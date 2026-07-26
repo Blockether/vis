@@ -1403,7 +1403,12 @@
         (expect (string/includes? (msg {"range" "1, x"}) "non-numeric"))
         (expect (string/includes? (msg {"range" ["1" "x"]}) "\"x\""))
         ;; wrong arity is called out distinctly
-        (expect (string/includes? (msg {"ranges" [[1 2 3]]}) "exactly 2 components"))))
+        (expect (string/includes? (msg {"ranges" [[1 2 3]]}) "exactly 2 components"))
+        ;; REGRESSION: a NON-pair `range` (bare int, map, bool) reached the [s e]
+        ;; destructure and leaked a raw `nth not supported on this type: Long`.
+        (doseq [bad [70 true {"start" 1 "end" 70}]]
+          (expect (string/includes? (msg {"range" bad}) "[start, end] pairs"))
+          (expect (not (string/includes? (msg {"range" bad}) "nth not supported"))))))
   (it
     "path/src/edits tools unwrap the collapsed all-kwargs spec map, never stringify it"
     (let
@@ -4379,50 +4384,24 @@
       "is_respect_gitignore=false never walks a root's tree — fff itself serves the no-ignore index"
       ;; "secret token" strict-matches nothing (no single path holds BOTH
       ;; words), so the relaxed fallback fires a per-token scan for "secret"
-      ;; AND "token" — 3 find-scan passes total. None of them may fall back to
-      ;; a direct filesystem walk: the fff index is created with
-      ;; `:respect-ignore-files? false`, so it already contains the ignored
-      ;; file and every pass is served natively.
-      (let
-        [path
-         (fixture! "gitignore-override-walkonce")
-
-         orig
-         (private-fn "find-walk-files")
-
-         calls
-         (atom 0)]
-
-        (with-redefs-fn {(core-var "find-walk-files") (fn [& args]
-                                                        (swap! calls inc)
-                                                        (apply orig args))}
-          #(let
-             [r
-              (find-search [{"query" "secret token" "paths" [path] "is_respect_gitignore" false}])]
-
-             ;; the fallback still surfaces the file via the "secret" token
-             (expect (some (fn [p]
-                             (string/includes? p "vendor/corp/secret.txt"))
-                           (get r "paths")))))
-        (expect (zero? @calls))))
+      ;; AND "token". Every pass is served natively: the fff index is created
+      ;; with `:respect-ignore-files? false`, so it already contains the
+      ;; ignored file. There is no Clojure walk left to fall back to — the
+      ;; former `find-walk-files` escape hatch is deleted.
+      (let [path (fixture! "gitignore-override-walkonce")
+            r    (find-search [{"query" "secret token" "paths" [path]
+                                "is_respect_gitignore" false}])]
+        (expect (nil? (core-var "find-walk-files")))
+        ;; the fallback still surfaces the file via the "secret" token
+        (expect (some (fn [p] (string/includes? p "vendor/corp/secret.txt"))
+                      (get r "paths")))))
     (it "the default (respect-gitignore) path never triggers a direct filesystem walk"
-        ;; With the flag left on, find_files stays on the fff index — the direct
-        ;; walk (find-walk-files) is the OPT-OUT branch only and must not run.
-        (let
-          [path
-           (fixture! "gitignore-override-nowalk")
-
-           orig
-           (private-fn "find-walk-files")
-
-           calls
-           (atom 0)]
-
-          (with-redefs-fn {(core-var "find-walk-files") (fn [& args]
-                                                          (swap! calls inc)
-                                                          (apply orig args))}
-            #(find-search [{"query" "secret" "paths" [path]}]))
-          (expect (zero? @calls))))
+        ;; With the flag left on, find_files stays on the fff index. No walk
+        ;; helper exists in the ns at all any more.
+        (let [path (fixture! "gitignore-override-nowalk")]
+          (find-search [{"query" "secret" "paths" [path]}])
+          (expect (nil? (core-var "find-walk-files")))
+          (expect (nil? (core-var "score-walked-candidates")))))
     (it "is_respect_gitignore=false still skips hidden .git metadata (is_hidden default false)"
         ;; Opting out of .gitignore must not drag VCS internals in: a file buried
         ;; in a dot-prefixed .git dir stays invisible because the is_hidden gate

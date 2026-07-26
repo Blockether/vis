@@ -118,17 +118,6 @@
   (let [rules (into [] (keep compile-rule) patterns)]
     (when (seq rules) rules)))
 
-(defn tool-ignore-present?
-  "True when `root` has a `.rgignore` — the ONE ignore file neither git nor fff
-   reads. fff's walker is ripgrep's `ignore` crate, so `.gitignore`, `.git/info/exclude`,
-   the global gitignore AND `.ignore` (including nested ones and their `!`
-   re-includes) are already honored natively by the index; only ripgrep's
-   `.rgignore` needs a custom filename fff does not register. A caller that finds
-   this true must walk the tree directly and evaluate the full layered
-   `load-matcher` instead of trusting the index."
-  [^File root]
-  (.exists (io/file root ".rgignore")))
-
 (defn ignored?
   "True when the `/`-separated relative path `rel` (with `path-dir?` telling
    whether it is a directory) is ignored by `matcher`. Last matching rule wins;

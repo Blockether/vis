@@ -2,14 +2,14 @@
   "THE canonical way vis talks to fff.
 
    Every fff instance in this process is born here and lives in ONE pool keyed
-   by `[canonical-root respect-ignore-files?]`. Nothing else may call
+   by `[canonical-root respect-ignore-files? ignore-overlay]`. Nothing else may call
    `fff/create` — a second, unpooled instance would duplicate a whole tree's
    native path+content index, spin its own watcher threads, and go stale on our
    own writes.
 
    Contract for callers:
 
-     (fff-index/with-index [idx (fff-index/lease root respect-ignore-files?)]
+     (fff-index/with-index [idx (fff-index/lease root respect-ignore-files? overlay)]
        (fff/search idx …) (fff/grep idx …))
 
    - the index is watcher-live (`:watch? true`) and resynced before the body
@@ -77,6 +77,11 @@
    more than `scan-max-concurrency` fresh scans ever run at once — a
    `gather(rg, …)` fan-out queues past the bound instead of stampeding.
 
+   `overlay` (optional) is the caller's ignore overlay —
+   `{:custom-ignore-filenames [\".rgignore\"] :exclude-globs [\"…\"] :unignore-globs [\"…\"]}` —
+   handed straight to fff, which applies it in the native walker AND in the
+   watcher's filter.
+
    `respect-ignore-files?` (default true) is handed STRAIGHT to fff: false makes
    fff's own native walker skip `.gitignore`/`.ignore`/`.git/info/exclude`/global
    ignores, so an `is_respect_gitignore false` caller stays on the fast native
@@ -92,8 +97,9 @@
    nvim). With both paths nil, fff opens no env, writes nothing to disk and
    shares NO cross-process state: pooled indexes are purely in-memory, so many
    sessions (and other fff consumers on the same machine) cannot clash."
-  (^java.io.Closeable [^File root] (open! root true))
-  (^java.io.Closeable [^File root respect-ignore-files?]
+  (^java.io.Closeable [^File root] (open! root true nil))
+  (^java.io.Closeable [^File root respect-ignore-files?] (open! root respect-ignore-files? nil))
+  (^java.io.Closeable [^File root respect-ignore-files? overlay]
    (when-not (.isDirectory root)
      (throw (ex-info "rg fff index root must be a directory"
                      {:type :ext.foundation.editing/invalid-rg-root :path (.getPath root)})))
@@ -112,7 +118,14 @@
                             ;; see docstring — never open fff's LMDB dbs.
                             :frecency-db-path nil
                             :history-db-path nil
-                            :respect-ignore-files? (boolean respect-ignore-files?)})
+                            :respect-ignore-files? (boolean respect-ignore-files?)
+                            ;; ignore overlay — fff honors it in BOTH the scan
+                            ;; walk and the live watcher, which is why vis no
+                            ;; longer walks trees in Clojure for `.rgignore` or
+                            ;; the `:search` config overlay.
+                            :custom-ignore-filenames (:custom-ignore-filenames overlay)
+                            :exclude-globs (:exclude-globs overlay)
+                            :unignore-globs (:unignore-globs overlay)})
                (catch Throwable t
                  (throw (ex-info (str "rg requires fff for directory search, but fff failed for " k)
                                  {:type :ext.foundation.editing/fff-unavailable :path k}
@@ -239,9 +252,15 @@
           (when (< (.get synced) now) (fff/rescan! idx scan-timeout-ms) (.set synced now)))))))
 
 (defn- pool-key
-  "The pool identity of a lease: canonical root path + ignore policy."
-  [{:keys [^File root respect-ignore-files?]}]
-  [(.getCanonicalPath root) (boolean respect-ignore-files?)])
+  "The pool identity of a lease: canonical root path, ignore policy and the
+   ignore overlay — two overlays index DIFFERENT file universes, so they must
+   never share one instance."
+  [{:keys [^File root respect-ignore-files? overlay]}]
+  [(.getCanonicalPath root) (boolean respect-ignore-files?)
+   (when overlay
+     (mapv (fn [k]
+             (vec (get overlay k)))
+           [:custom-ignore-filenames :exclude-globs :unignore-globs]))])
 
 (defn with-index*
   "Call `f` with a POOLED fff index for `lease`'s root + ignore policy. The entry
@@ -273,7 +292,7 @@
                   (cond-> m
                     (not (contains? m k))
                     (assoc k
-                      {:idx (delay (open! root respect-ignore-files?))
+                      {:idx (delay (open! root respect-ignore-files? (:overlay lease)))
                        :leases (java.util.concurrent.atomic.AtomicInteger. 0)
                        ;; born "just used": a 0 here would look ancient to a
                        ;; concurrent sweep and evict the entry before its first
@@ -322,10 +341,14 @@
                     (retire! entry))))))
 
 (defn lease
-  "One pool key: which root, under which ignore policy. Bundled into a single
-   value so `with-index` keeps a plain `[binding init]` shape."
-  [^File root respect-ignore-files?]
-  {:root root :respect-ignore-files? (boolean respect-ignore-files?)})
+  "One pool key: which root, under which ignore policy, with which ignore
+   overlay. Bundled into a single value so `with-index` keeps a plain
+   `[binding init]` shape."
+  ([^File root respect-ignore-files?] (lease root respect-ignore-files? nil))
+  ([^File root respect-ignore-files? overlay]
+   {:root root
+    :respect-ignore-files? (boolean respect-ignore-files?)
+    :overlay (when (some seq (vals overlay)) overlay)}))
 
 (defmacro with-index
   "`(with-index [idx (lease root respect?)] body…)` — body runs with a

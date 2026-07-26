@@ -176,9 +176,9 @@
    `:mode :plain` — literal, smart-case, the same rule as `make-line-matcher` — so
    it already sees every content candidate. This used to fall back to the FULL fff
    enumeration, which then had rg OPEN AND READ every file in the tree (measured
-   170ms vs 8ms on this repo for `tool-ignore-present?`) for no extra recall.
+   170ms vs 8ms on this repo) for no extra recall.
    Returns a File vec, deduped by canonical path."
-  [roots needles respect-ignore-files?]
+  [roots needles respect-ignore-files? overlay]
   (let
     [rel-files
      (fn [^File base items]
@@ -198,7 +198,7 @@
            (fn [^File root]
              (cond (.isFile root) [root]
                    :else (fff-index/with-index
-                           [idx (fff-index/lease root respect-ignore-files?)]
+                           [idx (fff-index/lease root respect-ignore-files? overlay)]
                            (let [base (.getCanonicalFile root)]
                              ;; doall: realize the lazy hits INSIDE with-open, before the fresh
                              ;; instance is closed.
@@ -1008,54 +1008,35 @@
 
       (gitignore/ignored? node rel dir?))))
 
-(defn- search-overlay-matchers
-  "Compiled `:search` config overlay (issue #23), or nil when unconfigured.
-   `{:include <matcher> :include-prefixes [static-prefix…] :exclude <matcher>}` —
-   both matchers compiled by `gitignore/compile-rules`, so the two config lists
-   speak `.gitignore` pattern syntax. `:include-prefixes` are the patterns'
-   static path prefixes: a gitignored DIRECTORY that is an ancestor of a prefix
-   must still be DESCENDED (git itself never descends an excluded dir, which is
-   exactly why a `.gitignore` `!` negation cannot re-include these subtrees —
-   the overlay can, but only if the walker opens the ancestors)."
-  []
-  (when-let [{:keys [include-gitignored-paths always-exclude]} (config/search-overlay)]
-    {:include (gitignore/compile-rules include-gitignored-paths)
-     :include-prefixes (mapv glob-static-prefix include-gitignored-paths)
-     :exclude (gitignore/compile-rules always-exclude)}))
+(defn- fff-ignore-overlay
+  "The ignore OVERLAY handed to fff for a search, or nil when there is nothing
+   to add. fff applies it natively in both the scan walk and the live watcher,
+   so vis never walks a tree itself to honor these:
 
-(defn- overlay-included?
-  "True when `rel` falls under an `:include-gitignored-paths` pattern — or, for
-   a DIRECTORY, when it is an ancestor of a pattern's static prefix (the walker
-   must open `repositories/` before `repositories/**` can match anything). A
-   prefix of `.` (pattern starts with a meta char, e.g. `**/vendored/`) opens
-   every directory: any gitignored dir might hold a match."
-  [{:keys [include include-prefixes]} ^String rel dir?]
-  (boolean (or (gitignore/ignored? include rel dir?)
-               (and dir?
-                    (some (fn [^String p]
-                            (or (= "." p) (path-prefix? rel p)))
-                          include-prefixes)))))
+   - `:custom-ignore-filenames [\".rgignore\"]` — the ONE ignore filename
+     ripgrep's `ignore` crate does not register on its own (`.gitignore`,
+     `.ignore`, `.git/info/exclude` and the global gitignore are native).
+   - `:unignore-globs` — the `:search :include-gitignored-paths` config
+     (issue #23): subtrees re-included although `.gitignore` excludes them.
+     A gitignored DIRECTORY is never descended by any gitignore-honoring
+     walker, which is why a `!` negation cannot do this and fff reopens those
+     static prefixes in a second, ignore-free pass.
+   - `:exclude-globs` — the `:search :always-exclude` config guarding what
+     those re-includes would otherwise drag in.
 
-(defn- search-excluded?
-  "Issue #23 exclusion formula:
-
-     excluded?(f) = always-exclude?(f) OR (gitignored?(f) AND NOT included?(f))
-
-   `overlay` nil degrades to plain `ignored?` — unconfigured projects keep
-   today's behavior bit-for-bit. `ignore-node` nil (gitignore opt-out) leaves
-   only the `:always-exclude` guard."
-  [ignore-node overlay ^File f ^File root]
+   The config half is active only on the DEFAULT gitignore-respecting path: an
+   EXPLICIT per-call `is_respect_gitignore` (either value) wins over it."
+  [is_respect_gitignore is_gitignore_explicit]
   (let
-    [rel
-     (paths/unixify (.relativize (.toPath root) (.toPath f)))
+    [{:keys [include-gitignored-paths always-exclude]}
+     (when (and is_respect_gitignore (not is_gitignore_explicit)) (config/search-overlay))
 
-     dir?
-     (.isDirectory f)]
+     overlay
+     {:custom-ignore-filenames (when is_respect_gitignore [".rgignore"])
+      :exclude-globs (vec always-exclude)
+      :unignore-globs (when is_respect_gitignore (vec include-gitignored-paths))}]
 
-    (or (boolean (and overlay (gitignore/ignored? (:exclude overlay) rel dir?)))
-        (boolean (and ignore-node
-                      (gitignore/ignored? ignore-node rel dir?)
-                      (not (and overlay (overlay-included? overlay rel dir?))))))))
+    (when (some seq (vals overlay)) overlay)))
 
 ;; =============================================================================
 ;; cat
@@ -1116,7 +1097,7 @@
       (throw
         (ex-info
           (str
-            "cat \"ranges\" entries must be [start, end] pairs, e.g. [10, 40] or \"10, 40\"; got "
+            "cat \"range\"/\"ranges\" entries must be [start, end] pairs, e.g. [10, 40] or \"10, 40\"; got "
             (pr-str pair))
           {:type :ext.foundation.editing/invalid-cat-args :range pair}))
       (not= 2 (count items))
@@ -1785,47 +1766,6 @@
        :is_gitignore_explicit (contains? spec "is_respect_gitignore")
        :is_ls ls?})))
 
-(defn- find-walk-files
-  "Walk directory `base` ONCE, returning a vector of `{:path :file-name :size}`
-   for every file (honoring `is_hidden`; dotfiles — incl. every `.git` dir —
-   skipped unless set). Exclusion is `search-excluded?`: `ignore-node` prunes
-   gitignored paths (nil for a full opt-out that walks everything), while a
-   non-nil `overlay` re-includes the configured `:include-gitignored-paths`
-   subtrees and prunes `:always-exclude` matches — so a gitignore-RESPECTING
-   walk still hides `.gitignore`'d files while surfacing the ones a `!` rule or
-   the `:search` overlay re-included.
-   Deliberately does NO scoring: `find-search` scores the strict query AND each
-   fallback token, so scoring here would re-walk the whole tree up to 6× per call.
-   Walk once, score the cached vector per query instead."
-  [^File base is_hidden ignore-node overlay]
-  (let [out (java.util.ArrayList.)]
-    (letfn [(walk [^File f]
-              (check-interrupt!)
-              (when (and (or is_hidden (not (.isHidden f)))
-                         (not (search-excluded? ignore-node overlay f base)))
-                (cond (.isDirectory f) (doseq [^File c (or (.listFiles f) (into-array File []))]
-                                         (walk c))
-                      (.isFile f)
-                      (.add out {:path (rel-path f) :file-name (.getName f) :size (.length f)}))))]
-      (walk base))
-    (vec out)))
-
-(defn- score-walked-candidates
-  "Score pre-walked `find-walk-files` entries against `query`, keeping those
-   whose `find-relevance` clears `find-min-score`. Pure in-memory — no I/O — so
-   it is cheap to run once per query token over a single cached walk."
-  [entries query]
-  (into []
-        (keep (fn [{:keys [path] :as e}]
-                (let [score (find-relevance query path)]
-                  (when (>= (double score)
-                            #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
-                            (double find-min-score))
-                    (assoc e
-                      :binary? false
-                      :score score)))))
-        entries))
-
 (defn- find-scan
   "Scan `roots` for ONE `query` string and keep candidates whose
    `find-relevance` (name-weighted, order-insensitive) clears `find-min-score`.
@@ -1833,86 +1773,57 @@
    itself at score 1.0. The single-query building block `find-search` runs
    once for the strict whole-query pass and once per token for the fallback.
 
-   Directory roots go through fff (fast, frecency-ranked) — including when the
-   caller opted OUT of gitignore: `is_respect_gitignore` is passed THROUGH to
-   fff's native walker, so ignored files surface without ever paying a raw
-   filesystem walk. `walk-cache` (a root→delay atom) memoizes the direct walk
-   still used for the overlay/tool-ignore cases so the strict + per-token passes
-   share ONE filesystem traversal instead of re-walking the whole tree each time."
-  [roots query is_hidden is_respect_gitignore candidate-page walk-cache overlay]
-  (->>
-    roots
-    (mapcat
-      (fn [^File root]
-        (cond (.isFile root) [{:path (rel-path root)
-                               :file-name (.getName root)
-                               :size (.length root)
-                               :binary? false
-                               :source :direct-file
-                               :score 1.0}]
-              ;; Walk the tree directly (bypassing fff) ONLY when a `.rgignore`
-              ;; is present — fff's walker IS ripgrep's `ignore` crate, so
-              ;; `.gitignore`, `.git/info/exclude`, the global gitignore and
-              ;; `.ignore` (nested ones and their `!` re-includes included) are
-              ;; already honored natively; `.rgignore` is the one filename it does
-              ;; not register — or when the `:search` config overlay is active (its
-              ;; re-included subtrees are invisible to the index). A plain
-              ;; `is_respect_gitignore false` is NOT a bypass: fff itself honors
-              ;; the flag, so no-ignore stays on the fast native path.
-              (or (some? overlay)
-                  (and is_respect_gitignore
-                       (gitignore/tool-ignore-present? (.getCanonicalFile root))))
-              (let
-                [base
-                 (.getCanonicalFile root)
+   Directory roots ALWAYS go through fff (fast, frecency-ranked) — including
+   when the caller opted OUT of gitignore (`is_respect_gitignore` is passed
+   THROUGH to fff's native walker) and including `.rgignore` / `:search`
+   overlay projects, which fff honors natively via `overlay`. vis walks no
+   tree here."
+  [roots query is_hidden is_respect_gitignore candidate-page overlay]
+  (->> roots
+       (mapcat
+         (fn [^File root]
+           (cond (.isFile root) [{:path (rel-path root)
+                                  :file-name (.getName root)
+                                  :size (.length root)
+                                  :binary? false
+                                  :source :direct-file
+                                  :score 1.0}]
+                 :else (fff-index/with-index
+                         [idx (fff-index/lease root is_respect_gitignore overlay)]
+                         (let [base (.getCanonicalFile root)]
+                           ;; doall: realize hits INSIDE with-open, before the
+                           ;; fresh instance is closed.
+                           (doall
+                             (->> (:items (fff/search idx {:query query :page-size candidate-page}))
+                                  (keep
+                                    (fn
+                                      [{:keys [relative-path file-name git-status size modified
+                                               frecency-score binary?]}]
+                                      (let
+                                        [f (io/file base relative-path)
+                                         rel (rel-path f)
+                                         score (find-relevance query rel)]
 
-                 ignore-node
-                 (when is_respect_gitignore (load-ignore-node base))
-
-                 entries
-                 @(-> walk-cache
-                      (swap! (fn [m]
-                               (if (contains? m base)
-                                 m
-                                 (assoc m
-                                   base (delay
-                                          (find-walk-files base is_hidden ignore-node overlay))))))
-                      (get base))]
-
-                (score-walked-candidates entries query))
-              :else
-              (fff-index/with-index
-                [idx (fff-index/lease root is_respect_gitignore)]
-                (let [base (.getCanonicalFile root)]
-                  ;; doall: realize hits INSIDE with-open, before the
-                  ;; fresh instance is closed.
-                  (doall
-                    (->> (:items (fff/search idx {:query query :page-size candidate-page}))
-                         (keep
-                           (fn
-                             [{:keys [relative-path file-name git-status size modified
-                                      frecency-score binary?]}]
-                             (let
-                               [f (io/file base relative-path)
-                                rel (rel-path f)
-                                score (find-relevance query rel)]
-
-                               (when (and (>= (double score)
-                                              #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
-                                              (double find-min-score))
-                                          (or is_hidden (not (.isHidden f)))
-                                          (or (not is_respect_gitignore)
-                                              (not (ignored? (load-ignore-node base) f base))))
-                                 {:path rel
-                                  :file-name (or file-name (.getName f))
-                                  :size size
-                                  :modified modified
-                                  :frecency-score frecency-score
-                                  :git-status git-status
-                                  :binary? (boolean binary?)
-                                  :score score})))))))))))
-    (distinct)
-    vec))
+                                        ;; No gitignore re-check here: the index was
+                                        ;; opened with this exact ignore policy AND
+                                        ;; overlay, so fff already decided. Re-running
+                                        ;; a Clojure matcher would drop the very files
+                                        ;; `:include-gitignored-paths` re-includes.
+                                        (when (and (>= (double score)
+                                                       #_{:clj-kondo/ignore
+                                                          [:redundant-primitive-coercion]}
+                                                       (double find-min-score))
+                                                   (or is_hidden (not (.isHidden f))))
+                                          {:path rel
+                                           :file-name (or file-name (.getName f))
+                                           :size size
+                                           :modified modified
+                                           :frecency-score frecency-score
+                                           :git-status git-status
+                                           :binary? (boolean binary?)
+                                           :score score})))))))))))
+       (distinct)
+       vec))
 
 (defn- find-fallback-tokens
   "Distinct alnum query tokens worth an independent per-token search: length
@@ -1937,8 +1848,8 @@
    `roots` (a FILE root lists itself) ranked by frecency then recency, capped at
    `limit`. There is no pattern to match, so this is `ls`, not a fuzzy search —
    it skips the whole query-scoring path. Honors `is_hidden`/`is_respect_gitignore`
-   exactly like the scored walk."
-  [roots limit is_hidden is_respect_gitignore]
+   and the same fff ignore `overlay` as the scored path."
+  [roots limit is_hidden is_respect_gitignore overlay]
   (->> roots
        (mapcat
          (fn [^File root]
@@ -1948,41 +1859,30 @@
                                   :binary? false
                                   :source :direct-file
                                   :score 1.0}]
-                 (and is_respect_gitignore
-                      (gitignore/tool-ignore-present? (.getCanonicalFile root)))
-                 (let
-                   [base
-                    (.getCanonicalFile root)
+                 :else (fff-index/with-index
+                         [idx (fff-index/lease root is_respect_gitignore overlay)]
+                         (let [base (.getCanonicalFile root)]
+                           (doall
+                             (->> (:items
+                                    (fff/search idx {:query "" :page-size (max (long limit) 300)}))
+                                  (keep
+                                    (fn
+                                      [{:keys [relative-path file-name git-status size modified
+                                               frecency-score binary?]}]
+                                      (let
+                                        [f (io/file base relative-path)
+                                         rel (rel-path f)]
 
-                    ignore-node
-                    (when is_respect_gitignore (load-ignore-node base))]
-
-                   (map #(assoc % :score 1.0) (find-walk-files base is_hidden ignore-node nil)))
-                 :else
-                 (fff-index/with-index
-                   [idx (fff-index/lease root is_respect_gitignore)]
-                   (let [base (.getCanonicalFile root)]
-                     (doall
-                       (->> (:items (fff/search idx {:query "" :page-size (max (long limit) 300)}))
-                            (keep
-                              (fn
-                                [{:keys [relative-path file-name git-status size modified
-                                         frecency-score binary?]}]
-                                (let
-                                  [f (io/file base relative-path)
-                                   rel (rel-path f)]
-
-                                  (when (and (or is_hidden (not (.isHidden f)))
-                                             (or (not is_respect_gitignore)
-                                                 (not (ignored? (load-ignore-node base) f base))))
-                                    {:path rel
-                                     :file-name (or file-name (.getName f))
-                                     :size size
-                                     :modified modified
-                                     :frecency-score frecency-score
-                                     :git-status git-status
-                                     :binary? (boolean binary?)
-                                     :score 1.0})))))))))))
+                                        ;; see find-scan: fff owns the ignore verdict.
+                                        (when (or is_hidden (not (.isHidden f)))
+                                          {:path rel
+                                           :file-name (or file-name (.getName f))
+                                           :size size
+                                           :modified modified
+                                           :frecency-score frecency-score
+                                           :git-status git-status
+                                           :binary? (boolean binary?)
+                                           :score 1.0})))))))))))
        (distinct)
        (sort-by (fn [it]
                   [(- (long (or (:frecency-score it) 0))) (- (long (or (:modified it) 0)))
@@ -2006,20 +1906,14 @@
      candidate-page
      (max (long limit) 300)
 
-     ;; ONE walk-cache shared across the strict + per-token scans so an
-     ;; is_respect_gitignore=false run walks each root's tree exactly once.
-     walk-cache
-     (atom {})
-
-     ;; `:search` config overlay (issue #23): active only on the DEFAULT
-     ;; gitignore-respecting path — an EXPLICIT per-call is_respect_gitignore
-     ;; (either value) wins over the overlay for that call.
+     ;; `.rgignore` + the `:search` config overlay (issue #23), handed to fff
+     ;; itself — see `fff-ignore-overlay`.
      search-overlay
-     (when (and is_respect_gitignore (not is_gitignore_explicit)) (search-overlay-matchers))
+     (fff-ignore-overlay is_respect_gitignore is_gitignore_explicit)
 
      scan
      (fn [q]
-       (find-scan roots q is_hidden is_respect_gitignore candidate-page walk-cache search-overlay))
+       (find-scan roots q is_hidden is_respect_gitignore candidate-page search-overlay))
 
      strict
      (if is_ls [] (scan query))
@@ -2044,7 +1938,7 @@
 
      [ranked fuzzy?]
      (if is_ls
-       [(find-ls roots limit is_hidden is_respect_gitignore) false]
+       [(find-ls roots limit is_hidden is_respect_gitignore search-overlay) false]
        (if (or (seq strict) (< (count tokens) 2))
          [strict false]
          (let
@@ -2777,50 +2671,23 @@
      matches?
      (make-line-matcher needles)
 
-     ;; `:search` config overlay (issue #23): active only on the DEFAULT
-     ;; gitignore-respecting path — an EXPLICIT per-call is_respect_gitignore
-     ;; (either value) wins over the overlay for that call.
+     ;; `.rgignore` + the `:search` config overlay (issue #23) — handed to fff
+     ;; itself, see `fff-ignore-overlay`.
      search-overlay
-     (when (and is_respect_gitignore (not is_gitignore_explicit)) (search-overlay-matchers))
+     (fff-ignore-overlay is_respect_gitignore is_gitignore_explicit)
 
-     walk
-     (fn walk [ignore-node root ^File f]
-       (check-interrupt!)
-       ;; The hidden-guard filters hidden DESCENDANTS, but must never reject the
-       ;; scan ROOT for its own dotname — an explicit/allowed root like `~/.vis`
-       ;; is entered on purpose, so exempt `f == root` (else a dotfile root scans
-       ;; to nothing, silently skipping a whole filesystem root on the default sweep).
-       (cond (and (not is_hidden) (not= f root) (.isHidden f)) []
-             (and is_respect_gitignore (search-excluded? ignore-node search-overlay f root)) []
-             (.isDirectory f) (mapcat #(walk ignore-node root %)
-                                      (or (.listFiles f) (into-array File [])))
-             (and (.isFile f) (include-file? f)) [f]
-             :else []))
-
-     ;; fff-first: fff OWNS discovery. It enumerates the correct universe (nested
+     ;; fff-first, ALWAYS: fff OWNS discovery. It enumerates the correct universe (nested
      ;; `.gitignore`-aware — NEVER descends node_modules/target/…) and needle-narrows via
      ;; native grep, ~280× faster than a raw walk. `is_respect_gitignore` is passed THROUGH
-     ;; to fff's walker, so even a no-ignore sweep stays native instead of raw-walking every
-     ;; workspace root (that bypass cost 120s on this workspace). Skip fff — walk instead —
-     ;; only when a `.rgignore` is present (the one ignore filename fff's ripgrep
-     ;; walker does not register; `.ignore` IS native) or the `:search` overlay is active (its
-     ;; gitignore-honoring index would re-drop the re-included files). fff surfaces dotfiles
-     ;; the walk hid by descent, so re-apply the include globs + hidden-below-root guard on
-     ;; the fff path.
-     fff-first?
-     (and (nil? search-overlay)
-          (or (not is_respect_gitignore) (not (some gitignore/tool-ignore-present? roots))))
-
+     ;; to fff's walker, and `.rgignore` / the `:search` overlay ride along as fff's own
+     ;; ignore overlay — so there is no raw-walk fallback left (that bypass cost 120s on
+     ;; this workspace). fff surfaces dotfiles a walk hid by descent, so re-apply the
+     ;; include globs + hidden-below-root guard here.
      candidates
-     (if fff-first?
-       (->> (rg-fff-candidate-files roots needles is_respect_gitignore)
-            (filter include-file?)
-            (remove (fn [^File f]
-                      (and (not is_hidden) (rg-hidden-below-root? roots f)))))
-       (->> roots
-            (mapcat (fn [root]
-                      (let [ignore-node (when is_respect_gitignore (load-ignore-node root))]
-                        (walk ignore-node root root))))))
+     (->> (rg-fff-candidate-files roots needles is_respect_gitignore search-overlay)
+          (filter include-file?)
+          (remove (fn [^File f]
+                    (and (not is_hidden) (rg-hidden-below-root? roots f)))))
 
      files
      ;; DECORATE-SORT-UNDECORATE: `rel-path` canonicalizes paths (syscalls). Handing it
@@ -3836,9 +3703,10 @@
                        tail (get arg "tail")]
 
                       (cond rng (let
-                                  [[s e] (or (normalize-cat-pair rng)
-                                             (when (cat-pair-items rng) (cat-pair-error! rng))
-                                             rng)]
+                                  ;; A NON-pair `range` (a bare 70, a map, true) used to reach
+                                  ;; the destructure and die with a raw `nth not supported on
+                                  ;; this type: Long`. Always route it through the pair error.
+                                  [[s e] (or (normalize-cat-pair rng) (cat-pair-error! rng))]
                                   (cat-tool path :range s e))
                             ranges (cat-tool path :ranges ranges)
                             ;; A mis-passed line-number `anchor` (`9357`, `"9357"`,

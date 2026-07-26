@@ -325,3 +325,10 @@ Semantics:
 - Hidden files stay governed by `is_hidden`: re-including `repositories/`
   never surfaces the repos' `.git` internals (doubly guarded — `.git/` is
   also in the default `always_exclude`).
+- The overlay is applied **natively by the fff index** (its ignore walker
+  *and* its live file watcher), not by a second pass in vis — so a
+  re-included subtree is indexed once, stays incrementally up to date, and
+  costs nothing per search. The same mechanism registers `.rgignore`, the
+  one ignore filename ripgrep's `ignore` crate does not pick up on its own
+  (`.gitignore`, `.ignore`, `.git/info/exclude` and the global gitignore
+  are native).
