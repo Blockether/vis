@@ -6342,69 +6342,9 @@
   [model]
   (when model (get svar-router/MODEL_PRICING (str model))))
 
-(def ^:private loop-give-up-text
-  "Markdown surfaced when a turn is force-finalized after the model kept
-   repeating without ever landing — and produced no usable answer to fall
-   back on."
-  (str "I kept repeating the same steps without converging on a confident "
-       "answer, so I stopped to avoid spinning. See the iteration trace above "
-       "for what I gathered."))
-
-(defn- repetition-loop-state
-  "Pure loop detector. Given this iteration's executed `blocks` and the prior
-   `:stuck` carry, returns the next history plus `:stuck?`.
-
-   ONE signal, no budget counting: an identical ACTION signature seen in the
-   previous three iterations means an immediate repeat or a short A→B→A /
-   A→B→C→A cycle. This catches alternating discovery/reference loops without
-   treating a long-running investigation as stuck.
-
-   Deliberately EXACT: no output/evidence hashing. Content-based \"no new
-   evidence\" detection fired on legitimate work (re-reading the same file
-   while reasoning forward) and killed real turns, so the detector only ever
-   reacts to the model literally re-issuing the same code."
-  [blocks prev-stuck]
-  (let
-    [action-code
-     (mapv :code blocks)
-
-     action-sig
-     (when (seq action-code) (hash action-code))
-
-     recent-sigs
-     (vec (or (:recent-sigs prev-stuck)
-              (when-let [last-sig (:last-sig prev-stuck)]
-                [last-sig])))
-
-     sig-repeat?
-     (boolean (and action-sig (some #{action-sig} recent-sigs)))
-
-     next-recent-sigs
-     (if action-sig
-       (->> (conj recent-sigs action-sig)
-            (take-last 3)
-            vec)
-       recent-sigs)]
-
-    {:stuck? sig-repeat? :action-sig action-sig :recent-sigs next-recent-sigs}))
-
-(defn- loop-checkpoint-message
-  "The repetition decision-checkpoint, injected as a user turn the moment the
-   model loops (identical action code repeated across iterations). Confronts the
-   one-shot urge: shows the best answer so far and forces a finish / one-tool /
-   blocked decision instead of another open-ended probe. `sticky-md` is the best
-   answer so far (Markdown) or nil."
-  [sticky-md]
-  (str "⚠️ STOP — you are repeating yourself. You wanted to one-shot this, but "
-       "you have now looped without finalizing.\n\n"
-       (if (str/blank? (str sticky-md))
-         "You have NOT produced any answer yet.\n\n"
-         (str "Your best answer so far:\n\n---\n" sticky-md "\n---\n\n"))
-       "DECIDE NOW:\n" "1. FINISH — reply with the best answer as plain prose; no tool call.\n"
-       "2. ONE TOOL — only if one named missing fact blocks the answer, call exactly "
-       "one NEW tool that can obtain it. Never repeat a prior call.\n"
-       "3. BLOCKED — reply in plain prose stating exactly what blocks you.\n"
-       "No other investigation."))
+(def ^:private empty-replies-give-up-text
+  "Fallback shown only when the provider repeatedly returns an empty reply."
+  "The model returned empty replies repeatedly, so the turn was stopped.")
 
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
@@ -7651,7 +7591,7 @@
                                                   deref
                                                   :best-answer
                                                   :value)
-                                          {:answer loop-give-up-text})]
+                                          {:answer empty-replies-give-up-text})]
                               (log-stage! :final
                                           iteration
                                           {:reason :empty-replies
@@ -7699,19 +7639,6 @@
                                        :times (mapv block-duration-ms blocks)})
                           (let
                             [_ blocks
-                             ;; Loop detection (no budget counting): an EXACT
-                             ;; action repeat inside a short window implies an
-                             ;; immediate or periodic cycle.
-                             {:keys [stuck? action-sig recent-sigs]}
-                             (repetition-loop-state blocks (:stuck loop-state))
-                             nudged? (boolean (:nudged? (:stuck loop-state)))
-                             sticky (some-> (:turn-state-atom environment)
-                                            deref
-                                            :best-answer
-                                            :value)
-                             ;; Checkpoint already shown AND still stuck => force-finalize.
-                             forced? (and nudged? stuck?)
-                             forced-answer (or sticky {:answer loop-give-up-text})
                              ;; ctx-diff for THIS iteration: the standing context
                              ;; AFTER its code ran, captured ONLY if it changed since
                              ;; the model last saw it (this iter started an nREPL,
@@ -7776,77 +7703,24 @@
                                              :tool-calls (:tool-calls iteration-result)
                                              :preserved-thinking/replay? true}])]
 
-                            ;; ONE iteration-final chunk, AFTER the decision. Terminal
-                            ;; (:done? true + :final answer) when force-finalizing so
-                            ;; live channels render the forced answer; a non-terminal
-                            ;; chunk before the force-finalize would never show it.
+                            ;; The model controls when the turn is complete. Repeated tool
+                            ;; calls remain ordinary non-terminal iterations.
                             (when on-chunk
-                              (on-chunk
-                                (if forced?
-                                  {:phase :iteration-final
-                                   :iteration (inc (long iteration))
-                                   :thinking thinking
-                                   :assistant-prose assistant-prose
-                                   :iteration-id iteration-id
-                                   :attachment-count (count iteration-attachments)
-                                   :final {:answer forced-answer
-                                           :iteration-count (inc (long iteration))
-                                           :status :success}
-                                   :done? true}
-                                  {:phase :iteration-final
-                                   :iteration (inc (long iteration))
-                                   :thinking thinking
-                                   :assistant-prose assistant-prose
-                                   :iteration-id iteration-id
-                                   :attachment-count (count iteration-attachments)
-                                   :final nil
-                                   :done? false})))
-                            (if forced?
-                              (do (log-stage! :final
-                                              iteration
-                                              {:reason :loop-forced
-                                               :iteration-count (inc (long iteration))})
-                                  ;; NB: no `:status` key — mirrors the normal
-                                  ;; success path so prior_outcome derives to
-                                  ;; `complete` (a bare `:status :success` violates
-                                  ;; the session_turn_state.prior_outcome CHECK).
-                                  (-> (merge {:answer forced-answer
-                                              :trace (conj trace trace-entry)
-                                              :iteration-count (inc (long iteration))
-                                              :utilization
-                                              (let
-                                                [u @usage-atom
-                                                 req (if (pos? (long (:iter-count u)))
-                                                       (long (:last-iter-input u))
-                                                       (long (:previous-request-input u)))]
-
-                                                (ctx-engine/utilization
-                                                  req
-                                                  effective-context-limit
-                                                  (:input-tokens u)
-                                                  ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))}
-                                             (finalize-cost))
-                                      (attach-llm-routing-summary pre-resolved-model
-                                                                  iteration-result)))
-                              (recur
-                                (merge (dissoc loop-state :llm-provider)
-                                       {:iteration (inc (long iteration))
-                                        :provider-error-streak 0
-                                        :empty-iteration-streak 0
-                                        ;; Inject ONE guidance turn when repetition
-                                        ;; is detected → stern decision-checkpoint.
-                                        :messages (cond-> messages
-                                                    stuck?
-                                                    (conj {:role "user"
-                                                           :content (loop-checkpoint-message
-                                                                      (when sticky
-                                                                        (answer-markdown
-                                                                          sticky)))}))
-                                        :trace (conj trace trace-entry)
-                                        :trailer-iters next-recent
-                                        :stuck {:last-sig action-sig
-                                                :recent-sigs recent-sigs
-                                                :nudged? stuck?}})))))))))))))))))
+                              (on-chunk {:phase :iteration-final
+                                         :iteration (inc (long iteration))
+                                         :thinking thinking
+                                         :assistant-prose assistant-prose
+                                         :iteration-id iteration-id
+                                         :attachment-count (count iteration-attachments)
+                                         :final nil
+                                         :done? false}))
+                            (recur (merge (dissoc loop-state :llm-provider)
+                                          {:iteration (inc (long iteration))
+                                           :provider-error-streak 0
+                                           :empty-iteration-streak 0
+                                           :messages messages
+                                           :trace (conj trace trace-entry)
+                                           :trailer-iters next-recent}))))))))))))))))
 
 (defn- slash-ctx-for-env
   "Build the slash dispatch ctx from a turn env. Pure data; carries

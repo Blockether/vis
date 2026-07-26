@@ -2440,126 +2440,9 @@
           (expect (= 1 (count entries)))))))
 
 (defdescribe
-  repetition-loop-detection-test
-  "Repetition-only loop detector + decision-checkpoint. No iteration/budget
-   counting — fires on immediate repeats and short periodic action cycles."
-  (let
-    [detect
-     (var-get #'lp/repetition-loop-state)
-
-     carry
-     (fn [r]
-       {:last-sig (:action-sig r) :recent-sigs (:recent-sigs r)})
-
-     step
-     (fn [previous code]
-       (detect [{:code code}] (when previous (carry previous))))
-
-     msg
-     (var-get #'lp/loop-checkpoint-message)]
-
-    (describe "repetition-loop-state"
-              (it "is not stuck on a single iteration"
-                  (let [r (step nil "grep({\"query\": \"x\"})")]
-                    (expect (false? (:stuck? r)))))
-              (it "trips when identical action code repeats immediately"
-                  (let
-                    [blocks
-                     [{:code "grep({\"query\": \"cancel\"})"} {:code "cat({\"path\": \"x.clj\"})"}]
-
-                     r1
-                     (detect blocks nil)
-
-                     r2
-                     (detect blocks (carry r1))]
-
-                    (expect (false? (:stuck? r1)))
-                    (expect (true? (:stuck? r2)))))
-              (it "does not trip on a distinct action sequence"
-                  (let
-                    [r1
-                     (step nil "apropos({\"query\": \"x\"})")
-
-                     r2
-                     (step r1 "doc({\"name\": \"x\"})")]
-
-                    (expect (false? (:stuck? r2)))))
-              (it "detects an alternating apropos → doc → apropos cycle"
-                  (let
-                    [r1
-                     (step nil "apropos({\"query\": \"find\"})")
-
-                     r2
-                     (step r1 "doc({\"name\": \"grep\"})")
-
-                     r3
-                     (step r2 "apropos({\"query\": \"find\"})")]
-
-                    (expect (false? (:stuck? r1)))
-                    (expect (false? (:stuck? r2)))
-                    (expect (true? (:stuck? r3)))))
-              (it "detects a three-action periodic cycle and bounds history"
-                  (let
-                    [r1
-                     (step nil "a()")
-
-                     r2
-                     (step r1 "b()")
-
-                     r3
-                     (step r2 "c()")
-
-                     r4
-                     (step r3 "a()")]
-
-                    (expect (false? (:stuck? r3)))
-                    (expect (true? (:stuck? r4)))
-                    (expect (= 3 (count (:recent-sigs r4))))))
-              (it "stays calm when only the OUTPUT repeats and the code differs"
-                  (let
-                    [probe
-                     (fn [previous code out]
-                       (detect [{:code code :stdout out}] (when previous (carry previous))))
-
-                     r1
-                     (probe nil "shell('curl localhost:5273/healthz')" "{\"status\":\"ok\"}")
-
-                     r2
-                     (probe r1 "shell('curl 127.0.0.1:5273/healthz')" "{\"status\":\"ok\"}")
-
-                     r3
-                     (probe r2 "shell('curl -m 5 localhost:5273/healthz')" "{\"status\":\"ok\"}")]
-
-                    ;; DELIBERATE: no output/evidence hashing. Re-reading the same
-                    ;; content while reasoning forward is legitimate work, so only a
-                    ;; verbatim action repeat counts as a loop.
-                    (expect (false? (:stuck? r1)))
-                    (expect (false? (:stuck? r2)))
-                    (expect (false? (:stuck? r3)))
-                    (expect (nil? (:no-evidence-streak r3))))))
-    (describe "loop-checkpoint-message"
-              (it "shows the sticky best-answer and forces a decision"
-                  (let [m (msg "The atom and token serve distinct roles.")]
-                    (expect (str/includes? m "STOP"))
-                    (expect (str/includes? m "best answer so far"))
-                    (expect (str/includes? m "The atom and token serve distinct roles."))
-                    (expect (str/includes? m "plain prose"))
-                    (expect (str/includes? m "ONE TOOL"))
-                    (expect (str/includes? m "exactly one NEW tool"))
-                    (expect (not (str/includes? m "run NO tools")))
-                    (expect (not (str/includes? m "CONTINUE")))))
-              (it "handles no answer yet"
-                  (let [m (msg nil)]
-                    (expect (str/includes? m "NOT produced any answer")))))))
-
-(defdescribe
-  forced-loop-termination-test
-  "STERN PATH (integration): a model that emits the SAME non-(done) action every
-   iteration trips the repetition detector → decision-checkpoint → force-finalize,
-   so the turn TERMINATES with a (give-up) answer instead of looping forever.
-   Pre-fix this would loop until cancel; the safety cap below turns a regression
-   into a loud failure instead of a hang."
-  (it "force-finalizes a repeating turn instead of looping forever"
+  repeated-actions-continue-test
+  "Repeated actions are valid work. The loop continues until the model returns an answer."
+  (it "does not checkpoint or force-finalize identical actions"
       (let
         [router-stub
          {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}]}
@@ -2571,19 +2454,16 @@
          (atom 0)]
 
         (try (with-redefs
-               [svar/ask-code! (fn [_ _]
-                                 (when (> (swap! calls inc) 12)
-                                   (throw (ex-info "force-finalize never fired — looped >12x" {})))
-                                 ;; identical non-(done) action every iteration → action-sig repeats
-                                 {:blocks [{:lang "clojure" :source "(def probe 1)"}]
-                                  :raw "```clojure\n(def probe 1)\n```"
-                                  :tokens {}})]
-               (let [result (lp/turn! env [(svar/user "go in circles")] {})]
-                 (expect (some? result))
-                 ;; terminated via force-finalize, not a hang / not blank
-                 (expect (not (str/blank? (str (lp/answer-markdown (:answer result))))))
-                 ;; converged fast: iter1 (seed) → iter2 (stuck+checkpoint) → iter3 (force)
-                 (expect (<= @calls 5))))
+               [svar/ask-code!
+                (fn [_ _]
+                  (if (<= (swap! calls inc) 4)
+                    {:blocks [{:lang "clojure" :source "(def probe 1)"}]
+                     :raw "```clojure\n(def probe 1)\n```"
+                     :tokens {}}
+                    {:stop-reason :end :tool-calls [] :content "finished" :tokens {}}))]
+               (let [result (lp/turn! env [(svar/user "repeat if needed")] {})]
+                 (expect (= 5 @calls))
+                 (expect (= "finished" (lp/answer-markdown (:answer result))))))
              (finally (lp/dispose-environment! env))))))
 
 (defdescribe
