@@ -876,14 +876,23 @@
          :op :add
          :turn-id (event-get event :turn-id)
          :text (event-get event :request)}
+        ;; Path-free row text derived by the GATEWAY (image paths → chips).
+        ;; Only present when the daemon actually derived one, so a plain
+        ;; text prompt keeps exactly one source of truth: `:text`.
+        (event-get event :request-preview)
+        (assoc :preview-text (event-get event :request-preview))
+
         (event-get event :idempotency-key)
         (assoc :client-id (event-get event :idempotency-key)))
 
       "turn.queued.updated"
-      {:phase :queue-sync
-       :op :update
-       :turn-id (event-get event :turn-id)
-       :text (event-get event :request)}
+      (cond->
+        {:phase :queue-sync
+         :op :update
+         :turn-id (event-get event :turn-id)
+         :text (event-get event :request)}
+        (event-get event :request-preview)
+        (assoc :preview-text (event-get event :request-preview)))
 
       "turn.queued.deleted"
       {:phase :queue-sync :op :delete :turn-id (event-get event :turn-id)}
@@ -1063,6 +1072,10 @@
                            (mapv (fn [t]
                                    {:turn-id (get t "turn_id")
                                     :text (get t "request")
+                                    ;; What the row PAINTS: the gateway's path-free preview
+                                    ;; (image paths → chips) when it has one. `:text` stays
+                                    ;; raw so pulling the row back into the editor re-attaches.
+                                    :preview-text (or (get t "request_preview") (get t "request"))
                                     :client-id (get t "idempotency_key")
                                     :queued-at-ms (get t "queued_at")})))]
 

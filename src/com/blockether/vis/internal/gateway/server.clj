@@ -1415,7 +1415,10 @@
                                      :extra-body (get body "extra_body")
                                      :turn-features (get body "turn_features")
                                      :workspace (get body "workspace")
-                                     :attachments (get body "attachments")})]
+                                     :attachments (get body "attachments")
+                                     ;; The submitter's own pre-expansion prose. Dropping it here
+                                     ;; is what made a queued image render as a raw /var/folders path.
+                                     :display-request (get body "display_request")})]
         (cond (:turn result) (json-response (if (:idempotent? result) 200 202) (:turn result))
               (= :turn-in-progress (:error result))
               (error-response 409

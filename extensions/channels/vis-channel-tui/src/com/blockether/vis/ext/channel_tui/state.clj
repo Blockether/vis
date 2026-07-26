@@ -3179,73 +3179,73 @@
   (boolean (or (and turn-id (= turn-id (:gateway-turn-id w)))
                (and client-id (= client-id (:live-turn-client-id w))))))
 
-(reg-event-db :sync-queued-turn
-              ;; THE ONE WRITER of gateway-owned queue rows. Every add carries gateway truth -
-              ;; either the `turn.queued` / `.updated` / `.deleted` / `.drained` broadcast
-              ;; (forwarded as a :queue-sync chunk by the sync/attach subscriptions) or the ack
-              ;; of this tab's own `:gateway-enqueue`, which has the same shape and the same
-              ;; key. So a row ALWAYS has the gateway turn id, nothing is matched by request
-              ;; text, and whichever of ack/broadcast arrives first wins (the other no-ops):
-              ;;   :add    - no-op when the turn id is already mirrored, otherwise append.
-              ;;   :update - rewrite the entry's text (queued-prompt edit anywhere).
-              ;;   :delete - drop the entry (cleared / pulled back / drained anywhere).
-              ;; A turn that is (or just became) this tab's LIVE turn collapses EVERY op to
-              ;; "ensure it is not mirrored": a late, replayed or out-of-order queue event must
-              ;; not resurrect a running turn as a "Queued" row.
-              (fn [db [_ workspace-id {:keys [op turn-id client-id text] mine-hint? :mine?}]]
-                (let [workspace-id (or workspace-id (current-tab-id db))]
-                  (if-not (and workspace-id turn-id)
-                    db
-                    (update-tab
-                      db
-                      workspace-id
-                      (fn [w]
-                        (let
-                          [;; OURS when the correlation id the gateway echoed back was
-                           ;; minted by THIS tab, or when a caller that already knows the
-                           ;; provenance says so (the delete reconcile re-writing a row it
-                           ;; just removed).
-                           mine? (boolean (or mine-hint? (our-submission? workspace-id client-id)))
-                           row (cond->
-                                 {:text text
-                                  :preview-text text
-                                  :turn-id turn-id
-                                  :queued-at-ms (System/currentTimeMillis)}
-                                 client-id
-                                 (assoc :client-id client-id)
+(reg-event-db
+  :sync-queued-turn
+  ;; THE ONE WRITER of gateway-owned queue rows. Every add carries gateway truth -
+  ;; either the `turn.queued` / `.updated` / `.deleted` / `.drained` broadcast
+  ;; (forwarded as a :queue-sync chunk by the sync/attach subscriptions) or the ack
+  ;; of this tab's own `:gateway-enqueue`, which has the same shape and the same
+  ;; key. So a row ALWAYS has the gateway turn id, nothing is matched by request
+  ;; text, and whichever of ack/broadcast arrives first wins (the other no-ops):
+  ;;   :add    - no-op when the turn id is already mirrored, otherwise append.
+  ;;   :update - rewrite the entry's text (queued-prompt edit anywhere).
+  ;;   :delete - drop the entry (cleared / pulled back / drained anywhere).
+  ;; A turn that is (or just became) this tab's LIVE turn collapses EVERY op to
+  ;; "ensure it is not mirrored": a late, replayed or out-of-order queue event must
+  ;; not resurrect a running turn as a "Queued" row.
+  (fn [db [_ workspace-id {:keys [op turn-id client-id text preview-text] mine-hint? :mine?}]]
+    (let [workspace-id (or workspace-id (current-tab-id db))]
+      (if-not (and workspace-id turn-id)
+        db
+        (update-tab db
+                    workspace-id
+                    (fn [w]
+                      (let
+                        [;; OURS when the correlation id the gateway echoed back was
+                         ;; minted by THIS tab, or when a caller that already knows the
+                         ;; provenance says so (the delete reconcile re-writing a row it
+                         ;; just removed).
+                         mine? (boolean (or mine-hint? (our-submission? workspace-id client-id)))
+                         row (cond->
+                               {:text text
+                                :preview-text (or preview-text text)
+                                :turn-id turn-id
+                                :queued-at-ms (System/currentTimeMillis)}
+                               client-id
+                               (assoc :client-id client-id)
 
-                                 mine?
-                                 (assoc :mine? true))]
+                               mine?
+                               (assoc :mine? true))]
 
-                          (-> w
-                              (update :pending-sends
-                                      (fn [q]
-                                        (let
-                                          [q (vec (or q []))
-                                           mirrored? (boolean (some #(= turn-id (:turn-id %)) q))]
+                        (-> w
+                            (update :pending-sends
+                                    (fn [q]
+                                      (let
+                                        [q (vec (or q []))
+                                         mirrored? (boolean (some #(= turn-id (:turn-id %)) q))]
 
-                                          (if (live-turn-mirror? w turn-id client-id)
+                                        (if (live-turn-mirror? w turn-id client-id)
+                                          (vec (remove #(= turn-id (:turn-id %)) q))
+                                          (case op
+                                            :add
+                                            (if mirrored? q (conj q row))
+
+                                            :update
+                                            (if mirrored?
+                                              (mapv (fn [e]
+                                                      (if (= turn-id (:turn-id e))
+                                                        (assoc e
+                                                          :text text
+                                                          :preview-text (or preview-text text)
+                                                          :agent-text text)
+                                                        e))
+                                                    q)
+                                              (conj q row))
+
+                                            :delete
                                             (vec (remove #(= turn-id (:turn-id %)) q))
-                                            (case op
-                                              :add
-                                              (if mirrored? q (conj q row))
 
-                                              :update
-                                              (if mirrored?
-                                                (mapv (fn [e]
-                                                        (if (= turn-id (:turn-id e))
-                                                          (assoc e
-                                                            :text text
-                                                            :preview-text text
-                                                            :agent-text text)
-                                                          e))
-                                                      q)
-                                                (conj q row))
-
-                                              :delete
-                                              (vec (remove #(= turn-id (:turn-id %)) q))
-
-                                              q)))))))))))))
+                                            q)))))))))))))
 
 (reg-event-fx :clear-pending-sends
               ;; Explicit user action - escape hatch when the queued items are no
@@ -3389,12 +3389,14 @@
                        (let [q (vec (or q []))]
                          (into q
                                (keep
-                                 (fn [{:keys [turn-id client-id text queued-at-ms]}]
+                                 (fn [{:keys [turn-id client-id text preview-text queued-at-ms]}]
                                    (when-not (or (some #(same-submission? % turn-id client-id) q)
                                                  (live-turn-mirror? w turn-id client-id))
                                      (cond->
                                        {:text text
-                                        :preview-text text
+                                        ;; Gateway-derived row text (image paths already
+                                        ;; chipped); falls back to the raw request.
+                                        :preview-text (or preview-text text)
                                         :turn-id turn-id
                                         :queued-at-ms (or queued-at-ms (System/currentTimeMillis))}
                                        client-id

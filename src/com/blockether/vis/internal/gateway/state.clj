@@ -14,6 +14,7 @@
    records, subscribers), nothing else."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
+            [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.content :as content]
@@ -363,6 +364,17 @@
       (when-let [ev @captured]
         (fan-out! sid ev))))
   nil)
+(defonce ^:private hydrate-monitors (atom {}))
+
+(defn- hydrate-monitor
+  "Per-sid lock object serializing `subscribe!`'s hydrate of a sibling's
+   in-flight turn."
+  ^Object [sid]
+  (let [k (str sid)]
+    (or (get @hydrate-monitors k)
+        (get (swap! hydrate-monitors (fn [m]
+                                       (if (get m k) m (assoc m k (Object.)))))
+             k))))
 
 (defn subscribe!
   "Register an SSE sink and return the replay vector (canonical string-keyed
@@ -387,7 +399,12 @@
     sid
     (fn [entry]
       (or entry (fresh-entry sid))))
-  (when-not (:current-turn (get @registry sid)) (bus/hydrate! sid))
+  ;; ONE hydrate at a time per session: the `:current-turn` check and the
+  ;; hydrate are a single atomic step here. Concurrent SSE subscribers otherwise
+  ;; both read `:current-turn` unset and both mirror the sibling's turn, so every
+  ;; event lands in the ring twice (re-sequenced, so no dedup catches it).
+  #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+  (locking (hydrate-monitor sid) (when-not (:current-turn (get @registry sid)) (bus/hydrate! sid)))
   (let [replay (volatile! [])]
     (swap! registry update
       sid
@@ -996,12 +1013,85 @@
 
 
 
+(defn- inline-attachment-preview
+  "Byte-free chip payload for ONE inline (already base64-encoded) upload."
+  [a]
+  (let
+    [pick
+     (fn [& ks]
+       (some (fn [k]
+               (let [v (or (get a k) (get a (keyword k)))]
+                 (when-not (str/blank? (str v)) (str v))))
+             ks))
+
+     b64
+     (str (or (get a "base64") (get a :base64) ""))
+
+     size
+     (long (* 3 (quot (count b64) 4)))]
+
+    (when-let [filename (pick "filename" "name")]
+      {:filename filename
+       :media_type (or (pick "media_type" "media-type") "image")
+       :size size
+       :size_label (attachments/size-label size)})))
+
+(defn- attachment-previews
+  "What a channel needs to PAINT one user message's images - filename, media
+   type, human size - with no pixel bytes at all.
+
+   Two authoring styles feed the same list: inline uploads (companion/web/API
+   post base64) and image PATHS inside the request text (the TUI's drag-drop or
+   clipboard paste). Both resolve HERE, once, at submit time, so a queued row
+   renders identically in every channel instead of each one re-deriving it (or,
+   as before, showing a raw `/var/folders/.../clipboard-....png`).
+   De-duped by filename; never throws."
+  [request inline workspace]
+  (let
+    [root
+     (or (:root workspace) (get workspace "root"))
+
+     from-inline
+     (keep inline-attachment-preview (or inline []))
+
+     from-text
+     (try (map (fn [d]
+                 {:filename (:filename d)
+                  :media_type (:media-type d)
+                  :size (:size d)
+                  :size_label (:size-label d)
+                  :path (:path d)})
+               (attachments/scan-image-descriptors request {:workspace-root root}))
+          (catch Throwable _ nil))]
+
+    (->> (concat from-inline from-text)
+         (reduce (fn [acc p]
+                   (if (some #(= (:filename %) (:filename p)) acc) acc (conj acc p)))
+                 [])
+         vec)))
+
+(defn- request-preview-text
+  "The prose a QUEUE ROW should show for `request`.
+
+   Image paths collapse to `🖼 name.png` chips (see
+   `attachments/text->chip-preview`); nil means the message was nothing but
+   images and the channel should paint its attachment chips alone. The
+   untouched `:request` still travels beside it, so pulling a queued message
+   back into a composer restores the exact text — paths included — that
+   re-attaches on re-send."
+  [request _previews]
+  (try (attachments/text->chip-preview request)
+       (catch Throwable _ (not-empty (str/trim (str (or request "")))))))
+
 (defn- wire-turn
   [turn]
   (when turn
     (let [started-at (or (:created_at turn) (:started_at turn) (:queued_at turn))]
       (-> turn
           (dissoc :cancel-token)
+          ;; Inline uploads carry base64 pixels: a turn LIST must never ship
+          ;; them. `:attachment_previews` is the byte-free chip payload.
+          (dissoc :attachments)
           (assoc :id (or (:id turn) (:turn_id turn))
                  :role (or (:role turn) "assistant")
                  :content (vec (or (:content turn) []))
@@ -2213,7 +2303,7 @@
    turn still runs per session; busy submissions become visible queued records."
   [sid
    {:keys [request messages idempotency-key model reasoning-default cancel-token extra-body
-           turn-features workspace engine-opts attachments]}]
+           turn-features workspace engine-opts attachments display-request]}]
   (cond
     (or (not (string? request)) (str/blank? request))
     {:error :invalid-request :message "request must be a non-blank string"}
@@ -2222,6 +2312,15 @@
     (let
       [tid
        (str (java.util.UUID/randomUUID))
+
+       ;; Byte-free image chips, resolved ONCE at submit time so every channel's
+       ;; queue row (TUI strip, companion tray) paints the same attachments —
+       ;; whether they arrived as inline uploads or as paths inside the text.
+       previews
+       (attachment-previews request attachments workspace)
+
+       request-preview
+       (request-preview-text request previews)
 
        ;; session pref is {:provider :model}; the engine routes by model name
        model
@@ -2237,89 +2336,109 @@
             (cond (and idempotency-key (get-in entry [:idempotency idempotency-key]))
                   (do (vreset! decision [:idempotent (get-in entry [:idempotency idempotency-key])])
                       entry)
-                  (:current-turn entry) (do
-                                          (vreset! decision [:queued tid])
-                                          (let [queued-at (System/currentTimeMillis)]
-                                            (-> entry
-                                                (assoc :last-active queued-at)
-                                                (assoc-in
-                                                  [:turns tid]
-                                                  (cond->
-                                                    {:turn_id tid
-                                                     :session_id (str sid)
-                                                     :status "queued"
-                                                     :request request
-                                                     :queued_at queued-at}
-                                                    ;; The submitter's OWN correlation id, echoed back on
-                                                    ;; every wire view of this turn and on turn.queued. A
-                                                    ;; channel paints no queue row of its own, so this is
-                                                    ;; how it recognises which gateway rows are ITS
-                                                    ;; submissions - by ID, never by request TEXT (two
-                                                    ;; identical prompts are indistinguishable by text).
-                                                    idempotency-key
-                                                    (assoc :idempotency_key idempotency-key)
+                  (:current-turn entry)
+                  (do
+                    (vreset! decision [:queued tid])
+                    (let [queued-at (System/currentTimeMillis)]
+                      (-> entry
+                          (assoc :last-active queued-at)
+                          (assoc-in
+                            [:turns tid]
+                            (cond->
+                              {:turn_id tid
+                               :session_id (str sid)
+                               :status "queued"
+                               :request request
+                               :queued_at queued-at}
+                              ;; The submitter's OWN correlation id, echoed back on
+                              ;; every wire view of this turn and on turn.queued. A
+                              ;; channel paints no queue row of its own, so this is
+                              ;; how it recognises which gateway rows are ITS
+                              ;; submissions - by ID, never by request TEXT (two
+                              ;; identical prompts are indistinguishable by text).
+                              idempotency-key
+                              (assoc :idempotency_key idempotency-key)
 
-                                                    messages
-                                                    (assoc :messages messages)
+                              messages
+                              (assoc :messages messages)
 
-                                                    cancel-token
-                                                    (assoc :cancel-token cancel-token)
+                              cancel-token
+                              (assoc :cancel-token cancel-token)
 
-                                                    extra-body
-                                                    (assoc :extra-body extra-body)
+                              extra-body
+                              (assoc :extra-body extra-body)
 
-                                                    turn-features
-                                                    (assoc :turn-features turn-features)
+                              turn-features
+                              (assoc :turn-features turn-features)
 
-                                                    (seq workspace)
-                                                    (assoc :workspace workspace)
+                              (seq workspace)
+                              (assoc :workspace workspace)
 
-                                                    engine-opts
-                                                    (assoc :engine-opts engine-opts)
+                              engine-opts
+                              (assoc :engine-opts engine-opts)
 
-                                                    model
-                                                    (assoc :model model)
+                              model
+                              (assoc :model model)
 
-                                                    reasoning-default
-                                                    (assoc :reasoning-default reasoning-default)
+                              reasoning-default
+                              (assoc :reasoning-default reasoning-default)
 
-                                                    (seq attachments)
-                                                    (assoc :attachments attachments)))
-                                                (update :turn-order (fnil conj []) tid)
-                                                (cond->
-                                                  idempotency-key
-                                                  (assoc-in [:idempotency idempotency-key] tid)))))
-                  :else (do (vreset! decision [:accepted tid])
-                            (let
-                              [token (or cancel-token (cancellation/cancellation-token))
-                               started-at (System/currentTimeMillis)]
+                              (seq attachments)
+                              (assoc :attachments attachments)
 
-                              (-> entry
-                                  (assoc :current-turn tid
-                                         :last-active started-at)
-                                  (assoc-in [:turns tid]
-                                            (cond->
-                                              {:turn_id tid
-                                               :session_id (str sid)
-                                               :status "running"
-                                               :request request
-                                               :cancel-token token
-                                               :started_at started-at}
-                                              idempotency-key
-                                              (assoc :idempotency_key idempotency-key)
+                              (seq previews)
+                              (assoc :attachment_previews previews)
 
-                                              model
-                                              (assoc :model model)
+                              request-preview
+                              (assoc :request_preview request-preview)
 
-                                              reasoning-default
-                                              (assoc :reasoning-default reasoning-default)
+                              (not (str/blank? (str display-request)))
+                              (assoc :display_request display-request)))
+                          (update :turn-order (fnil conj []) tid)
+                          (cond->
+                            idempotency-key
+                            (assoc-in [:idempotency idempotency-key] tid)))))
+                  :else (do
+                          (vreset! decision [:accepted tid])
+                          (let
+                            [token (or cancel-token (cancellation/cancellation-token))
+                             started-at (System/currentTimeMillis)]
 
-                                              (seq attachments)
-                                              (assoc :attachments attachments)))
-                                  (update :turn-order (fnil conj []) tid)
-                                  (cond->
-                                    idempotency-key
-                                    (assoc-in [:idempotency idempotency-key] tid)))))))))
+                            (-> entry
+                                (assoc :current-turn tid
+                                       :last-active started-at)
+                                (assoc-in [:turns tid]
+                                          (cond->
+                                            {:turn_id tid
+                                             :session_id (str sid)
+                                             :status "running"
+                                             :request request
+                                             :cancel-token token
+                                             :started_at started-at}
+                                            idempotency-key
+                                            (assoc :idempotency_key idempotency-key)
+
+                                            model
+                                            (assoc :model model)
+
+                                            reasoning-default
+                                            (assoc :reasoning-default reasoning-default)
+
+                                            (seq attachments)
+                                            (assoc :attachments attachments)
+
+                                            (seq previews)
+                                            (assoc :attachment_previews previews)
+
+                                            request-preview
+                                            (assoc :request_preview request-preview)
+
+                                            (not (str/blank? (str display-request)))
+                                            (assoc :display_request display-request)))
+                                (update :turn-order (fnil conj []) tid)
+                                (cond->
+                                  idempotency-key
+                                  (assoc-in [:idempotency idempotency-key] tid)))))))))
       (let [[kind v] @decision]
         (case kind
           :idempotent
@@ -2330,7 +2449,16 @@
                              "turn.queued"
                              (cond-> {:turn_id tid :request request}
                                idempotency-key
-                               (assoc :idempotency_key idempotency-key))
+                               (assoc :idempotency_key idempotency-key)
+
+                               request-preview
+                               (assoc :request_preview request-preview)
+
+                               (seq previews)
+                               (assoc :attachment_previews previews)
+
+                               (not (str/blank? (str display-request)))
+                               (assoc :display_request display-request))
                              {:store? false})
               {:turn (get-turn sid tid)})
 
@@ -2347,7 +2475,8 @@
                                   :turn-features turn-features
                                   :workspace workspace
                                   :engine-opts engine-opts
-                                  :attachments attachments})
+                                  :attachments attachments
+                                  :display-request display-request})
             {:turn turn}))))))
 
 (defn reconcile-orphaned-turns!
@@ -2559,11 +2688,28 @@
          (finally (unsubscribe! sid sub-id)))))
 
 (defn update-queued-turn!
-  "Replace the prompt text for a queued turn. Returns the updated turn or an error."
+  "Replace the prompt text for a queued turn. Returns the updated turn or an error.
+
+   The row's presentation is re-derived from the NEW text: image chips are
+   re-resolved and the stale `:display_request` (which described the text the
+   submitter authored BEFORE this edit) is dropped, so an edited row never
+   keeps painting the old prompt."
   [sid tid request]
   (cond (or (not (string? request)) (str/blank? request))
         {:error :invalid-request :message "request must be a non-blank string"}
-        :else (let [decision (volatile! nil)]
+        :else (let
+                [decision
+                 (volatile! nil)
+
+                 existing
+                 (get-in @registry [sid :turns tid])
+
+                 previews
+                 (attachment-previews request (:attachments existing) (:workspace existing))
+
+                 request-preview
+                 (request-preview-text request previews)]
+
                 (swap! registry update
                   sid
                   (fn [entry]
@@ -2574,6 +2720,17 @@
                             :else (do (vreset! decision [:updated])
                                       (-> entry
                                           (assoc-in [:turns tid :request] request)
+                                          (update-in [:turns tid] dissoc :display_request)
+                                          (update-in
+                                            [:turns tid]
+                                            (fn [t]
+                                              (cond->
+                                                (dissoc t :attachment_previews :request_preview)
+                                                (seq previews)
+                                                (assoc :attachment_previews previews)
+
+                                                request-preview
+                                                (assoc :request_preview request-preview))))
                                           (update-in [:turns tid :messages]
                                                      replace-last-user-message-content
                                                      request)))))))
@@ -2582,7 +2739,12 @@
                     :updated
                     (do (append-event! sid
                                        "turn.queued.updated"
-                                       {:turn_id tid :request request}
+                                       (cond-> {:turn_id tid :request request}
+                                         request-preview
+                                         (assoc :request_preview request-preview)
+
+                                         (seq previews)
+                                         (assoc :attachment_previews previews))
                                        {:store? false})
                         {:turn (get-turn sid tid)})
 
@@ -3157,6 +3319,7 @@
   (try (lp/delete! sid) (catch Throwable _ nil))
   (swap! registry dissoc sid)
   (bus/forget! sid)
+  (swap! hydrate-monitors dissoc (str sid))
   nil)
 
 (defn set-title! [sid title] (when (lp/by-id sid) (lp/set-title! sid title) (soul sid)))

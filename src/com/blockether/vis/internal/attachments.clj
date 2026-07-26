@@ -200,6 +200,12 @@
       (str/replace #"^[(\[{<'\"]+" "")
       (str/replace #"[.,;:!?)\]}>'\"]+$" "")))
 
+(def ^:private image-path-token-pattern
+  "One image-shaped PATH token as it appears IN prose: a quoted span or a
+   whitespace-delimited token ending in an image extension. Non-capturing
+   throughout so `str/replace` hands the matcher fn a plain string."
+  #"(?i)(?:\"[^\"]*\.(?:png|jpe?g|gif|webp|bmp)\"|'[^']*\.(?:png|jpe?g|gif|webp|bmp)'|\S+\.(?:png|jpe?g|gif|webp|bmp))")
+
 (defn- path-candidates
   "Raw path-shaped candidates from user text, drop-pattern aware:
    quoted spans first (verbatim content), then escape-honoring tokens —
@@ -420,3 +426,44 @@
          (catch Throwable _ acc)))
      {:attached [] :skipped []}
      (or attachments []))))
+
+(defn text->chip-preview
+  "One-line, path-free rendering of ONE user message for compact previews
+   (queue rows, tab titles, notifications).
+
+   Every image-shaped path token collapses to a short `🖼 name.png` chip, the
+   prose around it survives, and whitespace collapses to single spaces. Pure
+   string work — no filesystem access, no pixel bytes — so it is safe on a
+   paint path and on text whose files have since been deleted. That is the
+   whole point: a queued message authored by dropping a screenshot used to
+   render as a raw `/var/folders/…/clipboard-….png`, which tells the user
+   nothing about what they queued.
+
+   Returns nil when the message is nothing but images — the caller should paint
+   attachment chips alone rather than an empty row. The ORIGINAL text is never
+   mutated; callers keep it for re-send/edit so the paths still re-attach."
+  [text]
+  (let
+    [s
+     (str (or text ""))
+
+     collapse
+     #(not-empty (str/trim (str/replace % #"\s+" " ")))]
+
+    (if-not (re-find image-extension-present-pattern s)
+      (collapse s)
+      (collapse (str/replace s
+                             image-path-token-pattern
+                             (fn [m]
+                               (let
+                                 [clean
+                                  (-> (str m)
+                                      (str/replace #"^[\"'(\[{<]+" "")
+                                      (str/replace #"[\"')\]}>.,;:!?]+$" "")
+                                      unescape-token
+                                      strip-file-url)
+
+                                  base
+                                  (last (str/split clean #"[/\\\\]"))]
+
+                                 (str "🖼 " (if (str/blank? (str base)) clean base)))))))))

@@ -4,9 +4,12 @@
    pr-str'd op-error map (which nests host trace/data chains), and is omitted
    entirely when an errored op in the form's sink slice already renders the
    same failure as an op card — the web thread painted that failure twice."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance :as persistance]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -1339,3 +1342,133 @@
                  (expect (= "cid-1" (:idempotency_key queued)))
                  (expect (= (get-in res [:turn "turn_id"]) (:turn_id queued))))))
            (finally (swap! registry dissoc sid))))))
+
+(defdescribe
+  queued-turn-attachment-preview-test
+  "A queued message authored by dropping a screenshot must render as its image,
+   not as the raw `/var/folders/…/clipboard-….png` the OS pasted. The gateway
+   resolves that ONCE at submit time so every channel (TUI strip, companion
+   tray) paints the same row instead of each re-deriving it."
+  (it
+    "puts byte-free image chips and path-free prose on the record and its event"
+    (let
+      [registry
+       @#'state/registry
+
+       sid
+       (str "att-" (java.util.UUID/randomUUID))
+
+       dir
+       (.toFile (java.nio.file.Files/createTempDirectory
+                  "vis-queued-attachment"
+                  (make-array java.nio.file.attribute.FileAttribute 0)))
+
+       png
+       (let [f (io/file dir "clipboard-shot.png")]
+         (io/copy
+           (.decode
+             (java.util.Base64/getDecoder)
+             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+           f)
+         f)
+
+       request
+       (str (.getAbsolutePath png) "\nLOOK AT THIS")
+
+       events
+       (atom [])]
+
+      (try (swap! registry assoc sid {:next-seq 0 :current-turn "running-1"})
+           (with-redefs-fn {#'state/append-event! (fn [_sid type payload & _]
+                                                    (swap! events conj [type payload])
+                                                    nil)
+                            #'lp/by-id (fn [_]
+                                         {:id sid})
+                            #'state/session-model (fn [_]
+                                                    nil)}
+             (fn []
+               (let
+                 [res
+                  (state/submit-turn! sid {:request request :display-request "LOOK AT THIS"})
+
+                  queued
+                  (->> @events
+                       (filter (comp #{"turn.queued"} first))
+                       first
+                       second)
+
+                  chips
+                  (get-in res [:turn "attachment_previews"])]
+
+                 (expect (= "queued" (get-in res [:turn "status"])))
+                 ;; The raw request survives untouched — pulling the row back
+                 ;; into a composer must re-attach the same file.
+                 (expect (= request (get-in res [:turn "request"])))
+                 ;; One chip, named, sized, and with NO pixel bytes on it.
+                 (expect (= 1 (count chips)))
+                 (expect (= "clipboard-shot.png" (get (first chips) "filename")))
+                 (expect (= "image/png" (get (first chips) "media_type")))
+                 (expect (string? (get (first chips) "size_label")))
+                 (expect (not (contains? (first chips) "base64")))
+                 ;; Prose the channel paints: chipped, path-free.
+                 (expect (= "🖼 clipboard-shot.png LOOK AT THIS"
+                            (get-in res [:turn "request_preview"])))
+                 ;; The submitter's own pre-expansion text is no longer dropped.
+                 (expect (= "LOOK AT THIS" (get-in res [:turn "display_request"])))
+                 ;; …and the broadcast carries the same row, so a SIBLING channel
+                 ;; that never saw the submission paints it identically.
+                 (expect (= "🖼 clipboard-shot.png LOOK AT THIS" (:request_preview queued)))
+                 (expect (= 1 (count (:attachment_previews queued)))))))
+           (finally (swap! registry dissoc sid) (.delete png) (.delete dir))))))
+
+(defdescribe
+  concurrent-hydrate-test
+  "`subscribe!` checks `:current-turn` and THEN hydrates. Two SSE clients
+   attaching at once both read it unset, so both mirror the sibling's in-flight
+   turn — every event ingested twice, re-sequenced, with no dedup downstream."
+  (it
+    "hydrates a sibling's in-flight turn exactly ONCE across concurrent subscribers"
+    (let
+      [tmp
+       (java.nio.file.Files/createTempDirectory "hydrate-race"
+                                                (make-array java.nio.file.attribute.FileAttribute
+                                                            0))
+
+       sid
+       (str "hydrate-race-" (java.util.UUID/randomUUID))
+
+       reg
+       @#'state/registry
+
+       subs-n
+       4]
+
+      (with-redefs
+        [bus/events-dir (fn []
+                          tmp)]
+        (try (spit (#'bus/session-file sid)
+                   (str/join (map #(str (wire/json-str %) "\n")
+                                  [{:_producer (str (java.util.UUID/randomUUID))
+                                    :_pid (var-get #'bus/producer-pid) ; a LIVE producer
+                                    :_store true
+                                    :schema 1
+                                    :seq 5
+                                    :type "turn.started"
+                                    :turn_id "T-race"
+                                    :session_id sid
+                                    :request "hi"}])))
+             (let
+               [barrier (java.util.concurrent.CyclicBarrier. subs-n)
+                attach (mapv (fn [i]
+                               (future (.await barrier)
+                                       (state/subscribe! sid
+                                                         (str "sub-" i)
+                                                         (fn [_])
+                                                         0)))
+                             (range subs-n))]
+
+               (run! deref attach))
+             (expect
+               (= 1 (count (filter #(= "turn.started" (get % "type")) (:events (get @reg sid))))))
+             (expect (= "T-race" (:current-turn (get @reg sid))))
+             (finally (swap! reg dissoc sid) (.delete (#'bus/session-file sid))))))))

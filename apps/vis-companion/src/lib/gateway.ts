@@ -10,6 +10,7 @@ import type {
   AuthFlow,
   AuthVerdict,
   ModelPref,
+  QueuedAttachment,
   QueuedTurn,
   RouterProvider,
   GatewayAttachment,
@@ -86,6 +87,36 @@ const routerInflight = new Map<string, Promise<RouterProvider[]>>();
 
 function normalizeBase(url: string): string {
   return url.replace(/\/+$/, '');
+}
+
+/**
+ * One gateway queued-turn payload (a `/v1/sessions/:id/turns` row OR a
+ * `turn.queued` / `.updated` SSE frame — same keys) → the row the tray paints.
+ *
+ * The gateway resolves image attachments once, at submit time, so the tray never
+ * has to re-derive them: `request_preview` is the path-free prose and
+ * `attachment_previews` the byte-free chips. Without this a message authored by
+ * dropping a screenshot rendered as its raw `/var/folders/…/clipboard-….png`.
+ * `request` stays verbatim so editing a row starts from what was authored.
+ */
+export function queuedTurnFromWire(row: Record<string, unknown>): QueuedTurn {
+  const request = typeof row.request === 'string' ? row.request : '';
+  const preview = typeof row.request_preview === 'string' ? row.request_preview : '';
+  const rawAttachments = Array.isArray(row.attachment_previews) ? row.attachment_previews : [];
+  const attachments: QueuedAttachment[] = rawAttachments.map((entry) => {
+    const item = (entry ?? {}) as Record<string, unknown>;
+    return {
+      filename: typeof item.filename === 'string' ? item.filename : 'image',
+      mediaType: typeof item.media_type === 'string' ? item.media_type : 'image',
+      sizeLabel: typeof item.size_label === 'string' ? item.size_label : '',
+    };
+  });
+  return {
+    turnId: String(row.turn_id ?? row.id ?? ''),
+    request,
+    preview: preview || request,
+    attachments,
+  };
 }
 
 export class GatewayClient {
@@ -594,10 +625,7 @@ export class GatewayClient {
     return (response.turns ?? [])
       .filter((turn) => String(turn.status ?? '') === 'queued')
       .sort((a, b) => Number(a.queued_at ?? 0) - Number(b.queued_at ?? 0))
-      .map((turn) => ({
-        turnId: String(turn.turn_id ?? turn.id ?? ''),
-        request: typeof turn.request === 'string' ? turn.request : '',
-      }))
+      .map((turn) => queuedTurnFromWire(turn as unknown as Record<string, unknown>))
       .filter((row) => row.turnId !== '');
   }
 

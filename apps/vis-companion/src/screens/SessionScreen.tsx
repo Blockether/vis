@@ -13,6 +13,7 @@ import { Banner } from '../components/ui';
 import { ProviderRouterDialog } from './RouterScreen';
 import { attachmentsFromFiles, type PendingAttachment } from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';
+import { queuedTurnFromWire } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
   collapsePastePlaceholders,
@@ -943,12 +944,14 @@ export function SessionScreen({
             setQueued((current) =>
               current.some((item) => item.turnId === tid)
                 ? current
-                : [...current, { turnId: tid, request: stringField(event, 'request') }]);
+                : [...current, queuedTurnFromWire(event as unknown as Record<string, unknown>)]);
             break;
           case 'turn.queued.updated':
             setQueued((current) =>
               current.map((item) =>
-                item.turnId === tid ? { ...item, request: stringField(event, 'request') } : item));
+                item.turnId === tid
+                  ? { ...item, ...queuedTurnFromWire(event as unknown as Record<string, unknown>) }
+                  : item));
             break;
           case 'turn.queued.deleted':
           case 'turn.queued.drained':
@@ -1789,10 +1792,24 @@ export function SessionScreen({
                     type="button"
                     disabled={busy}
                     onClick={() => setEditingQueued({ turnId: item.turnId, text: item.request })}
-                    className="min-w-0 flex-1 truncate text-left font-mono text-[11px] text-dialog-foreground transition-colors hover:text-accent-ink disabled:cursor-not-allowed"
+                    className="flex min-w-0 flex-1 items-center gap-1 text-left font-mono text-[11px] text-dialog-foreground transition-colors hover:text-accent-ink disabled:cursor-not-allowed"
                     title="Tap to edit"
                   >
-                    {item.request || '(empty)'}
+                    {/* Image chips first: a queued screenshot reads as its filename,
+                        never as the raw /var/folders path the OS pasted. */}
+                    {item.attachments.map((attachment) => (
+                      <span
+                        key={attachment.filename}
+                        className="inline-flex shrink-0 items-center gap-1 border border-dialog-edge bg-input px-1 text-[9px] text-dialog-hint"
+                        title={`${attachment.filename}${attachment.sizeLabel ? ` · ${attachment.sizeLabel}` : ''}`}
+                      >
+                        <span aria-hidden="true">🖼</span>
+                        <span className="max-w-[7rem] truncate">{attachment.filename}</span>
+                      </span>
+                    ))}
+                    <span className="min-w-0 flex-1 truncate">
+                      {item.preview || (item.attachments.length ? '' : '(empty)')}
+                    </span>
                   </button>
                 )}
                 <button

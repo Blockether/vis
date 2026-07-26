@@ -1486,6 +1486,33 @@
 
           (expect (> size4 size3))
           (expect (> (count (:lines four)) (count (:lines three))))))
+    (it "renders a queued image as its filename, never the raw drop path"
+        (render/invalidate-cache!)
+        (let
+          [payload
+           (render/progress->lines-data
+             {:iterations (mapv mk-iter (range 2))}
+             130
+             settings
+             (assoc (extra 1700000005000)
+               :pending-sends [{:text
+                                "/var/folders/67/T/clipboard-2026-07-26-151209.png\nLOOK AT THIS"}
+                               ;; Gateway-mirrored row: the daemon already chipped it.
+                               {:text "/tmp/other.png" :preview-text "🖼 other.png"}]))
+
+           lines
+           (mapv str (:lines payload))
+
+           queued-row
+           (first (filter #(str/includes? % "clipboard-2026-07-26-151209.png") lines))]
+
+          (expect (some? queued-row))
+          ;; The chip carries the filename …
+          (expect (str/includes? queued-row "🖼"))
+          ;; … and NOT the directory it was pasted from.
+          (expect (not (some #(str/includes? % "/var/folders/67/T/") lines)))
+          (expect (some #(str/includes? % "🖼 other.png") lines))
+          (expect (not (some #(str/includes? % "/tmp/other.png") lines)))))
     (it "queued sends still render after the spinner with the body split path"
         (render/invalidate-cache!)
         (let

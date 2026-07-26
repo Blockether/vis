@@ -642,6 +642,19 @@
     (it "turn.queued.updated projects to :update"
         (expect (= {:phase :queue-sync :op :update :turn-id "q1" :text "hi2"}
                    (g->c {"type" "turn.queued.updated" "turn_id" "q1" "request" "hi2"}))))
+    ;; An image queued as a path: the gateway ships the chip preview beside the
+    ;; raw request, and the chunk carries BOTH - `:text` still re-attaches on
+    ;; edit, `:preview-text` is what the queue strip paints.
+    (it "turn.queued carries the gateway's path-free preview when there is one"
+        (expect (= {:phase :queue-sync
+                    :op :add
+                    :turn-id "q1"
+                    :text "/tmp/shot.png\nlook"
+                    :preview-text "\ud83d\uddbc shot.png look"}
+                   (g->c {"type" "turn.queued"
+                          "turn_id" "q1"
+                          "request" "/tmp/shot.png\nlook"
+                          "request_preview" "\ud83d\uddbc shot.png look"}))))
     (it "turn.queued.deleted projects to :delete"
         (expect (= {:phase :queue-sync :op :delete :turn-id "q1"}
                    (g->c {"type" "turn.queued.deleted" "turn_id" "q1"}))))

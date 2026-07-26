@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.render
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.attachments :as attach]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
@@ -5352,9 +5353,16 @@
                                                          :detail-expansions detail-expansions})))))
 
 (defn- queued-preview
+  "One clipped line describing a queued submission.
+
+   Image paths collapse to `🖼 name.png` chips, so a message authored by
+   dropping a screenshot reads as its filename instead of the raw
+   `/var/folders/…/clipboard-….png` the terminal pasted. Gateway-mirrored rows
+   already arrive with `:preview-text` derived the same way; local rows are
+   collapsed here, so both surfaces agree."
   [text]
   (let
-    [s (-> (str (or text ""))
+    [s (-> (or (try (attach/text->chip-preview text) (catch Throwable _ nil)) (str (or text "")))
            (str/replace #"\s+" " ")
            str/trim)]
     (if (> (count s) 240) (str (subs s 0 240) "…") s)))
@@ -5388,7 +5396,9 @@
                        [ord (str (inc (long idx)) ". ")
                         gutter-n (count ord)
                         avail (max 1 (- (long content-w) (long rail-w) (long gutter-n)))
-                        preview (ellipsize-cols (queued-preview (:text entry)) avail)]
+                        preview (ellipsize-cols (queued-preview (or (:preview-text entry)
+                                                                    (:text entry)))
+                                                avail)]
 
                        {:line (str queue-item-marker ord preview) :meta {:queue-gutter gutter-n}}))
          ;; Items stack directly, one line each — no blank rows between them.

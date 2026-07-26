@@ -350,10 +350,21 @@ export interface SubmittedTurn {
   [key: string]: unknown;
 }
 
+/** One image on a queued message — chip metadata only, never pixel bytes. */
+export interface QueuedAttachment {
+  filename: string;
+  mediaType: string;
+  sizeLabel: string;
+}
+
 /** A message enqueued behind the running turn, mirrored from the gateway. */
 export interface QueuedTurn {
   turnId: string;
+  /** Raw request text, exactly as authored — what an edit starts from. */
   request: string;
+  /** What the row PAINTS: image paths already collapsed to `🖼 name.png`. */
+  preview: string;
+  attachments: QueuedAttachment[];
 }
 
 /** The gateway paused this session's queue after a provider failure. */
