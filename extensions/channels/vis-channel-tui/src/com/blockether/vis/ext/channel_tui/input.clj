@@ -1113,6 +1113,22 @@
                 (when-let [c (.getCharacter key)]
                   (= (Character/toLowerCase ^char c) keymap/palette-meta-key)))))
 
+(defn escaped-typing-character
+  "Return the printable character from an otherwise-unbound Meta keystroke.
+
+   Terminals encode both `Esc` followed immediately by a character and
+   Alt/Option+character as the same two bytes. While a foreground turn is
+   running, the screen loop uses this predicate to give unbound Meta letters
+   their only useful interpretation: cancel first, then retain the character
+   in the editor. Real, bound Meta chords remain untouched."
+  [^KeyStroke key]
+  (when (and (= KeyType/Character (.getKeyType key)) (.isAltDown key) (not (.isCtrlDown key)))
+    (when-let [c (.getCharacter key)]
+      (let [lower (Character/toLowerCase ^char c)]
+        (when-not (or (#{keymap/palette-meta-key \> \< \v \b \f} lower)
+                      (and (Character/isDigit c) (not= \0 c)))
+          c)))))
+
 (defn move-up [st] (buf-> st (.moveUp (->buf st))))
 
 (defn move-down [st] (buf-> st (.moveDown (->buf st))))

@@ -6240,82 +6240,101 @@
 
 (defn- fs-plural [n one many] (if (= 1 n) one many))
 
-(defn- fs-entry-list
-  "Backticked entry paths joined for ONE summary line, capped with a `+N more`
-   tail. `label` decorates each entry (exists appends its verdict). A 40-path
-   batch must stay one readable line, not a wall."
-  [entries label]
-  (let
-    [shown
-     (take 6 entries)
+(defn- fs-batch-body
+  "One scan-friendly markdown row per batch target. The headline carries the
+   aggregate; this body preserves every path and verdict behind the card's native
+   disclosure affordance instead of wrapping paths across the painted headline."
+  [entries status]
+  (str "\n"
+       (str/join "\n"
+                 (map (fn [e]
+                        (str "- " (status e) " — `" (disp-path (get e "path")) "`"))
+                      entries))))
 
-     extra
-     (- (count entries) (count shown))]
+(defn- render-fs-batch-result
+  "Compact card for `{\"action\" … \"paths\" [entry …]}`.
 
-    (str (str/join ", " (map label shown)) (when (pos? extra) (str " +" extra " more")))))
-
-(defn- render-fs-batch-summary
-  "Summary line for a BATCH fs result — `{\"action\" … \"paths\" [entry …]}`.
-   Leads with the verb, then how many of the batch actually changed (a delete
-   that found nothing must not read like a delete that removed everything), then
-   names the paths."
+   The summary answers what happened and how many; the expandable body lists one
+   verdict and path per row. Keeping paths out of the headline prevents long
+   batches from turning the result band into an ambiguous wrapped paragraph."
   [action entries]
   (let
     [n
      (count entries)
 
-     plain
-     (fn [e]
-       (str "`" (disp-path (get e "path")) "`"))
-
      changed
      (fn ^long [k]
-       (long (count (filter #(get % k) entries))))]
+       (long (count (filter #(get % k) entries))))
 
-    (case action
-      "delete"
-      (let [d (changed "is_deleted")]
-        (if (= d n)
-          (str "deleted " n " " (fs-plural n "path" "paths") ": " (fs-entry-list entries plain))
-          (str "deleted " d
-               " of " n
-               " paths (" (- (long n) (long d))
-               " already absent): " (fs-entry-list entries plain))))
+     status
+     (case action
+       "delete"
+       (fn [e]
+         (if (get e "is_deleted") "✓ deleted" "– already absent"))
 
-      "create_dirs"
-      (let [c (changed "is_created")]
-        (if (= c n)
-          (str "created " n " " (fs-plural n "dir" "dirs") ": " (fs-entry-list entries plain))
-          (str "created " c
-               " of " n
-               " dirs (" (- (long n) (long c))
-               " already existed): " (fs-entry-list entries plain))))
+       "create_dirs"
+       (fn [e]
+         (if (get e "is_created") "✓ created" "– already existed"))
 
-      "exists"
-      (str (changed "is_existing")
-           " of " n
-           " exist: " (fs-entry-list entries
-                                     (fn [e]
-                                       (str (plain e) (if (get e "is_existing") " ✓" " ✗")))))
+       "exists"
+       (fn [e]
+         (if (get e "is_existing") "✓ exists" "✗ missing"))
 
-      (str/join " " (remove nil? ["fs" (not-empty (str action)) (str n " paths")])))))
+       (fn [_]
+         (or (not-empty (str action)) "target")))]
+
+    {:summary (case action
+                "delete"
+                (let
+                  [^long d
+                   (changed "is_deleted")
+
+                   absent
+                   (- (long n) d)]
+
+                  (if (zero? absent)
+                    (str "deleted " n " " (fs-plural n "path" "paths"))
+                    (str "deleted " d " of " n " paths · " absent " already absent")))
+
+                "create_dirs"
+                (let
+                  [^long c
+                   (changed "is_created")
+
+                   existing
+                   (- (long n) c)]
+
+                  (if (zero? existing)
+                    (str "created " n " " (fs-plural n "dir" "dirs"))
+                    (str "created " c " of " n " dirs · " existing " already existed")))
+
+                "exists"
+                (let
+                  [^long existing
+                   (changed "is_existing")
+
+                   missing
+                   (- (long n) existing)]
+
+                  (cond (zero? missing) (str n " " (fs-plural n "path exists" "paths exist"))
+                        (zero? existing) (str n " " (fs-plural n "path missing" "paths missing"))
+                        :else (str existing " of " n " paths exist · " missing " missing")))
+
+                (str/join " " (remove nil? [(not-empty (str action)) (str n " paths")])))
+     :body (fs-batch-body entries status)}))
 
 (defn- render-fs-result
-  "fs → `{:summary}` only: ONE verb-led line per action, read off the CANONICAL
-   fs result `{\"op\" \"fs\" \"action\" <verb> \"path\"|\"src\"+\"dest\"|\"paths\"
+  "fs → `{:summary :body?}`, read off the CANONICAL fs result
+   `{\"op\" \"fs\" \"action\" <verb> \"path\"|\"src\"+\"dest\"|\"paths\"
    \"is_created\"|\"is_deleted\"|\"is_existing\"}`.
 
-   The badge is the generic `FS` for every action, so the summary must LEAD with
-   the verb (`copied`/`moved`/`deleted`/…) — it is the only place the card says
-   WHICH filesystem op ran — and then name the path(s) it touched. A batch
-   result carries `paths`, and then ONE line covers the whole batch.
+   A single-target result stays on one verb-led headline. A batch uses a compact
+   aggregate headline plus an expandable, one-target-per-row body. The badge is
+   the generic `FS`, so the headline still says WHICH filesystem op ran.
 
    The action rides `\"action\"`, NOT `\"op\"`: the engine stamps `\"op\"` with the
-   canonical TOOL op (`\"fs\"`) on every result, so a sub-op parked under `\"op\"`
-   is clobbered and the card degrades to the nonsense headline `fs fs`. `\"op\"`
-   is still read as a fallback so results persisted before the split render.
-   Renders the canonical shape directly instead of delegating to the legacy
-   per-op renderers, which still serve the bare sandbox verbs."
+   canonical TOOL op (`\"fs\"`) on every result. `\"op\"` remains a fallback for
+   results persisted before the split."
   [r]
   (let
     [p
@@ -6330,9 +6349,9 @@
        (let [o (get r "op")]
          (when-not (= "fs" o) o)))]
 
-    {:summary
-     (if (seq entries)
-       (render-fs-batch-summary action entries)
+    (if (seq entries)
+      (render-fs-batch-result action entries)
+      {:summary
        (case action
          "copy"
          (str "copied `" (disp-path (get r "src")) "` → `" (disp-path (get r "dest")) "`")
@@ -6351,7 +6370,7 @@
 
          ;; Unknown/absent action: never echo the tool name twice — say what is
          ;; actually known (the verb and/or the path), else just the tool.
-         (str/join " " (remove nil? ["fs" (not-empty (str action)) (when p (str "`" p "`"))]))))}))
+         (str/join " " (remove nil? ["fs" (not-empty (str action)) (when p (str "`" p "`"))])))})))
 
 (defn- fs-paths-success
   "ONE envelope for a single-path fs op run over N targets. `entries` are the

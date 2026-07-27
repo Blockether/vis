@@ -14,7 +14,8 @@
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
-  (:import [java.util.concurrent Executors ScheduledExecutorService TimeUnit]))
+  (:import [java.util.concurrent ExecutorService Executors ScheduledExecutorService ThreadFactory
+            TimeUnit]))
 
 (set! *unchecked-math* :warn-on-boxed)
 ;;; ── Framework ──────────────────────────────────────────────────────────────
@@ -92,10 +93,11 @@
 (defn- bump-version [db] (update db :render-version (fnil inc 0)))
 
 (def ^:private tab-state-keys
-  [:session :workspace :workspace/root :title :messages :utilization :scroll :input :input-history
-   :input-history-index :input-history-draft :slash-command-index :slash-command-hidden?
-   :submitted-input :pending-sends :pastes :paste-counter :loading? :cancel-token :cancelling?
-   :progress :turn-start-ms :detail-expansions :mouse-selection :session-model-pref])
+  [:session :workspace :workspace/root :title :messages :utilization :scroll :layout :input
+   :input-history :input-history-index :input-history-draft :slash-command-index
+   :slash-command-hidden? :submitted-input :pending-sends :pastes :paste-counter :loading?
+   :cancel-token :cancelling? :progress :turn-start-ms :detail-expansions :mouse-selection
+   :session-model-pref])
 
 (defn- empty-tab-state
   []
@@ -105,6 +107,7 @@
    :title nil
    :messages []
    :scroll scroll/follow
+   :layout nil
    :input (input/empty-input)
    :input-history []
    :input-history-index nil
@@ -946,18 +949,44 @@
       :active-tab-id active-id)))
 
 (defn- restore-tab
-  "Pull the per-tab locals for `workspace-id` back into the active db.\n\n   Also clears two DERIVED/display fields that belong to the tab we are\n   LEAVING, not the one we are entering:\n\n   - `:layout` is a single top-level value the render thread computes for the\n     CURRENT tab's messages (`:total-h`, `:offsets`). It is not per-tab, so on a\n     switch it still describes the old tab. The first post-switch frame would\n     clamp the new tab's scroll against that stale document height (and feed the\n     old `:offsets` as `:prev-offsets`) → the viewport lurches, then the next\n     frame recomputes correctly. Dropping it forces a clean recompute for THIS\n     tab before any clamp.\n   - `:pos` on `:scroll` is the eased on-screen row, anchored to the old layout.\n     Stripping it makes a restored FOLLOW tab re-snap to its own bottom instead\n     of inheriting the previous tab's pinned bottom row, and lets a parked tab\n     re-resolve its `:offset` against the fresh layout."
+  "Pull the per-tab locals for `workspace-id` back into the active db.
+
+   Layout and eased scroll position are cached per tab so revisiting a tab can
+   paint against its own established geometry immediately instead of first
+   rendering with no layout and visibly settling on a later frame. The cache is
+   safe only while terminal dimensions match the tab being left; after a resize,
+   discard the target layout and `:pos` so the first frame recomputes against the
+   new geometry."
   [db workspace-id]
   (let
     [entry
      (some #(when (= (:id %) workspace-id) %) (:tabs db))
 
+     locals
+     (or (get-in db [:tab-locals workspace-id]) (empty-tab-state))
+
+     current-layout
+     (:layout db)
+
+     target-layout
+     (:layout locals)
+
+     compatible-layout?
+     (and (map? current-layout)
+          (map? target-layout)
+          (every? #(and (some? (get target-layout %))
+                        (= (get current-layout %) (get target-layout %)))
+                  [:cols :rows]))
+
      db'
-     (-> (merge db (or (get-in db [:tab-locals workspace-id]) (empty-tab-state)))
-         (dissoc :layout)
-         (update :scroll
-                 (fn [sc]
-                   (if (map? sc) (dissoc sc :pos) sc))))]
+     (cond-> (merge db locals)
+       (not compatible-layout?)
+       (dissoc :layout)
+
+       (not compatible-layout?)
+       (update :scroll
+               (fn [sc]
+                 (if (map? sc) (dissoc sc :pos) sc))))]
 
     ;; The tab ENTRY carries the workspace root reliably (set at creation). A
     ;; stale/empty tab-locals snapshot — taken before `:set-workspace` landed —
@@ -971,18 +1000,6 @@
       (and (nil? (:workspace db')) (:workspace entry))
       (assoc :workspace (:workspace entry)))))
 
-(defn- arm-transcript-enter
-  "Stamp `:transcript-enter-at` so the renderer plays its entrance dissolve for
-   the transcript that is about to appear (`screen/transcript-entering?`).
-
-   Armed only where the messages band changes WHOLESALE instead of growing: tab
-   activation, opening a session, boot. Those are the moments the TUI used to
-   teleport a full screen of history into place with no cue about what changed —
-   the terminal equivalent of mounting a list with no `@starting-style`.
-   Streaming appends deliberately do NOT arm it; re-fading the transcript on
-   every chunk would be strobing, not motion."
-  [db]
-  (assoc db :transcript-enter-at (System/currentTimeMillis)))
 
 (defn- activate-tab
   [db workspace-id]
@@ -997,8 +1014,7 @@
                           (-> (assoc :active? true)
                               (dissoc :unread?))))
                       entries)))
-      (restore-tab workspace-id)
-      arm-transcript-enter))
+      (restore-tab workspace-id)))
 
 (defn- update-tab
   [db workspace-id f]
@@ -1688,8 +1704,7 @@
                              :pastes {}
                              :paste-counter 0
                              :detail-expansions {})
-                      (reconcile-in-flight-state db session)
-                      arm-transcript-enter))))
+                      (reconcile-in-flight-state db session)))))
 
 (reg-event-fx
   :open-session-tab
@@ -1824,7 +1839,7 @@
                                 :messages (or history [])
                                 :input-history (history-user-texts history)))]
 
-                    {:db (seed-ctx (arm-transcript-enter db'))})))))
+                    {:db (seed-ctx db')})))))
 
 (reg-event-db :open-building-tab
               ;; Optimistic new tab for a session whose cold env/runtime is still being
@@ -3633,23 +3648,30 @@
                                  mine)})))))
 
 (defn- gateway-cancel-turn-or-current!
-  "Best-effort gateway cancel for Esc. With a known `tid` fire the id-addressed
-   cancel; WITHOUT one fall back to the tid-less `cancel-current` (kills whatever
-   holds the session's `:current-turn` — the Esc-before-`turn.started` race and
-   the post-self-heal ghost turn both land here, where the id-addressed route is
-   useless). Gateway HTTP errors come back as `{:error <keyword>}` (e.g.
-   `:turn-not-found`, `:no-running-turn`) instead of throwing — `send-json!`
-   throws ex-info on 4xx, so without this translation the old inline
-   `(catch Throwable _ nil)` swallowed the very errors the terminal-state check
-   branched on. Transport failures return nil (cancel simply didn't reach)."
+  "Cancel the gateway turn, retrying transient transport failures.
+
+   With a known `tid`, use the id-addressed route; otherwise use `cancel-current`
+   for the Esc-before-`turn.started` race. HTTP errors are semantic responses and
+   are returned immediately. Discovery, connection, and other transport failures
+   are retried because dropping one cancel leaves the provider running and makes
+   the user's next request queue behind the supposedly cancelled turn."
   [sid tid]
   (when sid
-    (try (if tid (vis/gateway-cancel-turn! sid tid) (vis/gateway-cancel-current-turn! sid))
-         (catch clojure.lang.ExceptionInfo e
-           (let [data (ex-data e)]
-             {:error (keyword (or (get data "error") "gateway-error"))
-              :http-status (:http-status data)}))
-         (catch Throwable _ nil))))
+    (loop [attempt 1]
+      (let
+        [outcome (try {:response (if tid
+                                   (vis/gateway-cancel-turn! sid tid)
+                                   (vis/gateway-cancel-current-turn! sid))}
+                      (catch clojure.lang.ExceptionInfo e
+                        (let [data (ex-data e)]
+                          (if (:http-status data)
+                            {:response {:error (keyword (or (get data "error") "gateway-error"))
+                                        :http-status (:http-status data)}}
+                            {:transport-error e})))
+                      (catch Throwable t {:transport-error t}))]
+        (cond (contains? outcome :response) (:response outcome)
+              (>= (long attempt) 3) {:error :gateway-unreachable}
+              :else (do (Thread/sleep (* 200 (long attempt))) (recur (inc (long attempt)))))))))
 
 (def ^:private gateway-terminal-cancel-errors
   "Gateway cancel errors that mean the server turn is ALREADY gone/terminal —
@@ -3660,78 +3682,78 @@
 (reg-event-fx
   :cancel-turn
   (fn [db _]
-    (cond (not (:loading? db)) {:db db}
-          ;; A SECOND cancel while one is already pending force-clears locally. The
-          ;; first press armed `:cancelling?` and now waits for the daemon's terminal
-          ;; `turn.completed` to release it — but if the daemon is gone (killed
-          ;; gateway, SSE drop) that event never arrives, and every repeated Esc/Ctrl+C
-          ;; otherwise RE-ARMS the self-heal clock (`:cancelling-at-ms` below), so
-          ;; mashing Esc to escape a dead turn wedges it forever instead of letting the
-          ;; 8s self-heal fire. Still make one best-effort gateway cancel (the turn id
-          ;; may only just have been late-bound), then tear the turn down locally now.
-          (:cancelling? db) (let
-                              [sid
-                               (get-in db [:session :id])
+    (if-not (:loading? db)
+      {:db db}
+      (let
+        [sid
+         (get-in db [:session :id])
 
-                               tid
-                               (:gateway-turn-id db)
+         tid
+         (:gateway-turn-id db)
 
-                               cancel-client-id
-                               (when-not tid (:live-turn-client-id db))
+         cancel-client-id
+         (when-not tid (:live-turn-client-id db))
 
-                               gateway-result
-                               (gateway-cancel-turn-or-current! sid tid)
+         token
+         (:cancel-token db)
 
-                               gateway-terminal?
-                               (contains? gateway-terminal-cancel-errors (:error gateway-result))]
+         already-cancelling?
+         (:cancelling? db)
 
-                              (try (vis/cancel! (:cancel-token db)) (catch Throwable _ nil))
-                              {:db (cond-> (clear-active-turn-state db)
-                                     cancel-client-id
-                                     (assoc :cancel-awaiting-client-id cancel-client-id))
-                               :fx [[:notify
-                                     (if gateway-terminal?
-                                       "Turn is no longer running; cleared local cancelling state."
-                                       "Turn force-cancelled locally.")
-                                     (if gateway-terminal? :info :warn)
-                                     cancel-notification-ttl-ms]]})
-          :else (let
-                  [sid
-                   (get-in db [:session :id])
+         cancel-key
+         (when-not already-cancelling? (System/currentTimeMillis))
 
-                   tid
-                   (:gateway-turn-id db)
+         db'
+         (if already-cancelling?
+           (cond-> (clear-active-turn-state db)
+             cancel-client-id
+             (assoc :cancel-awaiting-client-id cancel-client-id))
+           (cond->
+             (assoc db
+               :cancelling? true
+               :cancelling-at-ms cancel-key)
+             cancel-client-id
+             (assoc :cancel-awaiting-client-id cancel-client-id)))]
 
-                   cancel-client-id
-                   (when-not tid (:live-turn-client-id db))
+        ;; Esc must never wait for gateway discovery, HTTP, or the daemon's durable
+        ;; cancel stamp. Commit the visible state first, synchronously fire the LOCAL
+        ;; token next, and send the server cancel on its own daemon thread. The old
+        ;; inline HTTP call could block the Lanterna input loop for its full 30s timeout,
+        ;; delaying the local interrupt and making the TUI look disconnected.
+        {:db db'
+         :fx [[:cancel-local-turn token] [:gateway-cancel-active sid tid cancel-key]
+              [:notify
+               (if already-cancelling? "Turn force-cancelled locally." "Cancelling current turn...")
+               (if already-cancelling? :warn :info) cancel-notification-ttl-ms]]}))))
 
-                   gateway-result
-                   (gateway-cancel-turn-or-current! sid tid)
+(reg-event-fx :gateway-cancel-result
+              ;; Do not let the LOCAL attach worker's synthetic `:cancelled` result
+              ;; unlock resending before the daemon accepted the cancel. Only this
+              ;; generation-keyed gateway ACK (or an already-terminal response) may
+              ;; release the wait; a late result cannot clear a newer turn.
+              (fn [db [_ cancel-key result]]
+                (let
+                  [accepted?
+                   (and (map? result) (not (:error result)))
 
-                   gateway-terminal?
-                   (contains? gateway-terminal-cancel-errors (:error gateway-result))]
+                   terminal?
+                   (contains? gateway-terminal-cancel-errors (:error result))]
 
-                  ;; Both the cooperative flag and the hard interrupt are fired through one
-                  ;; channel-agnostic call. See channels.cancellation/cancel! for the contract.
-                  (vis/cancel! (:cancel-token db))
-                  ;; A `no-running-turn` response does NOT prove an in-flight submit POST was
-                  ;; rejected: Esc may have won the race just before that POST registered.
-                  ;; Preserve its client id even when clearing locally, and cancel the matching
-                  ;; delayed turn.started automatically. A rapid resend must not erase it.
-                  (if gateway-terminal?
-                    {:db (cond-> (clear-active-turn-state db)
-                           cancel-client-id
-                           (assoc :cancel-awaiting-client-id cancel-client-id))
-                     :fx [[:notify "Turn is no longer running; cleared local cancelling state."
-                           :info cancel-notification-ttl-ms]]}
-                    {:db (cond->
-                           (assoc db
-                             :cancelling? true
-                             :cancelling-at-ms (System/currentTimeMillis))
-                           cancel-client-id
-                           (assoc :cancel-awaiting-client-id cancel-client-id))
-                     :fx [[:notify "Cancelling current turn..." :info
-                           cancel-notification-ttl-ms]]})))))
+                  (if (and cancel-key
+                           (:cancelling? db)
+                           (= cancel-key (:cancelling-at-ms db))
+                           (or accepted? terminal?))
+                    (let [workspace-id (current-tab-id db)]
+                      {:db (clear-active-turn-state db)
+                       :fx (cond->
+                             [[:notify
+                               (if terminal?
+                                 "Turn is no longer running; cleared local cancelling state."
+                                 "Cancellation accepted. You can send again.") :info
+                               cancel-notification-ttl-ms]]
+                             (some :mine? (:pending-sends (db-for-tab db workspace-id)))
+                             (conj [:dispatch [:restore-pending-to-input workspace-id]]))})
+                    {:db db}))))
 
 (reg-event-fx :cancel-tab-turn
               ;; Best-effort SERVER-side cancel for the turn running in `tab-id`'s session —
@@ -3763,8 +3785,10 @@
                    tid
                    (:gateway-turn-id snap)]
 
-                  (when sid (gateway-cancel-turn-or-current! sid tid))
-                  {:db db})))
+                  {:db db
+                   :fx (cond-> []
+                         sid
+                         (conj [:gateway-cancel-active sid tid nil]))})))
 
 (defn- cancel-self-heal-due?
   "True when a user cancel has been pending (`:cancelling?`) at least
@@ -3789,18 +3813,18 @@
                 (let [now (or now-ms (System/currentTimeMillis))]
                   (if-not (cancel-self-heal-due? db now)
                     {:db db}
-                    (let [workspace-id (current-tab-id db)]
-                      (try (vis/cancel! (:cancel-token db)) (catch Throwable _ nil))
-                      ;; Re-kill server-side BEFORE the local clear drops the turn id:
-                      ;; after `clear-active-turn-state` the id-addressed cancel is
-                      ;; unusable forever, and a still-running server ghost would keep
-                      ;; `:current-turn` and silently queue every next submit behind it.
-                      ;; Tid-less fallback covers the id-never-bound case too.
-                      (gateway-cancel-turn-or-current! (get-in db [:session :id])
-                                                       (:gateway-turn-id db))
+                    (let
+                      [workspace-id (current-tab-id db)
+                       token (:cancel-token db)
+                       sid (get-in db [:session :id])
+                       tid (:gateway-turn-id db)]
+
+                      ;; Release input immediately. Server cancellation is best effort on
+                      ;; the dedicated cancel lane; it must not stall this heartbeat.
                       {:db (clear-active-turn-state db)
                        :fx (cond->
-                             [[:notify "Cancel timed out — cleared locally. You can send again."
+                             [[:cancel-local-turn token] [:gateway-cancel-active sid tid nil]
+                              [:notify "Cancel timed out — cleared locally. You can send again."
                                :warn cancel-notification-ttl-ms]]
                              (some :mine? (:pending-sends (db-for-tab db workspace-id)))
                              (conj [:dispatch [:restore-pending-to-input workspace-id]]))})))))
@@ -3872,6 +3896,13 @@
               cancelled?
               (= :cancelled status)
 
+              ;; Cancelling the local attach worker can synthesize this result before
+              ;; the HTTP cancel reaches the daemon. Keep the turn gate armed until the
+              ;; generation-matched :gateway-cancel-result confirms server acceptance;
+              ;; otherwise an immediate resend is queued behind the still-running turn.
+              awaiting-gateway-cancel?
+              (boolean (and cancelled? (:cancelling? workspace) (:cancelling-at-ms workspace)))
+
               ;; A cancellation that captured zero iterations is
               ;; usually a stray Esc - drop the placeholder pair
               ;; and restore the editor as before. A cancellation
@@ -3886,8 +3917,14 @@
                (let [ws (restore-submitted-input workspace (:submitted-input workspace))]
                  ;; A cancel must NOT auto-send the backlog — pull it back into
                  ;; the editor instead (see :restore-pending-to-input).
-                 (when (some :mine? (:pending-sends ws)) (vreset! restore-pending? true))
-                 ws)
+                 (when (and (not awaiting-gateway-cancel?) (some :mine? (:pending-sends ws)))
+                   (vreset! restore-pending? true))
+                 ;; `restore-submitted-input` normally clears the completed local turn.
+                 ;; A synthetic local cancellation is not completion of the SERVER turn:
+                 ;; retain the exact cancellation generation until its gateway ACK arrives.
+                 (if awaiting-gateway-cancel?
+                   (merge ws (select-keys workspace active-turn-state-keys))
+                   ws))
                (let
                  [start
                   (:turn-start-ms workspace)
@@ -3969,10 +4006,11 @@
                       :messages messages'
                       :utilization utilization
                       :scroll scroll/follow
-                      :loading? still-pending?
-                      :cancelling? false
-                      :cancelling-at-ms nil)
-                    (not still-pending?)
+                      :loading? (or still-pending? awaiting-gateway-cancel?)
+                      :cancelling? awaiting-gateway-cancel?
+                      :cancelling-at-ms (when awaiting-gateway-cancel?
+                                          (:cancelling-at-ms workspace)))
+                    (and (not still-pending?) (not awaiting-gateway-cancel?))
                     clear-active-turn-state)
 
                   ;; Cancelled-with-work: keep the bubble we just
@@ -4356,7 +4394,19 @@
   "Run `f` on the single FIFO gateway-queue thread. Returns its Future so a
    caller (or a test) can await the round-trip; the TUI never does."
   [f]
-  (.submit ^java.util.concurrent.ExecutorService @gateway-queue-executor ^Runnable f))
+  (.submit ^ExecutorService @gateway-queue-executor ^Runnable f))
+
+(def ^:private gateway-cancel-executor
+  ;; Cancellation must bypass the FIFO submission lane: that lane may itself be
+  ;; waiting on the request we need to abort. A cached daemon pool also prevents
+  ;; one unreachable gateway (30s HTTP timeout) from delaying a later Esc.
+  (delay (Executors/newCachedThreadPool (reify
+                                          ThreadFactory
+                                            (newThread [_ r]
+                                              (doto (Thread. ^Runnable r "vis-tui-gateway-cancel")
+                                                (.setDaemon true)))))))
+
+(defn- gateway-cancel-io! [f] (.submit ^ExecutorService @gateway-cancel-executor ^Runnable f))
 
 (def ^:private gateway-queue-attempts
   "Total submit attempts before a queued submission falls back to a local row."
@@ -4522,11 +4572,31 @@
                                                           :ttl-ms 3000)
                                              (catch Throwable _ nil)))))))))
 
+(reg-fx :cancel-local-turn
+        ;; Fast and synchronous by design: flip the cooperative flag and interrupt
+        ;; every registered worker before any network work starts.
+        (fn [token]
+          (try (vis/cancel! token) (catch Throwable _ nil))))
+
+(reg-fx :gateway-cancel-active
+        ;; Best-effort server cancel on a dedicated lane. Never run gateway discovery
+        ;; or HTTP on the Lanterna input/render thread. The generation-keyed result
+        ;; event may release a first cancel early, without touching a newer turn.
+        (fn [sid tid cancel-key]
+          (when sid
+            (gateway-cancel-io! (fn []
+                                  (let [result (gateway-cancel-turn-or-current! sid tid)]
+                                    (when cancel-key
+                                      (dispatch [:gateway-cancel-result cancel-key result]))))))))
+
 (reg-fx :gateway-cancel-turn
         ;; Fire-and-forget cancel of the exact RUNNING gateway turn whose correlated
         ;; turn.started completed an Esc-before-bind cancellation.
         (fn [sid tid]
-          (when (and sid tid) (try (vis/gateway-cancel-turn! sid tid) (catch Throwable _ nil)))))
+          (when (and sid tid)
+            (gateway-cancel-io! (fn []
+                                  (try (vis/gateway-cancel-turn! sid tid)
+                                       (catch Throwable _ nil)))))))
 
 (reg-fx :drain-idle-queue
         ;; Kick a server-side queued backlog into motion for an IDLE session on

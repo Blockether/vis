@@ -52,7 +52,8 @@
            [java.nio.file.attribute FileAttribute PosixFilePermissions]
            [java.security MessageDigest]
            [java.util.concurrent ArrayBlockingQueue TimeUnit]
-           [org.eclipse.jetty.server Server]))
+           [org.eclipse.jetty.server ConnectionFactory HttpConfiguration HttpConnectionFactory
+            Server ServerConnector]))
 
 (def ^:private DEFAULT_PORT 7890)
 
@@ -2625,6 +2626,38 @@
                         (throw t))))]
       (if (= outcome ::retry) (do (Thread/sleep 150) (recur)) (:server outcome)))))
 
+(defn- loopback-mirror-configurator
+  "Ring/Jetty `:configurator` adding a SECOND connector on 127.0.0.1:`port`.
+
+   A specific-IP bind — what `--pair` picks so the phone can reach us — does not
+   answer on loopback, yet every local caller (the TUI, the `vis` CLI, and
+   discovery's `port-free?` probe) dials 127.0.0.1. Without this mirror the local
+   half of the machine sees a free port and starts a SECOND gateway on it: split
+   brain rather than a visible error. The mirror shares the same `Server`, so it
+   is one handler, one thread pool, one session state, and it widens reach by
+   exactly loopback — auth is untouched. `0.0.0.0` already covers loopback and
+   must not get a mirror (the bind would collide with itself)."
+  [^long port]
+  (fn [^Server server]
+    (let
+      [^ServerConnector primary
+       (first (.getConnectors server))
+
+       ^HttpConnectionFactory http
+       (.getConnectionFactory primary HttpConnectionFactory)
+
+       factories
+       ^"[Lorg.eclipse.jetty.server.ConnectionFactory;"
+       (into-array ConnectionFactory
+                   [(HttpConnectionFactory. (HttpConfiguration. (.getHttpConfiguration http)))])
+
+       mirror
+       (ServerConnector. server factories)]
+
+      (.setHost mirror DEFAULT_HOST)
+      (.setPort mirror (int port))
+      (.addConnector server mirror))))
+
 (defn start!
   "Start the gateway on the Ring Jetty adapter with virtual threads.
    Returns `{:port :host :token-file}`. Throws when already running.
@@ -2642,6 +2675,11 @@
 
       loopback?
       (= host DEFAULT_HOST)
+
+      ;; Keep 127.0.0.1 served even when the primary bind is a concrete remote
+      ;; IP, so a `--pair` daemon is still the one gateway the local TUI finds.
+      mirror-loopback?
+      (not (or loopback? (= host "0.0.0.0")))
 
       ;; Loopback default: NO token (single local user; the dance is
       ;; friction). Non-loopback: token MANDATORY, not overridable —
@@ -2700,17 +2738,24 @@
       ;; into an APNs alert. Silent no-op until a device registers AND an APNs
       ;; key is configured, so this costs one set lookup per event otherwise.
       _
-      (do (push/set-session-describer! (fn [sid]
-                                         (try {:title (get (state/soul sid) "title")}
+      (do (push/set-session-describer! (fn [sid tid]
+                                         (try {:title (get (state/soul sid) "title")
+                                               ;; the ANSWER itself, so the banner says what
+                                               ;; vis said rather than that it said something.
+                                               :answer (state/turn-answer-text sid tid)}
                                               (catch Throwable _ nil))))
           (state/add-event-tap! ::push push/on-event!))
 
       server
-      (try (start-jetty!
-             serving-handler
-             {:port port :host host :join? false :virtual-threads? true :send-server-version? false}
-             (+ (System/currentTimeMillis) 6000))
-           (catch Throwable t (reset! server-state nil) (reset! live-app nil) (throw t)))]
+      (try
+        (start-jetty!
+          serving-handler
+          (cond->
+            {:port port :host host :join? false :virtual-threads? true :send-server-version? false}
+            mirror-loopback?
+            (assoc :configurator (loopback-mirror-configurator port)))
+          (+ (System/currentTimeMillis) 6000))
+        (catch Throwable t (reset! server-state nil) (reset! live-app nil) (throw t)))]
 
      (when-not (= host DEFAULT_HOST)
        (tel/log! :warn ["gateway: binding to non-loopback host" host]))
@@ -2826,10 +2871,18 @@
   (try ((requiring-resolve 'com.blockether.vis.internal.jfr/maybe-start!) "gateway")
        (catch Throwable _ nil))
   (let
-    [{:keys [port host token-file require-token?]}
+    [;; `--pair` is a request for PHONE access, so it selects the bind. With no
+     ;; explicit `--host` the loopback default printed a QR for an address
+     ;; nothing listened on — the failure landed on the phone, looking like a
+     ;; broken app. Prefer the Tailscale IP, else 0.0.0.0; both are non-loopback,
+     ;; so `start!` forces the bearer token.
+     auto-host
+     (when (and pair? (str/blank? host)) (pairing/pair-bind-host))
+
+     {:keys [port host token-file require-token?]}
      (start! {:port (some-> port
                             parse-long)
-              :host host
+              :host (or auto-host host)
               :token-file token-file
               :require-token? require-token?
               :db db
@@ -2848,6 +2901,14 @@
     (if require-token?
       (emit! (str "bearer token: " token-file))
       (emit! "auth: disabled (loopback default; pass --require-token to enable)"))
+    (when auto-host
+      (emit! (str "--pair with no --host: bound "
+                  auto-host
+                  (if (= auto-host "0.0.0.0")
+                    " (all interfaces) so your phone can reach it"
+                    " (your Tailscale IP) so your phone can reach it")))
+      (when-not (= auto-host "0.0.0.0")
+        (emit! (str "127.0.0.1:" port " is served too, so the local TUI still attaches"))))
     (when pair?
       (pairing/print-pairing! {:host host
                                :port port

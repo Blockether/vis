@@ -21,6 +21,8 @@
 
 (def ^:private result-row-bg @#'render/result-row-bg)
 
+(def ^:private code-row-bg @#'render/code-row-bg)
+
 (def ^:private truncate-with-suffix @#'render/truncate-with-suffix)
 
 (def ^:private coalesce-forms vis/coalesce-forms)
@@ -74,6 +76,15 @@
              (it "keeps body rows quiet and gives hover the strongest affordance"
                  (expect (= t/result-bg (result-row-bg nil false)))
                  (expect (= t/link-chrome-hover-bg (result-row-bg {:kind :toggle-details} true)))))
+
+(defdescribe python-header-color-test
+             (it "separates the PYTHON header from every execution-status code band"
+                 (doseq [code-bg [t/code-block-bg t/code-ok-bg t/code-err-bg]]
+                   (expect (= t/result-bg (code-row-bg {:kind :toggle-details} false code-bg)))
+                   (expect (= code-bg (code-row-bg nil false code-bg)))))
+             (it "uses the shared interactive hover surface for the PYTHON header"
+                 (expect (= t/link-chrome-hover-bg
+                            (code-row-bg {:kind :toggle-details} true t/code-ok-bg)))))
 
 (defn- native-form
   [tool summary render]
@@ -143,9 +154,8 @@
   native-tool-error-compact-test
   ;; A FAILED native tool (cat/rg/patch/…) must NOT dump its synthesized
   ;; `name({…args…})` invocation source into the client — that wall of the very
-  ;; args that failed is redundant chrome. The user channel shows only the
-  ;; `python_execution` errors embed their own numbered source + caret, so its
-  ;; separate submitted-source block must also be dropped.
+  ;; args that failed is redundant chrome. Python is the exception: the complete
+  ;; submitted program is evidence and must remain visible above its concise error.
   (it "drops the args-source wall for a failed native tool, keeps the message"
       (let
         [txt (str/join "\n"
@@ -183,18 +193,70 @@
       (expect (not (str/includes? txt "clojure.lang.ExceptionInfo")))
       (expect (not (str/includes? txt "java.util.concurrent.ExecutionException")))
       (expect (not (str/includes? txt "{:type :clj/bad-args")))))
-  (it "shows failed python_execution source exactly once via its error excerpt"
+  (it
+    "keeps a failed program with only two surplus source lines inline in full"
+    (let
+      [code
+       (str "first = 1\n"
+            "second = 2\n" "third = 3\n"
+            "fourth = 4\n" "fifth = 5\n"
+            "print(PYCODEMARKER)\n" "x = 1/0")
+
+       entries
+       (format-iteration-entry-entries
+         (iteration/canonicalize
+           {:position 0
+            :thinking nil
+            :forms [{:vis/tool-name "python_execution"
+                     :success? false
+                     :code code
+                     :error {:message
+                             (str "ZeroDivisionError: division by zero\n\n" "7: x = 1/0\n" "   ^")
+                             ;; Runtime metadata may contain only an
+                             ;; excerpt; it must not replace `code`.
+                             :block {:source "RUNTIME_EXCERPT_ONLY" :row 7 :col 1}}
+                     :result nil}]})
+         80
+         1
+         {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+
+       txt
+       (str/join "\n" (map :line entries))]
+
+      (expect (not (str/includes? txt "PYTHON")))
+      (expect (str/includes? txt "first = 1"))
+      (expect (str/includes? txt "x = 1 / 0"))
+      (expect (= 1 (count (re-seq #"PYCODEMARKER" txt))))
+      (expect (not (str/includes? txt "RUNTIME_EXCERPT_ONLY")))
+      (expect (= 1 (count (re-seq #"ZeroDivisionError" txt))))))
+  (it "defaults a long failed program collapsed without hiding its source preview or error"
       (let
-        [txt (str/join "\n"
-                       (render-forms [{:vis/tool-name "python_execution"
-                                       :success? false
-                                       :code "print(PYCODEMARKER)\nx = 1/0"
-                                       :error {:message (str "  1 | print(PYCODEMARKER)\n"
-                                                             "      ^\n"
-                                                             "ZeroDivisionError: division by zero")}
-                                       :result nil}]))]
-        (expect (= 1 (count (re-seq #"PYCODEMARKER" txt))))
-        (expect (str/includes? txt "ZeroDivisionError")))))
+        [code
+         (str "first = 1\nsecond = 2\nthird = 3\nfourth = 4\nfifth = 5\n"
+              "sixth = 6\nseventh = 7\neighth = 8\nx = 1/0")
+
+         txt
+         (str/join "\n"
+                   (map :line
+                        (format-iteration-entry-entries
+                          (iteration/canonicalize
+                            {:position 0
+                             :thinking nil
+                             :forms [{:vis/tool-name "python_execution"
+                                      :success? false
+                                      :code code
+                                      :error {:message "ZeroDivisionError: division by zero"
+                                              :block {:row 9 :col 1}}
+                                      :result nil}]})
+                          80
+                          1
+                          {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})))]
+
+        (expect (str/includes? txt "PYTHON +"))
+        (expect (str/includes? txt "first = 1"))
+        (expect (not (str/includes? txt "sixth = 6")))
+        (expect (not (str/includes? txt "x = 1 / 0")))
+        (expect (= 1 (count (re-seq #"ZeroDivisionError" txt)))))))
 
 (defdescribe
   coalesce-forms-test
@@ -3838,7 +3900,7 @@
                        :thinking nil
                        :forms [{:vis/tool-name "python_execution"
                                 :success? true
-                                :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7"
+                                :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
                                 :result-summary "ok"
                                 :result "ok"}]})
                     80
@@ -3862,7 +3924,7 @@
                  (expect (some? first-code-i))
                  (expect (< (long toggle-i) (long first-code-i)))
                  ;; collapsed: exactly the 5-line peek, and the hidden count names the rest
-                 (expect (str/includes? (nth lines toggle-i) "+2 more"))
+                 (expect (str/includes? (nth lines toggle-i) "+3 more"))
                  (expect (not (some #{"f = 6"} lines))))))
 
 (defdescribe python-code-disclosure-is-clickable-test
@@ -3882,7 +3944,7 @@
                        :thinking nil
                        :forms [{:vis/tool-name "python_execution"
                                 :success? true
-                                :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7"
+                                :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
                                 :result "ok"}]})
                     80
                     1

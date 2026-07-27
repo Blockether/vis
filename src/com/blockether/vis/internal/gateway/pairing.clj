@@ -69,6 +69,18 @@
   []
   (vec (filter tailscale-ip? (iface-addresses))))
 
+(defn pair-bind-host
+  "Bind address to use when `--pair` is requested WITHOUT an explicit `--host`.
+
+   Pairing on the loopback default is a contradiction: the QR would encode an
+   address no socket is listening on and the phone would time out minutes later.
+   Asking to pair IS asking for phone access, so it picks the narrowest bind that
+   delivers it — the Tailscale IP when the tailnet is up (only tailnet peers can
+   reach it), otherwise `0.0.0.0`. Both are non-loopback, so `server/start!`
+   makes the bearer token mandatory: this widens reach, never auth."
+  []
+  (or (first (tailscale-hosts)) "0.0.0.0"))
+
 (defn pairing-url
   "The `vis://gateway` deep link. `url=` is the best guess (Tailscale first), and
   `alt=` carries the remaining routable hosts so a phone that cannot reach the
@@ -156,31 +168,55 @@
                             bot? "▄"
                             :else " "))))))))
 
+(defn loopback-bind?
+  "True when `host` is an address only this machine can reach. A phone can never
+   open such a URL, so pairing against it is meaningless no matter how good the
+   QR is."
+  [host]
+  (contains? #{"127.0.0.1" "localhost" "::1" "[::1]" "0:0:0:0:0:0:0:1"} (str host)))
+
 (defn print-pairing!
   "Emit the companion pairing block (title, reachable hosts, `vis://` URL, and a
    terminal QR). Each line goes through `emit` (default `println`); CLI callers
    whose stdout is redirected to the log file pass a real-terminal writer so the
-   QR is actually visible. Returns the pairing URL payload."
-  [{:keys [require-token? emit] :or {emit println} :as opts}]
-  (let
-    [payload
-     (pairing-url (cond-> opts
-                    (not require-token?)
-                    (dissoc :token)))
+   QR is actually visible. Returns the pairing URL payload.
 
-     hosts
-     (candidate-hosts (:host opts))]
+   Bound to loopback there is nothing to pair with: the interface scan still
+   finds Tailscale/LAN addresses, but the listener is not on them, so a QR built
+   from those would encode a URL that times out — the failure landing on the
+   phone, minutes later, looking like a broken app. Refuse and print the restart
+   command instead; returns nil."
+  [{:keys [require-token? emit host] :or {emit println} :as opts}]
+  (if (loopback-bind? host)
+    (let [ts (first (tailscale-hosts))]
+      (emit "")
+      (emit "VIS companion pairing")
+      (emit (str "not pairable: vis is bound to " host " — only this machine can reach it."))
+      (emit "No QR printed: it would encode a URL your phone cannot open.")
+      (emit "Restart on a host the phone can reach:")
+      (emit (if ts
+              (str "  vis gateway start --host " ts
+                   " --require-token --pair"
+                   "   # your Tailscale IP — reachable from the phone on your tailnet")
+              "  vis gateway start --host 0.0.0.0 --require-token --pair"))
+      (flush)
+      nil)
+    (let
+      [payload
+       (pairing-url (cond-> opts
+                      (not require-token?)
+                      (dissoc :token)))
 
-    (emit "")
-    (emit "VIS companion pairing")
-    (emit "scan this in iOS Settings → Gateway → Scan QR")
-    (when (seq hosts) (emit (str "reachable hosts: " (str/join ", " hosts))))
-    (emit payload)
-    (emit (terminal-qr payload))
-    (when (= "127.0.0.1" (str (:host opts)))
-      (emit
-        "note: 127.0.0.1 is phone-local; for device pairing start with --host 0.0.0.0 --require-token or use a Tailscale host."))
-    ;; Callers often park (the gateway daemon) right after this; `*out*` does
-    ;; not autoflush, so an unflushed QR is an invisible QR.
-    (flush)
-    payload))
+       hosts
+       (candidate-hosts host)]
+
+      (emit "")
+      (emit "VIS companion pairing")
+      (emit "scan this in iOS Settings → Gateway → Scan QR")
+      (when (seq hosts) (emit (str "reachable hosts: " (str/join ", " hosts))))
+      (emit payload)
+      (emit (terminal-qr payload))
+      ;; Callers often park (the gateway daemon) right after this; `*out*` does
+      ;; not autoflush, so an unflushed QR is an invisible QR.
+      (flush)
+      payload)))

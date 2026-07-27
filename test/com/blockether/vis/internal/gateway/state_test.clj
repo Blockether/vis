@@ -859,6 +859,35 @@
              (expect (= "queued" (get (state/get-turn sid "q1") "status")))
              (finally (swap! registry dissoc sid))))))
 
+(defdescribe cancel-interrupt-order-test
+             (it "interrupts live work before waiting on the durable cancel stamp"
+                 (let
+                   [sid
+                    (str "cancel-order-" (java.util.UUID/randomUUID))
+
+                    tid
+                    "running"
+
+                    registry
+                    @#'state/registry
+
+                    order
+                    (atom [])]
+
+                   (try (swap! registry assoc
+                          sid
+                          {:current-turn tid
+                           :turns {tid {:turn_id tid :status "running" :cancel-token :token}}})
+                        (with-redefs-fn {#'cancellation/cancel! (fn [token]
+                                                                  (swap! order conj
+                                                                    [:cancel token]))
+                                         #'state/persist-cancel-stamp!
+                                         (fn [persisted-sid]
+                                           (swap! order conj [:persist persisted-sid]))}
+                          #(expect (= {:status "cancelling"} (state/cancel-turn! sid tid))))
+                        (expect (= [[:cancel :token] [:persist sid]] @order))
+                        (finally (swap! registry dissoc sid))))))
+
 (defdescribe
   cancelled-backlog-test
   ;; The queue-storm regression: a user cancel must not merely SKIP the backlog
@@ -1387,6 +1416,34 @@
         (try (reset! registry {sid {:next-seq 4 :current-turn "t-x" :turns {"t-x" {}}}})
              (expect (nil? (state/running-turn-start-cursor sid)))
              (finally (reset! registry saved))))))
+
+(defdescribe
+  failure-classification-test
+  "Gateway retries must classify the structured error stored in the loop trace,
+   rather than treating every status-error result with no top-level :error as transient."
+  (it "auto-retries typed stream timeouts from the real loop result shape"
+      (let
+        [err
+         {:message "Stream semantic timeout (300000ms without model/progress event): closed"
+          :data {:type :svar.core/stream-semantic-timeout :semantic-timeout-ms 300000}}
+
+         result
+         {:status :error :trace [{:thinking "still reasoning" :error err}]}]
+
+        (expect (true? (#'state/failure-transient? {:result result})))))
+  (it "does not auto-retry terminal or unclassified failures"
+      (let
+        [auth {:message "Exceptional status code: 401"
+               :data {:status 401 :body "invalid authentication credentials"}}]
+        (expect (false? (#'state/failure-transient?
+                         {:result {:status :error :trace [{:error auth}]}})))
+        (expect (false? (#'state/failure-transient? {:result {:status :error}})))))
+  (it "reads Retry-After data from the failing trace entry"
+      (expect (= 2500
+                 (#'state/failure-retry-after-ms
+                  {:result {:status :error
+                            :trace [{:error {:message "rate limited"
+                                             :data {:retry-after-ms 2500}}}]}})))))
 
 (defdescribe
   queue-failure-pause-test

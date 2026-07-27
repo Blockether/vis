@@ -794,8 +794,9 @@
 
 (def reasoning-collapse-min-hidden
   "Minimum HIDDEN reasoning rows required before a thinking trace collapses.
-   One means the preview limit is a hard maximum in every channel."
-  1)
+   One or two surplus rows stay inline because a disclosure would add more
+   friction than space savings."
+  3)
 
 (defn normalize-reasoning
   "Canonical normalization for model reasoning / thinking text before it is

@@ -125,3 +125,77 @@
         (when (qr-dark-at lines (+ x margin) (+ y margin)) (.set bits x y)))
       (is (= payload (.getText (.decode (com.google.zxing.qrcode.decoder.Decoder.) bits nil)))
           "block glyphs must paint the light modules, not the dark ones"))))
+
+(deftest loopback-bind-refuses-to-print-a-dead-qr
+  (testing
+    "bound to loopback the interface scan still sees Tailscale/LAN addresses,
+             but nothing listens there — so pairing prints the restart command
+             instead of a QR the phone can never open"
+    (with-redefs
+      [pairing/iface-addresses (fn []
+                                 ["100.109.18.77" "192.168.0.227"])]
+      (let
+        [lines (atom [])
+         out (pairing/print-pairing! {:host "127.0.0.1"
+                                      :port 7890
+                                      :token "tok"
+                                      :require-token? true
+                                      :emit #(swap! lines conj (str %))})
+         text (str/join "\n" @lines)]
+
+        (is (nil? out) "no payload is produced")
+        (is (not (str/includes? text "vis://")) "no unreachable pairing URL")
+        (is (not (str/includes? text "█")) "no QR")
+        (is (str/includes? text "only this machine can reach it"))
+        (is (str/includes? text "vis gateway start --host 100.109.18.77")
+            "remediation points at the Tailscale IP when the tailnet is up"))))
+  (testing "no Tailscale — fall back to 0.0.0.0 guidance"
+    (with-redefs
+      [pairing/iface-addresses (fn []
+                                 ["192.168.0.227"])]
+      (let [lines (atom [])]
+        (pairing/print-pairing! {:host "localhost" :port 7890 :emit #(swap! lines conj (str %))})
+        (is (str/includes? (str/join "\n" @lines) "--host 0.0.0.0")))))
+  (testing "a reachable bind host still prints URL + QR"
+    (with-redefs
+      [pairing/iface-addresses (fn []
+                                 ["100.109.18.77"])]
+      (let
+        [lines (atom [])
+         out (pairing/print-pairing! {:host "100.109.18.77"
+                                      :port 7890
+                                      :token "tok"
+                                      :require-token? true
+                                      :emit #(swap! lines conj (str %))})]
+
+        (is (str/starts-with? (str out) "vis://gateway?"))
+        (is (str/includes? (str/join "\n" @lines) "█"))))))
+
+(deftest pair-implies-a-phone-reachable-bind
+  (testing
+    "asking to pair with no --host must never fall back to the loopback
+           default: pairing IS the request for phone access, so the bind follows
+           it — Tailscale IP when the tailnet is up, else every interface"
+    (with-redefs
+      [pairing/iface-addresses (fn []
+                                 ["100.109.18.77" "192.168.0.227"])]
+      (is (= "100.109.18.77" (pairing/pair-bind-host))))
+    (with-redefs
+      [pairing/iface-addresses (fn []
+                                 ["192.168.0.227"])]
+      (is (= "0.0.0.0" (pairing/pair-bind-host))))
+    (with-redefs
+      [pairing/iface-addresses (fn []
+                                 [])]
+      (is (= "0.0.0.0" (pairing/pair-bind-host)))))
+  (testing
+    "every auto-picked bind is non-loopback, so print-pairing! emits a
+           real QR and server/start! forces the bearer token"
+    (with-redefs
+      [pairing/iface-addresses (fn []
+                                 ["100.109.18.77"])]
+      (is (false? (pairing/loopback-bind? (pairing/pair-bind-host)))))
+    (with-redefs
+      [pairing/iface-addresses (fn []
+                                 [])]
+      (is (false? (pairing/loopback-bind? (pairing/pair-bind-host)))))))

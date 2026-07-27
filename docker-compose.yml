@@ -1,0 +1,88 @@
+# =============================================================================
+# vis — containerised gateway
+# =============================================================================
+# Everything vis needs is inside the image (JDK, clojure, maven, python, node,
+# gh, chrome, spel + Playwright browsers, ffmpeg, the Parakeet ASR model). The
+# host contributes nothing but a port, a state volume and a workspace.
+#
+#   docker compose build          # ~30 min the first time; native-image is slow
+#   docker compose up -d
+#   docker compose exec vis-gateway cat /home/vis/.vis/gateway-token
+#
+# On general the publish address is deliberately the PRIVATE nic:
+#   VIS_BIND_HOST=10.0.1.4
+# because the k3s Ingress for vis.blockether.com routes to a selectorless
+# Service whose Endpoints object hard-codes 10.0.1.4:7890. Publishing there
+# means the container replaces the systemd unit with NO cluster change at all.
+# Binding 0.0.0.0 would additionally expose the gateway on the public NIC,
+# bypassing the ingress (and its TLS) entirely.
+# =============================================================================
+
+services:
+  vis-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Bump alongside ~/infrastructure/playbooks/vars/vis-toolchain-versions.yml.
+        VIS_PROFILE: ${VIS_PROFILE:-community}
+        WITH_BROWSERS: ${WITH_BROWSERS:-true}
+        WITH_CHROME: ${WITH_CHROME:-true}
+        # The GraalPy JIT variant forces -Xms14g on the builder JVM. Only turn
+        # it on where that much RAM is FREE, or the build OOMs at minute nine.
+        VIS_ORACLE_NATIVE_IMAGE: ${VIS_ORACLE_NATIVE_IMAGE:-false}
+    image: ${VIS_IMAGE:-vis-gateway}:${VIS_TAG:-local}
+    container_name: vis-gateway
+    restart: unless-stopped
+
+    # tini is the image's ENTRYPOINT and reaps what the agent spawns, so
+    # compose's own init is redundant here.
+    ports:
+      - "${VIS_BIND_HOST:-127.0.0.1}:${VIS_BIND_PORT:-7890}:7890"
+
+    volumes:
+      # State: the LMDB store, config, and the auto-generated bearer token.
+      # Named volume, not a bind mount — uid 10001 inside the container owns it,
+      # and a host bind would land root-owned and unwritable on first boot.
+      - vis-state:/home/vis/.vis
+      # The workspace the agent actually edits. Nothing else on the host is
+      # reachable: no docker socket, no /etc, no other user's home.
+      - ${VIS_WORKSPACE:-./work}:/work
+      # Model and browser caches live in the image, so a `docker volume rm` of
+      # the state volume costs nothing but the session history.
+
+    environment:
+      # VIS_HOME/VIS_PARAKEET_MODEL_DIR are already set in the image; repeated
+      # here only when you want to override them.
+      TZ: ${TZ:-Europe/Warsaw}
+
+    # /healthz is unauthenticated by design (everything under /v1 is 401), so
+    # it is the only probe that works without minting a token.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:7890/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+    # The agent runs untrusted, model-authored commands. It is already an
+    # unprivileged user in a namespace; deny the escalation paths outright.
+    security_opt:
+      - no-new-privileges:true
+    # NOT `cap_drop: ALL`. Chromium's own sandbox needs to create user
+    # namespaces; stripped of every capability it dies on the first launch and
+    # the only cure is running the browser with --no-sandbox, which is strictly
+    # worse. no-new-privileges above already blocks the setuid escalation path.
+
+    # Chrome/Playwright need a bigger /dev/shm than docker's 64 MB default, or
+    # the browser dies with "Target closed" on the first heavy page.
+    shm_size: ${VIS_SHM_SIZE:-1gb}
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+volumes:
+  vis-state:

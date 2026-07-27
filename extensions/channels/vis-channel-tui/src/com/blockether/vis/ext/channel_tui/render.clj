@@ -1506,7 +1506,11 @@
 
 (defn- ansi-code->fg
   [code current-fg base-fg]
-  (case code
+  ;; `(long code)` is what keeps this a constant-time tableswitch: the tests are
+  ;; int literals, so a boxed expression makes the compiler fall back to a linear
+  ;; scan ("case has int tests, but tested expression is not primitive"). Codes
+  ;; come from `parse-ansi-codes`, which only ever yields non-nil Longs.
+  (case (long code)
     7
     t/result-highlight-fg
 
@@ -1608,7 +1612,7 @@
                 chunk (subs line i end)]
 
                (paint-chunk! col chunk fg)
-               (recur end (+ col (p/display-width chunk)) fg))
+               (recur (long end) (+ (long col) (long (p/display-width chunk))) fg))
              (let [m-idx (str/index-of line "m" (+ (long esc-idx) 2))]
                (if (nil? m-idx)
                  (let [chunk (subs line esc-idx)]
@@ -1779,6 +1783,13 @@
    reads cleaner flush on the band. Hover still wins for interactive rows."
   [_meta hovered?]
   (if hovered? t/link-chrome-hover-bg t/result-bg))
+
+(defn- code-row-bg
+  "Give a Python disclosure header the quiet RESULT surface while preserving the
+   execution-status tint on the code rows beneath it. Hover remains the strongest
+   affordance for the clickable header."
+  [meta hovered? code-bg]
+  (if (= :toggle-details (:kind meta)) (result-row-bg meta hovered?) code-bg))
 
 ;; The assistant footer line + routing fallback note are the SHARED, humanized
 ;; turn-summary formatters in `internal.format` (`vis/meta-summary-line` +
@@ -2451,10 +2462,17 @@
                                          :collapsed? (:collapsed? meta)}))))
                     ;; ── Code (success) - light green bg ──
                     (str/starts-with? line code-ok-marker)
-                    (let [raw (subs line 1)]
-                      (p/set-colors! g t/code-block-fg t/code-ok-bg)
+                    (let
+                      [raw (subs line 1)
+                       abs-row (+ (long viewport-top) (long y))
+                       hovered? (and (= :toggle-details (:kind meta))
+                                     (= abs-row (:row (:bounds (cr/hovered)))))
+                       row-bg (code-row-bg meta hovered? t/code-ok-bg)
+                       row-fg (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
+
+                      (p/set-colors! g row-fg row-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (paint-ansi-line! g x y raw t/code-block-fg t/code-ok-bg)
+                      (paint-ansi-line! g x y raw row-fg row-bg)
                       ;; The code band hosts the `▸ PYTHON +N more` accordion
                       ;; HEADER (same rule as the THINKING band above). Register
                       ;; its toggle region or the row paints as a control that
@@ -2462,17 +2480,31 @@
                       (register-toggle-region! meta viewport-top y x iw))
                     ;; ── Code (error) - light red bg ──
                     (str/starts-with? line code-err-marker)
-                    (let [raw (subs line 1)]
-                      (p/set-colors! g t/code-block-fg t/code-err-bg)
+                    (let
+                      [raw (subs line 1)
+                       abs-row (+ (long viewport-top) (long y))
+                       hovered? (and (= :toggle-details (:kind meta))
+                                     (= abs-row (:row (:bounds (cr/hovered)))))
+                       row-bg (code-row-bg meta hovered? t/code-err-bg)
+                       row-fg (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
+
+                      (p/set-colors! g row-fg row-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (paint-ansi-line! g x y raw t/code-block-fg t/code-err-bg)
+                      (paint-ansi-line! g x y raw row-fg row-bg)
                       (register-toggle-region! meta viewport-top y x iw))
                     ;; ── Code (running, no status yet) - neutral bg ──
                     (str/starts-with? line code-marker)
-                    (do (p/set-colors! g t/code-block-fg t/code-block-bg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (paint-ansi-line! g x y (subs line 1) t/code-block-fg t/code-block-bg)
-                        (register-toggle-region! meta viewport-top y x iw))
+                    (let
+                      [abs-row (+ (long viewport-top) (long y))
+                       hovered? (and (= :toggle-details (:kind meta))
+                                     (= abs-row (:row (:bounds (cr/hovered)))))
+                       row-bg (code-row-bg meta hovered? t/code-block-bg)
+                       row-fg (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
+
+                      (p/set-colors! g row-fg row-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (paint-ansi-line! g x y (subs line 1) row-fg row-bg)
+                      (register-toggle-region! meta viewport-top y x iw))
                     ;; ── Duration annotation ──
                     (str/starts-with? line duration-marker)
                     (do (p/set-colors! g t/code-duration-fg iteration-bg)
@@ -3216,6 +3248,8 @@
   (some-> s
           str
           strip-exception-prefixes
+          str/split-lines
+          first
           (str/replace #"\s+\{:[\s\S]*$" "")
           str/trim
           not-empty))
@@ -3265,7 +3299,10 @@
      (error-field error :block)
 
      source
-     (or (error-field block :source) code-text)
+     ;; The submitted program is the source of truth. Runtime exceptions may
+     ;; carry only a short numbered excerpt in :block/:source; preferring that
+     ;; excerpt hid the rest of the code that actually ran.
+     (or (not-empty code-text) (error-field block :source))
 
      opened
      (error-field block :opened-loc)
@@ -3366,7 +3403,8 @@
   vis/reasoning-preview-line-limit)
 
 (def ^:private python-code-preview-line-limit
-  "Rows of a successful python_execution program shown before its disclosure."
+  "Rows of a python_execution program shown before its disclosure. The shared
+   minimum-hidden threshold keeps one or two surplus program rows inline."
   5)
 
 (defn- image-safe-split-n
@@ -4620,19 +4658,28 @@
                                code-node-id
                                code-text)
 
+          python-program-row-count
+          ;; An error context adds a caret row to `c-lines-full`; collapse
+          ;; decisions count the submitted PROGRAM rows so a five-line program
+          ;; plus one diagnostic row does not gain a pointless disclosure.
+          (if error (count (str/split-lines code-text)) (count c-lines-full))
+
           python-code-collapsible?
-          (and (not error)
-               (= "python_execution"
+          (and (= "python_execution"
                   (some-> (:vis/tool-name form)
                           name))
                code-node-id
-               (> (count c-lines-full) (long python-code-preview-line-limit)))
+               (>= (- (long python-program-row-count) (long python-code-preview-line-limit))
+                   (long vis/reasoning-collapse-min-hidden)))
 
           c-lines
           (if-not python-code-collapsible?
             c-lines-full
             (let
               [expanded?
+               ;; Python rests collapsed on success AND failure. A failed call
+               ;; still exposes the source preview and concise error; opening
+               ;; the disclosure reveals the complete program and caret.
                (detail-expanded? detail-expansions session-id code-node-id false)
 
                visible
@@ -4829,20 +4876,18 @@
           (when error
             (mapv #(line-entry (str c-marker %)) (wrap-text (form-error-headline error) fill-w)))
 
-          ;; Native invocation source is redundant beside its op-card. Successful
-          ;; Python is user-relevant and remains visible; failed Python drops the
-          ;; separate source block because its runtime error already embeds the
-          ;; numbered source excerpt + caret. `vis/hide-tool-code?` owns this TUI
-          ;; policy; the web mirrors it at its wire boundary. Blank non-tool code
-          ;; also drops empty chrome.
+          ;; Native invocation source is redundant beside its op-card. Python is
+          ;; user-relevant evidence and remains visible on success AND failure;
+          ;; failed programs use the same PYTHON disclosure as successful ones,
+          ;; defaulted collapsed above. `vis/hide-tool-code?` owns this shared policy.
+          ;; Blank non-tool code also drops empty chrome.
           hide-code-chrome?
           (or (and (not is-error?) (str/blank? code-text)) (vis/hide-tool-code? form))
 
           code-block
           (cond hide-code-chrome?
-                ;; Hide only the separate invocation source. A failed Python
-                ;; block still paints its runtime error, whose message already
-                ;; contains the numbered source excerpt and caret.
+                ;; Hide only a native tool's synthesized invocation source; its
+                ;; compact error message still remains visible.
                 (vec (concat (when (seq title-lines) [(line-entry "")])
                              title-lines
                              (when (seq title-lines) [(line-entry "")])

@@ -8,7 +8,8 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [com.blockether.vis.internal.gateway.push :as push]
-            [com.blockether.vis.internal.gateway.state :as state])
+            [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.gateway.wire :as wire])
   (:import [java.security KeyPairGenerator Signature]
            [java.security.spec ECGenParameterSpec]
            [java.util Arrays Base64]))
@@ -176,8 +177,13 @@
        (atom [])]
 
       (push/register-device! {:token (apply str (repeat 64 "b")) :environment "sandbox"})
-      (push/set-session-describer! (fn [_]
-                                     {:title "Fix the gateway"}))
+      (push/set-session-describer!
+        (fn [_ tid]
+          {:title "Fix the gateway"
+           :answer
+           (get {"t1" "**Fixed** the gateway: the QR encoded a dead host.\n\n```clj\n(inc 1)\n```"
+                 "t2" "Compile failed: unable to resolve symbol `foo`."}
+                tid)}))
       (with-redefs
         [push/configured?
          (fn []
@@ -191,21 +197,29 @@
         (testing "a non-terminal event pushes nothing"
           (push/on-event! sid {"type" "content.block.delta" "turn_id" "t1"})
           (is (= [] @sent)))
-        (testing "a completed turn pushes one alert carrying the session title and ids"
+        (testing "a completed turn pushes one alert carrying the ANSWER, title and ids"
           (push/on-event! sid {"type" "turn.completed" "turn_id" "t1" "status" "completed"})
           (Thread/sleep 200)
           (let [n (first @sent)]
             (is (= 1 (count @sent)))
             (is (= "Fix the gateway" (:title n)))
-            (is (= "Turn finished." (:body n)))
+            ;; the point of the alert: what vis SAID, not that it said something.
+            (is (= "Fixed the gateway: the QR encoded a dead host. [code]" (:body n)))
             (is (= (str sid) (:collapse-id n)))
             (is (= {:session_id (str sid) :turn_id "t1" :status "completed" :type "turn.end"}
                    (:data n)))))
-        (testing "a failed turn says so"
+        (testing "a failed turn carries the failure text it produced"
           (reset! sent [])
           (push/on-event! sid {"type" "turn.failed" "turn_id" "t2" "status" "failed"})
           (Thread/sleep 200)
-          (is (= "Turn failed." (:body (first @sent))))))
+          (is (= "Compile failed: unable to resolve symbol foo." (:body (first @sent)))))
+        (testing "with no answer text the status line is the fallback, never a blank body"
+          (reset! sent [])
+          (push/on-event! sid {"type" "turn.completed" "turn_id" "unknown" "status" "completed"})
+          (Thread/sleep 200)
+          (push/on-event! sid {"type" "turn.failed" "turn_id" "unknown" "status" "failed"})
+          (Thread/sleep 200)
+          (is (= ["Turn finished." "Turn failed."] (mapv :body @sent)))))
       (testing "with no device registered nothing is sent at all"
         (push/unregister-device! (apply str (repeat 64 "b")))
         (reset! sent [])
@@ -223,6 +237,56 @@
           (Thread/sleep 200)
           (is (= [] @sent))))
       (push/set-session-describer! nil))))
+
+(deftest answer-body-is-lock-screen-shaped-test
+  (testing "markdown is written for a renderer, not a banner: it is stripped, not shown"
+    (let [body #(@#'push/answer-body %)]
+      (is (= "Two bugs, both real. \u2022 the QR was dead \u2022 the deeplink was unregistered"
+             (body
+               "## Two bugs, both real.\n\n- the QR was dead\n- the *deeplink* was unregistered")))
+      (is (= "See the pairing docs for why." (body "See the [pairing docs](http://x/y) for why.")))
+      (is (= "Fixed: [code]" (body "Fixed:\n```clj\n(defn f [] 1)\n```")))
+      (is (nil? (body nil)))
+      (is (nil? (body "   \n\n  ")))))
+  (testing "a long answer is clipped on a word boundary with an ellipsis"
+    (let
+      [long-answer
+       (str/join " " (repeat 80 "word"))
+
+       out
+       (@#'push/answer-body long-answer)]
+
+      (is (<= (count out) 181))
+      (is (str/ends-with? out "\u2026"))
+      (is (not (str/includes? out "wor\u2026"))))))
+
+(deftest alert-payload-speaks-apns-kebab-case-test
+  (testing "aps keys are APNs' literal kebab-case, not the wire encoder's snake_case"
+    (let
+      [payload
+       (@#'push/alert-payload
+        {:title "Fix the gateway"
+         :body "Turn finished."
+         :thread-id "sess-1"
+         :data {:session_id "sess-1" :type "turn.end"}})
+
+       parsed
+       (wire/parse-json payload)
+
+       aps
+       (get parsed "aps")]
+
+      ;; APNs ignores unknown `aps` keys silently, so a snake_case slip costs
+      ;; grouping and interruption level with no error anywhere to notice.
+      (is (= "sess-1" (get aps "thread-id")))
+      (is (= "active" (get aps "interruption-level")))
+      (is (nil? (get aps "thread_id")))
+      (is (nil? (get aps "interruption_level")))
+      (is (= {"title" "Fix the gateway" "body" "Turn finished."} (get aps "alert")))
+      (is (= "default" (get aps "sound")))
+      ;; the custom payload beside `aps` stays snake_case: that half IS our wire
+      (is (= "sess-1" (get parsed "session_id")))
+      (is (= "turn.end" (get parsed "type"))))))
 
 (deftest event-tap-runs-on-append-test
   (testing "state/append-event! runs registered taps and survives a throwing one"

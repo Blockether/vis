@@ -13,6 +13,7 @@
             [com.blockether.vis.internal.theme :as theme]
             [com.blockether.vis.internal.toggles :as toggles]
             [reitit.ring :as rr]
+            [ring.adapter.jetty :as jetty]
             [ring.middleware.params :as ring-params]))
 
 (defn- rv
@@ -864,3 +865,44 @@
       (is (re-find #"vis_turns_waiting 1" text))
       (is (re-find #"vis_env_heap_pressure 1" text))
       (is (re-find #"vis_jvm_heap_used_bytes 1024" text)))))
+
+(defn- non-loopback-ipv4
+  "First live non-loopback IPv4 address, i.e. the kind of concrete host `--pair`
+   binds. nil on a machine with no such interface, where the mirror is moot."
+  []
+  (->> (enumeration-seq (java.net.NetworkInterface/getNetworkInterfaces))
+       (filter (fn [^java.net.NetworkInterface i]
+                 (.isUp i)))
+       (mapcat (fn [^java.net.NetworkInterface i]
+                 (enumeration-seq (.getInetAddresses i))))
+       (filter (fn [a]
+                 (instance? java.net.Inet4Address a)))
+       (remove (fn [^java.net.InetAddress a]
+                 (.isLoopbackAddress a)))
+       (map (fn [^java.net.InetAddress a]
+              (.getHostAddress a)))
+       first))
+
+(deftest pair-bind-still-answers-on-loopback
+  (testing
+    "a concrete non-loopback bind (what --pair picks) also serves 127.0.0.1,
+            so the local TUI attaches to THIS gateway instead of seeing a free port
+            and spawning a second one"
+    (if-let [host (non-loopback-ipv4)]
+      (let
+        [port (with-open [s (java.net.ServerSocket. 0)]
+                (.getLocalPort s))
+         server (jetty/run-jetty (constantly {:status 200 :headers {} :body "ok"})
+                                 {:port port
+                                  :host host
+                                  :join? false
+                                  :configurator ((rv 'loopback-mirror-configurator) port)})]
+
+        (try (is (= #{host "127.0.0.1"}
+                    (set (map (fn [^org.eclipse.jetty.server.ServerConnector c]
+                                (.getHost c))
+                              (.getConnectors ^org.eclipse.jetty.server.Server server)))))
+             (is (= "ok" (slurp (str "http://" host ":" port "/"))))
+             (is (= "ok" (slurp (str "http://127.0.0.1:" port "/"))))
+             (finally (.stop ^org.eclipse.jetty.server.Server server))))
+      (is (nil? (non-loopback-ipv4)) "no non-loopback interface here; nothing to mirror"))))

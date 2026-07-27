@@ -97,18 +97,34 @@
   "Canonical `[{:trunk :clone}]` pairs available to the current tool call.
    Includes the workspace's live extra roots plus immutable read/write roots from
    the environment security snapshot. Configured roots map to themselves (no
-   draft clone); the process jail and GraalPy consume the same resolved paths."
+   draft clone). With the jail disabled, host filesystem roots are granted and
+   marked no-search so explicit paths are unrestricted without making default
+   searches crawl the machine."
   [env-or-roots]
   (let
-    [workspace-roots
-     (if (map? env-or-roots) (:workspace/filesystem-roots env-or-roots) env-or-roots)
+    [environment?
+     (map? env-or-roots)
+
+     unrestricted?
+     (and environment? (false? (get-in env-or-roots [:security-policy :sandbox])))
+
+     workspace-roots
+     (if environment? (:workspace/filesystem-roots env-or-roots) env-or-roots)
+
+     host-roots
+     (when unrestricted?
+       (keep (fn [^java.io.File root]
+               (.getCanonicalPath root))
+             (java.io.File/listRoots)))
 
      configured-roots
-     (when (map? env-or-roots) (:security/filesystem-roots env-or-roots))
+     (if unrestricted? host-roots (when environment? (:security/filesystem-roots env-or-roots)))
 
      no-search
-     (when (map? env-or-roots)
-       (into #{} (keep normalize-root) (:security/no-search-roots env-or-roots)))]
+     (if unrestricted?
+       (into #{} (keep normalize-root) host-roots)
+       (when environment?
+         (into #{} (keep normalize-root) (:security/no-search-roots env-or-roots))))]
 
     (vec (distinct (concat (keep (fn [e]
                                    (when-let [{:keys [trunk clone]} (root-entry e)]

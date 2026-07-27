@@ -8,9 +8,25 @@ export async function onPairingLink(
   handler: (url: string) => void,
 ): Promise<() => void> {
   try {
+    const seen = new Set<string>();
+    const once = (url: string) => {
+      if (!url || seen.has(url)) return;
+      seen.add(url);
+      handler(url);
+    };
     const sub = await App.addListener('appUrlOpen', (event) => {
-      if (event.url) handler(event.url);
+      once(event.url);
     });
+    // Cold start: the link that LAUNCHED the app has already been delivered by
+    // the time React mounts and this listener attaches, so `appUrlOpen` never
+    // fires for it. Without this, tapping a pairing link while the app is not
+    // running opens a blank Connect screen — the exact case a fresh install hits.
+    try {
+      const launch = await App.getLaunchUrl();
+      if (launch?.url) once(launch.url);
+    } catch {
+      /* web / plugin unavailable */
+    }
     return () => {
       void sub.remove();
     };

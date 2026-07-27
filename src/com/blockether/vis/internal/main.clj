@@ -3240,7 +3240,8 @@
       {:name "host"
        :kind :flag
        :type :string
-       :doc "Bind host (default 127.0.0.1; non-loopback logs a warning)."}
+       :doc
+       "Bind host (default 127.0.0.1, or a phone-reachable host when --pair is given; non-loopback always requires the token)."}
       {:name "token-file"
        :kind :flag
        :type :string
@@ -3258,8 +3259,8 @@
        :kind :flag
        :type :boolean
        :doc
-       "Print a VIS companion pairing QR (URL + bearer token). Use with --host 0.0.0.0 or a Tailscale/LAN host for phone access."}]
-     :cmd/examples ["vis gateway start" "vis gateway start --port 8080"
+       "Print a VIS companion pairing QR (URL + bearer token). Implies a phone-reachable bind (Tailscale IP, else 0.0.0.0) unless --host says otherwise."}]
+     :cmd/examples ["vis gateway start" "vis gateway start --port 8080" "vis gateway start --pair"
                     "vis gateway start --host 0.0.0.0 --require-token --pair"]
      :cmd/run-fn cli-gateway-start!}
     {:cmd/name "status"

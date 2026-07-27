@@ -169,6 +169,14 @@
                    (input/handle-key (alt-key (Character. \s)) state)))
         (expect (= {:action :continue :state state}
                    (input/handle-key (alt-key (Character. \o)) state)))))
+  (it "identifies only unbound Meta characters as ambiguous fast Esc typing"
+      ;; A terminal emits the same bytes for Esc+r and Alt+r. Bound Meta chords
+      ;; must keep their real meaning; an otherwise ignored chord can safely be
+      ;; recovered as the character following a cancellation Escape.
+      (expect (= (Character. \r) (input/escaped-typing-character (alt-key (Character. \r)))))
+      (doseq [c [\x \> \< \v \b \f \1 \9]]
+        (expect (nil? (input/escaped-typing-character (alt-key (Character. c))))))
+      (expect (nil? (input/escaped-typing-character (char-key (Character. \r))))))
   (it "Ctrl+C and Escape clear non-empty input instead of exiting"
       (let
         [state (-> (input/empty-input)

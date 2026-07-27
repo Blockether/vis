@@ -338,22 +338,39 @@
       (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
       (expect (= "tab draft" (input/input->text (:input @state/app-db))))
       (expect (= ["tab prompt"] (:input-history @state/app-db))))
-  (it "tab switch clears the stale :layout and strips :scroll :pos (scroll-jump regression)"
-      ;; The leaving tab's :layout (total-h/offsets) and the eased on-screen :pos
-      ;; are derived/display state anchored to the OLD document. restore-tab drops
-      ;; both so the first post-switch frame recomputes layout for THIS tab and
-      ;; re-resolves the scroll offset, instead of clamping against a foreign
-      ;; total-h (the visible \"jump to bottom\").
-      (reset! state/app-db {:session {:id "main-c"}
-                            :messages [{:role :user :text "main prompt"}]
-                            :scroll {:mode :at :offset 40 :pos 900}
-                            :layout {:total-h 5000 :offsets [0 100 900]}
+  (it "restores a tab's cached layout and exact scroll position when geometry matches"
+      (let
+        [main-layout
+         {:cols 120 :rows 40 :total-h 5000 :inner-h 30 :offsets [0 100 900]}
+
+         tab-layout
+         {:cols 120 :rows 40 :total-h 7000 :inner-h 30 :offsets [0 200 1200]}]
+
+        (reset! state/app-db {:session {:id "main-c"}
+                              :messages [{:role :user :text "main prompt"}]
+                              :scroll {:mode :at :offset 40 :pos 900}
+                              :layout main-layout
+                              :tabs [{:id :main :label "Main" :active? true}
+                                     {:id :tab-1 :label "Tab 1"}]
+                              :active-tab-id :main
+                              :tab-locals {:tab-1 {:session {:id "tab-c"}
+                                                   :messages [{:role :user :text "tab prompt"}]
+                                                   :scroll {:mode :at :offset 5 :pos 1200}
+                                                   :layout tab-layout}}
+                              :render-version 0})
+        (state/dispatch [:select-tab-index 1])
+        (expect (= tab-layout (:layout @state/app-db)))
+        (expect (= {:mode :at :offset 5 :pos 1200} (:scroll @state/app-db)))
+        (state/dispatch [:select-tab-index 0])
+        (expect (= main-layout (:layout @state/app-db)))
+        (expect (= {:mode :at :offset 40 :pos 900} (:scroll @state/app-db)))))
+  (it "invalidates cached layout and eased position after terminal geometry changes"
+      (reset! state/app-db {:layout {:cols 140 :rows 50 :total-h 5000 :inner-h 40}
                             :tabs [{:id :main :label "Main" :active? true}
                                    {:id :tab-1 :label "Tab 1"}]
                             :active-tab-id :main
-                            :tab-locals {:tab-1 {:session {:id "tab-c"}
-                                                 :messages [{:role :user :text "tab prompt"}]
-                                                 :scroll {:mode :at :offset 5 :pos 7}}}
+                            :tab-locals {:tab-1 {:layout {:cols 120 :rows 40 :total-h 7000}
+                                                 :scroll {:mode :at :offset 5 :pos 1200}}}
                             :render-version 0})
       (state/dispatch [:select-tab-index 1])
       (expect (nil? (:layout @state/app-db)))
@@ -819,42 +836,61 @@
             (let [{db' :db} (send-message-fn db [:send-message "hello"])]
               (expect (= scroll/follow (:scroll db')))))))))
 
-(defdescribe cancel-turn-test
-             (it "notifies cancelling instead of relying on footer status"
-                 (let
-                   [cancelled
-                    (atom nil)
+(defdescribe
+  cancel-turn-test
+  (it
+    "notifies cancelling instead of relying on footer status"
+    (let
+      [cancelled
+       (atom nil)
 
-                    notified
-                    (atom nil)]
+       notified
+       (atom nil)
 
-                   (with-redefs
-                     [vis/cancel!
-                      (fn [token]
-                        (reset! cancelled token))
+       gateway-started
+       (promise)
 
-                      vis/notify!
-                      (fn [text & kvs]
-                        (reset! notified [text kvs]))]
+       release-gateway
+       (promise)]
 
-                     (reset! state/app-db
-                       {:loading? true :cancel-token :token :cancelling? false :render-version 0})
-                     (state/dispatch [:cancel-turn])
-                     (expect (= :token @cancelled))
-                     (expect (true? (:cancelling? @state/app-db)))
-                     (expect (= ["Cancelling current turn..." [:level :info :ttl-ms 2500]]
-                                @notified))))))
+      (with-redefs
+        [vis/cancel!
+         (fn [token]
+           (reset! cancelled token))
+
+         vis/gateway-cancel-current-turn!
+         (fn [_]
+           (deliver gateway-started true)
+           @release-gateway
+           {:status "cancelling"})
+
+         vis/notify!
+         (fn [text & kvs]
+           (reset! notified [text kvs]))]
+
+        (reset! state/app-db {:session {:id "s1"}
+                              :loading? true
+                              :cancel-token :token
+                              :cancelling? false
+                              :render-version 0})
+        ;; This returns while the gateway call is deliberately blocked.
+        (state/dispatch [:cancel-turn])
+        (expect (= :token @cancelled))
+        (expect (= true (deref gateway-started 1000 :timeout)))
+        (expect (true? (:cancelling? @state/app-db)))
+        (expect (= ["Cancelling current turn..." [:level :info :ttl-ms 2500]] @notified))
+        (deliver release-gateway true)))))
 
 (defdescribe cancel-reaches-gateway-after-send-test
              (it "binds the matching send-message turn so Esc reaches the gateway"
-                 (let [cancelled-gateway (atom nil)]
+                 (let [cancelled-gateway (promise)]
                    (with-redefs
                      [vis/cancel! (fn [_]
                                     nil)
                       vis/notify! (fn [_ & _]
                                     nil)
                       vis/gateway-cancel-turn! (fn [sid tid]
-                                                 (reset! cancelled-gateway [sid tid])
+                                                 (deliver cancelled-gateway [sid tid])
                                                  {:status "cancelling"})]
 
                      ;; State after :send-message submitted a fresh turn: its client id is
@@ -872,7 +908,7 @@
                                       {:turn-id "gw-turn-1" :client-id "cid-1" :started-at-ms 123}])
                      (expect (= "gw-turn-1" (:gateway-turn-id @state/app-db)))
                      (state/dispatch [:cancel-turn])
-                     (expect (= ["s1" "gw-turn-1"] @cancelled-gateway))))))
+                     (expect (= ["s1" "gw-turn-1"] (deref cancelled-gateway 1000 :timeout)))))))
 
 (defdescribe cancel-auto-fires-on-late-bind-test
              ;; REGRESSION: Esc can beat the submit POST, receive `no-running-turn`, and
@@ -883,7 +919,10 @@
                "quick cancel plus identical resend cancels only the delayed old start"
                (let
                  [cancelled-gateway
-                  (atom nil)
+                  (promise)
+
+                  terminal-cleared
+                  (promise)
 
                   send-message-fn
                   (:fn (get @@#'state/event-registry :send-message))]
@@ -894,8 +933,9 @@
                       nil)
 
                     vis/notify!
-                    (fn [_ & _]
-                      nil)
+                    (fn [text & _]
+                      (when (= "Turn is no longer running; cleared local cancelling state." text)
+                        (deliver terminal-cleared true)))
 
                     vis/gateway-cancel-current-turn!
                     (fn [_]
@@ -903,7 +943,7 @@
 
                     vis/gateway-cancel-turn!
                     (fn [sid tid]
-                      (reset! cancelled-gateway [sid tid])
+                      (deliver cancelled-gateway [sid tid])
                       {:status "cancelling"})]
 
                    (reset! state/app-db {:session {:id "s1"}
@@ -923,6 +963,7 @@
                    ;; Esc won before the old POST registered. The terminal-looking gateway
                    ;; response clears the visible turn, but its exact identity survives.
                    (state/dispatch [:cancel-turn])
+                   (expect (= true (deref terminal-cleared 1000 :timeout)))
                    (expect (false? (:loading? @state/app-db)))
                    (expect (= "cid-old" (:cancel-awaiting-client-id @state/app-db)))
                    ;; The user immediately sends the exact same text again. The normal send
@@ -941,7 +982,7 @@
                      ;; its id or clock onto the new optimistic request.
                      (state/dispatch [:sync-turn-clock nil
                                       {:turn-id "gw-old" :client-id "cid-old" :started-at-ms 123}])
-                     (expect (= ["s1" "gw-old"] @cancelled-gateway))
+                     (expect (= ["s1" "gw-old"] (deref cancelled-gateway 1000 :timeout)))
                      (expect (nil? (:gateway-turn-id @state/app-db)))
                      (expect (true? (:loading? @state/app-db)))
                      (expect (nil? (:cancel-awaiting-client-id @state/app-db)))
@@ -964,7 +1005,10 @@
        (atom nil)
 
        notified
-       (atom nil)]
+       (atom nil)
+
+       terminal-cleared
+       (promise)]
 
       (with-redefs
         [vis/cancel!
@@ -978,17 +1022,20 @@
 
          vis/notify!
          (fn [text & kvs]
-           (reset! notified [text kvs]))]
+           (reset! notified [text kvs])
+           (when (= "Turn is no longer running; cleared local cancelling state." text)
+             (deliver terminal-cleared true)))]
 
         (reset! state/app-db {:session {:id "s1"}
                               :loading? true
                               :cancel-token :token
                               :gateway-turn-id "turn-1"
-                              :cancelling? true
+                              :cancelling? false
                               :progress {:iterations []}
                               :turn-start-ms 10
                               :render-version 0})
         (state/dispatch [:cancel-turn])
+        (expect (= true (deref terminal-cleared 1000 :timeout)))
         (let [db @state/app-db]
           (expect (= :token @cancelled))
           (expect (= ["s1" "turn-1"] @cancelled-gateway))
@@ -1001,6 +1048,77 @@
           (expect (= ["Turn is no longer running; cleared local cancelling state."
                       [:level :info :ttl-ms 2500]]
                      @notified)))))))
+
+(defdescribe
+  cancel-gateway-confirmation-test
+  (it "retries a transient gateway failure instead of dropping the cancel"
+      (let [attempts (atom 0)]
+        (with-redefs
+          [vis/gateway-cancel-turn! (fn [sid tid]
+                                      (expect (= ["s1" "turn-1"] [sid tid]))
+                                      (if (= 1 (swap! attempts inc))
+                                        (throw (ex-info "connection reset" {}))
+                                        {:status "cancelling"}))]
+          (expect (= {:status "cancelling"}
+                     (#'state/gateway-cancel-turn-or-current! "s1" "turn-1")))
+          (expect (= 2 @attempts)))))
+  (it
+    "does not unlock resending on a local cancel before the gateway ACK"
+    (let
+      [message-fn
+       (-> #'state/event-registry
+           deref
+           deref
+           (get :message-received)
+           :fn)
+
+       cancel-result-fn
+       (-> #'state/event-registry
+           deref
+           deref
+           (get :gateway-cancel-result)
+           :fn)
+
+       cancel-key
+       1000
+
+       pending-id
+       "client-1"
+
+       initial-db
+       {:active-tab-id :main
+        :session {:id "s1"}
+        :loading? true
+        :cancelling? true
+        :cancelling-at-ms cancel-key
+        :cancel-token :token
+        :gateway-turn-id "turn-1"
+        :messages [{:role :user :text "first" :client-turn-id pending-id}
+                   {:role :assistant :pending? true :client-turn-id pending-id}]
+        :progress {:iterations []}
+        :submitted-input {:text "first" :pastes {} :paste-counter 0}
+        :pending-sends [{:text "correction" :client-id "queued-1" :mine? true}]}
+
+       local-result
+       (message-fn initial-db
+                   [:message-received :main [:ast {} [:p {} [:span {} "Cancelled by user."]]]
+                    {:status :cancelled :client-turn-id pending-id}])
+
+       local-db
+       (:db local-result)
+
+       ack-result
+       (cancel-result-fn local-db [:gateway-cancel-result cancel-key {:status "cancelling"}])]
+
+      (expect (true? (:loading? local-db)))
+      (expect (true? (:cancelling? local-db)))
+      (expect (empty? (:fx local-result)))
+      (expect (false? (:loading? (:db ack-result))))
+      (expect (false? (:cancelling? (:db ack-result))))
+      (expect (= [[:notify "Cancellation accepted. You can send again." :info 2500]
+                  [:dispatch [:restore-pending-to-input :main]]]
+                 (:fx ack-result))))))
+
 
 (defdescribe cancel-self-heal-test
              ;; REGRESSION (design edge): `:cancel-turn` flips `:cancelling?` and
@@ -1052,8 +1170,8 @@
                           ;; 8.5s elapsed > 8s timeout
                           {db' :db fx :fx} (heal-fn db [:cancel-self-heal-tick 9500])]
 
-                         ;; Local token re-fired (tears down any lingering attach waiter).
-                         (expect (= :token @cancelled))
+                         ;; The pure handler schedules the local interrupt before network I/O.
+                         (expect (= [:cancel-local-turn :token] (first fx)))
                          ;; Turn state fully cleared → input flows again.
                          (expect (false? (:cancelling? db')))
                          (expect (false? (:loading? db')))

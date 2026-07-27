@@ -131,19 +131,33 @@
        :base-dir (str base-dir)
        :home (str home)))))
 
+(defn- host-filesystem-roots
+  "Canonical host filesystem roots. With the jail disabled these represent
+   unrestricted filesystem access while remaining portable across Unix and Windows."
+  []
+  (->> (java.io.File/listRoots)
+       (keep (fn [^java.io.File root]
+               (try (.getCanonicalPath root) (catch Throwable _ nil))))
+       distinct
+       vec))
+
 (defn read-write-roots
-  "Configured roots available read/write to common model tools. `allow-write`
-   remains readable under the process-jail contract, so it belongs here too."
+  "Filesystem roots available read/write to common model tools. When the jail is
+   disabled, every host filesystem root is available; otherwise this is the
+   configured allowlist. `allow-write` remains readable under the process-jail
+   contract, so it belongs here too."
   [policy]
-  (vec (distinct (concat (get-in policy [:process-jail :allow-read-write])
-                         (get-in policy [:process-jail :allow-write])))))
+  (if (:sandbox policy)
+    (vec (distinct (concat (get-in policy [:process-jail :allow-read-write])
+                           (get-in policy [:process-jail :allow-write]))))
+    (host-filesystem-roots)))
 
 (defn no-search-roots
-  "Configured roots flagged `search: false` in the workspace catalog. They are
-   granted to the jail but excluded from the DEFAULT rg/find_files sweep;
-   explicit paths still reach them."
+  "Roots excluded from the DEFAULT rg/find_files sweep; explicit paths still reach
+   them. With the jail disabled, host filesystem roots are excluded so granting
+   unrestricted explicit access does not make an unscoped grep crawl the machine."
   [policy]
-  (vec (get-in policy [:process-jail :no-search])))
+  (if (:sandbox policy) (vec (get-in policy [:process-jail :no-search])) (host-filesystem-roots)))
 
 (defn access-view
   "Build the string-keyed model context from the exact enforcement snapshot.
@@ -178,7 +192,7 @@
      (mapv #(home-relative % home) (:deny-write jail))
 
      no-search
-     (mapv #(home-relative % home) (:no-search jail))
+     (mapv #(home-relative % home) (no-search-roots policy))
 
      descriptions
      (into {}

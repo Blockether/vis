@@ -1597,6 +1597,21 @@
         (= tid (:current-turn entry))
         (assoc :current-turn nil)))))
 
+(defn turn-answer-text
+  "Plain-text projection of ONE finished turn's answer content, or nil.
+
+   Read straight from the live registry (`finish-turn!` has already merged the
+   content patch by the time a terminal event is appended), so this costs one
+   map lookup and never touches the DB. Exists for the push alert: a
+   notification that only says \"turn finished\" makes you open the app to learn
+   anything at all."
+  [sid tid]
+  (try (some-> (get-in @registry [sid :turns tid :content])
+               content/text-projection
+               str/trim
+               not-empty)
+       (catch Throwable _ nil)))
+
 (defn- record-metrics!
   [sid {:keys [tokens cost duration-ms status]}]
   (let
@@ -2207,19 +2222,22 @@
   [sid]
   (drain-next-queued! sid))
 
+(defn- terminal-failure-error
+  [{:keys [throwable result]}]
+  (or throwable (:error result) (some :error (reverse (:trace result)))))
+
 (defn- failure-transient?
   "Classify a terminal FAILURE as transient (rate-limit / transport / stream
    stall) vs terminal (auth, bad-request, tool-schema, empty-content). A
    transient failure earns a backoff auto-retry of the head; a terminal one is
    held for an explicit resume. Accepts `{:stalled? :throwable :result}` — one
    of the three, whichever the failing path carries."
-  [{:keys [stalled? throwable result]}]
-  (boolean (cond stalled? true
-                 throwable (or (provider-error/transport-throwable? throwable)
-                               (contains? #{:rate-limit :transport :stream-timeout}
-                                          (provider-error/provider-error-kind throwable)))
-                 :else (let [err (:error result)]
-                         (or (nil? err)
+  [{:keys [stalled?] :as failure}]
+  (let [err (terminal-failure-error failure)]
+    (boolean (cond stalled? true
+                   (nil? err) false
+                   :else (or (and (instance? Throwable err)
+                                  (provider-error/transport-throwable? err))
                              (contains? #{:rate-limit :transport :stream-timeout}
                                         (provider-error/provider-error-kind err)))))))
 
@@ -2235,10 +2253,10 @@
   [{:keys [throwable result]}]
   (let
     [err
-     (or throwable (:error result))
+     (terminal-failure-error {:throwable throwable :result result})
 
      data
-     (ex-data err)
+     (or (:data err) (ex-data err) err)
 
      direct
      (or (:retry-after-ms data) (:retry_after_ms data))
@@ -3012,11 +3030,12 @@
             ;; them: "stop that, run THIS") from the pre-cancel backlog
             ;; (dropped) — see `drop-cancelled-backlog!`.
             (swap! registry assoc-in [sid :turns tid :cancelling_at] (System/currentTimeMillis))
-            ;; Durable twin of the stamp above: a JVM death mid-unwind must
-            ;; not leave the engine row `:running` after the process exits).
-            (persist-cancel-stamp! sid)
+            ;; Interrupt live work before touching persistence. The durable stamp may
+            ;; scan/update the session DB and must never postpone cancellation itself.
+            ;; It still completes before this endpoint ACKs; only the ordering changes.
             (some-> (:cancel-token turn)
                     cancellation/cancel!)
+            (persist-cancel-stamp! sid)
             {:status "cancelling"}))))
 
 (defn cancel-current-turn!

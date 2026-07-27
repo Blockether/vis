@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.security-policy-test
   (:require [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.security-policy :as policy]
+            [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]))
 
@@ -56,6 +57,42 @@
       (expect (= [5273] (get-in view ["network" "inbound_ports"])))
       (expect (= "reload" (get view "changes_require")))
       (expect (re-matches #"sha256:[0-9a-f]{64}" (get view "generation")))))
+  (it
+    "grants unrestricted explicit filesystem access when the jail is disabled"
+    (let
+      [home
+       (.getCanonicalFile (.toFile (Files/createTempDirectory
+                                     "vis-policy-open"
+                                     (make-array java.nio.file.attribute.FileAttribute 0))))
+
+       project
+       (doto (java.io.File. home "vis") .mkdirs)
+
+       base
+       (.getPath project)
+
+       snapshot
+       (policy/snapshot {"jail" {"enabled" false}} {:base-dir base :home (.getPath home)})
+
+       host-roots
+       (->> (java.io.File/listRoots)
+            (mapv #(.getCanonicalPath ^java.io.File %)))
+
+       view
+       (policy/access-view snapshot [base])]
+
+      (expect (false? (:sandbox snapshot)))
+      (expect (= host-roots (policy/read-write-roots snapshot)))
+      (expect (= host-roots (policy/no-search-roots snapshot)))
+      (expect (= (vec (distinct (concat ["~/vis"] host-roots)))
+                 (get-in view ["filesystem" "read_write"])))
+      (expect (= host-roots (get-in view ["filesystem" "no_search"])))
+      (expect (= (mapv (fn [root]
+                         {:trunk root :clone root :no-search? true})
+                       host-roots)
+                 (workspace/env-filesystem-roots {:security-policy snapshot
+                                                  :security/filesystem-roots []
+                                                  :security/no-search-roots []})))))
   (it "keeps a stable generation for equivalent snapshots and changes it with policy"
       (let
         [base

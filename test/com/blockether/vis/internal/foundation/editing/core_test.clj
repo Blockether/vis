@@ -4814,7 +4814,7 @@
   (describe
     "the batch `paths` form"
     (it
-      "turns N targets into ONE call, ONE result and ONE summary line"
+      "turns N targets into one result with a compact summary and scan-friendly body"
       (let
         [fs-tool
          (private-fn "fs-tool")
@@ -4837,46 +4837,63 @@
                                {"path" (str base "/b") "is_created" true}
                                {"path" (str base "/c") "is_created" true}]}
                      r))
-          (expect (= (str "created 3 dirs: `" base "/a`, `" base "/b`, `" base "/c`")
-                     (:summary (render r)))))
+          (expect (= "created 3 dirs" (:summary (render r))))
+          (expect (= (str "\n- ✓ created — `"
+                          base
+                          "/a`"
+                          "\n- ✓ created — `"
+                          base
+                          "/b`"
+                          "\n- ✓ created — `"
+                          base
+                          "/c`")
+                     (:body (render r)))))
         ;; A partial batch says so instead of claiming the whole batch changed.
         (let [r (res {"op" "create_dirs" "paths" [(str base "/a") (str base "/d")]})]
           (expect (= [false true] (mapv #(get % "is_created") (get r "paths"))))
-          (expect (= (str "created 1 of 2 dirs (1 already existed): `" base "/a`, `" base "/d`")
-                     (:summary (render r)))))
+          (expect (= "created 1 of 2 dirs · 1 already existed" (:summary (render r))))
+          (expect (= (str "\n- – already existed — `" base "/a`" "\n- ✓ created — `" base "/d`")
+                     (:body (render r)))))
         (spit (str base "/a/x.txt") "hi")
         (let [r (res {"op" "exists" "paths" [(str base "/a/x.txt") (str base "/a/nope.txt")]})]
           (expect (= {"action" "exists"
                       "paths" [{"path" (str base "/a/x.txt") "is_existing" true}
                                {"path" (str base "/a/nope.txt") "is_existing" false}]}
                      r))
-          (expect (= (str "1 of 2 exist: `" base "/a/x.txt` ✓, `" base "/a/nope.txt` ✗")
-                     (:summary (render r)))))
+          (expect (= "1 of 2 paths exist · 1 missing" (:summary (render r))))
+          (expect
+            (= (str "\n- ✓ exists — `" base "/a/x.txt`" "\n- ✗ missing — `" base "/a/nope.txt`")
+               (:body (render r)))))
         (let
           [r (res {"op" "delete"
                    "paths" [(str base "/a/x.txt") (str base "/a/nope.txt")]
                    "is_missing_ok" true})]
           (expect (= [true false] (mapv #(get % "is_deleted") (get r "paths"))))
-          (expect (= (str "deleted 1 of 2 paths (1 already absent): `"
+          (expect (= "deleted 1 of 2 paths · 1 already absent" (:summary (render r))))
+          (expect (= (str "\n- ✓ deleted — `"
                           base
-                          "/a/x.txt`, `"
+                          "/a/x.txt`"
+                          "\n- – already absent — `"
                           base
                           "/a/nope.txt`")
-                     (:summary (render r))))
+                     (:body (render r))))
           (expect (not (fs/exists? (str base "/a/x.txt")))))
         ;; A ONE-element batch still answers the batch shape: the shape follows
         ;; the REQUEST, never the accident of how many paths it carried.
         (let [r (res {"op" "exists" "paths" [(str base "/a")]})]
           (expect (= {"action" "exists" "paths" [{"path" (str base "/a") "is_existing" true}]} r))
-          (expect (= (str "1 of 1 exist: `" base "/a` ✓") (:summary (render r)))))
-        ;; A long batch stays ONE line.
-        (expect (string/includes? (:summary (render {"op" "fs"
-                                                     "action" "delete"
-                                                     "paths" (mapv (fn [i]
-                                                                     {"path" (str "p" i)
-                                                                      "is_deleted" true})
-                                                                   (range 9))}))
-                                  "+3 more"))
+          (expect (= "1 path exists" (:summary (render r))))
+          (expect (= (str "\n- ✓ exists — `" base "/a`") (:body (render r)))))
+        ;; Long batches keep their paths out of the headline without dropping any.
+        (let
+          [card (render {"op" "fs"
+                         "action" "delete"
+                         "paths" (mapv (fn [i]
+                                         {"path" (str "p" i) "is_deleted" true})
+                                       (range 9))})]
+          (expect (= "deleted 9 paths" (:summary card)))
+          (expect (not (string/includes? (:summary card) "`p0`")))
+          (expect (string/includes? (:body card) "- ✓ deleted — `p8`")))
         ;; copy/move refuse the batch key, and an empty batch is not a silent no-op.
         (expect (throws? clojure.lang.ExceptionInfo
                          #(fs-tool {"op" "copy" "paths" ["a"] "src" "a" "dest" "b"})))

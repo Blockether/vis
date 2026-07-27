@@ -120,18 +120,18 @@
       (expect (= "RG" (:label (first one)))))
     ;; non-tool form → no card at all (its body stays channel-specific).
     (expect (= [] (form/result-cards {:result {:k 1}}))))
-  (it "hide-tool-code? drops the redundant source for a successful native non-python tool only"
+  (it "hide-tool-code? drops only redundant successful native invocations"
       ;; A successful native tool (cat/rg/patch/…) already renders as an op-card, so
       ;; its synthesized `name(args)` source is redundant chrome — hide it.
       (expect (form/hide-tool-code? {:vis/tool-name "cat"}))
       (expect (form/hide-tool-code? {:vis/tool-name "rg" :success? true}))
-      ;; Successful Python keeps its program; failed Python hides the separate
-      ;; block because the runtime error already embeds source + caret.
+      ;; Python always keeps the actual submitted program, including on failure.
       (expect (not (form/hide-tool-code? {:vis/tool-name "python_execution"})))
-      (expect (form/hide-tool-code? {:vis/tool-name "python_execution" :error "1 | boom()\n    ^"}))
+      (expect (not (form/hide-tool-code? {:vis/tool-name "python_execution"
+                                          :error "1 | boom()\n    ^"})))
       ;; A non-tool form has no card, so there's nothing to hide behind.
       (expect (not (form/hide-tool-code? {:result {:k 1}})))
-      ;; An errored tool form keeps its code so the inline error has context.
+      ;; Failed native tools keep source context for channels that need it.
       (expect (not (form/hide-tool-code? {:vis/tool-name "cat" :error "boom"})))
       (expect (not (form/hide-tool-code? {:vis/tool-name "cat" :success? false}))))
   (it "removes redundant mutation verbs from new and persisted tool summaries"

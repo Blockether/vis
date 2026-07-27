@@ -161,22 +161,21 @@
 
 (defn hide-tool-code?
   "Should a channel DROP a form's invocation source instead of showing it as a
-   separate code block? Successful native tools already have a result card, but
-   successful `python_execution` keeps its user-relevant program. Failed native
-   tools keep source context, except failed Python: its runtime error already
-   embeds the numbered source excerpt and caret.
-   This is the shared TUI/channel policy; web mirrors it at the wire boundary."
+   separate code block? Successful native tools already have a result card, so
+   their synthesized invocation is redundant. Failed native tools keep source
+   context. `python_execution` is different: its program is user-relevant
+   evidence and remains visible on both success and failure. This is the shared
+   TUI/channel policy; web mirrors it at the wire boundary."
   [{:keys [error success?] :as form}]
   (let
     [errored?
      (or (some? error) (and (some? success?) (not success?)))
 
-     python?
-     (= (some-> (:vis/tool-name form)
-                name)
-        "python_execution")]
+     tool-name
+     (some-> (:vis/tool-name form)
+             name)]
 
-    (boolean (and (native-tool-form? form) (= errored? python?)))))
+    (boolean (and (native-tool-form? form) (not errored?) (not= tool-name "python_execution")))))
 
 (def ^:private same-path-coalescable-tools
   "Native tools whose ADJACENT op-cards fold only when they target the SAME file."

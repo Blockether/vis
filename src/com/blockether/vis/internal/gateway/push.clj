@@ -450,12 +450,16 @@
     (catch Throwable t {:status 0 :reason (or (ex-message t) "transport-error")})))
 
 (defn- alert-payload
+  ;; APNs spells the `aps` keys in kebab-case (`thread-id`, `interruption-level`)
+  ;; and silently ignores anything else, so these MUST be literal strings: the
+  ;; wire encoder mechanically snake_cases keywords, which would ship
+  ;; `thread_id` and cost us notification grouping without any error.
   ^String [{:keys [title body data thread-id]}]
   (wire/json-str
     (merge {:aps (cond->
-                   {:alert {:title title :body body} :sound "default" :interruption-level "active"}
+                   {:alert {:title title :body body} :sound "default" "interruption-level" "active"}
                    thread-id
-                   (assoc :thread-id thread-id))}
+                   (assoc "thread-id" thread-id))}
            data)))
 
 (defn send-to-device!
@@ -529,17 +533,61 @@
 ;; =============================================================================
 
 (defonce ^:private describe-session
-  ;; sid -> {:title …} — injected by the server so this ns stays free of any
-  ;; dependency on the session registry.
-  (atom (fn [_sid]
+  ;; [sid tid] -> {:title … :answer …} — injected by the server so this ns stays
+  ;; free of any dependency on the session registry.
+  (atom (fn [_sid _tid]
           nil)))
 
 (defn set-session-describer!
-  "Install the fn that turns a session id into `{:title …}` for the alert."
+  "Install the fn that turns a session id + turn id into `{:title … :answer …}`
+   for the alert. `:answer` is the finished turn's own text."
   [f]
   (reset! describe-session (or f
-                               (fn [_]
+                               (fn [_ _]
                                  nil))))
+
+(def ^:private BODY_LIMIT
+  ;; iOS shows ~2 lines on the lock screen and ~4 expanded; past this the tail is
+  ;; never read, and a huge alert payload only risks APNs' 4KB limit.
+  180)
+
+(defn- clip
+  [^String s ^long limit]
+  (if (<= (count s) limit)
+    s
+    (let
+      [cut
+       (subs s 0 limit)
+
+       sp
+       (.lastIndexOf cut " ")]
+
+      (str (str/trimr (if (> sp (quot limit 2)) (subs cut 0 sp) cut)) "…"))))
+
+(defn- answer-body
+  "The answer, flattened to one banner-safe line.
+
+   A notification exists to tell you WHAT vis said. Markdown is written for a
+   renderer, not a lock screen, so the syntax is stripped rather than shown:
+   fenced code becomes a marker (it is unreadable at this width and would eat
+   the whole budget), links keep their label, emphasis/heading/bullet markers
+   go. nil when nothing readable survives — the caller then falls back to the
+   status line."
+  [text]
+  (some-> text
+          str
+          (str/replace #"(?s)```.*?```" " [code] ")
+          (str/replace #"`([^`]*)`" "$1")
+          (str/replace #"!?\[([^\]]*)\]\([^)]*\)" "$1")
+          (str/replace #"(?m)^\s{0,3}#{1,6}\s*" "")
+          (str/replace #"(?m)^\s{0,3}>\s?" "")
+          (str/replace #"(?m)^\s{0,3}[-*+]\s+" "• ")
+          (str/replace #"\*\*([^*]+)\*\*" "$1")
+          (str/replace #"(?<!\w)[*_]([^*_\n]+)[*_](?!\w)" "$1")
+          (str/replace #"\s+" " ")
+          str/trim
+          not-empty
+          (clip BODY_LIMIT)))
 
 (defn- turn-notification
   [sid event]
@@ -547,11 +595,15 @@
     [status
      (or (get event "status") (when (= "turn.failed" (get event "type")) "failed") "completed")
 
+     described
+     (@describe-session sid (get event "turn_id"))
+
      title
-     (or (not-empty (str (:title (@describe-session sid)))) "Vis")]
+     (or (not-empty (str (:title described))) "Vis")]
 
     {:title title
-     :body (if (= "failed" status) "Turn failed." "Turn finished.")
+     :body (or (answer-body (:answer described))
+               (if (= "failed" status) "Turn failed." "Turn finished."))
      :thread-id (str sid)
      :collapse-id (str sid)
      :data {:session_id (str sid) :turn_id (get event "turn_id") :status status :type "turn.end"}}))
