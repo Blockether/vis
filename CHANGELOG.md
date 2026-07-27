@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.6] - 2026-07-27
+
+### Changed
+- fix(native): bound GraalPy analysis memory
+- Harden prompts, persistence, and mobile push delivery
+- Improve compaction persistence and agent guidance
+- fix(persistence): restore canonical assistant blocks
+- release: update version files for v0.1.5, bump to next dev version
+
+### Package changes
+
+#### com.blockether/vis
+- fix(native): bound GraalPy analysis memory (1a55017b7)
+- Harden prompts, persistence, and mobile push delivery (20f149d89)
+- Improve compaction persistence and agent guidance (a5da90763)
+- fix(persistence): restore canonical assistant blocks (8e2e145b1)
+- release: update version files for v0.1.5, bump to next dev version (4316b08de)
+
+#### com.blockether/vis-persistance-sqlite
+- Improve compaction persistence and agent guidance (a5da90763)
+- fix(persistence): restore canonical assistant blocks (8e2e145b1)
+
+
+
 ## [v0.1.5] - 2026-07-26
 
 ### Changed
@@ -1370,9 +1394,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.6...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
 [v0.1.4]: https://github.com/Blockether/vis/releases/tag/v0.1.4
 [v0.1.5]: https://github.com/Blockether/vis/releases/tag/v0.1.5
+[v0.1.6]: https://github.com/Blockether/vis/releases/tag/v0.1.6
