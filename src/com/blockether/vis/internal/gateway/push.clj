@@ -30,6 +30,8 @@
    knows nothing about Ring."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [com.blockether.vis.internal.gateway.fcm :as fcm]
+            [clojure.java.shell :as sh]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [taoensso.telemere :as tel])
@@ -81,6 +83,32 @@
   (let [v (System/getenv k)]
     (when-not (str/blank? v) (str/trim v))))
 
+(defn- unhex
+  "`security -w` prints hex, not text, whenever the stored password is not plain
+   printable ASCII — which a multi-line PEM never is. Decode that back."
+  [s]
+  (if (and (even? (count s)) (re-matches #"(?i)[0-9a-f]{32,}" s))
+    (String. (byte-array (map #(unchecked-byte (Integer/parseInt (apply str %) 16))
+                              (partition 2 s)))
+             StandardCharsets/UTF_8)
+    s))
+
+(defn- keychain
+  "Generic password stored under service `vis-apns`, account `account`, in the
+   macOS login keychain — or nil anywhere else. Read on demand rather than
+   cached, so locking the keychain revokes access immediately and the secret
+   never sits in a world-readable file."
+  [account]
+  (when (and (str/includes? (str/lower-case (str (System/getProperty "os.name"))) "mac")
+             ;; A redirected push home means a test fixture: never let the
+             ;; developer's real keychain leak into it.
+             (nil? (System/getProperty "vis.push.home")))
+    (try (let
+           [{:keys [exit out]}
+            (sh/sh "security" "find-generic-password" "-s" "vis-apns" "-a" account "-w")]
+           (when (and (= 0 (long exit)) (not (str/blank? out))) (unhex (str/trim out))))
+         (catch Throwable _ nil))))
+
 (defn- discovered-key
   "First `AuthKey_<kid>.p8` under `~/.vis/apns/`, as `{:key-path :key-id}`.
    Apple names the download that way, so the key id needs no extra config."
@@ -116,24 +144,28 @@
      disc
      (or (discovered-key) {})
 
+     ;; The key itself: keychain material beats any file on disk.
+     kc-key
+     (some? (keychain "key"))
+
      key-path
      (or (env-val "VIS_APNS_KEY_PATH") (:key-path side) (:key-path disc))
 
      key-id
-     (or (env-val "VIS_APNS_KEY_ID") (:key-id side) (:key-id disc))
+     (or (env-val "VIS_APNS_KEY_ID") (keychain "key_id") (:key-id side) (:key-id disc))
 
      team-id
-     (or (env-val "VIS_APNS_TEAM_ID") (:team-id side))
+     (or (env-val "VIS_APNS_TEAM_ID") (keychain "team_id") (:team-id side))
 
      topic
-     (or (env-val "VIS_APNS_TOPIC") (:topic side))
+     (or (env-val "VIS_APNS_TOPIC") (keychain "topic") (:topic side))
 
      default-env
-     (or (env-val "VIS_APNS_ENV") (:environment side) "production")
+     (or (env-val "VIS_APNS_ENV") (keychain "environment") (:environment side) "production")
 
      missing
      (cond-> []
-       (or (str/blank? (str key-path)) (not (.isFile (io/file (str key-path)))))
+       (and (not kc-key) (or (str/blank? (str key-path)) (not (.isFile (io/file (str key-path))))))
        (conj "key")
 
        (str/blank? (str key-id))
@@ -145,7 +177,8 @@
        (str/blank? (str topic))
        (conj "topic"))]
 
-    {:key-path key-path
+    {:key-path (when-not kc-key key-path)
+     :key-source (if kc-key "keychain" "file")
      :key-id key-id
      :team-id team-id
      :topic topic
@@ -154,9 +187,15 @@
      :is-configured (empty? missing)}))
 
 (defn configured?
-  "True when this gateway can actually deliver a push."
+  "True when this gateway can deliver an APPLE push."
   []
   (:is-configured (config)))
+
+(defn any-configured?
+  "True when this gateway can deliver a push to SOME platform — Apple or
+   Android. Android-only credentials are a perfectly valid setup."
+  []
+  (or (configured?) (fcm/configured?)))
 
 ;; =============================================================================
 ;; ES256 provider token (JWT)
@@ -224,7 +263,7 @@
     out))
 
 (defn- sign-jwt
-  [{:keys [key-path key-id team-id]}]
+  [{:keys [key-path key-source key-id team-id]}]
   (let
     [header
      (b64url (utf8 (wire/json-str {:alg "ES256" :kid key-id})))
@@ -237,7 +276,7 @@
 
      sig
      (doto (Signature/getInstance "SHA256withECDSA")
-       (.initSign (private-key (slurp key-path)))
+       (.initSign (private-key (if (= "keychain" key-source) (keychain "key") (slurp key-path))))
        (.update (utf8 signing-input)))]
 
     (str signing-input "." (b64url (der->jose (.sign sig))))))
@@ -429,33 +468,53 @@
    when Apple says the token is dead. Returns `{:is-delivered bool :status
    :reason}`."
   [device notification]
-  (let [cfg (config)]
-    (if-not (:is-configured cfg)
-      {:is-delivered false :status 0 :reason "not-configured"}
-      (let
-        [payload (alert-payload notification)
-         token (:token device)
-         env (or (:environment device) (:default-environment cfg))
-         attempt (post-apns cfg env token payload notification)
-         other
-         (when (contains? #{"BadDeviceToken" "BadEnvironmentKeyInToken"} (:reason attempt))
-           (post-apns cfg (if (= "sandbox" env) "production" "sandbox") token payload notification))
-         result (or (when (= 200 (:status other)) other) other attempt)]
+  (let
+    [platform (or (:platform device) "ios")
+     token (:token device)
+     result
+     (cond
+       (= "android" platform)
+       (let [r (fcm/send! token notification)]
+         (when (fcm/dead-token? r) (unregister-device! token))
+         r)
 
-        (when (and other (= 200 (:status other)))
-          (swap! devices assoc-in
-            [token :environment]
-            (if (= "sandbox" env) "production" "sandbox"))
-          (write-devices! @devices))
-        (when (contains? #{"BadDeviceToken" "Unregistered" "DeviceTokenNotForTopic"}
-                         (:reason result))
-          (unregister-device! token))
-        (when (not= 200 (:status result))
-          (tel/log! {:level :warn
-                     :id ::push-failed
-                     :data
-                     {:token (mask token) :status (:status result) :reason (:reason result)}}))
-        (assoc result :is-delivered (= 200 (:status result)))))))
+       ;; Anything else (a browser, some future platform) is stored so the app
+       ;; can see itself registered, but never handed to a provider.
+       (not (contains? #{"ios" "ipados"} platform))
+       {:status 0 :reason "unsupported-platform"}
+
+       :else
+       (let [cfg (config)]
+         (if-not (:is-configured cfg)
+           {:status 0 :reason "not-configured"}
+           (let
+             [payload (alert-payload notification)
+              env (or (:environment device) (:default-environment cfg))
+              attempt (post-apns cfg env token payload notification)
+              other
+              (when (contains? #{"BadDeviceToken" "BadEnvironmentKeyInToken"} (:reason attempt))
+                (post-apns cfg (if (= "sandbox" env) "production" "sandbox") token payload notification))
+              result (or (when (= 200 (:status other)) other) other attempt)]
+
+             (when (and other (= 200 (:status other)))
+               (swap! devices assoc-in
+                 [token :environment]
+                 (if (= "sandbox" env) "production" "sandbox"))
+               (write-devices! @devices))
+             (when (contains? #{"BadDeviceToken" "Unregistered" "DeviceTokenNotForTopic"}
+                              (:reason result))
+               (unregister-device! token))
+             result))))]
+
+    (when (not= 200 (:status result))
+      (tel/log! {:level :warn
+                 :id ::push-failed
+                 :data
+                 {:token (mask token)
+                  :platform platform
+                  :status (:status result)
+                  :reason (:reason result)}}))
+    (assoc result :is-delivered (= 200 (:status result)))))
 
 (defn broadcast!
   "Send one notification to every registered device. Returns a per-device
@@ -506,7 +565,7 @@
   [sid event]
   (try (when (and (contains? #{"turn.completed" "turn.failed"} (get event "type"))
                   (pos? (device-count))
-                  (configured?))
+                  (any-configured?))
          (let [n (turn-notification sid event)]
            (future (broadcast! n))))
        (catch Throwable t
@@ -516,10 +575,22 @@
 (defn status
   "Push capability for `/v1/capabilities` and `/v1/admin/status`."
   []
-  (let [cfg (config)]
-    {:is-available (:is-configured cfg)
-     :provider "apns"
+  (let [cfg (config)
+        f (fcm/config)]
+    {:is-available (or (:is-configured cfg) (:is-configured f))
+     :provider (cond (and (:is-configured cfg) (:is-configured f)) "apns+fcm"
+                     (:is-configured f) "fcm"
+                     :else "apns")
      :environment (:default-environment cfg)
      :topic (:topic cfg)
      :missing (:missing cfg)
+     :apns {:is-available (:is-configured cfg)
+            :environment (:default-environment cfg)
+            :topic (:topic cfg)
+            :key-source (:key-source cfg)
+            :missing (:missing cfg)}
+     :fcm {:is-available (:is-configured f)
+           :project-id (:project-id f)
+           :source (:source f)
+           :missing (:missing f)}
      :devices (device-count)}))

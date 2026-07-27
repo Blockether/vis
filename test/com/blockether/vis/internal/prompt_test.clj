@@ -94,25 +94,25 @@
           "Direct native tools: single operations" "simple edits" "small fixed call sets"
           "dependent chains" "fan-out" "output shaping" "Call advertised native tools directly"
           "never preflight a visible native tool" "read-only `session`"
-          "raw structured values, not UI-rendered text" "never infer fields from presentation"
-          "never use `ctx` or `context`" "reproduce before editing"
-          "rerun the same check after the fix" "batch independent reads" "Create no unrequested"
-          "without asking permission or offering optional" "Never expose or log secrets"
-          "commit, push, publish" "Treat context as a budget" "do not wait for provider failure"
-          "approaches `auto_compress_above`" "immediately when its `hint` asks"
-          "one broad `through`/range fold" "Fold settled search sweeps" "superseded reads"
-          "Never fold the live iteration" "last completed scope" "confirm meaningful reduction"
-          "saved nothing"
+          "raw data, not rendered text" "never infer fields" "After one shape/type error"
+          "inspect keys/types" "never guess again" "never use `ctx` or `context`"
+          "reproduce before editing" "rerun the same check after the fix" "batch independent reads"
+          "Create no unrequested" "without asking permission or offering optional"
+          "Never expose or log secrets" "commit, push, publish" "Treat context as a budget"
+          "do not wait for provider failure" "approaches `auto_compress_above`"
+          "immediately when its `hint` asks" "one broad `through`/range fold"
+          "Fold settled search sweeps" "superseded reads" "Never fold the live iteration"
+          "last completed scope" "confirm meaningful reduction" "saved nothing"
           ;; REPL lifecycle: the agent must reuse managed REPLs and STOP the ones
           ;; it started, or every session leaks a JVM/interpreter child.
           "Before `repl_eval` or any REPL lifecycle change"
           "`session[\"resources\"][\"repls\"][language][dir]`" "Reuse managed REPLs across turns"
           "stop the ones you" "External REPLs are user-owned" "detach, never kill"
-          ;; Anchor staleness: without this the agent chains small writes on
-          ;; anchors invalidated by its own previous edit.
-          "Anchors are positional and EVERY write stales them"
-          "ONE atomic\n  `patch`/`struct_patch` call" "After any write, re-read"
-          "never\n  reuse a pre-write anchor"
+          ;; Anchor staleness: avoid chains on anchors invalidated by an earlier write,
+          ;; without forcing wasteful re-reads of untouched files.
+          "successful write invalidates pre-write anchors for THAT file only"
+          "anchors for other\n  files remain valid" "ONE atomic `patch`/`struct_patch` call"
+          "re-read only that file" "never reuse its\n  pre-write anchor"
           "Lead with the answer. Be terse; depth only when earned."
           ;; End-of-turn teardown: without this the session leaks every REPL and
           ;; background shell the agent spawned.
@@ -176,74 +176,93 @@
 
 (defdescribe
   project-instructions-hoist-test
-  (it "injects AGENTS.md contents as a dedicated PROJECT-INSTRUCTIONS system block"
-      (with-redefs
-        [agents/instructions
-         (constantly {:found? true
-                      :source :repo
-                      :path (str (System/getProperty "user.home") "/repo/AGENTS.md")
-                      :content
-                      "PROJECT-RULE-FROM-AGENTS-MD\nreproduce -> inspect -> minimal change"})]
-        (let
-          [env {:extensions (atom [])}
-           messages (prompt/assemble-stable-prompt-messages env {:active-extensions []})
-           text (prompt/stable-prompt-text messages)]
+  (it
+    "injects primary guidance as a dedicated PROJECT-INSTRUCTIONS system block"
+    (with-redefs
+      [agents/primary-instructions
+       (constantly {:found? true
+                    :source :repo
+                    :path (str (System/getProperty "user.home") "/repo/AGENTS.md")
+                    :content "PROJECT-RULE-FROM-AGENTS-MD\nreproduce -> inspect -> minimal change"})
 
-          (expect (str/includes? text "PROJECT-INSTRUCTIONS"))
-          (expect (str/includes? text "PROJECT-RULE-FROM-AGENTS-MD"))
-          (expect (str/includes? text "~/repo/AGENTS.md"))
-          (expect (not (str/includes? text
-                                      (str (System/getProperty "user.home") "/repo/AGENTS.md"))))
-          (expect (str/includes? text "CORE wins"))
-          (expect (not (str/includes? text "contract (CTX shape, DONE pipeline, SANDBOX)")))
-          ;; Send order: SYSTEM-PROMPT first, then PROJECT-INSTRUCTIONS.
-          (expect (< (str/index-of text "SYSTEM-PROMPT")
-                     (str/index-of text "PROJECT-INSTRUCTIONS"))))))
-  (it "keeps added-folder rules path-scoped and renders every provenance path"
+       agents/added-root-guidance-index
+       (constantly [])]
+
+      (let
+        [env
+         {:extensions (atom [])}
+
+         messages
+         (prompt/assemble-stable-prompt-messages env {:active-extensions []})
+
+         text
+         (prompt/stable-prompt-text messages)]
+
+        (expect (str/includes? text "PROJECT-INSTRUCTIONS"))
+        (expect (str/includes? text "PROJECT-RULE-FROM-AGENTS-MD"))
+        (expect (str/includes? text "~/repo/AGENTS.md"))
+        (expect (not (str/includes? text (str (System/getProperty "user.home") "/repo/AGENTS.md"))))
+        (expect (str/includes? text "CORE wins"))
+        (expect (< (str/index-of text "SYSTEM-PROMPT")
+                   (str/index-of text "PROJECT-INSTRUCTIONS"))))))
+  (it "indexes added-root guidance without injecting its contents"
       (with-redefs
-        [agents/instructions
+        [agents/primary-instructions
          (constantly {:found? true
                       :files [{:scope :project
                                :source :agents-md
                                :path (str (System/getProperty "user.home") "/vis/AGENTS.md")
-                               :content "VIS-RULE"}
-                              {:scope :extra-root
-                               :source :agents-md
-                               :path (str (System/getProperty "user.home") "/spel/AGENTS.md")
-                               :content "SPEL-RULE"}]})]
-        (let
-          [env {:extensions (atom [])}
-           messages (prompt/assemble-stable-prompt-messages env {:active-extensions []})
-           text (prompt/stable-prompt-text messages)]
+                               :content "VIS-RULE"}]})
 
-          (expect (str/includes? text "AGENTS.md (workspace root) — ~/vis/AGENTS.md"))
-          (expect (str/includes? text "AGENTS.md (added folder) — ~/spel/AGENTS.md"))
-          (expect
-            (str/includes?
-              text
-              "Added-folder guidance applies only to files/actions beneath its listed folder"))
-          (expect (str/includes? text "cannot override primary-workspace guidance elsewhere")))))
-  (it "falls back to CLAUDE.md when AGENTS.md is absent and labels the source"
+         agents/added-root-guidance-index
+         (constantly [{:root (str (System/getProperty "user.home") "/spel")
+                       :path (str (System/getProperty "user.home") "/spel/AGENTS.md")
+                       :source :agents-md}])]
+
+        (let
+          [env
+           {:extensions (atom [])}
+
+           messages
+           (prompt/assemble-stable-prompt-messages env {:active-extensions []})
+
+           text
+           (prompt/stable-prompt-text messages)]
+
+          (expect (str/includes? text "VIS-RULE"))
+          (expect (str/includes? text "~/spel — guidance: ~/spel/AGENTS.md"))
+          (expect (str/includes? text "guidance is not loaded yet"))
+          (expect (str/includes? text "read its exact guidance path with `cat`"))
+          (expect (not (str/includes? text "SPEL-RULE"))))))
+  (it "falls back to CLAUDE.md when primary AGENTS.md is absent"
       (with-redefs
-        [agents/instructions (constantly {:found? true
-                                          :source :repo:claude-md-fallback
-                                          :path "/tmp/repo/CLAUDE.md"
-                                          :content "CLAUDE-FALLBACK-RULE"})]
-        (let
-          [env {:extensions (atom [])}
-           messages (prompt/assemble-stable-prompt-messages env {:active-extensions []})
-           text (prompt/stable-prompt-text messages)]
+        [agents/primary-instructions
+         (constantly {:found? true
+                      :source :repo:claude-md-fallback
+                      :path "/tmp/repo/CLAUDE.md"
+                      :content "CLAUDE-FALLBACK-RULE"})
 
-          (expect (str/includes? text "PROJECT-INSTRUCTIONS"))
+         agents/added-root-guidance-index
+         (constantly [])]
+
+        (let
+          [text (-> (prompt/assemble-stable-prompt-messages {:extensions (atom [])}
+                                                            {:active-extensions []})
+                    prompt/stable-prompt-text)]
           (expect (str/includes? text "CLAUDE-FALLBACK-RULE"))
           (expect (str/includes? text "CLAUDE.md")))))
-  (it "emits no PROJECT-INSTRUCTIONS block when no guidance file is present"
-      (with-redefs [agents/instructions (constantly {:found? false})]
-        (let
-          [env {:extensions (atom [])}
-           messages (prompt/assemble-stable-prompt-messages env {:active-extensions []})
-           text (prompt/stable-prompt-text messages)]
+  (it "emits no PROJECT-INSTRUCTIONS block when no guidance is available"
+      (with-redefs
+        [agents/primary-instructions
+         (constantly {:found? false})
 
+         agents/added-root-guidance-index
+         (constantly [])]
+
+        (let
+          [text (-> (prompt/assemble-stable-prompt-messages {:extensions (atom [])}
+                                                            {:active-extensions []})
+                    prompt/stable-prompt-text)]
           (expect (not (str/includes? text "PROJECT-INSTRUCTIONS")))))))
 
 (defdescribe extension-activation-test

@@ -15,13 +15,16 @@
     "sync": "cap sync",
     "presync": "npm run cap:config",
     "android": "cap run android",
-    "preandroid": "npm run cap:config",
+    "preandroid": "npm run cap:config && node scripts/android-prepare.mjs",
     "ios": "cap run ios",
     "preios": "npm run cap:config",
     "add:android": "cap add android",
     "add:ios": "cap add ios",
+    "prepare:android": "npm run cap:config && node scripts/android-prepare.mjs",
+    "build:android": "npm run build && npm run sync && node scripts/android-prepare.mjs",
     "build:ios": "npm run build && npm run sync",
-    "release:ios": "node scripts/ios-release.mjs"
+    "release:ios": "node scripts/ios-release.mjs",
+    "secrets": "node scripts/secrets.mjs"
   },
   "dependencies": {
     "@capacitor-mlkit/barcode-scanning": "8.1.0",

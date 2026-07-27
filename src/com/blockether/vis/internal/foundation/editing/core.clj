@@ -374,9 +374,13 @@
 (defn- ensure-existing-file!
   ^File [^File f]
   (when-not (.exists f)
-    (throw (ex-info (str "File not found: " (paths/abbreviate-home (.getPath f)))
-                    {:type :ext.foundation.editing/file-not-found
-                     :path (paths/abbreviate-home (.getPath f))})))
+    (throw
+      (ex-info
+        (str
+          "File not found: "
+          (paths/abbreviate-home (.getPath f))
+          ". Do not guess or reconstruct paths; use grep to locate the file, then copy its returned path exactly.")
+        {:type :ext.foundation.editing/file-not-found :path (paths/abbreviate-home (.getPath f))})))
   (when (.isDirectory f)
     (throw (ex-info (str "Path is a directory, not a file: " (paths/abbreviate-home (.getPath f)))
                     {:type :ext.foundation.editing/path-is-dir
@@ -4010,7 +4014,7 @@
    Anchors re-resolve against live content: unrelated changes are preserved when
    the targets still match; changed targets abort the entire atomic batch. Omit
    `to_anchor` for one line, use an inclusive range otherwise, and use an empty
-   replacement to delete. Re-read after every successful write."
+   replacement to delete. After success, re-read only a file you will edit again."
   [edits]
   ;; All-kwargs form: `patch(edits=[...])` collapses at the Python boundary to ONE
   ;; spec map `{"edits" [...]}` (see __vis_exec_call__). Unwrap it — mirrors cat/rg.
@@ -5190,15 +5194,20 @@
      "Object with string keys `op`, `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, `range`, and `ranges`. No rendered source-text field."
      :active-fn structural-supported?
      :description
-     (str "Inspect supported source structurally before reading bodies. Returns imports plus a "
-          "nested definition skeleton with signatures, doc gists, and fresh start/end anchors; "
-          "use those anchors to read one definition or its name/kind with `struct_patch`.")
+     (str
+       "Inspect supported source structurally before reading bodies. Returns imports plus a "
+       "nested definition skeleton with signatures, doc gists, and fresh start/end anchors; "
+       "use those anchors to read one definition or its name/kind with `struct_patch`. "
+       "The path must be an exact physical path returned by grep/cat/struct_index; if location is unknown, grep first and never reconstruct it from a namespace.")
      :render render-index-result
      :color-role :tool-color/read
      :schema
      {:type "object"
       :properties
-      {"path" {:type "string" :description "Path to a source file."}
+      {"path"
+       {:type "string"
+        :description
+        "Exact physical source-file path. Copy a path returned by grep/cat/struct_index unchanged; if unknown, grep first—never reconstruct it from a namespace."}
        "range" {:type "array"
                 :items {:type "integer"}
                 :minItems 2
@@ -5242,7 +5251,7 @@
        "Read ONE sufficient file region as patch-ready `lineno:hash` anchored lines. "
        "A DIRECTORY path switches to listing mode (entries one level deep; `depth`/`is_hidden`/`is_respect_gitignore` apply only there). "
        "Pass physical paths exactly as `grep`/`struct_index` returned them; never reconstruct a path from a language namespace or module name. "
-       "For supported code run `struct_index` first, then read only the body you need; every write invalidates returned anchors.")
+       "For supported code run `struct_index` first, then read only the body you need; a write invalidates pre-write anchors for that file, not other files.")
      :render render-cat-result
      :color-role :tool-color/read
      :schema
@@ -5293,7 +5302,12 @@
        "Object with string keys `op`, `query`, `needles`, `searched_paths`, `missing_paths`, "
        "`paths`, `matches`, `file_counts`, `first_hit`, `hint`, `hit_count`, `file_count`, "
        "`total_file_count`, `total_file_count_is_exact`, `limit`, `truncated_by`, and "
-       "`hits_truncated_by`; `matches` contains anchored text/context rows, not a `content` field.")
+       "`hits_truncated_by`. Exact nested shape: `matches[path][\"line:hash\"] = "
+       "{\"text\": string, \"before\": [{\"line\": integer, \"text\": string}], "
+       "\"after\": [{\"line\": integer, \"text\": string}]}`; `before` and `after` are "
+       "omitted only on a row when empty. In Python iterate "
+       "`for path, rows in result[\"matches\"].items():` then "
+       "`for anchor, row in rows.items():`. This is a mapping, never a list, and has no `content` field.")
      :description
      (str
        "Find code by CONTENT (literal, smart-case) and by fuzzy file name — the first move when you do not "
@@ -5344,8 +5358,9 @@
              {:args [(get input "edits")]})
      :description
      (str "Surgically edit text or unsupported code using fresh anchors from `cat`, `grep`, or "
-          "`struct_index`. The batch is atomic and every write stales all anchors. On failure, "
-          "follow its cause, refresh the target and anchor, retry once, then reassess; prefer "
+          "`struct_index`. The batch is atomic. A successful write invalidates pre-write anchors "
+          "for each changed file only; anchors for other files remain valid. On failure, follow "
+          "its cause, refresh only the target and anchor, retry once, then reassess; prefer "
           "`struct_patch` for supported code.")
      :render render-patch-result
      :color-role :tool-color/edit

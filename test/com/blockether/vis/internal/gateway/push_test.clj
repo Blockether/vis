@@ -82,19 +82,18 @@
                       (is (false? (push/configured?)))
                       (is (str/starts-with? (str (push/devices-file)) (.getAbsolutePath home))))))
   (testing "an AuthKey_<kid>.p8 plus apns.edn is a complete configuration"
-    (with-push-home [home]
-                    (write-key! home "ABC123DEFG")
-                    (spit (io/file home "apns" "apns.edn")
-                          (pr-str {:team-id "TEAMID1234"
-                                   :topic "com.example.testapp"
-                                   :environment "sandbox"}))
-                    (let [cfg (push/config)]
-                      (is (true? (:is-configured cfg)))
-                      (is (= [] (:missing cfg)))
-                      (is (= "ABC123DEFG" (:key-id cfg)))
-                      (is (= "com.example.testapp" (:topic cfg)))
-                      (is (= "sandbox" (:default-environment cfg)))
-                      (is (true? (push/configured?)))))))
+    (with-push-home
+      [home]
+      (write-key! home "ABC123DEFG")
+      (spit (io/file home "apns" "apns.edn")
+            (pr-str {:team-id "TEAMID1234" :topic "com.example.testapp" :environment "sandbox"}))
+      (let [cfg (push/config)]
+        (is (true? (:is-configured cfg)))
+        (is (= [] (:missing cfg)))
+        (is (= "ABC123DEFG" (:key-id cfg)))
+        (is (= "com.example.testapp" (:topic cfg)))
+        (is (= "sandbox" (:default-environment cfg)))
+        (is (true? (push/configured?)))))))
 
 (deftest provider-token-is-a-verifiable-es256-jwt-test
   (with-push-home
@@ -243,3 +242,20 @@
            (state/append-event! sid "turn.completed" {:turn_id "t9" :status "completed"})
            (is (= [[sid "turn.completed"]] @seen))
            (finally (state/remove-event-tap! ::boom) (state/remove-event-tap! ::spy))))))
+
+(deftest keychain-credentials
+  (testing "`security -w` hex output is decoded back to the PEM"
+    (let
+      [pem
+       "-----BEGIN PRIVATE KEY-----\nMIGHAg\n-----END PRIVATE KEY-----\n"
+
+       hex
+       (str/join (map #(format "%02x" (int %)) pem))]
+
+      (is (= pem (#'push/unhex hex)))
+      (is (= "ABCD123456" (#'push/unhex "ABCD123456")) "plain values pass through")))
+  (testing "a redirected push home never reads the developer's real keychain"
+    (with-push-home [home]
+                    (is (some? home))
+                    (is (nil? (#'push/keychain "key")))
+                    (is (contains? (set (:missing (push/config))) "key")))))

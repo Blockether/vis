@@ -1953,7 +1953,7 @@
    and report APNs' per-device verdict. The ONLY way to prove the whole chain
    (key, topic, environment, token) without waiting for a real turn."
   [_]
-  (if-not (push/configured?)
+  (if-not (push/any-configured?)
     (error-response 503
                     :push-unavailable "push is not configured on this gateway"
                     :push (push/status))

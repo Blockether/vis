@@ -212,11 +212,25 @@ The gateway pushes exactly **one alert per finished turn** — `turn.completed` 
 `turn.failed` — to every device registered with it, so you can leave the app and
 still learn when the model is done. Nothing else is pushed, and the alert carries
 only the session title plus `session_id`, `turn_id`, `status`; the transcript
-never leaves over APNs.
+never leaves the gateway. iOS devices are delivered through **APNs**, Android
+devices through **FCM**; each half is configured independently and either can be
+left off.
 
-### Gateway side (APNs credentials)
+### Gateway side, iOS (APNs credentials)
 
-Push is **off until the gateway holds an APNs key**. Give it one of:
+Push is **off until the gateway holds an APNs key**. On macOS the key can live in
+the login keychain, so nothing sensitive touches the filesystem:
+
+```bash
+security add-generic-password -U -s vis-apns -a key      -w "$(cat AuthKey_ABCD123456.p8)"
+security add-generic-password -U -s vis-apns -a key_id   -w ABCD123456
+security add-generic-password -U -s vis-apns -a team_id  -w YOURTEAMID
+security add-generic-password -U -s vis-apns -a topic    -w com.example.yourapp
+security add-generic-password -U -s vis-apns -a environment -w production
+```
+
+The key is read per signature rather than cached, so locking the keychain stops
+delivery immediately. Otherwise give the gateway one of:
 
 ```bash
 export VIS_APNS_KEY_PATH=~/.vis/apns/AuthKey_ABCD123456.p8
@@ -240,6 +254,39 @@ enabled; the same key signs for every app of the team and never expires.
 `GET /v1/capabilities` reports readiness as `features.push`, naming what is
 missing when it is not ready.
 
+### Gateway side, Android (FCM credentials)
+
+Android uses **FCM HTTP v1**, which authenticates with a Firebase *service
+account* JSON (Firebase console -> *Project settings -> Service accounts ->
+Generate new private key*). Same trust model as the APNs key:
+
+```bash
+security add-generic-password -U -s vis-fcm -a service_account -w "$(cat sa.json)"
+security add-generic-password -U -s vis-fcm -a project_id      -w your-firebase-project
+```
+
+or, without a keychain:
+
+```bash
+export VIS_FCM_SERVICE_ACCOUNT_PATH=~/.vis/fcm/service-account.json
+```
+
+A `*.json` service account dropped into `~/.vis/fcm/` is picked up as well. The
+gateway signs an RS256 assertion, exchanges it for an OAuth access token (cached
+for 50 minutes) and posts to `projects/<id>/messages:send`; tokens FCM reports as
+`UNREGISTERED`/`INVALID_ARGUMENT` are evicted like their APNs counterparts.
+
+The app half is `google-services.json` from the same Firebase project, for an
+Android app whose package name equals the Capacitor `appId`. Because `android/`
+is regenerable and gitignored, it is stamped in at build time by
+`npm run prepare:android` (also run by `npm run android` / `build:android`) from
+the keychain (`vis-fcm/google_services`), `~/.vis/fcm/google-services.json`, or
+`--file`. Without it the app still builds and simply never gets a token.
+
+Registrations from a platform the gateway cannot serve are stored and listed but
+never sent — the device reports `unsupported-platform` rather than having its
+token thrown at the wrong provider.
+
 ### Device registry
 
 | Route | What it does |
@@ -247,7 +294,7 @@ missing when it is not ready.
 | `GET /v1/devices` | registered devices (tokens **masked**) + this gateway's push readiness |
 | `POST /v1/devices` | idempotently register `{token, platform, environment, client, client_version, label}` |
 | `DELETE /v1/devices/:token` | stop pushing to one device |
-| `POST /v1/devices/actions/test` | one test alert to every device, with APNs' per-device verdict |
+| `POST /v1/devices/actions/test` | one test alert to every device, with the provider's per-device verdict |
 
 Tokens live in `~/.vis/devices.edn`, are never echoed back in full, and a device
 Apple reports as `Unregistered`/`BadDeviceToken` is evicted automatically. A
@@ -257,13 +304,14 @@ itself.
 
 ### App side
 
-Companion -> gateway **Settings -> Notifications**: *Notify this device* asks iOS
-for permission, registers the APNs token with that gateway, and *Send a test*
+Companion -> gateway **Settings -> Notifications**: *Notify this device* asks the
+OS for permission, registers the device token with that gateway, and *Send a test*
 proves the whole chain. Tapping an alert reopens the session it came from.
 
 The iOS capability itself (`aps-environment` entitlement + AppDelegate token
 forwarding) is stamped into the regenerable `ios/` project by
-`npm run release:ios -- --prepare`, so it survives a `cap add ios`.
+`npm run release:ios -- --prepare`, so it survives a `cap add ios`. Android needs
+no entitlement — only `google-services.json`, stamped by `npm run prepare:android`.
 
 
 ## Shared slash commands

@@ -16,6 +16,7 @@ import {
   isPushSupported,
   maskToken,
   pushPermission,
+  pushPlatform,
   type PushPermission,
 } from '../lib/push';
 import { applyGatewayTheme, resolveTheme } from '../lib/theme';
@@ -636,8 +637,9 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
 
 /**
  * Native push ON THIS GATEWAY: whether it can push at all, whether THIS device
- * is registered, and a live test that proves the whole APNs chain (key, topic,
- * environment, token) without waiting for a real turn to finish.
+ * is registered, and a live test that proves the whole push chain (APNs key and
+ * topic on iOS, the Firebase service account on Android) without waiting for a
+ * real turn to finish.
  *
  * The token itself never round-trips through the UI — the gateway masks every
  * token it stores, and the app matches its own row by computing the same mask.
@@ -736,7 +738,12 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
     }
   }, [client, load]);
 
-  const available = push?.is_available ?? false;
+  // Push has two independent halves; this device only cares about its own. An
+  // iOS-only gateway is "available" to an iPhone and "not configured" to a
+  // Pixel, and the missing-credentials banner must name the right ones.
+  const provider = pushPlatform() === 'android' ? push?.fcm : push?.apns;
+  const available = provider ? provider.is_available : (push?.is_available ?? false);
+  const missing = provider?.missing ?? push?.missing;
 
   return (
     <SettingsPanel
@@ -744,7 +751,7 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
       meta={
         push
           ? available
-            ? `${push.devices} device${push.devices === 1 ? '' : 's'} · ${push.environment ?? 'production'}`
+            ? `${push.devices} device${push.devices === 1 ? '' : 's'} · ${pushPlatform() === 'android' ? (push.fcm?.project_id ?? 'fcm') : (push.environment ?? 'production')}`
             : 'not configured'
           : 'checking…'
       }
@@ -760,7 +767,8 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
 
         {push && !available && (
           <Banner kind="warn">
-            This gateway cannot push yet — missing {(push.missing ?? ['APNs credentials']).join(', ')}.
+            This gateway cannot push to {pushPlatform() === 'android' ? 'Android' : 'iOS'} yet — missing{' '}
+            {(missing ?? ['push credentials']).join(', ')}.
           </Banner>
         )}
 

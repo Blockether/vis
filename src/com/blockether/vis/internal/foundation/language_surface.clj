@@ -110,12 +110,17 @@
        python  : repl_eval · repl"
   [env]
   (when-let [data (capability-data env)]
-    (str "LANGUAGE TOOLS (active packs; call via the facade, language first):\n"
-         (str/join "\n"
-                   (for [[lang tools] data]
-                     (str "  " lang " : " (str/join " · " tools))))
-         (when (contains? data "clojure")
-           "\n  clojure reload after disk edits: `(require 'my.ns :reload)`."))))
+    (str
+      "LANGUAGE TOOLS (active packs; call via the facade, language first):\n"
+      (str/join "\n"
+                (for [[lang tools] data]
+                  (str "  " lang " : " (str/join " · " tools))))
+      (when (contains? data "clojure")
+        (str
+          "\n  clojure REPL test runs reuse the managed REPL and execute its already-loaded Vars;"
+          " they do NOT reload namespaces automatically. After disk edits, explicitly"
+          " `(require 'my.ns :reload)` for every changed production and test namespace before"
+          " running it, or tests may exercise stale code; prefer restarting over `:reload-all`.")))))
 
 (defn- language-like? [x] (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x)))
 

@@ -45,6 +45,15 @@ export function pushEnvironment(): 'sandbox' | 'production' {
   return import.meta.env.DEV ? 'sandbox' : 'production';
 }
 
+/**
+ * Which push provider this device belongs to: `ios`/`ipados` are delivered via
+ * APNs, `android` via FCM. The gateway dispatches on exactly this value, so the
+ * panel reads the matching half of its status instead of the APNs one.
+ */
+export function pushPlatform(): string {
+  return Capacitor.getPlatform();
+}
+
 /** Same masking as the gateway, so a device can find ITS row in `/v1/devices`. */
 export function maskToken(token: string): string {
   return token.length <= 12 ? '…' : `${token.slice(0, 6)}…${token.slice(-4)}`;

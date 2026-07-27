@@ -17,6 +17,7 @@
  *   npm run release:ios -- --version 1.2.0 --build 4711
  *   npm run release:ios -- --skip-web   # reuse dist/ and the last `cap sync`
  *   npm run release:ios -- --prepare    # web + cap sync + stamp versions, then STOP
+ *   npm run release:ios -- --prepare --dev  # same, but aps-environment=development
  *                                       # (archive by hand in Xcode: Product > Archive)
  *
  * Upload auth, in order of preference:
@@ -31,15 +32,30 @@
  * profile.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+
+// Release credentials live in the macOS login keychain (scripts/secrets.mjs),
+// never in a dotfile or this repo. An env var still wins, so CI can inject one.
+// `security -w` prints hex whenever the stored password is not plain printable
+// ASCII, which a multi-line PEM never is.
+const unhex = (s) => (/^[0-9a-f]{32,}$/i.test(s) && s.length % 2 === 0 ? Buffer.from(s, 'hex').toString('utf8') : s);
+const keychain = (service, account) => {
+  if (process.platform !== 'darwin') return undefined;
+  const res = spawnSync('security', ['find-generic-password', '-s', service, '-a', account, '-w'], {
+    encoding: 'utf8',
+  });
+  return res.status === 0 && res.stdout.trim() ? unhex(res.stdout.trim()) : undefined;
+};
+const secret = (envName, account) => process.env[envName]?.trim() || keychain('vis-ios', account);
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const iosDir = join(appDir, 'ios');
 const projectDir = join(iosDir, 'App');
 const exportOptions = join(iosDir, 'ExportOptions.plist');
-const teamId = process.env.VIS_IOS_TEAM_ID ?? 'JSZTFUBUBB';
+const teamId = secret('VIS_IOS_TEAM_ID', 'team_id') ?? 'JSZTFUBUBB';
 
 const args = process.argv.slice(2);
 const flag = (name) => {
@@ -127,21 +143,29 @@ console.log(`· stamped App.xcodeproj  ${marketingVersion} (${buildNumber})`);
 // Push notifications are a NATIVE capability, and `ios/` is gitignored and
 // regenerable — so the entitlement, its wiring into the target, and the
 // AppDelegate token forwarding are stamped here rather than committed.
+//
+// `aps-environment` must MATCH the provisioning profile the build is signed
+// with, or codesign rejects it: an Xcode Run onto a cable-attached phone uses
+// the *development* profile (sandbox APNs), an archive uses distribution
+// (production). Default production; `--aps development` (or `--dev`) for the
+// device-testing loop. The file is rewritten whenever the value differs.
+const apsEnvironment = flag('aps') ?? (has('dev') ? 'development' : 'production');
+if (!['development', 'production'].includes(apsEnvironment)) {
+  die(`bad --aps "${apsEnvironment}" (development | production)`);
+}
 const entitlementsPath = join(projectDir, 'App', 'App.entitlements');
-if (!existsSync(entitlementsPath)) {
-  writeFileSync(
-    entitlementsPath,
-    `<?xml version="1.0" encoding="UTF-8"?>
+const entitlements = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>aps-environment</key>
-  <string>production</string>
+  <string>${apsEnvironment}</string>
 </dict>
 </plist>
-`,
-  );
-  console.log(`· wrote ${entitlementsPath}`);
+`;
+if (!existsSync(entitlementsPath) || readFileSync(entitlementsPath, 'utf8') !== entitlements) {
+  writeFileSync(entitlementsPath, entitlements);
+  console.log(`· wrote ${entitlementsPath} (aps-environment ${apsEnvironment})`);
 }
 
 // Point every build configuration of the App target at it. Without this the
@@ -185,11 +209,31 @@ if (has('prepare')) {
 }
 
 // App Store Connect API key: also lets xcodebuild create signing assets itself.
-const keyId = process.env.VIS_ASC_KEY_ID;
-const issuerId = process.env.VIS_ASC_ISSUER_ID;
-const keyPath = process.env.VIS_ASC_KEY_PATH;
+const keyId = secret('VIS_ASC_KEY_ID', 'asc_key_id');
+const issuerId = secret('VIS_ASC_ISSUER_ID', 'asc_issuer_id');
+const keyPem = process.env.VIS_ASC_KEY_PATH ? undefined : keychain('vis-ios', 'asc_key');
+
+// xcodebuild and altool both insist on a FILE. Materialise the keychain copy in
+// a private temp dir for the length of the run, then shred it — including when
+// the run dies, so key material never outlives the process.
+let keyPath = process.env.VIS_ASC_KEY_PATH;
+if (keyPem && keyId) {
+  const dir = mkdtempSync(join(tmpdir(), 'vis-asc-'));
+  keyPath = join(dir, `AuthKey_${keyId}.p8`);
+  writeFileSync(keyPath, keyPem.endsWith('\n') ? keyPem : `${keyPem}\n`, { mode: 0o600 });
+  chmodSync(dir, 0o700);
+  const shred = () => rmSync(dir, { recursive: true, force: true });
+  process.on('exit', shred);
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => process.exit(1));
+}
+
 const hasApiKey = Boolean(keyId && issuerId && keyPath);
-if (hasApiKey && !existsSync(keyPath)) die(`VIS_ASC_KEY_PATH does not exist: ${keyPath}`);
+if (hasApiKey && !existsSync(keyPath)) die(`App Store Connect key does not exist: ${keyPath}`);
+console.log(
+  hasApiKey
+    ? `· signing in with App Store Connect key ${keyId}${keyPem ? ' (keychain)' : ''}`
+    : "· no App Store Connect key — falling back to the Apple account signed into Xcode",
+);
 
 const archiveArgs = [
   '-project',
@@ -242,19 +286,14 @@ if (hasApiKey) {
   run('xcrun', ['altool', '--upload-app', '-t', 'ios', '-f', ipa, '--apiKey', keyId, '--apiIssuer', issuerId], {
     env: { ...process.env, API_PRIVATE_KEYS_DIR: dirname(resolve(keyPath)) },
   });
-} else if (process.env.VIS_ASC_APPLE_ID && process.env.VIS_ASC_APP_PASSWORD) {
-  run('xcrun', [
-    'altool',
-    '--upload-app',
-    '-t',
-    'ios',
-    '-f',
-    ipa,
-    '-u',
-    process.env.VIS_ASC_APPLE_ID,
-    '-p',
-    '@env:VIS_ASC_APP_PASSWORD',
-  ]);
+} else if (secret('VIS_ASC_APPLE_ID', 'apple_id') && secret('VIS_ASC_APP_PASSWORD', 'app_password')) {
+  run(
+    'xcrun',
+    ['altool', '--upload-app', '-t', 'ios', '-f', ipa, '-u', secret('VIS_ASC_APPLE_ID', 'apple_id'), '-p', '@env:VIS_ASC_APP_PASSWORD'],
+    // Through the environment, never argv: an app-specific password on a command
+    // line is readable by every process on the machine.
+    { env: { ...process.env, VIS_ASC_APP_PASSWORD: secret('VIS_ASC_APP_PASSWORD', 'app_password') } },
+  );
 } else {
   // No credentials in the environment: re-export with destination=upload, which
   // authenticates as the Apple account signed into Xcode (Xcode > Settings >

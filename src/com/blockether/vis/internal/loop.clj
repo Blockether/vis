@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.loop
   (:refer-clojure)
-  (:require [clojure.set :as set]
+  (:require [charred.api :as json]
+            [clojure.set :as set]
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [com.blockether.anomaly.core :as anomaly]
@@ -2748,7 +2749,15 @@
    `apply-summaries` still renders any legacy persisted `{\"drop\" true}` intents."
   [ctx-atom]
   (let
-    [->set
+    [normalize-target
+     (fn [value]
+       (if (and (string? value) (re-matches #"\s*[\[{].*" value))
+         (try (let [parsed (json/read-json value)]
+                (if (or (sequential? parsed) (map? parsed)) parsed value))
+              (catch Throwable _ value))
+         value))
+
+     ->set
      (fn [scopes]
        (into #{}
              (comp (map str) (map str/trim) (remove str/blank?))
@@ -2783,39 +2792,31 @@
 
      target
      (fn [scopes]
-       (if (map? scopes)
-         (let
-           [pick
-            (fn [k]
-              (some-> (get scopes k)
-                      str
-                      str/trim
-                      not-empty))
+       (let [scopes (normalize-target scopes)]
+         (if (map? scopes)
+           (let
+             [pick (fn [k]
+                     (some-> (get scopes k)
+                             str
+                             str/trim
+                             not-empty))
+              thr (pick "through")
+              snc (pick "since")
+              frm (pick "from")
+              to (pick "to")]
 
-            thr
-            (pick "through")
+             (cond thr [{"through" thr} (str "through " thr)]
+                   snc [(freeze {"since" snc}) (str "since " snc)]
+                   (or frm to) [(freeze (cond-> {}
+                                          frm
+                                          (assoc "from" frm)
 
-            snc
-            (pick "since")
-
-            frm
-            (pick "from")
-
-            to
-            (pick "to")]
-
-           (cond thr [{"through" thr} (str "through " thr)]
-                 snc [(freeze {"since" snc}) (str "since " snc)]
-                 (or frm to) [(freeze (cond-> {}
-                                        frm
-                                        (assoc "from" frm)
-
-                                        to
-                                        (assoc "to" to)))
-                              (str "window " (or frm "start") ".." (or to "end"))]
-                 :else nil))
-         (let [ss (->set scopes)]
-           (when (seq ss) [{"scopes" ss} (str/join ", " (sort ss))]))))
+                                          to
+                                          (assoc "to" to)))
+                                (str "window " (or frm "start") ".." (or to "end"))]
+                   :else nil))
+           (let [ss (->set scopes)]
+             (when (seq ss) [{"scopes" ss} (str/join ", " (sort ss))])))))
 
      exclude-protected
      (fn [intent]
@@ -6378,11 +6379,58 @@
   "Fallback shown only when the provider repeatedly returns an empty reply."
   "The model returned empty replies repeatedly, so the turn was stopped.")
 
+(defn- provider-output-chunk?
+  "True after visible assistant output or a tool execution entered the stream.
+   Engine lifecycle/progress chunks are safe to replay after a pre-output failure."
+  [chunk]
+  (contains? #{:reasoning :content :assistant-prose :form-start :tool-start :form-result}
+             (:phase chunk)))
+
+(defn- emergency-fold-activity
+  "Mechanical activity counts for omitted iterations; derives only recorded tool names."
+  [trailer-iters scopes]
+  (let
+    [names
+     (into []
+           (comp (filter (fn [[_ rec]]
+                           (contains? scopes (some iter-of-scope (keep :scope (:forms-vec rec))))))
+                 (mapcat (fn [[_ rec]]
+                           (keep #(some-> (:name %)
+                                          name)
+                                 (:tool-calls rec)))))
+           trailer-iters)
+
+     counts
+     (frequencies names)
+
+     categories
+     [["search" (+ (long (get counts "grep" 0)) (long (get counts "search" 0)))]
+      ["read"
+       (+ (long (get counts "cat" 0))
+          (long (get counts "struct_index" 0))
+          (long (get counts "struct_node" 0)))] ["test" (long (get counts "run_tests" 0))]
+      ["tool call" (long (count names))]]]
+
+    (->> categories
+         (keep (fn [[label n]]
+                 (let [n (long n)]
+                   (when (pos? n)
+                     (str n
+                          " "
+                          (if (and (= label "search") (not= n 1))
+                            "searches"
+                            (str label (when (not= n 1) "s"))))))))
+         (str/join ", "))))
+
 (defn- emergency-fold-projection
   "Build a one-shot provider projection with every foldable settled iteration
    collapsed through the same `apply-summaries` path as `session_fold`.
-   Canonical trailer history and persisted summaries are never mutated."
-  [base-messages trailer-iters summaries protected-scopes replay-target replay-policies]
+   Canonical trailer history and persisted summaries are never mutated. Existing
+   semantic folds remain authoritative and are not replaced by the mechanical gist.
+   The retry gate uses Svar's message-token estimator, not serialized characters;
+   the retry itself repeats Svar's provider-aware exact preflight before any send."
+  [base-messages trailer-iters summaries protected-scopes replay-target replay-policies model
+   max-input-tokens]
   (let
     [universe
      (into []
@@ -6393,8 +6441,11 @@
      protected
      (set protected-scopes)
 
+     already-folded
+     (into #{} (mapcat #(get % "scopes")) (ctx-engine/expand-through summaries universe))
+
      scopes
-     (into #{} (remove protected) universe)
+     (into #{} (remove (into protected already-folded)) universe)
 
      live-turn
      (some->> universe
@@ -6404,37 +6455,68 @@
 
     (when (seq scopes)
       (let
-        [intent
+        [activity
+         (emergency-fold-activity trailer-iters scopes)
+
+         intent
          (cond->
            {"scopes" scopes
-            "gist"
-            (str
-              "Emergency transport fold omitted "
-              (count scopes)
-              " settled iteration(s) after context overflow; canonical session history remains intact.")}
+            "gist" (str "Emergency transport fold omitted "
+                        (count scopes)
+                        " settled iteration(s)"
+                        (when (seq activity) (str " (" activity ")"))
+                        " after context overflow; canonical session history remains intact.")}
            live-turn
            (assoc "at_turn" live-turn))
 
          folded-trailer
          (apply-summaries trailer-iters (conj (vec summaries) intent) protected)
 
+         before-messages
+         (into (vec base-messages)
+               (conversation-suffix trailer-iters replay-target replay-policies))
+
          messages
          (into (vec base-messages)
                (conversation-suffix folded-trailer replay-target replay-policies))
 
-         before-size
-         (count (pr-str (into (vec base-messages)
-                              (conversation-suffix trailer-iters replay-target replay-policies))))
+         before-tokens
+         (svar-router/count-messages model before-messages)
 
-         after-size
-         (count (pr-str messages))]
+         after-tokens
+         (svar-router/count-messages model messages)]
 
-        (when (< after-size before-size)
+        (when (and (< after-tokens before-tokens)
+                   (or (nil? max-input-tokens) (<= after-tokens (long max-input-tokens))))
           {:messages messages
-           :before-size before-size
-           :after-size after-size
-           :saved-size (- before-size after-size)
+           :before-tokens before-tokens
+           :after-tokens after-tokens
+           :saved-tokens (- before-tokens after-tokens)
+           :max-input-tokens max-input-tokens
            :scopes scopes})))))
+
+(defn- context-overflow-recovery!
+  "Claim the one-shot overflow retry, publish the failed request's measured
+   utilization, and return a smaller provider projection. nil means terminal."
+  [{:keys [error output-started? recovery-attempted? ctx-atom turn-input-tokens base-messages
+           trailer-iters summaries protected-scopes replay-target replay-policies model]}]
+  (let [overflow (ex-data error)]
+    (when (and (= :svar.tokens/context-overflow (:type overflow))
+               (not @output-started?)
+               (compare-and-set! recovery-attempted? false true))
+      (stamp-utilization! ctx-atom
+                          (ctx-engine/utilization (:input-tokens overflow)
+                                                  (:max-input-tokens overflow)
+                                                  turn-input-tokens
+                                                  ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))
+      (emergency-fold-projection base-messages
+                                 trailer-iters
+                                 summaries
+                                 protected-scopes
+                                 replay-target
+                                 replay-policies
+                                 model
+                                 (:max-input-tokens overflow)))))
 
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
@@ -7145,7 +7227,8 @@
                            :routing @iteration-routing
                            :resolved-model resolved-model
                            :on-chunk (fn [chunk]
-                                       (reset! provider-output-started? true)
+                                       (when (provider-output-chunk? chunk)
+                                         (reset! provider-output-started? true))
                                        (emit-hook! on-chunk chunk "Provider chunk hook failed"))
                            :active-extensions active-exts
                            :answer-validation-context
@@ -7299,21 +7382,26 @@
                               (Thread/sleep #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
                                             (long delay-ms))
                               ::retry-provider-unavailable)
-                            (and (= :svar.tokens/context-overflow (:type (ex-data e)))
-                                 (not @provider-output-started?)
-                                 (compare-and-set! context-recovery-attempted? false true))
+                            :else
                             (if-let
-                              [recovery (emergency-fold-projection
-                                          messages
-                                          trailer-iters
-                                          (some-> (:ctx-atom environment)
-                                                  deref
-                                                  (get "session_summaries"))
-                                          (some-> (:ctx-atom environment)
-                                                  deref
-                                                  (get "engine_protected_iter_scopes"))
-                                          replay-target
-                                          replay-policies)]
+                              [recovery
+                               (context-overflow-recovery!
+                                 {:error e
+                                  :output-started? provider-output-started?
+                                  :recovery-attempted? context-recovery-attempted?
+                                  :ctx-atom (:ctx-atom environment)
+                                  :turn-input-tokens (:input-tokens @usage-atom)
+                                  :base-messages messages
+                                  :trailer-iters trailer-iters
+                                  :summaries (some-> (:ctx-atom environment)
+                                                     deref
+                                                     (get "session_summaries"))
+                                  :protected-scopes (some-> (:ctx-atom environment)
+                                                            deref
+                                                            (get "engine_protected_iter_scopes"))
+                                  :replay-target replay-target
+                                  :replay-policies replay-policies
+                                  :model (or (:name resolved-model) (:model resolved-model))})]
                               (do (reset! effective-messages-atom (:messages recovery))
                                   (tel/log!
                                     {:level :warn
@@ -7326,13 +7414,7 @@
                                                            {:iteration iteration
                                                             :messages @effective-messages-atom
                                                             :routing @iteration-routing
-                                                            :reasoning-level reasoning-level}))
-                            :else (handle-iteration-exception! e
-                                                               {:iteration iteration
-                                                                :messages @effective-messages-atom
-                                                                :routing @iteration-routing
-                                                                :reasoning-level
-                                                                reasoning-level}))))]
+                                                            :reasoning-level reasoning-level})))))]
                      (if-let
                        [[attempt* max-tokens-attempt* pu-attempt*]
                         (next-retry-counters result

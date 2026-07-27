@@ -268,30 +268,34 @@
         (expect (= :language-surface/ambiguous-language
                    (error-type #(language-surface/repl-eval env {"code" "1"})))))))
 
-(defdescribe capability-matrix-test
-             (it "renders the facade verbs per ACTIVE language pack"
-                 (let
-                   [env
-                    {:active-extensions (atom [{:ext/language-tools [{:language "clojure"
-                                                                      :format-fn identity
-                                                                      :test-fn identity
-                                                                      :repl-eval-fn identity
-                                                                      :start-repl-fn identity}
-                                                                     {:language "python"
-                                                                      :repl-eval-fn identity
-                                                                      :start-repl-fn identity}]}])}
+(defdescribe
+  capability-matrix-test
+  (it "renders the facade verbs per ACTIVE language pack"
+      (let
+        [env
+         {:active-extensions (atom [{:ext/language-tools [{:language "clojure"
+                                                           :format-fn identity
+                                                           :test-fn identity
+                                                           :repl-eval-fn identity
+                                                           :start-repl-fn identity}
+                                                          {:language "python"
+                                                           :repl-eval-fn identity
+                                                           :start-repl-fn identity}]}])}
 
-                    m
-                    (language-surface/capability-matrix env)]
+         m
+         (language-surface/capability-matrix env)]
 
-                   (expect (str/includes? m "clojure : format_code · run_tests · repl_eval · repl"))
-                   (expect (str/includes? m "python : repl_eval · repl"))
-                   (expect (str/includes? m "clojure reload after disk edits"))
-                   (expect (not (str/includes? m "session[\"resources\"]")))
-                   (expect (not (str/includes? m "Keep managed REPLs alive")))))
-             (it "is nil when no language pack is active (nothing dead in the prompt)"
-                 (expect (nil? (language-surface/capability-matrix {:active-extensions (atom
-                                                                                         [{}])})))))
+        (expect (str/includes? m "clojure : format_code · run_tests · repl_eval · repl"))
+        (expect (str/includes? m "python : repl_eval · repl"))
+        (expect (str/includes? m "reuse the managed REPL and execute its already-loaded Vars"))
+        (expect (str/includes? m "do NOT reload namespaces automatically"))
+        (expect (str/includes? m "tests may exercise stale code"))
+        (expect (str/includes? m "every changed production and test namespace"))
+        (expect (str/includes? m "prefer restarting over `:reload-all`"))
+        (expect (not (str/includes? m "session[\"resources\"]")))
+        (expect (not (str/includes? m "Keep managed REPLs alive")))))
+  (it "is nil when no language pack is active (nothing dead in the prompt)"
+      (expect (nil? (language-surface/capability-matrix {:active-extensions (atom [{}])})))))
 
 (defdescribe
   render-test-result-test

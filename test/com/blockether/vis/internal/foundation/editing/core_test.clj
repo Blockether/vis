@@ -2842,10 +2842,11 @@
      cat-result
      (:ext.symbol/result editing/cat-symbol)]
 
-    (it "keeps anchor lifecycle policy in the native descriptions"
+    (it "scopes anchor invalidation to files actually written"
         (expect (string/includes? patch-description "fresh anchors"))
-        (expect (string/includes? patch-description "stales all anchors"))
-        (expect (string/includes? cat-description "invalidates returned anchors")))
+        (expect (string/includes? patch-description "changed file only"))
+        (expect (string/includes? patch-description "anchors for other files remain valid"))
+        (expect (string/includes? cat-description "for that file, not other files")))
     (it "documents cat's Python result shape instead of relying on rendered output"
         (expect (string/includes? cat-result "only content field"))
         (expect (string/includes? cat-result "no `content`/`lines`"))
@@ -2859,77 +2860,83 @@
         (let [fields (get-in patch-schema [:properties "edits" :items :properties])]
           (expect (= #{"path" "from_anchor" "to_anchor" "replace"} (set (keys fields))))))))
 
-(defdescribe
-  editing-native-schema-shape-test
-  (it "grep advertises content-list OR, filename semantics, and empty-query listing"
-      (let
-        [description
-         (:ext.symbol/description editing/grep-symbol)
+(defdescribe editing-native-schema-shape-test
+             (it "grep advertises content-list OR, filename semantics, and empty-query listing"
+                 (let
+                   [description
+                    (:ext.symbol/description editing/grep-symbol)
 
-         query
-         (get-in editing/grep-symbol [:ext.symbol/schema :properties "query"])
+                    query
+                    (get-in editing/grep-symbol [:ext.symbol/schema :properties "query"])
 
-         alternatives
-         (into {} (map (juxt :type identity) (:oneOf query)))
+                    alternatives
+                    (into {} (map (juxt :type identity) (:oneOf query)))
 
-         string-schema
-         (get alternatives "string")
+                    string-schema
+                    (get alternatives "string")
 
-         array-schema
-         (get alternatives "array")]
+                    array-schema
+                    (get alternatives "array")]
 
-        (expect (= #{"string" "array"} (set (keys alternatives))))
-        (expect (nil? (:minLength string-schema)))
-        (expect (= 1 (get-in array-schema [:items :minLength])))
-        (expect (string/includes? description "`query: \"\"`"))
-        (expect (string/includes? (:description query) "empty string"))
-        (expect (string/includes? (:description query) "frecency/recency"))
-        (expect (string/includes? (:description query) "OR for content search"))
-        (expect (string/includes? (:description query) "joined terms"))))
-  (it "advertises file-scope fallback and non-negative context lines"
-      (let
-        [properties
-         (get-in editing/grep-symbol [:ext.symbol/schema :properties])
+                   (expect (= #{"string" "array"} (set (keys alternatives))))
+                   (expect (nil? (:minLength string-schema)))
+                   (expect (= 1 (get-in array-schema [:items :minLength])))
+                   (expect (string/includes? description "`query: \"\"`"))
+                   (expect (string/includes? (:description query) "empty string"))
+                   (expect (string/includes? (:description query) "frecency/recency"))
+                   (expect (string/includes? (:description query) "OR for content search"))
+                   (expect (string/includes? (:description query) "joined terms"))))
+             (it "advertises file-scope fallback and non-negative context lines"
+                 (let
+                   [properties
+                    (get-in editing/grep-symbol [:ext.symbol/schema :properties])
 
-         paths
-         (get properties "paths")
+                    paths
+                    (get properties "paths")
 
-         context
-         (get properties "context")]
+                    context
+                    (get properties "context")]
 
-        (expect (string/includes? (:description paths) "searched first"))
-        (expect (string/includes? (:description paths) "parent on zero content hits"))
-        (expect (string/includes? (:description paths) "nearest existing directory"))
-        (expect (string/includes? (:description paths) "missing_paths"))
-        (expect (string/includes? (:description paths) "exact physical paths"))
-        (expect (string/includes? (:ext.symbol/description editing/grep-symbol)
-                                  "never rebuild from a language namespace"))
-        (expect (= "integer" (:type context)))
-        (expect (= 0 (:minimum context)))))
-  (it "bounds cat's selector-plus-directory-option shape and requires exact discovered paths"
-      (let
-        [schema
-         (:ext.symbol/schema editing/cat-symbol)
+                   (expect (string/includes? (:description paths) "searched first"))
+                   (expect (string/includes? (:description paths) "parent on zero content hits"))
+                   (expect (string/includes? (:description paths) "nearest existing directory"))
+                   (expect (string/includes? (:description paths) "missing_paths"))
+                   (expect (string/includes? (:description paths) "exact physical paths"))
+                   (expect (string/includes? (:ext.symbol/description editing/grep-symbol)
+                                             "never rebuild from a language namespace"))
+                   (expect (= "integer" (:type context)))
+                   (expect (= 0 (:minimum context)))))
+             (it "requires exact discovered paths for struct_index and cat"
+                 (let
+                   [index-path-description
+                    (get-in editing/index-symbol
+                            [:ext.symbol/schema :properties "path" :description])
 
-         path-description
-         (get-in schema [:properties "path" :description])]
+                    cat-schema
+                    (:ext.symbol/schema editing/cat-symbol)
 
-        ;; path + one selector + the two directory flags/depth options.
-        ;; Runtime coercion rejects mutually exclusive selectors.
-        (expect (= 4 (:maxProperties schema)))
-        (expect (string/includes? path-description "Exact physical"))
-        (expect (string/includes? path-description "grep/struct_index unchanged"))
-        (expect (string/includes? (:ext.symbol/description editing/cat-symbol)
-                                  "never reconstruct a path from a language namespace"))
-        (expect (= 2 (get-in schema [:properties "range" :minItems])))
-        (expect (= 2 (get-in schema [:properties "range" :maxItems])))))
-  (it "uses one portable patch shape with a path on every edit"
-      (let [schema (:ext.symbol/schema editing/patch-symbol)]
-        (expect (= "object" (:type schema)))
-        (expect (not-any? #(contains? schema %) [:oneOf :allOf :anyOf]))
-        (expect (= #{"edits"} (set (keys (:properties schema)))))
-        (expect (= ["path" "from_anchor" "replace"]
-                   (get-in schema [:properties "edits" :items :required]))))))
+                    cat-path-description
+                    (get-in cat-schema [:properties "path" :description])]
+
+                   (expect (string/includes? index-path-description "Exact physical"))
+                   (expect (string/includes? index-path-description "grep first"))
+                   (expect (string/includes? index-path-description "never reconstruct"))
+                   ;; path + one selector + the two directory flags/depth options.
+                   ;; Runtime coercion rejects mutually exclusive selectors.
+                   (expect (= 4 (:maxProperties cat-schema)))
+                   (expect (string/includes? cat-path-description "Exact physical"))
+                   (expect (string/includes? cat-path-description "grep/struct_index unchanged"))
+                   (expect (string/includes? (:ext.symbol/description editing/cat-symbol)
+                                             "never reconstruct a path from a language namespace"))
+                   (expect (= 2 (get-in cat-schema [:properties "range" :minItems])))
+                   (expect (= 2 (get-in cat-schema [:properties "range" :maxItems])))))
+             (it "uses one portable patch shape with a path on every edit"
+                 (let [schema (:ext.symbol/schema editing/patch-symbol)]
+                   (expect (= "object" (:type schema)))
+                   (expect (not-any? #(contains? schema %) [:oneOf :allOf :anyOf]))
+                   (expect (= #{"edits"} (set (keys (:properties schema)))))
+                   (expect (= ["path" "from_anchor" "replace"]
+                              (get-in schema [:properties "edits" :items :required]))))))
 
 (defdescribe
   outline-path-resolution-test

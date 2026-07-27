@@ -301,6 +301,10 @@
 
 (def ^:private emergency-fold-projection (deref #'lp/emergency-fold-projection))
 
+(def ^:private context-overflow-recovery! (deref #'lp/context-overflow-recovery!))
+
+(def ^:private provider-output-chunk? (deref #'lp/provider-output-chunk?))
+
 (def ^:private MAX_PROVIDER_UNAVAILABLE_RETRIES (deref #'lp/MAX_PROVIDER_UNAVAILABLE_RETRIES))
 
 (def ^:private provider-connect-failure? (deref #'lp/provider-connect-failure?))
@@ -4251,61 +4255,192 @@
 
 (defdescribe
   emergency-context-fold-projection-test
-  (describe "one-shot overflow rescue"
-            (it "uses fold projection, shrinks wire input, and leaves canonical history unchanged"
-                (let
-                  [large
-                   (apply str (repeat 20000 "x"))
+  (describe
+    "one-shot overflow rescue"
+    (it
+      "uses fold projection, shrinks wire input, and leaves canonical history unchanged"
+      (let
+        [large
+         (apply str (repeat 20000 "x"))
 
-                   trailer
-                   [(stub-tool-iter {:id 1 :content large}) (stub-tool-iter {:id 2 :content large})]
+         content
+         [{:type "text" :text large} {:type "tool_use" :id "tc" :name "grep" :input {"query" "x"}}]
 
-                   original
-                   trailer
+         trailer
+         [(stub-tool-iter {:id 1 :content content}) (stub-tool-iter {:id 2 :content content})]
 
-                   recovery
-                   (emergency-fold-projection [{:role "system" :content "stable"}]
-                                              trailer
-                                              []
-                                              #{}
-                                              {:provider :openai :model "gpt"}
-                                              {})]
+         original
+         trailer
 
-                  (expect (some? recovery))
-                  (expect (< (:after-size recovery) (:before-size recovery)))
-                  (expect (= #{"t1/i1" "t1/i2"} (:scopes recovery)))
-                  (expect (= original trailer))
-                  (expect (= "stable"
-                             (-> recovery
-                                 :messages
-                                 first
-                                 :content)))
-                  (expect (some #(re-find #"Emergency transport fold" (str (:content %)))
-                                (:messages recovery)))))
-            (it "protects live skill scopes and refuses a no-op rescue"
-                (let
-                  [trailer
-                   [(stub-tool-iter {:id 1 :content (apply str (repeat 5000 "x"))})]
+         recovery
+         (emergency-fold-projection [{:role "system" :content "stable"}]
+                                    trailer
+                                    []
+                                    #{}
+                                    {:provider :openai :model "gpt"}
+                                    {}
+                                    "gpt-4o"
+                                    1000000)]
 
-                   scope
-                   (-> trailer
+        (expect (some? recovery))
+        (expect (< (:after-tokens recovery) (:before-tokens recovery)))
+        (expect (= #{"t1/i1" "t1/i2"} (:scopes recovery)))
+        (expect (= original trailer))
+        (expect (= "stable"
+                   (-> recovery
+                       :messages
                        first
-                       second
-                       :forms-vec
-                       first
-                       :scope)]
+                       :content)))
+        (expect (some #(re-find #"Emergency transport fold" (str (:content %)))
+                      (:messages recovery)))
+        (expect (some #(re-find #"2 searches, 2 tool calls" (str (:content %)))
+                      (:messages recovery)))))
+    (it "preserves existing semantic fold gists"
+        (let
+          [large
+           (apply str (repeat 5000 "x"))
 
-                  (expect (nil? (emergency-fold-projection []
-                                                           trailer
-                                                           []
-                                                           #{scope}
-                                                           {:provider :openai :model "gpt"}
-                                                           {})))))
-            (it "has an independent retry budget"
-                (expect (= [2 1 1]
-                           (next-retry-counters
-                             ::lp/retry-context-overflow
-                             {:attempt 2 :max-tokens-attempt 1 :pu-attempt 1}))))))
+           content
+           [{:type "text" :text large}
+            {:type "tool_use" :id "tc" :name "grep" :input {"query" "x"}}]
+
+           trailer
+           [(stub-tool-iter {:id 1 :content content}) (stub-tool-iter {:id 2 :content content})]
+
+           recovery
+           (emergency-fold-projection
+             []
+             trailer
+             [{"scopes" #{"t1/i1"} "gist" "IMPORTANT ROOT CAUSE" "at_turn" 1}]
+             #{}
+             {:provider :openai :model "gpt"}
+             {}
+             "gpt-4o"
+             1000000)
+
+           contents
+           (mapv (comp str :content) (:messages recovery))]
+
+          (expect (= #{"t1/i2"} (:scopes recovery)))
+          (expect (some #(str/includes? % "IMPORTANT ROOT CAUSE") contents))
+          (expect (some #(str/includes? % "Emergency transport fold") contents))))
+    (it "protects live skill scopes and refuses a no-op rescue"
+        (let
+          [trailer
+           [(stub-tool-iter {:id 1 :content (apply str (repeat 5000 "x"))})]
+
+           scope
+           (-> trailer
+               first
+               second
+               :forms-vec
+               first
+               :scope)]
+
+          (expect (nil? (emergency-fold-projection []
+                                                   trailer
+                                                   []
+                                                   #{scope}
+                                                   {:provider :openai :model "gpt"}
+                                                   {}
+                                                   "gpt-4o"
+                                                   1000000)))))
+    (it "refuses a retry whose folded estimate still exceeds the provider budget"
+        (let
+          [content
+           [{:type "text" :text (apply str (repeat 5000 "x"))}
+            {:type "tool_use" :id "tc" :name "grep" :input {"query" "x"}}]
+
+           trailer
+           [(stub-tool-iter {:id 1 :content content})]]
+
+          (expect (nil? (emergency-fold-projection []
+                                                   trailer
+                                                   []
+                                                   #{}
+                                                   {:provider :openai :model "gpt"}
+                                                   {}
+                                                   "gpt-4o"
+                                                   1)))))
+    (it "distinguishes replay-safe lifecycle chunks from output and side effects"
+        (expect (false? (provider-output-chunk? {:phase :provider-call})))
+        (expect (false? (provider-output-chunk? {:phase :response-parse})))
+        (doseq [phase [:reasoning :content :assistant-prose :form-start :tool-start :form-result]]
+          (expect (true? (provider-output-chunk? {:phase phase})))))
+    (it
+      "performs exactly one smaller retry, preserves live and canonical input, then terminates"
+      (let
+        [large
+         (apply str (repeat 30000 "x"))
+
+         content
+         [{:type "text" :text large} {:type "tool_use" :id "tc" :name "grep" :input {"query" "x"}}]
+
+         canonical
+         [(stub-tool-iter {:id 1 :content content})]
+
+         original
+         canonical
+
+         base
+         [{:role "system" :content "stable"} {:role "user" :content "CURRENT USER REQUEST"}]
+
+         calls
+         (atom [])
+
+         attempted?
+         (atom false)
+
+         output?
+         (atom false)
+
+         ctx-atom
+         (atom {"session_turn" 1})
+
+         overflow
+         (ex-info "Context overflow"
+                  {:type :svar.tokens/context-overflow
+                   :source :preflight
+                   :input-tokens 20000
+                   :max-input-tokens 10000})
+
+         terminal
+         (loop
+           [messages (into base
+                           (conversation-suffix canonical {:provider :openai :model "gpt"} {}))]
+           (swap! calls conj messages)
+           (let [result (try (throw overflow) (catch Exception e e))]
+             (if-let
+               [recovery (context-overflow-recovery! {:error result
+                                                      :output-started? output?
+                                                      :recovery-attempted? attempted?
+                                                      :ctx-atom ctx-atom
+                                                      :turn-input-tokens 0
+                                                      :base-messages base
+                                                      :trailer-iters canonical
+                                                      :summaries []
+                                                      :protected-scopes #{}
+                                                      :replay-target {:provider :openai
+                                                                      :model "gpt"}
+                                                      :replay-policies {}
+                                                      :model "gpt-4o"})]
+               (recur (:messages recovery))
+               result)))]
+
+        (expect (= 2 (count @calls)))
+        (expect (< (count (pr-str (second @calls))) (count (pr-str (first @calls)))))
+        (expect (every? #(some (fn [m]
+                                 (= "CURRENT USER REQUEST" (:content m)))
+                               %)
+                        @calls))
+        (expect (= original canonical))
+        (expect (= :svar.tokens/context-overflow (:type (ex-data terminal))))
+        (expect (= 20000 (get-in @ctx-atom ["engine_utilization" "last_request_tokens"])))
+        (expect (= 10000 (get-in @ctx-atom ["engine_utilization" "model_input_limit"])))))
+    (it "has an independent retry budget"
+        (expect (= [2 1 1]
+                   (next-retry-counters ::lp/retry-context-overflow
+                                        {:attempt 2 :max-tokens-attempt 1 :pu-attempt 1}))))))
 
 (defdescribe attachment-reinspection-wire-test
              (it "renders a reinspection image as a canonical vision message"

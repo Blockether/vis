@@ -77,6 +77,18 @@
              (get @ca "session_summaries")))
         (expect (re-find #"^folded " out))
         (expect (re-find #"explored auth" out))))
+  (it "normalizes a provider's JSON-encoded string target before selecting scopes"
+      (let
+        [[ca ev]
+         (with-verbs)
+
+         out
+         (ev "session_fold('[\"t1/i2\", \"t1/i3\"]', \"encoded target\")")]
+
+        (expect
+          (= [{"scopes" #{"t1/i2" "t1/i3"} "issued_turn" 99 "at_turn" 99 "gist" "encoded target"}]
+             (get @ca "session_summaries")))
+        (expect (str/includes? out "folded t1/i2, t1/i3"))))
   (it "session_fold excludes an active skill scope and folds the remaining target"
       (let
         [[ca ev]

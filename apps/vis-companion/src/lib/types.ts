@@ -284,10 +284,25 @@ export interface GatewayStatus {
  */
 export interface PushStatus {
   is_available: boolean;
-  provider: 'apns';
+  provider: 'apns' | 'fcm' | 'apns+fcm';
+  /** APNs view, mirrored at the top level for older gateways. */
   environment?: 'sandbox' | 'production';
   topic?: string | null;
   missing?: string[];
+  apns?: {
+    is_available: boolean;
+    environment?: 'sandbox' | 'production';
+    topic?: string | null;
+    key_source?: string | null;
+    missing?: string[];
+  };
+  /** Firebase Cloud Messaging — the Android half. */
+  fcm?: {
+    is_available: boolean;
+    project_id?: string | null;
+    source?: string | null;
+    missing?: string[];
+  };
   devices: number;
 }
 

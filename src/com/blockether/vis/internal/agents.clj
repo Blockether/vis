@@ -337,6 +337,24 @@
                            (java.io.File. p))))))
         workspace/*filesystem-roots*))
 
+(defn primary-instructions
+  "Read guidance for the primary workspace chain only. Added-root files are
+   intentionally excluded so unrelated sessions do not pay their prompt cost."
+  []
+  (:result (scan-roots (global-config-dir) (repo-cwd) nil)))
+
+(defn added-root-guidance-index
+  "Return metadata for guidance available at added filesystem roots without
+   reading file contents. Each row is `{:root path :path guidance-path :source}`."
+  []
+  (into []
+        (keep (fn [^java.io.File root]
+                (when-let [{:keys [source ^java.io.File file]} (guidance-candidate root)]
+                  {:root (try (.getCanonicalPath root) (catch Throwable _ (.getAbsolutePath root)))
+                   :path (.getAbsolutePath file)
+                   :source source})))
+        (extra-root-dirs)))
+
 (defn scan
   "Scan the user-global `~/.vis` dir, the active workspace root's ancestor
    chain, and each added filesystem root's own directory for project-guidance

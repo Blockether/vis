@@ -213,8 +213,9 @@
     "- Direct native tools: single operations, simple edits, small fixed call sets.\n"
     "- `python_execution`: dependent chains, fan-out, loops, filters/transforms, output shaping;\n"
     "  `await gather(...)` only for independent calls within them.\n"
-    "- Python native results are raw structured values, not UI-rendered text. Use documented keys;\n"
-    "  never infer fields from presentation. Shape via `ntr[tool_id]` before printing.\n"
+    "- Native results are raw data, not rendered text. Use documented keys; never infer fields\n"
+    "  from presentation. Shape via `ntr[tool_id]`. After one shape/type error, inspect keys/types\n"
+    "  once; adapt, never guess again.\n"
     "- `python_execution` persists Python state. Reading `session` is always live; `print`\n"
     "  only displays it—never probe merely to refresh it.\n"
     "- Call advertised native tools directly. Use `apropos`/`doc` only for unadvertised sandbox\n"
@@ -236,16 +237,14 @@
     "  If impossible, state why.\n"
     "- Prove the fix at runtime: `repl_eval` the changed code path (or the smallest\n"
     "  `run_tests` target) before answering.\n"
-    "- Read one relevant region; batch independent reads.\n\n"
-    "## 4. Edit + verify\n"
+    "- Read one relevant region; batch independent reads.\n\n" "## 4. Edit + verify\n"
     "- Make surgical in-scope changes; preserve unrelated work. Create no unrequested\n"
     "  scratch, debug, notes, or report files.\n"
-    "- Anchors are positional and EVERY write stales them, including anchors for other\n"
-    "  files in the same batch. Group all edits you already know about into ONE atomic\n"
-    "  `patch`/`struct_patch` call instead of a chain of small writes.\n"
-    "- After any write, re-read (`cat`/`struct_index`/`grep`) before the next edit; never\n"
-    "  reuse a pre-write anchor or hand-adjust line numbers. A stale-anchor failure means\n"
-    "  re-read and retry once, not guess again.\n\n" "## 5. Act autonomously\n"
+    "- A successful write invalidates pre-write anchors for THAT file only; anchors for other\n"
+    "  files remain valid. Group all known edits into ONE atomic `patch`/`struct_patch` call.\n"
+    "- Before a later edit to a file already written, re-read only that file; never reuse its\n"
+    "  pre-write anchor or hand-adjust line numbers. On stale-anchor failure, re-read the\n"
+    "  target once and retry, not guess.\n\n" "## 5. Act autonomously\n"
     "- Make non-destructive in-scope changes without asking permission or offering optional\n"
     "  follow-ups. Never expose or log secrets.\n"
     "- Do not commit, push, publish, message people, or mutate external systems unless requested.\n"
@@ -369,76 +368,59 @@
     (str/join "\n\n" (into [base] extras))))
 
 (defn- project-instructions-block
-  "Inline project rules (stacked AGENTS.md / CLAUDE.md context files) as a
-   stable system block. The model sees the actual rules, not a boolean hint.
-
-   `internal.agents` already does the reads + stacking + caching; this fn
-   labels the content and makes scope explicit. Primary-chain files render
-   broadest first so nearer rules override broader ones. Added-folder rules
-   apply only beneath their listed folder. Returns nil when no file is present
-   or every file is empty."
+  "Inline primary-workspace guidance and a metadata-only index of added-root
+   guidance. Added-root file contents enter the conversation only when the model
+   reads the indexed file before working in that root."
   [environment]
   (try
-    (let
-      [{:keys [found? source path content files]}
-       (binding [workspace/*filesystem-roots* (workspace/env-filesystem-roots environment)]
-         (agents/instructions))
+    (binding [workspace/*filesystem-roots* (workspace/env-filesystem-roots environment)]
+      (let
+        [{:keys [found? source path content files]} (agents/primary-instructions)
+         files (or (seq files)
+                   (when (and found? (string? content) (not (str/blank? content)))
+                     [{:scope :project
+                       :source (case source
+                                 :repo
+                                 :agents-md
 
-       ;; Back-compat: a single-file legacy shape (no :files) still renders.
-       files
-       (or (seq files)
-           (when (and found? (string? content) (not (str/blank? content)))
-             [{:scope :project
-               :source (case source
-                         :repo
-                         :agents-md
+                                 :repo:claude-md-fallback
+                                 :claude-md
 
-                         :repo:claude-md-fallback
-                         :claude-md
+                                 source)
+                       :path path
+                       :content content}]))
+         files (filter (fn [f]
+                         (and (string? (:content f)) (not (str/blank? (:content f)))))
+                       files)
+         added (agents/added-root-guidance-index)]
 
-                         source)
-               :path path
-               :content content}]))
-
-       files
-       (filter (fn [f]
-                 (and (string? (:content f)) (not (str/blank? (:content f)))))
-               files)]
-
-      (when (and found? (seq files))
-        (let
-          [multi?
-           (> (count files) 1)
-
-           has-extra?
-           (some #(= :extra-root (:scope %)) files)
-
-           header
-           (str
-             "Project rules from "
-             (if multi?
+        (when (or (seq files) (seq added))
+          (let
+            [header
+             (str
+               "Project rules from the primary workspace guidance chain. "
+               "Within one filesystem scope, broader files appear first and nearer files override them. "
+               "CORE wins on conflict.")
+             primary-body (when (seq files)
+                            (str/join "\n\n"
+                                      (map (fn [f]
+                                             (str "### " (agents/origin-label f)
+                                                  " — " (paths/abbreviate-home (:path f))
+                                                  "\n" (:content f)))
+                                           files)))
+             added-body
+             (when (seq added)
                (str
-                 (count files)
-                 " stacked guidance files. Within one filesystem scope, broader files appear first and nearer files override them."
-                 (when has-extra?
-                   " Added-folder guidance applies only to files/actions beneath its listed folder and cannot override primary-workspace guidance elsewhere."))
-               (str (agents/origin-label (first files))
-                    " ("
-                    (paths/abbreviate-home (:path (first files)))
-                    ")."))
-             " Honor them with CORE rules; on conflict, CORE wins.")
+                 "Added roots (guidance is not loaded yet):\n"
+                 (str/join "\n"
+                           (map (fn [{:keys [root path]}]
+                                  (str "- " (paths/abbreviate-home root)
+                                       " — guidance: " (paths/abbreviate-home path)))
+                                added))
+                 "\nBefore any action in an added root, read its exact guidance path with `cat`; then obey it for that root. The read result activates those rules in the conversation. Never mutate, run commands, or use browser automation there before that read."))]
 
-           body
-           (str/join "\n\n"
-                     (map (fn [f]
-                            (if multi?
-                              (str "### " (agents/origin-label f)
-                                   " — " (paths/abbreviate-home (:path f))
-                                   "\n" (:content f))
-                              (:content f)))
-                          files))]
-
-          (prompt-block "project-instructions" (str header "\n\n" body)))))
+            (prompt-block "project-instructions"
+                          (str/join "\n\n" (keep identity [header primary-body added-body])))))))
     (catch Throwable t
       (tel/log! {:level :warn :id ::project-instructions-error :data {:error (ex-message t)}}
                 "project-instructions-block read failed")
