@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.11] - 2026-07-27
+
+### Changed
+- fix(native): give the arm64 builder the heap it measurably needs
+- feat(gateway): protocol version handshake + compatibility verdict
+- feat(config,ui): ${VAR} config references, provider-level env gaps, drop "gateway" from user-facing copy
+- eval: Improve senior SWE bench reporting
+- feat(tui): dissolve the transcript in when a session opens
+- release: update version files for v0.1.10, bump to next dev version
+
+### Package changes
+
+#### com.blockether/vis
+- fix(native): give the arm64 builder the heap it measurably needs (5f973b184)
+- feat(gateway): protocol version handshake + compatibility verdict (ea2226448)
+- feat(config,ui): ${VAR} config references, provider-level env gaps, drop "gateway" from user-facing copy (796c917ad)
+- eval: Improve senior SWE bench reporting (4743d9263)
+- release: update version files for v0.1.10, bump to next dev version (10c022eef)
+
+#### com.blockether/vis-channel-tui
+- feat(gateway): protocol version handshake + compatibility verdict (ea2226448)
+- feat(config,ui): ${VAR} config references, provider-level env gaps, drop "gateway" from user-facing copy (796c917ad)
+- feat(tui): dissolve the transcript in when a session opens (708e19504)
+
+
+
 ## [v0.1.10] - 2026-07-27
 
 ### Changed
@@ -1482,7 +1508,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.10...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.11...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -1493,3 +1519,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.8]: https://github.com/Blockether/vis/releases/tag/v0.1.8
 [v0.1.9]: https://github.com/Blockether/vis/releases/tag/v0.1.9
 [v0.1.10]: https://github.com/Blockether/vis/releases/tag/v0.1.10
+[v0.1.11]: https://github.com/Blockether/vis/releases/tag/v0.1.11
