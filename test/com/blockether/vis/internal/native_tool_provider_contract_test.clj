@@ -118,9 +118,8 @@
        {:content nil
         :reasoning nil
         :provider-state {:provider :openai-responses}
-        :tool-calls [{:id "call_smoke"
-                      :name "grep"
-                      :input {:query "native tool schema smoke" :paths ["src"]}}]
+        :tool-calls
+        [{:id "call_smoke" :name "grep" :input {:query "native tool schema smoke" :paths ["src"]}}]
         :assistant-message {:role "assistant"
                             :content [{:type "tool_use"
                                        :id "call_smoke"

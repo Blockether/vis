@@ -163,17 +163,6 @@ export function ConnectScreen({
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-5 px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(2rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-4 transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:space-y-6 sm:px-6 sm:py-6">
-      <header className="flex items-end justify-between gap-4 border-b border-dialog-edge pb-3">
-        <h1 className="font-mono text-subhead font-black text-white">Gateways</h1>
-        {conns.length > 0 && (
-          <span className="shrink-0 font-mono text-meta text-dialog-hint">
-            {conns.length} saved
-          </span>
-        )}
-      </header>
-
-      {msg && <Banner kind={msg.kind === 'ok' ? 'ok' : 'err'}>{msg.text}</Banner>}
-
       {conns.length > 0 && (
         <section className="overflow-hidden border border-dialog-edge bg-panel shadow-none sm:shadow-[4px_4px_0_var(--dialog-shadow)]">
           <header className="flex min-h-9 items-center bg-dialog-title px-3 py-2 text-dialog-title-foreground">
@@ -259,7 +248,11 @@ export function ConnectScreen({
                 autoCorrect="off"
               />
               <div className="flex gap-2">
-                <Button className="min-h-9 flex-1 sm:min-h-8" onClick={addFromPayload} disabled={busy || !payload}>
+                <Button
+                  className="min-h-9 flex-1 disabled:border-dialog-title disabled:bg-dialog-title disabled:text-dialog-title-foreground disabled:opacity-50 sm:min-h-8"
+                  onClick={addFromPayload}
+                  disabled={busy || !payload}
+                >
                   {busy ? 'Checking\u2026' : 'Pair'}
                 </Button>
                 <Button variant="ghost" className="min-h-9 sm:min-h-8" onClick={scan} disabled={busy}>
@@ -291,12 +284,22 @@ export function ConnectScreen({
                 autoCapitalize="none"
                 autoCorrect="off"
               />
-              <Button className="min-h-9 w-full sm:min-h-8" onClick={addManual} disabled={busy || !url}>
+              <Button
+                className="min-h-9 w-full disabled:border-dialog-title disabled:bg-dialog-title disabled:text-dialog-title-foreground disabled:opacity-50 sm:min-h-8"
+                onClick={addManual}
+                disabled={busy || !url}
+              >
                 {busy ? 'Checking\u2026' : 'Connect'}
               </Button>
             </div>
           </div>
         </div>
+
+        {msg && (
+          <div className="mt-3">
+            <Banner kind={msg.kind === 'ok' ? 'ok' : 'err'}>{msg.text}</Banner>
+          </div>
+        )}
       </section>
     </div>
   );

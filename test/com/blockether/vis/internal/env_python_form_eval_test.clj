@@ -1055,12 +1055,12 @@ await patch({'path': css})" "t1/i1")]
              (it "degrades a hostile foreign map to a real dict with a normal KeyError"
                  (let
                    [weird
-                    (ProxyHashMap/from
-                      (doto (java.util.LinkedHashMap.)
-                        (.put "op" "probe")
-                        ;; A foreign LIST key is unhashable in python, so the dict
-                        ;; comprehension raises and the fallback path runs.
-                        (.put (ProxyArray/fromList (java.util.ArrayList. [1 2])) "x")))
+                    (ProxyHashMap/from (doto (java.util.LinkedHashMap.)
+                                         (.put "op" "probe")
+                                         ;; A foreign LIST key is unhashable in python, so the dict
+                                         ;; comprehension raises and the fallback path runs.
+                                         (.put (ProxyArray/fromList (java.util.ArrayList. [1 2]))
+                                               "x")))
 
                     pc
                     (ep/create-python-context {'weird weird})

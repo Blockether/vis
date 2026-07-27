@@ -2233,8 +2233,8 @@
 
    For NAME matching, existing files normalize to their parent directory and
    missing paths to the nearest existing confined directory. CONTENT matching
-   searches an existing file first, retries its parent only on zero hits, and
-   reports missing scopes while searching their nearest existing directory.
+   searches an existing file exactly as scoped and never widens it on zero hits;
+   missing scopes are searched at their nearest existing directory and reported.
    NAME matching is fuzzy subsequence over the fff file index."
   [& args]
   (let
@@ -2250,23 +2250,10 @@
      {:keys [needles]}
      (if ls? {:needles []} (coerce-rg-spec content-spec))
 
-     ;; CONTENT search is PRECISE first: a named existing FILE is grepped as that
-     ;; one file (rg semantics), not diluted into its whole parent directory. Only
-     ;; when the precise scope yields NOTHING do we widen to the normalized
-     ;; directory scopes — the same "productive climb" a missing path gets, so a
-     ;; filename scope still finds the sibling the caller was probably after.
-     precise-out
-     (if ls? {:hits [] :total-file-count 0 :total-file-count-exact? true} (rg-search content-spec))
-
-     widened-spec
-     (assoc content-spec "paths" (:paths (coerce-find-spec args)))
-
+     ;; CONTENT search preserves the caller's exact scope. In particular, an
+     ;; existing file that has zero hits must not silently widen to its parent.
      content-out
-     (if ls?
-       precise-out
-       (if (or (seq (:hits precise-out)) (= (get content-spec "paths") (get widened-spec "paths")))
-         precise-out
-         (rg-search widened-spec)))
+     (if ls? {:hits [] :total-file-count 0 :total-file-count-exact? true} (rg-search content-spec))
 
      content
      (content-result content-out needles)
@@ -5328,7 +5315,7 @@
        {:type "array"
         :items {:type "string" :minLength 1}
         :description
-        "Scopes (default: whole tree). A file scope is searched first, then its parent on zero content hits; a missing scope falls back to its nearest existing directory and is echoed in missing_paths. Returned values are exact physical paths for direct handoff to cat/struct_index."}
+        "Scopes (default: whole tree). An existing file scope is searched exactly and never widened on zero content hits; a missing scope falls back to its nearest existing directory and is echoed in missing_paths. Returned values are exact physical paths for direct handoff to cat/struct_index."}
        "include" {:oneOf [{:type "array" :items {:type "string"}} {:type "string"}]
                   :description "Restrict content search to these globs, e.g. [\"**/*.clj\"]."}
        "context" {:type "integer"

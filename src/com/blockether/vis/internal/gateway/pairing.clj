@@ -99,11 +99,20 @@
 
 (defn terminal-qr
   "Render `text` as a terminal QR code using Unicode half-blocks. Returns a string
-  so tests and CLI callers can decide where to print it."
+  so tests and CLI callers can decide where to print it.
+
+  Two properties matter for a phone camera to actually decode this:
+
+  - a full 4-module quiet zone (the spec minimum; a 1-module margin scans only
+    on a perfect white background), padded to an even module height so the
+    bottom quiet zone survives the half-block row packing;
+  - the block glyph paints the *light* modules, like `qrencode -t UTF8`, so the
+    code reads correctly on the dark terminal themes everyone runs. Painting
+    dark modules instead produces a photo-negative that most scanners reject."
   [text]
   (let
     [hints
-     (doto (EnumMap. EncodeHintType) (.put EncodeHintType/MARGIN 1))
+     (doto (EnumMap. EncodeHintType) (.put EncodeHintType/MARGIN 4))
 
      matrix
      (.encode (QRCodeWriter.) text BarcodeFormat/QR_CODE 0 0 hints)
@@ -112,15 +121,24 @@
      (.getWidth matrix)
 
      h
-     (.getHeight matrix)]
+     (.getHeight matrix)
+
+     ;; Pad to an even number of rows so the last half-block pair is a full
+     ;; quiet-zone row rather than a clipped one.
+     h*
+     (if (even? h) h (inc h))
+
+     light?
+     (fn [x y]
+       (or (>= (long y) h) (not (.get matrix x y))))]
 
     (str/join "\n"
-              (for [y (range 0 h 2)]
+              (for [y (range 0 h* 2)]
                 (apply str
                   (for [x (range w)]
                     (let
-                      [top? (.get matrix x y)
-                       bot? (and (< (inc (long y)) h) (.get matrix x (inc (long y))))]
+                      [top? (light? x y)
+                       bot? (light? x (inc (long y)))]
 
                       (cond (and top? bot?) "█"
                             top? "▀"

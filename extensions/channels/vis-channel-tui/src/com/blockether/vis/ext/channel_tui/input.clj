@@ -1254,20 +1254,19 @@
                     entry
                     (when id (get pastes-map id))]
 
-                   (cond
-                     (nil? entry) whole
-                     ;; An image entry's content is a bare filesystem path. Isolate it on
-                     ;; its own line so text the user typed flush against the placeholder
-                     ;; can't glue onto the path: `.../shot.pngin tui` no longer ends in an
-                     ;; image extension, so the engine's extension-anchored scanner drops it
-                     ;; and the image silently never attaches.
-                     (:image entry) (str "\n" (:content entry) "\n")
-                     ;; A plain paste that is ITSELF a lone image path: the paste-time
-                     ;; probe missed it (e.g. the temp file wasn't written yet), so it
-                     ;; was filed as `:content`, not `:image`. Isolate it the same way so
-                     ;; the now-existing file still attaches instead of gluing to text.
-                     (image-path-content? (:content entry)) (str "\n" (:content entry) "\n")
-                     :else (str (:content entry)))))))
+                   (cond (nil? entry) whole
+                         ;; An image entry's content is a bare filesystem path. Isolate it on
+                         ;; its own line so text the user typed flush against the placeholder
+                         ;; can't glue onto the path: `.../shot.pngin tui` no longer ends in an
+                         ;; image extension, so the engine's extension-anchored scanner drops it
+                         ;; and the image silently never attaches.
+                         (:image entry) (str "\n" (:content entry) "\n")
+                         ;; A plain paste that is ITSELF a lone image path: the paste-time
+                         ;; probe missed it (e.g. the temp file wasn't written yet), so it
+                         ;; was filed as `:content`, not `:image`. Isolate it the same way so
+                         ;; the now-existing file still attaches instead of gluing to text.
+                         (image-path-content? (:content entry)) (str "\n" (:content entry) "\n")
+                         :else (str (:content entry)))))))
 
 (def ^:const PASTE_PREVIEW_HEAD_LINES
   "How many leading lines of a pasted payload the collapsed transcript

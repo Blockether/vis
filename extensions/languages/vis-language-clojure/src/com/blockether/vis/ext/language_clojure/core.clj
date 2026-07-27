@@ -282,10 +282,9 @@
           (get opts "host")]
 
          (when-not port
-           (throw (ex-info (str
-                             "repl \"connect\" needs {\"port\": <the external nREPL's port>}"
-                             " (optional \"host\", \"dir\") — e.g."
-                             " repl(\"clojure\", \"connect\", {\"port\": 7888})")
+           (throw (ex-info (str "repl \"connect\" needs {\"port\": <the external nREPL's port>}"
+                                " (optional \"host\", \"dir\") — e.g."
+                                " repl(\"clojure\", \"connect\", {\"port\": 7888})")
                            {:type :clj/bad-args :got opts})))
          (let
            [r (repl-manager/connect!
@@ -323,8 +322,7 @@
            {:type :clj/bad-args
             :got op
             :examples
-            ["repl(\"clojure\")" "repl(\"clojure\", \"status\")"
-             "repl(\"clojure\", \"start\")"
+            ["repl(\"clojure\")" "repl(\"clojure\", \"status\")" "repl(\"clojure\", \"start\")"
              "repl(\"clojure\", \"start\", {\"dir\": \"extensions/languages/vis-language-clojure\", \"aliases\": [\"dev\", \"test\"]})"
              "repl(\"clojure\", \"stop\")" "repl(\"clojure\", \"restart\")"]}))))))
 

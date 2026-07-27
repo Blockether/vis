@@ -19,8 +19,7 @@
                         deref)
 
                     segments
-                    (render-fn {:session-model-pref {:provider "openai-codex" :model "gpt-5.5"}}
-                               0)
+                    (render-fn {:session-model-pref {:provider "openai-codex" :model "gpt-5.5"}} 0)
 
                     label
                     (get-in (first segments) [:ast 2 2 2])]

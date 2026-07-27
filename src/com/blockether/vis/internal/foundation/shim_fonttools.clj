@@ -41,7 +41,8 @@
    string is pure ASCII with zero backslash escaping, and only sys.modules /
    builtins gain the new modules. Installed once per sandbox context, BEFORE the
    baseline snapshot so its `__vis_*` name is filtered from the live-vars view."
-  (str "# vis sandbox fontTools/brotli-compat shim (WOFF2 -> TTF).
+  (str
+    "# vis sandbox fontTools/brotli-compat shim (WOFF2 -> TTF).
 #
 # The agent sandbox ships no `fontTools` or `brotli` wheel and GraalPy cannot
 # pip-install them. This publishes `fontTools.ttLib.woff2.decompress` plus a

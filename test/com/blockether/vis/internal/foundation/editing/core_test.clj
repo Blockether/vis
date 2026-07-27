@@ -2897,8 +2897,8 @@
                     context
                     (get properties "context")]
 
-                   (expect (string/includes? (:description paths) "searched first"))
-                   (expect (string/includes? (:description paths) "parent on zero content hits"))
+                   (expect (string/includes? (:description paths) "searched exactly"))
+                   (expect (string/includes? (:description paths) "never widened"))
                    (expect (string/includes? (:description paths) "nearest existing directory"))
                    (expect (string/includes? (:description paths) "missing_paths"))
                    (expect (string/includes? (:description paths) "exact physical paths"))
@@ -3791,42 +3791,37 @@
                    (let [spec {"query" ["FIND_FILES" "CAT"] "paths" []}]
                      (expect (= ["."] (:paths (coerce-rg spec))))))))
 
-(defdescribe
-  find-files-directory-scope-test
-  (let [find-files (private-fn "grep-tool")]
-    (it "widens a filename scope to its parent and returns matching lines without context"
-        (let
-          [dir (temp-dir-path "find-file-parent")
-           scoped-file (str dir "/scope.clj")
-           sibling-file (str dir "/sibling.clj")
-           _ (spit (fs/file scoped-file) "before\nnot-it\nafter\n")
-           _ (spit (fs/file sibling-file) "before\nsibling-only-needle\nafter\n")
-           result (:result (find-files {"query" "sibling-only-needle" "paths" [scoped-file]}))
-           expected-dir ((private-fn "rel-path") (fs/file dir))
-           expected-file ((private-fn "rel-path") (fs/file sibling-file))
-           hit (first (vals (get-in result ["matches" expected-file])))]
+(defdescribe find-files-directory-scope-test
+             (let [find-files (private-fn "grep-tool")]
+               (it "does not widen an existing filename scope to its parent on zero content hits"
+                   (let
+                     [dir (temp-dir-path "find-file-parent")
+                      scoped-file (str dir "/scope.clj")
+                      sibling-file (str dir "/sibling.clj")
+                      _ (spit (fs/file scoped-file) "before\nnot-it\nafter\n")
+                      _ (spit (fs/file sibling-file) "before\nsibling-only-needle\nafter\n")
+                      result (:result (find-files {"query" "sibling-only-needle"
+                                                   "paths" [scoped-file]}))]
 
-          (expect (= [expected-dir] (get result "searched_paths")))
-          ;; Content hits remain authoritative; fuzzy filename noise is omitted.
-          (expect (= [] (get result "paths")))
-          (expect (= "sibling-only-needle" (get hit "text")))
-          (expect (= #{"text"} (set (keys hit))))
-          (expect (not (contains? result "context")))))
-    (it "uses an empty query as grep's ls mode without attempting content search"
-        (let
-          [_ (write-temp! "grep-ls/one.clj" ";; a\n")
-           _ (write-temp! "grep-ls/two.md" "# b\n")
-           _ (write-temp! "grep-ls/sub/three.txt" "c\n")
-           dir (temp-dir-path "grep-ls")
-           result (:result (find-files {"query" "" "paths" [dir] "limit" 10}))
-           names (set (map #(last (string/split % #"/")) (get result "paths")))]
+                     (expect (= 0 (get result "hit_count")))
+                     (expect (= {} (get result "matches")))
+                     (expect (nil? (get result "first_hit")))
+                     (expect (= [] (get result "missing_paths")))))
+               (it "uses an empty query as grep's ls mode without attempting content search"
+                   (let
+                     [_ (write-temp! "grep-ls/one.clj" ";; a\n")
+                      _ (write-temp! "grep-ls/two.md" "# b\n")
+                      _ (write-temp! "grep-ls/sub/three.txt" "c\n")
+                      dir (temp-dir-path "grep-ls")
+                      result (:result (find-files {"query" "" "paths" [dir] "limit" 10}))
+                      names (set (map #(last (string/split % #"/")) (get result "paths")))]
 
-          (expect (= "" (get result "query")))
-          (expect (= #{"one.clj" "two.md" "three.txt"} names))
-          (expect (= 0 (get result "hit_count")))
-          (expect (empty? (get result "matches")))
-          (expect (not (contains? result "items")))
-          (expect (nil? (get result "hint")))))))
+                     (expect (= "" (get result "query")))
+                     (expect (= #{"one.clj" "two.md" "three.txt"} names))
+                     (expect (= 0 (get result "hit_count")))
+                     (expect (empty? (get result "matches")))
+                     (expect (not (contains? result "items")))
+                     (expect (nil? (get result "hint")))))))
 
 (defdescribe
   grep-searched-paths-reporting-test

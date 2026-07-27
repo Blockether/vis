@@ -61,9 +61,9 @@
 
 (def ->date vis/->date)
 
-(def new-uuid vis/new-uuid)
+(def new-uuid random-uuid)
 
-(def new-id vis/new-id)
+(defn new-id [] (->id (new-uuid)))
 
 (defn query!
   "Run a HoneySQL map and return rows with unqualified lower-case keys."

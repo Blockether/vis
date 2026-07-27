@@ -651,6 +651,10 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<'enable' | 'disable' | 'test' | null>(null);
+  // An OLDER gateway simply has no /v1/devices route. That is not an error the
+  // user can act on — it is a missing capability upstream — so the whole panel
+  // (and every button in it) disappears instead of offering calls that 404.
+  const [unsupported, setUnsupported] = useState(false);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -663,6 +667,12 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
         setErr(null);
       } catch (e) {
         if (signal?.aborted) return;
+        if (e instanceof GatewayError && (e.status === 404 || e.status === 501)) {
+          setUnsupported(true);
+          setDevices([]);
+          setErr(null);
+          return;
+        }
         setDevices([]);
         setErr(e instanceof GatewayError ? e.message : String(e));
       }
@@ -744,6 +754,9 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
   const provider = pushPlatform() === 'android' ? push?.fcm : push?.apns;
   const available = provider ? provider.is_available : (push?.is_available ?? false);
   const missing = provider?.missing ?? push?.missing;
+
+  // Gateway too old to know about push at all: render nothing.
+  if (unsupported) return null;
 
   return (
     <SettingsPanel

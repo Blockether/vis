@@ -790,15 +790,12 @@
    `+N more` disclosure (web) / `\u25b8 THINKING +N more` toggle (TUI). One
    source of truth so the TUI bubble and the web card clamp reasoning to the
    SAME height."
-  6)
+  3)
 
 (def reasoning-collapse-min-hidden
-  "Minimum number of HIDDEN reasoning rows required before a thinking trace is
-   COLLAPSED behind a disclosure at all. If the remainder beyond the preview is
-   smaller than this, the whole trace renders inline — a `+1 more` toggle that
-   only reveals one extra line is pure friction. One source of truth shared by
-   the TUI thinking bubble and the web thinking card."
-  3)
+  "Minimum HIDDEN reasoning rows required before a thinking trace collapses.
+   One means the preview limit is a hard maximum in every channel."
+  1)
 
 (defn normalize-reasoning
   "Canonical normalization for model reasoning / thinking text before it is

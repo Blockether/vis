@@ -41,3 +41,63 @@
     (let [qr (pairing/terminal-qr "vis://gateway?url=http%3A%2F%2F127.0.0.1%3A7890&token=s")]
       (is (not (str/blank? qr)))
       (is (or (str/includes? qr "█") (str/includes? qr "▀") (str/includes? qr "▄"))))))
+
+(defn- qr-dark-at
+  "Read the dark/light state of module (x, y) back out of a half-block render."
+  [lines x y]
+  (let
+    [c
+     (.charAt ^String (nth lines (quot (long y) 2)) x)
+
+     top?
+     (even? (long y))]
+
+    (case c
+      \█
+      false
+
+      \space
+      true
+
+      \▀
+      (not top?)
+
+      \▄
+      top?)))
+
+(deftest terminal-qr-is-scannable
+  (testing "the render round-trips through a real QR decoder"
+    (let
+      [payload
+       "vis://gateway?url=http%3A%2F%2F100.64.0.10%3A7890&token=abcdefghijklmnop"
+
+       lines
+       (str/split-lines (pairing/terminal-qr payload))
+
+       width
+       (count (first lines))
+
+       margin
+       4
+
+       modules
+       (- width (* 2 margin))
+
+       bits
+       (com.google.zxing.common.BitMatrix. modules modules)]
+
+      (testing "a full 4-module quiet zone surrounds the symbol"
+        (is (every? #(= (apply str (repeat width "█")) %)
+                    (concat (take 2 lines) (take-last 2 lines))))
+        (is (every? #(str/starts-with? % "████") lines))
+        (is (every? #(str/ends-with? % "████") lines)))
+      (doseq
+        [y
+         (range modules)
+
+         x
+         (range modules)]
+
+        (when (qr-dark-at lines (+ x margin) (+ y margin)) (.set bits x y)))
+      (is (= payload (.getText (.decode (com.google.zxing.qrcode.decoder.Decoder.) bits nil)))
+          "block glyphs must paint the light modules, not the dark ones"))))

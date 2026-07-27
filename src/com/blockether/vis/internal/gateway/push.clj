@@ -186,10 +186,7 @@
      :missing missing
      :is-configured (empty? missing)}))
 
-(defn configured?
-  "True when this gateway can deliver an APPLE push."
-  []
-  (:is-configured (config)))
+(defn configured? "True when this gateway can deliver an APPLE push." [] (:is-configured (config)))
 
 (defn any-configured?
   "True when this gateway can deliver a push to SOME platform — Apple or
@@ -469,51 +466,52 @@
    :reason}`."
   [device notification]
   (let
-    [platform (or (:platform device) "ios")
-     token (:token device)
+    [platform
+     (or (:platform device) "ios")
+
+     token
+     (:token device)
+
      result
-     (cond
-       (= "android" platform)
-       (let [r (fcm/send! token notification)]
-         (when (fcm/dead-token? r) (unregister-device! token))
-         r)
+     (cond (= "android" platform) (let [r (fcm/send! token notification)]
+                                    (when (fcm/dead-token? r) (unregister-device! token))
+                                    r)
+           ;; Anything else (a browser, some future platform) is stored so the app
+           ;; can see itself registered, but never handed to a provider.
+           (not (contains? #{"ios" "ipados"} platform)) {:status 0 :reason "unsupported-platform"}
+           :else (let [cfg (config)]
+                   (if-not (:is-configured cfg)
+                     {:status 0 :reason "not-configured"}
+                     (let
+                       [payload (alert-payload notification)
+                        env (or (:environment device) (:default-environment cfg))
+                        attempt (post-apns cfg env token payload notification)
+                        other (when (contains? #{"BadDeviceToken" "BadEnvironmentKeyInToken"}
+                                               (:reason attempt))
+                                (post-apns cfg
+                                           (if (= "sandbox" env) "production" "sandbox")
+                                           token
+                                           payload
+                                           notification))
+                        result (or (when (= 200 (:status other)) other) other attempt)]
 
-       ;; Anything else (a browser, some future platform) is stored so the app
-       ;; can see itself registered, but never handed to a provider.
-       (not (contains? #{"ios" "ipados"} platform))
-       {:status 0 :reason "unsupported-platform"}
-
-       :else
-       (let [cfg (config)]
-         (if-not (:is-configured cfg)
-           {:status 0 :reason "not-configured"}
-           (let
-             [payload (alert-payload notification)
-              env (or (:environment device) (:default-environment cfg))
-              attempt (post-apns cfg env token payload notification)
-              other
-              (when (contains? #{"BadDeviceToken" "BadEnvironmentKeyInToken"} (:reason attempt))
-                (post-apns cfg (if (= "sandbox" env) "production" "sandbox") token payload notification))
-              result (or (when (= 200 (:status other)) other) other attempt)]
-
-             (when (and other (= 200 (:status other)))
-               (swap! devices assoc-in
-                 [token :environment]
-                 (if (= "sandbox" env) "production" "sandbox"))
-               (write-devices! @devices))
-             (when (contains? #{"BadDeviceToken" "Unregistered" "DeviceTokenNotForTopic"}
-                              (:reason result))
-               (unregister-device! token))
-             result))))]
+                       (when (and other (= 200 (:status other)))
+                         (swap! devices assoc-in
+                           [token :environment]
+                           (if (= "sandbox" env) "production" "sandbox"))
+                         (write-devices! @devices))
+                       (when (contains? #{"BadDeviceToken" "Unregistered" "DeviceTokenNotForTopic"}
+                                        (:reason result))
+                         (unregister-device! token))
+                       result))))]
 
     (when (not= 200 (:status result))
       (tel/log! {:level :warn
                  :id ::push-failed
-                 :data
-                 {:token (mask token)
-                  :platform platform
-                  :status (:status result)
-                  :reason (:reason result)}}))
+                 :data {:token (mask token)
+                        :platform platform
+                        :status (:status result)
+                        :reason (:reason result)}}))
     (assoc result :is-delivered (= 200 (:status result)))))
 
 (defn broadcast!
@@ -575,8 +573,13 @@
 (defn status
   "Push capability for `/v1/capabilities` and `/v1/admin/status`."
   []
-  (let [cfg (config)
-        f (fcm/config)]
+  (let
+    [cfg
+     (config)
+
+     f
+     (fcm/config)]
+
     {:is-available (or (:is-configured cfg) (:is-configured f))
      :provider (cond (and (:is-configured cfg) (:is-configured f)) "apns+fcm"
                      (:is-configured f) "fcm"

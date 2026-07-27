@@ -257,10 +257,12 @@ const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
   value,
   language,
   compact,
+  copyValue,
 }: {
   value: string;
   language: string;
   compact: boolean;
+  copyValue?: string;
 }) {
   const gutter = splitGutter(value);
   const source = gutter ? gutter.code : value;
@@ -268,7 +270,7 @@ const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
 
   return (
     <div className={`${compact ? 'my-2' : 'my-3'} relative overflow-hidden border border-code-edge bg-code`}>
-      <CopyButton value={source} />
+      <CopyButton value={copyValue ?? source} />
       <pre className={`${compact ? 'py-2 text-meta ' : 'py-2.5 text-ui '} m-0 max-w-full overflow-x-auto overscroll-x-contain font-mono text-code-foreground`}>
         <code className="block min-w-max [tab-size:2]">
           {lines.map((segments, index) => (
@@ -616,6 +618,39 @@ function showFormCode(form: TranscriptForm, code: string): boolean {
   return form.tool_name === 'python_execution';
 }
 
+const PYTHON_PREVIEW_LINES = 5;
+
+const CollapsiblePythonCode = memo(function CollapsiblePythonCode({ value }: { value: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const lines = value.split(/\r?\n/);
+  const hiddenLines = Math.max(0, lines.length - PYTHON_PREVIEW_LINES);
+  const collapsible = hiddenLines > 0;
+  const visibleValue = collapsible && !expanded ? lines.slice(0, PYTHON_PREVIEW_LINES).join('\n') : value;
+
+  return (
+    <div className="min-w-0">
+      <SyntaxCodeBlock
+        value={visibleValue}
+        copyValue={value}
+        language="python"
+        compact
+      />
+      {collapsible && (
+        <button
+          type="button"
+          data-disclosure-toggle
+          className="mb-2 flex min-h-6 w-full items-center gap-1.5 px-3 text-left font-mono text-chip font-bold tracking-[0.07em] text-code-duration transition-colors hover:text-dialog-hint-key"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>
+          <span>{expanded ? 'PYTHON' : `PYTHON +${hiddenLines} more`}</span>
+        </button>
+      )}
+    </div>
+  );
+});
+
 const FormTrace = memo(function FormTrace({ form }: { form: TranscriptForm }) {
   if (form.silent || form.result === 'vis_silent' || form.result === 'vis_answer') return null;
   const code = formCode(form);
@@ -630,7 +665,7 @@ const FormTrace = memo(function FormTrace({ form }: { form: TranscriptForm }) {
           <Markdown compact>{form.comment.trim()}</Markdown>
         </div>
       )}
-      {showCode && <SyntaxCodeBlock value={code} language="python" compact />}
+      {showCode && <CollapsiblePythonCode value={code} />}
       {cards.length > 0 && (
         <div
           className="grid grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]"
@@ -648,8 +683,8 @@ const FormTrace = memo(function FormTrace({ form }: { form: TranscriptForm }) {
   );
 });
 
-const REASONING_PREVIEW_LINES = 6;
-const REASONING_COLLAPSE_MIN_HIDDEN = 3;
+const REASONING_PREVIEW_LINES = 3;
+const REASONING_COLLAPSE_MIN_HIDDEN = 1;
 const ENCRYPTED_REASONING_PLACEHOLDER =
   '[provider returned encrypted reasoning; plaintext reasoning is unavailable]';
 
@@ -709,7 +744,7 @@ export const ThinkingBand = memo(function ThinkingBand({ children }: { children:
       )}
       <div
         ref={bodyRef}
-        className={`${collapsible && !expanded ? 'max-h-[7.5rem] overflow-hidden' : ''} italic`}
+        className={`${collapsible && !expanded ? 'max-h-[3.75rem] overflow-hidden' : ''} italic`}
       >
         <Markdown compact hardBreaks>{normalized}</Markdown>
       </div>

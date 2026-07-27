@@ -3339,6 +3339,10 @@
    (usually the plan) stays visible without the full wall of text."
   vis/reasoning-preview-line-limit)
 
+(def ^:private python-code-preview-line-limit
+  "Rows of a successful python_execution program shown before its disclosure."
+  5)
+
 (defn- image-safe-split-n
   "Preview cut point for `entries` that never BISECTS a reserved image box.
 
@@ -4585,10 +4589,43 @@
                              :section :iteration
                              :kind :code}))
 
-          c-lines
+          c-lines-full
           (tag-copy-block-body (mapv #(line-entry (str c-marker %)) code-lines)
                                code-node-id
                                code-text)
+
+          python-code-collapsible?
+          (and (not error)
+               (= "python_execution"
+                  (some-> (:vis/tool-name form)
+                          name))
+               code-node-id
+               (> (count c-lines-full) (long python-code-preview-line-limit)))
+
+          c-lines
+          (if-not python-code-collapsible?
+            c-lines-full
+            (let
+              [expanded?
+               (detail-expanded? detail-expansions session-id code-node-id false)
+
+               visible
+               (vec (take python-code-preview-line-limit c-lines-full))
+
+               hidden
+               (vec (drop python-code-preview-line-limit c-lines-full))
+
+               summary
+               (detail-summary-entries
+                 {:marker c-marker
+                  :max-w fill-w
+                  :summary (if expanded? "PYTHON" (str "PYTHON +" (count hidden) " more"))
+                  :collapsed? (not expanded?)
+                  :session-id session-id
+                  :node-id code-node-id
+                  :color-role :tool-color/shell})]
+
+              (vec (concat visible summary (when expanded? hidden)))))
 
           ;; Human result surface: the form RETURN value as markdown. Stdout is
           ;; model-context only and is not rendered in human channels.

@@ -59,6 +59,7 @@
     (.getPublic kp)))
 
 (deftest config-reports-what-is-missing
+  #_{:clj-kondo/ignore [:unresolved-symbol]}
   (with-push-home [home]
                   (testing "an empty home cannot push to Android, and says exactly why"
                     (let [cfg (fcm/config)]
@@ -126,6 +127,7 @@
   (is (false? (fcm/dead-token? {:status 0 :reason "transport-error"}))))
 
 (deftest send-dispatches-on-platform
+  #_{:clj-kondo/ignore [:unresolved-symbol]}
   (with-push-home [_home]
                   (testing "an Android device goes to FCM, not to Apple"
                     (is (= {:status 0 :reason "not-configured" :is-delivered false}
