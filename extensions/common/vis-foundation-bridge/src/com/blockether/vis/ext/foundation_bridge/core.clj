@@ -5,7 +5,6 @@
    (`bridge.api`); `br/check` returns Bridge's canonical status summary
    (`:summary-version` 1) plus the Vis envelope keys. This extension
    adds no flattening of its own — meaning lives in the kernel."
-  (:refer-clojure :exclude [next])
   (:require [bridge.api :as br]
             [clojure.pprint :as pprint]
             [clojure.string :as str]
@@ -44,9 +43,8 @@
    snake_case strings (mirroring env-python/kw->snake), collections recurse.
    Bridge merges bridge.api's keyword-keyed status summary verbatim into its
    results, so this is the single source-stringification pass applied at each
-   public tool-fn exit — internal builders (`bridge-check`, `next-result`, the
-   `profile-discovery`/protected-path structures) stay idiomatic keyword Clojure
-   because `next`/`bridge-hint`/the sandbox layer read them back by keyword."
+   public tool-fn exit — internal builders stay idiomatic keyword Clojure until
+   the result crosses into the sandbox."
   [x]
   (cond (map? x) (reduce-kv (fn [m k v]
                               (assoc m (boundary-key k) (deep-stringify v)))
@@ -98,17 +96,6 @@
   {:tool tool
    :args (vec args)
    :call (str (py-tool-name tool) "(" (str/join ", " (map py-arg args)) ")")})
-
-(defn- render-tool-call [{:keys [call]}] (or call "br_init()"))
-
-(defn- action->extension-op
-  [action]
-  (when action
-    {:kind :extension-op
-     :summary (:summary action)
-     :reason (:reason action)
-     :required-evidence (vec (:required-evidence action))
-     :op (tool-call "br/run-evidence" [(:evidence-id action)])}))
 
 (defn- profile-discovery
   [root opts]
@@ -344,135 +331,6 @@
                      :profile-path profile-path
                      :policy-path policy-path)))))
 
-(defn- next-suggestion
-  [action]
-  (let
-    [op-name
-     (:op action)
-
-     evidence-id
-     (or (:evidence-id action) (get-in action [:args :id]))]
-
-    (cond (or (= "run-evidence" (:kind action)) (= "bridge/run-evidence" op-name))
-          (action->extension-op (assoc action :evidence-id evidence-id))
-          :else nil)))
-
-(defn- status-obligation->suggestion
-  [obligation]
-  (or (action->extension-op (:command obligation)) (next-suggestion obligation)))
-
-(defn- unconfigured-next-step [] {:kind :extension-op :op (tool-call "br/init" [])})
-
-(defn- next-result
-  [check-result]
-  (let [actions (keep status-obligation->suggestion (:required-obligations check-result))]
-    {:configured? true
-     :project (:project check-result)
-     :status (:status check-result)
-     :issue-count (:issue-count check-result)
-     :profile-path (:profile-path check-result)
-     :changed-files (:changed-files check-result)
-     :counts (:counts check-result)
-     :summary (select-keys check-result
-                           [:summary-version :project :status :issue-count :counts
-                            :required-obligations :recommended-obligations :stale-artifacts
-                            :subject-problems :evidence-receipts :next-action])
-     :next-step (action->extension-op (:next-action check-result))
-     :suggestions (vec actions)}))
-
-(def ^:private ^:const hint-recheck-ms
-  "Re-run the reflective Bridge check at most this often per workspace even when
-   `.bridge/` looks unchanged, so working-tree drift (stale artifacts vs edited
-   sources) still refreshes the nudge without paying the check every iteration."
-  30000)
-
-(defonce ^:private hint-cache
-  ;; workspace-root -> {:fingerprint fp :at ms :hint hint}. Memoizes the
-  ;; iteration-start check: `bridge-check` reaches Bridge through UNHINTED Java
-  ;; interop (a full reflective `Class/getMethods` + `Method[]` copy per call —
-  ;; the single biggest allocation source during a turn per the gateway JFR), and
-  ;; the hint reran it on EVERY agent iteration. Keyed on a `.bridge/` fingerprint
-  ;; so a receipt / profile / policy write invalidates it immediately.
-  (atom {}))
-
-(defn- bridge-dir-fingerprint
-  "Cheap change-detector for `.bridge/` inputs: `[max-mtime total-size file-count]`
-   across the tree. Any profile / policy / receipt write shifts it, so the memoized
-   check re-runs exactly then. nil when `.bridge/` is absent."
-  [root]
-  (try (let [dir (java.io.File. (str root) ".bridge")]
-         (when (.isDirectory dir)
-           (loop
-             [stack [dir]
-              mx 0
-              sz 0
-              n 0]
-
-             (if-let [^java.io.File f (peek stack)]
-               (let [stack (pop stack)]
-                 (if (.isDirectory f)
-                   (recur (into stack (or (seq (.listFiles f)) [])) mx sz n)
-                   (recur stack (max mx (.lastModified f)) (+ sz (.length f)) (inc n))))
-               [mx sz n]))))
-       (catch Throwable _ nil)))
-
-(defn- compute-bridge-hint
-  "The uncached hint body: run Bridge's check and, only when it reports open work,
-   build the :info nudge. Split out so `bridge-hint` can memoize the reflective
-   check around it."
-  [env]
-  (let [status-result (:result (bridge-check env {}))]
-    (when (and status-result (pos? (long (or (:issue-count status-result) 0))))
-      {:importance :info
-       :title
-       (str
-         "Bridge reports open verification work in this workspace. "
-         "Inspect the next suggested Bridge action via bare "
-         (render-tool-call (tool-call "br/next" []))
-         ". Do not execute evidence work from this hint unless verification is already in scope for the current task.")})))
-
-(defn- bridge-hint
-  "Iteration-start hint. Emits nothing when Bridge is not configured —
-   a workspace without Bridge is the normal state, not actionable work
-   (the static extension prompt already documents `br_init()` for when
-   Bridge is in scope). Only configured workspaces with open
-   verification work get an :info hint.
-
-   The underlying `bridge-check` reaches Bridge through reflective Java interop,
-   so its result is MEMOIZED per workspace (see `hint-cache`) and recomputed only
-   when `.bridge/` changes (a receipt / profile / policy write shifts the
-   fingerprint) or the cached value ages past `hint-recheck-ms` — rather than
-   running a fresh reflective check on every single agent iteration."
-  [{:keys [environment]}]
-  (let
-    [env
-     (or environment {})
-
-     root
-     (workspace-root env)
-
-     discovery
-     (profile-discovery root {})]
-
-    (when (:configured? discovery)
-      (let
-        [fp
-         (bridge-dir-fingerprint root)
-
-         now
-         (now-ms)
-
-         cached
-         (get @hint-cache root)]
-
-        (if (and cached
-                 (= (:fingerprint cached) fp)
-                 (< (- now (long (:at cached))) hint-recheck-ms))
-          (:hint cached)
-          (let [hint (compute-bridge-hint env)]
-            (swap! hint-cache assoc root {:fingerprint fp :at now :hint hint})
-            hint))))))
-
 (defn init
   "Bootstrap Bridge in this workspace. `await br_init()` (opts `{\"root\": path}`). Returns the existing config if already set up."
   [env & [opts]]
@@ -548,33 +406,9 @@
                                       (assoc (no-profile-result discovery)
                                         :status "unconfigured"
                                         :issue-count 1
-                                        :next-step (unconfigured-next-step)
                                         :changed-files (ensure-vector (get opts* "changed_files")))
                                       opts*)
                         (bridge-check env opts*)))))
-
-(defn next
-  "Next suggested Bridge action(s). `await br_next({\"changed_files\": [path, ...]})`. Returns `{\"status\", \"suggestions\": [...], \"next_step\"}`."
-  [env & [opts]]
-  (let
-    [opts*
-     (normalize-opts opts)
-
-     discovery
-     (profile-discovery (workspace-root env) opts*)]
-
-    (stringify-result
-      (if-not (:configured? discovery)
-        (tool-success :br/next
-                      (now-ms)
-                      (assoc (no-profile-result discovery)
-                        :status "unconfigured"
-                        :issue-count 1
-                        :next-step (unconfigured-next-step)
-                        :suggestions [(unconfigured-next-step)]
-                        :changed-files (ensure-vector (get opts* "changed_files")))
-                      opts*)
-        (tool-success :br/next (now-ms) (next-result (:result (bridge-check env opts*))) opts*)))))
 
 (defn list-evidence
   "List the active profile's evidence commands. `await br_list_evidence()`. Returns `{\"commands\": [...]}`."
@@ -621,24 +455,15 @@
   [(vis/symbol #'init {:before-fn inject-env :tag :mutation :arglists '([] [opts])})
    (vis/symbol #'profile {:before-fn inject-env :tag :observation :arglists '([] [opts])})
    (vis/symbol #'check {:before-fn inject-env :tag :observation :arglists '([] [opts])})
-   (vis/symbol #'next {:before-fn inject-env :tag :observation :arglists '([] [opts])})
    (vis/symbol #'list-evidence {:before-fn inject-env :tag :observation :arglists '([] [opts])})
    (vis/symbol #'run-evidence {:before-fn inject-env :tag :mutation :arglists '([id] [id opts])})])
 
 (defn bridge-prompt
   [env]
   (when (:configured? (profile-discovery (workspace-root env) {}))
-    (str "Bridge configured. Use `br_check()` for status, `br_next()` for the next "
-         "action, and `br_run_evidence(...)` only when verification is in scope. "
+    (str "Bridge configured. Use `br_check()` for canonical status and `next_action`; "
+         "use `br_run_evidence(...)` only when verification is in scope. "
          "Summarize selected fields; never dump the result. Use `doc(name)` for contracts.")))
-
-(def bridge-hooks
-  [{:id :vis.bridge/next
-    :doc
-    "Hint the model about the next Bridge action when a configured workspace has open evidence work. Silent when Bridge is not configured."
-    :phase :turn.iteration/start
-    :lifetime :turn
-    :fn bridge-hint}])
 
 ;; Tags carried INLINE on each `vis/symbol` opts map above;
 ;; register-extension! auto-populates the op registry.
@@ -731,8 +556,6 @@
 
 (defn- cli-check! [_parsed residual] (emit-result! (check (cli-env) (parse-kv-opts residual))))
 
-(defn- cli-next! [_parsed residual] (emit-result! (next (cli-env) (parse-kv-opts residual))))
-
 (defn- cli-list-evidence!
   [_parsed residual]
   (emit-result! (list-evidence (cli-env) (parse-kv-opts residual))))
@@ -748,7 +571,7 @@
 (def ^:private bridge-cli
   [{:cmd/name "bridge"
     :cmd/doc "Bridge verification coordinator -- mirrors the `br/` tool alias."
-    :cmd/usage "vis extension bridge <init|profile|check|next|list-evidence|run-evidence> [flags]"
+    :cmd/usage "vis extension bridge <init|profile|check|list-evidence|run-evidence> [flags]"
     :cmd/subcommands
     [{:cmd/name "init"
       :cmd/doc "Bootstrap Bridge for this workspace (.bridge/profile.yaml etc)."
@@ -763,10 +586,6 @@
       :cmd/usage
       "vis extension bridge check [--changed-file PATH ...] [--profile PATH] [--policy PATH]"
       :cmd/run-fn cli-check!}
-     {:cmd/name "next"
-      :cmd/doc "Print the next suggested Bridge action(s)."
-      :cmd/usage "vis extension bridge next [--changed-file PATH ...] [--profile PATH]"
-      :cmd/run-fn cli-next!}
      {:cmd/name "list-evidence"
       :cmd/doc "List evidence commands configured by the active profile."
       :cmd/usage "vis extension bridge list-evidence [--profile PATH]"
@@ -788,7 +607,6 @@
                   :ext/license "Apache-2.0"
                   :ext/engine {:ext.engine/alias 'br :ext.engine/symbols bridge-symbols}
                   :ext/cli bridge-cli
-                  :ext/hooks bridge-hooks
                   :ext/kind "verification"
                   :ext/protected-paths bridge-protected-paths
                   :ext/prompt-fn bridge-prompt}))

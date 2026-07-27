@@ -36,18 +36,10 @@ Observation tools:
   `:evidence-receipts`, and `:next-action`, plus the Vis envelope keys
   `:configured?`, `:profile-path`, and `:policy-path`. The extension adds no
   flattening of its own — summary semantics live in the Bridge kernel.
-- `(br/next)` returns the next suggested Bridge action, expressed as `br/*`
-  extension operations instead of shell commands.
-- A native Vis hint is emitted at `:turn.iteration/start` only when Bridge
-  is configured AND has open verification work; it points to `(br/next)`
-  for inspection rather than directly suggesting a mutation such as
-  `br/run-evidence`, and carries `:lifetime :turn` so it does not linger in
-  CTX (it is purely informational — no ctx-verb dismissal). When Bridge is
-  unconfigured the hook is silent — an
-  unconfigured workspace is the normal state, not actionable work, and a
-  standing hint would pressure the model toward `br/init` mutations in
-  repos where Bridge was never wanted. `br_init()` discoverability comes
-  from the static extension prompt instead.
+- There is no separate `br/next` wrapper. Callers inspect the canonical
+  `:next-action` returned by `br/check`.
+- The extension emits no proactive next-action hint. Bridge status remains an
+  explicit pull through `br/check`.
 - `(br/list-evidence)` lists configured evidence commands. When no profile is
   configured, it returns an empty command list plus setup guidance.
 - `(br/run-evidence id)` remains a failure when no profile exists, but the
@@ -83,14 +75,10 @@ without running a command or writing a receipt.
 3. The agent edits through `v/patch`.
 4. The agent calls `(br/check)`.
 5. Bridge maps changed files to subsystems and policy obligations.
-6. The agent can call `(br/next)` to get the next recommended action as a
-   `br/*` operation.
-7. The extension may also emit a native Vis hint that reminds the model to
-   inspect Bridge state via `(br/next)` without automatically escalating into
-   evidence execution.
-8. When needed, the agent calls `(br/run-evidence id)` for a configured
+6. The agent inspects `:next-action` in the returned status.
+7. When needed, the agent calls `(br/run-evidence id)` for a configured
    command.
-9. The agent calls `(br/check)` again and reports clear status or remaining
+8. The agent calls `(br/check)` again and reports clear status or remaining
    obligations in the final answer.
 
 ## Profile Discovery
@@ -126,7 +114,6 @@ Extension-owned:
 
 - profile discovery from the active workspace
 - converting Bridge library calls into plain Vis tool envelopes
-- emitting advisory native Vis hints that point to `br/*` operations
 - registering op tags and prompt guidance
 - translating Bridge path sandbox policy into Vis protected-path declarations
 

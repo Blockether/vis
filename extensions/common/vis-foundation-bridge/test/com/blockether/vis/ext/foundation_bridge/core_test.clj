@@ -15,17 +15,6 @@
   [envelope]
   (boundary/boundary-view (:result envelope)))
 
-(defn- run-in!
-  [root & args]
-  (let [pb (ProcessBuilder. ^"[Ljava.lang.String;" (into-array String args))]
-    (.directory pb (java.io.File. ^String root))
-    (let
-      [proc (.start pb)
-       exit (.waitFor proc)]
-
-      (expect (zero? exit))
-      exit)))
-
 (defn- temp-root
   [prefix]
   (str (java.nio.file.Files/createTempDirectory prefix
@@ -47,21 +36,15 @@
   (it
     "configures the extension"
     (expect (= 'br (get-in bridge/vis-extension [:ext/engine :ext.engine/alias])))
-    (expect (= '#{init profile check next list-evidence run-evidence}
+    (expect (= '#{init profile check list-evidence run-evidence}
                (set (map :ext.symbol/symbol
                          (get-in bridge/vis-extension [:ext/engine :ext.engine/symbols])))))
+    (expect (= #{"init" "profile" "check" "list-evidence" "run-evidence"}
+               (set (map :cmd/name
+                         (get-in bridge/vis-extension [:ext/cli 0 :cmd/subcommands])))))
     (expect (fn? (:ext/protected-paths bridge/vis-extension)))
-    (expect
-      (=
-        [{:id :vis.bridge/next
-          :doc
-          "Hint the model about the next Bridge action when a configured workspace has open evidence work. Silent when Bridge is not configured."
-          :phase :turn.iteration/start
-          :lifetime :turn
-          :fn (get-in bridge/vis-extension [:ext/hooks 0 :fn])}]
-        (get-in bridge/vis-extension [:ext/hooks])))
+    (expect (nil? (:ext/hooks bridge/vis-extension)))
     (expect (= :observation (vis/op-tag :br/check)))
-    (expect (= :observation (vis/op-tag :br/next)))
     (expect (= :mutation (vis/op-tag :br/init)))
     (expect (= :mutation (vis/op-tag :br/run-evidence))))
   (it "emits concise routing only in configured workspaces"
@@ -79,7 +62,8 @@
         (bridge/init env)
         (let [prompt (prompt-fn env)]
           (expect (str/includes? prompt "br_check"))
-          (expect (str/includes? prompt "br_next"))
+          (expect (str/includes? prompt "next_action"))
+          (expect (not (str/includes? prompt "br_next")))
           (expect (str/includes? prompt "doc(name)"))
           (expect (not (str/includes? prompt "required_obligations")))
           (expect (< (count prompt) 400))))))
@@ -204,9 +188,6 @@
        check-result
        (bridge/check env)
 
-       next-result
-       (bridge/next env)
-
        list-result
        (bridge/list-evidence env)
 
@@ -226,9 +207,6 @@
       (expect (= true (get-in (result-of profile-result) ["configured"])))
       (expect (true? (:success? check-result)))
       (expect (not= "unconfigured" (get-in (result-of check-result) ["status"])))
-      (expect (true? (:success? next-result)))
-      (expect (or (nil? (get-in (result-of next-result) ["next_step"]))
-                  (= "br/run-evidence" (get-in (result-of next-result) ["next_step" "op" "tool"]))))
       (expect (true? (:success? list-result)))
       (expect (vector? (get-in (result-of list-result) ["commands"])))
       (expect (true? (:success? run-result)))
@@ -275,55 +253,6 @@
                    (expect (= [] (get-in (result-of second-result) ["updated"])))
                    (expect (str/includes? (get-in (result-of second-result) ["message"])
                                           "already configured")))))
-
-(defdescribe
-  bridge-next-suggests-extension-ops-test
-  (it
-    "next suggests extension ops"
-    (let
-      [root
-       (str (java.nio.file.Files/createTempDirectory
-              "bridge-ext-next"
-              (make-array java.nio.file.attribute.FileAttribute 0)))
-
-       _
-       (spit (str root "/deps.edn") "{:aliases {:test {}}}")
-
-       _
-       (.mkdirs (java.io.File. root "src"))
-
-       _
-       (spit (str root "/src/core.clj") "(ns core)")
-
-       env
-       {:workspace/root root}
-
-       _
-       (bridge/init env)
-
-       check-result
-       (bridge/check env {"changed_files" ["src/core.clj"]})
-
-       next-result
-       (bridge/next env {"changed_files" ["src/core.clj"]})
-
-       open-obligation
-       (first (get-in (result-of check-result) ["required_obligations"]))
-
-       suggestion
-       (get-in (result-of next-result) ["next_step"])]
-
-      (expect (true? (:success? check-result)))
-      (expect (= "attention-required" (get-in (result-of check-result) ["status"])))
-      (expect (= 1 (get-in (result-of check-result) ["counts" "required_obligations"])))
-      (expect (= "open" (get open-obligation "state")))
-      (expect (= ["unit-tests"] (get-in open-obligation ["required_evidence"])))
-      (expect (true? (:success? next-result)))
-      (expect (= "attention-required" (get-in (result-of next-result) ["status"])))
-      (expect (= "extension_op" (get suggestion "kind")))
-      (expect (= "br/run-evidence" (get-in suggestion ["op" "tool"])))
-      (expect (= ["unit"] (get-in suggestion ["op" "args"])))
-      (expect (not (str/includes? (or (get-in suggestion ["op" "call"]) "") "bb bridge"))))))
 
 (defdescribe
   bridge-check-flattens-status-test
@@ -378,59 +307,3 @@
       (expect (= "unit" (get-in r ["next_action" "evidence_id"])))
       (expect (= "failed" (get-in r ["evidence_receipts" 0 "status"])))
       (expect (= "unit-tests" (get-in r ["required_obligations" 0 "evidence_kind"]))))))
-
-(defdescribe
-  bridge-hint-hook-test
-  (it
-    "hinting suggests the next action"
-    (let
-      [hint-fn
-       (get-in bridge/vis-extension [:ext/hooks 0 :fn])
-
-       unconfigured-root
-       (str (java.nio.file.Files/createTempDirectory
-              "bridge-ext-hint-unconfigured"
-              (make-array java.nio.file.attribute.FileAttribute 0)))
-
-       configured-root
-       (str (java.nio.file.Files/createTempDirectory
-              "bridge-ext-hint-configured"
-              (make-array java.nio.file.attribute.FileAttribute 0)))
-
-       _
-       (spit (str configured-root "/deps.edn") "{:aliases {:test {}}}")
-
-       _
-       (.mkdirs (java.io.File. configured-root "src"))
-
-       _
-       (spit (str configured-root "/src/core.clj") "(ns core)\n(def x 1)\n")
-
-       _
-       (bridge/init {:workspace/root configured-root})
-
-       _
-       (run-in! configured-root "git" "init" "-q")
-
-       _
-       (spit (str configured-root "/src/core.clj") "(ns core)\n(def x 2)\n")
-
-       unconfigured-hint
-       (hint-fn {:environment {:workspace/root unconfigured-root}})
-
-       configured-hint
-       (hint-fn {:environment {:workspace/root configured-root}})]
-
-      ;; Unconfigured workspaces are the normal state, not actionable
-      ;; verification work: the hook must stay silent instead of
-      ;; emitting a standing warn-task in every non-Bridge repo.
-      (expect (nil? unconfigured-hint))
-      (expect (= :info (:importance configured-hint)))
-      (expect (nil? (:validator-fn configured-hint)))
-      (expect (str/includes? (:title configured-hint) "br_next()"))
-      ;; The hint is purely informational — it must NOT instruct the model
-      ;; to call any removed ctx verb (plan_step / task_set were dropped).
-      (expect (not (str/includes? (:title configured-hint) "plan_step")))
-      (expect (not (str/includes? (:title configured-hint) "task_set")))
-      (expect (not (str/includes? (:title configured-hint) "br_run_evidence")))
-      (expect (not (str/includes? (:title configured-hint) "bb bridge"))))))
