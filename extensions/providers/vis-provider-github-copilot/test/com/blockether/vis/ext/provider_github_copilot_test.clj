@@ -5,62 +5,51 @@
 
 (defdescribe
   provider-registration-test
-  (it
-    "registers ONE transparent provider per Copilot account (no per-wire sub-providers)"
-    (require 'com.blockether.vis.ext.provider-github-copilot :reload)
-    (let
-      [business
-       (vis/provider-by-id :github-copilot-business)
+  (it "registers ONE transparent provider per Copilot account (no per-wire sub-providers)"
+      (require 'com.blockether.vis.ext.provider-github-copilot :reload)
+      (let
+        [business
+         (vis/provider-by-id :github-copilot-business)
 
-       individual
-       (vis/provider-by-id :github-copilot-individual)
+         individual
+         (vis/provider-by-id :github-copilot-individual)
 
-       enterprise
-       (vis/provider-by-id :github-copilot-enterprise)
+         enterprise
+         (vis/provider-by-id :github-copilot-enterprise)
 
-       ext-nses
-       (set (map :ext/name (vis/registered-extensions)))
+         ext-nses
+         (set (map :ext/name (vis/registered-extensions)))
 
-       models
-       (set (get-in individual [:provider/preset :default-models]))]
+         models
+         (set (get-in individual [:provider/preset :default-models]))]
 
-      (expect (= :github-copilot-business (:provider/id business)))
-      (expect (= :github-copilot-individual (:provider/id individual)))
-      (expect (= :github-copilot-enterprise (:provider/id enterprise)))
-      (expect (contains? ext-nses "provider-github-copilot"))
-      ;; One entry per account — the old `…-responses` / `…-chat` per-wire
-      ;; sub-providers are gone; one base-url `/v1` carries both wires.
-      (expect (nil? (vis/provider-by-id :github-copilot-individual-responses)))
-      (expect (nil? (vis/provider-by-id :github-copilot-individual-chat)))
-      (expect (= "https://api.business.githubcopilot.com/v1"
-                 (get-in business [:provider/preset :base-url])))
-      (expect (= "https://api.individual.githubcopilot.com/v1"
-                 (get-in individual [:provider/preset :base-url])))
-      (expect (= "https://api.business.githubcopilot.com/v1"
-                 (get-in enterprise [:provider/preset :base-url])))
-      (expect (= "/responses" (get-in individual [:provider/preset :responses-path])))
-      ;; Catalog carries both cacheable wires; Gemini/Grok (chat-only) dropped.
-      (expect (contains? models "claude-opus-4.8"))
-      (expect (contains? models "claude-fable-5"))
-      (expect (contains? models "gpt-5.4"))
-      ;; Enterprise serves the SAME curated Claude catalog (dotted models.dev
-      ;; ids → native Anthropic /v1/messages wire) so Copilot Enterprise users
-      ;; can select Opus/Sonnet/Haiku.
-      (expect (contains? (set (get-in enterprise [:provider/preset :default-models]))
-                         "claude-opus-4.8"))
-      (expect (contains? (set (get-in enterprise [:provider/preset :default-models]))
-                         "claude-fable-5"))
-      (expect (contains? (set (get-in enterprise [:provider/preset :default-models]))
-                         "claude-sonnet-4.6"))
-      (expect (contains? (set (get-in enterprise [:provider/preset :default-models]))
-                         "claude-haiku-4.5"))
-      (expect (not-any? #(re-find #"(?i)gemini|grok" %) models))
-      (expect (ifn? (:provider/status-fn business)))
-      (expect (ifn? (:provider/logout-fn business)))
-      (expect (ifn? (:provider/detect-fn business)))
-      (expect (ifn? (:provider/auth-fn business)))
-      (expect (ifn? (:provider/get-token-fn business)))
-      (expect (ifn? (:provider/limits-fn business)))))
+        (expect (= :github-copilot-business (:provider/id business)))
+        (expect (= :github-copilot-individual (:provider/id individual)))
+        (expect (= :github-copilot-enterprise (:provider/id enterprise)))
+        (expect (contains? ext-nses "provider-github-copilot"))
+        ;; One entry per account — the old `…-responses` / `…-chat` per-wire
+        ;; sub-providers are gone; one base-url `/v1` carries both wires.
+        (expect (nil? (vis/provider-by-id :github-copilot-individual-responses)))
+        (expect (nil? (vis/provider-by-id :github-copilot-individual-chat)))
+        (expect (= "https://api.business.githubcopilot.com/v1"
+                   (get-in business [:provider/preset :base-url])))
+        (expect (= "https://api.individual.githubcopilot.com/v1"
+                   (get-in individual [:provider/preset :base-url])))
+        (expect (= "https://api.business.githubcopilot.com/v1"
+                   (get-in enterprise [:provider/preset :base-url])))
+        (expect (= "/responses" (get-in individual [:provider/preset :responses-path])))
+        ;; The curated defaults intentionally contain only the current cacheable fleets.
+        (expect (= #{"claude-opus-5" "claude-fable-5" "claude-sonnet-5" "gpt-5.6-luna" "gpt-5.6-sol"
+                     "gpt-5.6-terra"}
+                   models))
+        (expect (= models (set (get-in enterprise [:provider/preset :default-models]))))
+        (expect (not-any? #(re-find #"(?i)gemini|grok" %) models))
+        (expect (ifn? (:provider/status-fn business)))
+        (expect (ifn? (:provider/logout-fn business)))
+        (expect (ifn? (:provider/detect-fn business)))
+        (expect (ifn? (:provider/auth-fn business)))
+        (expect (ifn? (:provider/get-token-fn business)))
+        (expect (ifn? (:provider/limits-fn business)))))
   (describe "active-tier-detect"
             (it "surfaces credentials for ONLY the active Copilot tier (issue #48)"
                 (require 'com.blockether.vis.ext.provider-github-copilot :reload)
