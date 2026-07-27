@@ -37,16 +37,33 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, profile: community, bin: target/vis, asset: vis-linux-x64-community, extra_args: '' }
-          - { os: ubuntu-latest, profile: corporate, bin: target/vis, asset: vis-linux-x64-corporate, extra_args: '' }
+          # Every job below died in `[2/8] Performing analysis` on v0.1.0..v0.1.5.
+          # Two distinct symptoms, one cause — the GraalPy analysis working set
+          # does not fit the builder heap:
+          #   • linux: no -J args at all, so the builder took the default 80% of
+          #     RAM (12 GB) and grew into it incrementally -> 1388 GCs / 1486 s
+          #     (79.8% of the stage) -> the DeadlockWatchdog saw "no activity"
+          #     and aborted a build that was merely GC-thrashing.
+          #   • macOS (7 GB host): -Xmx6g -> straight OutOfMemoryError.
+          # Fixes applied per platform:
+          #   • -Xms == -Xmx: commit the heap up front instead of paying repeated
+          #     full GCs while the heap ratchets up under an already-full old gen.
+          #   • -XX:+UseParallelGC on the BUILDER (throughput collector; the
+          #     "Serial GC" line in the log is the generated image's GC, not this).
+          #   • -H:NumberOfThreads caps analysis parallelism — peak footprint
+          #     scales with concurrent analysis threads, so fewer threads is the
+          #     only lever that lowers the high-water mark on a fixed-RAM runner.
+          #   • -H:DeadlockWatchdogInterval=0 disables the watchdog: a slow but
+          #     progressing analysis must not be killed as a false deadlock.
+          - { os: ubuntu-latest, profile: community, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx12g -J-Xms12g -J-XX:+UseParallelGC -H:NumberOfThreads=4 -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-latest, profile: corporate, bin: target/vis, asset: vis-linux-x64-corporate, extra_args: '-J-Xmx12g -J-Xms12g -J-XX:+UseParallelGC -H:NumberOfThreads=4 -H:DeadlockWatchdogInterval=0' }
           # macos-15: FREE Apple-silicon runner (M1, 7 GB). The paid macos-15-xlarge
           # (14 GB) is blocked by the org spending limit, so free runners are the only
-          # option. GraalPy forces -Xms14g, which on a 7 GB host swaps into a
-          # DeadlockWatchdog kill — so VIS_NATIVE_EXTRA_ARGS overrides the heap
-          # (-Xmx6g/-Xms1g), and the -Os + interpreter-only build (DefaultTruffleRuntime,
-          # no Truffle JIT) keeps the analysis footprint low enough to fit via swap.
-          - { os: macos-15, profile: community, bin: target/vis, asset: vis-macos-arm64-community, extra_args: '-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC' }
-          - { os: macos-15, profile: corporate, bin: target/vis, asset: vis-macos-arm64-corporate, extra_args: '-J-Xmx6g -J-Xms1g -J-XX:+UseParallelGC' }
+          # option. 6 GB of builder heap on a 7 GB host still OOM'd, so lean harder on
+          # macOS's dynamic swap (-Xmx7g) and cut analysis threads to 2 to drop the
+          # peak, accepting a slower build in exchange for one that finishes.
+          - { os: macos-15, profile: community, bin: target/vis, asset: vis-macos-arm64-community, extra_args: '-J-Xmx7g -J-Xms2g -J-XX:+UseParallelGC -H:NumberOfThreads=2 -H:DeadlockWatchdogInterval=0' }
+          - { os: macos-15, profile: corporate, bin: target/vis, asset: vis-macos-arm64-corporate, extra_args: '-J-Xmx7g -J-Xms2g -J-XX:+UseParallelGC -H:NumberOfThreads=2 -H:DeadlockWatchdogInterval=0' }
     steps:
       - uses: actions/checkout@v7
       # GraalVM COMMUNITY Edition (GPLv2 + Classpath Exception) — the SAME pinned
