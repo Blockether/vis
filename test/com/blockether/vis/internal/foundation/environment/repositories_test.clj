@@ -87,14 +87,16 @@
                (expect (false? (:truncated? inventory)))
                (expect (every? #(= #{:path :root} (set (keys %))) (:repositories inventory))))
              (finally (repositories/refresh-inventory!) (cleanup root)))))
-  (it "skips hidden, vendor, and build roots"
+  (it "discovers dot-prefixed repositories but skips known cache, vendor, and build roots"
       (let [root (make-tmp-dir)]
         (try (mark-repo! (io/file root "visible"))
              (mark-repo! (io/file root ".hidden/project"))
+             (mark-repo! (io/file root ".cache/project"))
              (mark-repo! (io/file root "vendor/project"))
              (mark-repo! (io/file root "build/project"))
              (repositories/refresh-inventory!)
-             (expect (= ["visible"] (mapv :path (:repositories (repositories/inventory root)))))
+             (expect (= [".hidden/project" "visible"]
+                        (mapv :path (:repositories (repositories/inventory root)))))
              (finally (repositories/refresh-inventory!) (cleanup root)))))
   (it "keeps new repositories out of a cached inventory until refresh"
       (let [root (make-tmp-dir)]

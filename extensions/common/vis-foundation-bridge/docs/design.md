@@ -115,9 +115,10 @@ obligations, receipts, or next action: those are fresh, explicit outputs of
 
 The extension reuses Vis's cached, bounded Git repository inventory beneath the
 primary workspace root. The inventory scans at most 64 repositories and skips
-hidden, vendor, and build roots. `refresh()` invalidates it; profile files
-inside already-known repositories are probed on every contribution and become
-visible immediately.
+known VCS metadata, cache, vendor, and build roots. Dot-prefixed repositories
+remain discoverable. `refresh()` invalidates the inventory; profile files inside
+already-known repositories are probed on every contribution and become visible
+immediately.
 
 For the active root and each discovered Git root, the extension checks:
 

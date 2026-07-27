@@ -9,7 +9,6 @@
    scan itself is bounded by max files, max repos, and a wall-clock
    deadline. Never throws."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
             [com.blockether.vis.internal.foundation.environment.git :as git]
             [com.blockether.vis.internal.paths :as paths])
   (:import (java.io File)
@@ -102,8 +101,7 @@
                   (= dir start) (do (when (repo-root? dir) (add-root! roots dir (long max-repos)))
                                     FileVisitResult/CONTINUE)
                   :else (let [name (str (.getFileName dir))]
-                          (cond (or (str/starts-with? name ".") (contains? skip-directories name))
-                                FileVisitResult/SKIP_SUBTREE
+                          (cond (contains? skip-directories name) FileVisitResult/SKIP_SUBTREE
                                 (repo-root? dir) (do (add-root! roots dir (long max-repos))
                                                      (if (>= (.size roots) (long max-repos))
                                                        (do (aset truncated 0 true)
@@ -132,8 +130,9 @@
   "Return a lightweight, cached inventory of Git roots below `root`.
 
    Unlike `snapshot`, this performs no per-repository Git status work and is
-   suitable for extension discovery. Hidden, vendor, and build directories are
-   skipped. The default scan is bounded at 64 repositories.
+   suitable for extension discovery. Known VCS metadata, cache, vendor, and
+   build directories are skipped. The default scan is bounded at 64
+   repositories.
 
    Shape:
      {:root <abs-root>

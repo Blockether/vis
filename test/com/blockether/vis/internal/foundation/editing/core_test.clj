@@ -562,6 +562,66 @@
                  [{"any" ["scrollbar"]}])]
 
         (expect (not (contains? out :result)))))
+  (it "grep allows nested repository roots when only default-hidden descendants are protected"
+      ;; A parent-workspace session searches each repository directly. Bridge
+      ;; contributes `bridge/.bridge/**` and `vis/.bridge/**`; those hidden
+      ;; descendants must not make the repository roots themselves protected.
+      (let [before
+            (:ext.symbol/before-fn (private-fn "grep-symbol"))
+
+            args
+            [{"query" "protected-rule-matches?"
+              "paths" ["target/editing-test/workspace/bridge"
+                       "target/editing-test/workspace/vis"]}]
+
+            out
+            (before
+              (protected-env
+                [{:glob "target/editing-test/workspace/bridge/.bridge/**"
+                  :access :none
+                  :hint "Use br/* tools."}
+                 {:glob "target/editing-test/workspace/vis/.bridge/**"
+                  :access :none
+                  :hint "Use br/* tools."}])
+              (constantly :ok)
+              args)]
+
+        (expect (not (contains? out :result)))
+        (expect (= args (:args out)))))
+  (it "grep still blocks nested ancestors when hidden files are requested"
+      (let [before
+            (:ext.symbol/before-fn (private-fn "grep-symbol"))
+
+            out
+            (before
+              (protected-env
+                [{:glob "target/editing-test/workspace/bridge/.bridge/**"
+                  :access :none
+                  :hint "Use br/* tools."}])
+              (constantly :ok)
+              [{"query" "secret"
+                "paths" ["target/editing-test/workspace/bridge"]
+                "is_hidden" true}])]
+
+        (expect (false? (-> out :result :success?)))
+        (expect (= :ext.foundation.editing/path-protected
+                   (-> out :result :error :type)))))
+  (it "grep still blocks nested ancestors of visible protected paths"
+      (let [before
+            (:ext.symbol/before-fn (private-fn "grep-symbol"))
+
+            out
+            (before
+              (protected-env
+                [{:glob "target/editing-test/workspace/bridge/secrets/**"
+                  :access :none
+                  :hint "Use the owner API."}])
+              (constantly :ok)
+              [{"query" "secret" "paths" ["target/editing-test/workspace/bridge"]}])]
+
+        (expect (false? (-> out :result :success?)))
+        (expect (= :ext.foundation.editing/path-protected
+                   (-> out :result :error :type)))))
   (it "exists? on `.` is allowed when only descendants are protected"
       (let
         [before

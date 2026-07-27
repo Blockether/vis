@@ -765,29 +765,38 @@
   [access-intent access]
   (or (= :none access) (and (= :write access-intent) (= :read-only access))))
 
-(defn- current-dir-read-ancestor-match?
-  "True when a read op is targeting `.` (cwd) and the matched rule
-   protects only a descendant of `.`. Reading cwd itself must stay
-   usable for every observation tool (ls, rg, cat-on-dir,
-   exists?, grep, …); hidden protected extension roots (for
-   example `.bridge/**`) should not make cwd reads fail closed.
+(defn- hidden-descendant-prefix?
+  "Whether the static protected prefix is strictly below `ancestor` and crosses
+   a dot-prefixed path segment. A default grep walk prunes at that segment."
+  [ancestor glob]
+  (let [prefix (glob-static-prefix glob)
+        suffix (when (and (not= ancestor prefix) (path-prefix? ancestor prefix))
+                 (if (= "." ancestor) prefix (subs prefix (inc (count ancestor)))))]
+    (boolean
+      (some #(str/starts-with? % ".") (when suffix (str/split suffix #"/+"))))))
 
-   Direct rules for `.` (a glob that literally matches `.`) still
-   apply — those are explicit \"do not read cwd\" decisions and the
-   bypass leaves them intact.
+(defn- hidden-search?
+  [args]
+  (boolean (some #(and (map? %) (get % "is_hidden")) args)))
 
-   This bypass is INTENTIONALLY read-only. Writes/mutations on `.`
-   stay blocked because they cannot be filtered descendant-by-descendant
-   the way a recursive search/list can.
+(defn- safe-read-ancestor-match?
+  "True when a protected rule matched only because the read target is an
+   ancestor of the protected path and the operation can safely start there.
 
-   Tools that recurse into `.` (rg, ls, grep) remain responsible for
-   skipping protected descendants in their own walk — the bypass only
-   lets the operation start."
-  [_op access-intent target rule]
-  (and (= :read access-intent)
-       (composite-path-target? target)
-       (= "." (:resolved target))
-       (not (protected-glob-matches? (:glob rule) (:resolved target)))))
+   Reads at `.` retain the existing workspace-root behavior. A nested grep
+   scope is also safe when reaching the protected prefix crosses a hidden
+   segment (for example `bridge/.bridge/**`) and the caller did not request
+   hidden files. Direct reads of that hidden directory, visible protected
+   descendants, hidden-enabled searches, and every write remain blocked."
+  [op access-intent target rule args]
+  (let [rel (:resolved target)]
+    (and (= :read access-intent)
+         (composite-path-target? target)
+         (not (protected-glob-matches? (:glob rule) rel))
+         (or (= "." rel)
+             (and (= :grep op)
+                  (not (hidden-search? args))
+                  (hidden-descendant-prefix? rel (:glob rule)))))))
 
 (defn- protected-failure-row
   [{:keys [target intent glob access hint] ext-name :extension/name}]
@@ -870,7 +879,7 @@
                     (when-let [rule (resolve-protected-access rules target)]
                       (when (and (blocked-access? access-intent (:access rule))
                                  (not
-                                   (current-dir-read-ancestor-match? op access-intent target rule)))
+                                   (safe-read-ancestor-match? op access-intent target rule args)))
                         (assoc rule
                           :target target
                           :intent access-intent))))
