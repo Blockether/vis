@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.8] - 2026-07-27
+
+### Changed
+- ci(native): restore workflow, community-only, macOS quick-build (-Ob)
+- feat: improve companion pairing and context rendering
+- feat(copilot): use svar 0.7.84 current models
+- Improve transcript previews and runtime reliability
+- build(native): drop the corporate profile — community-only distributions
+- release: update version files for v0.1.7, bump to next dev version
+
+### Package changes
+
+#### com.blockether/vis
+- ci(native): restore workflow, community-only, macOS quick-build (-Ob) (7d19345a3)
+- feat: improve companion pairing and context rendering (43c935dba)
+- feat(copilot): use svar 0.7.84 current models (3fc447867)
+- Improve transcript previews and runtime reliability (5162cee30)
+- build(native): drop the corporate profile — community-only distributions (02767a32e)
+- release: update version files for v0.1.7, bump to next dev version (135117911)
+
+#### com.blockether/vis-channel-tui
+- feat: improve companion pairing and context rendering (43c935dba)
+- Improve transcript previews and runtime reliability (5162cee30)
+
+#### com.blockether/vis-language-clojure
+- Improve transcript previews and runtime reliability (5162cee30)
+
+#### com.blockether/vis-persistance-sqlite
+- Improve transcript previews and runtime reliability (5162cee30)
+
+#### com.blockether/vis-provider-github-copilot
+- feat(copilot): use svar 0.7.84 current models (3fc447867)
+- Improve transcript previews and runtime reliability (5162cee30)
+
+
+
 ## [v0.1.7] - 2026-07-27
 
 ### Changed
@@ -1408,7 +1444,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.8...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -1416,3 +1452,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.5]: https://github.com/Blockether/vis/releases/tag/v0.1.5
 [v0.1.6]: https://github.com/Blockether/vis/releases/tag/v0.1.6
 [v0.1.7]: https://github.com/Blockether/vis/releases/tag/v0.1.7
+[v0.1.8]: https://github.com/Blockether/vis/releases/tag/v0.1.8
