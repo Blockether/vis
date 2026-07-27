@@ -365,8 +365,7 @@
 ;; ── Shipped end-user distributions ──
 ;;   :community — FULL agent: every extension incl. web `search` + voice ASR;
 ;;                models download on first use (lean binary).
-;;   :corporate — AIR-GAPPED: `search` extension dropped entirely + the parakeet
-;;                ASR model ALWAYS embedded (no runtime HuggingFace/network fetch).
+;;   (There is no air-gapped/"corporate" distribution — community only.)
 ;; Dropping a dep here removes its whole subtree: vis-foundation-voice is the
 ;; ONLY way sherpa-onnx/onnxruntime JNI libs reach the classpath, so :tui and
 ;; :cross contain zero voice natives for ANY platform. Every channel
@@ -383,22 +382,15 @@
    ;;   AND the web/network `search` extension). Park (parakeet) voice models
    ;;   and any other on-demand assets download on FIRST USE, so the binary
    ;;   stays lean. Same classpath as :voice; named for the distribution.
-   :community #{}
-   ;; :corporate — the AIR-GAPPED agent for locked-down networks. The `search`
-   ;;   extension is dropped ENTIRELY (its namespaces never reach the image, so
-   ;;   `search_web`/`search_code`/`search_papers` do not exist and nothing can
-   ;;   phone a search API). Corporates typically also forbid pulling models
-   ;;   from HuggingFace at runtime, so this profile ALWAYS embeds the parakeet
-   ;;   ASR model into the image (see `native` / `voice-profile?`) — the binary
-   ;;   is fully offline out of the box.
-   :corporate #{'com.blockether/vis-foundation-search}})
+   ;; Community is the ONLY shipped distribution.
+   :community #{}})
 
 (defn- resolve-profile
   [opts]
   (let [p (keyword (or (:profile opts) :voice))]
     (when-not (contains? profile->dropped-libs p)
       (throw (ex-info
-               (str "Unknown :profile " p " — use :tui, :cross, :voice, :community or :corporate")
+               (str "Unknown :profile " p " — use :tui, :cross, :voice or :community")
                {:profile p :available (keys profile->dropped-libs)})))
     p))
 
@@ -410,11 +402,10 @@
   (not (contains? (profile->dropped-libs profile) 'com.blockether/vis-foundation-voice)))
 
 (defn- embed-assets?
-  "Whether to vendor the parakeet ASR model INTO the image. Explicit
-   `:with-assets true` requests it; the `:corporate` profile forces it (an
-   air-gapped binary must not fetch the model at runtime)."
-  [opts profile]
-  (boolean (or (:with-assets opts) (= :corporate profile))))
+  "Whether to vendor the parakeet ASR model INTO the image. Only an explicit
+   `:with-assets true` requests it."
+  [opts _profile]
+  (boolean (:with-assets opts)))
 
 (defn- dropped-lib-roots
   "The `:local/root` dirs of the deps a profile drops — used to keep their
@@ -1146,14 +1137,11 @@
      :profile :tui       — MINIMAL: TUI channel only (no voice).
      :profile :cross     — all channels, NO voice.
      :profile :voice     — all channels + voice ASR (the default).
-     :profile :community — SHIPPED full distribution: every extension incl. web
+     :profile :community — SHIPPED distribution (the only one): every extension
                            `search` + voice ASR; models download on first use.
-     :profile :corporate — SHIPPED air-gapped distribution: `search` extension
-                           dropped entirely + the parakeet ASR model ALWAYS
-                           embedded (fully offline, no HuggingFace/network fetch).
      :with-assets true   — embed the ~465 MB voice ASR model for a fully-offline
                            binary (default: download on first use). Requires a
-                           voice-capable profile; :corporate implies it.
+                           voice-capable profile.
      :oracle-native-image true — KEEP the GraalPy JIT in the image (bigger binary, slower
                            build, faster CPU-bound Python). Default: lean interpreter."
   [opts]
@@ -1168,7 +1156,7 @@
      (when (and with-assets? (not (voice-profile? profile)))
        (throw
          (ex-info
-           ":with-assets embeds the voice model — it requires a voice-capable profile (:voice, :community or :corporate)"
+           ":with-assets embeds the voice model — it requires a voice-capable profile (:voice or :community)"
            {:opts opts :profile profile})))
 
      basis
