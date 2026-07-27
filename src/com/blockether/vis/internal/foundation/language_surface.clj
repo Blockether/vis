@@ -118,7 +118,11 @@
           "\n  clojure REPL test runs reuse the managed REPL and execute its already-loaded Vars;"
           " they do NOT reload namespaces automatically. After disk edits, explicitly"
           " `(require 'my.ns :reload)` for every changed production and test namespace before"
-          " running it, or tests may exercise stale code; prefer restarting over `:reload-all`.")))))
+          " running it, or tests may exercise stale code; prefer restarting over `:reload-all`."
+          "\n  clojure lint_code runs TWO providers: clj-kondo static analysis AND `general` —"
+          " the compiler's REFLECTION and BOXED-MATH warnings. So linting the whole project"
+          " (omit code/path/paths) reports reflection + boxed-math findings too; there is no"
+          " separate reflection check to run.")))))
 
 (defn- language-like? [x] (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x)))
 
