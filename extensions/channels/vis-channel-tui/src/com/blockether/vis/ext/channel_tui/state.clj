@@ -3916,10 +3916,11 @@
         ;; inline HTTP call could block the Lanterna input loop for its full 30s timeout,
         ;; delaying the local interrupt and making the TUI look disconnected.
         {:db db'
-         :fx [[:cancel-local-turn token] [:gateway-cancel-active sid tid cancel-key]
+         :fx [[:cancel-local-turn token]
               [:notify
                (if already-cancelling? "Turn force-cancelled locally." "Cancelling current turn...")
-               (if already-cancelling? :warn :info) cancel-notification-ttl-ms]]}))))
+               (if already-cancelling? :warn :info) cancel-notification-ttl-ms]
+              [:gateway-cancel-active sid tid cancel-key]]}))))
 
 (reg-event-fx :gateway-cancel-result
               ;; Do not let the LOCAL attach worker's synthetic `:cancelled` result
