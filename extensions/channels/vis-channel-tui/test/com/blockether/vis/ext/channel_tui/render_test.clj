@@ -3791,3 +3791,111 @@
                      (expect (= (str/includes? l p/INLINE_BOLD_ON)
                                 (str/includes? l p/INLINE_BOLD_OFF))
                              (str "unbalanced sentinels on line " (pr-str l)))))))
+
+(defdescribe python-code-disclosure-is-a-header-test
+             ;; ONE accordion rule across every collapsible band (THINKING, op-cards, the
+             ;; python code band): the chevron row is a HEADER that labels the block BENEATH
+             ;; it. The code band used to append its `PYTHON +N more` row AFTER the peek,
+             ;; which read as a footer belonging to the next card and pushed the collapse
+             ;; control off screen once expanded.
+             (it
+               "puts `PYTHON +N more` ABOVE the peeked code, not after it"
+               (let
+                 [entries
+                  (format-iteration-entry-entries
+                    (iteration/canonicalize
+                      {:position 0
+                       :thinking nil
+                       :forms [{:vis/tool-name "python_execution"
+                                :success? true
+                                :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7"
+                                :result-summary "ok"
+                                :result "ok"}]})
+                    80
+                    1
+                    {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+
+                  lines
+                  (mapv (comp body-of strip-ansi :line) entries)
+
+                  toggle-i
+                  (first (keep-indexed (fn [i l]
+                                         (when (str/includes? l "PYTHON") i))
+                                       lines))
+
+                  first-code-i
+                  (first (keep-indexed (fn [i l]
+                                         (when (= "a = 1" l) i))
+                                       lines))]
+
+                 (expect (some? toggle-i))
+                 (expect (some? first-code-i))
+                 (expect (< (long toggle-i) (long first-code-i)))
+                 ;; collapsed: exactly the 5-line peek, and the hidden count names the rest
+                 (expect (str/includes? (nth lines toggle-i) "+2 more"))
+                 (expect (not (some #{"f = 6"} lines))))))
+
+(defdescribe python-code-disclosure-is-clickable-test
+             ;; The header row is only a control if the PAINTER publishes its hit target:
+             ;; `cr/register!` feeds BOTH the mouse (`screen/lookup` → `:toggle-detail`) and
+             ;; the `C-x t` jump overlay, which labels the same registered regions. The code
+             ;; band used to paint the row and register nothing, so the python disclosure was
+             ;; unreachable by mouse AND by keyboard label — collapsed forever unless you
+             ;; folded the whole transcript.
+             (it
+               "registers a toggle click region on the `PYTHON` row it paints"
+               (let
+                 [entries
+                  (format-iteration-entry-entries
+                    (iteration/canonicalize
+                      {:position 0
+                       :thinking nil
+                       :forms [{:vis/tool-name "python_execution"
+                                :success? true
+                                :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7"
+                                :result "ok"}]})
+                    80
+                    1
+                    {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+
+                  toggle-i
+                  (first (keep-indexed (fn [i e]
+                                         (when (str/includes? (str (:line e)) "PYTHON") i))
+                                       entries))
+
+                  _
+                  (do (cr/reset!) (cr/begin-frame!))
+
+                  _height
+                  (render/draw-chat-bubble! (dummy-text-graphics)
+                                            {:role :assistant
+                                             :text ""
+                                             :prewrapped-lines (mapv :line entries)
+                                             :line-meta (mapv :meta entries)}
+                                            0 2
+                                            80 {:viewport-top 0 :viewport-h 60})
+
+                  _
+                  (cr/commit-frame!)
+
+                  ;; The bubble adds its own chrome row, so the painted screen row of the
+                  ;; header is not the entry index. Scan the whole bubble instead: exactly
+                  ;; ONE row may answer, and it must be the header.
+                  hits
+                  (into []
+                        (keep (fn [row]
+                                (when-some [h (cr/lookup 4 (long row))]
+                                  (assoc h :row row))))
+                        (range 0 (+ 2 (count entries) 4)))
+
+                  hit
+                  (first hits)]
+
+                 (expect (some? toggle-i))
+                 (expect (= 1 (count hits)))
+                 (expect (= :toggle-details (:kind hit)))
+                 (expect (= "iteration:tt1:i1:b1:code" (:node-id hit)))
+                 ;; collapsed now → a click asks for EXPANDED
+                 (expect (true? (:collapsed? hit)))
+                 ;; and it is the HEADER row that answers, not a peek line
+                 (expect (str/includes? (str (:line (nth entries toggle-i))) "PYTHON")))))

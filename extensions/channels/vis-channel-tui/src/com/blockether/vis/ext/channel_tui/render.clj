@@ -1840,6 +1840,25 @@
                        (map? cost) (pos-num cost "total_cost")
                        :else false)))))
 
+(defn- register-toggle-region!
+  "Publish the click target for a disclosure HEADER row.
+
+   A row carrying `:toggle-details` meta IS the toggle. If the marker
+   family that paints it doesn't register the region, the accordion is
+   DEAD in both input paths at once: the mouse finds nothing under the
+   chevron, and the `C-x t` jump overlay (which labels the SAME
+   registered regions) never offers it a letter. Every painter branch
+   that can host a header calls this."
+  [meta viewport-top y x iw]
+  (when (= :toggle-details (:kind meta))
+    (cr/register! {:bounds {:row (+ (long viewport-top) (long y))
+                            :col x
+                            :width (long (or (:click-width meta) iw))}
+                   :kind :toggle-details
+                   :session-id (:session-id meta)
+                   :node-id (:node-id meta)
+                   :collapsed? (:collapsed? meta)})))
+
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -2435,18 +2454,25 @@
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/code-block-fg t/code-ok-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (paint-ansi-line! g x y raw t/code-block-fg t/code-ok-bg))
+                      (paint-ansi-line! g x y raw t/code-block-fg t/code-ok-bg)
+                      ;; The code band hosts the `▸ PYTHON +N more` accordion
+                      ;; HEADER (same rule as the THINKING band above). Register
+                      ;; its toggle region or the row paints as a control that
+                      ;; nothing can click and no jump label can reach.
+                      (register-toggle-region! meta viewport-top y x iw))
                     ;; ── Code (error) - light red bg ──
                     (str/starts-with? line code-err-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/code-block-fg t/code-err-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (paint-ansi-line! g x y raw t/code-block-fg t/code-err-bg))
+                      (paint-ansi-line! g x y raw t/code-block-fg t/code-err-bg)
+                      (register-toggle-region! meta viewport-top y x iw))
                     ;; ── Code (running, no status yet) - neutral bg ──
                     (str/starts-with? line code-marker)
                     (do (p/set-colors! g t/code-block-fg t/code-block-bg)
                         (p/fill-rect! g fbx y iw 1)
-                        (paint-ansi-line! g x y (subs line 1) t/code-block-fg t/code-block-bg))
+                        (paint-ansi-line! g x y (subs line 1) t/code-block-fg t/code-block-bg)
+                        (register-toggle-region! meta viewport-top y x iw))
                     ;; ── Duration annotation ──
                     (str/starts-with? line duration-marker)
                     (do (p/set-colors! g t/code-duration-fg iteration-bg)
@@ -4625,7 +4651,11 @@
                   :node-id code-node-id
                   :color-role :tool-color/shell})]
 
-              (vec (concat visible summary (when expanded? hidden)))))
+              ;; Accordion HEADER at the top of the code band (same rule as the
+              ;; THINKING band and every op-card): the row labels the block
+              ;; BENEATH it, so expanding never pushes the collapse control off
+              ;; screen behind its own body.
+              (vec (concat summary visible (when expanded? hidden)))))
 
           ;; Human result surface: the form RETURN value as markdown. Stdout is
           ;; model-context only and is not rendered in human channels.
