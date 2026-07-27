@@ -257,7 +257,13 @@ def summarize(
         and not unexpected_task_ids
         and len(actual_task_ids) == len(expected_task_ids)
     )
-    agents = _unique_dicts([task["agent"] for task in tasks if any(task["agent"].values())])
+    agents = _unique_dicts(
+        [
+            {key: value for key, value in task["agent"].items() if key != "vis_eval_valid"}
+            for task in tasks
+            if any(task["agent"].values())
+        ]
+    )
     verifiers = _unique_dicts([task["verifier_config"] for task in tasks if any(task["verifier_config"].values())])
     dataset_commits = sorted({str(task["dataset_commit"]) for task in tasks if task.get("dataset_commit")})
     artifacts = _unique_dicts(

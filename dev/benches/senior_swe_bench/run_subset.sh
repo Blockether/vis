@@ -78,6 +78,7 @@ python3 "$here/summarize_subset.py" \
   --subset-path "$subset" \
   --manifest "$manifest" \
   --out "$aggregate_out" >/dev/null
+python3 "$here/render_run_index.py" "$here/results" --out "$here/results/index.html"
 rm -f "$manifest"
 echo "wrote subset summary $aggregate_out"
 exit "$status"

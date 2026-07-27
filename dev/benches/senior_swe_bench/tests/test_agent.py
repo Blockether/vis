@@ -198,3 +198,41 @@ def test_run_sets_provider_native_effort_and_populates_harbor_context(monkeypatc
     assert context["metadata"]["vis"]["reasoning_effort"] == "max"
     assert context["metadata"]["vis"]["reasoning_effort_explicit"] is True
     assert context["metadata"]["vis"]["eval_valid"] is True
+
+
+def test_pi_install_retries_when_base_installer_silently_fails(monkeypatch, tmp_path):
+    models = tmp_path / "models.json"
+    models.write_text("{}")
+    monkeypatch.setenv("VIS_BENCH_PI_MODELS_JSON", str(models))
+    installs = []
+
+    async def base_install(_self, _environment):
+        installs.append(True)
+
+    monkeypatch.setattr(agent.HarborPi, "install", base_install, raising=False)
+
+    class Installed(agent.PiGlm52Agent):
+        def __init__(self):
+            self.probes = 0
+            self.root_commands = []
+
+        async def exec_as_root(self, _environment, *, command):
+            self.root_commands.append(command)
+            return {"returncode": 0, "stderr": ""}
+
+        async def exec_as_agent(self, _environment, *, command):
+            if "pi --version" in command:
+                self.probes += 1
+                if self.probes == 1:
+                    raise RuntimeError("pi missing")
+                return {"returncode": 0, "stderr": ""}
+            return {"returncode": 0, "stderr": ""}
+
+    environment = FakeEnvironment()
+    installed = Installed()
+    asyncio.run(installed.install(environment))
+
+    assert len(installs) == 2
+    assert len(installed.root_commands) == 2
+    assert all("/usr/local/bin/pi" in command for command in installed.root_commands)
+    assert environment.uploads == [(models.resolve(), "/tmp/vis-bench-pi-models.json")]

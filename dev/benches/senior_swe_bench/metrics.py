@@ -579,7 +579,10 @@ def completion_summary(
     rubric_status = rubric.get("status") or judge_dict.get("rubric_status")
     taste_status = taste.get("status") or judge_dict.get("taste_status")
     verifier_complete = isinstance(verifier_dict.get("total"), int) and verifier_dict.get("total", 0) > 0
-    judges_complete = rubric_status == "ok" and taste_status == "ok"
+    judges_complete = all(
+        status == "ok" or (isinstance(status, str) and status.startswith("skipped:"))
+        for status in (rubric_status, taste_status)
+    )
     validation_required = str(segment).lower() == "design"
     validation_score = _first_number(validation_results_dict, "validation_score", "score")
     validation_complete = not validation_required or (

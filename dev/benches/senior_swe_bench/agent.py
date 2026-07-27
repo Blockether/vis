@@ -424,6 +424,41 @@ class PiGlm52Agent(HarborPi):
 
     async def install(self, environment: Any) -> None:
         await super().install(environment)
+        stabilize_command = (
+            "set -euo pipefail; "
+            "pi_bin=$(find /root /home -path '*/.nvm/versions/node/*/bin/pi' -print 2>/dev/null "
+            "| sort -V | tail -n 1); "
+            'test -n "$pi_bin"; '
+            'node_bin="$(dirname "$pi_bin")/node"; '
+            'test -x "$node_bin"; '
+            'ln -sf "$node_bin" /usr/local/bin/node; '
+            'ln -sf "$pi_bin" /usr/local/bin/pi'
+        )
+        probe_command = "command -v pi >/dev/null && pi --version"
+
+        async def stabilize_and_probe() -> Any:
+            await self.exec_as_root(environment, command=stabilize_command)
+            return await self.exec_as_agent(environment, command=probe_command)
+
+        probe_error = None
+        try:
+            probe = await stabilize_and_probe()
+        except Exception as error:
+            probe, probe_error = None, error
+        if probe_error or (probe is not None and _returncode(probe) != 0):
+            await super().install(environment)
+            probe_error = None
+            try:
+                probe = await stabilize_and_probe()
+            except Exception as error:
+                probe, probe_error = None, error
+        if probe_error or (probe is not None and _returncode(probe) != 0):
+            probe_exit = _returncode(probe) if probe is not None else "unavailable"
+            raise RuntimeError(
+                "failed to install pinned Pi after retry "
+                f"(exit {probe_exit}): "
+                f"{probe_error or _result_text(probe, 'stderr')[-1000:]}"
+            ) from probe_error
         config_value = _env_value(self, PI_MODELS_ENV)
         if not config_value:
             raise FileNotFoundError(f"{PI_MODELS_ENV} is not set")

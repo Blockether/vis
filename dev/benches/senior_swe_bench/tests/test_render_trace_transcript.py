@@ -52,3 +52,17 @@ def test_render_trace_transcript_renders_error_result_vector(tmp_path):
     output = renderer.render(trace, "Failed run")
 
     assert "Stream TTFT timeout" in output
+
+
+def test_render_trace_transcript_accumulates_compact_reasoning_deltas(tmp_path):
+    trace = tmp_path / "vis.trace.jsonl"
+    frames = [
+        {"event": "trace-chunk", "payload": {"phase": "reasoning", "iteration": 1, "delta": "First "}},
+        {"event": "trace-chunk", "payload": {"phase": "reasoning", "iteration": 1, "delta": "thought"}},
+        {"event": "trace-chunk", "payload": {"phase": "form-start", "iteration": 1, "position": 0, "code": "read_file(...)"}},
+    ]
+    trace.write_text("".join(json.dumps(frame) + "\n" for frame in frames))
+
+    output = renderer.render(trace, "Interrupted compact trace")
+
+    assert "First thought" in output

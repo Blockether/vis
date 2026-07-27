@@ -499,6 +499,22 @@ def test_summary_does_not_mark_correctness_authoritative_when_judge_failed(tmp_p
     assert summary["failure_class"] == "incomplete_judge"
 
 
+def test_summary_treats_inapplicable_judges_as_complete(tmp_path):
+    run_dir = tmp_path / "run"
+    verifier = run_dir / "harbor-output" / "trial" / "verifier"
+    verifier.mkdir(parents=True)
+    (verifier / "reward_details.json").write_text(json.dumps({"reward": 0.0, "correctness": 0.0}))
+    (verifier / "verifier_results.json").write_text(json.dumps({"passed": 0, "total": 1, "all_pass": False}))
+    (verifier / "judge_output.json").write_text(
+        json.dumps({"rubric_status": "skipped:no_criteria", "taste_status": "skipped:empty_patches"})
+    )
+
+    summary = _run_metrics(tmp_path, run_dir)
+
+    assert summary["completion"]["judges_complete"] is True
+    assert summary["completion"]["status"] == "complete_fail"
+
+
 def test_design_validation_requires_successful_agent_status():
     completion = metrics.completion_summary(
         {"reward": 1.0, "correctness": 1.0},

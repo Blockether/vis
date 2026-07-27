@@ -131,6 +131,24 @@ def test_summarize_subset_aggregates_successful_install_only_runs(tmp_path):
     assert summary["tasks"][0]["agent"]["vis_eval_valid"] is True
 
 
+def test_summarize_subset_keeps_task_validity_out_of_agent_identity(tmp_path):
+    run_a = _run_dir(tmp_path, "run-a", task_id="task-a")
+    run_b = _run_dir(tmp_path, "run-b", task_id="task-b")
+    data = json.loads((run_b / "summary.json").read_text())
+    data["agent"]["vis_eval_valid"] = False
+    (run_b / "summary.json").write_text(json.dumps(data))
+
+    summary = summarize_subset.summarize(
+        subset_name="subset",
+        run_dirs=[(run_a, 0), (run_b, 0)],
+    )
+
+    assert summary["provenance"]["consistent"] is True
+    assert len(summary["provenance"]["agents"]) == 1
+    assert "vis_eval_valid" not in summary["provenance"]["agents"][0]
+    assert [task["agent"]["vis_eval_valid"] for task in summary["tasks"]] == [True, False]
+
+
 def test_summarize_subset_marks_missing_summary_and_nonzero_status(tmp_path):
     run = tmp_path / "subset-1-task-a"
     run.mkdir()

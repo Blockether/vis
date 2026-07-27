@@ -93,10 +93,73 @@ STRUCTURED_VALIDATE_ORIGINAL = "    return schema.model_validate(args)\n"
 STRUCTURED_VALIDATE_PATCHED = "    return _vis_model_validate(schema, args)\n"
 EXPLORE_VALIDATE_ORIGINAL = "                return emit_schema.model_validate(args)\n"
 EXPLORE_VALIDATE_PATCHED = "                return llm_utils._vis_model_validate(emit_schema, args)\n"
+EXPLORE_VALIDATE_RETRY_PATCHED = '''                try:
+                    return llm_utils._vis_model_validate(emit_schema, args)
+                except ValueError as error:
+                    emit_validation_error = str(error)
+'''
+EMIT_ERROR_INIT_ORIGINAL = '        emitted = any(c.function.name == emit_tool_name for c in tool_calls)\n'
+EMIT_ERROR_INIT_PATCHED = (
+    '        emit_validation_error = None\n'
+    '        emitted = any(c.function.name == emit_tool_name for c in tool_calls)\n'
+)
+EMIT_NUDGE_ORIGINAL = '''                content = (
+                    f"Explore the codebase with the read-only tools before scoring "
+                    f"(at least {min_explore_turns} steps), then call {emit_tool_name}."
+                )
+'''
+EMIT_NUDGE_PATCHED = '''                content = (
+                    f"Your {emit_tool_name} arguments failed schema validation: "
+                    f"{emit_validation_error}. Call {emit_tool_name} again with corrected arguments."
+                    if emit_validation_error
+                    else f"Explore the codebase with the read-only tools before scoring "
+                    f"(at least {min_explore_turns} steps), then call {emit_tool_name}."
+                )
+'''
 FORCED_VALIDATE_ORIGINAL = "    return emit_schema.model_validate(emit_args) if emit_args is not None else None\n"
 FORCED_VALIDATE_PATCHED = (
     "    return llm_utils._vis_model_validate(emit_schema, emit_args) if emit_args is not None else None\n"
 )
+FORCED_CALL_ORIGINAL = '''    response = llm_utils.complete(
+        model=model,
+        system=system,
+        messages=messages,
+        tools=[emit_tool],
+        tool_choice={"type": "function", "function": {"name": emit_tool_name}},
+        max_tokens=max_tokens,
+    )
+    emit_args = llm_utils.tool_call_args(response, emit_tool_name)
+    return emit_schema.model_validate(emit_args) if emit_args is not None else None
+'''
+FORCED_CALL_PATCHED = FORCED_CALL_ORIGINAL.replace(
+    "emit_schema.model_validate(emit_args)",
+    "llm_utils._vis_model_validate(emit_schema, emit_args)",
+)
+FORCED_VALIDATE_RETRY_PATCHED = '''    for attempt in range(2):
+        response = llm_utils.complete(
+            model=model,
+            system=system,
+            messages=messages,
+            tools=[emit_tool],
+            tool_choice={"type": "function", "function": {"name": emit_tool_name}},
+            max_tokens=max_tokens,
+        )
+        emit_args = llm_utils.tool_call_args(response, emit_tool_name)
+        if emit_args is None:
+            continue
+        try:
+            return llm_utils._vis_model_validate(emit_schema, emit_args)
+        except ValueError as error:
+            if attempt == 0:
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"Your {emit_tool_name} arguments failed schema validation: {error}. "
+                        f"Call {emit_tool_name} again with corrected arguments."
+                    ),
+                })
+    return None
+'''
 LITELLM_REQUIREMENT = "litellm>=1.0,<2.0\n"
 PINNED_LITELLM_REQUIREMENT = "litellm==1.92.0\n"
 FASTAPI_REQUIREMENT = "fastapi>=0.136.3,<1.0\n"
@@ -446,12 +509,28 @@ def _patch_llm_tools(path: Path) -> AdaptedFile:
     text = path.read_text()
     original = text
     if EXPLORE_VALIDATE_ORIGINAL in text:
-        text = text.replace(EXPLORE_VALIDATE_ORIGINAL, EXPLORE_VALIDATE_PATCHED, 1)
-    elif EXPLORE_VALIDATE_PATCHED not in text:
+        text = text.replace(EXPLORE_VALIDATE_ORIGINAL, EXPLORE_VALIDATE_RETRY_PATCHED, 1)
+    elif EXPLORE_VALIDATE_PATCHED in text:
+        text = text.replace(EXPLORE_VALIDATE_PATCHED, EXPLORE_VALIDATE_RETRY_PATCHED, 1)
+    elif EXPLORE_VALIDATE_RETRY_PATCHED not in text:
         raise AdaptationError(f"{path}: cannot find explore structured validation")
-    if FORCED_VALIDATE_ORIGINAL in text:
-        text = text.replace(FORCED_VALIDATE_ORIGINAL, FORCED_VALIDATE_PATCHED, 1)
-    elif FORCED_VALIDATE_PATCHED not in text:
+    if EMIT_ERROR_INIT_ORIGINAL in text:
+        text = text.replace(EMIT_ERROR_INIT_ORIGINAL, EMIT_ERROR_INIT_PATCHED, 1)
+    elif EMIT_ERROR_INIT_PATCHED not in text:
+        raise AdaptationError(f"{path}: cannot find emit validation state")
+    if EMIT_NUDGE_ORIGINAL in text:
+        text = text.replace(EMIT_NUDGE_ORIGINAL, EMIT_NUDGE_PATCHED, 1)
+    elif EMIT_NUDGE_PATCHED not in text:
+        raise AdaptationError(f"{path}: cannot find emit validation nudge")
+    if FORCED_CALL_ORIGINAL in text:
+        text = text.replace(FORCED_CALL_ORIGINAL, FORCED_VALIDATE_RETRY_PATCHED, 1)
+    elif FORCED_CALL_PATCHED in text:
+        text = text.replace(FORCED_CALL_PATCHED, FORCED_VALIDATE_RETRY_PATCHED, 1)
+    elif FORCED_VALIDATE_ORIGINAL in text:
+        text = text.replace(FORCED_VALIDATE_ORIGINAL, FORCED_VALIDATE_RETRY_PATCHED, 1)
+    elif FORCED_VALIDATE_PATCHED in text:
+        text = text.replace(FORCED_VALIDATE_PATCHED, FORCED_VALIDATE_RETRY_PATCHED, 1)
+    elif FORCED_VALIDATE_RETRY_PATCHED not in text:
         raise AdaptationError(f"{path}: cannot find forced structured validation")
     if text != original:
         path.write_text(text)

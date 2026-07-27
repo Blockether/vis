@@ -67,7 +67,10 @@ def render(trace: Path, title: str) -> str:
         if not isinstance(iteration, int):
             continue
         if phase == "reasoning":
-            reasoning[iteration] = text(payload.get("thinking"))
+            if "thinking" in payload:
+                reasoning[iteration] = text(payload.get("thinking"))
+            else:
+                reasoning[iteration] = reasoning.get(iteration, "") + text(payload.get("delta"))
         elif phase == "assistant-prose":
             emit_reasoning(iteration)
             key = ("prose", iteration, 0)

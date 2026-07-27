@@ -492,9 +492,15 @@ def complete(  # noqa: PLR0913
         "REQS\n"
     )
     llm_tools.write_text(
-        "def run_explore(emit_schema, args, emit_args):\n"
+        "def run_explore(emit_schema, args, emit_args, tool_calls, emit_tool_name, min_explore_turns):\n"
+        "        emitted = any(c.function.name == emit_tool_name for c in tool_calls)\n"
         "    if args is not None:\n"
         "                return emit_schema.model_validate(args)\n"
+        "            if call.function.name == emit_tool_name:\n"
+        "                content = (\n"
+        "                    f\"Explore the codebase with the read-only tools before scoring \"\n"
+        "                    f\"(at least {min_explore_turns} steps), then call {emit_tool_name}.\"\n"
+        "                )\n"
         "    return emit_schema.model_validate(emit_args) if emit_args is not None else None\n"
     )
 
@@ -507,6 +513,8 @@ def complete(  # noqa: PLR0913
     assert {item["path"] for item in first["files"]} == {str(llm_utils), str(llm_tools), str(test_sh)}
     assert "llm_utils._vis_model_validate(emit_schema, args)" in llm_tools.read_text()
     assert "llm_utils._vis_model_validate(emit_schema, emit_args)" in llm_tools.read_text()
+    assert "emit_validation_error = str(error)" in llm_tools.read_text()
+    assert "for attempt in range(2):" in llm_tools.read_text()
     assert [item for item in second["files"] if item["path"] == str(test_sh)] == [
         {"path": str(test_sh), "changed": False}
     ]
