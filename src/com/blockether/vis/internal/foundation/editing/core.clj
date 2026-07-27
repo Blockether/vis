@@ -5517,8 +5517,14 @@
          (throw (ex-info (str "struct_patch: unknown op " (pr-str (get args "op")))
                          {:type :ext.foundation.editing/struct-unknown-op :op (get args "op")})))
 
+     at-locator?
+     ;; Some tool-call serializers materialize an omitted optional vector as [].
+     ;; When a real anchor is also present, that empty path is not an intentional
+     ;; request to edit the parse root.
+     (and (contains? args "at") (or (seq (get args "at")) (not (contains? args "anchor"))))
+
      explicit-path-locator?
-     (or (contains? args "at")
+     (or at-locator?
          ;; For moves, `anchor` is a definition NAME rather than a node handle.
          (and (contains? args "anchor") (not (#{:move-before :move-after} raw-op))))
 
@@ -5574,7 +5580,7 @@
           (slurp (safe-path path))
 
           base
-          (cond (contains? args "at") (get args "at")
+          (cond at-locator? (get args "at")
                 name-child-locator?
                 (definition-path lang source (get args "target") (get args "kind"))
                 :else

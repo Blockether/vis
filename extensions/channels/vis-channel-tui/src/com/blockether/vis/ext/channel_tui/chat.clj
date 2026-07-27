@@ -975,6 +975,28 @@
         (event-get event :idempotency-key)
         (assoc :client-id (event-get event :idempotency-key)))
 
+      ;; Terminal lifecycle events are also consumed by the persistent per-tab
+      ;; subscription. The blocking submit/attach request normally sees the same
+      ;; terminal, but it may be stranded across a transport/restart gap; this
+      ;; independent projection lets the tab reconcile its optimistic spinner.
+      "turn.completed"
+      {:phase :turn-terminal
+       :turn-id (event-get event :turn-id)
+       :client-id (event-get event :idempotency-key)
+       :status (event-get event :status)}
+
+      "turn.failed"
+      {:phase :turn-terminal
+       :turn-id (event-get event :turn-id)
+       :client-id (event-get event :idempotency-key)
+       :status (or (event-get event :status) "failed")}
+
+      "turn.cancelled"
+      {:phase :turn-terminal
+       :turn-id (event-get event :turn-id)
+       :client-id (event-get event :idempotency-key)
+       :status (or (event-get event :status) "cancelled")}
+
       ;; A session's title changed — auto-title or a rename, possibly produced
       ;; in a SIBLING process (another TUI, the web, the serve daemon), where
       ;; THIS process's in-process titling listeners never fire. Project it so

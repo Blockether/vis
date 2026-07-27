@@ -70,9 +70,10 @@
   ;; polyglot boundary does not unmount virtual threads), so virtual threads gave
   ;; no overlap benefit here and only let carrier spawning grow unbounded. This is
   ;; a bounded, self-reclaiming PLATFORM pool: up to `gather-max-threads` daemon
-  ;; workers of genuine overlap, 30 s idle keep-alive so bursts reclaim, a
-  ;; SynchronousQueue (no unbounded backlog) and CallerRunsPolicy so overflow runs
-  ;; inline on the submitting turn thread — bounded threads, never a deadlock.
+  ;; workers of genuine overlap, 30 s idle keep-alive, and a SynchronousQueue with
+  ;; no retained backlog. Saturated nested work may run inline only from a platform
+  ;; thread; a virtual submitter instead blocks on the queue's virtual-thread-safe
+  ;; handoff until a platform worker is free, so GraalPy never pins its carrier.
   (let
     [seq
      (AtomicLong. 0)
@@ -82,7 +83,23 @@
        ThreadFactory
          (newThread [_ r]
            (doto (Thread. ^Runnable r (str "vis-gather-" (.getAndIncrement seq)))
-             (.setDaemon true))))]
+             (.setDaemon true))))
+
+     rejection-handler
+     (reify
+       java.util.concurrent.RejectedExecutionHandler
+         (rejectedExecution [_ task executor]
+           (cond (.isShutdown ^ThreadPoolExecutor executor)
+                 (throw (java.util.concurrent.RejectedExecutionException.
+                          "Gather executor is shut down"))
+                 (.isVirtual (Thread/currentThread))
+                 (try (.put (.getQueue ^ThreadPoolExecutor executor) ^Runnable task)
+                      (catch InterruptedException e
+                        (.interrupt (Thread/currentThread))
+                        (throw (java.util.concurrent.RejectedExecutionException.
+                                 "Interrupted while applying gather backpressure"
+                                 e))))
+                 :else (.run ^Runnable task))))]
 
     (doto (ThreadPoolExecutor. 0
                                (int gather-max-threads)
@@ -90,7 +107,7 @@
                                TimeUnit/SECONDS
                                (SynchronousQueue.)
                                tf
-                               (ThreadPoolExecutor$CallerRunsPolicy.))
+                               rejection-handler)
       (.allowCoreThreadTimeOut true))))
 
 (defn- settle-gather-futures!
@@ -959,7 +976,7 @@
 ;; OBSERVATIONS (cat / grep / ls / struct_index / struct_occurrences / struct_node /
 ;; file_exists — anything the extension declares `:tag :observation`), and NONE
 ;; is python_execution, a native handler, or carries a preflight error, we run
-;; the whole batch CONCURRENTLY through the isolated virtual-thread pool
+;; the whole batch CONCURRENTLY through the isolated bounded platform pool
 ;; (`__vis_par_isolated__`) instead of serially. I/O-bound reads/greps overlap;
 ;; the ORDERED result list is re-split so result[i] still pairs to the i-th
 ;; tool_use_id, exactly as the serial path does. A single mutation
@@ -10055,7 +10072,7 @@
                            (second (first failures)))))))
 
      ;; ISOLATED sibling of `gather-fn`, backing `__vis_par_isolated__`. Runs
-     ;; every thunk on the SAME virtual-thread pool with the SAME real overlap,
+     ;; every thunk on the SAME bounded platform pool with the SAME real overlap,
      ;; but NEVER throws an aggregate on failure: each slot returns a per-call
      ;; SENTINEL — `{"__vis_ok__" true "__vis_val__" v}` on success, or
      ;; `{"__vis_ok__" false "__vis_exc__" <Throwable>}` on failure. The raw
@@ -10132,12 +10149,12 @@
                                              @environment-atom))
        ;; Engine verbs (no `done` — a plain-text reply
        ;; finalizes the turn): the compaction verbs +
-       ;; `__vis_par__`, the host virtual-thread pool
+       ;; `__vis_par__`, the bounded host platform pool
        ;; that backs the async runtime's `gather`
        ;; (Python-side `gather`/`await` live in the
        ;; env_python async-runtime preamble; this is
        ;; the dispatcher they call to overlap awaitables
-       ;; on real virtual threads).
+       ;; on bounded platform workers).
        compaction
        {(symbol "__vis_par__") gather-fn (symbol "__vis_par_isolated__") par-isolated-fn}
        ;; ntr[tool_id] host callbacks:

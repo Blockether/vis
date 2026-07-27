@@ -487,31 +487,43 @@ await patch({'path': css})" "t1/i1")]
 (defdescribe
   asyncio-shim-test
   "The model's habitual `asyncio.run(...)` / `asyncio.gather(...)` is ROUTED onto
-   our virtual-thread driver instead of the sandbox-excluded real asyncio (which
+   our trampoline + bounded host pool instead of the sandbox-excluded real asyncio (which
    would trip a native `socket was excluded` crash). We meet the model where it
    is — `import asyncio` is AST-rewritten to bind the shim — so no prompt rule is
    needed and the model never fights an opaque event-loop error."
-  ;; `__vis_par__` (the host virtual-thread pool backing `gather`) is supplied by
+  ;; `__vis_par__` (the bounded host platform pool backing `gather`) is supplied by
   ;; loop.clj in production; the test wires a minimal sequential stand-in so the
   ;; gather path resolves — echo is sync, so order/result are deterministic.
   (let
-    [par
+    [call
+     (fn [t]
+       (if (instance? org.graalvm.polyglot.Value t)
+         (.execute ^org.graalvm.polyglot.Value t (object-array 0))
+         (t)))
+
+     normalize-thunks
+     (fn [thunks]
+       (if (and (= 1 (count thunks)) (sequential? (first thunks)))
+         (vec (first thunks))
+         (vec thunks)))
+
+     par
      (fn [& thunks]
-       (let
-         [ts (if (and (= 1 (count thunks)) (sequential? (first thunks)))
-               (vec (first thunks))
-               (vec thunks))]
-         (mapv (fn [t]
-                 (if (instance? org.graalvm.polyglot.Value t)
-                   (.execute ^org.graalvm.polyglot.Value t (object-array 0))
-                   (t)))
-               ts)))
+       (mapv call (normalize-thunks thunks)))
+
+     par-isolated
+     (fn [& thunks]
+       (mapv (fn [t]
+               (try {"__vis_ok__" true "__vis_val__" (call t)}
+                    (catch Throwable e {"__vis_ok__" false "__vis_exc__" e})))
+             (normalize-thunks thunks)))
 
      mk
      (fn []
        (:python-context (ep/create-python-context {'echo (fn [x]
                                                            (str "<" x ">"))
-                                                   (symbol "__vis_par__") par})))]
+                                                   (symbol "__vis_par__") par
+                                                   (symbol "__vis_par_isolated__") par-isolated})))]
 
     (it
       "asyncio.run(main()) drives a coroutine that awaits tools"
@@ -526,6 +538,28 @@ await patch({'path': css})" "t1/i1")]
            "t1/i1")]
         (expect (nil? (:error r)))
         (expect (= "<x><y>" (clojure.string/trim (str (:stdout r)))))))
+    (it "asyncio.sleep really sleeps and returns its result"
+        (let
+          [started
+           (System/nanoTime)
+
+           r
+           (ep/run-python-block (mk)
+                                (str "import asyncio, time\n" "t0 = time.monotonic()\n"
+                                     "v = await asyncio.sleep(0.1, result='done')\n"
+                                     "print(v, time.monotonic() - t0)")
+                                "t1/i1")
+
+           elapsed-ms
+           (/ (- (System/nanoTime) started) 1000000.0)
+
+           [_ measured]
+           (clojure.string/split (clojure.string/trim (str (:stdout r))) #"\s+")]
+
+          (expect (nil? (:error r)))
+          (expect (<= 80.0 elapsed-ms))
+          (expect (<= 0.08 (Double/parseDouble measured)))
+          (expect (clojure.string/starts-with? (str (:stdout r)) "done "))))
     (it "asyncio.gather runs awaitables concurrently via our gather"
         (let
           [r (ep/run-python-block
@@ -538,6 +572,49 @@ await patch({'path': css})" "t1/i1")]
           (let [out (str (:stdout r))]
             (expect (clojure.string/includes? out "<a>"))
             (expect (clojure.string/includes? out "<b>")))))
+    (it
+      "Task, TaskGroup, wait_for, wait, to_thread, and return_exceptions compose"
+      (let
+        [r
+         (ep/run-python-block
+           (mk)
+           (str
+             "import asyncio\n" "async def boom():\n    raise ValueError('bad')\n"
+             "async def main():\n" "    t = asyncio.create_task(echo('task'), name='named')\n"
+             "    assert not t.done() and t.get_name() == 'named'\n"
+             "    assert await t == '<task>' and t.done() and t.result() == '<task>'\n"
+             "    assert t.get_coro() is None\n"
+             "    vals = await asyncio.gather(echo('ok'), boom(), return_exceptions=True)\n"
+             "    assert vals[0] == '<ok>' and isinstance(vals[1], ValueError)\n"
+             "    async with asyncio.TaskGroup() as tg:\n"
+             "        a = tg.create_task(echo('a'))\n"
+             "        b = tg.create_task(asyncio.to_thread(lambda x: x + 1, 6))\n"
+             "    assert a.result() == '<a>' and b.result() == 7\n"
+             "    done, pending = await asyncio.wait([asyncio.sleep(0, 1), asyncio.sleep(0, 2)])\n"
+             "    assert len(done) == 2 and not pending\n"
+             "    assert await asyncio.wait_for(asyncio.sleep(0, 'ready'), 1) == 'ready'\n"
+             "    return 'compat-ok'\n" "print(asyncio.run(main()))")
+           "t1/i1")]
+        (expect (= nil (:error r)))
+        (expect (= "compat-ok" (clojure.string/trim (str (:stdout r)))))))
+    (it "completed and cancelled tasks release coroutine frames without a global registry"
+        (let
+          [r (ep/run-python-block
+               (mk)
+               (str
+                 "import asyncio, gc\n"
+                 "async def churn():\n" "    for _ in range(40):\n"
+                 "        tasks = [asyncio.create_task(asyncio.sleep(0, i)) for i in range(25)]\n"
+                 "        vals = await asyncio.gather(*tasks)\n"
+                 "        assert vals == list(range(25))\n"
+                 "        assert all(t.done() and t.get_coro() is None for t in tasks)\n"
+                 "    doomed = asyncio.create_task(asyncio.sleep(10))\n"
+                 "    assert doomed.cancel() and doomed.cancelled() and doomed.get_coro() is None\n"
+                 "    return 'clean'\n" "print(asyncio.run(churn()))\n"
+                 "gc.collect()\n" "print(len(asyncio.all_tasks()))")
+               "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= "clean\n0" (clojure.string/trim (str (:stdout r)))))))
     (it "NO native event-loop/socket crash leaks from asyncio use"
         (let
           [r

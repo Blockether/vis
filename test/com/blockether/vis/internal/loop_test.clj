@@ -2035,9 +2035,10 @@
         (expect (= ::router router))
         (expect (= rt/ASK_CODE_TTFT_TIMEOUT_MS (:ttft-timeout-ms opts)))
         (expect (= rt/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts)))
-        ;; Semantic timeout is now auto-added by `with-default-ask-code-idle-timeout`
-        ;; (default 300s, catches transport-alive-but-model-silent stalls).
-        (expect (= rt/ASK_CODE_SEMANTIC_TIMEOUT_MS (:semantic-timeout-ms opts)))))
+        ;; Semantic silence can be legitimate encrypted reasoning while SSE
+        ;; keepalives prove the transport is healthy, so it is opt-in.
+        (expect (nil? rt/ASK_CODE_SEMANTIC_TIMEOUT_MS))
+        (expect (not (contains? opts :semantic-timeout-ms)))))
   (it "preserves explicit ask-code TTFT and idle timeout overrides"
       (expect (= 77 (:ttft-timeout-ms (:opts (captured-ask-code-opts {:ttft-timeout-ms 77})))))
       (expect (contains? (:opts (captured-ask-code-opts {:ttft-timeout-ms nil})) :ttft-timeout-ms))
@@ -2045,19 +2046,11 @@
       (expect (= 42 (:idle-timeout-ms (:opts (captured-ask-code-opts {:idle-timeout-ms 42})))))
       (expect (contains? (:opts (captured-ask-code-opts {:idle-timeout-ms nil})) :idle-timeout-ms))
       (expect (nil? (:idle-timeout-ms (:opts (captured-ask-code-opts {:idle-timeout-ms nil}))))))
-  (it "uses a 300-second semantic timeout by default and accepts overrides"
-      ;; Codex/Claude over Copilot can sit silent for minutes while the
-      ;; model reasons server-side; idle-timeout-ms keeps resetting on
-      ;; SSE pings. The semantic watchdog surfaces \"transport alive but
-      ;; no model events\" — at CODEX PARITY (the Codex CLI's own
-      ;; DEFAULT_STREAM_IDLE_TIMEOUT_MS is 300_000), so a legitimately
-      ;; long silent reasoning phase is not hung up on.
-      (expect (= 300000 rt/ASK_CODE_SEMANTIC_TIMEOUT_MS))
+  (it "accepts explicit semantic watchdog opt-in and opt-out"
       (let [opts (:opts (captured-ask-code-opts {:semantic-timeout-ms 180000}))]
         (expect (= 180000 (:semantic-timeout-ms opts)))
         (expect (= rt/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts))))
       (let [opts (:opts (captured-ask-code-opts {:semantic-timeout-ms nil}))]
-        ;; Explicit nil opts the call out of the watchdog.
         (expect (contains? opts :semantic-timeout-ms))
         (expect (nil? (:semantic-timeout-ms opts))))))
 
@@ -2142,7 +2135,7 @@
    awaitable on a virtual thread and returns results IN ORDER. Guards the async
    runtime end-to-end through a real sandbox: the await path AST-wraps + drives
    the coroutine, gather dispatches awaitables to __vis_par__ (the host
-   virtual-thread pool). Concurrency itself is proven by GraalPy lock-release."
+   bounded platform pool). Concurrency itself is proven by GraalPy lock-release."
   (it
     "awaits gathered coroutines and returns their results in order"
     (let [environment (lp/create-environment ::router {:db :memory})]
@@ -3647,7 +3640,7 @@
         (finally (lp/dispose-environment! env)
                  (.delete (java.io.File. ^String pa))
                  (.delete (java.io.File. ^String pc))))))
-  (it "actually overlaps calls on virtual threads (wall ≈ max, not sum)"
+  (it "actually overlaps calls on bounded platform workers (wall ≈ max, not sum)"
       ;; Bind two SLOW fake observation tools via set-python-binding! so their
       ;; host bodies (Thread/sleep) overlap. 3×250ms serial=750ms; concurrent≈250.
       (let [env (lp/create-environment ::router {:db :memory})]
@@ -3751,6 +3744,81 @@
              (finally (lp/dispose-environment! env))))))
 
 (def ^:private settle-gather-futures! (deref #'lp/settle-gather-futures!))
+(def ^:private gather-executor (deref #'lp/gather-executor))
+(def ^:private gather-max-threads (deref #'lp/gather-max-threads))
+
+(defdescribe
+  gather-executor-resource-safety-test
+  "GraalPy pins a carrier across Value.execute, so gather must never use an
+   unbounded virtual-thread-per-task executor. The production pool has a hard
+   platform-thread ceiling, no backlog, reclaimable idle workers, and the
+   cancellation tests below prove children do not outlive their coordinator."
+  (it "is a bounded, self-reclaiming platform pool with no queued-task retention"
+      (let
+        [^java.util.concurrent.ThreadPoolExecutor exec
+         gather-executor
+
+         worker-virtual?
+         (.get (.submit exec
+                        ^java.util.concurrent.Callable
+                        (fn []
+                          (.isVirtual (Thread/currentThread)))))]
+
+        (expect (instance? java.util.concurrent.ThreadPoolExecutor exec))
+        (expect (= 0 (.getCorePoolSize exec)))
+        (expect (= (int gather-max-threads) (.getMaximumPoolSize exec)))
+        (expect (instance? java.util.concurrent.SynchronousQueue (.getQueue exec)))
+        (expect (.allowsCoreThreadTimeOut exec))
+        (expect (= 30 (.getKeepAliveTime exec java.util.concurrent.TimeUnit/SECONDS)))
+        (expect (false? worker-virtual?))
+        (expect (<= (.getPoolSize exec) (int gather-max-threads)))))
+  (it
+    "backpressures a saturated virtual submitter instead of pinning it with guest work"
+    (let
+      [^java.util.concurrent.ThreadPoolExecutor exec
+       gather-executor
+
+       release
+       (java.util.concurrent.CountDownLatch. 1)
+
+       started
+       (java.util.concurrent.CountDownLatch. (int gather-max-threads))
+
+       blockers
+       (mapv (fn [_]
+               (.submit exec
+                        ^java.util.concurrent.Callable
+                        (fn []
+                          (.countDown started)
+                          (.await release)
+                          nil)))
+             (range gather-max-threads))]
+
+      (try (expect (.await started 5 java.util.concurrent.TimeUnit/SECONDS))
+           (let
+             [result
+              (promise)
+
+              submitter
+              (Thread/startVirtualThread
+                ^Runnable
+                (fn []
+                  (try (deliver result
+                                (.get (.submit exec
+                                               ^java.util.concurrent.Callable
+                                               (fn []
+                                                 (.isVirtual (Thread/currentThread))))))
+                       (catch Throwable e (deliver result e)))))]
+
+             (Thread/sleep 25)
+             (expect (not (realized? result)))
+             (.countDown release)
+             (.join submitter 5000)
+             (expect (false? (deref result 5000 ::timeout))))
+           (finally (.countDown release)
+                    (doseq [^java.util.concurrent.Future blocker blockers]
+                      (try (.get blocker 5 java.util.concurrent.TimeUnit/SECONDS)
+                           (catch Throwable _))))))))
 
 (defdescribe
   settle-gather-futures-test

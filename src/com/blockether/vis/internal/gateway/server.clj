@@ -2874,8 +2874,8 @@
     [;; `--pair` is a request for PHONE access, so it selects the bind. With no
      ;; explicit `--host` the loopback default printed a QR for an address
      ;; nothing listened on — the failure landed on the phone, looking like a
-     ;; broken app. Prefer the Tailscale IP, else 0.0.0.0; both are non-loopback,
-     ;; so `start!` forces the bearer token.
+     ;; broken app. Bind every interface, which is what the QR's `alt=` hosts
+     ;; promise; it is non-loopback, so `start!` forces the bearer token.
      auto-host
      (when (and pair? (str/blank? host)) (pairing/pair-bind-host))
 

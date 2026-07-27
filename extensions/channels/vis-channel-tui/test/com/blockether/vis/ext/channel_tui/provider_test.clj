@@ -6,7 +6,11 @@
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.providers :as providers]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]])
+  (:import [com.googlecode.lanterna TerminalSize]
+           [com.googlecode.lanterna.input KeyStroke KeyType]
+           [com.googlecode.lanterna.screen TerminalScreen]
+           [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
 (defn- eventually
   [pred]
@@ -23,6 +27,103 @@
              (it "uses the concise Providers title"
                  (expect (= "Providers" @#'provider/provider-dialog-title))))
 
+(defdescribe default-first-provider-presentation-test
+             (it "moves the explicit default provider to the top without disturbing peers"
+                 (let
+                   [order
+                    @#'provider/default-first-providers
+
+                    fleet
+                    [{:id :anthropic-coding-plan} {:id :openai-codex} {:id :zai-coding-plan}]]
+
+                   (expect (= [:openai-codex :anthropic-coding-plan :zai-coding-plan]
+                              (mapv :id (order fleet "openai-codex"))))))
+             (it "moves the explicit default model above the live catalog and keeps Show all last"
+                 (with-redefs
+                   [vis/gateway-provider-model-options
+                    (fn [_ show-all?]
+                      (if show-all?
+                        {:models ["gpt-mini" "gpt-main" "gpt-main-2025-01-01"] :hidden-count 0}
+                        {:models ["gpt-mini" "gpt-main"] :hidden-count 1}))]
+                   (let
+                     [build @#'provider/build-model-list
+                      provider {:id :openai-codex}]
+
+                     (expect (= ["gpt-main" "gpt-mini" :show-all]
+                                (mapv :id (build provider ["gpt-main"] false))))
+                     (expect (= ["gpt-main" "gpt-mini" "gpt-main-2025-01-01"]
+                                (mapv :id (build provider ["gpt-main"] true))))))))
+
+(defdescribe
+  provider-inline-model-transient-test
+  (it
+    "selects the default model inside the provider dialog instead of opening another dialog"
+    (let
+      [terminal
+       (DefaultVirtualTerminal. (TerminalSize. 80 30))
+
+       screen
+       (doto (TerminalScreen. terminal) (.startScreen))
+
+       selected
+       (atom nil)
+
+       seed
+       {:default-provider :beta
+        :default-model "beta-default"
+        :providers [{:id :alpha :models [{:name "alpha-1"} {:name "alpha-2"}]}
+                    {:id :beta :models [{:name "beta-default"} {:name "beta-2"}]}]}]
+
+      (try
+        (with-redefs
+          [vis/authenticated-preset-providers
+           (constantly [])
+
+           vis/gateway-provider-status
+           (fn [_]
+             {"is_authenticated" true "is_loading" false})
+
+           vis/gateway-provider-limits
+           (fn [provider-id]
+             {:provider-id provider-id :status :ready :static {} :dynamic {:limits []}})
+
+           vis/worker-future
+           (fn [_ f]
+             (f))
+
+           vis/gateway-provider-model-options
+           (fn [provider-id _]
+             {:models (if (= provider-id :alpha) ["alpha-1" "alpha-2"] ["beta-default" "beta-2"])
+              :hidden-count 0})
+
+           vis/gateway-set-router-default!
+           (fn [provider-id model]
+             (reset! selected {:provider-id provider-id :model model}))
+
+           vis/load-config-raw
+           (constantly {})
+
+           vis/configured-providers
+           (constantly [])
+
+           vis/save-config!
+           (constantly nil)
+
+           vis/load-config
+           (constantly seed)
+
+           dlg/select-dialog!
+           (fn [& _]
+             (throw (ex-info "nested model dialog opened" {})))]
+
+          ;; Default :beta starts first. Choose :alpha, open its actions, choose
+          ;; "Set as Default...", select the first inline model, then close.
+          (doseq
+            [key-type [KeyType/ArrowDown KeyType/Enter KeyType/Enter KeyType/Enter KeyType/Escape]]
+            (.addInput terminal (KeyStroke. key-type)))
+          (provider/show-provider-dialog! screen seed)
+          (expect (= {:provider-id :alpha :model "alpha-1"} @selected)))
+        (finally (.stopScreen screen))))))
 
 (defdescribe remove-provider-by-id-test
              (it "removes a logged-out provider from the router list"

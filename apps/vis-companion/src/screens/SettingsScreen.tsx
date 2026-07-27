@@ -25,7 +25,9 @@ import { Banner, Button, Input } from '../components/ui';
 import {
   ProviderFlowPanel,
   ProviderSignOutButton,
+  defaultFirstProviders,
   isProviderAuthed,
+  preferredModelFirst,
   providerLimitsLine,
   providerStatusDot,
   providerStatusLine,
@@ -562,13 +564,14 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
           </p>
         )}
 
-        {providers?.map((provider) => {
+        {defaultFirstProviders(providers ?? []).map((provider) => {
           const dot = providerStatusDot(provider);
           const authed = isProviderAuthed(provider);
           const limits = providerLimitsLine(provider);
           const open = expanded === provider.id;
+          const orderedModels = preferredModelFirst(provider.models, provider.default_model);
           const selectedModel =
-            modelDrafts[provider.id] ?? provider.default_model ?? provider.models[0] ?? '';
+            modelDrafts[provider.id] ?? provider.default_model ?? orderedModels[0] ?? '';
           const settingDefault = pending === `default:${provider.id}`;
 
           return (
@@ -637,7 +640,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                         }
                         className="min-h-10 min-w-0 flex-1 border border-dialog-edge bg-input px-3 font-mono text-ui text-white outline-none transition-colors focus:border-accent disabled:opacity-50"
                       >
-                        {provider.models.map((model) => (
+                        {orderedModels.map((model) => (
                           <option key={model} value={model}>
                             {model}
                           </option>

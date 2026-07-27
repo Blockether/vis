@@ -10,6 +10,20 @@ export function isProviderAuthed(provider: RouterProvider): boolean {
   return provider.status?.is_authenticated === true;
 }
 
+/** Present the explicit router default first without mutating the gateway fleet. */
+export function defaultFirstProviders(providers: RouterProvider[]): RouterProvider[] {
+  return [
+    ...providers.filter((provider) => provider.is_default),
+    ...providers.filter((provider) => !provider.is_default),
+  ];
+}
+
+/** Present a provider's explicit default model first, preserving every other model's order. */
+export function preferredModelFirst(models: string[], preferred?: string | null): string[] {
+  if (!preferred) return [...models];
+  return [...models.filter((model) => model === preferred), ...models.filter((model) => model !== preferred)];
+}
+
 /**
  * Open an OAuth URL in the system browser. `window.open` is the one call that
  * works identically on web, iOS, and Android under Capacitor's WebView, so the

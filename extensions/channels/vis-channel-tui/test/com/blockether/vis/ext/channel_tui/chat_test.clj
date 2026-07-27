@@ -739,6 +739,23 @@
                                        "session_id" "other-session"
                                        "title" "X"})))))))
 
+(defdescribe terminal-event-chunk-test
+             ;; The persistent mux must carry terminal lifecycle events independently of
+             ;; the blocking submit transport, otherwise a completed backend turn can
+             ;; leave an optimistic TUI spinner alive forever.
+             (let [g->c @#'chat/gateway-event->chunk]
+               (it "projects all canonical terminal event variants"
+                   (expect
+                     (= [{:phase :turn-terminal :turn-id "t1" :client-id "c1" :status "completed"}
+                         {:phase :turn-terminal :turn-id "t2" :client-id nil :status "failed"}
+                         {:phase :turn-terminal :turn-id "t3" :client-id nil :status "cancelled"}]
+                        (mapv g->c
+                              [{"type" "turn.completed"
+                                "turn_id" "t1"
+                                "idempotency_key" "c1"
+                                "status" "completed"} {"type" "turn.failed" "turn_id" "t2"}
+                               {"type" "turn.cancelled" "turn_id" "t3"}]))))))
+
 (it "rehydrates a structured iteration error for the transient retry row"
     (let
       [g->c

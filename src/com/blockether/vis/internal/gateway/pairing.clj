@@ -74,12 +74,16 @@
 
    Pairing on the loopback default is a contradiction: the QR would encode an
    address no socket is listening on and the phone would time out minutes later.
-   Asking to pair IS asking for phone access, so it picks the narrowest bind that
-   delivers it — the Tailscale IP when the tailnet is up (only tailnet peers can
-   reach it), otherwise `0.0.0.0`. Both are non-loopback, so `server/start!`
-   makes the bearer token mandatory: this widens reach, never auth."
+   Asking to pair IS asking for phone access, so it binds every interface.
+
+   Binding only the Tailscale IP was the earlier, narrower choice and it broke
+   the pairing link's own promise: `pairing-url` advertises the LAN addresses as
+   `alt=` fallbacks, but nothing listened there, so a phone whose Tailscale was
+   off or paused failed on EVERY candidate while sitting on the same Wi-Fi as
+   the gateway. `0.0.0.0` is non-loopback exactly like the Tailscale IP was, so
+   `server/start!` still forces the bearer token: this widens reach, never auth."
   []
-  (or (first (tailscale-hosts)) "0.0.0.0"))
+  "0.0.0.0")
 
 (defn pairing-url
   "The `vis://gateway` deep link. `url=` is the best guess (Tailscale first), and

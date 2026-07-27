@@ -3029,6 +3029,27 @@
 
           (expect (:success? r))
           (expect (clojure.string/includes? (slurp (fs/file path)) "(+ y 2)"))))
+    (it "an anchor wins over a serializer-default empty at path"
+        (let
+          [path
+           (write-temp! "anchor-zipper/empty-at.clj" "(ns my.app)\n\n(defn bar [y]\n  (* y 2))\n")
+
+           anchor
+           (patch/line-anchor 3 "(defn bar [y]")
+
+           r
+           (struct-patch {"path" path
+                          "op" "insert_before"
+                          "anchor" anchor
+                          "at" []
+                          "code" "(defn foo [x]\n  (+ x 1))"})
+
+           src
+           (slurp (fs/file path))]
+
+          (expect (:success? r))
+          (expect (= "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n\n(defn bar [y]\n  (* y 2))\n"
+                     src))))
     (it "stale anchors are refused before zipper navigation"
         (let
           [path

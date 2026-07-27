@@ -62,11 +62,10 @@
    300s = CODEX PARITY. The Codex CLI has NO separate first-token budget:
    its single `stream_idle_timeout_ms` (default
    `DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000`) governs the wait for the
-   FIRST event exactly like every later gap. Vis splits the watchdog into
-   ttft/idle/semantic phases, so each phase gets that same budget — a
-   shorter one only means Vis hangs up first on a queued, cold-starting or
-   long-reasoning provider, and a stricter pre-header window buys nothing:
-   a genuinely dead connection still fails on its own transport error."
+   FIRST event exactly like every later transport gap. Matching that 300s
+   budget avoids hanging up first on a queued or cold-starting provider; a
+   genuinely dead connection still fails on its own transport error. Model-
+   progress silence is a separate, opt-in semantic watchdog below."
   300000)
 
 (def ASK_CODE_IDLE_TIMEOUT_MS
@@ -74,37 +73,23 @@
 
    Fires when the transport itself goes silent — not one byte, not even an
    SSE keepalive comment. 300s = CODEX PARITY with
-   `DEFAULT_STREAM_IDLE_TIMEOUT_MS`; see `ASK_CODE_SEMANTIC_TIMEOUT_MS` for
-   why nothing shorter is safe against the OpenAI Responses wire. All three
-   stream watchdogs now share ONE budget, so no phase can hang up early on
-   a model that is still working."
+   `DEFAULT_STREAM_IDLE_TIMEOUT_MS`. Model-progress silence while keepalives
+   continue is different and does not time out by default; see
+   `ASK_CODE_SEMANTIC_TIMEOUT_MS`."
   300000)
 
 (def ASK_CODE_SEMANTIC_TIMEOUT_MS
   "Default model/progress timeout for Vis `svar/ask-code!` streams (ms).
 
-   Catches the failure mode `idle-timeout-ms` cannot: the transport
-   keeps emitting bytes (SSE `: ping` comments, blank separators, or
-   any framing-layer keepalive that returns from `.readLine`) which
-   resets the idle watchdog forever, yet zero `response.*.delta` /
-   `message.*` events ever arrive. Without this watchdog the iteration
-   loop blocks on `.readLine` until the model finally streams output.
+   Disabled by default. A provider can keep its transport healthy with SSE
+   keepalives while legitimately emitting no model-visible event during a long
+   encrypted-reasoning phase. Treating that silence as failure loses healthy
+   turns, as the transport's 300s idle watchdog already catches truly silent
+   or wedged connections.
 
-   300s (300000 ms) is CODEX PARITY: the OpenAI Codex CLI runs exactly
-   one stream watchdog, `stream_idle_timeout_ms`, whose built-in default
-   is `DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000` — nothing shorter is
-   safe against the OpenAI Responses wire, where a gpt-5.x turn with
-   encrypted reasoning and no summary deltas legitimately emits NOTHING
-   for minutes between `response.*` events. It also clears Anthropic's
-   documented worst case for extended thinking on Opus 4.5
-   (anthropics/claude-agent-sdk-typescript#44).
-
-   A shorter budget (this was 185s) does not surface a real provider
-   fault — it HANGS UP on a model that is still thinking, and the turn
-   dies mid-reasoning.
-
-   Disable per call with `:semantic-timeout-ms nil`."
-  300000)
+   Callers that require a bounded model-progress gap can opt in with
+   `:semantic-timeout-ms`; explicit nil also disables it per call."
+  nil)
 
 
 (defn with-default-ask-code-idle-timeout

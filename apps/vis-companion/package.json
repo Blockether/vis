@@ -27,8 +27,8 @@
     "secrets": "node scripts/secrets.mjs"
   },
   "dependencies": {
-    "@capacitor-mlkit/barcode-scanning": "8.1.0",
     "@capacitor/app": "8.1.1",
+    "@capacitor/barcode-scanner": "3.1.0",
     "@capacitor/camera": "8.2.1",
     "@capacitor/core": "8.4.2",
     "@capacitor/preferences": "8.0.1",

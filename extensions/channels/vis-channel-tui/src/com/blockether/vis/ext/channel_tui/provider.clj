@@ -30,31 +30,47 @@
 
 ;;; ── Model list (core service + the TUI's 'Show all' affordance) ────────────
 
+(defn- same-id?
+  [a b]
+  (= (some-> a
+             name)
+     (some-> b
+             name)))
+
+(defn- move-matches-first
+  "Stable partition used only for presentation; non-matches keep their order."
+  [pred xs]
+  (let [{matches true others false} (group-by (comp boolean pred) xs)]
+    (into (vec matches) others)))
+
+(defn- default-first-providers
+  [providers provider-id]
+  (if provider-id (move-matches-first #(same-id? (:id %) provider-id) providers) (vec providers)))
+
 (defn- build-model-list
-  "Build the model selection list from the gateway's LIVE catalog
-   (`vis/gateway-provider-model-options`). The daemon owns OAuth token
-   resolution, so the TUI NEVER builds a token-resolving router to list
-   models — it proxies to the gateway. Appends the 'Show all models...'
+  "Build the model selection list from the gateway's LIVE catalog.
+   Preferred/default models are presented first. Appends the 'Show all models...'
    toggle when dated variants were hidden."
-  [provider _default-models show-all?]
+  [provider preferred-models show-all?]
   (let
     [{:keys [models hidden-count]}
      (vis/gateway-provider-model-options (:id provider) show-all?)
 
+     preferred
+     (into #{} (map #(if (map? %) (vis/model-name %) (str %))) preferred-models)
+
      items
-     (mapv (fn [id]
-             {:label id :id id})
-           models)]
+     (->> models
+          (mapv (fn [id]
+                  {:label id :id id}))
+          (move-matches-first #(contains? preferred (:id %))))]
 
     (if (and (not show-all?) (pos? (long hidden-count)))
       (conj items {:label "Show all models..." :id :show-all})
       items)))
 
-;;; ── Provider setup dialog ──────────────────────────────────────────────────
-
 (defn- select-model!
-  "Show model selection dialog. Hides dated variants by default, with toggle to show all.
-    Returns model id string or nil on cancel."
+  "Show model selection dialog for provider setup. Returns a model id or nil."
   [^TerminalScreen screen provider default-models]
   (loop [show-all? false]
     (let [models (build-model-list provider default-models show-all?)]
@@ -1079,16 +1095,16 @@
                (vec (or (:providers seed) []))
 
                configured-ids
-               (into #{} (map :id) base)]
+               (into #{} (map :id) base)
 
-              ;; Mirror runtime-router-providers / picker-fleet: authenticated
-              ;; OAuth providers (creds live OUTSIDE config) route AND list even
-              ;; when never persisted into `:providers`. The manager must SEE them
-              ;; too — otherwise a fleet that is entirely OAuth coding-plans reads
-              ;; "No providers. Press A to add." while the router happily routes.
-              (into base
-                    (remove #(contains? configured-ids (:id %)))
-                    (try (vis/authenticated-preset-providers) (catch Throwable _ nil)))))
+               fleet
+               (into base
+                     (remove #(contains? configured-ids (:id %)))
+                     (try (vis/authenticated-preset-providers) (catch Throwable _ nil)))]
+
+              ;; Default-first is a presentation rule only. Provider order has no
+              ;; routing semantics; the explicit provider/model pair remains canonical.
+              (default-first-providers fleet (:default-provider seed))))
 
       default-selection
       (atom
@@ -1134,6 +1150,15 @@
       (atom :list)
 
       action-sel
+      (atom 0)
+
+      model-items
+      (atom [])
+
+      model-sel
+      (atom 0)
+
+      model-scroll
       (atom 0)
 
       status-scroll
@@ -1308,86 +1333,168 @@
                              :scroll @scroll}))
          ;; Bottom-anchored magit-style transients painted OVER the card list —
          ;; the provider stays visible above, actions/confirm live at the base.
-         (cond (and (= @mode :actions) (pos? total))
+         (cond
+           (and (= @mode :models) (pos? total))
+           (let
+             [provider
+              (nth @items @selected)
+
+              models
+              @model-items
+
+              n
+              (count models)
+
+              capacity
+              (max 1 (- content-h 3))
+
+              sel
+              (p/clamp (long @model-sel) 0 (max 0 (dec n)))
+
+              old-scroll
+              (p/clamp (long @model-scroll) 0 (max 0 (- n capacity)))
+
+              sc
+              (cond (< sel old-scroll) sel
+                    (>= sel (+ old-scroll capacity)) (inc (- sel capacity))
+                    :else old-scroll)
+
+              sc
+              (p/clamp sc 0 (max 0 (- n capacity)))
+
+              shown-count
+              (if (pos? n) (min capacity (- n sc)) 1)
+
+              last-body
+              (+ content-top content-h -1)
+
+              body-top
+              (- (inc last-body) shown-count)
+
+              title-row
+              (dec body-top)
+
+              sep-row
+              (dec title-row)]
+
+             (reset! model-sel sel)
+             (reset! model-scroll sc)
+             (p/set-colors! g t/dialog-fg t/dialog-bg)
+             (p/fill-rect! g (inc left) sep-row inner-w (+ shown-count 2))
+             (p/set-colors! g t/dialog-border t/dialog-bg)
+             (p/draw-separator! g left (+ left inner-w 1) sep-row)
+             (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+             (p/styled g
+                       [p/BOLD]
+                       (p/put-str! g
+                                   (+ left 2)
+                                   title-row
+                                   (str (vis/display-label (:id provider)) " — models")))
+             (if (zero? n)
+               (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                   (p/put-str! g (+ left 2) body-top "No models available"))
+               (doseq [i (range shown-count)]
+                 (let
+                   [idx (+ sc (long i))
+                    model (nth models idx)
+                    row (+ body-top (long i))
+                    sel? (= idx sel)
+                    default? (and (string? (:id model))
+                                  (same-id? (:id provider) (:provider-id @default-selection))
+                                  (= (:id model) (:model @default-selection)))
+                    label (str (:label model) (when default? "  (default)"))
+                    label (subs label 0 (min (count label) (max 0 (- inner-w 5))))]
+
+                   (p/set-colors! g t/dialog-fg t/dialog-bg)
+                   (p/fill-rect! g (inc left) row inner-w 1)
+                   (p/draw-selection-marker! g (inc left) row sel? t/dialog-hint-key)
+                   (p/set-colors! g (if sel? t/dialog-fg t/dialog-hint) t/dialog-bg)
+                   (if sel?
+                     (p/styled g [p/BOLD] (p/put-str! g (+ left 2 p/SELECTION_WIDTH) row label))
+                     (p/put-str! g (+ left 2 p/SELECTION_WIDTH) row label))))))
+           (and (= @mode :actions) (pos? total))
+           (let
+             [provider
+              (nth @items @selected)
+
+              actions
+              (provider-action-items provider (get @statuses (:id provider)))
+
+              n
+              (count actions)
+
+              last-body
+              (+ content-top content-h -1)
+
+              body-top
+              (max (+ content-top 2) (- (inc last-body) n))
+
+              title-row
+              (dec body-top)
+
+              sep-row
+              (dec title-row)]
+
+             (p/set-colors! g t/dialog-fg t/dialog-bg)
+             (p/fill-rect! g (inc left) sep-row inner-w 1)
+             (p/set-colors! g t/dialog-border t/dialog-bg)
+             (p/draw-separator! g left (+ left inner-w 1) sep-row)
+             (p/set-colors! g t/dialog-fg t/dialog-bg)
+             (p/fill-rect! g (inc left) title-row inner-w 1)
+             (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+             (p/styled g
+                       [p/BOLD]
+                       (p/put-str! g
+                                   (+ left 2)
+                                   title-row
+                                   (str (vis/display-label (:id provider)) " — actions")))
+             (doseq [[i action] (map-indexed vector actions)]
                (let
-                 [provider
-                  (nth @items @selected)
-
-                  actions
-                  (provider-action-items provider (get @statuses (:id provider)))
-
-                  n
-                  (count actions)
-
-                  last-body
-                  (+ content-top content-h -1)
-
-                  body-top
-                  (max (+ content-top 2) (- (inc last-body) n))
-
-                  title-row
-                  (dec body-top)
-
-                  sep-row
-                  (dec title-row)]
+                 [row (+ (long body-top) (long i))
+                  sel? (= (long i) (long @action-sel))
+                  keytxt (str (:key action))
+                  kx (+ left 2 p/SELECTION_WIDTH)
+                  lx (+ kx (p/display-width keytxt) 2)]
 
                  (p/set-colors! g t/dialog-fg t/dialog-bg)
-                 (p/fill-rect! g (inc left) sep-row inner-w 1)
-                 (p/set-colors! g t/dialog-border t/dialog-bg)
-                 (p/draw-separator! g left (+ left inner-w 1) sep-row)
-                 (p/set-colors! g t/dialog-fg t/dialog-bg)
-                 (p/fill-rect! g (inc left) title-row inner-w 1)
+                 (p/fill-rect! g (inc left) row inner-w 1)
+                 (p/draw-selection-marker! g (inc left) row sel? t/dialog-hint-key)
                  (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                 (p/styled g
-                           [p/BOLD]
-                           (p/put-str! g
-                                       (+ left 2)
-                                       title-row
-                                       (str (vis/display-label (:id provider)) " — actions")))
-                 (doseq [[i action] (map-indexed vector actions)]
-                   (let
-                     [row (+ (long body-top) (long i))
-                      sel? (= (long i) (long @action-sel))
-                      keytxt (str (:key action))
-                      kx (+ left 2 p/SELECTION_WIDTH)
-                      lx (+ kx (p/display-width keytxt) 2)]
+                 (p/put-str! g kx row keytxt)
+                 (p/set-colors! g (if sel? t/dialog-fg t/dialog-hint) t/dialog-bg)
+                 (if sel?
+                   (p/styled g [p/BOLD] (p/put-str! g lx row (:label action)))
+                   (p/put-str! g lx row (:label action))))))
+           (= @mode :confirm)
+           (let
+             [prompt
+              (:prompt @pending)
 
-                     (p/set-colors! g t/dialog-fg t/dialog-bg)
-                     (p/fill-rect! g (inc left) row inner-w 1)
-                     (p/draw-selection-marker! g (inc left) row sel? t/dialog-hint-key)
-                     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                     (p/put-str! g kx row keytxt)
-                     (p/set-colors! g (if sel? t/dialog-fg t/dialog-hint) t/dialog-bg)
-                     (if sel?
-                       (p/styled g [p/BOLD] (p/put-str! g lx row (:label action)))
-                       (p/put-str! g lx row (:label action))))))
-               (= @mode :confirm)
-               (let
-                 [prompt
-                  (:prompt @pending)
+              last-body
+              (+ content-top content-h -1)
 
-                  last-body
-                  (+ content-top content-h -1)
+              title-row
+              last-body
 
-                  title-row
-                  last-body
+              sep-row
+              (dec title-row)]
 
-                  sep-row
-                  (dec title-row)]
-
-                 (p/set-colors! g t/dialog-fg t/dialog-bg)
-                 (p/fill-rect! g (inc left) sep-row inner-w 1)
-                 (p/set-colors! g t/dialog-border t/dialog-bg)
-                 (p/draw-separator! g left (+ left inner-w 1) sep-row)
-                 (p/set-colors! g t/dialog-fg t/dialog-bg)
-                 (p/fill-rect! g (inc left) title-row inner-w 1)
-                 (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                 (p/styled g [p/BOLD] (p/put-str! g (+ left 2) title-row (str prompt)))))
+             (p/set-colors! g t/dialog-fg t/dialog-bg)
+             (p/fill-rect! g (inc left) sep-row inner-w 1)
+             (p/set-colors! g t/dialog-border t/dialog-bg)
+             (p/draw-separator! g left (+ left inner-w 1) sep-row)
+             (p/set-colors! g t/dialog-fg t/dialog-bg)
+             (p/fill-rect! g (inc left) title-row inner-w 1)
+             (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+             (p/styled g [p/BOLD] (p/put-str! g (+ left 2) title-row (str prompt)))))
          (dlg/draw-hint-bar! g
                              left
                              hint-row
                              inner-w
                              (case @mode
+                               :models
+                               [["↑/↓" "move"] ["Enter" "set default"] ["Esc" "back"]]
+
                                :actions
                                [["↑/↓" "move"] ["Enter" "run"] ["key" "pick"] ["Esc" "back"]]
 
@@ -1409,6 +1516,49 @@
            (if (nil? key)
              (do (Thread/sleep 100) (recur))
              (cond
+               (= @mode :models)
+               (if (instance? MouseAction key)
+                 (let [at (.getActionType ^MouseAction key)]
+                   (cond (= at MouseActionType/SCROLL_UP)
+                         (do (swap! model-sel #(max 0 (dec (long %)))) (recur))
+                         (= at MouseActionType/SCROLL_DOWN)
+                         (do (swap! model-sel #(min (max 0 (dec (count @model-items)))
+                                                    (inc (long %))))
+                             (recur))
+                         :else (recur)))
+                 (let
+                   [ktype (.getKeyType ^com.googlecode.lanterna.input.KeyStroke key)
+                    n (count @model-items)]
+
+                   (cond (= ktype KeyType/Escape) (do (reset! mode :actions) (recur))
+                         (= ktype KeyType/ArrowUp)
+                         (do (swap! model-sel #(p/clamp (dec (long %)) 0 (max 0 (dec n)))) (recur))
+                         (= ktype KeyType/ArrowDown)
+                         (do (swap! model-sel #(p/clamp (inc (long %)) 0 (max 0 (dec n)))) (recur))
+                         (and (= ktype KeyType/Enter) (pos? n))
+                         (let
+                           [provider (nth @items @selected)
+                            choice (nth @model-items (p/clamp (long @model-sel) 0 (dec n)))]
+
+                           (if (= (:id choice) :show-all)
+                             (let
+                               [preferred (when (same-id? (:id provider)
+                                                          (:provider-id @default-selection))
+                                            [(:model @default-selection)])]
+                               (reset! model-items (build-model-list provider preferred true))
+                               (reset! model-sel 0)
+                               (reset! model-scroll 0)
+                               (recur))
+                             (let
+                               [selection (vis/gateway-set-router-default! (:id provider)
+                                                                           (:id choice))]
+                               (reset! default-selection selection)
+                               (swap! items default-first-providers (:provider-id selection))
+                               (reset! selected 0)
+                               (reset! scroll 0)
+                               (reset! mode :list)
+                               (recur))))
+                         :else (recur))))
                (= @mode :status)
                (if (instance? MouseAction key)
                  (let
@@ -1456,10 +1606,14 @@
                     (fn [action]
                       (case (:id action)
                         :default
-                        (when-let [model (select-provider-model! screen provider)]
-                          (reset! default-selection (vis/gateway-set-router-default! (:id provider)
-                                                                                     model))
-                          (reset! mode :list))
+                        (let
+                          [preferred (when (same-id? (:id provider)
+                                                     (:provider-id @default-selection))
+                                       [(:model @default-selection)])]
+                          (reset! model-items (build-model-list provider preferred false))
+                          (reset! model-sel 0)
+                          (reset! model-scroll 0)
+                          (reset! mode :models))
 
                         :authenticate
                         (do (when (authenticate-provider! screen provider (:force? action))

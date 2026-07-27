@@ -1785,11 +1785,10 @@
   (if hovered? t/link-chrome-hover-bg t/result-bg))
 
 (defn- code-row-bg
-  "Give a Python disclosure header the quiet RESULT surface while preserving the
-   execution-status tint on the code rows beneath it. Hover remains the strongest
-   affordance for the clickable header."
-  [meta hovered? code-bg]
-  (if (= :toggle-details (:kind meta)) (result-row-bg meta hovered?) code-bg))
+  "Keep Python disclosure rows inside their execution-status band. Hover remains
+   the strongest affordance for the clickable header."
+  [_meta hovered? code-bg]
+  (if hovered? t/link-chrome-hover-bg code-bg))
 
 ;; The assistant footer line + routing fallback note are the SHARED, humanized
 ;; turn-summary formatters in `internal.format` (`vis/meta-summary-line` +
@@ -4702,7 +4701,10 @@
               ;; THINKING band and every op-card): the row labels the block
               ;; BENEATH it, so expanding never pushes the collapse control off
               ;; screen behind its own body.
-              (vec (concat summary visible (when expanded? hidden)))))
+              ;; Leave one execution-status band row between the disclosure
+              ;; header and its preview body: PYTHON is a header, not the
+              ;; first source line.
+              (vec (concat summary [(line-entry (str c-pad ""))] visible (when expanded? hidden)))))
 
           ;; Human result surface: the form RETURN value as markdown. Stdout is
           ;; model-context only and is not rendered in human channels.

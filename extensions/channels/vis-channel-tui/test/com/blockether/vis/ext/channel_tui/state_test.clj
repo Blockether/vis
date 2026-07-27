@@ -2126,6 +2126,322 @@
         (expect (false? (:loading? db)))
         ;; queue survives the commit; the follow-up fx clears + restores it.
         (expect (= ["second"] (mapv :text (:pending-sends db))))))
+  (it
+    "restores every pristine editor shape without losing submitted metadata"
+    (let
+      [restore-fns
+       [#'state/restore-submitted-input #'state/restore-editor-only]
+
+       submissions
+       [{:text "first" :pastes {1 "old paste"} :paste-counter 1}
+        {:text "line one\nline two" :pastes {2 "multi"} :paste-counter 7} {:text "defaults"}]]
+
+      (doseq
+        [restore
+         restore-fns
+
+         submitted
+         submissions]
+
+        (let
+          [db (restore {:input (input/empty-input)
+                        :pastes {99 "stale"}
+                        :paste-counter 99
+                        :input-history-index 4
+                        :input-history-draft "stale draft"
+                        :slash-command-index 3
+                        :slash-command-hidden? true
+                        :submitted-input submitted}
+                       submitted)]
+          (expect (= (:text submitted) (input/input->text (:input db))))
+          (expect (= (or (:pastes submitted) {}) (:pastes db)))
+          (expect (= (or (:paste-counter submitted) 0) (:paste-counter db)))
+          (expect (nil? (:input-history-index db)))
+          (expect (nil? (:input-history-draft db)))
+          (expect (= 0 (:slash-command-index db)))
+          (expect (false? (:slash-command-hidden? db)))
+          (expect (nil? (:submitted-input db)))))))
+  (it
+    "never overwrites any non-pristine draft while cancellation settles"
+    (let
+      [submitted
+       {:text "old prompt" :pastes {1 "old paste"} :paste-counter 1}
+
+       visible-submitted
+       (input/expand-paste-placeholders (:text submitted) (:pastes submitted))
+
+       messages
+       [{:role :user :text "old prompt"} {:role :assistant :pending? true}]
+
+       drafts
+       [(reduce input/insert-char (input/empty-input) "x")
+        (reduce input/insert-char (input/empty-input) "   ") {:lines ["" ""] :crow 1 :ccol 0}
+        {:lines ["new" "draft"] :crow 0 :ccol 1}
+        (reduce input/insert-char (input/empty-input) "[Paste #9]")]
+
+       editor-meta
+       {:pastes {9 "fresh paste"}
+        :paste-counter 9
+        :input-history-index 2
+        :input-history-draft "new history draft"
+        :slash-command-index 5
+        :slash-command-hidden? true}
+
+       editor-keys
+       [:input :pastes :paste-counter :input-history-index :input-history-draft :slash-command-index
+        :slash-command-hidden?]]
+
+      (doseq [draft drafts]
+        (let
+          [base (merge {:input draft
+                        :messages messages
+                        :input-history ["older" visible-submitted]
+                        :submitted-input submitted}
+                       editor-meta)
+           dropped (#'state/restore-submitted-input base submitted)
+           retained (#'state/restore-editor-only base submitted)]
+
+          (expect (= (select-keys base editor-keys) (select-keys dropped editor-keys)))
+          (expect (= (select-keys base editor-keys) (select-keys retained editor-keys)))
+          (expect (nil? (:submitted-input dropped)))
+          (expect (nil? (:submitted-input retained)))
+          (expect (empty? (:messages dropped)))
+          (expect (= messages (:messages retained)))
+          (expect (= ["older"] (:input-history dropped)))
+          (expect (= ["older" visible-submitted] (:input-history retained)))))))
+  (it "restoration cleanup is independent from whether a newer draft wins"
+      (let
+        [submitted
+         {:text "old" :pastes {} :paste-counter 0}
+
+         messages
+         [{:role :user :text "old"} {:role :assistant :pending? true}]
+
+         base
+         {:messages messages
+          :loading? true
+          :cancelling? true
+          :turn-start-ms 123
+          :input-history ["keep" "old"]
+          :submitted-input submitted}]
+
+        (doseq [draft [(input/empty-input) (reduce input/insert-char (input/empty-input) "new")]]
+          (let [db (#'state/restore-submitted-input (assoc base :input draft) submitted)]
+            (expect (false? (:loading? db)))
+            (expect (false? (:cancelling? db)))
+            (expect (nil? (:turn-start-ms db)))
+            (expect (nil? (:submitted-input db)))
+            (expect (empty? (:messages db)))
+            (expect (= ["keep"] (:input-history db)))
+            (expect (= (if (input/input-empty? draft) "old" "new")
+                       (input/input->text (:input db))))))))
+  (it
+    "an async FX ACK retries against and preserves many concurrent editor updates"
+    (let
+      [ack-id
+       ::blocking-ack-many-edits
+
+       edit-id
+       ::concurrent-edit-many
+
+       effect-id
+       ::record-winning-edit-state
+
+       entered
+       (promise)
+
+       release
+       (promise)
+
+       attempts
+       (atom 0)
+
+       effects
+       (atom [])
+
+       old-db
+       @state/app-db
+
+       registry
+       @#'state/event-registry
+
+       fx-registry
+       @#'state/fx-registry]
+
+      (swap! registry assoc
+        ack-id
+        {:type :fx
+         :fn (fn [db _]
+               (when (= 1 (swap! attempts inc)) (deliver entered true) @release)
+               {:db (assoc db :acknowledged? true) :fx [[effect-id (:typed db)]]})}
+        edit-id
+        {:type :db
+         :fn (fn [db [_ ch]]
+               (update db :typed (fnil conj []) ch))})
+      (swap! fx-registry assoc
+        effect-id
+        (fn [winning-typed]
+          (swap! effects conj winning-typed)))
+      (reset! state/app-db {:typed []})
+      (let [worker (future (state/dispatch [ack-id]))]
+        (try (expect (= true (deref entered 1000 ::timeout)))
+             (doseq [ch (range 20)]
+               (state/dispatch [edit-id ch]))
+             (deliver release true)
+             (expect (not= ::timeout (deref worker 1000 ::timeout)))
+             (expect (< 1 @attempts))
+             (expect (true? (:acknowledged? @state/app-db)))
+             (expect (= (vec (range 20)) (:typed @state/app-db)))
+             (expect (= [(vec (range 20))] @effects))
+             (finally (deliver release true)
+                      (deref worker 1000 nil)
+                      (swap! registry dissoc ack-id edit-id)
+                      (swap! fx-registry dissoc effect-id)
+                      (reset! state/app-db old-db))))))
+  (it
+    "a pure-effect FX retries without reverting a concurrent edit and runs once"
+    (let
+      [fx-event-id
+       ::blocking-pure-effect
+
+       edit-id
+       ::edit-during-pure-effect
+
+       effect-id
+       ::record-pure-effect
+
+       entered
+       (promise)
+
+       release
+       (promise)
+
+       attempts
+       (atom 0)
+
+       effects
+       (atom [])
+
+       old-db
+       @state/app-db
+
+       registry
+       @#'state/event-registry
+
+       fx-registry
+       @#'state/fx-registry]
+
+      (swap! registry assoc
+        fx-event-id
+        {:type :fx
+         :fn (fn [db _]
+               (when (= 1 (swap! attempts inc)) (deliver entered true) @release)
+               {:fx [[effect-id (:draft db)]]})}
+        edit-id
+        {:type :db
+         :fn (fn [db _]
+               (assoc db :draft "typed after Esc"))})
+      (swap! fx-registry assoc effect-id #(swap! effects conj %))
+      (reset! state/app-db {:stable :value})
+      (let [worker (future (state/dispatch [fx-event-id]))]
+        (try (expect (= true (deref entered 1000 ::timeout)))
+             (state/dispatch [edit-id])
+             (deliver release true)
+             (expect (not= ::timeout (deref worker 1000 ::timeout)))
+             (expect (< 1 @attempts))
+             (expect (= :value (:stable @state/app-db)))
+             (expect (= "typed after Esc" (:draft @state/app-db)))
+             (expect (= ["typed after Esc"] @effects))
+             (finally (deliver release true)
+                      (deref worker 1000 nil)
+                      (swap! registry dissoc fx-event-id edit-id)
+                      (swap! fx-registry dissoc effect-id)
+                      (reset! state/app-db old-db))))))
+  (it
+    "two simultaneous cancellation ACKs merge with intervening typing"
+    (let
+      [ack-a
+       ::simultaneous-ack-a
+
+       ack-b
+       ::simultaneous-ack-b
+
+       edit-id
+       ::edit-between-acks
+
+       effect-id
+       ::record-simultaneous-ack
+
+       entered-a
+       (promise)
+
+       entered-b
+       (promise)
+
+       release
+       (promise)
+
+       attempts-a
+       (atom 0)
+
+       attempts-b
+       (atom 0)
+
+       effects
+       (atom [])
+
+       old-db
+       @state/app-db
+
+       registry
+       @#'state/event-registry
+
+       fx-registry
+       @#'state/fx-registry
+
+       handler
+       (fn [ack-key entered attempts]
+         {:type :fx
+          :fn (fn [db _]
+                (when (= 1 (swap! attempts inc)) (deliver entered true) @release)
+                {:db (assoc db ack-key true) :fx [[effect-id ack-key]]})})]
+
+      (swap! registry assoc
+        ack-a
+        (handler :ack-a? entered-a attempts-a)
+        ack-b
+        (handler :ack-b? entered-b attempts-b)
+        edit-id
+        {:type :db
+         :fn (fn [db _]
+               (assoc db :draft "third prompt"))})
+      (swap! fx-registry assoc effect-id #(swap! effects conj %))
+      (reset! state/app-db {})
+      (let
+        [worker-a
+         (future (state/dispatch [ack-a]))
+
+         worker-b
+         (future (state/dispatch [ack-b]))]
+
+        (try (expect (= true (deref entered-a 1000 ::timeout)))
+             (expect (= true (deref entered-b 1000 ::timeout)))
+             (state/dispatch [edit-id])
+             (deliver release true)
+             (expect (not= ::timeout (deref worker-a 1000 ::timeout)))
+             (expect (not= ::timeout (deref worker-b 1000 ::timeout)))
+             (expect (true? (:ack-a? @state/app-db)))
+             (expect (true? (:ack-b? @state/app-db)))
+             (expect (= "third prompt" (:draft @state/app-db)))
+             (expect (= #{:ack-a? :ack-b?} (set @effects)))
+             (expect (= 2 (count @effects)))
+             (expect (or (< 1 @attempts-a) (< 1 @attempts-b)))
+             (finally (deliver release true)
+                      (deref worker-a 1000 nil)
+                      (deref worker-b 1000 nil)
+                      (swap! registry dissoc ack-a ack-b edit-id)
+                      (swap! fx-registry dissoc effect-id)
+                      (reset! state/app-db old-db))))))
   (it "restore-pending-to-input appends queued prompts and deletes gateway records"
       (let
         [restore-fn
@@ -2793,6 +3109,172 @@
                  (let [db @state/app-db]
                    (expect (= "t1" (:gateway-turn-id db)))
                    (expect (= 42 (:turn-start-ms db))))))
+
+(defn- terminal-test-db
+  ([] (terminal-test-db {}))
+  ([overrides]
+   (merge {:session {:id "s1"}
+           :active-tab-id "s1"
+           :render-version 0
+           :loading? true
+           :cancelling? false
+           :progress {:iterations []}
+           :turn-start-ms 10
+           :cancel-token ::token
+           :gateway-turn-id "t1"
+           :live-turn-client-id "c1"
+           :submitted-input {:text "first" :pastes {} :paste-counter 0}
+           :input {:lines [""] :crow 0 :ccol 0}
+           :messages [{:role :user :text "first" :client-turn-id "c1"}
+                      {:role :assistant :pending? true :client-turn-id "c1"}]}
+          overrides)))
+
+(defn- sync-terminal-without-timer!
+  [chunk]
+  (with-redefs
+    [vis/worker-future (fn [_ _]
+                         (future nil))]
+    (state/dispatch [:sync-turn-terminal nil chunk])))
+
+(defn- settle-marked-terminal!
+  []
+  (let
+    [terminal (->> (:messages @state/app-db)
+                   (keep :terminal-pending)
+                   first)]
+    (state/dispatch [:settle-turn-terminal nil terminal])))
+
+(defdescribe
+  sync-turn-terminal-test
+  (it "releases only the matching gateway turn and marks its exact placeholder"
+      (reset! state/app-db (terminal-test-db))
+      (sync-terminal-without-timer! {:turn-id "other" :status "completed"})
+      (expect (true? (:loading? @state/app-db)))
+      (sync-terminal-without-timer! {:turn-id "t1" :status "completed"})
+      (let
+        [db
+         @state/app-db
+
+         marker
+         (get-in db [:messages 1 :terminal-pending])]
+
+        (expect (false? (:loading? db)))
+        (expect (false? (:cancelling? db)))
+        (expect (nil? (:progress db)))
+        (expect (nil? (:gateway-turn-id db)))
+        (expect (= "t1" (:turn-id marker)))
+        (expect (= :completed (:status marker)))))
+  (it "falls back to submit correlation before turn.started binds an id"
+      (reset! state/app-db (terminal-test-db {:gateway-turn-id nil}))
+      (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})
+      (expect (false? (:loading? @state/app-db)))
+      (expect (= "c1" (get-in @state/app-db [:messages 1 :terminal-pending :client-id]))))
+  (it "does not let a sibling terminal clear an unbound local turn"
+      (reset! state/app-db (terminal-test-db {:gateway-turn-id nil}))
+      (sync-terminal-without-timer! {:turn-id "sibling" :client-id "theirs" :status "completed"})
+      (expect (true? (:loading? @state/app-db)))
+      (expect (nil? (get-in @state/app-db [:messages 1 :terminal-pending]))))
+  (it "settles a stranded completed worker after the grace path"
+      (reset! state/app-db (terminal-test-db))
+      (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})
+      (settle-marked-terminal!)
+      (let [assistant (get-in @state/app-db [:messages 1])]
+        (expect (not (:pending? assistant)))
+        (expect (= :completed (:status assistant)))
+        (expect (nil? (:terminal-pending assistant)))
+        (expect (false? (:loading? @state/app-db)))))
+  (it "settles a stranded failure instead of leaving a pending spinner"
+      (reset! state/app-db (terminal-test-db))
+      (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "failed"})
+      (settle-marked-terminal!)
+      (let [assistant (get-in @state/app-db [:messages 1])]
+        (expect (= :failed (:status assistant)))
+        (expect (not (:pending? assistant)))
+        (expect (= "turn_failed" (get-in assistant [:content 0 "code"])))))
+  (it "terminal cancellation uses the pristine-editor restoration contract"
+      (reset! state/app-db (terminal-test-db {:cancelling? true :cancelling-at-ms 11}))
+      (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "cancelled"})
+      (settle-marked-terminal!)
+      (let [db @state/app-db]
+        (expect (= "first" (input/input->text (:input db))))
+        (expect (= [] (:messages db)))
+        (expect (false? (:loading? db)))
+        (expect (false? (:cancelling? db)))))
+  (it "terminal cancellation never overwrites typing entered during the race"
+      (let [draft {:lines ["new draft"] :crow 0 :ccol 4 :selection-anchor [0 1]}]
+        (reset! state/app-db (terminal-test-db
+                               {:cancelling? true :cancelling-at-ms 11 :input draft}))
+        (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "cancelled"})
+        (settle-marked-terminal!)
+        (expect (= draft (:input @state/app-db)))
+        (expect (= [] (:messages @state/app-db)))))
+  (it "preserves the completed trace when the blocking worker is stranded"
+      (let [trace [{:id :iter-1 :forms [{:id :form-1}]}]]
+        (reset! state/app-db (terminal-test-db {:progress {:iterations trace}}))
+        (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})
+        (settle-marked-terminal!)
+        (expect (= trace (get-in @state/app-db [:messages 1 :traces])))))
+  (it "lets the full worker result win inside the grace window"
+      (reset! state/app-db (terminal-test-db))
+      (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})
+      (let [terminal (get-in @state/app-db [:messages 1 :terminal-pending])]
+        (state/dispatch [:message-received nil (vis/markdown->ast "full answer")
+                         {:client-turn-id "c1" :status :completed}])
+        (let [before (:messages @state/app-db)]
+          (state/dispatch [:settle-turn-terminal nil terminal])
+          (expect (= before (:messages @state/app-db)))
+          (expect (= (vis/markdown->ast "full answer")
+                     (get-in @state/app-db [:messages 1 :content]))))))
+  (it "a late c1 callback cannot mutate c2 editor or active turn state"
+      (reset! state/app-db (-> (terminal-test-db)
+                               (assoc :live-turn-client-id "c2"
+                                      :gateway-turn-id "t2"
+                                      :submitted-input
+                                      {:text "second" :pastes {2 "paste"} :paste-counter 2}
+                                      :input {:lines ["typing"] :crow 0 :ccol 6})
+                               (update :messages
+                                       into
+                                       [{:role :user :text "second" :client-turn-id "c2"}
+                                        {:role :assistant :pending? true :client-turn-id "c2"}])))
+      (state/dispatch [:message-received nil (vis/markdown->ast "old answer")
+                       {:client-turn-id "c1" :status :cancelled}])
+      (let [db @state/app-db]
+        (expect (true? (:loading? db)))
+        (expect (= "c2" (:live-turn-client-id db)))
+        (expect (= "second" (get-in db [:submitted-input :text])))
+        (expect (= "typing" (input/input->text (:input db))))
+        (expect (not (get-in db [:messages 1 :pending?])))
+        (expect (true? (get-in db [:messages 3 :pending?])))))
+  (it "the delayed reconciler isolates c1 after an immediate resend"
+      (reset! state/app-db (terminal-test-db))
+      (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})
+      (let [terminal (get-in @state/app-db [:messages 1 :terminal-pending])]
+        (swap! state/app-db (fn [db]
+                              (-> db
+                                  (assoc :loading? true
+                                         :live-turn-client-id "c2"
+                                         :gateway-turn-id "t2"
+                                         :submitted-input {:text "second"})
+                                  (update
+                                    :messages
+                                    into
+                                    [{:role :user :text "second" :client-turn-id "c2"}
+                                     {:role :assistant :pending? true :client-turn-id "c2"}]))))
+        (state/dispatch [:settle-turn-terminal nil terminal])
+        (let [db @state/app-db]
+          (expect (= :completed (get-in db [:messages 1 :status])))
+          (expect (true? (get-in db [:messages 3 :pending?])))
+          (expect (true? (:loading? db)))
+          (expect (= "c2" (:live-turn-client-id db))))))
+  (it "duplicate identified callbacks are idempotent"
+      (reset! state/app-db (terminal-test-db))
+      (state/dispatch [:message-received nil (vis/markdown->ast "answer")
+                       {:client-turn-id "c1" :status :completed}])
+      (let [messages (:messages @state/app-db)]
+        (state/dispatch [:message-received nil (vis/markdown->ast "duplicate")
+                         {:client-turn-id "c1" :status :completed}])
+        (expect (= messages (:messages @state/app-db)))
+        (expect (= 2 (count (:messages @state/app-db)))))))
 
 (defdescribe restore-pending-ownership-test
              ;; A cancel pulls back ONLY the rows this tab submitted (`:mine?`, from the

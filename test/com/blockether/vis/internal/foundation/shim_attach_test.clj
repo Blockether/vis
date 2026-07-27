@@ -36,18 +36,22 @@
 
 (defdescribe
   vis-attach-bytes-capture-test
-  (it "records an in-memory artifact into the block's :attachments with sniffed type"
+  (it "records an in-memory artifact without returning displayable metadata"
       (let
         [pctx
          (ctx-with-root (temp-root))
 
          out
-         (block pctx "r = vis_attach_bytes('a,b\\n1,2\\n', 'data.csv')\nprint(r['size'])")
+         (block pctx "vis_attach_bytes('a,b\\n1,2\\n', 'data.csv')\n")
 
          [att]
          (:attachments out)]
 
         (expect (nil? (:error out)))
+        ;; Attachment APIs are side-effect-only: a bare call must not make the
+        ;; python_execution card show a summary dictionary.
+        (expect (nil? (:result out)))
+        (expect (empty? (str (:stdout out))))
         (expect (= 1 (count (:attachments out))))
         (expect (= "text/csv" (:media-type att)))
         (expect (= "file" (:kind att)))

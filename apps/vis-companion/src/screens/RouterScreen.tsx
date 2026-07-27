@@ -3,7 +3,9 @@ import type { GatewayClient } from '../lib/gateway';
 import type { ModelPref, RouterProvider } from '../lib/types';
 import { Banner, Button } from '../components/ui';
 import {
+  defaultFirstProviders,
   isProviderAuthed,
+  preferredModelFirst,
   providerLimitsLine,
   providerStatusDot,
   providerStatusLine,
@@ -134,7 +136,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
             </p>
           )}
 
-          {providers?.map((provider) => {
+          {defaultFirstProviders(providers ?? []).map((provider) => {
             const dot = providerStatusDot(provider);
             const limits = providerLimitsLine(provider);
             const open = expanded === provider.id;
@@ -176,7 +178,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
 
                     {sid && provider.models.length > 0 && (
                       <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {provider.models.map((model) => {
+                        {preferredModelFirst(provider.models, provider.default_model).map((model) => {
                           const active = pref?.provider === provider.id && pref?.model === model;
                           return (
                             <li key={model} className="min-w-0">

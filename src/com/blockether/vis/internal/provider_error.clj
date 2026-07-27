@@ -378,8 +378,11 @@
       "NEXT STEP: fold older settled history, choose a larger-context model, or start a fresh session."
 
       :stream-timeout
-      (str "NEXT STEP: Vis is retrying automatically after a short backoff. If long reasoning "
-           "turns keep tripping it, raise `idle-timeout-ms`.")
+      (if (= :svar.core/stream-semantic-timeout (:type data))
+        (str "NEXT STEP: Vis is retrying automatically after a short backoff. If long reasoning "
+             "turns keep tripping it, raise `semantic-timeout-ms` or set it to `nil`.")
+        (str "NEXT STEP: Vis is retrying automatically after a short backoff. If the transport "
+             "is expected to stay silent this long, raise `idle-timeout-ms`."))
 
       :empty-content
       (str "NEXT STEP: retry — Vis re-sends and these stalls usually clear. If it "

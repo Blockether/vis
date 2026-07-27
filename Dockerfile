@@ -84,7 +84,12 @@ ARG VIS_PROFILE
 ARG VIS_ORACLE_NATIVE_IMAGE
 ARG VIS_NATIVE_EXTRA_ARGS
 
-ENV GRAALVM_HOME=/opt/graalvm \
+# HOME here is only about where the BUILD's caches land (~/.m2, ~/.gitconfig).
+# It deliberately does NOT fix `user.home` in the produced binary: building the
+# whole image with HOME=/home/vis was measured and the binary still opened
+# /root/.vis. That is handled by the wrapper in the runtime stage.
+ENV HOME=/home/vis \
+    GRAALVM_HOME=/opt/graalvm \
     JAVA_HOME=/opt/graalvm \
     PATH=/opt/graalvm/bin:/usr/local/bin:/usr/bin:/bin \
     VIS_ORACLE_NATIVE_IMAGE=${VIS_ORACLE_NATIVE_IMAGE} \
@@ -93,7 +98,8 @@ ENV GRAALVM_HOME=/opt/graalvm \
 # build-essential + zlib headers are native-image's C toolchain, not optional.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git bash rlwrap build-essential zlib1g-dev \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /home/vis
 
 RUN set -eux; \
     curl -fL --retry 3 -o /tmp/linux-install.sh \
@@ -337,12 +343,28 @@ COPY --from=model /opt/vis/models /opt/vis/models
 ENV VIS_PARAKEET_MODEL_DIR=/opt/vis/models/${PARAKEET_MODEL}
 
 # ── the binary ──
-COPY --from=builder /build/target/vis /usr/local/bin/vis
-RUN chmod 0755 /usr/local/bin/vis
+# Installed as `vis.bin` behind a wrapper. `native-image` resolves `user.home`
+# ONCE, from the environment the image was BUILT in — proved on this image:
+# with HOME=/tmp/h the binary still opened /root/.vis, and building the whole
+# thing with HOME=/home/vis did not move it either. vis derives ~/.vis from
+# `user.home` in ~30 places (several are top-level defs, so nothing set inside
+# main can fix them), and as the unprivileged `vis` user that is an instant
+# "/root/.vis/vis.log (Permission denied)" at boot.
+# A native image DOES honour a leading -D at runtime (verified), so the wrapper
+# pins user.home to the real HOME for every entry point — CMD, `docker exec`,
+# and every tool the agent shells out to.
+COPY --from=builder /build/target/vis /usr/local/bin/vis.bin
+COPY --chmod=0755 <<'EOF' /usr/local/bin/vis
+#!/bin/sh
+exec /usr/local/bin/vis.bin -Duser.home="${HOME:-/home/vis}" "$@"
+EOF
+RUN chmod 0755 /usr/local/bin/vis.bin
 
 # Unprivileged. The gateway never runs as root, and neither does anything the
 # agent spawns. /work is the default workspace mount point.
-RUN useradd --create-home --shell /bin/bash --uid 10001 vis \
+# Absolute path on purpose: the PATH set above deliberately omits /usr/sbin
+# (the vis user has no business there), so a bare `useradd` is "not found".
+RUN /usr/sbin/useradd --create-home --shell /bin/bash --uid 10001 vis \
     && mkdir -p /home/vis/.vis /work \
     && chown -R vis:vis /home/vis /work
 
@@ -358,7 +380,9 @@ RUN set -eux; \
     python3 --version; node --version; gh --version | head -1; \
     ffmpeg -version | head -1; git --version; \
     vis --version; \
-    vis extension voice models status
+    vis extension voice models status; \
+    test ! -e /root/.vis; \
+    test -d /home/vis/.vis
 
 EXPOSE 7890
 

@@ -78,9 +78,9 @@
                  (expect (= t/link-chrome-hover-bg (result-row-bg {:kind :toggle-details} true)))))
 
 (defdescribe python-header-color-test
-             (it "separates the PYTHON header from every execution-status code band"
+             (it "keeps the PYTHON header continuous with every execution-status code band"
                  (doseq [code-bg [t/code-block-bg t/code-ok-bg t/code-err-bg]]
-                   (expect (= t/result-bg (code-row-bg {:kind :toggle-details} false code-bg)))
+                   (expect (= code-bg (code-row-bg {:kind :toggle-details} false code-bg)))
                    (expect (= code-bg (code-row-bg nil false code-bg)))))
              (it "uses the shared interactive hover surface for the PYTHON header"
                  (expect (= t/link-chrome-hover-bg
@@ -3922,6 +3922,8 @@
 
                  (expect (some? toggle-i))
                  (expect (some? first-code-i))
+                 (expect (= p/MARKER_CODE_OK_PAD
+                            (marker-of (:line (nth entries (inc (long toggle-i)))))))
                  (expect (< (long toggle-i) (long first-code-i)))
                  ;; collapsed: exactly the 5-line peek, and the hidden count names the rest
                  (expect (str/includes? (nth lines toggle-i) "+3 more"))

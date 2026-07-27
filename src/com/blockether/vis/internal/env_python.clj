@@ -383,7 +383,7 @@
    Tools are DEFERRED: calling `cat('x')` returns a `__vis_Call__` thunk instead
    of running. You drive them three ways:
      • `await cat('x')`                         — canonical, anywhere nested
-     • `a, b = await gather(cat(x), cat(y))`    — CONCURRENT on virtual threads
+     • `a, b = await gather(cat(x), cat(y))`    — CONCURRENT on bounded host workers
      • bare top-level `cat('x')` / `x = cat(y)` — auto-SETTLED in place
    (via inline `__vis_settle__(...)` wrapping of every top-level assign/expr)
 
@@ -391,7 +391,7 @@
    an `async def` (GraalPy rejects top-level await), declares its assigned names
    `global` so REPL vars still persist, and drives the coroutine with the
    trampoline `__vis_drive__`. `gather` dispatches its awaitables to the
-   host virtual-thread pool `__vis_par__` (bound from Clojure) — real overlap on
+   host bounded platform pool `__vis_par__` (bound from Clojure) — real overlap on
    blocking tool I/O, no event loop. A NESTED `__vis_Call__` that leaks into
    output because you forgot `await` on a call you USE still repr's a loud hint
    rather than running silently — EXCEPT `print(...)`, which auto-settles a
@@ -401,6 +401,7 @@
    only TOP-LEVEL bare calls otherwise auto-settle."
   "
 import ast as __vis_ast__
+import time as __vis_time__
 
 def __vis_count_forms__(src):
     return len(__vis_ast__.parse(src).body)
@@ -487,19 +488,20 @@ class __vis_Call__:
         return k in __vis_settle__(self)
 
 class __vis_Gather__:
-    __slots__ = ('aws',)
-    def __init__(self, aws):
+    __slots__ = ('aws', 'return_exceptions')
+    def __init__(self, aws, return_exceptions=False):
         self.aws = aws
+        self.return_exceptions = bool(return_exceptions)
     def __await__(self):
         __vis_r__ = yield self
         if type(__vis_r__) is __vis_Raise__:
             raise __vis_r__.exc
         return __vis_r__
 
-def gather(*aws):
+def gather(*aws, return_exceptions=False):
     if len(aws) == 1 and isinstance(aws[0], (list, tuple)):
         aws = list(aws[0])
-    return __vis_Gather__(list(aws))
+    return __vis_Gather__(list(aws), return_exceptions)
 
 class __vis_Already__:
     # A trivially-ready awaitable: `await __vis_Already__(v)` immediately yields
@@ -698,6 +700,27 @@ def __vis_pyify__(x):
     except Exception:
         return x
 
+def __vis_settle_gather__(v):
+    # Normal gather uses the host's bounded worker pool and aggregated failure
+    # contract. `return_exceptions=True` settles each slot in guest Python so a
+    # native exception keeps its exact Python type instead of crossing the
+    # polyglot boundary as a host exception. This uncommon diagnostic mode is
+    # intentionally serial; ordinary gather remains concurrent.
+    try:
+        if v.return_exceptions:
+            out = []
+            for aw in v.aws:
+                try:
+                    out.append(__vis_settle__(aw))
+                except BaseException as exc:
+                    out.append(__vis_wrap_tool_exc__(exc))
+            return out
+        thunks = [(lambda a=a: __vis_settle__(a)) for a in v.aws]
+        return __vis_pyify__(__vis_par__(thunks))
+    finally:
+        # A completed gather must not retain coroutine frames/tool arguments.
+        v.aws.clear()
+
 def __vis_settle__(v):
     if isinstance(v, __vis_Call__):
         # TOP-LEVEL tool result: re-type a list/str payload to the probeable
@@ -707,7 +730,7 @@ def __vis_settle__(v):
         # 'get'` and the print-capture below could not recognise it as a result.
         return __vis_as_result__(__vis_pyify__(__vis_exec_call__(v)))
     if isinstance(v, __vis_Gather__):
-        return __vis_pyify__(__vis_par__([(lambda a=a: __vis_settle__(a)) for a in v.aws]))
+        return __vis_settle_gather__(v)
     if hasattr(v, '__await__') or hasattr(v, 'send'):
         return __vis_pyify__(__vis_drive__(v))
     return __vis_pyify__(v)
@@ -734,8 +757,7 @@ def __vis_drive__(coro):
             if isinstance(y, __vis_Call__):
                 send = __vis_as_result__(__vis_pyify__(__vis_exec_call__(y)))
             elif isinstance(y, __vis_Gather__):
-                send = __vis_pyify__(
-                    __vis_par__([(lambda a=a: __vis_settle__(a)) for a in y.aws]))
+                send = __vis_settle_gather__(y)
             else:
                 send = y
         except BaseException as __vis_exc__:
@@ -767,6 +789,141 @@ def __vis_error_pos__(e):
         tb = tb.tb_next
     return None if line is None else (line, col, end_col)
 
+class CancelledError(BaseException):
+    pass
+
+class InvalidStateError(Exception):
+    pass
+
+class __vis_Sleep__:
+    # A real blocking sleep wrapped as an awaitable. There is deliberately no
+    # selector/event-loop thread. Under gather it runs on the host's bounded,
+    # self-reclaiming PLATFORM pool, so a Graal polyglot call cannot pin virtual
+    # carriers or grow an unbounded virtual-thread scheduler.
+    __slots__ = ('delay', 'result')
+    def __init__(self, delay, result=None):
+        self.delay = float(delay); self.result = result
+    def __await__(self):
+        __vis_time__.sleep(max(0.0, self.delay))
+        if False:
+            yield
+        return self.result
+
+class __vis_Task__:
+    # A lazy Task-compatible awaitable. It intentionally has NO global task
+    # registry or scheduler thread. Completion/cancellation clears the coroutine
+    # reference, preventing finished frames and tool arguments from accumulating
+    # in a long-lived sandbox Context.
+    __slots__ = ('_aw', '_done', '_cancelled', '_result', '_exception', '_name')
+    def __init__(self, aw, name=None):
+        self._aw = aw
+        self._done = False
+        self._cancelled = False
+        self._result = None
+        self._exception = None
+        self._name = name
+    def __await__(self):
+        if self._cancelled:
+            raise CancelledError()
+        if not self._done:
+            try:
+                self._result = yield from __vis_awaitable__(self._aw).__await__()
+            except BaseException as exc:
+                self._exception = exc
+            finally:
+                self._done = True
+                self._aw = None
+        if self._cancelled:
+            raise CancelledError()
+        if self._exception is not None:
+            raise self._exception
+        return self._result
+    def cancel(self, msg=None):
+        if self._done:
+            return False
+        self._cancelled = True
+        self._done = True
+        aw = self._aw
+        self._aw = None
+        try:
+            if hasattr(aw, 'close'):
+                aw.close()
+        except BaseException:
+            pass
+        return True
+    def cancelled(self): return self._cancelled
+    def done(self): return self._done
+    def result(self):
+        if not self._done: raise InvalidStateError('Result is not ready.')
+        if self._cancelled: raise CancelledError()
+        if self._exception is not None: raise self._exception
+        return self._result
+    def exception(self):
+        if not self._done: raise InvalidStateError('Exception is not set.')
+        if self._cancelled: raise CancelledError()
+        return self._exception
+    def get_name(self): return self._name or 'Task'
+    def set_name(self, name): self._name = str(name)
+    def get_coro(self): return self._aw
+
+class __vis_TaskGroup__:
+    __slots__ = ('_tasks', '_entered')
+    def __init__(self):
+        self._tasks = []
+        self._entered = False
+    async def __aenter__(self):
+        self._entered = True
+        return self
+    def create_task(self, coro, *, name=None, context=None):
+        if not self._entered:
+            raise RuntimeError('TaskGroup has not been entered')
+        task = __vis_Task__(coro, name)
+        self._tasks.append(task)
+        return task
+    async def __aexit__(self, typ, val, tb):
+        try:
+            if typ is not None:
+                for task in self._tasks:
+                    task.cancel()
+                return False
+            if self._tasks:
+                await gather(*self._tasks)
+            return False
+        finally:
+            self._tasks.clear()
+            self._entered = False
+
+def __vis_create_task__(coro, *, name=None, context=None):
+    return coro if isinstance(coro, __vis_Task__) else __vis_Task__(coro, name)
+
+async def __vis_wait_for__(aw, timeout):
+    # No hidden timer/event-loop thread. Zero/negative deadlines cancel before
+    # work starts; positive deadlines are checked cooperatively after each
+    # awaitable completes (blocking host tools remain governed by Vis turn/eval
+    # cancellation, which interrupts and cancels every gather child).
+    task = __vis_create_task__(aw)
+    if timeout is not None and float(timeout) <= 0:
+        task.cancel()
+        raise TimeoutError()
+    started = __vis_time__.monotonic()
+    result = await task
+    if timeout is not None and __vis_time__.monotonic() - started > float(timeout):
+        raise TimeoutError()
+    return result
+
+async def __vis_wait__(aws, *, timeout=None, return_when='ALL_COMPLETED'):
+    tasks = {__vis_create_task__(aw) for aw in aws}
+    if timeout is not None and float(timeout) <= 0:
+        return set(), tasks
+    if tasks:
+        await gather(*tasks, return_exceptions=True)
+    return tasks, set()
+
+def __vis_to_thread__(func, /, *args, **kwargs):
+    # The deferred call is dispatched by gather on the same bounded platform
+    # executor as tools; it never creates a guest thread or a per-call executor.
+    return __vis_Call__(func, args, kwargs, getattr(func, '__name__', 'to_thread'))
+
 def __vis_deferred__(realfn, nm='tool'):
     def __vis_tool__(*a, **k):
         return __vis_Call__(realfn, a, k, nm)
@@ -774,34 +931,60 @@ def __vis_deferred__(realfn, nm='tool'):
     return __vis_tool__
 
 class __vis_asyncio__:
-    # asyncio SHIM. The real asyncio is sandbox-excluded — importing it then
-    # calling `asyncio.run(coro)` spins up an event loop and trips a native
-    # `socket was excluded` crash. Rather than forbid the model's habit, we route
-    # `asyncio.run` / `gather` / `run_until_complete` onto OUR virtual-thread
-    # driver (`__vis_drive__`) and `gather` (which yields a concurrent
-    # `__vis_Gather__`). `import asyncio` is AST-rewritten to bind THIS object, so
-    # `asyncio.run(main())` drives `main()`'s coroutine exactly like top-level
-    # `await` does — no event loop, no socket, identical result.
+    # Practical asyncio compatibility for Vis' coroutine trampoline. This is NOT
+    # CPython's socket/select event loop: it owns no loop thread, timer thread,
+    # task registry, or executor. Concurrent work is delegated only to the host's
+    # bounded, self-reclaiming platform pool.
+    CancelledError = CancelledError
+    InvalidStateError = InvalidStateError
+    TimeoutError = TimeoutError
+    Task = __vis_Task__
+    TaskGroup = __vis_TaskGroup__
+    ALL_COMPLETED = 'ALL_COMPLETED'
+    FIRST_COMPLETED = 'FIRST_COMPLETED'
+    FIRST_EXCEPTION = 'FIRST_EXCEPTION'
     @staticmethod
-    def run(coro): return __vis_drive__(coro)
+    def run(coro, *, debug=None): return __vis_drive__(coro)
     @staticmethod
     def run_until_complete(coro): return __vis_drive__(coro)
     @staticmethod
-    def gather(*aws): return gather(*aws)
+    def gather(*aws, return_exceptions=False):
+        return gather(*aws, return_exceptions=return_exceptions)
     @staticmethod
-    def create_task(coro): return coro
+    def create_task(coro, *, name=None, context=None):
+        return __vis_create_task__(coro, name=name, context=context)
     @staticmethod
-    def ensure_future(coro): return coro
+    def ensure_future(coro, *, loop=None): return __vis_create_task__(coro)
     @staticmethod
     def get_event_loop(): return __vis_asyncio__
+    @staticmethod
+    def get_running_loop(): return __vis_asyncio__
     @staticmethod
     def new_event_loop(): return __vis_asyncio__
     @staticmethod
     def set_event_loop(*a, **k): return None
     @staticmethod
-    def sleep(*a, **k): return None
+    def sleep(delay, result=None): return __vis_Sleep__(delay, result)
     @staticmethod
     def iscoroutine(v): return hasattr(v, 'send') or hasattr(v, '__await__')
+    @staticmethod
+    def isfuture(v): return isinstance(v, __vis_Task__)
+    @staticmethod
+    def current_task(loop=None): return None
+    @staticmethod
+    def all_tasks(loop=None): return set()
+    @staticmethod
+    def shield(aw): return __vis_create_task__(aw)
+    @staticmethod
+    def wait_for(aw, timeout): return __vis_wait_for__(aw, timeout)
+    @staticmethod
+    def wait(aws, *, timeout=None, return_when='ALL_COMPLETED'):
+        return __vis_wait__(aws, timeout=timeout, return_when=return_when)
+    @staticmethod
+    def to_thread(func, /, *args, **kwargs): return __vis_to_thread__(func, *args, **kwargs)
+    @staticmethod
+    def iscoroutinefunction(fn):
+        return bool(getattr(getattr(fn, '__code__', None), 'co_flags', 0) & 0x80)
 
 asyncio = __vis_asyncio__
 
@@ -1865,7 +2048,7 @@ def __vis_native_result_scan__(__vis_tree__):
     (set-python-binding-doc!
       ctx
       'gather
-      "gather(*awaitables) -> list. Concurrently run independent deferred tool calls or awaitables on host virtual threads; results preserve input order. Also accepts one list/tuple. Use `await gather(call1(...), call2(...))`; keep dependent calls sequential. All slots settle before an aggregated failure reports every failing slot index.")
+      "gather(*awaitables) -> list. Concurrently run independent deferred tool calls or awaitables on the bounded host platform pool; results preserve input order. Also accepts one list/tuple. Use `await gather(call1(...), call2(...))`; keep dependent calls sequential. All slots settle before an aggregated failure reports every failing slot index.")
     (set-python-binding-doc!
       ctx
       'session-fold
@@ -3159,7 +3342,7 @@ def network_probe(method='GET', url=None, headers=None, body=None):
       (catch Throwable _ nil))
     ;; ASYNC-BY-DEFAULT runtime: install the trampoline + `gather`, then DEFER
     ;; every tool binding (so `await cat(x)` / `gather(cat(x), cat(y))` work).
-    ;; `__vis_par__` (the host virtual-thread pool) is wired as a binding above;
+    ;; `__vis_par__` (the bounded host platform pool) is wired as a binding above;
     ;; the compaction verbs (`session_fold`/`session_drop`) stay direct (never deferred).
     ;; Eval'd before the snapshot so all `__vis_*` names land in the baseline.
     (.eval ctx "python" async-runtime-python)
@@ -3928,7 +4111,7 @@ def network_probe(method='GET', url=None, headers=None, body=None):
   "Run the program as ONE driven coroutine. `__vis_run_async__` AST-wraps it in
    an `async def` (with `global` decls for its assigned names so they persist in
    the interpreter), the trampoline `__vis_drive__` drives it, and `gather`
-   overlaps awaitables on the host virtual-thread pool. Returns the FLAT sum
+   overlaps awaitables on the bounded host platform pool. Returns the FLAT sum
    `{:stdout <printed>}` | `{:result <value>}` | `{:error <raised> :stdout?}`."
   [^Context ctx ^Value g code]
   (let

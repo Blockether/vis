@@ -174,12 +174,13 @@
 (deftest pair-implies-a-phone-reachable-bind
   (testing
     "asking to pair with no --host must never fall back to the loopback
-           default: pairing IS the request for phone access, so the bind follows
-           it — Tailscale IP when the tailnet is up, else every interface"
+           default, and must never bind narrower than the pairing link
+           advertises: `alt=` offers the LAN hosts as fallbacks, so the socket
+           has to serve every interface"
     (with-redefs
       [pairing/iface-addresses (fn []
                                  ["100.109.18.77" "192.168.0.227"])]
-      (is (= "100.109.18.77" (pairing/pair-bind-host))))
+      (is (= "0.0.0.0" (pairing/pair-bind-host))))
     (with-redefs
       [pairing/iface-addresses (fn []
                                  ["192.168.0.227"])]

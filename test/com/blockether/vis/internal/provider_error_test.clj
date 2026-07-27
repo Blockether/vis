@@ -236,7 +236,9 @@
         ;; :stream-timeout as transient. The copy stays surface-agnostic: no CLI
         ;; commands, no keybindings, no internal var names.
         (expect (re-find #"retrying automatically" next-step))
-        (expect (re-find #"idle-timeout-ms" next-step))
+        (expect (re-find #"semantic-timeout-ms" next-step))
+        (expect (re-find #"set it to `nil`" next-step))
+        (expect (nil? (re-find #"idle-timeout-ms" next-step)))
         (expect (true? (get (first (perr/provider-error-content err)) "retryable")))))
   (it "the idle-timeout sibling classifies the same way"
       (let

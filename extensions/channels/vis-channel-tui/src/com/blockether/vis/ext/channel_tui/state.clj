@@ -229,21 +229,28 @@
                           (if eff? (bump-version db') db'))))
 
         :fx
-        (let
-          [old-db @app-db
-           {:keys [db fx]} ((:fn handler) old-db event-vec)]
+        (let [effects (volatile! nil)]
+          ;; An FX handler still performs a state transition. Use CAS just like
+          ;; :db handlers: an async gateway ACK and UI keystrokes can dispatch on
+          ;; different threads, and read+reset would let the ACK overwrite every
+          ;; edit committed after its stale read. `swap!` retries the pure handler
+          ;; against the latest db; only the winning attempt's effects run.
+          (swap! app-db (fn [old-db]
+                          (let [{:keys [db fx]} ((:fn handler) old-db event-vec)]
+                            (vreset! effects fx)
+                            (if db
+                              (let
+                                [db' (finalize-db db)
+                                 eff? (decide-bump old-db db')]
 
-          (if db
-            (let
-              [db' (finalize-db db)
-               eff? (decide-bump old-db db')]
-
-              (vreset! bumped? eff?)
-              (reset! app-db (if eff? (bump-version db') db')))
-            ;; Pure-effect handler (no :db): preserve the prior contract —
-            ;; notify whenever the event is allowed to bump at all.
-            (vreset! bumped? allow-bump?))
-          (doseq [[fx-id & args] fx]
+                                (vreset! bumped? eff?)
+                                (if eff? (bump-version db') db'))
+                              (do
+                                ;; Pure-effect handler (no :db): preserve the prior
+                                ;; contract and leave the atom's value untouched.
+                                (vreset! bumped? allow-bump?)
+                                old-db)))))
+          (doseq [[fx-id & args] @effects]
             (when-let [fx-fn (get @fx-registry fx-id)]
               (apply fx-fn args)))))
       (when @bumped? (notify-render!)))
@@ -379,11 +386,86 @@
 
 (defn- pending-assistant-message? [m] (and (= :assistant (:role m)) (true? (:pending? m))))
 
+(defn- pending-assistant-index
+  "Locate the optimistic assistant slot for one submit generation. Identified
+   completions never fall through to a sibling generation; legacy completions
+   without a client id retain the oldest-pending fallback."
+  [messages client-turn-id]
+  (let [messages (vec (or messages []))]
+    (if client-turn-id
+      (first (keep-indexed (fn [idx m]
+                             (when (and (pending-assistant-message? m)
+                                        (= (str client-turn-id)
+                                           (some-> (:client-turn-id m)
+                                                   str)))
+                               idx))
+                           messages))
+      (first (keep-indexed (fn [idx m]
+                             (when (pending-assistant-message? m) idx))
+                           messages)))))
+
+(defn- completion-response
+  "Build the canonical assistant bubble shared by live, delayed and terminal
+   completion paths. `trace` belongs to the completed generation, never to a
+   newer turn which may already be active in the same tab."
+  [answer trace wall-ms
+   {:keys [model provider llm-selected llm-actual llm-fallback? llm-routing-trace iteration-count
+           duration-ms tokens cost confidence session-turn-id status client-turn-id slash]}]
+  (->
+    (chat/assistant-message (vec (or answer [])))
+    (cond->
+      session-turn-id
+      (assoc :session-turn-id session-turn-id)
+
+      (seq trace)
+      (assoc :traces trace)
+
+      (or duration-ms wall-ms)
+      (assoc :duration-ms (or duration-ms wall-ms))
+
+      model
+      (assoc :model model)
+
+      provider
+      (assoc :provider provider)
+
+      llm-selected
+      (assoc :llm-selected llm-selected)
+
+      llm-actual
+      (assoc :llm-actual llm-actual)
+
+      (some? llm-fallback?)
+      (assoc :llm-fallback? llm-fallback?)
+
+      (seq llm-routing-trace)
+      (assoc :llm-routing-trace llm-routing-trace)
+
+      iteration-count
+      (assoc :iteration-count iteration-count)
+
+      tokens
+      (assoc :tokens tokens)
+
+      cost
+      (assoc :cost cost)
+
+      confidence
+      (assoc :confidence confidence)
+
+      status
+      (assoc :status status)
+
+      client-turn-id
+      (assoc :client-turn-id client-turn-id)
+
+      slash
+      (assoc :slash? true))))
+
 (defn- replace-pending-assistant
-  "Replace the pending assistant slot for a completed turn. Prefer the
-   stable client turn id; fall back to the oldest pending placeholder for
-   older events/tests. Never pop the tail: newer user messages may already
-   have been appended while this turn was still live."
+  "Replace only the pending assistant slot owned by this completion. An
+   identified completion with no matching placeholder is a duplicate/stale
+   callback and leaves the transcript untouched."
   [messages response]
   (let
     [messages
@@ -396,15 +478,7 @@
      (dissoc response :pending?)
 
      idx
-     (or (when client-turn-id
-           (first (keep-indexed (fn [idx m]
-                                  (when (and (pending-assistant-message? m)
-                                             (= client-turn-id (:client-turn-id m)))
-                                    idx))
-                                messages)))
-         (first (keep-indexed (fn [idx m]
-                                (when (pending-assistant-message? m) idx))
-                              messages)))
+     (pending-assistant-index messages client-turn-id)
 
      carry-slash
      (fn [old resp]
@@ -413,6 +487,7 @@
          (assoc :slash? true)))]
 
     (cond idx (assoc messages idx (carry-slash (get messages idx) response))
+          client-turn-id messages
           (and (seq messages) (= :assistant (:role (peek messages))))
           (conj (pop messages) (carry-slash (peek messages) response))
           :else (conj messages response))))
@@ -2332,52 +2407,51 @@
           :else messages)))
 
 (defn- restore-submitted-input
-  "Drop the pending turn pair AND repopulate the editor. Used when
-   a turn was cancelled before any iteration produced visible work
-   - the user pressed Esc fast, no trace exists, so dropping the
-   placeholder bubble keeps the transcript clean."
+  "Drop the pending turn pair and restore the submitted prompt only when the
+   editor is still pristine. Keystrokes entered while cancellation settles are
+   a newer draft and must never be overwritten by the cancellation ACK."
   [db {:keys [text pastes paste-counter]}]
-  (let [visible-text (input/expand-paste-placeholders text pastes)]
-    (-> db
-        clear-active-turn-state
-        (assoc :messages (drop-pending-turn-messages (:messages db))
-               :scroll scroll/follow
-               :input (text->input-state text)
-               :input-history-index nil
-               :input-history-draft nil
-               :slash-command-index 0
-               :slash-command-hidden? false
-               :pastes (or pastes {})
-               :paste-counter (or paste-counter 0))
-        (update :input-history
-                (fn [xs]
-                  (let [xs (vec (or xs []))]
-                    (if (= visible-text (peek xs)) (pop xs) xs))))
-        (dissoc :turn-start-ms :submitted-input))))
+  (let
+    [visible-text
+     (input/expand-paste-placeholders text pastes)
+
+     restore-editor?
+     (input/input-empty? (:input db))]
+
+    (cond->
+      (-> db
+          clear-active-turn-state
+          (assoc :messages (drop-pending-turn-messages (:messages db))
+                 :scroll scroll/follow)
+          (update :input-history
+                  (fn [xs]
+                    (let [xs (vec (or xs []))]
+                      (if (= visible-text (peek xs)) (pop xs) xs))))
+          (dissoc :turn-start-ms :submitted-input))
+      restore-editor?
+      (assoc :input
+        (text->input-state text) :input-history-index
+        nil :input-history-draft
+        nil :slash-command-index
+        0 :slash-command-hidden?
+        false :pastes
+        (or pastes {}) :paste-counter
+        (or paste-counter 0)))))
 
 (defn- restore-editor-only
-  "Repopulate the editor without touching `:messages`. Used when
-   a turn was cancelled AFTER iterations produced visible work -
-   we keep the cancelled bubble (with its `:traces`) in the
-   transcript so the user can see what the agent did, AND we
-   refill the input box with the original prompt so they can
-   tweak/resubmit without retyping. The session-turn row,
-   each completed iteration, and any blocks they wrote already
-   landed in SQLite via the iteration loop's per-iteration
-   `db-store-iteration!` calls and `finalize-turn-result`'s
-   `db-update-session-turn!`, so reopening the session
-   shows the same partial trace."
+  "Restore the submitted prompt after a cancellation with visible work, unless
+   the user already started a newer draft while the cancellation settled."
   [db {:keys [text pastes paste-counter]}]
-  ;; See note in restore-submitted-input: leave :input-history alone.
-  (-> db
-      (assoc :input (text->input-state text)
-             :input-history-index nil
-             :input-history-draft nil
-             :slash-command-index 0
-             :slash-command-hidden? false
-             :pastes (or pastes {})
-             :paste-counter (or paste-counter 0))
-      (dissoc :submitted-input)))
+  (cond-> (dissoc db :submitted-input)
+    (input/input-empty? (:input db))
+    (assoc :input
+      (text->input-state text) :input-history-index
+      nil :input-history-draft
+      nil :slash-command-index
+      0 :slash-command-hidden?
+      false :pastes
+      (or pastes {}) :paste-counter
+      (or paste-counter 0))))
 
 (reg-event-fx
   :history-up
@@ -3174,6 +3248,127 @@
             (and awaiting-cancel? sid)
             (assoc :fx [[:gateway-cancel-turn sid turn-id]])))))))
 
+(def ^:private terminal-result-grace-ms
+  "Give the blocking submit/attach worker one short window to deliver the full
+   result after the persistent mux observes the terminal event. If that worker
+   is stranded, the independent terminal path settles its placeholder."
+  500)
+
+(defn- terminal-status
+  [status]
+  (keyword (or (some-> status
+                       name)
+               "completed")))
+
+(defn- terminal-content
+  [{:keys [status turn-id]}]
+  (let
+    [[type code message] (case (terminal-status status)
+                           :cancelled
+                           ["notice" "turn_cancelled" "Cancelled by user."]
+
+                           :failed
+                           ["error" "turn_failed" "Turn failed."]
+
+                           ["notice" "turn_completed" "Turn completed."])]
+    [{"id" (str "terminal-" (or turn-id (java.util.UUID/randomUUID)))
+      "type" type
+      "code" code
+      "message" message}]))
+
+(reg-event-fx :sync-turn-terminal
+              ;; The persistent mux is independent of the blocking submit/attach worker.
+              ;; Stop the matching optimistic spinner immediately, but retain its exact
+              ;; placeholder for a brief grace period so the normal worker can still paint
+              ;; the full answer. The delayed reconciliation owns only that generation.
+              (fn [db [_ workspace-id chunk]]
+                (let
+                  [workspace-id
+                   (or workspace-id (current-tab-id db))
+
+                   target
+                   (when workspace-id (db-for-tab db workspace-id))
+
+                   gateway-turn-id
+                   (:gateway-turn-id target)
+
+                   live-client-id
+                   (:live-turn-client-id target)
+
+                   turn-id
+                   (:turn-id chunk)
+
+                   client-id
+                   (:client-id chunk)
+
+                   matching-turn?
+                   (or (and turn-id gateway-turn-id (= (str turn-id) (str gateway-turn-id)))
+                       (and client-id live-client-id (= (str client-id) (str live-client-id))))
+
+                   idx
+                   (when matching-turn? (pending-assistant-index (:messages target) client-id))
+
+                   terminal
+                   (assoc chunk
+                     :status (terminal-status (:status chunk))
+                     :trace (vec (or (get-in target [:progress :iterations]) [])))]
+
+                  (if-not (and workspace-id (:loading? target) matching-turn?)
+                    {:db db}
+                    {:db (update-tab db
+                                     workspace-id
+                                     (fn [workspace]
+                                       (cond-> (clear-active-turn-state workspace)
+                                         idx
+                                         (assoc-in [:messages idx :terminal-pending] terminal))))
+                     :fx (cond-> []
+                           idx
+                           (conj [:settle-turn-terminal-later workspace-id terminal]))}))))
+
+(reg-event-fx
+  :settle-turn-terminal
+  (fn [db [_ workspace-id terminal]]
+    (let
+      [workspace-id
+       (or workspace-id (current-tab-id db))
+
+       target
+       (when workspace-id (db-for-tab db workspace-id))
+
+       messages
+       (vec (or (:messages target) []))
+
+       idx
+       (first (keep-indexed (fn [idx message]
+                              (when (and (pending-assistant-message? message)
+                                         (= terminal (:terminal-pending message)))
+                                idx))
+                            messages))
+
+       options
+       {:client-turn-id (:client-id terminal)
+        :status (terminal-status (:status terminal))
+        :terminal-sync? true
+        :terminal-trace (:trace terminal)}]
+
+      (cond (nil? idx) {:db db}
+            ;; A resend started during the grace period. Settle only the old bubble;
+            ;; never clear the new generation's spinner/editor/cancellation state.
+            (:loading? target) {:db (update-tab db
+                                                workspace-id
+                                                (fn [workspace]
+                                                  (assoc workspace
+                                                    :messages (assoc (vec (:messages workspace))
+                                                                idx (completion-response
+                                                                      (terminal-content terminal)
+                                                                      (:trace terminal)
+                                                                      nil
+                                                                      options))
+                                                    :scroll scroll/follow)))}
+            :else {:db db
+                   :fx [[:dispatch
+                         [:message-received workspace-id (terminal-content terminal) options]]]}))))
+
 (reg-event-db :sync-queue-paused
               ;; Mirror the gateway's queue.paused / queue.resumed signal into the
               ;; tab so the Queued strip shows the provider-failure hold. The chunk
@@ -3870,13 +4065,28 @@
 
 (reg-event-fx
   :message-received
-  (fn [db [_ a b c]]
+  (fn [db [_ a b c :as event]]
     (let
-      [[workspace-id answer
-        {:keys [model provider llm-selected llm-actual llm-fallback? llm-routing-trace
-                iteration-count duration-ms tokens cost confidence session-turn-id status
-                utilization client-turn-id slash]}]
-       (if (keyword? a) [a b c] [(current-tab-id db) a b])
+      [[event-workspace-id answer
+        {:keys [status utilization client-turn-id terminal-sync? terminal-trace] :as completion}]
+       (if (= 4 (count event)) [a b c] [(current-tab-id db) a b])
+
+       workspace-id
+       (or event-workspace-id (current-tab-id db))
+
+       target
+       (db-for-tab db workspace-id)
+
+       matching-pending-index
+       (when client-turn-id (pending-assistant-index (:messages target) client-turn-id))
+
+       skip-identified-completion?
+       (boolean (and client-turn-id (nil? matching-pending-index)))
+
+       stale-generation?
+       (boolean (and matching-pending-index
+                     (:live-turn-client-id target)
+                     (not= (str client-turn-id) (str (:live-turn-client-id target)))))
 
        drain?
        (volatile! false)
@@ -3889,156 +4099,121 @@
          db
          workspace-id
          (fn [workspace]
-           (let
-             [trace
-              (get-in workspace [:progress :iterations])
+           (cond
+             skip-identified-completion? workspace
+             stale-generation? (assoc workspace
+                                 :messages (replace-pending-assistant
+                                             (:messages workspace)
+                                             (completion-response answer nil nil completion))
+                                 :scroll scroll/follow)
+             :else
+             (let
+               [trace
+                (or terminal-trace (get-in workspace [:progress :iterations]))
 
-              cancelled?
-              (= :cancelled status)
+                cancelled?
+                (= :cancelled status)
 
-              ;; Cancelling the local attach worker can synthesize this result before
-              ;; the HTTP cancel reaches the daemon. Keep the turn gate armed until the
-              ;; generation-matched :gateway-cancel-result confirms server acceptance;
-              ;; otherwise an immediate resend is queued behind the still-running turn.
-              awaiting-gateway-cancel?
-              (boolean (and cancelled? (:cancelling? workspace) (:cancelling-at-ms workspace)))
+                ;; Cancelling the local attach worker can synthesize this result before
+                ;; the HTTP cancel reaches the daemon. Keep the turn gate armed until the
+                ;; generation-matched :gateway-cancel-result confirms server acceptance;
+                ;; otherwise an immediate resend is queued behind the still-running turn.
+                awaiting-gateway-cancel?
+                (boolean (and (not terminal-sync?)
+                              cancelled?
+                              (:cancelling? workspace)
+                              (:cancelling-at-ms workspace)))
 
-              ;; A cancellation that captured zero iterations is
-              ;; usually a stray Esc - drop the placeholder pair
-              ;; and restore the editor as before. A cancellation
-              ;; with a non-empty trace means the agent already
-              ;; did visible work (and persisted those iterations
-              ;; to SQLite); KEEP the bubble so the user can read
-              ;; what happened, and only repopulate the editor.
-              no-work?
-              (empty? trace)]
+                ;; A cancellation that captured zero iterations is
+                ;; usually a stray Esc - drop the placeholder pair
+                ;; and restore the editor as before. A cancellation
+                ;; with a non-empty trace means the agent already
+                ;; did visible work (and persisted those iterations
+                ;; to SQLite); KEEP the bubble so the user can read
+                ;; what happened, and only repopulate the editor.
+                no-work?
+                (empty? trace)]
 
-             (if (and cancelled? (:submitted-input workspace) no-work?)
-               (let [ws (restore-submitted-input workspace (:submitted-input workspace))]
-                 ;; A cancel must NOT auto-send the backlog — pull it back into
-                 ;; the editor instead (see :restore-pending-to-input).
-                 (when (and (not awaiting-gateway-cancel?) (some :mine? (:pending-sends ws)))
-                   (vreset! restore-pending? true))
-                 ;; `restore-submitted-input` normally clears the completed local turn.
-                 ;; A synthetic local cancellation is not completion of the SERVER turn:
-                 ;; retain the exact cancellation generation until its gateway ACK arrives.
-                 (if awaiting-gateway-cancel?
-                   (merge ws (select-keys workspace active-turn-state-keys))
-                   ws))
-               (let
-                 [start
-                  (:turn-start-ms workspace)
+               (if (and cancelled? (:submitted-input workspace) no-work?)
+                 (let [ws (restore-submitted-input workspace (:submitted-input workspace))]
+                   ;; A cancel must NOT auto-send the backlog — pull it back into
+                   ;; the editor instead (see :restore-pending-to-input).
+                   (when (and (not awaiting-gateway-cancel?) (some :mine? (:pending-sends ws)))
+                     (vreset! restore-pending? true))
+                   ;; `restore-submitted-input` normally clears the completed local turn.
+                   ;; A synthetic local cancellation is not completion of the SERVER turn:
+                   ;; retain the exact cancellation generation until its gateway ACK arrives.
+                   (if awaiting-gateway-cancel?
+                     (merge ws (select-keys workspace active-turn-state-keys))
+                     ws))
+                 (let
+                   [start
+                    (:turn-start-ms workspace)
 
-                  wall-ms
-                  (when start (- (System/currentTimeMillis) (long start)))
+                    wall-ms
+                    (when start (- (System/currentTimeMillis) (long start)))
 
-                  content
-                  (vec (or answer []))
+                    content
+                    (vec (or answer []))
 
-                  response
-                  (->
-                    (chat/assistant-message content)
+                    response
+                    (completion-response content trace wall-ms completion)
+
+                    messages'
+                    (replace-pending-assistant (:messages workspace) response)
+
+                    still-pending?
+                    (boolean (some pending-assistant-message? messages'))
+
+                    workspace'
                     (cond->
-                      session-turn-id
-                      (assoc :session-turn-id session-turn-id)
+                      (assoc workspace
+                        ;; Re-pin to the bottom by REPLACING `:scroll`
+                        ;; with a fresh FOLLOW. A result can land
+                        ;; atomically while an ease was in flight (e.g.
+                        ;; a `/workspace list` table); replacing the
+                        ;; whole value means no animation target can
+                        ;; dangle, so the view snaps cleanly to the
+                        ;; bottom instead of flashing to the top first.
+                        :messages messages'
+                        :utilization utilization
+                        :scroll scroll/follow
+                        :loading? (or still-pending? awaiting-gateway-cancel?)
+                        :cancelling? awaiting-gateway-cancel?
+                        :cancelling-at-ms (when awaiting-gateway-cancel?
+                                            (:cancelling-at-ms workspace)))
+                      (and (not still-pending?) (not awaiting-gateway-cancel?))
+                      clear-active-turn-state)
 
-                      (seq trace)
-                      (assoc :traces trace)
+                    ;; Cancelled-with-work: keep the bubble we just
+                    ;; built AND refill the editor from the snapshot so
+                    ;; the user can edit/resubmit the prompt that
+                    ;; produced this trace without retyping.
+                    ws-final
+                    (if (and cancelled? (:submitted-input workspace) (not no-work?))
+                      (restore-editor-only workspace' (:submitted-input workspace))
+                      (cond-> workspace'
+                        (not still-pending?)
+                        (dissoc :submitted-input)))]
 
-                      (or duration-ms wall-ms)
-                      (assoc :duration-ms (or duration-ms wall-ms))
-
-                      model
-                      (assoc :model model)
-
-                      provider
-                      (assoc :provider provider)
-
-                      llm-selected
-                      (assoc :llm-selected llm-selected)
-
-                      llm-actual
-                      (assoc :llm-actual llm-actual)
-
-                      (some? llm-fallback?)
-                      (assoc :llm-fallback? llm-fallback?)
-
-                      (seq llm-routing-trace)
-                      (assoc :llm-routing-trace llm-routing-trace)
-
-                      iteration-count
-                      (assoc :iteration-count iteration-count)
-
-                      tokens
-                      (assoc :tokens tokens)
-
-                      cost
-                      (assoc :cost cost)
-
-                      confidence
-                      (assoc :confidence confidence)
-
-                      status
-                      (assoc :status status)
-
-                      client-turn-id
-                      (assoc :client-turn-id client-turn-id)
-
-                      slash
-                      (assoc :slash? true)))
-
-                  messages'
-                  (replace-pending-assistant (:messages workspace) response)
-
-                  still-pending?
-                  (boolean (some pending-assistant-message? messages'))
-
-                  workspace'
-                  (cond->
-                    (assoc workspace
-                      ;; Re-pin to the bottom by REPLACING `:scroll`
-                      ;; with a fresh FOLLOW. A result can land
-                      ;; atomically while an ease was in flight (e.g.
-                      ;; a `/workspace list` table); replacing the
-                      ;; whole value means no animation target can
-                      ;; dangle, so the view snaps cleanly to the
-                      ;; bottom instead of flashing to the top first.
-                      :messages messages'
-                      :utilization utilization
-                      :scroll scroll/follow
-                      :loading? (or still-pending? awaiting-gateway-cancel?)
-                      :cancelling? awaiting-gateway-cancel?
-                      :cancelling-at-ms (when awaiting-gateway-cancel?
-                                          (:cancelling-at-ms workspace)))
-                    (and (not still-pending?) (not awaiting-gateway-cancel?))
-                    clear-active-turn-state)
-
-                  ;; Cancelled-with-work: keep the bubble we just
-                  ;; built AND refill the editor from the snapshot so
-                  ;; the user can edit/resubmit the prompt that
-                  ;; produced this trace without retyping.
-                  ws-final
-                  (if (and cancelled? (:submitted-input workspace) (not no-work?))
-                    (restore-editor-only workspace' (:submitted-input workspace))
-                    (cond-> workspace'
-                      (not still-pending?)
-                      (dissoc :submitted-input)))]
-
-                 (when (and (not (:loading? ws-final)) (seq (:pending-sends ws-final)))
-                   ;; Normal completion drains the next queued turn; a cancel
-                   ;; restores the AUTHORED backlog to the editor instead of
-                   ;; firing it. Mirrored sibling entries are never restored
-                   ;; (or deleted) here — see :restore-pending-to-input.
-                   (if cancelled?
-                     (when (some :mine? (:pending-sends ws-final)) (vreset! restore-pending? true))
-                     (vreset! drain? true)))
-                 ws-final)))))]
+                   (when (and (not (:loading? ws-final)) (seq (:pending-sends ws-final)))
+                     ;; Normal completion drains the next queued turn; a cancel
+                     ;; restores the AUTHORED backlog to the editor instead of
+                     ;; firing it. Mirrored sibling entries are never restored
+                     ;; (or deleted) here — see :restore-pending-to-input.
+                     (if cancelled?
+                       (when (some :mine? (:pending-sends ws-final))
+                         (vreset! restore-pending? true))
+                       (vreset! drain? true)))
+                   ws-final))))))]
 
       {:db (cond-> db'
              ;; Persistent unread dot: a BACKGROUND tab that just FINISHED a
              ;; turn (same gate as the bell) lights a dot that stays until the
              ;; user focuses it (cleared in `activate-tab`).
-             (and (not= workspace-id (current-tab-id db)) (not= :cancelled status))
+             (and (not skip-identified-completion?)
+                  (not= workspace-id (current-tab-id db))
+                  (not= :cancelled status))
              (update :tabs
                      (fn [entries]
                        (mapv (fn [entry]
@@ -4057,6 +4232,12 @@
 (reg-fx :dispatch
         (fn [event]
           (dispatch event)))
+
+(reg-fx :settle-turn-terminal-later
+        (fn [workspace-id terminal]
+          (vis/worker-future "vis-tui-terminal-result-grace"
+                             #(do (Thread/sleep (long terminal-result-grace-ms))
+                                  (dispatch [:settle-turn-terminal workspace-id terminal])))))
 
 (reg-fx :notify
         (fn [text level ttl-ms]

@@ -257,7 +257,7 @@ def __vis_install_attach__():
         disp = env[1] if len(env) > 1 else None
         if disp:
             __vis_emit_image_fence(disp, name, mt, len(data))
-        return {'filename': name, 'media_type': mt, 'kind': knd, 'size': len(data)}
+        return None
 
     def vis_attach(path, kind=None, media_type=None, filename=None):
         with open(path, 'rb') as f:
@@ -310,14 +310,16 @@ def __vis_install_attach__():
         'session_iteration_attachment row - surviving a web/TUI restart and, for '
         'image/* media-types, replayable to a vision model on later turns. '
         'kind / media_type / filename override the guesses. '
-        'Returns a summary dict {filename, media_type, kind, size}. '
+        'Returns None so a bare call produces no result display; do not print the '
+        'call. Use vis_attachments() when attachment metadata is needed. '
         'Use vis_attach_bytes(data, filename, ...) for in-memory bytes/str.'
     )
     vis_attach_bytes.__doc__ = (
         'Persist in-memory bytes (or a str, utf-8 encoded) as a durable iteration '
         'attachment - the no-temp-file twin of vis_attach. filename gives the '
         'artifact its name and drives extension-based media-type guessing. '
-        'Returns a summary dict {filename, media_type, kind, size}.'
+        'Returns None so a bare call produces no result display; do not print the '
+        'call. Use vis_attachments() when attachment metadata is needed.'
     )
 
     g = globals()
@@ -333,11 +335,13 @@ def __vis_install_attach__():
     docs['vis_attach'] = (
         'vis_attach(path, kind=None, media_type=None, filename=None): persist a '
         'produced file as a durable DB iteration attachment (survives restart; '
-        'image/* replays to vision models).'
+        'image/* replays to vision models). Returns None; call directly, do not print. '
+        'Use vis_attachments() when metadata is needed.'
     )
     docs['vis_attach_bytes'] = (
         'vis_attach_bytes(data, filename, kind=None, media_type=None): persist '
-        'in-memory bytes/str as a durable DB iteration attachment.'
+        'in-memory bytes/str as a durable DB iteration attachment. Returns None; '
+        'call directly, do not print. Use vis_attachments() when metadata is needed.'
     )
     docs['vis_reinspect_attachment'] = (
         'vis_reinspect_attachment(id, detail=auto): queue a persisted image from this '

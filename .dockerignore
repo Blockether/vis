@@ -14,3 +14,8 @@ apps/vis-companion/.vite
 .vis
 *.log
 .DS_Store
+
+# The Dockerfile is not needed INSIDE the image, and including it makes every
+# edit to it bust `COPY . .` — a ~11 minute native-image rebuild per comment.
+Dockerfile
+.dockerignore

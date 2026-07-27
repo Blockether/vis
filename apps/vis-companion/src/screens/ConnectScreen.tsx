@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayConn } from '../lib/types';
 import { GatewayClient, GatewayError } from '../lib/gateway';
 import { parsePairing } from '../lib/pairing';
-import { scanQr } from '../lib/scan';
+import { QrScanner } from '../components/QrScanner';
 import { Banner, Button, Input } from '../components/ui';
 
 interface Props {
@@ -36,6 +36,7 @@ export function ConnectScreen({
   const [token, setToken] = useState('');
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const [health, setHealth] = useState<Record<string, GwHealth>>(() => ({ ...lastHealth }));
   const probeInFlight = useRef(false);
 
@@ -179,29 +180,25 @@ export function ConnectScreen({
     await tryConn({ url: u, token: token.trim() || undefined, label: hostOf(u) });
   }
 
-  async function scan() {
-    try {
-      const raw = await scanQr();
-      if (!raw) {
-        setMsg({ kind: 'err', text: 'No QR code found — try again or paste the link' });
-        return;
-      }
-      const conn = parsePairing(raw);
-      if (!conn) {
-        setMsg({ kind: 'err', text: 'QR is not a Vis pairing code' });
-        return;
-      }
-      await tryConn(conn);
-    } catch (cause) {
-      const text = (cause as Error).message || '';
-      // A user-dismissed camera is not an error — stay silent.
-      if (/cancel/i.test(text)) return;
-      setMsg({ kind: 'err', text: text || 'Camera unavailable' });
+  async function onScanned(raw: string) {
+    setScanning(false);
+    const conn = parsePairing(raw);
+    if (!conn) {
+      setMsg({ kind: 'err', text: 'QR is not a Vis pairing code' });
+      return;
     }
+    await tryConn(conn);
   }
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-5 px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(2rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-4 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:space-y-6 sm:px-6 sm:py-6">
+      {scanning && (
+        <QrScanner
+          onResult={(raw) => void onScanned(raw)}
+          onCancel={() => setScanning(false)}
+        />
+      )}
+
       {conns.length > 0 && (
         <section className="overflow-hidden border border-dialog-edge bg-panel shadow-none sm:shadow-[4px_4px_0_var(--dialog-shadow)]">
           <header className="flex min-h-9 items-center bg-dialog-title px-3 py-2 text-dialog-title-foreground">
@@ -295,7 +292,7 @@ export function ConnectScreen({
                 >
                   {busy ? 'Checking\u2026' : 'Pair'}
                 </Button>
-                <Button variant="ghost" onClick={scan} disabled={busy}>
+                <Button variant="ghost" onClick={() => setScanning(true)} disabled={busy}>
                   Scan QR
                 </Button>
               </div>

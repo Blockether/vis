@@ -3821,6 +3821,9 @@
                   (do (state/dispatch [:sync-turn-clock tab-id chunk])
                       (state/dispatch [:sibling-turn-started tab-id chunk]))
 
+                  :turn-terminal
+                  (state/dispatch [:sync-turn-terminal tab-id chunk])
+
                   :title-sync
                   ;; Title generated/renamed in a SIBLING process (another
                   ;; TUI / web / the serve daemon) — the in-process value
