@@ -6,7 +6,7 @@
    disables keychain reads — the developer's real credentials can never leak in."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]
+            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.gateway.fcm :as fcm]
             [com.blockether.vis.internal.gateway.push :as push])
   (:import [java.security KeyPairGenerator Signature]

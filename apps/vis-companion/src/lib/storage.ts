@@ -66,6 +66,40 @@ export async function removeConnection(url: string): Promise<GatewayConn[]> {
   return conns;
 }
 
+/**
+ * Move one saved gateway onto a different address, keeping its identity.
+ *
+ * A connection is keyed by URL, so switching to the Tailscale address must
+ * REWRITE the entry rather than add a second machine: the token, label, id and
+ * known alternates travel with it, the active pointer follows, and the
+ * per-gateway subscribed-session list is re-keyed so live sessions survive the
+ * move. Returns the new list.
+ */
+export async function switchConnectionUrl(
+  from: string,
+  to: string,
+  patch: Partial<GatewayConn> = {},
+): Promise<GatewayConn[]> {
+  const conns = await loadConnections();
+  const idx = conns.findIndex((c) => c.url === from);
+  if (idx < 0 || from === to) return conns;
+  const moved: GatewayConn = { ...conns[idx], ...patch, url: to };
+  const rest = conns.filter((c, i) => i !== idx && c.url !== to);
+  rest.splice(Math.min(idx, rest.length), 0, moved);
+  await saveConnections(rest);
+  if ((await getActiveUrl()) === from) await setActiveUrl(to);
+  const store = await loadSubscriptionStore();
+  if (store[from]) {
+    store[to] = Array.from(new Set([...(store[to] ?? []), ...store[from]])).slice(
+      0,
+      MAX_SUBSCRIBED_SESSIONS,
+    );
+    delete store[from];
+    await setRaw(SUBSCRIPTIONS_KEY, JSON.stringify(store));
+  }
+  return rest;
+}
+
 export async function getActiveUrl(): Promise<string | null> {
   return getRaw(ACTIVE_KEY);
 }

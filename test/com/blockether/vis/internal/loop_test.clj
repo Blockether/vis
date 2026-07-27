@@ -573,6 +573,33 @@
                         (finally (try (.close ^org.graalvm.polyglot.Context pc true)
                                       (catch Throwable _ nil)))))))
 
+(defdescribe parallel-sub-loops-child-error-isolation-test
+             ;; REGRESSION: the settle loop only cancelled siblings on InterruptedException,
+             ;; and nothing guarded the child body beyond `run-spec!`'s own catch. An Error
+             ;; (or a throw while BUILDING the failed result) surfaced from `deref` as an
+             ;; ExecutionException that (a) sank the whole batch, against the documented
+             ;; "a child that throws does NOT sink the batch" contract, and (b) skipped the
+             ;; cancel, leaving every sibling running as an orphaned full LLM turn whose
+             ;; result nobody would ever read.
+             (it "an escaping child error becomes one failed slot and never orphans a sibling"
+                 (let [sib (atom {:started false :finished false})]
+                   (with-redefs-fn {#'lp/run-spec! (fn [_ spec]
+                                                     (if (= "boom" (get spec "prompt"))
+                                                       (throw (Error. "hard child failure"))
+                                                       (do (swap! sib assoc :started true)
+                                                           (Thread/sleep 150)
+                                                           (swap! sib assoc :finished true)
+                                                           {"status" "completed"})))}
+                     (fn []
+                       (let [res (lp/parallel-sub-loops! nil [{"prompt" "boom"} {"prompt" "ok"}])]
+                         ;; input order preserved, one slot per spec
+                         (expect (= 2 (count res)))
+                         (expect (= "failed" (get (first res) "status")))
+                         (expect (= "hard child failure" (get (first res) "error")))
+                         ;; the sibling's work is RETURNED, not orphaned
+                         (expect (= "completed" (get (second res) "status")))
+                         (expect (true? (:finished @sib)))))))))
+
 (defdescribe nested-outside-tool-wall-test
              ;; REGRESSION: run_tests nests the park — language-surface wraps the
              ;; WHOLE run in run-outside-tool-wall AND clj-test-fn wraps its

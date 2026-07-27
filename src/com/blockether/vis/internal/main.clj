@@ -809,6 +809,9 @@
         (inst? x) (str x)
         (instance? Throwable x)
         {"type" (str (type x)) "message" (ex-message x) "data" (json-safe (ex-data x))}
+        ;; JSON has no NaN/Infinity: charred rejects them and the whole
+        ;; `vis --json` envelope would fail over one field.
+        (and (float? x) (not (Double/isFinite (double x)))) nil
         :else x))
 
 (defn result->json [result] (json/write-json-str (json-safe result)))

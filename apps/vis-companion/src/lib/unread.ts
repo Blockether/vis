@@ -57,10 +57,27 @@ function announce(): void {
   for (const listener of listeners) listener();
 }
 
-/** Turns the gateway says this session has finished. */
-export function sessionTurnCount(session: Session): number {
+/**
+ * Turns this session has ANSWERED — the only count an unread mark may use.
+ *
+ * The gateway persists a turn row the moment the turn STARTS (status
+ * `running`), so `turn_count` moves at submit, not at completion, and never
+ * moves again when the answer lands (proven against a live gateway: 7 -> 8 the
+ * instant the turn went live, still 8 after it finished). Marking a session
+ * read at the raw count while you watch your own turn run therefore already
+ * covers the answer that arrives minutes later — every turn you started
+ * yourself was silently pre-read, which is exactly "I was notified but the list
+ * shows no badge".
+ *
+ * A session has at most one persisted in-flight turn (queued messages are not
+ * written until they start), so discounting the live one is exact.
+ */
+export function answeredTurnCount(session: Session | null | undefined): number {
+  if (!session) return 0;
   const count = Number(session.turn_count ?? 0);
-  return Number.isFinite(count) && count > 0 ? count : 0;
+  const total = Number.isFinite(count) && count > 0 ? count : 0;
+  const inFlight = session.live === true || session.status === 'running' ? 1 : 0;
+  return Math.max(0, total - inFlight);
 }
 
 /**
@@ -87,7 +104,7 @@ export function seedReadMarks(sessions: readonly Session[]): void {
   let changed = false;
   for (const session of sessions) {
     if (store[session.id] !== undefined) continue;
-    store[session.id] = sessionTurnCount(session);
+    store[session.id] = answeredTurnCount(session);
     changed = true;
   }
   if (!changed) return;
@@ -104,13 +121,13 @@ function isSessionUnread(session: Session): boolean {
   if (session.live === true || session.status === 'running') return false;
   const seen = load()[session.id];
   if (seen === undefined) return false;
-  return sessionTurnCount(session) > seen;
+  return answeredTurnCount(session) > seen;
 }
 
 /** How many unread answers a session is holding (1+ when unread). */
 export function unreadTurnCount(session: Session): number {
   if (!isSessionUnread(session)) return 0;
-  return sessionTurnCount(session) - (load()[session.id] ?? 0);
+  return answeredTurnCount(session) - (load()[session.id] ?? 0);
 }
 
 function subscribe(listener: () => void): () => void {

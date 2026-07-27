@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.gateway.protocol-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.protocol :as protocol]))
 

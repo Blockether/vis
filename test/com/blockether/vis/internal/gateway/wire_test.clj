@@ -114,3 +114,60 @@
         ;; serialize as ":request" and every client would have to strip the colon.
         (expect (= "request" (get hit "side")))
         (expect (every? string? (all-map-keys w))))))
+
+(defdescribe
+  unencodable-value-test
+  "Every canonical value MUST survive `json-str`. The encoder throws per FRAME
+   at the transport, and `append-event!` stores the canonical event in the
+   replay ring BEFORE anything encodes it — so one unencodable value inside a
+   tool result silently kills the SSE connection and the `/poll` batch for the
+   whole session, then again on every replay."
+  (it "non-string map keys (decoded JSON / Python dicts) render as JSON keys"
+      (expect (= {"1" "a" "2" "b"} (wire/canonical {1 :a 2 :b})))
+      (expect (= {"null" 1 "true" 2 "2.5" 3} (wire/canonical {nil 1 true 2 2.5 3}))))
+  (it "a non-finite double becomes null instead of throwing, like JSON.stringify"
+      (expect (= {"v" nil} (wire/canonical {:v (/ 0.0 0.0)})))
+      (expect (= {"v" nil} (wire/canonical {:v Double/POSITIVE_INFINITY})))
+      (expect (= {"v" nil} (wire/canonical {:v Double/NEGATIVE_INFINITY}))))
+  (it "a BigDecimal keeps the canonical == roundtrip invariant"
+      (expect (= {"v" 1.5} (wire/canonical {:v 1.5M}))))
+  (it "an event carrying such values still renders an SSE frame and a poll batch"
+      (let
+        [event (wire/canonical {:seq 1
+                                :type "iteration.completed"
+                                :tool-result {:counts {1 "a"} :ratio (/ 0.0 0.0)}})]
+        (expect (str/starts-with? (wire/sse-frame event)
+                                  "id: 1\nevent: iteration.completed\ndata: "))
+        (expect (= [event] (wire/parse-json (wire/json-str [event]))))))
+  (it "the invariant holds for every awkward scalar"
+      (doseq
+        [x [{1 :a} {nil 1} {true 1} {[1 2] :k} {:v 1.0M} {:v (/ 0.0 0.0)}
+            {:v Double/POSITIVE_INFINITY} {:v (float 0.5)} {:v (/ 1 3)} {:v (biginteger 10)}
+            {:v #{1 2}} {:v \c} {:v Long/MAX_VALUE}]]
+        (expect (= (wire/canonical x) (wire/parse-json (wire/json-str x)))
+                (str "roundtrip differs for " (pr-str x))))))
+
+(defdescribe
+  bounded-clamp-test
+  "Truncation must never emit a LONE surrogate: half an emoji is not valid text
+   and corrupts every UTF-8 consumer downstream."
+  (it "a cut landing inside a surrogate pair steps back instead of splitting it"
+      (let
+        [s
+         (str "okxxxxxxxxxx" "😀😀")
+
+         ;; A LONE surrogate cannot be encoded: the UTF-8 round-trip
+         ;; replaces it with `?`, which is exactly how it reaches a client.
+         utf8-clean?
+         (fn [^String t]
+           (= t (String. (.getBytes t "UTF-8") "UTF-8")))]
+
+        (doseq [limit [11 12 13 14 15]]
+          (expect (utf8-clean? (wire/bounded-str s limit))
+                  (str "lone surrogate at limit " limit)))))
+  (it "a non-positive limit clamps instead of throwing"
+      (expect (= " …[truncated]" (wire/bounded-str "abc" 0)))
+      (expect (= " …[truncated]" (wire/bounded-str "abc" -1))))
+  (it "a short string is returned verbatim"
+      (expect (= "abc" (wire/bounded-str "abc" 10)))
+      (expect (= "\"abc\"" (wire/bounded-pr "abc" 10)))))

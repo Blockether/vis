@@ -499,6 +499,8 @@
    "line_count" 0
    "dropped" 0
    "sent" 0
+   "text" nil
+   "keys" nil
    "stopped" false})
 
 (defn- shell-result
@@ -931,6 +933,37 @@
           :op :shell
           :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))))
 
+(def ^:private control-key-names
+  "Human names for the control characters `send` writes into a PTY, so a card can
+   show WHAT was typed even when the payload prints nothing at all."
+  {\newline "↵" \return "↵" \tab "⇥" (char 27) "Esc" (char 127) "Del"})
+
+(defn- key-token
+  "Named key for ONE control character, or nil when the character is printable."
+  [c]
+  (let [n (int c)]
+    (or (control-key-names c)
+        (cond (zero? n) "C-@"
+              (< n 27) (str "C-" (char (+ 96 n)))
+              (< n 32) (str "C-" (char (+ 64 n)))
+              (<= 127 n 159) (format "\\u%04x" n)
+              :else nil))))
+
+(defn- keys-label
+  "Human keystroke label for a `send` payload: printable runs stay literal (quoted),
+   every control character becomes its key name — `\"y\" ↵`, `C-c`, `Esc`. A send is
+   frequently ENTIRELY non-printing, where a char count says nothing about what the
+   shell actually received, so this is what the card shows."
+  [s]
+  (when (some? s)
+    (->> (str s)
+         (partition-by #(some? (key-token %)))
+         (mapcat
+           (fn [run]
+             (if (key-token (first run)) (map key-token run) [(str "\"" (str/join run) "\"")])))
+         (str/join " ")
+         not-empty)))
+
 (defn- shell-send-impl
   "Write `text` to a background shell's STDIN (its PTY master). With enter (default
    true) a trailing newline SUBMITS the line — exactly what an interactive prompt
@@ -974,7 +1007,10 @@
           t (now-ms)]
 
          (send-fn (.getBytes payload java.nio.charset.StandardCharsets/UTF_8))
-         (extension/success {:result (assoc (bg-core "send" id entry) "sent" (count payload))
+         (extension/success {:result (assoc (bg-core "send" id entry)
+                                       "sent" (count payload)
+                                       "text" payload
+                                       "keys" (keys-label payload))
                              :op :shell
                              :metadata
                              {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}}))))))
@@ -1521,15 +1557,30 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
     {:summary summary :body (when (seq body) body)}))
 
 (defn- render-shell-send-result
-  "shell op `send` → send-keys lifecycle card."
+  "shell op `send` → send-keys lifecycle card that SHOWS the keystrokes: printable
+   text verbatim, control characters by name (`↵`, `C-c`, `Esc`). A bare char count
+   never told the reader what the shell was actually driven with."
   [r]
   (let
-    [details (kv-lines [["id" (get r "id")]
-                        ["sent"
-                         (when-let [n (get r "sent")]
-                           (str n " chars"))] ["status" (get r "status")] ["pid" (get r "pid")]])]
-    {:summary (str "↵ `" (get r "id") "` sent " (get r "sent") " chars")
-     :body (shell-section "STATUS" details)}))
+    [keys-lbl
+     (or (get r "keys") (keys-label (get r "text")))
+
+     details
+     (kv-lines [["id" (get r "id")] ["keys" keys-lbl]
+                ["sent"
+                 (when-let [n (get r "sent")]
+                   (str n " chars"))] ["status" (get r "status")] ["pid" (get r "pid")]])
+
+     body
+     (->> [(shell-section "KEYS" keys-lbl) (shell-section "STATUS" details)]
+          (remove nil?)
+          (str/join "\n\n"))]
+
+    {:summary (str "↵ `" (get r "id")
+                   "` sent " (if keys-lbl
+                               (clip-chip (shell-one-line keys-lbl) shell-chip-max)
+                               (str (get r "sent") " chars")))
+     :body (when (seq body) body)}))
 
 (defn- render-shell-stop-result
   "shell op `stop` → terminal lifecycle card."
@@ -1577,7 +1628,8 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
        "Fixed-key object with `stage`, `op`, `cmd`, `cwd`, `id`, `pid`, `status`, `exit`, `stdout`, "
        "`stderr`, `stdout_truncated`, `stderr_truncated`, `stdout_omitted_chars`, "
        "`stderr_omitted_chars`, `timed_out`, `timeout_secs`, `duration_ms`, `uptime_ms`, "
-       "`line_count`, `lines`, `sent`, `stopped`, `already_running`, `attach`, `socket`, "
+       "`line_count`, `lines`, `sent`, `text`, `keys`, `stopped`, `already_running`, `attach`, "
+       "`socket`, "
        "`dropped`, and `note`; keys remain present with null/empty values when inapplicable.")
      :name "shell"
      :description

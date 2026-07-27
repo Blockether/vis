@@ -5,6 +5,7 @@ Keep only non-obvious project contracts here; inspect nearby source and tests fo
 ## Clojure tests (Lazytest)
 
 - Tests use Lazytest. Prefer the `run_tests` language tool with the smallest relevant test namespace; `only` entries are fully qualified top-level test vars (usually `defdescribe` vars).
+- Never require `clojure.test` in a test namespace: the Lazytest runner does not discover `clojure.test/deftest`, so such a namespace is silently skipped (prints nothing, exit 0). For `deftest`/`is`/`testing` style use `[lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]`, and replace `use-fixtures` with `lazytest.core/set-ns-context!` + `around-each`.
 - A managed Clojure REPL runs already-loaded Vars and does **not** reload edited namespaces. After disk edits, evaluate `(require 'changed.production.ns :reload)` for every changed production namespace and then `(require 'changed.test.ns :reload)` for every changed test namespace before `run_tests`. Restart the REPL when a clean load is safer; do not use `:reload-all`.
 - For a clean-JVM CLI run from the owning project directory: full suite `clojure -M:test`; namespace `clojure -M:test --namespace my.ns-test`; top-level var `clojure -M:test --var my.ns-test/my-test`. Repeat `--namespace` or `--var` to select several. Use the CLI when there is no suitable REPL or when clean process state matters.
 
@@ -20,6 +21,7 @@ Keep only non-obvious project contracts here; inspect nearby source and tests fo
 - `gateway/wire.clj` is the deterministic boundary. Wire keys are snake_case strings; engine keys are mechanical kebab-case keyword mirrors.
 - Boolean flags use wire `is_<foo>` and engine `:is-<foo>`; no `:foo?` aliases or endpoint-specific restoration.
 - Use `wire/->wire` and `wire/json-str`; never hand-encode keyword keys.
+- Encoding must be TOTAL. Charred rejects non-string map keys, NaN and ±Infinity, and the throw lands at the transport: `append-event!` has already stored the event, so one exotic value (a Python `Counter`, a pandas NaN) kills SSE and `/poll` for that session on every replay. `wire/->wire` and `persistance/->json` render those instead of throwing — keep any new encoder behind them.
 
 ## Feature toggles
 

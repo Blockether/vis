@@ -1337,26 +1337,44 @@
   (mapv :id (db-search-session-matches db-info channel query)))
 
 (defn db-session-turn-stats
-  "Per-session turn aggregates for the WHOLE store in ONE grouped query:
-   {soul-id-str {:turn-count n :latest-turn-at Date}}. Powers the session
-   picker summaries (`turn_count` + `modified_at` folded into list-sessions)
-   without an N+1 per-session `db-list-session-turns` hydration. Counts every
-   turn soul across ALL of a session's states (forks included) — an upper
-   bound of the chain view, but exact for `has any turns?` and for
+  "Per-session turn aggregates: `{:turn-count n :latest-turn-at Date}`.
+
+   1-arity: the WHOLE store in ONE grouped query, keyed by soul-id string —
+   `{soul-id-str stats}`. Powers the session picker summaries (`turn_count` +
+   `modified_at` folded into list-sessions) without an N+1 per-session
+   `db-list-session-turns` hydration.
+
+   2-arity: the SAME aggregate for ONE session, returned unwrapped (nil when
+   the session has no state rows). `GET /v1/sessions/:id` needs these two facts
+   as much as the list does — without them a client cannot tell that a session
+   moved — and a detail poll must not scan every session to learn them.
+
+   Counts every turn soul across ALL of a session's states (forks included) — an
+   upper bound of the chain view, but exact for `has any turns?` and for
    latest-activity ordering."
-  [db-info]
-  (if (ds db-info)
-    (into {}
-          (map (fn [row]
-                 [(str (:sid row))
-                  {:turn-count (long (or (:n row) 0)) :latest-turn-at (->date (:latest row))}]))
-          (query! db-info
-                  {:select [[:ss.session_soul_id :sid] [[:count :ts.id] :n]
-                            [[:max :ts.created_at] :latest]]
-                   :from [[:session_turn_soul :ts]]
-                   :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
-                   :group-by [:ss.session_soul_id]}))
-    {}))
+  ([db-info]
+   (if (ds db-info)
+     (into {}
+           (map (fn [row]
+                  [(str (:sid row))
+                   {:turn-count (long (or (:n row) 0)) :latest-turn-at (->date (:latest row))}]))
+           (query! db-info
+                   {:select [[:ss.session_soul_id :sid] [[:count :ts.id] :n]
+                             [[:max :ts.created_at] :latest]]
+                    :from [[:session_turn_soul :ts]]
+                    :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
+                    :group-by [:ss.session_soul_id]}))
+     {}))
+  ([db-info session-id]
+   (when (and (ds db-info) session-id)
+     (let [soul-id-s (->ref session-id)]
+       (when-let
+         [row (query-one! db-info
+                          {:select [[[:count :ts.id] :n] [[:max :ts.created_at] :latest]]
+                           :from [[:session_turn_soul :ts]]
+                           :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
+                           :where [:= :ss.session_soul_id soul-id-s]})]
+         {:turn-count (long (or (:n row) 0)) :latest-turn-at (->date (:latest row))})))))
 
 (defn db-find-session-by-external
   [db-info channel external-id]
@@ -2409,7 +2427,11 @@
                       (assoc :llm_root_provider (name (->kw (get cost "provider"))))
 
                       (some? content)
-                      (assoc :content_json (json/write-json-str content))
+                      ;; The shared column codec, like every other JSON column
+                      ;; here: raw `write-json-str` throws on a value charred
+                      ;; refuses (int map keys, NaN) and takes the whole final
+                      ;; outcome row — the settled answer — down with it.
+                      (assoc :content_json (->json content))
 
                       prior-outcome
                       (assoc :prior_outcome (name prior-outcome))

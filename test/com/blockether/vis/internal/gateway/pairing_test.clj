@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.gateway.pairing-test
   (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]
+            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.gateway.pairing :as pairing]))
 
 (deftest pairing-url-is-a-scannable-vis-url

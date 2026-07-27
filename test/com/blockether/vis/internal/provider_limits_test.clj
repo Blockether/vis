@@ -5,7 +5,7 @@
    independently (TUI footer thread, companion router dialog, `/v1/router`
    fan-out), so the cache must collapse a burst into ONE call and an auth change
    must drop it immediately."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.registry :as registry]))
 

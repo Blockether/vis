@@ -19,21 +19,27 @@
   "Keyword/symbol map key -> snake_case string. A boolean-style `foo?` key
    becomes `is_foo` (already-`is-` prefixed keys just drop the `?`). String
    keys (fact keys, scope strings, file paths) pass VERBATIM - rewriting
-   them could corrupt user data that legitimately contains hyphens."
+   them could corrupt user data that legitimately contains hyphens. ANY
+   other key (the number/boolean/nil keys a decoded JSON or Python value can
+   carry into a tool result) is rendered to its JSON key spelling: JSON has
+   no non-string keys, and leaving one unrendered makes the whole event
+   unencodable - which kills the transport, not just the field."
   [k]
-  (if (or (keyword? k) (symbol? k))
-    (let
-      [n
-       (name k)
+  (cond (or (keyword? k) (symbol? k))
+        (let
+          [n
+           (name k)
 
-       n
-       (if (str/ends-with? n "?")
-         (let [base (subs n 0 (dec (count n)))]
-           (if (str/starts-with? base "is-") base (str "is-" base)))
-         n)]
+           n
+           (if (str/ends-with? n "?")
+             (let [base (subs n 0 (dec (count n)))]
+               (if (str/starts-with? base "is-") base (str "is-" base)))
+             n)]
 
-      (str/replace n "-" "_"))
-    k))
+          (str/replace n "-" "_"))
+        (string? k) k
+        (nil? k) "null"
+        :else (str k)))
 
 (defn ->wire
   "Recursively convert an engine value into JSON-encodable data."
@@ -49,6 +55,15 @@
         (symbol? x) (str x)
         (uuid? x) (str x)
         (ratio? x) (double x)
+        ;; JSON has no NaN/Infinity: a non-finite double makes the encoder
+        ;; THROW, and the throw happens per-frame at the transport, so one
+        ;; poisoned value takes down SSE and /poll for the whole session (and
+        ;; again on every replay, because the event is already in the ring).
+        ;; `null` is what JSON.stringify emits for the same value.
+        (and (float? x) (not (Double/isFinite (double x)))) nil
+        ;; A BigDecimal parses back as a double, so passing it through would
+        ;; break the `canonical` = parse-json ∘ json-str invariant.
+        (decimal? x) (double x)
         (or (string? x) (number? x) (boolean? x) (nil? x)) x
         (instance? java.time.Instant x) (.toEpochMilli ^java.time.Instant x)
         (instance? java.util.Date x) (.getTime ^java.util.Date x)
@@ -84,12 +99,25 @@
   (when-not (str/blank? s) (try (json/read-json s) (catch Throwable _ nil))))
 
 
+(defn- clamp
+  "Cut `s` to at most `limit` chars and mark it truncated, WITHOUT splitting a
+   surrogate pair — a lone surrogate is not valid text and corrupts every
+   UTF-8 consumer downstream (JSON escape, SQLite, the mobile client)."
+  [^String s ^long limit]
+  (if (<= (count s) limit)
+    s
+    (let
+      [cut (if (and (pos? limit) (Character/isHighSurrogate (.charAt s (dec limit))))
+             (dec limit)
+             limit)]
+      (str (subs s 0 (max 0 cut)) " …[truncated]"))))
+
 (defn bounded-pr
   "Bounded `pr-str` for tool results / errors riding events. Protects the
    event log and SSE frames from multi-megabyte values."
   [x ^long limit]
   (let [s (try (pr-str x) (catch Throwable t (str "#render-error " (ex-message t))))]
-    (if (> (count s) limit) (str (subs s 0 limit) " …[truncated]") s)))
+    (clamp s limit)))
 
 (defn bounded-str
   "Bounded plain-string clamp for an ALREADY-rendered value (e.g. the
@@ -97,8 +125,7 @@
    `bounded-pr` but WITHOUT re-`pr-str`'ing, so the string rides the wire
    verbatim instead of quoted/escaped."
   [s ^long limit]
-  (let [s (str s)]
-    (if (> (count s) limit) (str (subs s 0 limit) " …[truncated]") s)))
+  (clamp (str s) limit))
 
 (def queue-mirror-event-types
   "Queue lifecycle event types every attached channel mirrors LIVE even when

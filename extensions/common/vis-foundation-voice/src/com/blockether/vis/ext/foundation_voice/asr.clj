@@ -155,39 +155,70 @@
       (str/join File/separator parts))))
 
 (defn- extract-tar-bz2!
-  [archive-path target-dir]
-  (.mkdirs (io/file target-dir))
-  (with-open
-    [fis
-     (FileInputStream. (io/file archive-path))
+  "Extract `archive-path` into `target-dir`. Decompressing the ~465MB bzip2 model
+   takes MINUTES, so `on-progress` (0..99, optional) is driven by how far the
+   COMPRESSED file has been consumed — read straight off the file channel, so the
+   copy loop stays a plain read/write and no UI has to sit on a frozen number."
+  ([archive-path target-dir] (extract-tar-bz2! archive-path target-dir nil))
+  ([archive-path target-dir on-progress]
+   (.mkdirs (io/file target-dir))
+   (let
+     [archive
+      (io/file archive-path)
 
-     bz
-     (BZip2CompressorInputStream. fis)
+      total
+      (.length archive)]
 
-     tar
-     (TarArchiveInputStream. bz)]
+     (with-open
+       [^FileInputStream fis
+        (FileInputStream. archive)
 
-    (loop []
+        bz
+        (BZip2CompressorInputStream. fis)
 
-      (when-let [entry (.getNextTarEntry tar)]
-        (when-let [relative (safe-entry-name (.getName entry))]
-          (let [out-file (io/file target-dir relative)]
-            (if (.isDirectory entry)
-              (.mkdirs out-file)
-              (do (.mkdirs (.getParentFile out-file))
-                  (with-open [out (FileOutputStream. out-file)]
-                    (io/copy tar out))))))
-        (recur))))
-  target-dir)
+        tar
+        (TarArchiveInputStream. bz)]
+
+       (let
+         [^java.nio.channels.FileChannel channel
+          (.getChannel fis)
+
+          buf
+          (byte-array 262144)
+
+          report!
+          (fn []
+            (when (and on-progress (pos? total))
+              (on-progress (min 99
+                                (long (* 100 (/ (double (.position channel)) (double total))))))))]
+
+         (loop []
+
+           (when-let [entry (.getNextTarEntry tar)]
+             (when-let [relative (safe-entry-name (.getName entry))]
+               (let [out-file (io/file target-dir relative)]
+                 (if (.isDirectory entry)
+                   (.mkdirs out-file)
+                   (do (.mkdirs (.getParentFile out-file))
+                       (with-open [out (FileOutputStream. out-file)]
+                         (loop []
+
+                           (let [n (.read tar buf)]
+                             (when-not (neg? n) (.write out buf 0 n) (report!) (recur)))))))))
+             (recur))))))
+   target-dir))
 
 (defn- download-with-progress!
   "Stream `url` to `path`, calling `(on-progress pct)` (0..99) as bytes land
-   when the server reports a content length. nil `on-progress` is fine."
+   when the server reports a content length. nil `on-progress` is fine.
+   Both timeouts are set: a silently stalled socket must FAIL (so the state
+   machine can report :failed and the user can retry) rather than pin the
+   download atom on :downloading forever, which leaves the UI's mic dead."
   [url path on-progress]
   (.mkdirs (.getParentFile (io/file path)))
   (let
     [^java.net.URLConnection conn
-     (.openConnection (URL. url))
+     (doto (.openConnection (URL. url)) (.setConnectTimeout 20000) (.setReadTimeout 120000))
 
      total
      (.getContentLengthLong conn)]
@@ -262,20 +293,36 @@
   "Download + extract into a STAGING dir, verify all files, then ATOMICALLY
    move it into place. The final `dir` never holds partial files — an
    interrupted or corrupt download can't leave a truncated `.onnx` that
-   native-aborts the JVM on the next load; it just stays absent. Returns dir."
+   native-aborts the JVM on the next load; it just stays absent. Returns dir.
+
+   `on-progress` (optional) is called with {:phase :downloading|:extracting
+   :progress 0..99}. Transfer owns 0..89 and unpacking owns 90..98, so the
+   number keeps MOVING through the multi-minute bzip2 extraction instead of
+   parking on 99% and looking hung."
   [dir on-progress]
   (let
     [archive
      (File/createTempFile "vis-voice-asr-model-" ".tar.bz2")
 
      staging
-     (io/file (str dir ".staging-" (System/nanoTime)))]
+     (io/file (str dir ".staging-" (System/nanoTime)))
 
-    (try (download-with-progress! model-url (str archive) on-progress)
-         (extract-tar-bz2! (str archive) (str staging))
+     report
+     (fn [phase pct]
+       (when on-progress (on-progress {:phase phase :progress pct})))]
+
+    (try (download-with-progress! model-url
+                                  (str archive)
+                                  (fn [pct]
+                                    (report :downloading (long (* 0.9 (long pct))))))
+         (extract-tar-bz2! (str archive)
+                           (str staging)
+                           (fn [pct]
+                             (report :extracting (+ 90 (long (* 0.09 (long pct)))))))
          (when-not (model-installed? (str staging))
            (throw (ex-info "Parakeet model download did not produce expected files"
                            {:type :voice-asr/download-incomplete :model-dir dir})))
+         (report :extracting 99)
          (let [final (io/file dir)]
            (when (.exists final) (delete-dir! final))
            (.mkdirs (.getParentFile final))
@@ -328,13 +375,14 @@
   []
   (locking download-state
     (when (and (not (model-installed?)) (not= :downloading (:state @download-state)))
-      (reset! download-state {:state :downloading :progress 0})
+      (reset! download-state {:state :downloading :phase :downloading :progress 0})
       (future (try (if (bundled-model-available?)
                      ;; --with-assets binary: copy the embedded model out (no network)
                      (install-bundled-model! (model-dir))
                      (install-model! (model-dir)
-                                     (fn [pct]
-                                       (swap! download-state assoc :progress pct))))
+                                     (fn [m]
+                                       (swap! download-state #(when (= :downloading (:state %))
+                                                                (merge % m))))))
                    (reset! download-state nil) ; model-state now derives :ready
                    (catch Throwable t
                      (reset! download-state {:state :failed
@@ -515,6 +563,14 @@
        (throw (ex-info (str "Missing audio file: " audio-path)
                        {:type :voice-asr/missing-audio-file :path (str audio-path)})))
      (validate-wav-file! audio-path)
+     ;; MUST run before the FIRST sherpa class is touched. `WaveReader` below is
+     ;; loaded before `recognizer`, and its static init is what System/loads
+     ;; libsherpa-onnx-jni.dylib — which links @rpath/libonnxruntime.<ver>.dylib
+     ;; from the same ~/lib/<platform> dir. Ensuring it only inside `recognizer`
+     ;; was too late: on a machine that never had the versioned dylib, the very
+     ;; first transcription died with UnsatisfiedLinkError "Library not loaded:
+     ;; @rpath/libonnxruntime.1.17.1.dylib" and voice never worked at all.
+     (ensure-onnxruntime-native!)
      ;; every interop call below is TYPE-HINTED: reflective calls in a native
      ;; image only work when reflection metadata happens to cover them — the
      ;; hot path must not depend on that.

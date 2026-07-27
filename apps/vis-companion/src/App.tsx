@@ -8,9 +8,12 @@ import {
   loadSubscribedSessions,
   rememberSubscribedSession,
   setActiveUrl,
+  switchConnectionUrl,
   upsertConnection,
   removeConnection,
 } from './lib/storage';
+import { bestAddress, hostOf, isUpgrade, mergeAddresses } from './lib/endpoints';
+import { onWake } from './lib/wake';
 import { SessionSubscriptionHub } from './lib/subscriptions';
 import { parsePairing } from './lib/pairing';
 import { onPairingLink } from './lib/deeplink';
@@ -182,9 +185,9 @@ export function App() {
     void onPairingLink((url) => {
       const parsed = parsePairing(url);
       if (parsed) {
-        // `alts` is pairing-time only: the deep link opens the URL it names.
-        const { alts: _alts, ...conn } = parsed;
-        void addConnection(conn);
+        // Keep `alts`: they are the other addresses this gateway answers on,
+        // and the app needs them to move off a LAN-only address later.
+        void addConnection(parsed);
         return;
       }
       const hash = parseSessionDeepLink(url);
@@ -247,6 +250,82 @@ export function App() {
       ctrl.abort();
     };
   }, [client, compatNonce]);
+
+  // ── Address preference ──────────────────────────────────────────
+  // One gateway answers on several addresses at once (Tailscale, LAN, tunnel,
+  // loopback) and they are NOT equal: pairing happens standing next to the
+  // machine, where the LAN address replies first — and that address dies the
+  // moment the phone leaves the house. So for the ACTIVE gateway the app
+  //   1. refreshes the known address list FROM the gateway (`/v1/capabilities`
+  //      advertises them), so an app paired on the LAN can still learn the
+  //      tailnet address without re-scanning a QR, and
+  //   2. moves itself onto a more durable address as soon as that one answers.
+  // A hand-picked address (`pinned`) is never overridden, and loopback is never
+  // left behind — see `lib/endpoints.ts`.
+  const activeUrl = active?.url ?? '';
+  const activeToken = active?.token;
+  const activePinned = active?.pinned ?? false;
+  const activeLabel = active?.label;
+  const knownAltsKey = (active?.alts ?? []).join(' ');
+  useEffect(() => {
+    if (!activeUrl) return;
+    let cancelled = false;
+    let ctrl = new AbortController();
+
+    const run = async () => {
+      ctrl.abort();
+      ctrl = new AbortController();
+      const signal = ctrl.signal;
+      const creds = { url: activeUrl, token: activeToken };
+      let advertised: string[] = [];
+      try {
+        advertised = (await new GatewayClient(creds).capabilities(signal)).addresses ?? [];
+      } catch {
+        // Older gateway, or simply offline: what pairing gave us still stands.
+      }
+      if (cancelled) return;
+      const known = mergeAddresses([activeUrl], knownAltsKey.split(' '), advertised);
+      if (known.join(' ') !== knownAltsKey) {
+        await upsertConnection({ url: activeUrl, alts: known });
+        if (cancelled) return;
+        setConns(await loadConnections());
+      }
+      if (activePinned) return;
+      const better = known.filter((url) => isUpgrade(url, activeUrl));
+      if (!better.length) return;
+      const reachable = (
+        await Promise.all(
+          better.map(async (url) => {
+            try {
+              return (await new GatewayClient({ ...creds, url }).ping(signal)) ? url : null;
+            } catch {
+              return null;
+            }
+          }),
+        )
+      ).filter((url): url is string => url !== null);
+      const chosen = bestAddress(reachable);
+      if (cancelled || !chosen) return;
+      // A machine the user renamed keeps its name across an address switch; an
+      // auto-derived host label follows the address it describes.
+      const named = Boolean(activeLabel) && activeLabel !== hostOf(activeUrl);
+      await switchConnectionUrl(activeUrl, chosen, named ? {} : { label: hostOf(chosen) });
+      if (cancelled) return;
+      await refresh();
+    };
+
+    void run();
+    // A resumed app is often on a different network than when it was suspended,
+    // which is exactly when the durable address becomes reachable (or the LAN
+    // one stops being).
+    const off = onWake(() => void run());
+    return () => {
+      cancelled = true;
+      ctrl.abort();
+      off();
+    };
+  }, [activeUrl, activeToken, activePinned, activeLabel, knownAltsKey, refresh]);
+
 
   // Native push: keep this device's token fresh with the active gateway, and
   // reopen the session a tapped alert came from. Registration only refreshes a
@@ -412,6 +491,16 @@ export function App() {
           }}
           onRemove={async () => {
             await removeConnection(settingsTarget.url);
+            await refresh();
+          }}
+          onSelectAddress={async (url, pinned) => {
+            if (url !== settingsTarget.url) {
+              const named =
+                Boolean(settingsTarget.label) && settingsTarget.label !== hostOf(settingsTarget.url);
+              await switchConnectionUrl(settingsTarget.url, url, named ? {} : { label: hostOf(url) });
+            }
+            const saved = await upsertConnection({ url, pinned });
+            setSettingsTarget(saved.find((c) => c.url === url) ?? { ...settingsTarget, url, pinned });
             await refresh();
           }}
           onClose={() => setSettingsTarget(null)}

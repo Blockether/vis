@@ -605,13 +605,69 @@
         headers))
 
 
+(def ^:private HANDSHAKE_READ_TIMEOUT_MS
+  "Read deadline for the request line + headers (or SOCKS greeting) a freshly
+   accepted child must send before it gets a tunnel. Applies to the HANDSHAKE
+   only — `splice` re-arms the socket, because a TUNNELLED client is legitimately
+   silent for as long as its response streams."
+  30000)
+
+(def ^:private TUNNEL_READ_TIMEOUT_MS
+  "Poll granularity for a spliced tunnel. NOT an end-of-stream signal: a read
+   that times out only wakes the relay so it can notice a closed peer, a
+   stopping proxy, or a fully idle tunnel. A blocking socket read ignores
+   `Thread.interrupt`/`shutdownNow`, so this bounded read is the ONLY thing that
+   makes a wedged tunnel reclaimable at all."
+  5000)
+
+(def ^:private TUNNEL_MAX_IDLE_MS
+  "Give up on a tunnel where NOT ONE byte moved in EITHER direction for this
+   long. That is a dead peer (half-open TCP after a NAT/VPN drop never sends a
+   FIN, so both directions would park forever, pinning two pool threads for the
+   life of the process). Generous enough that a quiet-but-live SSE/websocket
+   with keepalives is never cut."
+  900000)
+
 (defn- splice
-  "Full-duplex byte relay between two sockets on `pool`; returns when either side EOFs."
+  "Full-duplex byte relay between two sockets on `pool`; returns when BOTH
+   directions have ended, when either side aborts, when the proxy is stopping, or
+   when the tunnel has been fully idle for `TUNNEL_MAX_IDLE_MS`.
+
+   WHY A TIMEOUT IS NOT AN EOF — the client socket arrives carrying the
+   handshake read deadline, and a tunnelled client sends NOTHING client→upstream
+   for the entire life of a streaming response (a long LLM completion, an SSE
+   feed, an idle ssh session). Treating that read timeout as end-of-stream
+   half-closed live tunnels mid-stream: the relay called `shutdownOutput` on the
+   half-closed live tunnels mid-stream: the relay called `shutdownOutput` on the
+   upstream and the origin tore the response down. So both sockets are re-armed
+   with a SHORT poll timeout here and a timed-out read simply loops.
+
+   WHY ONE EOF IS NOT THE END OF THE TUNNEL — a client that half-closes after
+   sending its request (`shutdownOutput`, ordinary for HTTP/1 and ssh) EOFs the
+   client→upstream direction immediately. That is the REQUEST ending, not the
+   tunnel: the response is still to come, and a first token can be many seconds
+   away. Only an ABORT (an exception on either leg, i.e. a socket that really
+   died) stops the sibling direction early."
   [^ExecutorService pool ^Socket a ^Socket b]
   (let
-    [copy
+    [abort
+     (atom false)
+
+     last-io
+     (atom (System/currentTimeMillis))
+
+     give-up?
      (fn [^Socket from ^Socket to]
-       (try (let
+       (or @abort
+           (.isClosed from)
+           (.isClosed to)
+           (.isShutdown pool)
+           (> (- (System/currentTimeMillis) (long @last-io)) (long TUNNEL_MAX_IDLE_MS))))
+
+     copy
+     (fn [^Socket from ^Socket to]
+       (try (.setSoTimeout from TUNNEL_READ_TIMEOUT_MS)
+            (let
               [in
                (.getInputStream from)
 
@@ -623,9 +679,18 @@
 
               (loop []
 
-                (let [n (.read in buf)]
-                  (when (pos? n) (.write out buf 0 n) (.flush out) (recur)))))
-            (catch Throwable _ nil)
+                ;; -1 ends the relay, 0 is "quiet, still live — keep waiting"
+                (let
+                  [n (long (try (.read in buf)
+                                (catch java.net.SocketTimeoutException _
+                                  (if (give-up? from to) -1 0))))]
+                  (when-not (neg? n)
+                    (when (pos? n)
+                      (reset! last-io (System/currentTimeMillis))
+                      (.write out buf 0 n)
+                      (.flush out))
+                    (recur)))))
+            (catch Throwable _ (reset! abort true))
             (finally (try (.shutdownOutput to) (catch Throwable _ nil)))))
 
      f
@@ -1155,7 +1220,7 @@
 
 (defn- handle-client
   [^ExecutorService pool ^Socket client policy-fn mitm on-log]
-  (try (.setSoTimeout client 30000)
+  (try (.setSoTimeout client HANDSHAKE_READ_TIMEOUT_MS)
        (let
          [cin
           (java.io.PushbackInputStream. (.getInputStream client) 1)
@@ -1265,7 +1330,14 @@
      accept
      (fn []
        (while @running
-         (let [client (try (.accept server) (catch Throwable _ nil))]
+         (let
+           [client (try (.accept server)
+                        (catch Throwable _
+                          ;; A failing accept must not HOT-SPIN this thread: back off
+                          ;; briefly, and treat a closed server socket as "stopping".
+                          (when (.isClosed server) (reset! running false))
+                          (when @running (try (Thread/sleep 50) (catch InterruptedException _ nil)))
+                          nil))]
            (when client
              (.submit
                pool

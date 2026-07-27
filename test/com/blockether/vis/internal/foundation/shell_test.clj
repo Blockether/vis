@@ -33,6 +33,10 @@
 
 (def ^:private render-shell-logs-result @#'shell/render-shell-logs-result)
 
+(def ^:private render-shell-send-result @#'shell/render-shell-send-result)
+
+(def ^:private keys-label @#'shell/keys-label)
+
 (def ^:private format-shell-command @#'shell/format-shell-command)
 
 (defn- with-shell-on
@@ -401,7 +405,11 @@
                               (let [snt (:result (shell-send* env "echoer" "hi-there"))]
                                 (expect (= "running" (get snt "status")))
                                 ;; "hi-there" (8) + submitting newline = 9 chars written
-                                (expect (= 9 (get snt "sent"))))
+                                (expect (= 9 (get snt "sent")))
+                                ;; The card must be able to show WHAT was typed, not
+                                ;; just how many chars it was.
+                                (expect (= "hi-there\n" (get snt "text")))
+                                (expect (= "\"hi-there\" ↵" (get snt "keys"))))
                               (let
                                 [hit? (fn [r]
                                         (some #(str/includes? (str (second %)) "GOT:hi-there")
@@ -575,7 +583,33 @@
         (expect (str/includes? (:summary bg) "⚙ background `srv` running · pid 123"))
         (expect (str/includes? (:body bg) "**COMMAND**"))
         (expect (str/includes? (:summary logs) "◷ `srv` running · 1 lines · 1.5s"))
-        (expect (str/includes? (:body logs) "**LOGS**")))))
+        (expect (str/includes? (:body logs) "**LOGS**"))))
+  (it "shows the KEYSTROKES a send typed, naming every control character"
+      (let
+        [typed
+         (render-shell-send-result
+           {"id" "ops" "status" "running" "sent" 6 "text" "hello\n" "keys" (keys-label "hello\n")})
+
+         ;; A send is frequently ENTIRELY non-printing (Ctrl-C, Esc, a bare Enter):
+         ;; the old card said "sent 1 chars" and the reader learned nothing.
+         ctrl
+         (render-shell-send-result
+           {"id" "ops" "status" "running" "sent" 1 "text" "\u0003" "keys" (keys-label "\u0003")})]
+
+        (expect (= "\"hello\" ↵" (keys-label "hello\n")))
+        (expect (= "C-c" (keys-label "\u0003")))
+        (expect (= "Esc ⇥ \"y\" ↵" (keys-label "\u001b\ty\n")))
+        (expect (nil? (keys-label "")))
+        (expect (= "↵ `ops` sent \"hello\" ↵" (:summary typed)))
+        (expect (str/includes? (:body typed) "**KEYS**"))
+        (expect (str/includes? (:body typed) "keys: \"hello\" ↵"))
+        (expect (= "↵ `ops` sent C-c" (:summary ctrl)))
+        (expect (str/includes? (:body ctrl) "C-c"))
+        ;; Falls back to the payload when an older result carries no `keys`.
+        (expect (= "↵ `ops` sent \"y\" ↵"
+                   (:summary (render-shell-send-result {"id" "ops" "sent" 2 "text" "y\n"}))))
+        (expect (= "↵ `ops` sent 0 chars"
+                   (:summary (render-shell-send-result {"id" "ops" "sent" 0})))))))
 
 (defdescribe shell-native-contract-test
              (it "advertises exactly ONE native shell tool covering the whole lifecycle"

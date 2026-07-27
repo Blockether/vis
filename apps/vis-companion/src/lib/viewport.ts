@@ -16,6 +16,143 @@ const WAKE_RESYNC_MS = [0, 60, 160, 320, 600];
 type Box = { height: number; top: number };
 
 /**
+ * Rotation is a LAYOUT event, and for a few hundred milliseconds the webview
+ * describes two different devices at once: iOS keeps handing out the portrait
+ * `visualViewport` height while the layout viewport is already landscape. Every
+ * consumer that measures during that window records a box that never existed —
+ * the shell pins itself to a stale height, the transcript reflows under a
+ * scroll offset that no longer means anything, and the result is the visible
+ * lurch-then-catch-up at the end of the rotation animation.
+ *
+ * So rotation gets its own signal instead of being inferred from `resize`:
+ * `start` fires the moment the orientation flips (subscribers snapshot what
+ * they must preserve), `settle` repeats while the OS finishes the animation,
+ * and `end` closes the window. Nothing measures in between.
+ */
+export type RotationPhase = 'start' | 'settle' | 'end';
+
+/** Re-check schedule across the OS rotation animation (~400ms on iOS). */
+const ROTATION_SETTLE_MS = [0, 60, 160, 300, 520];
+const ROTATION_END_MS = 700;
+
+const rotationListeners = new Set<(phase: RotationPhase) => void>();
+let rotationTimers: number[] = [];
+let rotating = false;
+let rotationWatched = false;
+
+function emitRotation(phase: RotationPhase) {
+  for (const listener of [...rotationListeners]) listener(phase);
+}
+
+function beginRotation() {
+  for (const t of rotationTimers) window.clearTimeout(t);
+  rotationTimers = [];
+  // `orientationchange` and the media query both fire for one physical
+  // rotation; the second must extend the window, not restart the snapshot.
+  if (!rotating) {
+    rotating = true;
+    emitRotation('start');
+  }
+  for (const delay of ROTATION_SETTLE_MS) {
+    rotationTimers.push(window.setTimeout(() => emitRotation('settle'), delay));
+  }
+  rotationTimers.push(
+    window.setTimeout(() => {
+      rotating = false;
+      rotationTimers = [];
+      emitRotation('end');
+    }, ROTATION_END_MS),
+  );
+}
+
+/**
+ * Installed once for the app's lifetime. The media query is the reliable
+ * signal everywhere (it flips exactly when layout does); `orientationchange`
+ * is kept because older iOS fires it a frame earlier, and the duplicate is
+ * absorbed above.
+ */
+function watchRotation() {
+  if (rotationWatched || typeof window === 'undefined') return;
+  rotationWatched = true;
+  window.matchMedia?.('(orientation: portrait)').addEventListener('change', beginRotation);
+  window.addEventListener('orientationchange', beginRotation);
+}
+
+/**
+ * Scroll anchoring for a rotation.
+ *
+ * A rotation rewraps every line in a scroller, so the pixel `scrollTop` the
+ * reader was parked at stops pointing at the content they were reading. The
+ * browser's own anchoring is not an option in the transcript (it runs with
+ * `overflow-anchor: none` so that prepending earlier turns stays stable), so
+ * remember one child and its distance above the fold, and put it back.
+ *
+ * Structurally typed on purpose: only these few numbers matter, which keeps the
+ * arithmetic verifiable without a DOM.
+ */
+type AnchorChild = { offsetTop: number; offsetHeight: number; isConnected: boolean };
+type AnchorHost = { children: ArrayLike<Element> };
+type AnchorScroller = { scrollTop: number };
+export type ScrollAnchor = { el: AnchorChild; offset: number };
+
+/**
+ * The top-most child still on screen, plus its (negative or zero) offset from
+ * the fold. Stacked children make `offsetTop` monotonic, so this is a binary
+ * search rather than a walk — it runs on every scroll event and a long
+ * transcript has hundreds of turns.
+ */
+export function scrollAnchorFor(
+  viewport: AnchorScroller,
+  container: AnchorHost,
+): ScrollAnchor | null {
+  const children = container.children;
+  const target = viewport.scrollTop;
+  let lo = 0;
+  let hi = children.length - 1;
+  let found: AnchorChild | null = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const child = children[mid] as unknown as AnchorChild;
+    if (child.offsetTop + child.offsetHeight > target) {
+      found = child;
+      hi = mid - 1;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  return found ? { el: found, offset: found.offsetTop - target } : null;
+}
+
+/**
+ * Puts the anchored child back where it was. False means there was nothing to
+ * restore (no anchor, or the turn was unmounted meanwhile) and the caller owns
+ * the fallback.
+ */
+export function applyScrollAnchor(
+  viewport: AnchorScroller,
+  anchor: ScrollAnchor | null,
+): boolean {
+  if (!anchor || !anchor.el.isConnected) return false;
+  const next = Math.max(0, anchor.el.offsetTop - anchor.offset);
+  if (Math.abs(next - viewport.scrollTop) > 0.5) viewport.scrollTop = next;
+  return true;
+}
+
+/** True while the viewport metrics are mid-rotation and must not be trusted. */
+export function isViewportRotating(): boolean {
+  return rotating;
+}
+
+/** Subscribe to rotation phases. Returns an unsubscribe. */
+export function onViewportRotation(listener: (phase: RotationPhase) => void): () => void {
+  watchRotation();
+  rotationListeners.add(listener);
+  return () => {
+    rotationListeners.delete(listener);
+  };
+}
+
+/**
  * Pins the app shell to the *visual* viewport.
  *
  * Focusing the composer shrinks the visual viewport — the software keyboard, or
@@ -61,6 +198,20 @@ export function useVisualViewportShell(): CSSProperties | undefined {
         // A suspended/hidden webview reports whatever it froze at; recording it
         // would outlive the state it described.
         if (document.visibilityState === 'hidden') return;
+        // Mid-rotation iOS reports the PRE-rotation visual viewport against the
+        // POST-rotation layout one. That reads as a keyboard, and pinning the
+        // shell to it fixes the app at a height the device no longer has —
+        // which is the mismatch you see, corrected a few frames later as a
+        // jump. Let the plain `h-dvh` box carry the rotation and re-measure
+        // once it is over.
+        if (isViewportRotating()) {
+          setBox(null);
+          document.documentElement.style.setProperty(
+            '--safe-bottom',
+            'env(safe-area-inset-bottom)',
+          );
+          return;
+        }
         const covered = window.innerHeight - vv.height > COVERED_EPSILON;
         const next: Box | null =
           vv.height > 0 && (covered || vv.offsetTop > 1)
@@ -114,9 +265,16 @@ export function useVisualViewportShell(): CSSProperties | undefined {
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('pageshow', resync);
     window.addEventListener('focus', onVisible);
-    window.addEventListener('orientationchange', resync);
     window.addEventListener('resize', sync);
     document.addEventListener('focusin', onFocusIn);
+
+    // Rotation, not a wake: `start` drops the stale pin in the frame the flip
+    // happens, the settles re-check cheaply, and only the end pays for a full
+    // wake schedule.
+    const stopRotation = onViewportRotation((phase) => {
+      if (phase === 'end') resync();
+      else sync();
+    });
 
     // Native resume: Capacitor fires this on iOS/Android even when the webview
     // emits no viewport event at all. No-op on the web build.
@@ -139,9 +297,9 @@ export function useVisualViewportShell(): CSSProperties | undefined {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('pageshow', resync);
       window.removeEventListener('focus', onVisible);
-      window.removeEventListener('orientationchange', resync);
       window.removeEventListener('resize', sync);
       document.removeEventListener('focusin', onFocusIn);
+      stopRotation();
       disposeNative();
     };
   }, []);

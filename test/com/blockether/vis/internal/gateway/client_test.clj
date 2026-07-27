@@ -4,7 +4,7 @@
    The point under test is that the /ui 404 self-heal is NON-DESTRUCTIVE: it only
    force-restarts a stale daemon that is genuinely idle, treats a transport blip as
    \"leave it alone\", and never confuses either with a real 404."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.discovery :as discovery]))
 

@@ -15,11 +15,61 @@
    become epoch milliseconds, and unsupported leaves stringify. This is for
    inspection and plain-data round trips, not exact Clojure type preservation.
    Java Serializable fallback is disabled in both directions."
-  (:require [clojure.walk :as walk]
+  (:require [clojure.core.matrix :as matrix]
+            [clojure.walk :as walk]
             [com.blockether.vis.core :as vis]
-            [io.blockether.nippy-stream.vectorz-compat :as vectorz-compat]
             [taoensso.nippy :as nippy])
-  (:import [java.util Base64]))
+  (:import [java.util Base64]
+           [mikera.vectorz AVector Vector Vector1 Vector2 Vector3 Vector4 Vectorz]))
+
+;; --- Vectorz Nippy codecs ---
+;; Adapted from Blockether/nippy-stream vectorz_compat.clj at
+;; 0fe1f7f84051a25d5b1387e90a743bc5add9736f (MIT, Copyright 2024 Blockether).
+;; Registration is deferred: loading this namespace performs no codec
+;; registration or matrix-implementation selection, so sandbox context creation
+;; stays free of Vectorz side effects.
+
+(defonce ^:private vectorz-installation
+  (delay
+    (matrix/set-current-implementation :vectorz)
+    #_{:clj-kondo/ignore [:unresolved-symbol]}
+    (nippy/extend-freeze Vector
+                         1
+                         [^Vector x data-output]
+                         (nippy/freeze-to-out! data-output (.asDoubleArray x)))
+    #_{:clj-kondo/ignore [:unresolved-symbol]}
+    (nippy/extend-thaw 1 [data-input] (Vector/wrap ^doubles (nippy/thaw-from-in! data-input)))
+    (nippy/extend-freeze Vector1
+                         2
+                         [^Vector1 x data-output]
+                         (nippy/freeze-to-out! data-output (.toDoubleArray x)))
+    (nippy/extend-thaw 2 [data-input] (Vectorz/create ^doubles (nippy/thaw-from-in! data-input)))
+    (nippy/extend-freeze Vector2
+                         3
+                         [^Vector2 x data-output]
+                         (nippy/freeze-to-out! data-output (.toDoubleArray x)))
+    (nippy/extend-thaw 3 [data-input] (Vectorz/create ^doubles (nippy/thaw-from-in! data-input)))
+    (nippy/extend-freeze Vector3
+                         4
+                         [^Vector3 x data-output]
+                         (nippy/freeze-to-out! data-output (.toDoubleArray x)))
+    (nippy/extend-thaw 4 [data-input] (Vectorz/create ^doubles (nippy/thaw-from-in! data-input)))
+    (nippy/extend-freeze Vector4
+                         5
+                         [^Vector4 x data-output]
+                         (nippy/freeze-to-out! data-output (.toDoubleArray x)))
+    (nippy/extend-thaw 5 [data-input] (Vectorz/create ^doubles (nippy/thaw-from-in! data-input)))
+    true))
+
+(defn ensure-vectorz-installed!
+  "Install the Vectorz Nippy codecs once, on first codec use."
+  []
+  @vectorz-installation)
+
+(defn- ->clj-vector
+  "Convert a Vectorz vector to a plain Clojure vector; leave other values intact."
+  [value]
+  (if (instance? AVector value) (vec (.toDoubleArray ^AVector value)) value))
 
 (defn- nippy-envelope
   "Return `[true payload]`, or `[false message]` so Python can raise a catchable
@@ -32,7 +82,7 @@
    applying Vis's canonical Python boundary conversion."
   [value]
   (->> value
-       (walk/postwalk vectorz-compat/->clj-vector)
+       (walk/postwalk ->clj-vector)
        vis/wire-canonical))
 
 (defn- nippy-bridge-bindings
@@ -42,13 +92,13 @@
    input is not a trusted Java object graph."
   []
   {"__vis_nippy_decode__" (fn [encoded]
-                            (nippy-envelope #(do (vectorz-compat/ensure-installed!)
+                            (nippy-envelope #(do (ensure-vectorz-installed!)
                                                  (-> (.decode (Base64/getDecoder) ^String encoded)
                                                      (nippy/thaw {:serializable-allowlist #{}})
                                                      nippy-python-value))))
    "__vis_nippy_encode__"
    (fn [value]
-     (nippy-envelope #(do (vectorz-compat/ensure-installed!)
+     (nippy-envelope #(do (ensure-vectorz-installed!)
                           (.encodeToString (Base64/getEncoder)
                                            (nippy/freeze value {:serializable-allowlist #{}})))))})
 

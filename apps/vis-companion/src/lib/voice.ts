@@ -66,6 +66,14 @@ export async function startWavRecording(): Promise<WavRecording> {
   processor.connect(silentOutput);
   silentOutput.connect(context.destination);
   await context.resume();
+  // A context that stays suspended captures nothing: iOS/WKWebView parks it when
+  // resume() lands outside the tap's gesture window, or when another app owns the
+  // audio session. Fail loudly here instead of shipping a silent WAV.
+  if (context.state !== 'running') {
+    for (const track of stream.getTracks()) track.stop();
+    await context.close();
+    throw new Error('Microphone could not start — tap the mic again');
+  }
 
   const close = async () => {
     if (closed) return;
@@ -82,6 +90,17 @@ export async function startWavRecording(): Promise<WavRecording> {
     stop: async () => {
       await close();
       if (!chunks.length) throw new Error('No audio was recorded');
+      let peak = 0;
+      for (const chunk of chunks) {
+        for (const value of chunk) {
+          const level = Math.abs(value);
+          if (level > peak) peak = level;
+        }
+      }
+      // Digital silence means the track was live but muted (another app holds the
+      // mic, or the OS denied it after the fact). Transcribing it returns an empty
+      // string the composer cannot explain, so name the cause here.
+      if (peak < 1e-4) throw new Error('Microphone captured only silence — check that nothing else is using it');
       return encodePcmWav(chunks, context.sampleRate);
     },
     cancel: close,

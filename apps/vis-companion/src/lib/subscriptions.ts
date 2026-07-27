@@ -8,6 +8,10 @@ type ConnectionListener = (connected: boolean) => void;
 
 const MAX_BUFFERED_EVENTS = 2_048;
 
+// The frames that END a turn. After one of these the turn's story is told by the
+// transcript, never by the event buffer.
+const TURN_TERMINAL_EVENTS = new Set(['turn.completed', 'turn.failed', 'turn.cancelled']);
+
 // iOS/Android fire visibilitychange, online and pageshow together on wake, and
 // each handler calls resync(). Without a floor that is 3 stream teardowns and 3
 // reconnects against the gateway in one tick; one is enough.
@@ -26,6 +30,9 @@ export class SessionSubscriptionHub {
   private readonly fleetListeners = new Set<FleetListener>();
   private readonly connectionListeners = new Set<ConnectionListener>();
   private readonly buffers = new Map<string, SseEvent[]>();
+  // Sessions whose last seen lifecycle frame ENDED a turn. Absence means
+  // "unknown" (e.g. the hub attached mid-turn), which is treated as in-flight.
+  private readonly ended = new Set<string>();
   private stopStream: (() => void) | null = null;
   private connected = false;
   private disposed = false;
@@ -123,6 +130,7 @@ export class SessionSubscriptionHub {
     this.fleetListeners.clear();
     this.connectionListeners.clear();
     this.buffers.clear();
+    this.ended.clear();
   }
 
   private restart(): void {
@@ -146,12 +154,27 @@ export class SessionSubscriptionHub {
     if (!sid) return;
     if (event.type === 'subscription.ready') return;
 
-    const previous = event.type === 'turn.started' ? [] : (this.buffers.get(sid) ?? []);
-    const buffered = [...previous, event];
-    if (buffered.length > MAX_BUFFERED_EVENTS) {
-      buffered.splice(0, buffered.length - MAX_BUFFERED_EVENTS);
+    // The buffer replays the turn that is STILL STREAMING to a screen that was
+    // reopened mid-flight. A FINISHED turn must never be replayed: its
+    // `turn.started` flips the composer to "running" and its progress frames
+    // paint an activity line, so reopening an idle session showed work that had
+    // long completed — corrected only by an async refetch, and not at all when
+    // the terminal frame itself was missed. So: a turn's frames are buffered
+    // between `turn.started` and its terminal frame, and the terminal frame
+    // drops the buffer outright.
+    if (TURN_TERMINAL_EVENTS.has(event.type)) {
+      this.ended.add(sid);
+      this.buffers.delete(sid);
+    } else if (event.type === 'turn.started') {
+      this.ended.delete(sid);
+      this.buffers.set(sid, [event]);
+    } else if (!this.ended.has(sid)) {
+      const buffered = [...(this.buffers.get(sid) ?? []), event];
+      if (buffered.length > MAX_BUFFERED_EVENTS) {
+        buffered.splice(0, buffered.length - MAX_BUFFERED_EVENTS);
+      }
+      this.buffers.set(sid, buffered);
     }
-    this.buffers.set(sid, buffered);
 
     for (const listener of this.sessionListeners.get(sid) ?? []) listener(event);
     for (const listener of this.fleetListeners) listener(event);

@@ -3,7 +3,7 @@
    the footer-frequency read must never re-run the full config enumeration on
    a warm caller, a stale snapshot must refresh OFF the calling thread, and
    every same-process fleet mutation must invalidate the snapshot."
-  (:require [clojure.test :refer [deftest is]]
+  (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.registry :as registry]))

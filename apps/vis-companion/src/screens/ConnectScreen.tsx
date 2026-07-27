@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayConn } from '../lib/types';
 import { GatewayClient, GatewayError } from '../lib/gateway';
 import { parsePairing } from '../lib/pairing';
+import { REACH_LABEL, bestAddress, mergeAddresses, reachOf } from '../lib/endpoints';
 import { QrScanner } from '../components/QrScanner';
 import { Banner, Button, Input } from '../components/ui';
 
@@ -108,30 +109,44 @@ export function ConnectScreen({
   // returns false on a genuine network failure. We only persist a gateway that
   // actually answered — an unreachable URL/QR is rejected with a clear reason.
   //
-  // A pairing payload can carry `alts` (the gateway's other reachable hosts:
-  // Tailscale, LAN, …). The QR names the gateway's own favourite first, which is
-  // useless if this phone isn't on that network — so each candidate is tried in
-  // order and the one that answers is the one we save.
+  // A pairing payload carries `alts` (the gateway's other reachable hosts:
+  // Tailscale, LAN, tunnel). Every candidate is probed CONCURRENTLY and the most
+  // DURABLE one that answers wins — not the first to answer. Pairing happens
+  // standing next to the machine, where the LAN address is always the quickest
+  // to reply; saving that one pins the app to an address that dies the moment
+  // the phone leaves the house. All candidates are kept on the connection so a
+  // later failover/upgrade has somewhere to go.
   async function tryConn(conn: GatewayConn) {
     setBusy(true);
     setMsg(null);
     const { alts, ...base } = conn;
-    const candidates = [base.url, ...(alts ?? [])];
+    const candidates = mergeAddresses([base.url], alts);
     let unauthorized = false;
     try {
-      for (const url of candidates) {
-        const candidate: GatewayConn = { ...base, url, label: hostLabel(url) };
-        try {
-          if (!(await new GatewayClient(candidate).ping())) continue;
-        } catch (e) {
-          if (e instanceof GatewayError && e.status === 401) {
-            unauthorized = true;
-            continue;
-          }
-          continue;
-        }
+      const reachable = (
+        await Promise.all(
+          candidates.map(async (url) => {
+            try {
+              return (await new GatewayClient({ ...base, url }).ping()) ? url : null;
+            } catch (e) {
+              if (e instanceof GatewayError && e.status === 401) unauthorized = true;
+              return null;
+            }
+          }),
+        )
+      ).filter((url): url is string => url !== null);
+
+      const chosen = bestAddress(reachable);
+      if (chosen) {
+        const candidate: GatewayConn = {
+          ...base,
+          url: chosen,
+          label: hostLabel(chosen),
+          ...(candidates.length > 1 ? { alts: candidates } : {}),
+        };
         await onAdd(candidate);
-        setMsg({ kind: 'ok', text: `Connected to ${candidate.label}` });
+        const via = REACH_LABEL[reachOf(chosen)].toLowerCase();
+        setMsg({ kind: 'ok', text: `Connected to ${candidate.label} (${via})` });
         setPayload('');
         setUrl('');
         setToken('');

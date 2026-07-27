@@ -23,6 +23,14 @@ import {
   shouldCollapsePaste,
   type ComposerPaste,
 } from '../lib/paste';
+import {
+  draftMessageKey,
+  flushDraftMessages,
+  peekDraftMessage,
+  readDraftMessage,
+  watchDraftMessageExits,
+  writeDraftMessage,
+} from '../lib/draft-messages';
 import type {
   GatewayCapabilities,
   FileSuggestion,
@@ -36,10 +44,18 @@ import type {
   TranscriptTurn,
   VoiceModelState,
   ModelPref,
+  GatewayAttachment,
 } from '../lib/types';
 import { startWavRecording, type WavRecording } from '../lib/voice';
 import { onWake } from '../lib/wake';
-import { markSessionRead } from '../lib/unread';
+import {
+  applyScrollAnchor,
+  isViewportRotating,
+  onViewportRotation,
+  scrollAnchorFor,
+  type ScrollAnchor,
+} from '../lib/viewport';
+import { answeredTurnCount, markSessionRead } from '../lib/unread';
 import { shareableSessionLink } from '../lib/router';
 import { Capacitor } from '@capacitor/core';
 
@@ -60,6 +76,9 @@ interface LiveTurn {
   startedAt: number;
   cancelling?: boolean;
   status: 'running' | 'failed' | 'cancelled';
+  // Bytes of the images this device just sent. The gateway's live rail carries
+  // none (persisted rows own them), so the bubble would otherwise be text-only.
+  attachments?: GatewayAttachment[];
 }
 
 const TERMINAL_EVENTS = new Set(['turn.completed', 'turn.failed', 'turn.cancelled']);
@@ -228,13 +247,17 @@ function upsertLiveForm(iteration: TranscriptIteration, next: TranscriptForm): T
 function reduceLiveEvent(turn: LiveTurn | null, event: SseEvent): LiveTurn | null {
   const type = event.type;
   if (type === 'turn.started') {
+    const startedId = stringField(event, 'turn_id');
     return {
-      id: stringField(event, 'turn_id'),
+      id: startedId,
       request: stringField(event, 'request'),
       answer: '',
       iterations: [],
       startedAt: typeof event.started_at === 'number' ? event.started_at : Date.now(),
       status: 'running',
+      // `turn.started` for the turn we optimistically painted must not drop the
+      // attachments we are already showing (the event has no bytes).
+      attachments: turn && (!turn.id || turn.id === startedId) ? turn.attachments : undefined,
     };
   }
   if (!turn) return turn;
@@ -627,7 +650,15 @@ export function SessionScreen({
   // placeholder with no outcome: rendered before confirmation it spins and
   // counts elapsed time for a turn that may already be cancelled or done.
   const [turnsFresh, setTurnsFresh] = useState(false);
-  const [prompt, setPrompt] = useState('');
+  // The composer holds a DRAFT MESSAGE, not a keystroke buffer: unsent text
+  // survives leaving for the session list, backgrounding, and killing the app.
+  // (A "draft" in this system is an isolated agent workspace — different thing.)
+  // The seed is synchronous off the in-memory mirror so a revisit paints what you
+  // typed on the FIRST frame; the effect below covers the cold start, where
+  // storage still has to be read.
+  const draftMessageId = draftMessageKey(client.base, sid);
+  const [prompt, setPrompt] = useState(() => peekDraftMessage(draftMessageId).text);
+  const [draftMessageReady, setDraftMessageReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The session's provider/model pick. Read once from the gateway so the header
   // chip is right on open, then written through by the router dialog.
@@ -655,10 +686,16 @@ export function SessionScreen({
   const [resumingQueue, setResumingQueue] = useState(false);
   const [showJump, setShowJump] = useState(false);
   const [visibleTurnCount, setVisibleTurnCount] = useState(INITIAL_VISIBLE_TURNS);
-  // Reading IS being here. While this transcript is on screen its finished turns
+  // Reading IS being here. While this transcript is on screen its FINISHED turns
   // count as read, so an answer that lands while you watch never raises a badge
   // in the session list — but one that lands with the screen backgrounded does.
-  const readTurns = Math.max(Number(session?.turn_count ?? 0), turns.length);
+  // Both halves must count answers only: `turn_count` includes the turn that is
+  // running right now (the gateway persists it at submit), and marking that as
+  // read would pre-read the answer before it exists.
+  const readTurns = Math.max(
+    answeredTurnCount(session),
+    turns.filter((turn) => turn.status !== 'running' && turn.status !== 'pending').length,
+  );
   useEffect(() => {
     if (document.visibilityState !== 'hidden') markSessionRead(sid, readTurns);
     // Coming back to a screen that stayed mounted through a suspend is also a read.
@@ -680,7 +717,10 @@ export function SessionScreen({
   const [fileDismissed, setFileDismissed] = useState(false);
   const [capabilities, setCapabilities] = useState<GatewayCapabilities | null>(null);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
-  const [pastes, setPastes] = useState<Map<number, ComposerPaste>>(() => new Map());
+  const [pastes, setPastes] = useState<Map<number, ComposerPaste>>(
+    () =>
+      new Map(peekDraftMessage(draftMessageId).pastes.map((paste) => [paste.id, paste])),
+  );
   const [composerNotice, setComposerNotice] = useState<string | null>(null);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [voiceModel, setVoiceModel] = useState<VoiceModelState | null>(null);
@@ -691,7 +731,7 @@ export function SessionScreen({
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recordingRef = useRef<WavRecording | null>(null);
-  const pasteCounterRef = useRef(0);
+  const pasteCounterRef = useRef(peekDraftMessage(draftMessageId).counter);
   const resizeScrollFrameRef = useRef<number | null>(null);
   const disclosureScrollFrameRef = useRef<number | null>(null);
   const prependScrollHeightRef = useRef<number | null>(null);
@@ -702,6 +742,21 @@ export function SessionScreen({
   const followingRef = useRef(true);
   const showJumpRef = useRef(false);
   const liveTurnRef = useRef<LiveTurn | null>(null);
+  // turn id -> the image bytes this device sent with it. A queued message drains
+  // into a live turn minutes later, and the SSE rail never replays attachments,
+  // so the sender keeps them until the persisted transcript row takes over.
+  const sentAttachmentsRef = useRef<Map<string, GatewayAttachment[]>>(new Map());
+  const rememberSent = (turnId: string | undefined, sent: GatewayAttachment[]) => {
+    if (!turnId || !sent.length) return;
+    const map = sentAttachmentsRef.current;
+    map.set(turnId, sent);
+    // Bounded: these are base64 pixels and only the newest turns can still be live.
+    while (map.size > 8) {
+      const oldest = map.keys().next();
+      if (oldest.done) break;
+      map.delete(oldest.value);
+    }
+  };
   const runningRef = useRef(false);
   const turnsRef = useRef<TranscriptTurn[]>([]);
   const cancelRef = useRef<() => void>(() => undefined);
@@ -727,6 +782,7 @@ export function SessionScreen({
     setEarlierRemaining(client.transcriptWindow(sid).offset);
     setLoadingEarlier(false);
     setLiveTurn(null);
+    sentAttachmentsRef.current.clear();
     setQueued(client.cachedQueuedTurns(sid) ?? []);
     setQueueBusy(new Set());
     setQueuePaused(null);
@@ -836,6 +892,44 @@ export function SessionScreen({
     settleTimersRef.current.forEach((id) => window.clearTimeout(id));
     settleTimersRef.current = [];
   }, []);
+
+  // Rotation reflows the whole transcript: every wrapped line changes width, so
+  // the pixel `scrollTop` you were reading at stops pointing at the same turn
+  // and the reader lands somewhere else entirely. The browser's own scroll
+  // anchoring cannot rescue it — this scroller runs `[overflow-anchor:none]` so
+  // that loading earlier turns stays stable — so anchor it ourselves: remember
+  // the turn at the top edge before the flip and put it back after, or simply
+  // stay pinned to the bottom when that is where the reader was.
+  const scrollAnchorRef = useRef<ScrollAnchor | null>(null);
+
+  const captureScrollAnchor = useCallback(() => {
+    const viewport = scrollRef.current;
+    const transcript = transcriptRef.current;
+    if (!viewport || !transcript) return;
+    // Following the live turn needs no anchor: the bottom IS the anchor.
+    scrollAnchorRef.current = followingRef.current
+      ? null
+      : scrollAnchorFor(viewport, transcript);
+  }, []);
+
+  const restoreScrollAnchor = useCallback(() => {
+    const viewport = scrollRef.current;
+    if (!viewport) return;
+    if (applyScrollAnchor(viewport, scrollAnchorRef.current)) return;
+    if (followingRef.current) scrollToEnd('auto');
+  }, [scrollToEnd]);
+
+  // The snapshot is taken when the orientation flips and replayed on every
+  // settle, because the reflow arrives over several frames (composer autosize,
+  // re-wrapped code blocks, images) rather than in one.
+  useEffect(
+    () =>
+      onViewportRotation((phase) => {
+        if (phase === 'start') captureScrollAnchor();
+        else restoreScrollAnchor();
+      }),
+    [captureScrollAnchor, restoreScrollAnchor],
+  );
 
   // Pass the session's meta `row` and the transcript is re-read ONLY when that
   // row says a turn was persisted since the copy already on screen — a long
@@ -1295,6 +1389,42 @@ export function SessionScreen({
     }
   }, [prompt]);
 
+  // Cold start: read the stored draft message and adopt it only while the
+  // composer is still untouched, so typing that raced the read is never
+  // overwritten. Until it resolves nothing is recorded — writing the empty
+  // initial composer first would erase the very message we are about to restore.
+  useEffect(() => {
+    let cancelled = false;
+    setDraftMessageReady(false);
+    watchDraftMessageExits();
+    void readDraftMessage(draftMessageId).then((message) => {
+      if (cancelled) return;
+      if (message.text) {
+        setPrompt((current) => current || message.text);
+        setPastes((current) =>
+          current.size ? current : new Map(message.pastes.map((paste) => [paste.id, paste])),
+        );
+        pasteCounterRef.current = Math.max(pasteCounterRef.current, message.counter);
+      }
+      setDraftMessageReady(true);
+    });
+    // Leaving the screen is one of the moments the message must be on disk.
+    return () => {
+      cancelled = true;
+      void flushDraftMessages();
+    };
+  }, [draftMessageId]);
+
+  // Record every change. Sending clears the composer, which clears the message.
+  useEffect(() => {
+    if (!draftMessageReady) return;
+    writeDraftMessage(draftMessageId, {
+      text: prompt,
+      pastes: pastes.values(),
+      counter: pasteCounterRef.current,
+    });
+  }, [draftMessageReady, draftMessageId, prompt, pastes]);
+
   function addAttachments() {
     const limits = capabilities?.features.attachments;
     const maximum = limits?.max_files ?? 8;
@@ -1412,7 +1542,11 @@ export function SessionScreen({
         const wav = await recording.stop();
         const transcript = await client.transcribeVoice(sid, wav);
         const text = transcript.text.trim();
+        // A transcript that comes back empty is a REAL outcome (a muted or
+        // hijacked mic records perfect silence), so it has to say so: dropping it
+        // silently is what makes the button feel dead.
         if (text) setPrompt((current) => `${current.trimEnd()}${current.trim() ? ' ' : ''}${text}`);
+        else setComposerNotice('No speech recognised — nothing was captured.');
         requestAnimationFrame(() => composerRef.current?.focus());
       } catch (cause) {
         setComposerNotice((cause as Error).message);
@@ -1422,17 +1556,41 @@ export function SessionScreen({
       return;
     }
 
-    if (voiceModel?.status === 'downloading') return;
+    if (voiceModel?.status === 'downloading') {
+      setComposerNotice('Voice model is still downloading — dictation starts when it lands.');
+      return;
+    }
+
+    // The microphone is acquired FIRST, inside the click's own user-gesture
+    // window. iOS/WKWebView only honours getUserMedia + AudioContext.resume()
+    // there; probing the model first put a network round trip in between, and
+    // the context then came up suspended — onaudioprocess never fired, the WAV
+    // was silence, and the empty transcript looked like a dead button. That
+    // round trip is slowest exactly while a turn streams, which is when this
+    // was reported.
+    let recording: WavRecording | null = null;
     try {
+      recording = await startWavRecording();
       let model = voiceModel;
       if (model?.status !== 'ready') {
         model = await client.voiceModel(sid, true);
         setVoiceModel(model);
-        if (model.status !== 'ready') return;
+        if (model.status !== 'ready') {
+          await recording.cancel();
+          setComposerNotice(
+            model.status === 'downloading'
+              ? 'Downloading the voice model — dictation starts when it lands.'
+              : model.status === 'failed'
+                ? `Voice model failed${model.error ? ` · ${model.error}` : ''}`
+                : 'Voice model is not ready yet.',
+          );
+          return;
+        }
       }
-      recordingRef.current = await startWavRecording();
+      recordingRef.current = recording;
       setVoicePhase('recording');
     } catch (cause) {
+      await recording?.cancel().catch(() => {});
       setVoicePhase('idle');
       setComposerNotice((cause as Error).message);
     }
@@ -1490,14 +1648,14 @@ export function SessionScreen({
       setSlashDismissed(false);
       setError(null);
       try {
-        await client.submitTurn(sid, request, {
+        const sent: GatewayAttachment[] = pendingAttachments.map(
+          ({ filename, media_type, base64 }) => ({ filename, media_type, base64 }),
+        );
+        const submitted = await client.submitTurn(sid, request, {
           displayRequest,
-          attachments: pendingAttachments.map(({ filename, media_type, base64 }) => ({
-            filename,
-            media_type,
-            base64,
-          })),
+          attachments: sent,
         });
+        rememberSent(submitted.turn_id ?? submitted.id, sent);
       } catch (cause) {
         setPrompt(authoredRequest);
         setPastes(pendingPastes);
@@ -1517,12 +1675,16 @@ export function SessionScreen({
     setSlashDismissed(false);
     setError(null);
     setRunning(true);
+    const sent: GatewayAttachment[] = pendingAttachments.map(
+      ({ filename, media_type, base64 }) => ({ filename, media_type, base64 }),
+    );
     setLiveTurn({
       request: displayRequest,
       answer: '',
       iterations: [],
       startedAt: Date.now(),
       status: 'running',
+      attachments: sent.length ? sent : undefined,
     });
     followingRef.current = true;
     requestAnimationFrame(() => scrollToEnd());
@@ -1530,13 +1692,11 @@ export function SessionScreen({
     try {
       const submitted = await client.submitTurn(sid, request, {
         displayRequest,
-        attachments: pendingAttachments.map(({ filename, media_type, base64 }) => ({
-          filename,
-          media_type,
-          base64,
-        })),
+        attachments: sent,
       });
-      setLiveTurn((turn) => turn ? { ...turn, id: submitted.turn_id ?? submitted.id } : turn);
+      const submittedId = submitted.turn_id ?? submitted.id;
+      rememberSent(submittedId, sent);
+      setLiveTurn((turn) => turn ? { ...turn, id: submittedId } : turn);
     } catch (cause) {
       setRunning(false);
       setLiveTurn(null);
@@ -1631,6 +1791,10 @@ export function SessionScreen({
       showJumpRef.current = !following;
       setShowJump(!following);
     }
+    // Keep the rotation anchor fresh: iOS can deliver the orientation signal
+    // AFTER the reflow, and by then the top-most turn is already unreadable.
+    // Scrolls during a rotation are the reflow's own, never the reader's.
+    if (!isViewportRotating()) captureScrollAnchor();
   }
 
   useEffect(() => {
@@ -1780,13 +1944,20 @@ export function SessionScreen({
     [visibleTurns],
   );
   const liveRow = useMemo(
-    () =>
-      liveTurn && (
+    () => {
+      if (!liveTurn) return null;
+      // A screenshot just sent lives only in this device's memory until the turn
+      // is persisted: the live rail and the queue tray ship no attachment bytes.
+      const liveAttachments = liveTurn.attachments
+        ?? (liveTurn.id ? sentAttachmentsRef.current.get(liveTurn.id) : undefined);
+      return (
         <div
           className={`${turns.length ? 'mt-10 ' : ''}${transcriptEnterClass}`}
           data-live="true"
         >
-          {liveTurn.request && <UserMessage>{liveTurn.request}</UserMessage>}
+          {(liveTurn.request || (liveAttachments?.length ?? 0) > 0) && (
+            <UserMessage attachments={liveAttachments}>{liveTurn.request}</UserMessage>
+          )}
           <AssistantMessage
             turn={{
               id: liveTurn.id ?? 'live',
@@ -1802,7 +1973,8 @@ export function SessionScreen({
             startedAt={liveTurn.startedAt}
           />
         </div>
-      ),
+      );
+    },
     [liveTurn, turns.length],
   );
   // Pin the viewport to the content it is already showing, so rows added ABOVE
@@ -2188,14 +2360,15 @@ export function SessionScreen({
             </div>
           )}
 
-          {(composerNotice || voicePhase !== 'idle' || (voiceRequested && voiceModel?.status !== 'ready')) && (
+          {(composerNotice || voicePhase !== 'idle' || voiceModel?.status === 'downloading'
+            || (voiceRequested && voiceModel?.status !== 'ready')) && (
             <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex max-w-full items-center gap-1.5 border border-dialog-edge bg-panel px-2 py-1 font-mono text-chip text-dialog-hint shadow-[3px_3px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
               {voicePhase === 'recording' ? (
                 <><span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" /> Listening · tap the microphone to finish</>
               ) : voicePhase === 'transcribing' ? (
                 <><span className="size-1.5 animate-pulse bg-accent motion-reduce:animate-none" /> Transcribing on your machine…</>
               ) : composerNotice ? composerNotice : voiceModel?.status === 'downloading' ? (
-                <>Downloading voice model{voiceModel.progress == null ? '…' : ` · ${Math.round(voiceModel.progress)}%`}</>
+                <>{voiceModel.phase === 'extracting' ? 'Unpacking voice model' : 'Downloading voice model'}{voiceModel.progress == null ? '…' : ` · ${Math.round(voiceModel.progress)}%`}</>
               ) : voiceModel?.status === 'failed' ? (
                 <>Voice model failed{voiceModel.error ? ` · ${voiceModel.error}` : ''}</>
               ) : voiceModel?.status === 'absent' ? (

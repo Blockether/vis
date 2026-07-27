@@ -252,6 +252,25 @@
        (catch Throwable t (tel/log! :debug ["gateway-bus: publish failed" (ex-message t)]) nil))
   nil)
 
+(defn- spawn-writer-thread!
+  "Create, mark daemon and START the journal writer thread, returning it. Seam:
+   tests simulate a JVM that cannot create a thread by redefining this to throw."
+  ^Thread []
+  (let
+    [t (Thread. ^Runnable
+                (fn []
+                  (while (not (Thread/interrupted))
+                    (try (let [{:keys [sid event opts done]} (.take writer-queue)]
+                           (write-event! sid event opts)
+                           (when done (deliver done true)))
+                         (catch InterruptedException _ (.interrupt (Thread/currentThread)))
+                         (catch Throwable t
+                           (tel/log! :debug ["gateway-bus: writer failed" (ex-message t)])))))
+                "gateway-bus-writer")]
+    (.setDaemon t true)
+    (.start t)
+    t))
+
 (defn- start-writer!
   "Start the single async journal writer. Idempotent. The gateway hot path can now
    fan out to local subscribers without waiting for ndjson I/O; cross-process
@@ -266,20 +285,14 @@
     (when (and (not= ::starting cur)
                (or (nil? cur) (not (.isAlive ^Thread cur)))
                (compare-and-set! writer cur ::starting))
-      (let
-        [t (Thread. ^Runnable
-                    (fn []
-                      (while (not (Thread/interrupted))
-                        (try (let [{:keys [sid event opts done]} (.take writer-queue)]
-                               (write-event! sid event opts)
-                               (when done (deliver done true)))
-                             (catch InterruptedException _ (.interrupt (Thread/currentThread)))
-                             (catch Throwable t
-                               (tel/log! :debug ["gateway-bus: writer failed" (ex-message t)])))))
-                    "gateway-bus-writer")]
-        (.setDaemon t true)
-        (.start t)
-        (reset! writer t))))
+      ;; ::starting is the "another thread is already spawning" gate, so it must
+      ;; never outlive this block: a failed spawn (thread limit / OOME) that left
+      ;; it behind wedged the gate forever and killed journalling exactly as
+      ;; permanently as the dead-writer corpse above.
+      (try (reset! writer (spawn-writer-thread!))
+           (catch Throwable t
+             (compare-and-set! writer ::starting nil)
+             (tel/log! :debug ["gateway-bus: writer start failed" (ex-message t)])))))
   nil)
 
 (defn- enqueue-write!

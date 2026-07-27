@@ -17,11 +17,20 @@ export interface GatewayConn {
    */
   id?: string;
   /**
-   * Other URLs the same gateway is reachable at (from the pairing `alt=` /
-   * `hosts` list). Tried in order when the primary URL cannot be reached; never
-   * persisted, only used while adding a gateway.
+   * Every other URL the SAME gateway answers on — from the pairing `alt=` /
+   * `hosts` list and, later, from what the gateway advertises in
+   * `/v1/capabilities`. Persisted: this is how the app can move itself to the
+   * Tailscale address after being paired on the LAN, and how it fails over
+   * when the current address stops answering. See `lib/endpoints.ts` for the
+   * durability order.
    */
   alts?: string[];
+  /**
+   * The user picked this address by hand in gateway settings. Freezes the
+   * automatic upgrade to a more durable address — an explicit choice outranks
+   * the ranking.
+   */
+  pinned?: boolean;
 }
 
 export interface Session {
@@ -203,6 +212,8 @@ export interface GatewayTheme extends ThemeSummary {
 export interface VoiceModelState {
   status: 'ready' | 'downloading' | 'failed' | 'absent' | 'unavailable';
   progress?: number;
+  /** What the 'downloading' status is actually doing right now. */
+  phase?: 'downloading' | 'extracting';
   error?: string;
 }
 
@@ -238,6 +249,12 @@ export interface GatewayHealth {
 export interface GatewayCapabilities {
   version: number;
   protocol?: GatewayProtocol;
+  /**
+   * Every base URL this gateway is reachable at, most durable first (Tailscale
+   * before LAN). Lets an already-paired app discover the tailnet address
+   * without re-scanning a pairing QR. Absent on older gateways.
+   */
+  addresses?: string[];
   /** The gateway's own verdict on the caller that asked. */
   compatibility?: {
     is_compatible?: boolean;

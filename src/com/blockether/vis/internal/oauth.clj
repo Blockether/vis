@@ -76,24 +76,85 @@
     (fn ([] (single-flight! lock #(reuse nil) refresh!))
       ([rejected] (single-flight! lock #(reuse rejected) refresh!)))))
 
+(def default-file-lock-timeout-ms
+  "How long to wait for the CROSS-PROCESS advisory lock before giving up and
+   running unlocked. A peer's own exchange takes a second or two, so this is
+   generous; the point is that a peer that STALLED (or died holding the lock on a
+   filesystem that leaks it) must never freeze provider auth in this JVM
+   forever — the caller reaches here holding the in-process monitor, so a wedged
+   acquisition blocks EVERY refresh here, not just this one."
+  20000)
+
+(defn- try-lock!
+  "ONE non-blocking attempt at the OS advisory lock on `ch`. Returns the
+   `FileLock`, or nil when another PROCESS currently holds it. Seam: tests
+   simulate a stalled peer holder by redefining this to always return nil."
+  [^java.nio.channels.FileChannel ch]
+  (.tryLock ch))
+
+(defn- close-quietly!
+  "Close `c`, swallowing any failure — used on paths that already carry an
+   outcome (a throw, or the normal `finally`) that must not be masked."
+  [^java.io.Closeable c]
+  (when c (try (.close c) (catch Throwable _ nil))))
+
+(defn- acquire-file-lock!
+  "Poll `try-lock!` until granted or `timeout-ms` elapses. nil on timeout, on an
+   overlapping lock already held by THIS JVM, or on any locking failure
+   (unsupported filesystem, IO error) — every one of which means \"run unlocked\".
+
+   An INTERRUPT is the one input that is not degraded: the caller is being
+   cancelled, so the wait aborts, the interrupt flag is RESTORED (`Thread/sleep`
+   clears it) and `InterruptedException` propagates for the caller to close over."
+  [ch timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) (long timeout-ms))]
+    (loop []
+
+      (let [fl (try (try-lock! ch) (catch Throwable _ ::failed))]
+        (cond (= ::failed fl) nil
+              (some? fl) fl
+              (>= (System/currentTimeMillis) deadline) nil
+              :else
+              (do (try (Thread/sleep 50)
+                       (catch InterruptedException e (.interrupt (Thread/currentThread)) (throw e)))
+                  (recur)))))))
+
 (defn call-with-file-lock
   "Run `f` while holding an OS advisory lock on `lock-path`, serializing the
    critical section ACROSS processes (e.g. two vis JVMs — a `--jvm` client and
    its gateway daemon — sharing one credential file). The caller must already
    hold the in-process monitor, since a single JVM cannot hold two overlapping
-   locks on the same file. Blank/nil `lock-path`, or any locking failure
-   (unsupported filesystem, IO error, overlapping lock), degrades to running
-   `f` UNLOCKED rather than blocking authentication."
-  [lock-path f]
-  (if (str/blank? lock-path)
-    (f)
-    (let [lf (io/file lock-path)]
-      (try (io/make-parents lf)
-           (with-open [ch (.getChannel (java.io.RandomAccessFile. lf "rw"))]
-             (let [fl (.lock ch)]
-               (try (f) (finally (.release fl)))))
-           (catch java.nio.channels.OverlappingFileLockException _ (f))
-           (catch Throwable _ (f))))))
+   locks on the same file.
+
+   `f` runs EXACTLY ONCE, always, and its exception propagates untouched — a
+   retry here would re-run a ROTATING token exchange with an already-spent
+   refresh token. Blank/nil `lock-path`, any locking failure (unsupported
+   filesystem, IO error, overlapping lock), or a peer still holding the lock
+   after `timeout-ms` degrades to running `f` UNLOCKED rather than blocking
+   authentication.
+
+   The single exception is an INTERRUPT while waiting for a peer: the caller is
+   being cancelled, so `f` does NOT run and `InterruptedException` propagates
+   with the flag restored. The lock file handle is closed on EVERY exit path,
+   including that one — an fd left to the GC would also leave the advisory lock
+   held for an unbounded time."
+  ([lock-path f] (call-with-file-lock lock-path default-file-lock-timeout-ms f))
+  ([lock-path timeout-ms f]
+   (if (str/blank? lock-path)
+     (f)
+     (let
+       [ch (try (io/make-parents (io/file lock-path))
+                (.getChannel (java.io.RandomAccessFile. (io/file lock-path) "rw"))
+                (catch Throwable _ nil))]
+       (if (nil? ch)
+         (f)
+         (let
+           [fl (try (acquire-file-lock! ch timeout-ms)
+                    (catch Throwable t (close-quietly! ch) (throw t)))]
+           (try (f)
+                (finally (when fl
+                           (try (.release ^java.nio.channels.FileLock fl) (catch Throwable _ nil)))
+                         (close-quietly! ch)))))))))
 
 (defn make-file-refresher
   "Build a 0/1-arg single-flight refresh fn for a FILE-backed credential

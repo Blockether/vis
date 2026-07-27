@@ -2,7 +2,7 @@
   "Contract for the messages-area scroll state, with focus on
    `scrolled-up?` — the predicate that drives input-cursor hiding so the
    terminal blink does not jump around while the transcript scrolls."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]))
 
 (deftest scrolled-up?-true-only-when-parked

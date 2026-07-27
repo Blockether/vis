@@ -3,7 +3,7 @@
    asserted as crypto facts, no network: a self-signed CA, a leaf that carries the
    requested host in its SAN and verifies under the CA, per-host context caching,
    and the ephemeral CA-PEM lifecycle. Cross-platform (runs on Linux CI too)."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.tls-mitm :as tls])
   (:import (java.io File FileInputStream)
            (java.security KeyStore)

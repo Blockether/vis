@@ -3,7 +3,8 @@
    (registry dir, pid-liveness, spawn) are redirected/injected so nothing touches
    the real `~/.vis` or launches a process."
   (:require [clojure.java.io :as io]
-            [clojure.test :refer [deftest is testing use-fixtures]]
+            [lazytest.core :as lt]
+            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.gateway.discovery :as disco]))
 
 (def ^:dynamic *tmp* nil)
@@ -19,7 +20,9 @@
              (f)))
          (finally (run! #(.delete ^java.io.File %) (reverse (file-seq dir)))))))
 
-(use-fixtures :each with-tmp-registry)
+;; Lazytest's clojure.test shim has no `use-fixtures`; a namespace-level
+;; `around-each` context is the same per-test wrapping.
+(lt/set-ns-context! [(lt/around-each [f] (with-tmp-registry f))])
 
 (def dead-pid 2147483646)                ; never a live process
 

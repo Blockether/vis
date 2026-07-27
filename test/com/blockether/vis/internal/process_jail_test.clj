@@ -6,7 +6,8 @@
    VALUE threaded into `wrap-argv`, never a process-global singleton."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]
+            [lazytest.experimental.interfaces.clojure-test :refer
+             [deftest is testing thrown? thrown-with-msg?]]
             [com.blockether.vis.internal.process-jail :as pj]))
 
 (deftest macos-profile-compiler

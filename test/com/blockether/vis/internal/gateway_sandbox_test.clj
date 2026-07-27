@@ -5,7 +5,7 @@
    token is attributed to its session's policy while an unknown/missing token is denied
    \u2014 one shared listener, many sessions, no external network."
   (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]
+            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.egress-proxy :as ep]
             [com.blockether.vis.internal.gateway-sandbox :as gs])
   (:import (java.io BufferedReader InputStreamReader)

@@ -3,8 +3,7 @@
    Python while preserving the strings-only boundary and disabling Java
    Serializable fallback."
   (:require [com.blockether.vis.internal.env-python :as ep]
-            [com.blockether.vis.internal.foundation.shim-nippy]
-            [io.blockether.nippy-stream.vectorz-compat :as vectorz-compat]
+            [com.blockether.vis.internal.foundation.shim-nippy :as shim-nippy]
             [lazytest.core :refer [defdescribe expect it]]
             [taoensso.nippy :as nippy])
   (:import [java.util Base64 Date]
@@ -23,7 +22,7 @@
 
 (defn- encoded-vectorz-fixture
   []
-  (vectorz-compat/ensure-installed!)
+  (shim-nippy/ensure-vectorz-installed!)
   (encoded-fixture {:vectors [(Vector/wrap (double-array [1.25 2.5 5.75 11.5 23.25]))
                               (Vector1. 1.25) (Vector2. 1.25 2.5) (Vector3. 1.25 2.5 5.75)
                               (Vector4. 1.25 2.5 5.75 11.5)]}))

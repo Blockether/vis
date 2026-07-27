@@ -9768,18 +9768,28 @@
 
      futs
      (mapv (fn [spec]
-             (future (.acquire sem) (try (run-spec! parent-env spec) (finally (.release sem)))))
+             (future (.acquire sem)
+                     ;; DEFENCE IN DEPTH — `run-spec!` already folds a throw into a failed
+                     ;; result, but ANYTHING escaping it (an Error, or a failure while
+                     ;; BUILDING that result) used to come out of `deref` below as an
+                     ;; ExecutionException: it sank the whole batch AND skipped the sibling
+                     ;; cancel, so every other child kept running as an orphaned LLM turn
+                     ;; whose result nobody ever read.
+                     (try (run-spec! parent-env spec)
+                          (catch Throwable t (failed-subloop-result spec t))
+                          (finally (.release sem)))))
            specs)]
 
     ;; Settle in input order — but when the COORDINATING thread is interrupted
     ;; (turn cancel / eval timeout), hard-cancel every child sub-loop before
     ;; propagating. Otherwise cancelled parallel sub-loops kept running as
-    ;; orphaned full LLM turns (same leak the gather settle loop had).
+    ;; orphaned full LLM turns (same leak the gather settle loop had). ANY escape
+    ;; must take the batch with it, not just an interrupt.
     (try (mapv deref futs)
-         (catch InterruptedException e
+         (catch Throwable t
            (doseq [f futs]
              (try (future-cancel f) (catch Throwable _ nil)))
-           (throw e)))))
+           (throw t)))))
 
 (defonce ^:private last-good-security-snapshot
   ;; Retains the most recent VALID security snapshot so an invalid live config

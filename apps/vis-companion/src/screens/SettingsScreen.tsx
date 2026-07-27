@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { GatewayError, type GatewayClient } from '../lib/gateway';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { GatewayClient, GatewayError } from '../lib/gateway';
 import type {
   GatewayConn,
   GatewayTheme,
@@ -22,6 +22,7 @@ import {
 import { applyGatewayTheme, resolveTheme } from '../lib/theme';
 import { getThemePref, setThemePref } from '../lib/storage';
 import { Banner, Button, Input } from '../components/ui';
+import { REACH_HINT, REACH_LABEL, bestAddress, hostOf, mergeAddresses, reachOf } from '../lib/endpoints';
 import {
   ProviderFlowPanel,
   ProviderSignOutButton,
@@ -41,6 +42,7 @@ interface Props {
   onActivate?: () => void;
   onRename?: (label: string | undefined) => void | Promise<void>;
   onRemove?: () => void | Promise<void>;
+  onSelectAddress?: (url: string, pinned: boolean) => void | Promise<void>;
   onClose: () => void;
 }
 
@@ -51,6 +53,7 @@ export function GatewaySettingsDialog({
   onActivate,
   onRename,
   onRemove,
+  onSelectAddress,
   onClose,
 }: Props) {
   // Reopening the dialog paints the gateway's last known toggles immediately;
@@ -303,6 +306,10 @@ export function GatewaySettingsDialog({
               </div>
             </div>
           </SettingsPanel>
+
+          {onSelectAddress && (
+            <AddressPanel gateway={gateway} onSelect={onSelectAddress} />
+          )}
 
           {!unreachable && !unauthorized && <ProvidersPanel client={client} />}
 
@@ -940,4 +947,138 @@ function gatewayHost(url: string): string {
   } catch {
     return url;
   }
+}
+
+/**
+ * Which address this device actually talks to.
+ *
+ * A gateway answers on several at once — Tailscale, LAN, loopback — and pairing
+ * happens standing next to the machine, where the LAN address always wins the
+ * race to reply. That address stops resolving the moment the phone leaves the
+ * house, so the choice has to be visible, probeable and pinnable instead of
+ * being whatever answered first months ago.
+ */
+function AddressPanel({
+  gateway,
+  onSelect,
+}: {
+  gateway: GatewayConn;
+  onSelect: (url: string, pinned: boolean) => void | Promise<void>;
+}) {
+  const addresses = useMemo(
+    () => mergeAddresses([gateway.url], gateway.alts),
+    [gateway.url, gateway.alts],
+  );
+  const [reach, setReach] = useState<Record<string, 'checking' | 'online' | 'offline'>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const token = gateway.token;
+  useEffect(() => {
+    let cancelled = false;
+    setReach(Object.fromEntries(addresses.map((url) => [url, 'checking' as const])));
+    void Promise.all(
+      addresses.map(async (url) => {
+        let ok = false;
+        try {
+          ok = await new GatewayClient({ url, token }).ping();
+        } catch (cause) {
+          // Reachable-but-unauthorized still proves the address routes here;
+          // only a network failure means the address is unusable from here.
+          ok = cause instanceof GatewayError;
+        }
+        if (!cancelled) setReach((current) => ({ ...current, [url]: ok ? 'online' : 'offline' }));
+      }),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [addresses, token]);
+
+  const choose = async (url: string, pinned: boolean) => {
+    setBusy(url);
+    setErr(null);
+    try {
+      await onSelect(url, pinned);
+    } catch (cause) {
+      setErr((cause as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Nothing to choose between: one address and no pin is simply "the address",
+  // and a panel offering a single disabled row is noise.
+  if (addresses.length < 2 && !gateway.pinned) return null;
+
+  return (
+    <SettingsPanel title="Address" meta={gateway.pinned ? 'pinned' : 'automatic'}>
+      <div className="space-y-2 p-3">
+        {err && <Banner kind="err">{err}</Banner>}
+
+        <ul className="space-y-1">
+          {addresses.map((url) => {
+            const inUse = url === gateway.url;
+            const kind = reachOf(url);
+            const state = reach[url] ?? 'checking';
+            return (
+              <li key={url}>
+                <button
+                  type="button"
+                  disabled={inUse || busy !== null}
+                  onClick={() => void choose(url, true)}
+                  className={`flex w-full min-w-0 items-center gap-2 border px-2 py-1.5 text-left transition-colors disabled:cursor-default ${
+                    inUse
+                      ? 'border-accent bg-panel-2'
+                      : 'border-dialog-edge hover:border-accent hover:bg-hover'
+                  }`}
+                >
+                  <span
+                    className={`size-1.5 shrink-0 rounded-full ${
+                      state === 'online'
+                        ? 'bg-ok'
+                        : state === 'offline'
+                          ? 'bg-err'
+                          : 'animate-pulse bg-dialog-hint motion-reduce:animate-none'
+                    }`}
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 flex-1 truncate font-mono text-ui text-white">
+                    {hostOf(url)}
+                  </span>
+                  <span className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
+                    {REACH_LABEL[kind]}
+                  </span>
+                  <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
+                    {inUse ? 'in use' : busy === url ? 'switching' : 'use'}
+                  </span>
+                </button>
+                {inUse && (
+                  <p className="px-2 pt-1 font-mono text-meta text-dialog-hint">
+                    {REACH_HINT[kind]}
+                  </p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+
+        <div className="flex flex-wrap items-center gap-2 border-t border-dialog-edge pt-2">
+          <span className="min-w-0 flex-1 font-mono text-meta text-dialog-hint">
+            {gateway.pinned
+              ? 'Pinned: this device always uses the address above and never switches on its own.'
+              : 'Automatic: this device prefers the most durable address that answers — Tailscale over Wi-Fi, Wi-Fi over anything local.'}
+          </span>
+          {gateway.pinned && (
+            <Button
+              variant="ghost"
+              onClick={() => void choose(bestAddress(addresses) ?? gateway.url, false)}
+            >
+              Automatic
+            </Button>
+          )}
+        </div>
+      </div>
+    </SettingsPanel>
+  );
 }

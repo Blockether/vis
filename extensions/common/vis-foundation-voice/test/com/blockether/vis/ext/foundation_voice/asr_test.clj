@@ -2,8 +2,10 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.ext.foundation-voice.asr :as asr]
             [lazytest.core :refer [defdescribe it expect]])
-  (:import [java.io ByteArrayInputStream]
-           [javax.sound.sampled AudioFileFormat$Type AudioFormat AudioInputStream AudioSystem]))
+  (:import [java.io ByteArrayInputStream File FileOutputStream]
+           [javax.sound.sampled AudioFileFormat$Type AudioFormat AudioInputStream AudioSystem]
+           [org.apache.commons.compress.archivers.tar TarArchiveEntry TarArchiveOutputStream]
+           [org.apache.commons.compress.compressors.bzip2 BZip2CompressorOutputStream]))
 
 (defn- write-silence-wav!
   [^java.io.File file seconds]
@@ -162,3 +164,98 @@
                ;; check needs the native WaveReader to read the audio, so it can't
                ;; run at all. Skip rather than fail on the missing shared object.
                (expect true)))))))
+
+(defn- fake-model-archive!
+  "A tiny tar.bz2 shaped like the release archive — a top-level directory holding
+   the four model files — so the install path can be driven without the network."
+  ^File []
+  (let
+    [archive
+     (File/createTempFile "vis-voice-model-test-" ".tar.bz2")
+
+     payload
+     (byte-array (* 512 1024))]
+
+    (with-open
+      [out
+       (FileOutputStream. archive)
+
+       bz
+       (BZip2CompressorOutputStream. out)
+
+       tar
+       (TarArchiveOutputStream. bz)]
+
+      (doseq [file-name ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"]]
+        (let [entry (TarArchiveEntry. (str "sherpa-onnx-model/" file-name))]
+          (.setSize entry (alength payload))
+          (.putArchiveEntry tar entry)
+          (.write tar payload)
+          (.closeArchiveEntry tar))))
+    archive))
+
+(defdescribe
+  model-install-progress-test
+  (it "reports progress through the UNPACK too, not only the transfer"
+      ;; Regression: the download reported 0..99 and extraction reported nothing,
+      ;; so a ~465MB bzip2 archive sat on "99%" for minutes and looked hung.
+      (let
+        [archive
+         (fake-model-archive!)
+
+         target
+         (str (io/file (System/getProperty "java.io.tmpdir")
+                       (str "vis-voice-model-dir-" (System/nanoTime))))
+
+         seen
+         (atom [])]
+
+        (try (with-redefs [asr/model-url (str (.toURI archive))]
+               (#'asr/install-model!
+                target
+                (fn [update]
+                  (swap! seen conj update))))
+             (let
+               [updates
+                @seen
+
+                downloading
+                (filter #(= :downloading (:phase %)) updates)
+
+                extracting
+                (filter #(= :extracting (:phase %)) updates)]
+
+               (expect (seq downloading))
+               (expect (seq extracting))
+               (expect (every? #(<= 0 (:progress %) 89) downloading))
+               (expect (every? #(<= 90 (:progress %) 99) extracting))
+               (expect (true? (boolean (#'asr/model-installed? target)))))
+             (finally (.delete archive) (#'asr/delete-dir! (io/file target)))))))
+
+(defdescribe
+  onnxruntime-native-test
+  (it "materialises the VERSIONED onnxruntime dylib sherpa's JNI links against"
+      ;; Regression: sherpa's libsherpa-onnx-jni links @rpath/libonnxruntime.<ver>
+      ;; from ~/lib/<platform>. The onnxruntime jar only carries the UNversioned
+      ;; name, so without this copy the first sherpa class touched dies with
+      ;; UnsatisfiedLinkError "Library not loaded: @rpath/libonnxruntime.1.17.1.dylib".
+      (let
+        [home
+         (io/file (System/getProperty "java.io.tmpdir") (str "vis-voice-home-" (System/nanoTime)))
+
+         previous
+         (System/getProperty "user.home")]
+
+        (try (.mkdirs home)
+             (System/setProperty "user.home" (str home))
+             (let
+               [platform
+                (#'asr/native-platform)
+
+                dir
+                (io/file home "lib" platform)]
+
+               (#'asr/ensure-onnxruntime-native!)
+               (doseq [name (#'asr/onnxruntime-target-names platform)]
+                 (expect (.isFile (io/file dir name)))))
+             (finally (System/setProperty "user.home" previous) (#'asr/delete-dir! home))))))

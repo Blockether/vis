@@ -5,7 +5,7 @@
    real HTTP through the proxy against a local origin, proving a GET is forwarded and a POST
    is denied at the wire with no external network."
   (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]
+            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.egress-proxy :as ep]
             [com.blockether.vis.internal.tls-mitm :as tls])
   (:import (java.io BufferedReader InputStreamReader)
@@ -874,3 +874,242 @@
              (is (empty? filters) "no filter runs once tier-1 denies")
              (is (false? (:allow? final))))
            (finally (ep/unregister-network-filters-for-owner! o))))))
+
+;; ---------------------------------------------------------------------------
+;; CONNECT tunnel liveness — a read timeout is a POLL, not an EOF
+;; ---------------------------------------------------------------------------
+
+(defn- start-tunnel-origin!
+  "A raw (non-HTTP) origin for CONNECT-tunnel tests: accepts, NEVER reads, and
+   emits `ticks` lines `gap-ms` apart (0 ticks ⇒ dead silent and never closed).
+   `:sent` counts the lines it got out; `:broken-at` records the ms offset at
+   which its write first failed — i.e. when the proxy tore the tunnel down.
+   Returns {:port :sent :broken-at :stop!}."
+  [ticks gap-ms]
+  (let
+    [server
+     (doto (ServerSocket.) (.bind (InetSocketAddress. "127.0.0.1" 0)))
+
+     running
+     (atom true)
+
+     sent
+     (atom 0)
+
+     broken-at
+     (atom nil)
+
+     t0
+     (System/currentTimeMillis)
+
+     loop-fn
+     (fn []
+       (while @running
+         (when-let [^Socket c (try (.accept server) (catch Throwable _ nil))]
+           ;; A REAL streaming origin notices a half-close: it reads the request
+           ;; side, and when that side EOFs it abandons the response. That is what
+           ;; made the pre-fix half-close destructive rather than cosmetic.
+           ;;
+           ;; With NO ticks the origin models the opposite peer: one that never
+           ;; reads, never writes and never sends a FIN (half-open TCP after a
+           ;; NAT/VPN drop) — the shape that used to park a copy thread forever.
+           (when (pos? ticks)
+             (future
+               (try (let [in (.getInputStream c)]
+                      (loop []
+
+                        (let [n (.read in)]
+                          (if (neg? n)
+                            (do (compare-and-set! broken-at nil (- (System/currentTimeMillis) t0))
+                                (try (.close c) (catch Throwable _ nil)))
+                            (when @running (recur))))))
+                    (catch Throwable _ nil))))
+           (future (try (let [out (.getOutputStream c)]
+                          (dotimes [i ticks]
+                            (.write out (.getBytes (str "tick " i "\n")))
+                            (.flush out)
+                            (swap! sent inc)
+                            (Thread/sleep (long gap-ms)))
+                          ;; stay connected and silent until the test stops us
+                          (while @running (Thread/sleep 25)))
+                        (catch Throwable _
+                          (compare-and-set! broken-at nil (- (System/currentTimeMillis) t0)))
+                        (finally (try (.close c) (catch Throwable _ nil))))))))]
+
+    (doto (Thread. ^Runnable loop-fn "tunnel-origin") (.setDaemon true) (.start))
+    {:port (.getLocalPort server)
+     :sent sent
+     :broken-at broken-at
+     :stop! (fn []
+              (reset! running false)
+              (try (.close server) (catch Throwable _ nil)))}))
+
+(defn- open-tunnel!
+  "CONNECT through the proxy to `origin-port` and hand the raw tunnel socket to
+   `f` once the 200 is in. The client then says NOTHING — exactly like a browser
+   or an LLM SDK waiting on a streaming response."
+  [proxy-port origin-port f]
+  (with-open [s (doto (Socket.) (.connect (InetSocketAddress. "127.0.0.1" (int proxy-port)) 5000))]
+    (.setSoTimeout s 15000)
+    (.write (.getOutputStream s)
+            (.getBytes
+              (str "CONNECT localhost:" origin-port " HTTP/1.1\r\nHost: localhost\r\n\r\n")))
+    (.flush (.getOutputStream s))
+    (let
+      [in (BufferedReader. (InputStreamReader. (.getInputStream s)))
+       status (.readLine in)]
+
+      (loop []
+
+        (let [l (.readLine in)]
+          (when (and l (not= l "")) (recur))))
+      (f status in))))
+
+(deftest tunnel-read-timeout-is-not-eof
+  ;; REGRESSION — the client socket used to keep the HANDSHAKE read timeout for
+  ;; the whole life of the tunnel, and `splice` treated that timeout as EOF. A
+  ;; tunnelled client is legitimately silent client→upstream for the entire
+  ;; streaming response, so every long/quiet CONNECT (LLM completion, SSE,
+  ;; websocket, ssh) got half-closed mid-stream: the proxy called
+  ;; `shutdownOutput` on the upstream and the origin saw the response die.
+  (run-wire-test
+    (fn []
+      (with-redefs-fn {#'ep/TUNNEL_READ_TIMEOUT_MS 200 #'ep/TUNNEL_MAX_IDLE_MS 60000}
+        (fn []
+          (let [origin (start-tunnel-origin! 6 250)]
+            (try (let
+                   [proxy (ep/start! {:policy-fn (fn [_]
+                                                   (ep/compile-policy
+                                                     {:allowed-domains ["*"]
+                                                      :rules [{:host "localhost"
+                                                               :ports [(:port origin)]}]}))})]
+                   (try (open-tunnel!
+                          (:port proxy)
+                          (:port origin)
+                          (fn [status in]
+                            (testing "the tunnel is established"
+                              (is (= "HTTP/1.1 200 Connection Established" status)))
+                            (testing
+                              "a silent client survives many read timeouts while the origin streams"
+                              ;; 6 ticks over ~1.5 s with a 200 ms poll timeout: the old
+                              ;; code cut this after the FIRST timeout.
+                              (let [got (doall (repeatedly 6 #(.readLine in)))]
+                                (is (= ["tick 0" "tick 1" "tick 2" "tick 3" "tick 4" "tick 5"] got))
+                                (is (nil? @(:broken-at origin))
+                                    "the origin's writes were never broken by the proxy")))))
+                        (finally ((:stop! proxy)))))
+                 (finally ((:stop! origin))))))))))
+
+(deftest tunnel-idle-reclaim
+  ;; The flip side: a bounded read is the ONLY way a wedged tunnel is ever
+  ;; reclaimed. A blocking socket read ignores interrupt/shutdownNow, so a peer
+  ;; that dies WITHOUT a FIN (NAT/VPN drop, half-open TCP) used to park both
+  ;; copy directions forever and pin two pool threads for the life of the JVM.
+  (run-wire-test
+    (fn []
+      (with-redefs-fn {#'ep/TUNNEL_READ_TIMEOUT_MS 150 #'ep/TUNNEL_MAX_IDLE_MS 600}
+        (fn []
+          (let [origin (start-tunnel-origin! 0 0)]
+            (try (let
+                   [proxy (ep/start! {:policy-fn (fn [_]
+                                                   (ep/compile-policy
+                                                     {:allowed-domains ["*"]
+                                                      :rules [{:host "localhost"
+                                                               :ports [(:port origin)]}]}))})]
+                   (try (open-tunnel!
+                          (:port proxy)
+                          (:port origin)
+                          (fn [status in]
+                            (is (= "HTTP/1.1 200 Connection Established" status))
+                            (testing "a fully idle tunnel is torn down instead of parking forever"
+                              (let
+                                [t0 (System/currentTimeMillis)
+                                 eof (.readLine in)
+                                 took (- (System/currentTimeMillis) t0)]
+
+                                (is (nil? eof) "the relay closed the idle tunnel")
+                                (is (< took 10000) (str "reclaimed in " took "ms"))))))
+                        (finally ((:stop! proxy)))))
+                 (finally ((:stop! origin))))))))))
+
+(defn- start-patient-origin!
+  "An origin that IGNORES its request side entirely (never reads, never reacts to
+   a half-close), waits `think-ms` — the model's time-to-first-token — and only
+   then streams. Returns {:port :wrote :stop!}."
+  [think-ms]
+  (let
+    [server
+     (doto (ServerSocket.) (.bind (InetSocketAddress. "127.0.0.1" 0)))
+
+     running
+     (atom true)
+
+     wrote
+     (atom nil)
+
+     loop-fn
+     (fn []
+       (while @running
+         (when-let [^Socket c (try (.accept server) (catch Throwable _ nil))]
+           (future (try (Thread/sleep (long think-ms))
+                        (let [out (.getOutputStream c)]
+                          (.write out (.getBytes "late-token\n"))
+                          (.flush out)
+                          (reset! wrote true)
+                          (while @running (Thread/sleep 25)))
+                        (catch Throwable _ (compare-and-set! wrote nil false))
+                        (finally (try (.close c) (catch Throwable _ nil))))))))]
+
+    (doto (Thread. ^Runnable loop-fn "patient-origin") (.setDaemon true) (.start))
+    {:port (.getLocalPort server)
+     :wrote wrote
+     :stop! (fn []
+              (reset! running false)
+              (try (.close server) (catch Throwable _ nil)))}))
+
+(deftest tunnel-half-close-does-not-end-the-tunnel
+  ;; REGRESSION — a client that half-closes after sending its request
+  ;; (`shutdownOutput`; ordinary for HTTP/1 and ssh) EOFs the client→upstream
+  ;; direction at once. The relay used to read that as "the tunnel is over": the
+  ;; FIRST direction to finish flipped a shared flag, so the response direction
+  ;; gave up at its very next poll and the client got EOF instead of the answer.
+  ;; Only a real abort (an exception on either leg) may stop the sibling.
+  (run-wire-test
+    (fn []
+      (with-redefs-fn {#'ep/TUNNEL_READ_TIMEOUT_MS 150 #'ep/TUNNEL_MAX_IDLE_MS 60000}
+        (fn []
+          (let [origin (start-patient-origin! 1500)]
+            (try
+              (let
+                [proxy (ep/start! {:policy-fn (fn [_]
+                                                (ep/compile-policy
+                                                  {:allowed-domains ["*"]
+                                                   :rules [{:host "localhost"
+                                                            :ports [(:port origin)]}]}))})]
+                (try (with-open
+                       [s (doto (Socket.)
+                            (.connect (InetSocketAddress. "127.0.0.1" (int (:port proxy))) 5000))]
+                       (.setSoTimeout s 15000)
+                       (.write (.getOutputStream s)
+                               (.getBytes (str "CONNECT localhost:"
+                                               (:port origin)
+                                               " HTTP/1.1\r\nHost: localhost\r\n\r\n")))
+                       (.flush (.getOutputStream s))
+                       (let
+                         [in (BufferedReader. (InputStreamReader. (.getInputStream s)))
+                          status (.readLine in)]
+
+                         (is (= "HTTP/1.1 200 Connection Established" status))
+                         (loop []
+
+                           (let [l (.readLine in)]
+                             (when (and l (not= l "")) (recur))))
+                         ;; the request is complete — say so at the TCP level
+                         (.shutdownOutput s)
+                         (testing "the response still arrives after the client half-closes"
+                           (let [got (.readLine in)]
+                             (is (= "late-token" got))
+                             (is (true? @(:wrote origin))
+                                 "the origin's write was not torn down by the proxy")))))
+                     (finally ((:stop! proxy)))))
+              (finally ((:stop! origin))))))))))

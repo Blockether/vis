@@ -224,3 +224,93 @@
       (expect (every? #(= {:token "T"} %) results))
       (expect (.exists (io/file lock-path)))
       (.delete (clojure.java.io/file lock-path)))))
+
+(defn- temp-lock-path
+  "A throwaway advisory-lock path in a fresh temp dir."
+  []
+  (str (java.nio.file.Files/createTempDirectory "oauth-lock"
+                                                (make-array java.nio.file.attribute.FileAttribute
+                                                            0))
+       "/lock"))
+
+(defdescribe
+  oauth-file-lock-test
+  "`call-with-file-lock` guards the ROTATING token exchange. Two failure modes make
+   it worse than no lock at all: running the exchange TWICE (the second reuses an
+   already-rotated refresh token → HTTP 400 `invalid_grant`, the exact race this
+   namespace exists to prevent), and blocking FOREVER on a peer process that
+   stalled while holding the OS lock — which, since the caller also holds the
+   in-process monitor, freezes every provider refresh in this JVM."
+  (it "runs f exactly once when f throws"
+      (let [runs (atom 0)]
+        (expect (throws? clojure.lang.ExceptionInfo
+                         #(oauth/call-with-file-lock (temp-lock-path)
+                                                     (fn []
+                                                       (swap! runs inc)
+                                                       (throw (ex-info "exchange failed" {}))))))
+        (expect (= 1 @runs))))
+  (it "gives up on a peer that holds the lock and runs f unlocked"
+      ;; `try-lock!` returning nil is exactly what a FOREIGN process holding the
+      ;; POSIX lock looks like; the real `.lock` parked here forever.
+      (with-redefs
+        [oauth/try-lock! (fn [_ch]
+                           nil)]
+        (let
+          [t0 (System/currentTimeMillis)
+           res (oauth/call-with-file-lock (temp-lock-path)
+                                          300
+                                          (fn []
+                                            :ran))
+           ms (- (System/currentTimeMillis) t0)]
+
+          (expect (= :ran res))
+          (expect (>= ms 300))
+          (expect (< ms 5000)))))
+  (it "still runs f when the lock path cannot be opened"
+      (expect (= :ran
+                 (oauth/call-with-file-lock "/dev/null/nope/lock"
+                                            (fn []
+                                              :ran))))
+      (expect (= :ran
+                 (oauth/call-with-file-lock nil
+                                            (fn []
+                                              :ran)))))
+  (it "an interrupt while waiting aborts without running f and leaks no handle"
+      ;; Cancellation is the ONE input that must not degrade to "run unlocked": a
+      ;; rotating exchange fired on a thread that is being torn down spends the
+      ;; refresh token for nobody. It must also not leak the lock-file handle —
+      ;; an fd left to the GC keeps the OS advisory lock alive for an unbounded
+      ;; time, stalling the peer process this lock exists to coordinate with.
+      (with-redefs
+        [oauth/try-lock! (fn [_ch]
+                           nil)]
+        (let
+          [path (temp-lock-path)
+           os (java.lang.management.ManagementFactory/getOperatingSystemMXBean)
+           fds (fn []
+                 (when (instance? com.sun.management.UnixOperatingSystemMXBean os)
+                   (.getOpenFileDescriptorCount ^com.sun.management.UnixOperatingSystemMXBean os)))
+           before (fds)
+           ran (atom 0)
+           seen (atom [])
+           threads (doall (for [_ (range 25)]
+                            (doto (Thread. #(try (oauth/call-with-file-lock path
+                                                                            60000
+                                                                            (fn []
+                                                                              (swap! ran inc)))
+                                                 (catch Throwable t
+                                                   (swap! seen conj
+                                                     [(class t)
+                                                      (.isInterrupted (Thread/currentThread))]))))
+                              (.start))))]
+
+          (Thread/sleep 200)
+          (doseq [^Thread t threads]
+            (.interrupt t))
+          (doseq [^Thread t threads]
+            (.join t 5000))
+          (expect (= 0 @ran))
+          (expect (= {[InterruptedException true] 25} (frequencies @seen)))
+          (when before
+            ;; Pre-fix this grew by one fd per interrupted acquisition.
+            (expect (< (- (fds) before) 10)))))))

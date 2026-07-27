@@ -1917,6 +1917,11 @@
     (:progress st)
     (assoc :progress (:progress st))
 
+    ;; "downloading" covers both the transfer and the multi-minute unpack; the
+    ;; phase lets a UI name what is actually happening instead of stalling on 99%.
+    (:phase st)
+    (assoc :phase (name (:phase st)))
+
     (:error st)
     (assoc :error (:error st))))
 
@@ -1984,6 +1989,33 @@
                                                :data {:type "test"}})
                     :push (push/status)})))
 
+(defn- reachable-addresses
+  "Every base URL this gateway answers on, most durable first (Tailscale before
+   LAN — see [[pairing/candidate-hosts]]).
+
+   A pairing QR carries the same list, but only ONCE: a phone paired at home
+   picks the LAN address, keeps it, and is stranded the moment it leaves the
+   house. Advertising the addresses on a live, token-gated endpoint lets an
+   already-paired client discover the tailnet address and move itself, with no
+   second QR. The port/scheme come from the request when the bind is unknown, so
+   a tunnel sees itself correctly."
+  [request]
+  (let
+    [{:keys [host port]}
+     @server-state
+
+     port
+     (or port (:server-port request) 7890)
+
+     scheme
+     (name (or (:scheme request) :http))]
+
+    (->> (pairing/candidate-hosts (or host "0.0.0.0"))
+         (remove str/blank?)
+         (map #(str scheme "://" % ":" port))
+         distinct
+         vec)))
+
 (defn- capabilities-handler
   "GET /v1/capabilities — stable feature negotiation for remote/native clients.
    Availability describes what THIS gateway can accept; device-side permissions
@@ -2017,6 +2049,7 @@
 
     (json-response {:version 1
                     :protocol (protocol/handshake)
+                    :addresses (reachable-addresses request)
                     :compatibility (protocol/gateway-verdict request)
                     :features {:chat {:enabled true}
                                :attachments {:enabled true

@@ -4,7 +4,7 @@
    cards, every other dialog — routes through this ns, so painter and
    hit-test layers cannot drift apart. If a test here changes, every
    call site moves with it."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.input MouseAction MouseActionType]))

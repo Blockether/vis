@@ -139,6 +139,10 @@ const transcriptWindows = new Map<string, TranscriptWindow>();
 
 function transcriptStamp(row: Session | null | undefined): string {
   if (!row) return '';
+  // Neither fact present = a payload that cannot express movement (an older
+  // gateway's detail row). Return '' so callers FETCH instead of trusting a
+  // constant stamp that both never invalidates and never detects a change.
+  if (row.turn_count === undefined && row.modified_at === undefined) return '';
   return `${row.turn_count ?? ''}\u0000${row.modified_at ?? ''}`;
 }
 

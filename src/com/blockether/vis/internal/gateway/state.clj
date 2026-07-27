@@ -2147,10 +2147,15 @@
    overrides the gate."
   ([sid] (drain-next-queued! sid nil))
   ([sid {:keys [force?]}]
-   (let [decision (volatile! nil)
-         ;; Read the session pin HERE, as the turn starts — not at submit. A
-         ;; queued turn inherits the model the session is pinned to NOW.
-         pinned-model (:model (session-model sid))]
+   (let
+     [decision
+      (volatile! nil)
+
+      ;; Read the session pin HERE, as the turn starts — not at submit. A
+      ;; queued turn inherits the model the session is pinned to NOW.
+      pinned-model
+      (:model (session-model sid))]
+
      (swap! registry update
        sid
        (fn [entry]
@@ -2183,9 +2188,7 @@
                           :last-active started-at)
                    (update-in [:turns tid]
                               merge
-                              (cond-> {:status "running"
-                                       :cancel-token token
-                                       :started_at started-at}
+                              (cond-> {:status "running" :cancel-token token :started_at started-at}
                                 (or model pinned-model)
                                 (assoc :model (or model pinned-model))))))
              entry))))
@@ -3282,8 +3285,7 @@
      pool-eligible?
      (and (nil? external-id)
           (nil? workspace-id)
-          (or (nil? root)
-              (= (workspace/normalize-root root) (workspace/trunk-root))))
+          (or (nil? root) (= (workspace/normalize-root root) (workspace/trunk-root))))
 
      pooled
      (when pool-eligible? (pop-prewarmed! channel))]
@@ -3326,7 +3328,14 @@
   "Canonical (string-keyed) wire soul for one session: persisted record + live
    gateway status. Running sessions include their request, start timestamp, and
    the gateway clock sampled in the same response so remote channels can derive
-   one elapsed baseline without trusting their device wall clock."
+   one elapsed baseline without trusting their device wall clock.
+
+   Carries the SAME `turn_count` / `modified_at` freshness pair the list rows
+   get from `session-summary-extras` (one session-scoped query here, not a
+   whole-store scan). Without them a client holding only a detail row cannot
+   tell that a session moved: its transcript stamp is constant, so a cached
+   transcript never revalidates and an unread mark can only count the page it
+   happens to hold."
   [sid]
   (when-let [session (lp/by-id sid)]
     (let
@@ -3336,7 +3345,10 @@
        last-turn (some->> (:turn-order entry)
                           peek
                           (get (:turns entry)))
-       server-time-ms (System/currentTimeMillis)]
+       server-time-ms (System/currentTimeMillis)
+       stats (try (some-> (lp/db-info)
+                          (persistance/db-session-turn-stats sid))
+                  (catch Throwable _ nil))]
 
       (wire/canonical
         (cond->
@@ -3360,7 +3372,11 @@
            :live (boolean current-turn-id)
            :current_turn_id current-turn-id
            :last_active_at (:last-active entry)
+           :turn_count (long (or (:turn-count stats) 0))
            :server_time_ms server-time-ms}
+          (:latest-turn-at stats)
+          (assoc :modified_at (:latest-turn-at stats))
+
           (and current-turn-id (:request current-turn))
           (assoc :running_request (:request current-turn))
 

@@ -78,10 +78,38 @@
 ;; Column codecs (shared by EVERY backend)
 ;; =============================================================================
 
+(defn- json-key
+  "A map key charred can actually write. Keyword/symbol/string keys keep their
+   EXACT current spelling (persisted columns must not shift under an existing
+   database); anything else — the int keys a Python `Counter` or a decoded JSON
+   value carries out of the sandbox — is RENDERED rather than left to blow up
+   the whole write."
+  [k]
+  (cond (string? k) k
+        (keyword? k) (subs (str k) 1)
+        (symbol? k) (str k)
+        (nil? k) "null"
+        :else (str k)))
+
+(defn- json-encodable
+  "Rewrite ONLY what charred REFUSES to encode: non-string map keys and
+   non-finite doubles (a pandas `NaN`, a `x/0.0`). Everything else passes
+   through untouched, so no persisted spelling changes. Without this the
+   encoder throws mid-write and the caller loses the whole column — the final
+   answer content of a settled turn — over one exotic value inside it."
+  [x]
+  (cond (map? x) (persistent! (reduce-kv (fn [m k v]
+                                           (assoc! m (json-key k) (json-encodable v)))
+                                         (transient {})
+                                         x))
+        (coll? x) (mapv json-encodable x)
+        (and (float? x) (not (Double/isFinite (double x)))) nil
+        :else x))
+
 (defn ->json
   "Serialize a value to a JSON TEXT column. Nil in, nil out."
   [m]
-  (when m (json/write-json-str m)))
+  (when m (json/write-json-str (json-encodable m))))
 
 (defn <-json
   "Parse a JSON TEXT column. STRINGS-ONLY: keys come back as VERBATIM STRINGS -
@@ -469,7 +497,13 @@
 
 (defdelegate db-list-session-turns [db-info session-ref])
 
-(defdelegate db-session-turn-stats [db-info])
+(defn db-session-turn-stats
+  "Per-session turn aggregates. 1-arity: the whole store, `{soul-id-str
+   {:turn-count n :latest-turn-at Date}}`. 2-arity: ONE session's stats
+   unwrapped (nil when unknown), so a single-session read never scans the
+   whole store."
+  ([db-info] ((deref (resolve-impl db-info 'db-session-turn-stats)) db-info))
+  ([db-info session-id] ((deref (resolve-impl db-info 'db-session-turn-stats)) db-info session-id)))
 
 (defdelegate db-retry-session-turn! [db-info session-turn-soul-id opts])
 

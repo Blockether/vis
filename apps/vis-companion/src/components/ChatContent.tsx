@@ -5,6 +5,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type MouseEvent,
   type ReactNode,
 } from 'react';
 import Prism from 'prismjs';
@@ -63,10 +64,23 @@ const toolLabelOverrides: Record<string, string> = {
   // `shell` needs no override: ONE tool, whose card names the op that ran.
 };
 
-function CopyButton({ value }: { value: string }) {
+function CopyButton({
+  value,
+  className = 'absolute right-2 top-2 z-10',
+  label = 'Copy code',
+}: {
+  value: string;
+  /** Placement only — the chip's own look is fixed. */
+  className?: string;
+  label?: string;
+}) {
   const [copied, setCopied] = useState(false);
 
-  async function copy() {
+  async function copy(event: MouseEvent<HTMLButtonElement>) {
+    // This chip also lives inside a <summary>, where a bare click would toggle
+    // the disclosure as well as copy.
+    event.preventDefault();
+    event.stopPropagation();
     try {
       await navigator.clipboard.writeText(value);
       setCopied(true);
@@ -79,9 +93,10 @@ function CopyButton({ value }: { value: string }) {
   return (
     <button
       type="button"
-      className="absolute right-2 top-2 z-10 border border-dialog-edge bg-button px-1.5 py-0.5 font-mono text-chip text-button-foreground transition-colors hover:bg-hover"
+      // min-w keeps 'Copy' and 'Copied' the same width so the chip never jumps.
+      className={`${className} min-w-[6ch] border border-dialog-edge bg-button px-1.5 py-0.5 text-center font-mono text-chip text-button-foreground transition-colors hover:bg-hover`}
       onClick={copy}
-      aria-label="Copy code"
+      aria-label={label}
     >
       {copied ? 'Copied' : 'Copy'}
     </button>
@@ -117,13 +132,13 @@ const DiffBlock = memo(function DiffBlock({ value, compact, frameless = false }:
       className={`${compact ? 'my-2' : 'my-3'} relative overflow-hidden bg-code ${frameless ? '' : 'border border-code-edge'}`}
       aria-label="Unified diff"
     >
-      <CopyButton value={value} />
+      {!frameless && <CopyButton value={value} />}
       <pre
         className={`${compact ? 'text-meta ' : 'text-ui '} m-0 max-w-full overflow-x-auto overscroll-x-contain py-2 font-mono`}
       >
         {value.split('\n').map((line, index) => (
           <span
-            className={`block min-w-full w-fit whitespace-pre px-3 first:pr-16 ${lineClasses[diffLineKind(line)]}`}
+            className={`block min-w-full w-fit whitespace-pre px-3 ${frameless ? '' : 'first:pr-16'} ${lineClasses[diffLineKind(line)]}`}
             key={`${index}-${line}`}
           >
             {line || ' '}
@@ -286,11 +301,13 @@ const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
     <div
       className={`relative overflow-hidden bg-code ${bare ? '' : `${compact ? 'my-2' : 'my-3'} ${frameless ? '' : 'border border-code-edge'}`}`}
     >
-      <CopyButton value={copyValue ?? source} />
+      {/* An enclosing card (a tool result) owns ONE copy control for the whole
+          body, so a frameless block does not add a second, third, … chip. */}
+      {!frameless && <CopyButton value={copyValue ?? source} />}
       <pre className={`${compact ? 'py-2 text-meta ' : 'py-2.5 text-ui '} m-0 max-w-full overflow-x-auto overscroll-x-contain font-mono text-code-foreground`}>
         <code className="block min-w-max [tab-size:2]">
           {lines.map((segments, index) => (
-            <div key={index} className="flex w-fit min-w-full whitespace-pre px-3 first:pr-16">
+            <div key={index} className={`flex w-fit min-w-full whitespace-pre px-3 ${frameless ? '' : 'first:pr-16'}`}>
               {gutter && (
                 <span className="mr-3 shrink-0 select-none text-right text-code-duration" aria-hidden="true">
                   {gutter.gutters[index] ?? ''}
@@ -626,6 +643,9 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
       <summary className="flex min-h-6 list-none cursor-pointer select-none items-center gap-1.5 px-2 py-1 text-code-result hover:bg-hover [&::-webkit-details-marker]:hidden">
         <span className={`${disclosureClass} ${failed ? 'text-err' : role.text}`} aria-hidden="true">›</span>
         {headline}
+        {/* ONE copy control per result card: the body's code blocks are frameless
+            inside this card and render no chip of their own. */}
+        <CopyButton value={body} className="shrink-0" label="Copy result" />
       </summary>
       <div className={`min-w-0 overflow-hidden border-t border-code-edge bg-result px-3 py-2 text-ui text-code-result ${failed ? 'text-code-error-result' : ''}`}>
         {failed ? <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-words font-mono text-meta ">{body}</pre> : <Markdown compact nested>{body}</Markdown>}
@@ -665,31 +685,43 @@ const CollapsiblePythonCode = memo(function CollapsiblePythonCode({ value }: { v
   return (
     <div className="mb-1 min-w-0 overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
       <div className="min-w-0 border-l-2 border-tool-shell bg-code">
-        {collapsible && (
-          <button
-            type="button"
-            data-disclosure-toggle
-            className="flex min-h-6 w-full cursor-pointer select-none items-center gap-1.5 border-b border-code-edge px-2 py-1 text-left transition-colors hover:bg-hover"
-            aria-expanded={expanded}
-            onClick={() => setExpanded((current) => !current)}
-          >
-            <span
-              className={`${disclosureClass} text-tool-shell ${expanded ? 'rotate-90' : ''}`}
-              aria-hidden="true"
+        {/* The header row OWNS the copy control (right edge), exactly like the
+            `ToolCard` result headline — never a chip floating over the source.
+            It is rendered even when the program is too short to collapse, so a
+            4-line snippet and a 40-line one carry the same chrome. */}
+        <div className="flex min-h-6 items-center gap-1.5 border-b border-code-edge pr-1.5">
+          {collapsible ? (
+            <button
+              type="button"
+              data-disclosure-toggle
+              className="flex min-h-6 min-w-0 flex-1 cursor-pointer select-none items-center gap-1.5 px-2 py-1 text-left transition-colors hover:bg-hover"
+              aria-expanded={expanded}
+              onClick={() => setExpanded((current) => !current)}
             >
-              ›
+              <span
+                className={`${disclosureClass} text-tool-shell ${expanded ? 'rotate-90' : ''}`}
+                aria-hidden="true"
+              >
+                ›
+              </span>
+              <span className="truncate font-mono text-chip font-extrabold tracking-[0.06em] text-tool-shell">
+                {expanded ? 'PYTHON' : `PYTHON +${hiddenLines} more`}
+              </span>
+            </button>
+          ) : (
+            <span className="min-w-0 flex-1 select-none truncate px-2 py-1 font-mono text-chip font-extrabold tracking-[0.06em] text-tool-shell">
+              PYTHON
             </span>
-            <span className="font-mono text-chip font-extrabold tracking-[0.06em] text-tool-shell">
-              {expanded ? 'PYTHON' : `PYTHON +${hiddenLines} more`}
-            </span>
-          </button>
-        )}
+          )}
+          <CopyButton value={value} className="shrink-0" label="Copy code" />
+        </div>
         <SyntaxCodeBlock
           value={visibleValue}
           copyValue={value}
           language="python"
           compact
           bare
+          frameless
         />
       </div>
     </div>
