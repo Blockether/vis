@@ -8,6 +8,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
+            [com.blockether.vis.ext.channel-tui.enter :as enter]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
@@ -16,13 +17,20 @@
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
+            [com.blockether.vis.ext.channel-tui.theme :as theme]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe it expect]])
-  (:import [com.googlecode.lanterna TerminalPosition]
+  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize TextCharacter TextColor]
            [com.googlecode.lanterna.input MouseAction MouseActionType]
-           [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]))
+           [com.googlecode.lanterna.screen TerminalScreen]
+           [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]
+           [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
 (def ^:private parse-args (deref #'screen/parse-args))
+
+(def ^:private paint-transcript-enter! (deref #'screen/paint-transcript-enter!))
+
+(def ^:private activate-tab (deref #'state/activate-tab))
 
 (def ^:private live-progress-only-change? (deref #'screen/live-progress-only-change?))
 
@@ -1573,3 +1581,89 @@
                      (let [got (:img (first (fit (band 10 0 5) 0 15)))]
                        (expect (= 10 (long (:rows got)))))
                      (expect (empty? (fit (band 20 20 0) 0 30)))))))
+
+(defn- rgb
+  "Color as [r g b] so a faded cell can be compared by value."
+  [^TextColor c]
+  [(.getRed c) (.getGreen c) (.getBlue c)])
+
+(defn- enter-band-screen
+  "A 20x6 virtual screen whose every row carries painted text on the terminal
+   background — a stand-in for a freshly drawn messages band."
+  ^TerminalScreen []
+  (let
+    [scr
+     (doto (TerminalScreen. (DefaultVirtualTerminal. (TerminalSize. 20 6))) (.startScreen))
+
+     ch
+     (TextCharacter. \X theme/text-fg theme/terminal-bg (into-array SGR []))]
+
+    (dotimes [row 6]
+      (dotimes [col 4]
+        (.setCharacter scr (int col) (int row) ch)))
+    scr))
+
+(defdescribe
+  transcript-enter-test
+  (it "the entrance wave resolves the BOTTOM of the band first, then settles"
+      (let
+        [alphas (fn [t]
+                  (mapv #(enter/row-alpha 0 t % 0 10) (range 10)))]
+        ;; Non-decreasing top -> bottom: the newest lines, nearest the input,
+        ;; are always at least as far along as the history above them.
+        (expect (apply <= (alphas 60)))
+        (expect (zero? (first (alphas 0))))
+        ;; Past the duration every row is fully painted, so the pass is a no-op.
+        (expect (every? #(== 1.0 %) (alphas enter/duration-ms)))
+        ;; Nothing armed: callers must see the final colors, never a fade.
+        (expect (== 1.0 (enter/row-alpha nil 999 3 0 10)))))
+  (it "active? covers exactly one duration from the arming stamp"
+      (expect (not (enter/active? nil 100)))
+      (expect (enter/active? 100 100))
+      (expect (enter/active? 100 (+ 100 enter/duration-ms -1)))
+      (expect (not (enter/active? 100 (+ 100 enter/duration-ms)))))
+  (it "the messages band dissolves up out of the terminal background"
+      (let
+        [fg-at
+         (fn [now]
+           (let [scr (enter-band-screen)]
+             (paint-transcript-enter! scr 20 0 6 1000 now)
+             (mapv #(rgb (.getForegroundColor (.getBackCharacter scr (int 0) (int %)))) (range 6))))
+
+         bg
+         (rgb theme/terminal-bg)
+
+         fg
+         (rgb theme/text-fg)]
+
+        ;; First frame: fully painted, yet entirely invisible.
+        (expect (= (vec (repeat 6 bg)) (fg-at 1000)))
+        ;; Mid-flight: the last row is already legible while history is not.
+        (let [mid (fg-at 1060)]
+          (expect (= bg (first mid)))
+          (expect (not= bg (last mid))))
+        ;; Settled: the pass must leave the real colors untouched.
+        (expect (= (vec (repeat 6 fg)) (fg-at (+ 1000 enter/duration-ms))))))
+  (it "an armed entrance forces FULL frames at the animation cadence"
+      (let
+        [flags (frame-change-flags {:last-db {}
+                                    :db {}
+                                    :last-layout {:total-h 10 :inner-h 5}
+                                    :last-hover nil
+                                    :current-hover nil
+                                    :cols 80
+                                    :same-size? true
+                                    :animate? false
+                                    :loading? false
+                                    :scroll-anim? false
+                                    :entering? true
+                                    :overlay-open? false
+                                    :was-blocked? false})]
+        ;; No cheap path may survive: the dissolve rewrites the whole band.
+        (expect (= :full (choose-frame-path flags)))
+        ;; And the loop must keep waking up while it runs.
+        (expect (< (park-wait-ms {:transcript-enter-at (System/currentTimeMillis)} false)
+                   (park-wait-ms {} true)))
+        (expect (= 250 (park-wait-ms {:transcript-enter-at 0} false)))))
+  (it "activating a tab arms the entrance"
+      (expect (:transcript-enter-at (activate-tab {:tabs [{:id "w1"}] :tab-locals {}} "w1")))))

@@ -5,6 +5,7 @@
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.command-suggest :as slash]
             [com.blockether.vis.ext.channel-tui.components :as components]
+            [com.blockether.vis.ext.channel-tui.enter :as enter]
             [com.blockether.vis.ext.channel-tui.file-suggest :as file-suggest]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.header :as header]
@@ -25,7 +26,7 @@
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [taoensso.telemere :as tel])
-  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize]
+  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize TextCharacter]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal MouseCaptureMode]
@@ -1899,6 +1900,51 @@
     (p/set-colors! g t/text-fg t/terminal-bg)
     (p/put-str! g 0 row (p/center-text label (long cols)))))
 
+(defn- transcript-entering?
+  "True while this view's transcript entrance dissolve is still running.
+   Armed by `state/arm-transcript-enter` whenever a session's transcript is
+   swapped in wholesale (tab activation, opening a session) — exactly the moments
+   the old code teleported a wall of text onto the screen."
+  [db now-ms]
+  (enter/active? (:transcript-enter-at db) now-ms))
+
+(defn- paint-transcript-enter!
+  "Dissolve pass: blend every painted cell of the messages band back toward the
+   terminal background by this frame's per-row alpha, so a freshly opened or
+   refocused transcript fades UP from the bottom instead of appearing between
+   two frames. The terminal counterpart of the companion's `@starting-style`
+   enter transition (`transcriptEnterClass`).
+
+   Runs on the BACK BUFFER after the frame is fully painted, after
+   `cr/commit-frame!` too, since click regions are geometry and unaffected by
+   color, and before `.refresh`, so the delta ships the faded cells and the
+   final frame lands on the real colors with nothing left to correct.
+
+   Cheap by construction: a blank cell on the plain background carries no
+   pigment, so it is skipped and only glyphs and tinted bubble rows are
+   rewritten. Caller holds `draw-lock`."
+  [^TerminalScreen screen cols messages-top messages-bottom start-ms now-ms]
+  (let [cols (long cols)
+        top (long messages-top)
+        bottom (long messages-bottom)
+        bg t/terminal-bg
+        fade-cell!
+        (fn [row alpha col]
+          (when-let [^TextCharacter tc (.getBackCharacter screen (int col) (int row))]
+            (let [fg (.getForegroundColor tc)
+                  cell-bg (.getBackgroundColor tc)]
+              (when-not (and (= " " (.getCharacterString tc)) (= cell-bg bg))
+                (.setCharacter screen (int col) (int row)
+                               (-> tc
+                                   (.withForegroundColor (enter/blend fg bg alpha))
+                                   (.withBackgroundColor (enter/blend cell-bg bg alpha))))))))]
+    (dotimes [dy (max 0 (- bottom top))]
+      (let [row (+ top dy)
+            alpha (enter/row-alpha start-ms now-ms row top bottom)]
+        (when (< alpha 1.0)
+          (dotimes [col cols]
+            (fade-cell! row alpha col)))))))
+
 (defn- render-frame!
   "Draw one frame: background, messages area (bubbles), input box,
    echo-area row, and two footer rows.
@@ -2239,6 +2285,9 @@
       ;; the commit so `cr/current` holds this frame's fresh toggle regions and
       ;; each letter badge lands on the chevron the user sees. No-op when off.
       (render/draw-detail-labels! g (:detail-labels-active? db) (:detail-labels db))
+      (when (transcript-entering? db now-ms)
+        (paint-transcript-enter! screen cols messages-top messages-bottom
+                                 (:transcript-enter-at db) now-ms))
       (when-not *skip-frame-refresh?*
         (let [refresh-start-ns (System/nanoTime)]
           (.refresh screen Screen$RefreshType/DELTA)
@@ -3236,9 +3285,11 @@
    published layout to diff against.
 
    A hydrating tab with an EMPTY transcript (`tab-content-loading?`) forces the
-   FULL path every tick so the centered in-content loading spinner animates."
+   FULL path every tick so the centered in-content loading spinner animates, and
+   so does an in-flight transcript entrance (`entering?`): its dissolve rewrites
+   every cell of the messages band, so no cheap partial path is valid."
   [{:keys [last-db db last-layout last-hover current-hover cols same-size? animate? loading?
-           scroll-anim? overlay-open? was-blocked?]}]
+           scroll-anim? entering? overlay-open? was-blocked?]}]
   (let
     [eligible?
      (and (not force-full-frame?) (not overlay-open?) (not was-blocked?))
@@ -3246,7 +3297,7 @@
      with-layout?
      (and eligible? same-size? last-layout)]
 
-    (if (tab-content-loading? db)
+    (if (or entering? (tab-content-loading? db))
       {:header-hover-only? false
        :partial-live? false
        :header-spinner-only? false
@@ -3310,10 +3361,12 @@
 
 (defn- park-wait-ms
   "How long the render thread should sleep before re-checking for work:
-   the fast animation tick while a scroll ease is in flight, the spinner tick
-   while a turn streams, else a defensive ~250ms idle cap on lost wakeups."
+   the fast animation tick while a scroll ease or a transcript entrance is in
+   flight, the spinner tick while a turn streams, else a defensive ~250ms idle
+   cap on lost wakeups."
   [db loading?]
-  (cond (scroll-anim-active? db) scroll-anim-tick-ms
+  (cond (transcript-entering? db (System/currentTimeMillis)) scroll-anim-tick-ms
+        (scroll-anim-active? db) scroll-anim-tick-ms
         loading? spinner-tick-ms
         :else 250))
 
@@ -3423,6 +3476,9 @@
                   scroll-anim?
                   (scroll-anim-active? db)
 
+                  entering?
+                  (transcript-entering? db now-ms)
+
                   ;; F1 (help) / F2 (context) overlays LOCK the
                   ;; background: while one is up we suppress every
                   ;; incremental repaint path. The overlay paints once
@@ -3437,6 +3493,9 @@
                        (or (and any-loading?
                                 (>= (- (long now-ms) (long last-frame-ms)) (long spinner-tick-ms)))
                            (and scroll-anim?
+                                (>= (- (long now-ms) (long last-frame-ms))
+                                    (long scroll-anim-tick-ms)))
+                           (and entering?
                                 (>= (- (long now-ms) (long last-frame-ms))
                                     (long scroll-anim-tick-ms)))))
 
@@ -3457,6 +3516,7 @@
                                                           :animate? animate?
                                                           :loading? loading?
                                                           :scroll-anim? scroll-anim?
+                                                          :entering? entering?
                                                           :overlay-open? overlay-open?
                                                           :was-blocked? was-blocked?}))]
 

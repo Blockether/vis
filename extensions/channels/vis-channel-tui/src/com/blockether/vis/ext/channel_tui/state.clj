@@ -971,6 +971,19 @@
       (and (nil? (:workspace db')) (:workspace entry))
       (assoc :workspace (:workspace entry)))))
 
+(defn- arm-transcript-enter
+  "Stamp `:transcript-enter-at` so the renderer plays its entrance dissolve for
+   the transcript that is about to appear (`screen/transcript-entering?`).
+
+   Armed only where the messages band changes WHOLESALE instead of growing: tab
+   activation, opening a session, boot. Those are the moments the TUI used to
+   teleport a full screen of history into place with no cue about what changed —
+   the terminal equivalent of mounting a list with no `@starting-style`.
+   Streaming appends deliberately do NOT arm it; re-fading the transcript on
+   every chunk would be strobing, not motion."
+  [db]
+  (assoc db :transcript-enter-at (System/currentTimeMillis)))
+
 (defn- activate-tab
   [db workspace-id]
   (-> db
@@ -984,7 +997,8 @@
                           (-> (assoc :active? true)
                               (dissoc :unread?))))
                       entries)))
-      (restore-tab workspace-id)))
+      (restore-tab workspace-id)
+      arm-transcript-enter))
 
 (defn- update-tab
   [db workspace-id f]
@@ -1676,7 +1690,8 @@
                              :pastes {}
                              :paste-counter 0
                              :detail-expansions {})
-                      (reconcile-in-flight-state db session)))))
+                      (reconcile-in-flight-state db session)
+                      arm-transcript-enter))))
 
 (reg-event-fx
   :open-session-tab
@@ -1811,7 +1826,7 @@
                                 :messages (or history [])
                                 :input-history (history-user-texts history)))]
 
-                    {:db (seed-ctx db')})))))
+                    {:db (seed-ctx (arm-transcript-enter db'))})))))
 
 (reg-event-db :open-building-tab
               ;; Optimistic new tab for a session whose cold env/runtime is still being
