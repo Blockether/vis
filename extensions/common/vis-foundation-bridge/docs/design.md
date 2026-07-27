@@ -18,6 +18,9 @@ Mutation tools:
 
 - `(br/init)` bootstraps Bridge in the current workspace. If Bridge is already
   configured, it returns the discovered profile path instead of failing.
+- In a non-repository parent that contains Git repositories, bare `(br/init)`
+  refuses to guess. Pass `{"root": "/abs/path/to/project"}`; initialization
+  still targets exactly one project.
 - `(br/run-evidence id)` runs one configured evidence command and writes the
   Bridge receipt.
 
@@ -50,30 +53,57 @@ Vis `:ext/protected-paths`. When policy enforcement is enabled, Bridge
 `path-pattern` entries become workspace-relative protected globs for the
 foundation editing tools. Directory patterns such as `.bridge/` are expanded
 to subtree globs such as `.bridge/**`; relative policy paths are resolved
-against the normalized Bridge profile root.
+against the normalized Bridge profile root. In a multi-repository workspace,
+rules from every discovered Bridge project are combined, with nested project
+roots ordered before ancestors and then lexically.
 
 All tools accept an optional opts map where relevant:
 
 ```clojure
-{:profile "path/to/profile.edn"
- :policy "path/to/verification-policy.yaml"
- :changed-files ["src/foo.clj"]
- :subject "core"
- :out-dir ".bridge/ephemeral/evidence"
- :out ".bridge/ephemeral/evidence/unit.yaml"
- :timeout-seconds 300
- :dry-run? true}
+{"root" "/abs/path/to/project"
+ "profile" "/abs/path/to/.bridge/profile.yaml"
+ "policy" "/abs/path/to/verification-policy.yaml"
+ "changed_files" ["src/foo.clj"]
+ "subject" "core"
+ "out_dir" ".bridge/ephemeral/evidence"
+ "out" ".bridge/ephemeral/evidence/unit.yaml"
+ "timeout_seconds" 300
+ "is_dry_run" true}
 ```
 
-`br/run-evidence` supports `:dry-run? true` to return the execution plan
+`br/run-evidence` supports `"is_dry_run" true` to return the execution plan
 without running a command or writing a receipt.
+
+## Session Context
+
+The extension contributes only Bridge project identity to the live Vis session
+object:
+
+```python
+session["env"]["bridge"] = {
+    "projects": [
+        {"root": "/abs/project", "profile_path": "/abs/project/.bridge/profile.yaml"}
+    ],
+    # Present only when bare br/* operations have a safe default:
+    "default_profile_path": "/abs/project/.bridge/profile.yaml",
+    # Present only when the bounded repository scan stopped early:
+    "discovery_truncated": True,
+}
+```
+
+All keys at this boundary are strings. The entire `bridge` slice is omitted
+when no configured project is discovered. It intentionally contains no status,
+obligations, receipts, or next action: those are fresh, explicit outputs of
+`br/check`, not ambient session state.
 
 ## Runtime Flow
 
 1. The agent reproduces and inspects through normal Vis tools.
-2. If the repo is new to Bridge, the agent calls `(br/init)`.
+2. If the repo is new to Bridge, the agent calls `(br/init)` or supplies an
+   explicit root in a multi-repository parent.
 3. The agent edits through `v/patch`.
-4. The agent calls `(br/check)`.
+4. The agent calls `(br/check)`, passing an explicit profile when the session
+   has no safe default.
 5. Bridge maps changed files to subsystems and policy obligations.
 6. The agent inspects `:next-action` in the returned status.
 7. When needed, the agent calls `(br/run-evidence id)` for a configured
@@ -83,13 +113,34 @@ without running a command or writing a receipt.
 
 ## Profile Discovery
 
-The extension resolves profile paths relative to the active Vis workspace
-root, then checks:
+The extension reuses Vis's cached, bounded Git repository inventory beneath the
+primary workspace root. The inventory scans at most 64 repositories and skips
+hidden, vendor, and build roots. `refresh()` invalidates it; profile files
+inside already-known repositories are probed on every contribution and become
+visible immediately.
 
-1. `.bridge/profile.edn`
-2. `.bridge/persistent/profile.edn`
+For the active root and each discovered Git root, the extension checks:
 
-Callers can override discovery with `{:profile "..."}`.
+1. `.bridge/profile.yaml`
+2. `.bridge/persistent/profile.yaml`
+3. `.bridge/profile.edn`
+4. `.bridge/persistent/profile.edn`
+
+Selection is deterministic and conservative:
+
+1. An explicit `{"profile": path}` wins.
+2. Otherwise a profile at the active workspace root wins.
+3. Otherwise exactly one discovered profile is the default only when repository
+   discovery completed.
+4. Multiple candidates, or a truncated scan without an active-root profile,
+   produce a structured ambiguity error with candidates and require an explicit
+   profile.
+
+Bridge remains single-project per operation. The extension has no hidden
+"current project" and no aggregate check verdict. Cross-repository work runs
+one `br/check` for each touched profile. Additional attached filesystem roots
+are not scanned in this first integration; their profiles remain available
+through the explicit selector.
 
 ## Boundaries
 
@@ -112,7 +163,9 @@ Bridge-owned:
 
 Extension-owned:
 
-- profile discovery from the active workspace
+- Git-root-based Bridge project discovery below the primary workspace
+- safe default selection and structured ambiguity reporting
+- string-keyed project identity in `session["env"]["bridge"]`
 - converting Bridge library calls into plain Vis tool envelopes
 - registering op tags and prompt guidance
 - translating Bridge path sandbox policy into Vis protected-path declarations
@@ -129,3 +182,4 @@ instead.
 - No duplicate policy engine inside Vis.
 - No direct storage poking into Vis or Bridge internals.
 - No automatic evidence execution without an explicit `br/run-evidence` call.
+- No aggregate multi-project verdict or implicit mutable current-project state.

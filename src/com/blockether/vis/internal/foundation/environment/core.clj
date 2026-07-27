@@ -52,56 +52,54 @@
   "Build the full snapshot map. Each piece is independently guarded
    so a failure in one section never poisons the others."
   [^String cwd]
-  (let
-    [cwd-file
-     (java.io.File. cwd)
+  (let [cwd-file
+        (java.io.File. cwd)
 
-     host-map
-     (try (host/snapshot)
-          (catch Throwable t
-            (tel/log! {:level :warn :id ::host-failed :data {:error (ex-message t)}})
-            {}))
+        host-map
+        (try (host/snapshot)
+             (catch Throwable t
+               (tel/log! {:level :warn :id ::host-failed :data {:error (ex-message t)}})
+               {}))
 
-     git-map
-     (try (git/snapshot cwd-file)
-          (catch Throwable t
-            (tel/log! {:level :warn :id ::git-failed :data {:error (ex-message t)}})
-            nil))
+        git-map
+        (try (git/snapshot cwd-file)
+             (catch Throwable t
+               (tel/log! {:level :warn :id ::git-failed :data {:error (ex-message t)}})
+               nil))
 
-     scan-root
-     (or (some-> ^String (:root git-map)
-                 (java.io.File.))
-         cwd-file)
+        scan-root
+        (or (some-> ^String (:root git-map)
+                    (java.io.File.))
+            cwd-file)
 
-     langs-map
-     (try (languages/scan scan-root)
-          (catch Throwable t
-            (tel/log! {:level :warn :id ::languages-failed :data {:error (ex-message t)}})
-            nil))
+        langs-map
+        (try (languages/scan scan-root)
+             (catch Throwable t
+               (tel/log! {:level :warn :id ::languages-failed :data {:error (ex-message t)}})
+               nil))
 
-     mono-map
-     (try (monorepo/snapshot scan-root)
-          (catch Throwable t
-            (tel/log! {:level :warn :id ::monorepo-failed :data {:error (ex-message t)}})
-            nil))
+        mono-map
+        (try (monorepo/snapshot scan-root)
+             (catch Throwable t
+               (tel/log! {:level :warn :id ::monorepo-failed :data {:error (ex-message t)}})
+               nil))
 
-     repos-map
-     (try (repositories/snapshot scan-root)
-          (catch Throwable t
-            (tel/log! {:level :warn :id ::repositories-failed :data {:error (ex-message t)}})
-            nil))]
+        repos-map
+        (try (repositories/snapshot scan-root)
+             (catch Throwable t
+               (tel/log! {:level :warn :id ::repositories-failed :data {:error (ex-message t)}})
+               nil))]
 
     {:host host-map :git git-map :languages langs-map :monorepo mono-map :repositories repos-map}))
 
 (defn snapshot
   "Full environment snapshot map {:host :git :languages :monorepo :repositories}. Cached per cwd; host helper, not a model tool."
   []
-  (let
-    [cwd
-     (canonical-cwd)
+  (let [cwd
+        (canonical-cwd)
 
-     cached
-     @cache]
+        cached
+        @cache]
 
     (if (= cwd (:key cached))
       (:value cached)
@@ -114,6 +112,7 @@
 Drop the cached env snapshot and recompute. Returns the fresh snapshot. Use after large tree/branch changes."
   []
   (reset! cache {:key nil :value nil})
+  (repositories/refresh-inventory!)
   (try (agents/reload!)
        (catch Throwable t
          (tel/log! {:level :warn :id ::agents-reload-failed :data {:error (ex-message t)}})))

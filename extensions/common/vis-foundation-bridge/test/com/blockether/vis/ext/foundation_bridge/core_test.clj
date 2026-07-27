@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.foundation-bridge.core-test
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
             [bridge.io :as bio]
             [com.blockether.vis.core :as vis]
@@ -17,9 +18,9 @@
 
 (defn- temp-root
   [prefix]
-  (str (java.nio.file.Files/createTempDirectory prefix
-                                                (make-array java.nio.file.attribute.FileAttribute
-                                                            0))))
+  (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
+                                prefix
+                                (make-array java.nio.file.attribute.FileAttribute 0)))))
 
 (defn- write-policy!
   [root sandbox]
@@ -29,34 +30,44 @@
                    :bridge-path-sandbox sandbox
                    :rules []}))
 
+(defn- mark-repository! [root] (.mkdirs (io/file root ".git")) root)
+
+(defn- configure-project!
+  [workspace-root project-root]
+  (mark-repository! project-root)
+  (bridge/init {:workspace/root workspace-root} {"root" project-root})
+  (str project-root "/.bridge/profile.yaml"))
+
+(defn- bridge-context
+  [root]
+  (boundary/boundary-view ((:ext/ctx-fn bridge/vis-extension) {:workspace/root root})))
+
 (defn- protected-env [root] {:workspace/root root :extensions (atom [bridge/vis-extension])})
 
 (defdescribe
   bridge-extension-test
-  (it
-    "configures the extension"
-    (expect (= 'br (get-in bridge/vis-extension [:ext/engine :ext.engine/alias])))
-    (expect (= '#{init profile check list-evidence run-evidence}
-               (set (map :ext.symbol/symbol
-                         (get-in bridge/vis-extension [:ext/engine :ext.engine/symbols])))))
-    (expect (= #{"init" "profile" "check" "list-evidence" "run-evidence"}
-               (set (map :cmd/name
-                         (get-in bridge/vis-extension [:ext/cli 0 :cmd/subcommands])))))
-    (expect (fn? (:ext/protected-paths bridge/vis-extension)))
-    (expect (nil? (:ext/hooks bridge/vis-extension)))
-    (expect (= :observation (vis/op-tag :br/check)))
-    (expect (= :mutation (vis/op-tag :br/init)))
-    (expect (= :mutation (vis/op-tag :br/run-evidence))))
+  (it "configures the extension"
+      (expect (= 'br (get-in bridge/vis-extension [:ext/engine :ext.engine/alias])))
+      (expect (= '#{init profile check list-evidence run-evidence}
+                 (set (map :ext.symbol/symbol
+                           (get-in bridge/vis-extension [:ext/engine :ext.engine/symbols])))))
+      (expect (= #{"init" "profile" "check" "list-evidence" "run-evidence"}
+                 (set (map :cmd/name (get-in bridge/vis-extension [:ext/cli 0 :cmd/subcommands])))))
+      (expect (fn? (:ext/ctx-fn bridge/vis-extension)))
+      (expect (fn? (:ext/protected-paths bridge/vis-extension)))
+      (expect (nil? (:ext/hooks bridge/vis-extension)))
+      (expect (= :observation (vis/op-tag :br/check)))
+      (expect (= :mutation (vis/op-tag :br/init)))
+      (expect (= :mutation (vis/op-tag :br/run-evidence))))
   (it "emits concise routing only in configured workspaces"
-      (let
-        [root
-         (temp-root "bridge-ext-prompt")
+      (let [root
+            (temp-root "bridge-ext-prompt")
 
-         env
-         {:workspace/root root}
+            env
+            {:workspace/root root}
 
-         prompt-fn
-         (:ext/prompt-fn bridge/vis-extension)]
+            prompt-fn
+            (:ext/prompt-fn bridge/vis-extension)]
 
         (expect (nil? (prompt-fn env)))
         (bridge/init env)
@@ -69,33 +80,210 @@
           (expect (< (count prompt) 400))))))
 
 (defdescribe
+  bridge-session-projects-test
+  (it "omits the Bridge session slice when no configured project is known"
+      (expect (= {} (bridge-context (temp-root "bridge-ext-session-empty")))))
+  (it
+    "discovers one configured child repository and defaults bare operations to it"
+    (let [root
+          (temp-root "bridge-ext-session-one")
+
+          child
+          (str root "/project")
+
+          _
+          (mark-repository! child)
+
+          before
+          (bridge-context root)
+
+          profile-path
+          (configure-project! root child)
+
+          context
+          (bridge-context root)
+
+          bridge-slice
+          (get-in context ["session_env" "bridge"])
+
+          check-result
+          (bridge/check {:workspace/root root})]
+
+      ;; Repository roots are cached, but profile files are probed on every
+      ;; contribution, so configuring a known repo is visible immediately.
+      (expect (= {} before))
+      (expect (= [{"root" child "profile_path" profile-path}] (get bridge-slice "projects")))
+      (expect (= profile-path (get bridge-slice "default_profile_path")))
+      (expect (not (contains? bridge-slice "discovery_truncated")))
+      (expect (true? (:success? check-result)))
+      (expect (= profile-path (get-in (result-of check-result) ["profile_path"])))))
+  (it
+    "requires explicit selection when multiple child repositories are configured"
+    (let [root
+          (temp-root "bridge-ext-session-many")
+
+          alpha
+          (str root "/alpha")
+
+          beta
+          (str root "/beta")
+
+          _
+          (mark-repository! alpha)
+
+          _
+          (mark-repository! beta)
+
+          alpha-profile
+          (configure-project! root alpha)
+
+          beta-profile
+          (configure-project! root beta)
+
+          bridge-slice
+          (get-in (bridge-context root) ["session_env" "bridge"])
+
+          ambiguous
+          (bridge/check {:workspace/root root})
+
+          selected
+          (bridge/check {:workspace/root root} {"profile" beta-profile})]
+
+      (expect (= [alpha-profile beta-profile]
+                 (mapv #(get % "profile_path") (get bridge-slice "projects"))))
+      (expect (not (contains? bridge-slice "default_profile_path")))
+      (expect (false? (:success? ambiguous)))
+      (expect (str/includes? (get-in ambiguous [:error :message]) "Multiple Bridge projects"))
+      (expect (= 2 (count (get-in ambiguous [:error :details :projects]))))
+      (expect (true? (:success? selected)))
+      (expect (= beta-profile (get-in (result-of selected) ["profile_path"])))
+      (expect (str/includes? ((:ext/prompt-fn bridge/vis-extension) {:workspace/root root})
+                             "profile"))))
+  (it "gives the active-root profile precedence over configured nested repositories"
+      (let [root
+            (temp-root "bridge-ext-session-root")
+
+            nested
+            (str root "/nested")
+
+            _
+            (mark-repository! root)
+
+            _
+            (mark-repository! nested)
+
+            root-profile
+            (configure-project! root root)
+
+            _
+            (configure-project! root nested)
+
+            bridge-slice
+            (get-in (bridge-context root) ["session_env" "bridge"])
+
+            result
+            (bridge/profile {:workspace/root root})]
+
+        (expect (= root-profile (get bridge-slice "default_profile_path")))
+        (expect (true? (:success? result)))
+        (expect (= root-profile (get-in (result-of result) ["profile_path"])))))
+  (it "disables sole-project defaulting when repository discovery is truncated"
+      (let [root
+            (temp-root "bridge-ext-session-truncated")
+
+            child
+            (str root "/project")
+
+            profile-path
+            (configure-project! root child)
+
+            inventory
+            {:root root :count 1 :repositories [{:path "project" :root child}] :truncated? true}]
+
+        (with-redefs [vis/repository-inventory (constantly inventory)]
+          (let [bridge-slice (get-in (bridge-context root) ["session_env" "bridge"])
+                ambiguous (bridge/check {:workspace/root root})
+                selected (bridge/check {:workspace/root root} {"profile" profile-path})]
+
+            (expect (= true (get bridge-slice "discovery_truncated")))
+            (expect (not (contains? bridge-slice "default_profile_path")))
+            (expect (false? (:success? ambiguous)))
+            (expect (str/includes? (get-in ambiguous [:error :message]) "truncated"))
+            (expect (true? (:success? selected))))))))
+
+(defdescribe bridge-multirepo-init-test
+             (it
+               "refuses bare initialization in a non-repository parent and accepts an explicit root"
+               (let [root
+                     (temp-root "bridge-ext-init-parent")
+
+                     child
+                     (mark-repository! (str root "/project"))
+
+                     bare
+                     (bridge/init {:workspace/root root})
+
+                     explicit
+                     (bridge/init {:workspace/root root} {"root" child})]
+
+                 (expect (false? (:success? bare)))
+                 (expect (str/includes? (get-in bare [:error :message]) "explicit project root"))
+                 (expect (= [child] (get-in bare [:error :details :repository-roots])))
+                 (expect (true? (:success? explicit)))
+                 (expect (= child (get-in (result-of explicit) ["workspace_root"])))))
+             (it "initializes the active repository instead of adopting a configured nested profile"
+                 (let [root
+                       (temp-root "bridge-ext-init-active")
+
+                       nested
+                       (str root "/nested")
+
+                       _
+                       (mark-repository! root)
+
+                       _
+                       (mark-repository! nested)
+
+                       nested-profile
+                       (configure-project! root nested)
+
+                       result
+                       (bridge/init {:workspace/root root})
+
+                       root-profile
+                       (str root "/.bridge/profile.yaml")]
+
+                   (expect (true? (:success? result)))
+                   (expect (= false (get-in (result-of result) ["already_configured"])))
+                   (expect (= root-profile (get-in (result-of result) ["profile_path"])))
+                   (expect (not= nested-profile (get-in (result-of result) ["profile_path"]))))))
+
+(defdescribe
   bridge-protected-paths-test
   (it "returns no protected path rules when Bridge is unconfigured"
       (let [root (temp-root "bridge-ext-protected-unconfigured")]
         (expect (= [] ((:ext/protected-paths bridge/vis-extension) (protected-env root))))
         (expect (= [] (extension/active-protected-globs (protected-env root))))))
   (it "returns no protected path rules when policy enforcement is disabled"
-      (let
-        [root
-         (temp-root "bridge-ext-protected-disabled")
+      (let [root
+            (temp-root "bridge-ext-protected-disabled")
 
-         env
-         {:workspace/root root}]
+            env
+            {:workspace/root root}]
 
         (bridge/init env)
         (write-policy! root {:enforce? false :rules [{:path-pattern ".bridge/" :access "none"}]})
         (expect (= [] ((:ext/protected-paths bridge/vis-extension) (protected-env root))))))
   (it
     "maps enforced Bridge path sandbox rules to Vis protected path rules"
-    (let
-      [root
-       (temp-root "bridge-ext-protected")
+    (let [root
+          (temp-root "bridge-ext-protected")
 
-       env
-       {:workspace/root root}
+          env
+          {:workspace/root root}
 
-       hint
-       "Policy changes require human approval."]
+          hint
+          "Policy changes require human approval."]
 
       (bridge/init env)
       (write-policy!
@@ -133,18 +321,17 @@
           (extension/active-protected-globs (protected-env root))))))
   (it
     "prefixes policy patterns when the Bridge profile root is below the workspace"
-    (let
-      [root
-       (temp-root "bridge-ext-protected-subroot")
+    (let [root
+          (temp-root "bridge-ext-protected-subroot")
 
-       project-root
-       (str root "/project")
+          project-root
+          (str root "/project")
 
-       env
-       {:workspace/root root}
+          env
+          {:workspace/root root}
 
-       profile-path
-       (str root "/.bridge/profile.yaml")]
+          profile-path
+          (str root "/.bridge/profile.yaml")]
 
       (bridge/init env)
       (.mkdirs (java.io.File. project-root ".bridge"))
@@ -161,38 +348,65 @@
             :access :none
             :hint
             "Bridge policy protects this path; use the br/* tool surface instead of direct file IO."}]
-          ((:ext/protected-paths bridge/vis-extension) (protected-env root)))))))
+          ((:ext/protected-paths bridge/vis-extension) (protected-env root))))))
+  (it "aggregates protected paths from nested projects before ancestor projects"
+      (let [root
+            (temp-root "bridge-ext-protected-projects")
+
+            nested
+            (str root "/nested")
+
+            _
+            (mark-repository! root)
+
+            _
+            (mark-repository! nested)
+
+            _
+            (configure-project! root root)
+
+            _
+            (configure-project! root nested)]
+
+        (write-policy! root
+                       {:enforce? true
+                        :rules [{:path-pattern ".bridge/" :access "read-only" :reason "ancestor"}]})
+        (write-policy! nested
+                       {:enforce? true
+                        :rules [{:path-pattern ".bridge/" :access "none" :reason "nested"}]})
+        (expect (= [{:glob "nested/.bridge/**" :access :none :hint "nested"}
+                    {:glob ".bridge/**" :access :read-only :hint "ancestor"}]
+                   ((:ext/protected-paths bridge/vis-extension) (protected-env root)))))))
 
 (defdescribe
   bridge-unconfigured-workspace-test
   (it
     "can initialize an unconfigured workspace and run the CLI"
-    (let
-      [root
-       (str (java.nio.file.Files/createTempDirectory
-              "bridge-ext-test"
-              (make-array java.nio.file.attribute.FileAttribute 0)))
+    (let [root
+          (str (java.nio.file.Files/createTempDirectory
+                 "bridge-ext-test"
+                 (make-array java.nio.file.attribute.FileAttribute 0)))
 
-       _
-       (spit (str root "/deps.edn") "{:aliases {:test {}}}")
+          _
+          (spit (str root "/deps.edn") "{:aliases {:test {}}}")
 
-       env
-       {:workspace/root root}
+          env
+          {:workspace/root root}
 
-       init-result
-       (bridge/init env)
+          init-result
+          (bridge/init env)
 
-       profile-result
-       (bridge/profile env)
+          profile-result
+          (bridge/profile env)
 
-       check-result
-       (bridge/check env)
+          check-result
+          (bridge/check env)
 
-       list-result
-       (bridge/list-evidence env)
+          list-result
+          (bridge/list-evidence env)
 
-       run-result
-       (bridge/run-evidence env "unit" {"is_dry_run" true})]
+          run-result
+          (bridge/run-evidence env "unit" {"is_dry_run" true})]
 
       (expect (true? (:success? init-result)))
       (expect (= true (get-in (result-of init-result) ["configured"])))
@@ -215,17 +429,16 @@
 (defdescribe
   bridge-no-profile-error-test
   (it "returns an error when no profile is configured"
-      (let
-        [root
-         (str (java.nio.file.Files/createTempDirectory
-                "bridge-ext-no-profile"
-                (make-array java.nio.file.attribute.FileAttribute 0)))
+      (let [root
+            (str (java.nio.file.Files/createTempDirectory
+                   "bridge-ext-no-profile"
+                   (make-array java.nio.file.attribute.FileAttribute 0)))
 
-         env
-         {:workspace/root root}
+            env
+            {:workspace/root root}
 
-         run-result
-         (bridge/run-evidence env "unit" {"is_dry_run" true})]
+            run-result
+            (bridge/run-evidence env "unit" {"is_dry_run" true})]
 
         (expect (false? (:success? run-result)))
         (expect (not (str/includes? (or (get-in run-result [:error :hint]) "") "bb bridge")))
@@ -233,17 +446,17 @@
 
 (defdescribe bridge-init-idempotent-test
              (it "init is iempotent"
-                 (let
-                   [env
-                    {:workspace/root (str (java.nio.file.Files/createTempDirectory
-                                            "bridge-ext-idempotent"
-                                            (make-array java.nio.file.attribute.FileAttribute 0)))}
+                 (let [env
+                       {:workspace/root (str (java.nio.file.Files/createTempDirectory
+                                               "bridge-ext-idempotent"
+                                               (make-array java.nio.file.attribute.FileAttribute
+                                                           0)))}
 
-                    first-result
-                    (bridge/init env)
+                       first-result
+                       (bridge/init env)
 
-                    second-result
-                    (bridge/init env)]
+                       second-result
+                       (bridge/init env)]
 
                    (expect (true? (:success? first-result)))
                    (expect (= false (get-in (result-of first-result) ["already_configured"])))
@@ -258,44 +471,43 @@
   bridge-check-flattens-status-test
   (it
     "check returns flattened status summary"
-    (let
-      [root
-       (str (java.nio.file.Files/createTempDirectory
-              "bridge-ext-flatten"
-              (make-array java.nio.file.attribute.FileAttribute 0)))
+    (let [root
+          (str (java.nio.file.Files/createTempDirectory
+                 "bridge-ext-flatten"
+                 (make-array java.nio.file.attribute.FileAttribute 0)))
 
-       _
-       (spit (str root "/deps.edn") "{:aliases {:test {}}}")
+          _
+          (spit (str root "/deps.edn") "{:aliases {:test {}}}")
 
-       _
-       (.mkdirs (java.io.File. root "src"))
+          _
+          (.mkdirs (java.io.File. root "src"))
 
-       _
-       (spit (str root "/src/core.clj") "(ns core)")
+          _
+          (spit (str root "/src/core.clj") "(ns core)")
 
-       env
-       {:workspace/root root}
+          env
+          {:workspace/root root}
 
-       _
-       (bridge/init env)
+          _
+          (bridge/init env)
 
-       _
-       (bio/write-data (str root "/.bridge/ephemeral/evidence/unit.yaml")
-                       {:artifact "evidence-run"
-                        :evidence-id "unit"
-                        :kind "unit-tests"
-                        :role "regression"
-                        :subject "vis"
-                        :evidence-status "failed"
-                        :execution-status "execution-failed"
-                        :finished-at "2026-05-20T19:01:06.340575Z"
-                        :command "clojure -M:test"})
+          _
+          (bio/write-data (str root "/.bridge/ephemeral/evidence/unit.yaml")
+                          {:artifact "evidence-run"
+                           :evidence-id "unit"
+                           :kind "unit-tests"
+                           :role "regression"
+                           :subject "vis"
+                           :evidence-status "failed"
+                           :execution-status "execution-failed"
+                           :finished-at "2026-05-20T19:01:06.340575Z"
+                           :command "clojure -M:test"})
 
-       result
-       (bridge/check env {"changed_files" ["src/core.clj"]})
+          result
+          (bridge/check env {"changed_files" ["src/core.clj"]})
 
-       r
-       (result-of result)]
+          r
+          (result-of result)]
 
       (expect (true? (:success? result)))
       (expect (= "attention-required" (get-in r ["status"])))

@@ -49,6 +49,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.extension-aggregate :as extension-aggregate]
             [com.blockether.vis.internal.form :as form]
+            [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
             [com.blockether.vis.internal.import :refer [import-vars]]
             [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
@@ -254,6 +255,8 @@
              [workspace-with-session workspace/workspace-with-session]
              [workspace-list-active-with-sessions workspace/list-active-with-sessions]
              [workspace-register-hook! workspace/register-hook!])
+
+(import-vars [repository-inventory repositories/inventory])
 
 ;; =============================================================================
 ;; Slash commands (declarative `:ext/slash-commands`)

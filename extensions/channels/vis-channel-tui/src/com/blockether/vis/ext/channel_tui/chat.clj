@@ -1049,25 +1049,28 @@
 
 (defn- create-session*
   [_provider-config {:keys [workspace-id root]}]
-  (let
-    [resp (vis/gateway-create-session! (cond-> {:channel :tui}
-                                         workspace-id
-                                         (assoc :workspace-id workspace-id)
+  (let [root (or root
+                 (when-not workspace-id
+                   (vis/workspace-normalize-root (System/getProperty "user.dir"))))
+        resp (vis/gateway-create-session! (cond-> {:channel :tui}
+                                            workspace-id
+                                            (assoc :workspace-id workspace-id)
 
-                                         root
-                                         (assoc :root root)))]
+                                            root
+                                            (assoc :root root)))]
     {:id (java.util.UUID/fromString (get resp "id")) :history []}))
 
 
 
 (defn make-session
-  "Create a fresh `:tui` session through the gateway-owned warm pool."
+  "Create a fresh `:tui` session at this client's invocation root. The gateway
+   reuses a warm session when that root matches its own."
   ([_provider-config] (make-session _provider-config nil))
   ([provider-config opts] (create-session* provider-config opts)))
 
 (defn make-session-async
   "Create a session off the input thread. The gateway normally answers from its
-   warm pool; a pool miss still never blocks TUI input."
+   compatible warm pool; a pool miss still never blocks TUI input."
   ([provider-config] (make-session-async provider-config nil))
   ([provider-config opts]
    {:building (vis/worker-future "tui-session-build" #(create-session* provider-config opts))}))

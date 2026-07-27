@@ -3222,9 +3222,10 @@
 (defn create-session!
   "Create or adopt a gateway-managed session.
 
-   Ordinary default-workspace creates consume the gateway-owned warm pool and
-   replenish it in the background. `:workspace-id`, `:root`, and `:external-id`
-   require a purpose-built environment and bypass the pool."
+   Default-workspace creates consume the gateway-owned warm pool and replenish
+   it in the background. An explicit `:root` can share that pool only when it
+   matches the gateway launch root; other roots, `:workspace-id`, and
+   `:external-id` require a purpose-built environment."
   [{:keys [channel external-id workspace-id root] :as opts}]
   (let
     [channel
@@ -3234,7 +3235,10 @@
      (assoc opts :channel channel)
 
      pool-eligible?
-     (and (nil? external-id) (nil? workspace-id) (nil? root))
+     (and (nil? external-id)
+          (nil? workspace-id)
+          (or (nil? root)
+              (= (workspace/normalize-root root) (workspace/trunk-root))))
 
      pooled
      (when pool-eligible? (pop-prewarmed! channel))]

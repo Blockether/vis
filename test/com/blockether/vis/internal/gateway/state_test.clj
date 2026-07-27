@@ -1314,7 +1314,9 @@
               (fn [session title]
                 (assoc session :title title))]
 
-             (let [created (state/create-session! {:channel :api :title "Ready"})]
+             (let [created (state/create-session! {:channel :api
+                                                   :title "Ready"
+                                                   :root (System/getProperty "user.dir")})]
                (expect (= (str sid) (get created "id")))
                (expect (= "Ready" (get created "title")))
                (expect (= [:api] @refills))
