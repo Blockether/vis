@@ -1113,6 +1113,9 @@
      basis
      (b/create-basis {:project (root-deps-edn profile) :aliases [:native]})]
 
+    ;; A prior `package`/uber run can leave a target/vis DIRECTORY behind; the
+    ;; builder then dies at [8/8] Creating image with "Path exists as directory".
+    (b/delete {:path native-bin})
     (println "native-image (reusing target/native-classes)…")
     (let
       [{:keys [exit]} (b/process {:command-args (into [(native-image-command)]
@@ -1171,6 +1174,9 @@
              :main 'com.blockether.vis.core
              :exclude uber-exclusions})
     (println "->" native-uber)
+    ;; A prior `package`/uber run can leave a target/vis DIRECTORY behind; the
+    ;; builder then dies at [8/8] Creating image with "Path exists as directory".
+    (b/delete {:path native-bin})
     ;; (2) native distribution. Built from a classpath of real jars (NOT the
     ;; uberjar) so polyglot/graalpy keep their module-info + native-image.properties.
     (println "native-image:"
