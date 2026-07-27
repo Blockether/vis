@@ -846,58 +846,7 @@
                                 @notified))))))
 
 (defdescribe cancel-reaches-gateway-after-send-test
-             ;; REGRESSION (user report): cancel a running turn, then send a correction.
-             ;; The correction landed in BOTH the transcript AND the gateway queue, then
-             ;; sat there until the "cancelled" turn finished on its own — because the
-             ;; cancel never reached the daemon. Root cause: a plain `:send-message` turn
-             ;; has no `:gateway-turn-id` yet (it's minted server-side), and
-             ;; `:sync-turn-clock` used to drop the id the `turn.started` chunk carries.
-             ;; So `:cancel-turn`'s `(when (and sid tid) …)` short-circuited and the
-             ;; daemon kept running. Fix: `:sync-turn-clock` late-binds the id.
-             (it
-               "cancel of a send-message turn reaches the gateway once turn.started arrives"
-               (let [cancelled-gateway (atom nil)]
-                 (with-redefs
-                   [vis/cancel! (fn [_]
-                                  nil)
-                    vis/notify! (fn [_ & _]
-                                  nil)
-                    vis/gateway-cancel-turn! (fn [sid tid]
-                                               (reset! cancelled-gateway [sid tid])
-                                               {:status "cancelling"})]
-
-                   ;; State AFTER `:send-message` submitted a fresh turn: loading, but
-                   ;; the gateway turn id is not known yet.
-                   (reset! state/app-db {:session {:id "s1"}
-                                         :active-tab-id "s1"
-                                         :render-version 0
-                                         :loading? true
-                                         :cancel-token :token
-                                         :cancelling? false
-                                         :gateway-turn-id nil
-                                         :turn-start-ms 10})
-                   ;; BEFORE turn.started: a cancel can't reach the gateway — the id is
-                   ;; unknown (the turn isn't assigned server-side yet either).
-                   (state/dispatch [:cancel-turn])
-                   (expect (nil? @cancelled-gateway))
-                   ;; turn.started lands, projected as a :turn-start chunk with the id.
-                   (state/dispatch [:sync-turn-clock nil {:turn-id "gw-turn-1" :started-at-ms 123}])
-                   (expect (= "gw-turn-1" (:gateway-turn-id @state/app-db)))
-                   ;; NOW the cancel reaches the daemon with the real (sid, tid).
-                   (reset! cancelled-gateway nil)
-                   (state/dispatch [:cancel-turn])
-                   (expect (= ["s1" "gw-turn-1"] @cancelled-gateway))))))
-
-(defdescribe cancel-auto-fires-on-late-bind-test
-             ;; REGRESSION (user report): "I send siema, hit Esc, then send siema again and
-             ;; I see BOTH the queue and the sent text; after a few seconds it renegotiates
-             ;; and the queue vanishes." A single Esc pressed BEFORE `turn.started` bound the
-             ;; gateway id armed `:cancelling?` but could not reach the daemon, leaving a
-             ;; ghost turn running server-side that the next submit queued behind. It only
-             ;; drained once the ghost finished on its own. Fix: `:sync-turn-clock` finishes
-             ;; the pending cancel automatically when the id late-binds — no second Esc, no
-             ;; ghost, no phantom queue.
-             (it "a single Esc kills the turn the moment turn.started binds the id"
+             (it "binds the matching send-message turn so Esc reaches the gateway"
                  (let [cancelled-gateway (atom nil)]
                    (with-redefs
                      [vis/cancel! (fn [_]
@@ -908,25 +857,100 @@
                                                  (reset! cancelled-gateway [sid tid])
                                                  {:status "cancelling"})]
 
+                     ;; State after :send-message submitted a fresh turn: its client id is
+                     ;; known locally, while its server-minted turn id is not.
                      (reset! state/app-db {:session {:id "s1"}
                                            :active-tab-id "s1"
                                            :render-version 0
                                            :loading? true
                                            :cancel-token :token
                                            :cancelling? false
+                                           :live-turn-client-id "cid-1"
                                            :gateway-turn-id nil
                                            :turn-start-ms 10})
-                     ;; One Esc, before the id is known: nothing reaches the gateway yet, but
-                     ;; the intent is remembered.
-                     (state/dispatch [:cancel-turn])
-                     (expect (nil? @cancelled-gateway))
-                     (expect (true? (:cancel-awaiting-turn-id? @state/app-db)))
-                     ;; turn.started lands — the cancel now fires automatically, no 2nd Esc.
                      (state/dispatch [:sync-turn-clock nil
-                                      {:turn-id "gw-turn-1" :started-at-ms 123}])
-                     (expect (= ["s1" "gw-turn-1"] @cancelled-gateway))
-                     ;; Marker is one-shot — cleared so it can't cancel a later turn.
-                     (expect (not (:cancel-awaiting-turn-id? @state/app-db)))))))
+                                      {:turn-id "gw-turn-1" :client-id "cid-1" :started-at-ms 123}])
+                     (expect (= "gw-turn-1" (:gateway-turn-id @state/app-db)))
+                     (state/dispatch [:cancel-turn])
+                     (expect (= ["s1" "gw-turn-1"] @cancelled-gateway))))))
+
+(defdescribe cancel-auto-fires-on-late-bind-test
+             ;; REGRESSION: Esc can beat the submit POST, receive `no-running-turn`, and
+             ;; clear locally. An immediate identical resend then races the OLD POST's
+             ;; delayed turn.started. Correlate starts by client id so the old ghost is
+             ;; cancelled, never rebound as the new visible turn.
+             (it
+               "quick cancel plus identical resend cancels only the delayed old start"
+               (let
+                 [cancelled-gateway
+                  (atom nil)
+
+                  send-message-fn
+                  (:fn (get @@#'state/event-registry :send-message))]
+
+                 (with-redefs
+                   [vis/cancel!
+                    (fn [_]
+                      nil)
+
+                    vis/notify!
+                    (fn [_ & _]
+                      nil)
+
+                    vis/gateway-cancel-current-turn!
+                    (fn [_]
+                      {:error :no-running-turn})
+
+                    vis/gateway-cancel-turn!
+                    (fn [sid tid]
+                      (reset! cancelled-gateway [sid tid])
+                      {:status "cancelling"})]
+
+                   (reset! state/app-db {:session {:id "s1"}
+                                         :active-tab-id "s1"
+                                         :render-version 0
+                                         :workspace {:workspace/root "."}
+                                         :messages []
+                                         :input-history []
+                                         :pastes {}
+                                         :paste-counter 0
+                                         :loading? true
+                                         :cancel-token :old-token
+                                         :cancelling? false
+                                         :live-turn-client-id "cid-old"
+                                         :gateway-turn-id nil
+                                         :turn-start-ms 10})
+                   ;; Esc won before the old POST registered. The terminal-looking gateway
+                   ;; response clears the visible turn, but its exact identity survives.
+                   (state/dispatch [:cancel-turn])
+                   (expect (false? (:loading? @state/app-db)))
+                   (expect (= "cid-old" (:cancel-awaiting-client-id @state/app-db)))
+                   ;; The user immediately sends the exact same text again. The normal send
+                   ;; path must preserve the old marker while assigning a fresh identity.
+                   (let
+                     [{resent-db :db}
+                      (send-message-fn @state/app-db [:send-message "same text" nil])
+
+                      new-client-id
+                      (:live-turn-client-id resent-db)]
+
+                     (reset! state/app-db resent-db)
+                     (expect (= "cid-old" (:cancel-awaiting-client-id @state/app-db)))
+                     (expect (not= "cid-old" new-client-id))
+                     ;; The old POST starts late. Cancel that gateway turn, but do not bind
+                     ;; its id or clock onto the new optimistic request.
+                     (state/dispatch [:sync-turn-clock nil
+                                      {:turn-id "gw-old" :client-id "cid-old" :started-at-ms 123}])
+                     (expect (= ["s1" "gw-old"] @cancelled-gateway))
+                     (expect (nil? (:gateway-turn-id @state/app-db)))
+                     (expect (true? (:loading? @state/app-db)))
+                     (expect (nil? (:cancel-awaiting-client-id @state/app-db)))
+                     ;; Once the queued resend starts, only its matching id may bind.
+                     (state/dispatch
+                       [:sync-turn-clock nil
+                        {:turn-id "gw-new" :client-id new-client-id :started-at-ms 456}])
+                     (expect (= "gw-new" (:gateway-turn-id @state/app-db)))
+                     (expect (= 456 (:turn-start-ms @state/app-db))))))))
 
 (defdescribe
   cancel-turn-stale-gateway-test

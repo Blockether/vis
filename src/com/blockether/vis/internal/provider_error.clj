@@ -378,7 +378,7 @@
       "NEXT STEP: fold older settled history, choose a larger-context model, or start a fresh session."
 
       :stream-timeout
-      (str "NEXT STEP: retry — a stall is auto-retried on a backoff. If long reasoning "
+      (str "NEXT STEP: Vis is retrying automatically after a short backoff. If long reasoning "
            "turns keep tripping it, raise `idle-timeout-ms`.")
 
       :empty-content
@@ -598,7 +598,7 @@
      (provider-error-info err)
 
      retryable?
-     (contains? #{:rate-limit :transport :overloaded :empty-content} kind)
+     (contains? #{:rate-limit :transport :overloaded :empty-content :stream-timeout} kind)
 
      message
      (str/join "\n\n" (remove str/blank? [title explanation next-step]))]

@@ -5708,6 +5708,29 @@
 
 (defn- ast-non-empty? [ast] (and (vector? ast) (= :ast (first ast)) (seq (nnext ast))))
 
+(defn- canonical-provider-error-answer?
+  "True when `answer` is the final projection of a provider error already present
+   in `trace`. Provider failures are rendered once as the final card; replaying the
+   same diagnosis from the iteration trace produced the doubled timeout panel."
+  [answer trace]
+  (and (string? answer)
+       (or
+         ;; Backward compatibility for the old Markdown envelope.
+         (str/includes? answer "PROVIDER_ERROR")
+         (some (fn [iteration]
+                 (when-let [err (:error iteration)]
+                   (let
+                     [kind (perr/provider-error-kind err)
+                      title (perr/provider-error-title err)
+                      explanation (perr/provider-error-explanation err)]
+
+                     (and (not= :generic kind)
+                          (not (str/blank? title))
+                          (not (str/blank? explanation))
+                          (str/includes? answer title)
+                          (str/includes? answer explanation)))))
+               trace))))
+
 (defn format-answer-with-thinking-data*
   "Uncached Markdown layout. Returns `{:text :lines :line-meta}` so the
    bubble painter can keep clickable summary-row metadata aligned with the
@@ -5728,7 +5751,7 @@
      (assert-markdown! answer)
 
      suppress-trace?
-     (and (string? answer) (str/includes? answer "PROVIDER_ERROR"))
+     (canonical-provider-error-answer? answer trace)
 
      trace-entries
      (trace-render-entries {:iterations trace

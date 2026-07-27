@@ -702,10 +702,18 @@
     (it "turn.queued.drained (gateway auto-start) projects to :delete"
         (expect (= {:phase :queue-sync :op :delete :turn-id "q1"}
                    (g->c {"type" "turn.queued.drained" "turn_id" "q1"}))))
-    (it "turn.started projects to :turn-start with the canonical run-start clock"
-        (expect
-          (= {:phase :turn-start :turn-id "t1" :request "hi" :started-at-ms 1234 :server-at-ms nil}
-             (g->c {"type" "turn.started" "turn_id" "t1" "request" "hi" "started_at" 1234}))))))
+    (it "turn.started projects its submit correlation id with the canonical run-start clock"
+        (expect (= {:phase :turn-start
+                    :turn-id "t1"
+                    :client-id "cid-1"
+                    :request "hi"
+                    :started-at-ms 1234
+                    :server-at-ms nil}
+                   (g->c {"type" "turn.started"
+                          "turn_id" "t1"
+                          "idempotency_key" "cid-1"
+                          "request" "hi"
+                          "started_at" 1234}))))))
 
 (defdescribe
   title-sync-event-chunk-test

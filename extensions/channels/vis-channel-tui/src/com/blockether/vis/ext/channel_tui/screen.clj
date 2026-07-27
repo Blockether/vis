@@ -959,7 +959,7 @@
   (boolean (and prev
                 (= (long (:row cur)) (inc (long (:row prev))))
                 (= (:col prev) (:col cur))
-                (> (+ (p/display-width (:text prev)) 1 (line-first-token-width (:text cur)))
+                (> (+ (long (p/display-width (:text prev))) 1 (long (line-first-token-width (:text cur))))
                    (long (:wrap-w prev))))))
 
 (defn- assign-selectable-line-ids
@@ -1525,7 +1525,7 @@
                   (let [id next-id
                         e {:id id :img-w w :img-h h}]
                     (.append sb ^String (timg/kitty-transmit data id))
-                    [(assoc transmits tkey e) (conj order tkey) (inc next-id) e])
+                    [(assoc transmits tkey e) (conj order tkey) (inc (long next-id)) e])
                   [transmits order next-id nil]))]
           (if entry
             (do
@@ -1537,8 +1537,8 @@
                                                      :crop-bottom (:crop-bottom img)
                                                      :img-w (:img-w entry)
                                                      :img-h (:img-h entry)}))
-              (recur (rest rs) transmits order (conj placed (long (:id entry))) next-id))
-            (recur (rest rs) transmits order placed next-id)))
+              (recur (rest rs) transmits order (conj placed (long (:id entry))) (long next-id)))
+            (recur (rest rs) transmits order placed (long next-id))))
         ;; All regions emitted. Delete placements that left the viewport (keep data),
         ;; then evict the oldest off-screen transmits if we're over the cap.
         (do
@@ -1548,7 +1548,7 @@
           (let [[transmits order]
                 (loop [transmits transmits
                        order order]
-                  (let [victim (when (> (count order) kitty-max-transmits)
+                  (let [victim (when (> (count order) (long kitty-max-transmits))
                                  (first (remove #(placed (:id (get transmits %))) order)))]
                     (if victim
                       (do (.append sb ^String (timg/kitty-free-image (:id (get transmits victim))))
@@ -1941,7 +1941,7 @@
     (dotimes [dy (max 0 (- bottom top))]
       (let [row (+ top dy)
             alpha (enter/row-alpha start-ms now-ms row top bottom)]
-        (when (< alpha 1.0)
+        (when (< (double alpha) 1.0)
           (dotimes [col cols]
             (fade-cell! row alpha col)))))))
 

@@ -1161,6 +1161,17 @@
   (some-> (wire-turn (get-in @registry [sid :turns tid]))
           wire/canonical))
 
+(def ^:private persisted-status->wire
+  "Durable engine turn status -> wire status. A map lookup rather than `case`:
+   the constants collide on hash, so `case` degrades to a linear scan anyway."
+  {nil "completed"
+   "" "completed"
+   "success" "completed"
+   "done" "completed"
+   "interrupted" "cancelled"
+   "error" "failed"
+   "running" "streaming"})
+
 (defn- persisted-turn->wire
   "Project one durable engine turn into the canonical role/content message shape."
   [sid row]
@@ -1169,23 +1180,10 @@
      (str (:id row))
 
      status
-     (case
-       (some-> (:status row)
-               name)
-       (nil "" "success" "done")
-       "completed"
-
-       "interrupted"
-       "cancelled"
-
-       "error"
-       "failed"
-
-       "running"
-       "streaming"
-
-       (some-> (:status row)
-               name))
+     (let
+       [raw (some-> (:status row)
+                    name)]
+       (get persisted-status->wire raw raw))
 
      created-at
      (some-> (:created-at row)
@@ -2023,6 +2021,9 @@
                                     (System/currentTimeMillis))}
                    queued?
                    (assoc :queued? true)
+
+                   (get-in @registry [sid :turns tid :idempotency_key])
+                   (assoc :idempotency_key (get-in @registry [sid :turns tid :idempotency_key]))
 
                    (seq attachments)
                    (assoc :attachments attachments)))

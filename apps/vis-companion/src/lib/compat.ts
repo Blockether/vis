@@ -16,10 +16,10 @@
 import type { GatewayProtocol } from './types';
 
 /** Wire protocol number THIS app build speaks. Bump on a breaking wire change. */
-export const APP_PROTOCOL = 1;
+export const APP_PROTOCOL = 2;
 
-/** Oldest gateway protocol this app can still drive correctly. */
-export const APP_MIN_GATEWAY_PROTOCOL = 1;
+/** Oldest gateway protocol this app accepts: only the current wire contract. */
+export const APP_MIN_GATEWAY_PROTOCOL = 2;
 
 /** How this app names itself in the handshake. */
 export const APP_NAME = 'vis-companion';
@@ -69,9 +69,8 @@ function asInt(value: unknown): number | null {
 }
 
 /**
- * Judge one gateway from its advertised `protocol` block. A gateway old enough
- * to advertise nothing yields `unknown` and is GRANDFATHERED as compatible: an
- * unknown peer is never refused, only an explicitly out-of-range one.
+ * Judge one gateway from its advertised `protocol` block. An unversioned gateway
+ * is unsupported; this app drives only the current daemon wire contract.
  */
 export function compatOf(block?: GatewayProtocol | null): Compat {
   const gatewayProtocol = asInt(block?.protocol);
@@ -88,7 +87,7 @@ export function compatOf(block?: GatewayProtocol | null): Compat {
           : 'ok';
 
   const base = {
-    isCompatible: reason === 'ok' || reason === 'unknown',
+    isCompatible: reason === 'ok',
     reason,
     gatewayProtocol,
     gatewayMinClient,
@@ -128,14 +127,24 @@ export function compatOf(block?: GatewayProtocol | null): Compat {
     };
   }
 
+  if (reason === 'unknown') {
+    return {
+      ...base,
+      upgrade: 'gateway',
+      title: 'Update the gateway',
+      summary: 'The gateway did not advertise the current Vis wire protocol and is unsupported.',
+      remedy: [
+        'Update Vis on the machine hosting the gateway.',
+        'Restart it: vis gateway stop && vis gateway start',
+      ],
+    };
+  }
+
   return {
     ...base,
     upgrade: null,
-    title: reason === 'unknown' ? 'Version unknown' : 'Versions match',
-    summary:
-      reason === 'unknown'
-        ? 'The gateway did not advertise a protocol version, so compatibility could not be verified.'
-        : `Gateway and app both speak protocol ${gatewayProtocol}.`,
-    remedy: reason === 'unknown' ? ['Update both halves to the same Vis release.'] : [],
+    title: 'Versions match',
+    summary: `Gateway and app both speak protocol ${gatewayProtocol}.`,
+    remedy: [],
   };
 }

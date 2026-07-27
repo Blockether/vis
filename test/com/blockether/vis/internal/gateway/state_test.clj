@@ -1636,6 +1636,44 @@
                  (expect (= "cid-1" (get-in res [:turn "idempotency_key"])))
                  (expect (= "cid-1" (:idempotency_key queued)))
                  (expect (= (get-in res [:turn "turn_id"]) (:turn_id queued))))))
+           (finally (swap! registry dissoc sid)))))
+  (it
+    "echoes the submitter's correlation id on turn.started"
+    (let
+      [registry
+       @#'state/registry
+
+       sid
+       (str "started-idem-" (java.util.UUID/randomUUID))
+
+       tid
+       "turn-1"
+
+       events
+       (atom [])]
+
+      (try (swap! registry assoc
+             sid
+             {:next-seq 0
+              :turns {tid {:turn_id tid
+                           :session_id sid
+                           :status "running"
+                           :started_at 123
+                           :idempotency_key "cid-1"}}})
+           (with-redefs-fn {#'state/append-event! (fn [_sid type payload & _]
+                                                    (swap! events conj [type payload])
+                                                    nil)
+                            #'cancellation/worker-future (fn [& _]
+                                                           nil)
+                            #'cancellation/cancellation-set-future! (fn [& _]
+                                                                      nil)}
+             #(#'state/launch-turn-worker! sid tid "hello" {:cancel-token :token}))
+           (expect (= "cid-1"
+                      (->> @events
+                           (filter (comp #{"turn.started"} first))
+                           first
+                           second
+                           :idempotency_key)))
            (finally (swap! registry dissoc sid))))))
 
 (defdescribe

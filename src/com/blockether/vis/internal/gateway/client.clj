@@ -108,8 +108,8 @@
 (defn- note-handshake!
   "Record the daemon's advertised version contract from a `/healthz` body — the
    probe EVERY attach already pays for, so compatibility costs no extra round
-   trip. A daemon too old to advertise a `protocol` block records all-nils and is
-   grandfathered. Returns the body unchanged."
+   trip. A daemon without a `protocol` block records all-nils and is rejected.
+   Returns the body unchanged."
   [body]
   (reset! gateway-handshake* (protocol/wire->handshake (get body "protocol")))
   body)

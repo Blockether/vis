@@ -1066,23 +1066,19 @@ export class GatewayClient {
    * invents rows, and SSE only carries the deltas that happen while we are
    * subscribed — so a session opened (or reloaded, or backgrounded by iOS)
    * while messages sit queued must read the backlog back from here. Same
-   * source and same filter the TUI resumes from (`chat/resume-session`).
+   * source the TUI resumes from (`chat/resume-session`).
    *
-   * `?status=queued` is what keeps this poll cheap: unfiltered, this endpoint
-   * returns the session's ENTIRE turn history with content (600KB+ on a long
-   * session) every 5s just to learn the queue is empty. The client-side
-   * `status === 'queued'` filter below stays as the compatibility net for a
-   * gateway that predates the query param and ignores it.
+   * `?status=queued` keeps this poll cheap: the current gateway returns only the
+   * queued rows instead of the session's entire turn history and content.
    */
   async queuedTurns(sid: string, signal?: AbortSignal): Promise<QueuedTurn[]> {
-    const response = await this.request<{ turns?: SubmittedTurn[] }>(
+    const response = await this.request<{ turns: SubmittedTurn[] }>(
       'GET',
       `/v1/sessions/${encodeURIComponent(sid)}/turns?status=queued`,
       undefined,
       signal,
     );
-    const fetched = (response.turns ?? [])
-      .filter((turn) => String(turn.status ?? '') === 'queued')
+    const fetched = response.turns
       .sort((a, b) => Number(a.queued_at ?? 0) - Number(b.queued_at ?? 0))
       .map((turn) => queuedTurnFromWire(turn as unknown as Record<string, unknown>))
       .filter((row) => row.turnId !== '');

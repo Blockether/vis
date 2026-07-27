@@ -235,9 +235,9 @@
         ;; (deliberate-stream-abort-types), but the gateway queue DOES auto-retry a
         ;; :stream-timeout as transient. The copy stays surface-agnostic: no CLI
         ;; commands, no keybindings, no internal var names.
-        (expect (re-find #"auto-retried" next-step))
+        (expect (re-find #"retrying automatically" next-step))
         (expect (re-find #"idle-timeout-ms" next-step))
-        (expect (nil? (re-find #"already re-sent" next-step)))))
+        (expect (true? (get (first (perr/provider-error-content err)) "retryable")))))
   (it "the idle-timeout sibling classifies the same way"
       (let
         [err {:message "Stream idle timeout (180000ms with no bytes)."

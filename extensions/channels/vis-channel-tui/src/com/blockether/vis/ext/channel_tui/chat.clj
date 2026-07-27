@@ -961,16 +961,19 @@
       ;; TUI re-seeds its elapsed timer from it (see state/:sync-turn-clock):
       ;; local submit/drain/attach stamps drift from the real run start.
       "turn.started"
-      {:phase :turn-start
-       :turn-id (event-get event :turn-id)
-       ;; The request text rides along so an IDLE tab can attach to a
-       ;; sibling-started turn (state/:sibling-turn-started) with the real
-       ;; user bubble, not a blank one.
-       :request (event-get event :request)
-       :started-at-ms (event-get event :started-at)
-       ;; `ts` is sampled by the gateway in the same event. Consumers derive
-       ;; elapsed from ts-started_at, so a device clock cannot skew the timer.
-       :server-at-ms (event-get event :ts)}
+      (cond->
+        {:phase :turn-start
+         :turn-id (event-get event :turn-id)
+         ;; The request text rides along so an IDLE tab can attach to a
+         ;; sibling-started turn (state/:sibling-turn-started) with the real
+         ;; user bubble, not a blank one.
+         :request (event-get event :request)
+         :started-at-ms (event-get event :started-at)
+         ;; `ts` is sampled by the gateway in the same event. Consumers derive
+         ;; elapsed from ts-started_at, so a device clock cannot skew the timer.
+         :server-at-ms (event-get event :ts)}
+        (event-get event :idempotency-key)
+        (assoc :client-id (event-get event :idempotency-key)))
 
       ;; A session's title changed — auto-title or a rename, possibly produced
       ;; in a SIBLING process (another TUI, the web, the serve daemon), where

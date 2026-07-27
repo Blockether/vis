@@ -34,18 +34,17 @@
 (def protocol-version
   "Wire protocol number THIS build speaks. Monotonic; bump on every BREAKING
    change to the gateway HTTP/SSE surface."
-  1)
+  2)
 
 (def min-client-protocol
-  "Oldest CLIENT protocol this gateway still serves. Raise only when a client
-   at the old protocol can no longer be served correctly — a client below this
-   is refused with 426 instead of being fed a shape it cannot read."
-  1)
+  "Oldest CLIENT protocol this gateway serves. This release supports only the
+   current wire contract; older clients are refused with 426."
+  2)
 
 (def min-gateway-protocol
-  "Oldest GATEWAY protocol this client still accepts. Raise only when this
-   client can no longer drive an older daemon correctly."
-  1)
+  "Oldest GATEWAY protocol this client accepts. This release supports only the
+   current daemon wire contract."
+  2)
 
 (def protocol-header "Request header carrying the client's own protocol number." "x-vis-protocol")
 
@@ -101,8 +100,8 @@
 
 (defn wire->handshake
   "Read a peer's advertised handshake out of the canonical string-keyed wire
-   map (`{\"protocol\" 1 \"min_client\" 1 ...}`), tolerating a peer old enough
-   to advertise nothing at all (every field comes back nil)."
+   map (`{\"protocol\" 2 \"min_client\" 2 ...}`). Missing fields remain nil so the
+   compatibility verdict can reject an unversioned peer explicitly."
   [m]
   {:protocol (->int (get m "protocol"))
    :min-client (->int (get m "min_client"))
@@ -112,9 +111,9 @@
                     not-empty)})
 
 (defn request->client
-  "Read the client's advertised protocol out of a Ring request's headers. A
-   client that stamps nothing yields nils and is GRANDFATHERED by [[verdict]]:
-   an unknown peer is never refused, only an explicitly too-old one."
+  "Read the client's advertised protocol out of a Ring request's headers.
+   Missing protocol headers identify an unsupported client and are rejected by
+   [[verdict]]."
   [request]
   (let [h (:headers request)]
     {:protocol (->int (get h protocol-header))
@@ -132,10 +131,10 @@
    the gateway itself never disagree about who is out of date.
 
    Reasons:
-     `ok`               both halves speak a protocol the other still accepts
+     `ok`               both halves speak a protocol the other accepts
      `client-too-old`   client protocol < the gateway's `min-client`
      `gateway-too-old`  gateway protocol < the client's `min-gateway`
-     `unknown`          a peer advertised nothing — grandfathered as compatible
+     `unknown`          a peer did not advertise a protocol and is unsupported
 
    `:upgrade` names WHICH half the user must update, so a UI can render one
    unambiguous instruction instead of \"something is out of date\"."
@@ -160,7 +159,7 @@
            (< (long gp) (long cmin)) "gateway-too-old"
            :else "ok")]
 
-    {:is-compatible (not (contains? #{"client-too-old" "gateway-too-old"} reason))
+    {:is-compatible (= "ok" reason)
      :reason reason
      :upgrade (case reason
                 "client-too-old"
@@ -168,6 +167,11 @@
 
                 "gateway-too-old"
                 "gateway"
+
+                "unknown"
+                (cond (nil? cp) "client"
+                      (nil? gp) "gateway"
+                      :else nil)
 
                 nil)
      :gateway-protocol gp
@@ -239,16 +243,26 @@
      :remedy ["Update Vis on the machine hosting the gateway."
               "Restart it: vis gateway stop && vis gateway start"]}
 
-    {:title (if (= "unknown" reason) "Version unknown" "Versions match")
-     :summary
-     (if (= "unknown" reason)
-       "One side did not advertise a protocol version, so compatibility could not be verified."
-       (str "Gateway and "
-            (or client-name "client")
-            " both speak protocol "
-            (or gateway-protocol client-protocol)
-            "."))
-     :remedy (if (= "unknown" reason) ["Update both halves to the same Vis release."] [])}))
+    "unknown"
+    (if (nil? gateway-protocol)
+      {:title "Update the gateway"
+       :summary "The gateway did not advertise the current Vis wire protocol and is unsupported."
+       :remedy ["Update Vis on the machine hosting the gateway."
+                "Restart it: vis gateway stop && vis gateway start"]}
+      {:title "Update this client"
+       :summary (str "This "
+                     (or client-name "client")
+                     " did not advertise the current Vis wire protocol and is unsupported.")
+       :remedy ["Update Vis on this device to the version running the gateway."
+                "Reload the app (or restart the TUI) once the update lands."]})
+
+    {:title "Versions match"
+     :summary (str "Gateway and "
+                   (or client-name "client")
+                   " both speak protocol "
+                   (or gateway-protocol client-protocol)
+                   ".")
+     :remedy []}))
 
 (def ^:private panel-width 70)
 

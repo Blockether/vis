@@ -2299,11 +2299,10 @@
   #{"/healthz" "/readyz" "/v1/capabilities"})
 
 (defn- wrap-protocol
-  "Wire-protocol gate (§3). A client that EXPLICITLY advertises a protocol this
-   gateway no longer serves is refused ONCE, up front, with 426 and the same
-   verdict + copy every surface renders — instead of being fed a shape it cannot
-   read and failing later as a mystery 404 or a missing field. A client that
-   advertises nothing is GRANDFATHERED: unknown is never refused."
+  "Wire-protocol gate (§3). A client whose advertised protocol is unsupported —
+   including a client that advertises nothing — is refused once, up front, with
+   426 and the same verdict + copy every surface renders, instead of being fed a
+   shape it cannot read and failing later as a mystery 404 or missing field."
   [handler]
   (fn [request]
     (let [uri (str (:uri request))]

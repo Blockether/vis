@@ -3031,7 +3031,9 @@
                                   :loading? true
                                   :cancel-token token
                                   :cancelling? false
-                                  :cancel-awaiting-turn-id? false
+                                  ;; Do NOT clear `:cancel-awaiting-client-id` here. A rapid
+                                  ;; cancel/resubmit must retain the old submit's identity until
+                                  ;; its delayed turn.started either arrives or is proven absent.
                                   :progress {:iterations []}
                                   :turn-start-ms (System/currentTimeMillis)
                                   ;; Identity of the turn this tab launched DIRECTLY: the
@@ -3086,69 +3088,76 @@
                                                   :mine? true
                                                   :unsent? true)))))))))
 
-(reg-event-fx :sync-turn-clock
-              ;; The gateway's `turn.started` (projected as a :turn-start chunk) carries
-              ;; the CANONICAL `started_at` epoch ms — the ONE clock every channel shares —
-              ;; AND the gateway `:turn-id`. Three jobs here:
-              ;;   1. Re-seed this tab's elapsed timer from `started_at` (only mid-turn) so
-              ;;      two terminals attached to the same work show the SAME elapsed.
-              ;;   2. LATE-BIND `:gateway-turn-id` (only mid-turn). A plain `:send-message`
-              ;;      submit has NO turn id yet — it's minted server-side, and `turn.started`
-              ;;      is the first place it reaches this tab. Without this bind the id stays
-              ;;      nil and `:cancel-turn` short-circuits `(when (and sid tid) …)`: the
-              ;;      cancel NEVER reaches the gateway.
-              ;;   3. FINISH A CANCEL THAT RACED THE BIND. If Esc was pressed BEFORE the id
-              ;;      bound (`:cancel-awaiting-turn-id?`), that cancel couldn't reach the
-              ;;      daemon, so it kept running the "cancelled" turn (a ghost) and the next
-              ;;      submit queued behind it — only surfacing once the ghost finished on its
-              ;;      own (the visible "queue for a few seconds then it vanishes"). Now that
-              ;;      the id is here, fire the gateway cancel automatically instead of forcing
-              ;;      a SECOND Esc, and clear the marker so it never bites a later turn.
-              (fn [db [_ workspace-id {:keys [started-at-ms server-at-ms turn-id]}]]
-                (let
-                  [workspace-id
-                   (or workspace-id (current-tab-id db))
+(reg-event-fx
+  :sync-turn-clock
+  ;; The gateway's `turn.started` carries the canonical run clock, turn id,
+  ;; AND the submitter's idempotency key (`:client-id`). Correlation matters:
+  ;; after a quick Esc + resend, the old POST can start late while the new POST
+  ;; waits behind it. Never bind that old ghost to the new optimistic turn.
+  (fn [db [_ workspace-id {:keys [started-at-ms server-at-ms turn-id client-id]}]]
+    (let
+      [workspace-id
+       (or workspace-id (current-tab-id db))
 
-                   ;; Convert the gateway clock into this process's wall-clock
-                   ;; domain using the event's gateway-sampled elapsed value.
-                   local-started-at-ms
-                   (when (nat-int? started-at-ms)
-                     (if (nat-int? server-at-ms)
-                       (- (System/currentTimeMillis)
-                          (max 0 (- (long server-at-ms) (long started-at-ms))))
-                       started-at-ms))]
+       ;; Convert the gateway clock into this process's wall-clock domain using
+       ;; the event's gateway-sampled elapsed value.
+       local-started-at-ms
+       (when (nat-int? started-at-ms)
+         (if (nat-int? server-at-ms)
+           (- (System/currentTimeMillis) (max 0 (- (long server-at-ms) (long started-at-ms))))
+           started-at-ms))]
 
-                  (if-not workspace-id
-                    {:db db}
-                    (let
-                      [target
-                       (db-for-tab db workspace-id)
+      (if-not workspace-id
+        {:db db}
+        (let
+          [target
+           (db-for-tab db workspace-id)
 
-                       awaiting-cancel?
-                       (boolean (and turn-id (:cancel-awaiting-turn-id? target)))
+           cancel-client-id
+           (:cancel-awaiting-client-id target)
 
-                       sid
-                       (get-in target [:session :id])
+           live-client-id
+           (:live-turn-client-id target)
 
-                       db'
-                       (update-tab db
-                                   workspace-id
-                                   (fn [w]
-                                     (cond->
-                                       (if (:loading? w)
-                                         (cond-> w
-                                           (nat-int? local-started-at-ms)
-                                           (assoc :turn-start-ms local-started-at-ms)
+           ;; Older gateways omitted the correlation id. Event order still makes
+           ;; the first start after an armed cancel the old submit, so preserve the
+           ;; pre-upgrade safety fallback for that one case.
+           awaiting-cancel?
+           (boolean
+             (and turn-id cancel-client-id (or (nil? client-id) (= client-id cancel-client-id))))
 
-                                           (and turn-id (nil? (:gateway-turn-id w)))
-                                           (assoc :gateway-turn-id turn-id))
-                                         w)
-                                       (:cancel-awaiting-turn-id? w)
-                                       (dissoc :cancel-awaiting-turn-id?))))]
+           matching-live-start?
+           (boolean (and (not awaiting-cancel?)
+                         (or (nil? live-client-id)
+                             (= client-id live-client-id)
+                             (and (nil? client-id) (nil? cancel-client-id)))))
 
-                      (cond-> {:db db'}
-                        (and awaiting-cancel? sid)
-                        (assoc :fx [[:gateway-cancel-turn sid turn-id]])))))))
+           ;; If the new submit starts first, FIFO ordering proves the cancelled
+           ;; POST never reached the gateway; retire its otherwise-stale marker.
+           cancel-resolved?
+           (or awaiting-cancel? (and cancel-client-id live-client-id (= client-id live-client-id)))
+
+           sid
+           (get-in target [:session :id])
+
+           db'
+           (update-tab
+             db
+             workspace-id
+             (fn [w]
+               (cond-> w
+                 cancel-resolved?
+                 (dissoc :cancel-awaiting-client-id)
+
+                 (and matching-live-start? (:loading? w) (nat-int? local-started-at-ms))
+                 (assoc :turn-start-ms local-started-at-ms)
+
+                 (and matching-live-start? (:loading? w) turn-id (nil? (:gateway-turn-id w)))
+                 (assoc :gateway-turn-id turn-id))))]
+
+          (cond-> {:db db'}
+            (and awaiting-cancel? sid)
+            (assoc :fx [[:gateway-cancel-turn sid turn-id]])))))))
 
 (reg-event-db :sync-queue-paused
               ;; Mirror the gateway's queue.paused / queue.resumed signal into the
@@ -3667,6 +3676,9 @@
                                tid
                                (:gateway-turn-id db)
 
+                               cancel-client-id
+                               (when-not tid (:live-turn-client-id db))
+
                                gateway-result
                                (gateway-cancel-turn-or-current! sid tid)
 
@@ -3674,7 +3686,9 @@
                                (contains? gateway-terminal-cancel-errors (:error gateway-result))]
 
                               (try (vis/cancel! (:cancel-token db)) (catch Throwable _ nil))
-                              {:db (clear-active-turn-state db)
+                              {:db (cond-> (clear-active-turn-state db)
+                                     cancel-client-id
+                                     (assoc :cancel-awaiting-client-id cancel-client-id))
                                :fx [[:notify
                                      (if gateway-terminal?
                                        "Turn is no longer running; cleared local cancelling state."
@@ -3688,6 +3702,9 @@
                    tid
                    (:gateway-turn-id db)
 
+                   cancel-client-id
+                   (when-not tid (:live-turn-client-id db))
+
                    gateway-result
                    (gateway-cancel-turn-or-current! sid tid)
 
@@ -3695,30 +3712,24 @@
                    (contains? gateway-terminal-cancel-errors (:error gateway-result))]
 
                   ;; Both the cooperative flag and the hard interrupt are fired through one
-                  ;; channel-agnostic call. See channels.cancellation/cancel! for the
-                  ;; contract.
+                  ;; channel-agnostic call. See channels.cancellation/cancel! for the contract.
                   (vis/cancel! (:cancel-token db))
-                  ;; An attached gateway turn runs server-side: interrupting the local
-                  ;; attach waiter alone would leave the engine working, so fire the
-                  ;; gateway turn's own cancel token too. If the gateway says the turn is
-                  ;; already gone/terminal (for example after an orphan sweep), reconcile
-                  ;; the local optimistic loading state immediately: no future gateway
-                  ;; completion event will arrive to clear "Cancelling...".
+                  ;; A `no-running-turn` response does NOT prove an in-flight submit POST was
+                  ;; rejected: Esc may have won the race just before that POST registered.
+                  ;; Preserve its client id even when clearing locally, and cancel the matching
+                  ;; delayed turn.started automatically. A rapid resend must not erase it.
                   (if gateway-terminal?
-                    {:db (clear-active-turn-state db)
+                    {:db (cond-> (clear-active-turn-state db)
+                           cancel-client-id
+                           (assoc :cancel-awaiting-client-id cancel-client-id))
                      :fx [[:notify "Turn is no longer running; cleared local cancelling state."
                            :info cancel-notification-ttl-ms]]}
                     {:db (cond->
                            (assoc db
                              :cancelling? true
                              :cancelling-at-ms (System/currentTimeMillis))
-                           ;; Esc landed BEFORE turn.started bound the gateway id, so the
-                           ;; cancel above couldn't reach the daemon. Remember it: when the
-                           ;; id late-binds (`:sync-turn-clock`) the gateway cancel fires
-                           ;; automatically, so a single Esc tears the turn down instead of
-                           ;; leaving a ghost the next submit queues behind.
-                           (nil? tid)
-                           (assoc :cancel-awaiting-turn-id? true))
+                           cancel-client-id
+                           (assoc :cancel-awaiting-client-id cancel-client-id))
                      :fx [[:notify "Cancelling current turn..." :info
                            cancel-notification-ttl-ms]]})))))
 
@@ -4512,10 +4523,8 @@
                                              (catch Throwable _ nil)))))))))
 
 (reg-fx :gateway-cancel-turn
-        ;; Fire-and-forget cancel of a RUNNING gateway turn. Used by `:sync-turn-clock`
-        ;; to finish a cancel that was armed before the turn id late-bound (see
-        ;; `:cancel-awaiting-turn-id?`); the result is irrelevant — we've already torn
-        ;; the turn down locally, this just stops the daemon-side ghost.
+        ;; Fire-and-forget cancel of the exact RUNNING gateway turn whose correlated
+        ;; turn.started completed an Esc-before-bind cancellation.
         (fn [sid tid]
           (when (and sid tid) (try (vis/gateway-cancel-turn! sid tid) (catch Throwable _ nil)))))
 

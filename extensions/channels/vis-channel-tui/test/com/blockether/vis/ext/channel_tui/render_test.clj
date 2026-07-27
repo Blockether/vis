@@ -2500,7 +2500,37 @@
 
       (expect (= 1 (count (re-seq #"PROVIDER_ERROR" text))))
       (expect (not (str/includes? text "provider response:")))
-      (expect (str/includes? text "WHAT HAPPENED: invalid thinking signature")))))
+      (expect (str/includes? text "WHAT HAPPENED: invalid thinking signature"))))
+  (it
+    "renders a stream-timeout diagnosis once when the final answer is typed error prose"
+    (render/invalidate-cache!)
+    (let
+      [answer
+       (str
+         "Stream went quiet — Vis timed out\n\n"
+         "WHAT HAPPENED: the stream stalled — no model progress for 300s. "
+         "The model was likely still reasoning. Nothing was rejected; your transcript and tool results are intact.\n\n"
+         "NEXT STEP: Vis is retrying automatically after a short backoff. "
+         "If long reasoning turns keep tripping it, raise `idle-timeout-ms`.")
+
+       trace
+       [{:thinking "Planning session identification via mtime"
+         :error {:message "Stream semantic timeout (300000ms without model/progress event): closed"
+                 :data {:type :svar.core/stream-semantic-timeout :semantic-timeout-ms 300000}}}]
+
+       text
+       (:text (render/format-answer-with-thinking-data answer
+                                                       trace
+                                                       120
+                                                       {:show-iterations true}
+                                                       nil
+                                                       false
+                                                       {}))]
+
+      (expect (= 1 (count (re-seq #"WHAT HAPPENED" text))))
+      (expect (= 1 (count (re-seq #"NEXT STEP" text))))
+      (expect (not (str/includes? text "Wrapper: Stream semantic timeout")))
+      (expect (str/includes? text "Stream went quiet — Vis timed out")))))
 
 (defdescribe answer-separator-test
              (it "does not draw a bottom border between reasoning and final answer"
