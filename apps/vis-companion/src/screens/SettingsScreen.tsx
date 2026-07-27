@@ -188,7 +188,7 @@ export function GatewaySettingsDialog({
       }}
     >
       <section
-        className="flex h-[92dvh] max-h-[calc(100dvh-env(safe-area-inset-top))] w-full max-w-3xl flex-col overflow-hidden border-x border-t border-dialog-edge bg-panel shadow-none transition-[opacity,transform] duration-200 starting:translate-y-6 starting:opacity-0 motion-reduce:transition-none sm:h-auto sm:max-h-[calc(100dvh-2.5rem)] sm:border sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:starting:translate-y-2"
+        className="flex h-[92dvh] max-h-[calc(100dvh-env(safe-area-inset-top))] w-full max-w-3xl flex-col overflow-hidden border-x border-t border-dialog-edge bg-panel shadow-none transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-6 starting:opacity-0 motion-reduce:transition-none sm:h-auto sm:max-h-[calc(100dvh-2.5rem)] sm:border sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:starting:translate-y-2"
         role="dialog"
         aria-modal="true"
         aria-labelledby="gateway-settings-title"
@@ -215,7 +215,8 @@ export function GatewaySettingsDialog({
 
         <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
           <p className="text-ui text-dialog-hint">
-            Stored on this gateway and shared with its connected TUI and clients.
+            Providers, notifications and appearance live on the gateway — shared with
+            its TUI and every other client.
           </p>
         </div>
 
@@ -223,18 +224,18 @@ export function GatewaySettingsDialog({
           {err && <Banner kind="err">{err}</Banner>}
 
           <SettingsPanel
-            title="Gateway"
+            title="Saved connection"
             meta={
               <span className={`font-black ${status.tone}`}>
                 {status.dot} {status.label}
               </span>
             }
           >
-            <div className="space-y-2.5 p-2.5">
+            <div className="space-y-2 p-2.5">
               <Input
                 value={labelDraft}
-                placeholder={gatewayHost(gateway.url)}
-                aria-label="Display name"
+                placeholder="Name this gateway"
+                aria-label="Name this gateway"
                 autoCapitalize="none"
                 autoCorrect="off"
                 className="w-full"
@@ -252,7 +253,14 @@ export function GatewaySettingsDialog({
                 }}
               />
 
-              <div className="flex items-center gap-2 border-t border-dialog-edge pt-2">
+              <p className="font-mono text-meta text-dialog-hint">
+                This device remembers{' '}
+                <span className="text-white">{gatewayHost(gateway.url)}</span> and its
+                access token. The name is only shown in your gateway list — the gateway
+                never sees it.
+              </p>
+
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-dialog-edge pt-2">
                 {!isActive && (
                   <Button
                     onClick={() => {
@@ -264,17 +272,17 @@ export function GatewaySettingsDialog({
                   </Button>
                 )}
 
-                <span className="flex-1" />
+                {!confirmRemove && <span className="flex-1" />}
 
                 {confirmRemove ? (
                   <>
-                    <button
-                      type="button"
-                      className="px-1 text-meta text-dialog-hint transition-colors hover:text-white"
-                      onClick={() => setConfirmRemove(false)}
-                    >
+                    <span className="min-w-0 flex-1 font-mono text-meta text-dialog-hint">
+                      Deletes the address and token from this device. You&apos;ll need
+                      the QR code again.
+                    </span>
+                    <Button variant="ghost" onClick={() => setConfirmRemove(false)}>
                       Cancel
-                    </button>
+                    </Button>
                     <Button
                       variant="danger"
                       onClick={async () => {
@@ -282,17 +290,13 @@ export function GatewaySettingsDialog({
                         onClose();
                       }}
                     >
-                      Forget gateway
+                      Forget
                     </Button>
                   </>
                 ) : (
-                  <button
-                    type="button"
-                    className="px-1 text-meta text-dialog-hint transition-colors hover:text-err"
-                    onClick={() => setConfirmRemove(true)}
-                  >
-                    Forget
-                  </button>
+                  <Button variant="danger" onClick={() => setConfirmRemove(true)}>
+                    Forget this gateway
+                  </Button>
                 )}
               </div>
             </div>
@@ -335,7 +339,7 @@ export function GatewaySettingsDialog({
                           key={choice.key}
                           disabled={pending?.startsWith('theme:') ?? false}
                           onClick={() => chooseTheme(choice.key)}
-                          className={`flex min-h-10 min-w-0 items-center justify-between gap-3 px-3 py-1.5 text-left transition-[background-color,color,transform] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-9 ${
+                          className={`flex min-h-10 min-w-0 items-center justify-between gap-3 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-9 ${
                             selected
                               ? 'bg-accent text-accent-foreground'
                               : 'bg-input text-white hover:bg-hover'
@@ -472,10 +476,10 @@ export function GatewaySettingsDialog({
                                   key={choice}
                                   disabled={busy}
                                   onClick={() => pick(toggle, choice)}
-                                  className={`min-h-8 border px-2 py-0.5 font-mono text-chip font-bold transition-[background-color,border-color,color,transform] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none sm:min-h-6 ${
+                                  className={`min-h-8 border px-2 py-0.5 font-mono text-chip font-bold transition-[background-color,border-color,color,transform,translate,scale,rotate] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none sm:min-h-6 ${
                                     selected
-                                      ? 'border-accent bg-accent text-accent-foreground'
-                                      : 'border-dialog-edge bg-input text-dialog-hint hover:border-edge-strong hover:text-white'
+                                      ? 'border-transparent bg-accent text-accent-foreground'
+                                      : 'border-transparent bg-panel-2 text-dialog-hint hover:bg-hover hover:text-white'
                                   }`}
                                   aria-pressed={selected}
                                 >
@@ -856,7 +860,7 @@ function SettingsPanel({
   children: ReactNode;
 }) {
   return (
-    <section className="min-w-0 overflow-hidden border border-dialog-edge bg-panel transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+    <section className="min-w-0 overflow-hidden border border-dialog-edge bg-panel transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
       <header className="flex min-h-8 items-center justify-between gap-3 border-b border-dialog-edge bg-panel-2 px-3 py-1.5">
         <h3 className="min-w-0 truncate border-l-2 border-accent pl-2 font-mono text-meta font-black uppercase tracking-[0.12em] text-white">
           {title}
@@ -896,8 +900,8 @@ function Switch({
       onClick={onClick}
       className={`mt-0.5 inline-flex h-8 w-[3.25rem] shrink-0 items-center justify-center border font-mono text-chip font-black tracking-[0.08em] transition-colors duration-150 ease-out active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none motion-reduce:active:scale-100 sm:h-6 ${
         on
-          ? 'border-accent bg-accent text-accent-foreground'
-          : 'border-dialog-edge bg-input text-dialog-hint hover:border-edge-strong'
+          ? 'border-transparent bg-accent text-accent-foreground'
+          : 'border-transparent bg-panel-2 text-dialog-hint hover:bg-hover hover:text-white'
       }`}
     >
       <span aria-hidden className={busy ? 'animate-pulse' : ''}>

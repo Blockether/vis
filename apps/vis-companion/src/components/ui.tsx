@@ -13,16 +13,15 @@ export function Button({
   variant?: 'solid' | 'ghost' | 'danger';
 }) {
   const styles = {
-    solid:
-      'border-accent bg-accent text-accent-foreground hover:opacity-90',
+    solid: 'border-accent bg-accent text-accent-foreground hover:border-accent/85 hover:bg-accent/85',
     ghost:
-      'border-dialog-edge bg-panel text-dialog-hint-key hover:border-edge-strong hover:bg-hover hover:text-white',
-    danger: 'border-err/50 bg-panel text-err hover:border-err hover:bg-err hover:text-white',
+      'border-edge-strong bg-transparent text-white hover:border-accent hover:bg-hover hover:text-accent-ink',
+    danger: 'border-err/40 bg-err/10 text-err hover:border-err hover:bg-err hover:text-white',
   }[variant];
 
   return (
     <button
-      className={`min-h-7 rounded-none border px-2.5 py-0.5 text-meta font-bold transition-[background-color,border-color,color,opacity,transform] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:border-edge disabled:bg-panel-2 disabled:text-muted disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${styles} ${className}`}
+      className={`min-h-7 rounded-none border px-2.5 py-0.5 text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:border-edge disabled:bg-panel-2 disabled:text-muted disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${styles} ${className}`}
       {...props}
     />
   );
@@ -33,7 +32,7 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
     return (
       <input
         ref={ref}
-        className={`min-h-7 w-full rounded-none border border-dialog-edge bg-input px-2.5 py-0.5 font-mono text-meta text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${className}`}
+        className={`min-h-7 w-full rounded-none border border-edge bg-input px-2.5 py-0.5 font-mono text-meta text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${className}`}
         {...props}
       />
     );
@@ -86,7 +85,7 @@ export function DialogFrame({
 }) {
   return (
     <section
-      className={`overflow-hidden border border-dialog-edge bg-panel shadow-none transition-[opacity,transform] duration-200 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:shadow-[8px_8px_0_var(--dialog-shadow)] ${className}`}
+      className={`overflow-hidden border border-dialog-edge bg-panel shadow-none transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:shadow-[8px_8px_0_var(--dialog-shadow)] ${className}`}
       role="dialog"
       aria-modal="true"
       aria-label={title}

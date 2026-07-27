@@ -201,7 +201,7 @@ export function ConnectScreen({
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-5 px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(2rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-4 transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:space-y-6 sm:px-6 sm:py-6">
+    <div className="mx-auto w-full max-w-3xl space-y-5 px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(2rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-4 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:space-y-6 sm:px-6 sm:py-6">
       {conns.length > 0 && (
         <section className="overflow-hidden border border-dialog-edge bg-panel shadow-none sm:shadow-[4px_4px_0_var(--dialog-shadow)]">
           <header className="flex min-h-9 items-center bg-dialog-title px-3 py-2 text-dialog-title-foreground">
@@ -216,7 +216,7 @@ export function ConnectScreen({
                   type="button"
                   key={conn.url}
                   onClick={() => onSettings(conn)}
-                  className={`flex w-full min-w-0 items-center gap-3 px-2 py-2.5 text-left transition-[background-color,transform] duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-3 ${
+                  className={`flex w-full min-w-0 items-center gap-3 px-2 py-2.5 text-left transition-[background-color,transform,translate,scale,rotate] duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-3 ${
                     selected ? 'border-l-2 border-accent bg-panel-2' : 'border-l-2 border-transparent bg-panel'
                   }`}
                 >
@@ -262,7 +262,7 @@ export function ConnectScreen({
         </section>
       )}
 
-      <section className="transition-[opacity,transform] delay-75 duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+      <section className="transition-[opacity,transform,translate,scale,rotate] delay-75 duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
         <div className="mb-3 flex items-center gap-3">
           <h2 className="font-mono text-body font-black uppercase tracking-[0.12em] text-white">
             Add a gateway

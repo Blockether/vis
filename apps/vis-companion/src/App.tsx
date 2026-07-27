@@ -461,7 +461,7 @@ function TabBar({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) {
           type="button"
           key={item.id}
           onClick={() => onTab(item.id)}
-          className={`relative flex min-h-12 items-center justify-center gap-2 font-mono text-meta font-bold uppercase tracking-[0.08em] transition-[color,background-color,transform] duration-150 active:scale-[0.98] motion-reduce:transition-none ${
+          className={`relative flex min-h-12 items-center justify-center gap-2 font-mono text-meta font-bold uppercase tracking-[0.08em] transition-[color,background-color,transform,translate,scale,rotate] duration-150 active:scale-[0.98] motion-reduce:transition-none ${
             tab === item.id
               ? 'bg-panel text-white after:absolute after:inset-x-5 after:top-0 after:h-0.5 after:bg-accent'
               : 'text-dialog-hint active:bg-hover active:text-white'

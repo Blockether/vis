@@ -24,7 +24,7 @@ export function IncompatibleScreen({ compat, conn, onRetry, onBack, isChecking =
   const gatewayStale = compat.upgrade === 'gateway';
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(2rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-4 transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:gap-6 sm:px-6 sm:py-6">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(2rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-4 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:gap-6 sm:px-6 sm:py-6">
       <header className="border-b border-dialog-edge pb-3">
         <p className="font-mono text-chip font-black uppercase tracking-[0.18em] text-warn">
           Version mismatch

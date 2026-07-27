@@ -36,6 +36,14 @@ import type {
 const disclosureClass =
   'inline-block shrink-0 text-ui transition-transform duration-150 group-open:rotate-90';
 
+// Transcript nodes the stream appends rise + fade in instead of popping into
+// place. `@starting-style` plays the transition exactly once — on the element's
+// first paint after insertion — so a re-render can never replay it. Only live
+// subtrees pass `live`, so replaying history (or a finished turn re-keyed out of
+// the live slot into the turn list) stays perfectly still.
+export const transcriptEnterClass =
+  'transition-[opacity,transform,translate,scale,rotate] duration-200 ease-out starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none';
+
 const toolRoleClasses: Record<string, { border: string; text: string }> = {
   'tool-color/read': { border: 'border-tool-read', text: 'text-tool-read' },
   'tool-color/search': { border: 'border-tool-search', text: 'text-tool-search' },
@@ -258,18 +266,23 @@ const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
   language,
   compact,
   copyValue,
+  bare = false,
 }: {
   value: string;
   language: string;
   compact: boolean;
   copyValue?: string;
+  /** Drop this block's own frame + margin so a parent can own the chrome. */
+  bare?: boolean;
 }) {
   const gutter = splitGutter(value);
   const source = gutter ? gutter.code : value;
   const lines = segmentsToLines(highlightSegments(source, language));
 
   return (
-    <div className={`${compact ? 'my-2' : 'my-3'} relative overflow-hidden border border-code-edge bg-code`}>
+    <div
+      className={`relative overflow-hidden bg-code ${bare ? '' : `${compact ? 'my-2' : 'my-3'} border border-code-edge`}`}
+    >
       <CopyButton value={copyValue ?? source} />
       <pre className={`${compact ? 'py-2 text-meta ' : 'py-2.5 text-ui '} m-0 max-w-full overflow-x-auto overscroll-x-contain font-mono text-code-foreground`}>
         <code className="block min-w-max [tab-size:2]">
@@ -629,31 +642,49 @@ const CollapsiblePythonCode = memo(function CollapsiblePythonCode({ value }: { v
   const collapsible = hiddenLines > 0;
   const visibleValue = collapsible && !expanded ? lines.slice(0, PYTHON_PREVIEW_LINES).join('\n') : value;
 
+  // Same frame as the result cards this program produced (see `FormTrace`) and
+  // the same shell-coloured rail the TUI paints for its code band — program and
+  // results read as ONE stack. The disclosure row is a HEADER (top of the frame,
+  // content reveals below it), identical to the `ToolCard` result headline and to
+  // the TUI's THINKING accordion: one rule everywhere, so a row always labels the
+  // block beneath it and the collapse control never scrolls away with the body.
   return (
-    <div className="min-w-0">
-      <SyntaxCodeBlock
-        value={visibleValue}
-        copyValue={value}
-        language="python"
-        compact
-      />
-      {collapsible && (
-        <button
-          type="button"
-          data-disclosure-toggle
-          className="mb-2 flex min-h-6 w-full items-center gap-1.5 px-3 text-left font-mono text-chip font-bold tracking-[0.07em] text-code-duration transition-colors hover:text-dialog-hint-key"
-          aria-expanded={expanded}
-          onClick={() => setExpanded((current) => !current)}
-        >
-          <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>
-          <span>{expanded ? 'PYTHON' : `PYTHON +${hiddenLines} more`}</span>
-        </button>
-      )}
+    <div className="mb-1 min-w-0 overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
+      <div className="min-w-0 border-l-2 border-tool-shell bg-code">
+        {collapsible && (
+          <button
+            type="button"
+            data-disclosure-toggle
+            className="flex min-h-6 w-full cursor-pointer select-none items-center gap-1.5 border-b border-code-edge px-2 py-1 text-left transition-colors hover:bg-hover"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            <span
+              className={`${disclosureClass} text-tool-shell ${expanded ? 'rotate-90' : ''}`}
+              aria-hidden="true"
+            >
+              ›
+            </span>
+            <span className="font-mono text-chip font-extrabold tracking-[0.06em] text-tool-shell">
+              {expanded ? 'PYTHON' : `PYTHON +${hiddenLines} more`}
+            </span>
+          </button>
+        )}
+        <SyntaxCodeBlock
+          value={visibleValue}
+          copyValue={value}
+          language="python"
+          compact
+          bare
+        />
+      </div>
     </div>
   );
 });
 
-const FormTrace = memo(function FormTrace({ form }: { form: TranscriptForm }) {
+const FormTrace = memo(function FormTrace(
+  { form, live = false }: { form: TranscriptForm; live?: boolean },
+) {
   if (form.silent || form.result === 'vis_silent' || form.result === 'vis_answer') return null;
   const code = formCode(form);
   const showCode = showFormCode(form, code);
@@ -661,7 +692,7 @@ const FormTrace = memo(function FormTrace({ form }: { form: TranscriptForm }) {
   if (!showCode && !cards.length) return null;
 
   return (
-    <div className="min-w-0">
+    <div className={live ? `min-w-0 ${transcriptEnterClass}` : 'min-w-0'}>
       {showCode && form.comment?.trim() && (
         <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-ui not-italic text-vis-message">
           <Markdown compact>{form.comment.trim()}</Markdown>
@@ -670,7 +701,7 @@ const FormTrace = memo(function FormTrace({ form }: { form: TranscriptForm }) {
       {showCode && <CollapsiblePythonCode value={code} />}
       {cards.length > 0 && (
         <div
-          className="grid grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]"
+          className={`grid grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]${live ? ` ${transcriptEnterClass}` : ''}`}
           aria-label={`${cards.length} ${cards.length === 1 ? 'result' : 'results'}`}
         >
           {cards.map((card, cardIndex) => (
@@ -756,8 +787,10 @@ export const ThinkingBand = memo(function ThinkingBand({ children }: { children:
 
 export const IterationTrace = memo(function IterationTrace({
   iterations,
+  live = false,
 }: {
   iterations: TranscriptIteration[];
+  live?: boolean;
 }) {
   const visible = iterations
     .map((iteration, index) => ({
@@ -776,7 +809,10 @@ export const IterationTrace = memo(function IterationTrace({
   return (
     <div className="mb-2.5 grid gap-2.5">
       {visible.map(({ iteration, index, thinking, prose, forms }) => (
-        <section key={iteration.id ?? iteration.position ?? index} className="min-w-0">
+        <section
+          key={iteration.id ?? iteration.position ?? index}
+          className={live ? `min-w-0 ${transcriptEnterClass}` : 'min-w-0'}
+        >
           {thinking && <ThinkingBand>{thinking}</ThinkingBand>}
           {prose && (
             <div className="my-2.5 text-body text-vis-message">
@@ -787,6 +823,7 @@ export const IterationTrace = memo(function IterationTrace({
             <FormTrace
               key={`${form.scope ?? form.tool_name ?? 'form'}-${formIndex}`}
               form={form}
+              live={live}
             />
           ))}
         </section>
@@ -909,7 +946,7 @@ export const AssistantMessage = memo(function AssistantMessage({
     <article className="mt-4 w-full [contain:layout_style]" aria-busy={streaming}>
       <div className={`mb-1 font-mono text-meta font-bold ${cancelled ? 'text-dialog-hint' : 'text-vis-role'}`}>Vis</div>
       <div className="min-w-0">
-        <IterationTrace iterations={turn.iterations ?? []} />
+        <IterationTrace iterations={turn.iterations ?? []} live={streaming} />
         <div className={`bg-answer text-body ${cancelled ? 'italic text-cancelled-foreground' : 'text-answer-foreground'}`}>
           {blocks.map((block) => <ContentBlockView key={block.id} block={block} />)}
           {fallback && <Markdown>{fallback}</Markdown>}

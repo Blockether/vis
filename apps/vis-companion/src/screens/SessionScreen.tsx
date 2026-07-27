@@ -8,7 +8,7 @@ import {
   type ClipboardEvent as ReactClipboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
-import { AssistantMessage, UserMessage } from '../components/ChatContent';
+import { AssistantMessage, transcriptEnterClass, UserMessage } from '../components/ChatContent';
 import { Banner } from '../components/ui';
 import { ProviderRouterDialog } from './RouterScreen';
 import { attachmentsFromFiles, type PendingAttachment } from '../lib/attachments';
@@ -443,6 +443,10 @@ function expandFileMentions(text: string): string {
 
 const LOADING_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
+// Matches the veil's `duration-200`. Kept in JS because the veil has to stay
+// MOUNTED for the length of its own fade-out (see the reveal effect below).
+const VEIL_FADE_MS = 200;
+
 // Mirrors the TUI's `paint-content-loading!`: a centered Braille spinner that
 // advances every 100ms next to "Loading session…" while an existing session
 // hydrates. New-session creation never mounts this — it opens straight to the
@@ -521,7 +525,7 @@ function ShareLink({ className }: { className: string }) {
       onClick={share}
       title="Share this session"
       aria-label="Share this session"
-      className={`group inline-flex h-6 shrink-0 items-center gap-1 border px-2 font-mono text-chip font-bold uppercase tracking-[0.08em] transition-[background-color,color,border-color,transform] duration-150 active:scale-[0.97] motion-reduce:transition-none ${copied ? 'border-ok bg-ok/15 text-ok' : 'border-dialog-title bg-dialog-title text-dialog-title-foreground hover:bg-accent-2'} ${className}`}
+      className={`group inline-flex h-6 shrink-0 items-center gap-1 border px-2 font-mono text-chip font-bold uppercase tracking-[0.08em] transition-[background-color,color,border-color,transform,translate,scale,rotate] duration-150 active:scale-[0.97] motion-reduce:transition-none ${copied ? 'border-ok bg-ok/15 text-ok' : 'border-dialog-title bg-dialog-title text-dialog-title-foreground hover:bg-accent-2'} ${className}`}
     >
       {copied ? (
         <>
@@ -572,6 +576,8 @@ export function SessionScreen({
   const [modelPref, setModelPref] = useState<ModelPref | null>(null);
   const [routerOpen, setRouterOpen] = useState(false);
   const [loading, setLoading] = useState(!fresh);
+  // The veil outlives `loading` by one transition so it can dissolve.
+  const [veiled, setVeiled] = useState(!fresh);
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(false);
   const [liveTurn, setLiveTurn] = useState<LiveTurn | null>(null);
@@ -659,6 +665,7 @@ export function SessionScreen({
     setVoicePhase('idle');
     setVoiceRequested(false);
     setLoading(!fresh);
+    setVeiled(!fresh);
     setVisibleTurnCount(INITIAL_VISIBLE_TURNS);
     followingRef.current = true;
     initialScrollPendingRef.current = !fresh;
@@ -1083,6 +1090,22 @@ export function SessionScreen({
       requestAnimationFrame(() => setLoading(false));
     }
   }, [turns, visibleTurnCount, liveTurn?.id, scrollToEnd]);
+
+  // The veil must DISSOLVE, not vanish. Unmounting it the instant the transcript
+  // is ready swaps a full-bleed `bg-ink` sheet for the whole transcript inside a
+  // single frame — and reopening a *cached* session is exactly that worst case:
+  // the turns are already painted, so the veil is only up for a frame or two and
+  // its removal reads as a jump rather than a load. Holding it mounted at
+  // `opacity-0` for one transition lets the transcript cross-fade in underneath.
+  useEffect(() => {
+    if (loading) {
+      setVeiled(true);
+      return;
+    }
+    if (!veiled) return;
+    const timer = window.setTimeout(() => setVeiled(false), VEIL_FADE_MS);
+    return () => window.clearTimeout(timer);
+  }, [loading, veiled]);
 
   // Deferred Markdown, fonts, and content-visibility can change the transcript's
   // measured height after React commits. Keep a newly opened/followed session at
@@ -1595,7 +1618,10 @@ export function SessionScreen({
   const liveRow = useMemo(
     () =>
       liveTurn && (
-        <div className={turns.length ? 'mt-10' : ''} data-live="true">
+        <div
+          className={`${turns.length ? 'mt-10 ' : ''}${transcriptEnterClass}`}
+          data-live="true"
+        >
           {liveTurn.request && <UserMessage>{liveTurn.request}</UserMessage>}
           <AssistantMessage
             turn={{
@@ -1650,11 +1676,11 @@ export function SessionScreen({
   };
 
   return (
-    <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-ink transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none">
+    <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-ink transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
       <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
         <button
           type="button"
-          className="grid w-11 shrink-0 place-items-center border-r border-dialog-edge bg-dialog-title font-mono text-subhead font-bold text-dialog-title-foreground transition-[background-color,transform] duration-150 active:scale-[0.96] hover:bg-accent-2 focus-visible:outline-none focus-visible:bg-accent-2 motion-reduce:transition-none sm:w-10"
+          className="grid w-11 shrink-0 place-items-center border-r border-dialog-edge bg-dialog-title font-mono text-subhead font-bold text-dialog-title-foreground transition-[background-color,transform,translate,scale,rotate] duration-150 active:scale-[0.96] hover:bg-accent-2 focus-visible:outline-none focus-visible:bg-accent-2 motion-reduce:transition-none sm:w-10"
           onClick={onBack}
           aria-label="Back to sessions"
         >
@@ -1701,7 +1727,7 @@ export function SessionScreen({
 
           <>
               {!turns.length && !liveTurn ? (
-            <div className="flex min-h-[55vh] flex-col items-center justify-center text-center transition-[opacity,transform] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
+            <div className="flex min-h-[55vh] flex-col items-center justify-center text-center transition-[opacity,transform,translate,scale,rotate] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
               <div className="grid size-9 place-items-center border border-dialog-edge bg-panel-2" aria-hidden="true">
                 <img src="/vis-logo.png" alt="" className="h-5 w-6 object-contain" />
               </div>
@@ -1735,8 +1761,13 @@ export function SessionScreen({
           </>
         </div>
       </div>
-        {loading && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-ink transition-opacity duration-200">
+        {veiled && (
+          <div
+            aria-hidden={!loading}
+            className={`absolute inset-0 z-10 flex items-center justify-center bg-ink transition-opacity duration-200 motion-reduce:transition-none ${
+              loading ? 'opacity-100' : 'pointer-events-none opacity-0'
+            }`}
+          >
             <LoadingSession />
           </div>
         )}
@@ -1749,7 +1780,7 @@ export function SessionScreen({
         {showJump && !fileMatches.length && !slashMatches.length && (
           <button
             type="button"
-            className="absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2 border border-dialog-edge bg-button px-3 py-1.5 font-mono text-meta font-bold text-button-foreground shadow-[4px_4px_0_var(--dialog-shadow)] transition-[opacity,transform,background-color] duration-150 starting:translate-y-2 starting:opacity-0 active:scale-[0.97] motion-reduce:transition-none"
+            className="absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2 border border-dialog-edge bg-button px-3 py-1.5 font-mono text-meta font-bold text-button-foreground shadow-[4px_4px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate,background-color] duration-150 starting:translate-y-2 starting:opacity-0 active:scale-[0.97] motion-reduce:transition-none"
             onClick={() => scrollToEnd('smooth')}
           >
             ↓ Latest
@@ -1761,7 +1792,7 @@ export function SessionScreen({
             id="file-mention-list"
             role="listbox"
             aria-label="File mentions"
-            className="absolute inset-x-2 bottom-full mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-[max(1.5rem,calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
+            className="absolute inset-x-2 bottom-full mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-[max(1.5rem,calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
           >
             <div className="bg-dialog-title px-3 py-2 font-mono text-meta font-bold text-dialog-title-foreground">
               Attach a file
@@ -1798,7 +1829,7 @@ export function SessionScreen({
             id="slash-command-list"
             role="listbox"
             aria-label="Slash commands"
-            className="absolute inset-x-2 bottom-full mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-[max(1.5rem,calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
+            className="absolute inset-x-2 bottom-full mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-[max(1.5rem,calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
           >
             <div className="bg-dialog-title px-3 py-2 font-mono text-meta font-bold text-dialog-title-foreground">
               Slash commands
@@ -1865,7 +1896,7 @@ export function SessionScreen({
               return (
               <div
                 key={item.turnId}
-                className={`flex items-center gap-2 border-t border-dialog-edge px-2.5 py-1 first:border-t-0 transition-[opacity,transform] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none${busy ? ' opacity-50' : ''}`}
+                className={`flex items-center gap-2 border-t border-dialog-edge px-2.5 py-1 first:border-t-0 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none${busy ? ' opacity-50' : ''}`}
               >
                 <span className="shrink-0 font-mono text-meta font-bold text-accent-ink">#{index + 1}</span>
                 {editing ? (
@@ -1967,7 +1998,7 @@ export function SessionScreen({
               {attachments.map((attachment) => (
                 <div
                   key={attachment.id}
-                  className="group relative flex min-w-0 max-w-40 shrink-0 items-center gap-1.5 border border-dialog-edge bg-panel pr-6 transition-[opacity,transform] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
+                  className="group relative flex min-w-0 max-w-40 shrink-0 items-center gap-1.5 border border-dialog-edge bg-panel pr-6 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
                 >
                   <img
                     src={attachment.previewUrl}
@@ -1991,7 +2022,7 @@ export function SessionScreen({
           )}
 
           {(composerNotice || voicePhase !== 'idle' || (voiceRequested && voiceModel?.status !== 'ready')) && (
-            <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex max-w-full items-center gap-1.5 border border-dialog-edge bg-panel px-2 py-1 font-mono text-chip text-dialog-hint shadow-[3px_3px_0_var(--dialog-shadow)] transition-[opacity,transform] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+            <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex max-w-full items-center gap-1.5 border border-dialog-edge bg-panel px-2 py-1 font-mono text-chip text-dialog-hint shadow-[3px_3px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
               {voicePhase === 'recording' ? (
                 <><span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" /> Listening · tap the microphone to finish</>
               ) : voicePhase === 'transcribing' ? (
@@ -2018,7 +2049,7 @@ export function SessionScreen({
 
             <button
               type="button"
-              className="grid h-8 w-7 shrink-0 place-items-center text-dialog-hint transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-dialog-hint-key active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:h-7 sm:w-6"
+              className="grid h-8 w-7 shrink-0 place-items-center text-dialog-hint transition-[background-color,color,transform,translate,scale,rotate] duration-150 hover:bg-hover hover:text-dialog-hint-key active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:h-7 sm:w-6"
               onClick={() => void addAttachments()}
               disabled={attachments.length >= (capabilities?.features.attachments.max_files ?? 8)}
               aria-label="Add images"
@@ -2032,7 +2063,7 @@ export function SessionScreen({
             {voiceSupported && (
               <button
                 type="button"
-                className={`grid h-8 w-7 shrink-0 place-items-center transition-[background-color,color,transform] duration-150 active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:h-7 sm:w-6 ${
+                className={`grid h-8 w-7 shrink-0 place-items-center transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:h-7 sm:w-6 ${
                   voicePhase === 'recording'
                     ? 'animate-pulse bg-warn-surface text-err motion-reduce:animate-none'
                     : 'text-dialog-hint hover:bg-hover hover:text-dialog-hint-key'
@@ -2122,7 +2153,7 @@ export function SessionScreen({
             {(!running || !!(prompt.trim() || attachments.length)) && (
               <button
                 type="button"
-                className="grid size-8 shrink-0 place-items-center border border-dialog-edge bg-dialog-title text-ui font-bold text-dialog-title-foreground transition-[background-color,color,transform] duration-150 hover:bg-accent-2 active:scale-[0.94] disabled:scale-100 disabled:bg-button disabled:text-dialog-hint motion-reduce:transition-none sm:size-7"
+                className="grid size-8 shrink-0 place-items-center border border-dialog-edge bg-dialog-title text-ui font-bold text-dialog-title-foreground transition-[background-color,color,transform,translate,scale,rotate] duration-150 hover:bg-accent-2 active:scale-[0.94] disabled:scale-100 disabled:bg-button disabled:text-dialog-hint motion-reduce:transition-none sm:size-7"
                 onClick={send}
                 disabled={(!prompt.trim() && !attachments.length) || voicePhase !== 'idle'}
                 aria-label={running ? 'Queue message' : 'Send message'}
@@ -2134,7 +2165,7 @@ export function SessionScreen({
             {running && (
               <button
                 type="button"
-                className="grid size-8 shrink-0 place-items-center border border-err bg-cancelled transition-[background-color,transform] duration-150 hover:bg-warn-surface active:scale-[0.94] motion-reduce:transition-none sm:size-7"
+                className="grid size-8 shrink-0 place-items-center border border-err bg-cancelled transition-[background-color,transform,translate,scale,rotate] duration-150 hover:bg-warn-surface active:scale-[0.94] motion-reduce:transition-none sm:size-7"
                 onClick={cancel}
                 aria-label="Stop response"
               >
