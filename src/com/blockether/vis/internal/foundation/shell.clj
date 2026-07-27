@@ -1327,11 +1327,29 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
             :else (do (.append sb c) (recur (inc i) sq dq depth))))))))
 
 
+(def ^:private terminal-escape-re
+  #"(?s)(?:\u001B\].*?(?:\u0007|\u001B\\)|(?:\u001B\[|\u009B)[0-?]*[ -/]*[@-~]|\u001B[ -/]*[@-~])")
+
+(def ^:private non-printing-control-re #"[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]")
+
+(defn- normalize-terminal-output
+  "Make captured terminal text safe and stable for Markdown renderers. Removes
+   ANSI/VT escape sequences and non-printing controls, while preserving tabs and
+   line feeds. Bare carriage returns become line feeds instead of leaking terminal
+   overwrite behavior into the TUI or companion app."
+  [s]
+  (when (some? s)
+    (-> (str s)
+        (str/replace terminal-escape-re "")
+        (str/replace "\r\n" "\n")
+        (str/replace \return \newline)
+        (str/replace non-printing-control-re ""))))
+
 (defn- fence
-  "Wrap `s` in a code fence, or nil when blank."
+  "Wrap normalized terminal text `s` in a code fence, or nil when blank."
   ([s] (fence s nil))
   ([s lang]
-   (when-let [s (present-str s)]
+   (when-let [s (present-str (normalize-terminal-output s))]
      (str "```" (or lang "") "\n" s "\n```"))))
 
 (defn- shell-section

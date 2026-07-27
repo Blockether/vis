@@ -537,6 +537,28 @@
                                                                  "timeout_secs" 5
                                                                  "duration_ms" 5000}))
                              "$ make test (failure) · timed out after 5s · 5.0s")))
+  (it "normalizes terminal controls in rendered output without changing the native result"
+      (let
+        [stdout
+         "\u001b[0;32m✓ PASS\u001b[0m\rnext\b!"
+
+         result
+         {"cmd" "tests" "exit" 0 "stdout" stdout}
+
+         run-card
+         (render-shell-run-result result)
+
+         logs-card
+         (render-shell-logs-result {"id" "tests"
+                                    "status" "running"
+                                    "lines" [[1 "\u001b]0;title\u0007\u001b[31mready\u001b[0m"]]})]
+
+        (expect (= stdout (get result "stdout")))
+        (expect (str/includes? (:body run-card) "✓ PASS\nnext!"))
+        (expect (not (str/includes? (:body run-card) "\u001b")))
+        (expect (not (str/includes? (:body run-card) "[0;32m")))
+        (expect (str/includes? (:body logs-card) "ready"))
+        (expect (not (str/includes? (:body logs-card) "\u001b")))))
   (it "renders background lifecycle/log cards with expandable sections"
       (let
         [bg
