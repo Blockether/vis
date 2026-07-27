@@ -299,6 +299,8 @@
 
 (def ^:private next-retry-counters (deref #'lp/next-retry-counters))
 
+(def ^:private emergency-fold-projection (deref #'lp/emergency-fold-projection))
+
 (def ^:private MAX_PROVIDER_UNAVAILABLE_RETRIES (deref #'lp/MAX_PROVIDER_UNAVAILABLE_RETRIES))
 
 (def ^:private provider-connect-failure? (deref #'lp/provider-connect-failure?))
@@ -4246,6 +4248,64 @@
                                     #'lp/process-rss-bytes (constantly (* 2 1024 1024))}
                      (fn []
                        (expect (true? (pressure?))))))))
+
+(defdescribe
+  emergency-context-fold-projection-test
+  (describe "one-shot overflow rescue"
+            (it "uses fold projection, shrinks wire input, and leaves canonical history unchanged"
+                (let
+                  [large
+                   (apply str (repeat 20000 "x"))
+
+                   trailer
+                   [(stub-tool-iter {:id 1 :content large}) (stub-tool-iter {:id 2 :content large})]
+
+                   original
+                   trailer
+
+                   recovery
+                   (emergency-fold-projection [{:role "system" :content "stable"}]
+                                              trailer
+                                              []
+                                              #{}
+                                              {:provider :openai :model "gpt"}
+                                              {})]
+
+                  (expect (some? recovery))
+                  (expect (< (:after-size recovery) (:before-size recovery)))
+                  (expect (= #{"t1/i1" "t1/i2"} (:scopes recovery)))
+                  (expect (= original trailer))
+                  (expect (= "stable"
+                             (-> recovery
+                                 :messages
+                                 first
+                                 :content)))
+                  (expect (some #(re-find #"Emergency transport fold" (str (:content %)))
+                                (:messages recovery)))))
+            (it "protects live skill scopes and refuses a no-op rescue"
+                (let
+                  [trailer
+                   [(stub-tool-iter {:id 1 :content (apply str (repeat 5000 "x"))})]
+
+                   scope
+                   (-> trailer
+                       first
+                       second
+                       :forms-vec
+                       first
+                       :scope)]
+
+                  (expect (nil? (emergency-fold-projection []
+                                                           trailer
+                                                           []
+                                                           #{scope}
+                                                           {:provider :openai :model "gpt"}
+                                                           {})))))
+            (it "has an independent retry budget"
+                (expect (= [2 1 1]
+                           (next-retry-counters
+                             ::lp/retry-context-overflow
+                             {:attempt 2 :max-tokens-attempt 1 :pu-attempt 1}))))))
 
 (defdescribe attachment-reinspection-wire-test
              (it "renders a reinspection image as a canonical vision message"

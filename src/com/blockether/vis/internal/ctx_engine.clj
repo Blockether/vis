@@ -771,39 +771,51 @@
        (assoc "now" now)))))
 
 (defn over-budget-hint
-  "Throttled compaction nudge for `session_utilization`, added ONLY when the
-   handled context has grown past the operating ceiling — a BIGGER task, not the
-   1M hard per-call max. Trigger: `last_request_tokens` > `auto_compress_above`
-   (the 144k soft guardrail; the floor of the fold card's `% of budget`). It is the
-   actionable partner to the passive `auto_compress_above`/`headroom_tokens`
-   numbers already in the map: those state the ceiling, this says do something.
+  "Stateful compaction guidance for `session_utilization`.
 
-   Throttled to AT MOST 3 turns from `since-turn` (the turn it first fired,
-   armed once in `stamp-utilization!`), so a long over-budget stretch nudges
-   three times and then goes quiet instead of nagging every turn. Dropping back
-   under the ceiling clears `since-turn`, so a later re-crossing re-arms a fresh
-   3-turn window. Reuses `fmt-toks` — the SAME estimator spelling as the fold
-   card and the `now` budget, so nothing reads two ways. Pure; returns nil when
-   not over budget, unarmed, or past the 3-turn window (never breaks the line)."
+   Pressure starts at 75% of `auto_compress_above`, escalates at 90%, and becomes
+   mandatory above the operating ceiling. Once armed it remains visible while
+   pressure remains; an ignored warning must never silently expire. The hint names
+   `session_fold`, the safe settled boundary, and the evidence to preserve. Pure."
   [util current-turn since-turn]
   (let
     [req
      (long (or (get util "last_request_tokens") 0))
 
      cap
-     (long (or (get util "auto_compress_above") 0))]
+     (long (or (get util "auto_compress_above") 0))
 
-    (when (and (pos? cap)
-               (> req cap)
-               since-turn
-               current-turn
-               (< (- (long current-turn) (long since-turn)) 3))
+     armed?
+     (and since-turn current-turn)
+
+     advisory?
+     (and (pos? cap) (>= (* req 4) (* cap 3)))
+
+     urgent?
+     (and (pos? cap) (>= (* req 10) (* cap 9)))
+
+     required?
+     (and (pos? cap) (> req cap))
+
+     action
+     (cond required? "ACTION REQUIRED"
+           urgent? "FOLD NOW"
+           advisory? "FOLD SOON"
+           :else nil)]
+
+    (when (and armed? action)
       (str
-        "ACTION REQUIRED: handled context "
+        action
+        ": handled context "
         (fmt-toks req)
-        " exceeds the "
+        " of "
         (fmt-toks cap)
-        " compaction budget. Fold settled search/tool sweeps and superseded reads NOW with one broad session_fold through the last completed scope; preserve decisions, edits, and verification, then confirm the receipt saved tokens."))))
+        " compaction budget. "
+        (if required?
+          "Fold settled search/tool sweeps and superseded reads NOW with one broad session_fold through the last completed scope"
+          (str "Use one broad session_fold through the last completed scope"
+               (when urgent? " before another large tool call")))
+        "; preserve decisions, edits, and verification, then confirm the receipt saved tokens."))))
 
 (defn session-view
   "THE single projection from engine-internal ctx to the model-facing

@@ -302,6 +302,7 @@
      (long pu-attempt)]
 
     (cond (= result ::retry-stream) [(inc attempt) max-tokens-attempt pu-attempt]
+          (= result ::retry-context-overflow) [attempt max-tokens-attempt pu-attempt]
           (= result ::retry-provider-unavailable) [attempt max-tokens-attempt (inc pu-attempt)]
           (and (map? result) (contains? result ::retry-max-tokens))
           [attempt (inc max-tokens-attempt) pu-attempt]
@@ -2034,10 +2035,9 @@
   [ctx-atom util]
   (when (and ctx-atom util)
     (swap! ctx-atom (fn [ctx]
-                      ;; Arm/disarm the throttled over-budget compaction hint (rendered by
-                      ;; `ctx-engine/over-budget-hint`): stamp the FIRST turn the handled
-                      ;; context crossed the soft ceiling so the hint can self-silence after
-                      ;; 3 turns, and clear it once back under so a later re-crossing re-arms.
+                      ;; Arm at 75% of the operating budget. Pressure guidance escalates
+                      ;; before overflow and remains armed until a measured request falls
+                      ;; below that threshold; ignored warnings never silently expire.
                       (let
                         [turn
                          (long (or (get ctx "session_turn") 1))
@@ -2048,17 +2048,17 @@
                          cap
                          (long (or (get util "auto_compress_above") 0))
 
-                         over?
-                         (and (pos? cap) (> req cap))
+                         pressured?
+                         (and (pos? cap) (>= (* req 4) (* cap 3)))
 
                          since
                          (get ctx "engine_overbudget_hint_turn")]
 
                         (cond-> (assoc ctx "engine_utilization" util)
-                          (and over? (nil? since))
+                          (and pressured? (nil? since))
                           (assoc "engine_overbudget_hint_turn" turn)
 
-                          (not over?)
+                          (not pressured?)
                           (dissoc "engine_overbudget_hint_turn")))))))
 
 (defn- stamp-iter-universe!
@@ -6378,6 +6378,64 @@
   "Fallback shown only when the provider repeatedly returns an empty reply."
   "The model returned empty replies repeatedly, so the turn was stopped.")
 
+(defn- emergency-fold-projection
+  "Build a one-shot provider projection with every foldable settled iteration
+   collapsed through the same `apply-summaries` path as `session_fold`.
+   Canonical trailer history and persisted summaries are never mutated."
+  [base-messages trailer-iters summaries protected-scopes replay-target replay-policies]
+  (let
+    [universe
+     (into []
+           (keep (fn [[_ rec]]
+                   (some iter-of-scope (keep :scope (:forms-vec rec)))))
+           trailer-iters)
+
+     protected
+     (set protected-scopes)
+
+     scopes
+     (into #{} (remove protected) universe)
+
+     live-turn
+     (some->> universe
+              (keep (comp first ctx-engine/scope-key))
+              seq
+              (apply max))]
+
+    (when (seq scopes)
+      (let
+        [intent
+         (cond->
+           {"scopes" scopes
+            "gist"
+            (str
+              "Emergency transport fold omitted "
+              (count scopes)
+              " settled iteration(s) after context overflow; canonical session history remains intact.")}
+           live-turn
+           (assoc "at_turn" live-turn))
+
+         folded-trailer
+         (apply-summaries trailer-iters (conj (vec summaries) intent) protected)
+
+         messages
+         (into (vec base-messages)
+               (conversation-suffix folded-trailer replay-target replay-policies))
+
+         before-size
+         (count (pr-str (into (vec base-messages)
+                              (conversation-suffix trailer-iters replay-target replay-policies))))
+
+         after-size
+         (count (pr-str messages))]
+
+        (when (< after-size before-size)
+          {:messages messages
+           :before-size before-size
+           :after-size after-size
+           :saved-size (- before-size after-size)
+           :scopes scopes})))))
+
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
    until the model emits `:answer` or the user cancels."
@@ -7005,8 +7063,8 @@
                                                        ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))))
                  ;; Standing context render + budget guard.
                  ;;
-                 ;; The engine never silently drops data; the model owns
-                 ;; deliberate prior-turn compaction through `session_fold`.
+                 ;; Canonical history stays intact. The model owns semantic folds;
+                 ;; emergency rescue may compact only the provider-facing projection.
                  ;; This turn's append-only suffix: [assistant-replay,
                  ;; <results>] pairs per prior iteration, so the model sees
                  ;; both its reasoning AND what its code returned.
@@ -7027,18 +7085,23 @@
                  ;; never repeat it. Matches z.ai's canonical preserved-thinking
                  ;; shape (user → asst → user → asst → user).
                  _ (stamp-iter-universe! (:ctx-atom environment) trailer-iters)
-                 conversation-suffix-msgs
-                 (conversation-suffix
-                   (apply-summaries trailer-iters
-                                    (some-> (:ctx-atom environment)
-                                            deref
-                                            (get "session_summaries"))
-                                    (some-> (:ctx-atom environment)
-                                            deref
-                                            (get "engine_protected_iter_scopes")))
-                   (replay-context pre-resolved-model)
-                   (extension/native-tool-replay-policies active-exts environment))
+                 replay-target (replay-context pre-resolved-model)
+                 replay-policies (extension/native-tool-replay-policies active-exts environment)
+                 conversation-suffix-msgs (conversation-suffix
+                                            (apply-summaries
+                                              trailer-iters
+                                              (some-> (:ctx-atom environment)
+                                                      deref
+                                                      (get "session_summaries"))
+                                              (some-> (:ctx-atom environment)
+                                                      deref
+                                                      (get "engine_protected_iter_scopes")))
+                                            replay-target
+                                            replay-policies)
                  provider-messages (into (vec messages) conversation-suffix-msgs)
+                 effective-messages-atom (atom provider-messages)
+                 context-recovery-attempted? (atom false)
+                 provider-output-started? (atom false)
                  effective-messages provider-messages
                  resolved-model pre-resolved-model
                  effective-routing (or routing {})
@@ -7072,21 +7135,24 @@
                    (let
                      [result
                       (try
-                        (run-iteration env
-                                       effective-messages
-                                       {:iteration iteration
-                                        :reasoning-level reasoning-level
-                                        :reasoning-effort reasoning-effort
-                                        :routing @iteration-routing
-                                        :resolved-model resolved-model
-                                        :on-chunk on-chunk
-                                        :active-extensions active-exts
-                                        :answer-validation-context
-                                        {:user-request user-request
-                                         :previous-iterations trailer-iters
-                                         :previous-blocks (vec (mapcat (comp :blocks second)
-                                                                       trailer-iters))}
-                                        :extra-body current-extra-body})
+                        (reset! provider-output-started? false)
+                        (run-iteration
+                          env
+                          @effective-messages-atom
+                          {:iteration iteration
+                           :reasoning-level reasoning-level
+                           :reasoning-effort reasoning-effort
+                           :routing @iteration-routing
+                           :resolved-model resolved-model
+                           :on-chunk (fn [chunk]
+                                       (reset! provider-output-started? true)
+                                       (emit-hook! on-chunk chunk "Provider chunk hook failed"))
+                           :active-extensions active-exts
+                           :answer-validation-context
+                           {:user-request user-request
+                            :previous-iterations trailer-iters
+                            :previous-blocks (vec (mapcat (comp :blocks second) trailer-iters))}
+                           :extra-body current-extra-body})
                         (catch Exception e
                           (cond
                             (and (stream-truncated-error? e)
@@ -7233,9 +7299,37 @@
                               (Thread/sleep #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
                                             (long delay-ms))
                               ::retry-provider-unavailable)
+                            (and (= :svar.tokens/context-overflow (:type (ex-data e)))
+                                 (not @provider-output-started?)
+                                 (compare-and-set! context-recovery-attempted? false true))
+                            (if-let
+                              [recovery (emergency-fold-projection
+                                          messages
+                                          trailer-iters
+                                          (some-> (:ctx-atom environment)
+                                                  deref
+                                                  (get "session_summaries"))
+                                          (some-> (:ctx-atom environment)
+                                                  deref
+                                                  (get "engine_protected_iter_scopes"))
+                                          replay-target
+                                          replay-policies)]
+                              (do (reset! effective-messages-atom (:messages recovery))
+                                  (tel/log!
+                                    {:level :warn
+                                     :id ::context-overflow-emergency-fold
+                                     :data (dissoc recovery :messages)
+                                     :msg
+                                     "Context overflow: retrying once with folded settled history"})
+                                  ::retry-context-overflow)
+                              (handle-iteration-exception! e
+                                                           {:iteration iteration
+                                                            :messages @effective-messages-atom
+                                                            :routing @iteration-routing
+                                                            :reasoning-level reasoning-level}))
                             :else (handle-iteration-exception! e
                                                                {:iteration iteration
-                                                                :messages effective-messages
+                                                                :messages @effective-messages-atom
                                                                 :routing @iteration-routing
                                                                 :reasoning-level
                                                                 reasoning-level}))))]

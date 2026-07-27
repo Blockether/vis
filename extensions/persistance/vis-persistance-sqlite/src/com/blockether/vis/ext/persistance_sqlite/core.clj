@@ -61,9 +61,9 @@
 
 (def ->date vis/->date)
 
-(defn- new-uuid [] (->uuid (str (java.util.UUID/randomUUID))))
+(def new-uuid vis/new-uuid)
 
-(defn- new-id [] (->id (new-uuid)))
+(def new-id vis/new-id)
 
 (defn query!
   "Run a HoneySQL map and return rows with unqualified lower-case keys."
@@ -74,82 +74,15 @@
 
 (defn execute! [db-info q] (jdbc/execute! (ds db-info) (sql/format q)))
 
-(defn- normalize-status
-  "Map runtime status keywords to V1 schema CHECK constraint values.
-   Schema allows: running, done, error, interrupted."
-  [status]
-  (case status
-    (:success :done)
-    "done"
+(def normalize-status vis/normalize-status)
 
-    :error
-    "error"
+(def ->json vis/->json)
 
-    (:cancelled :interrupted)
-    "interrupted"
+(def <-json vis/<-json)
 
-    :running
-    "running"
-
-    ;; fallback
-    (->kw (or status :done))))
-
-(defn- ->json [m] (when m (json/write-json-str m)))
-
-(defn- <-json
-  "Parse a JSON TEXT column. STRINGS-ONLY: keys come back as VERBATIM STRINGS —
-   no `:key-fn keyword` re-keywordizing. Whatever needs an internal keyword
-   shape converts at ONE named adapter (e.g. `normalize-routing-event`), never
-   here."
-  [s]
-  (when s (json/read-json s)))
-
-(def ^:private assistant-wire-key->canonical
-  {"role" :role
-   "content" :content
-   "model" :model
-   "type" :type
-   "text" :text
-   "thinking" :thinking
-   "thinking_signature" :thinking-signature
-   "is_redacted" :redacted?
-   "data" :data
-   "id" :id
-   "name" :name
-   "input" :input
-   "tool_use_id" :tool-use-id
-   "is_error" :is-error
-   "image_url" :image_url
-   "source" :source
-   "url" :url
-   "detail" :detail
-   "media_type" :media_type
-   "cache_control" :cache_control})
-
-(defn- canonical-assistant-value
-  "Restore Vis' persisted wire envelope to Svar's canonical keyword shape.
-   Tool input remains opaque so user map keys are never rewritten."
-  ([value] (canonical-assistant-value value false))
-  ([value opaque?]
-   (cond opaque? value
-         (vector? value) (mapv canonical-assistant-value value)
-         (map? value)
-         (persistent! (reduce-kv (fn [out k v]
-                                   (let [canonical-k (get assistant-wire-key->canonical k k)]
-                                     (assoc! out
-                                             canonical-k
-                                             (canonical-assistant-value v (= :input canonical-k)))))
-                                 (transient {})
-                                 value))
-         :else value)))
-
-(defn- <-json-lazy
-  "Lazily restores one persisted canonical Svar assistant message.
-   Storage uses Vis wire strings; replay requires Svar's keyword envelope."
-  [s]
-  (delay (some-> s
-                 <-json
-                 canonical-assistant-value)))
+;; Restore of persisted canonical assistant messages lives in the shared
+;; persistence facade so every backend replays the identical keyword shape.
+(def <-json-lazy vis/<-json-canonical-lazy)
 
 (defn- ->blob
   "Serialize a Clojure value to a Nippy byte array for BLOB columns."
