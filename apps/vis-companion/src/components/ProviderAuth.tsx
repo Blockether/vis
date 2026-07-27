@@ -81,8 +81,22 @@ function quotaNote(row: ProviderLimitRow): string | null {
   return note && note.length <= QUOTA_NOTE_MAX ? note : null;
 }
 
+/**
+ * A percentage window: the provider reports a 0-100 scale (`limit` 100) rather
+ * than raw token counts. The gateway fills `remaining` for those, and the TUI
+ * footer renders exactly that number — so this surface must read `remaining`
+ * too, or the same account shows `6%` here and `94%` there.
+ */
+function percentRemaining(row: ProviderLimitRow): number | null {
+  if (typeof row.limit !== 'number' || row.limit !== 100) return null;
+  if (typeof row.remaining === 'number') return Math.round(row.remaining);
+  if (typeof row.used === 'number') return Math.round(100 - row.used);
+  return null;
+}
+
 function hasQuotaValue(row: ProviderLimitRow): boolean {
   if (row.is_unlimited) return true;
+  if (percentRemaining(row) !== null) return true;
   if (typeof row.used === 'number' && typeof row.limit === 'number' && row.limit > 0) return true;
   return quotaNote(row) !== null;
 }
@@ -97,8 +111,10 @@ function limitRowText(row: ProviderLimitRow): string | null {
   const label = row.label?.trim();
   if (!label) return null;
   if (row.is_unlimited) return `${label} unlimited`;
+  const left = percentRemaining(row);
+  if (left !== null) return `${label} ${left}% left`;
   if (typeof row.used === 'number' && typeof row.limit === 'number' && row.limit > 0) {
-    return `${label} ${Math.round((row.used / row.limit) * 100)}%`;
+    return `${label} ${Math.round((row.used / row.limit) * 100)}% used`;
   }
   const note = quotaNote(row);
   return note ? `${label} ${note}` : label;

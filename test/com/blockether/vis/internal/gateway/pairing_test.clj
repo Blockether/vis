@@ -13,6 +13,30 @@
         (is (str/includes? payload "url=http%3A%2F%2F127.0.0.1%3A7890"))
         (is (str/includes? payload "token=secret+token"))))))
 
+(deftest pairing-url-carries-alternate-hosts
+  (testing
+    "every other reachable host rides along as `alt=` so a phone that
+            cannot route the first one falls back instead of failing"
+    (with-redefs
+      [pairing/candidate-hosts (fn [_]
+                                 ["100.64.0.10" "192.168.0.5" "169.254.1.2"])]
+      (let
+        [url (pairing/pairing-url {:host "0.0.0.0" :port 7890 :token "tok"})
+         alt (some-> (re-find #"[?&]alt=([^&]+)" url)
+                     second
+                     (java.net.URLDecoder/decode "UTF-8"))]
+
+        (is (str/includes? url "url=http%3A%2F%2F100.64.0.10%3A7890"))
+        (is (= ["http://192.168.0.5:7890"]
+               (some-> alt
+                       (str/split #","))))
+        (is (not (str/includes? url "169.254")) "link-local is unroutable for a phone")))
+    (with-redefs
+      [pairing/candidate-hosts (fn [_]
+                                 ["100.64.0.10"])]
+      (is (not (str/includes? (pairing/pairing-url {:host "0.0.0.0" :port 7890}) "alt="))
+          "a lone host adds no alt param"))))
+
 (deftest candidate-hosts-prefers-tailscale
   (testing "Tailscale 100.64/10 addresses are offered before LAN addresses"
     (with-redefs-fn {#'pairing/iface-addresses (fn []

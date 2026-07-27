@@ -2731,6 +2731,19 @@
 
 (declare ntr-recover-hint)
 
+(def ^:private SESSION_REBASE_RECLAIMED_TOKENS 200000)
+
+(defn- rebase-session-context!
+  "Materialize `cur` as both the same-turn full delta and next-turn standing
+   snapshot when a fold crossed the rebase threshold. Returns nil otherwise."
+  [standing-ctx-atom session-rebase-atom cur]
+  (when (and cur
+             (true? (:pending? (some-> session-rebase-atom
+                                       deref))))
+    (reset! standing-ctx-atom {:block (ctx-renderer/render-ctx-map cur) :baseline cur})
+    (reset! session-rebase-atom {:reclaimed-tokens 0 :pending? false})
+    (ctx-renderer/render-ctx-delta {} cur)))
+
 (defn- compaction-verbs
   "Build the model-facing compaction verb bound into the sandbox as
    `session_fold`, closing over `ctx-atom`. It records a `:session/summaries`
@@ -2747,7 +2760,7 @@
    STRING-KEYED (they persist inside the ctx nippy blob — strings-only DB):
      {\"scopes\" #{…}|\"through\" \"tN/iN\", \"gist\" <takeaway>?}
    `apply-summaries` still renders any legacy persisted `{\"drop\" true}` intents."
-  [ctx-atom]
+  [ctx-atom & [session-rebase-atom]]
   (let
     [normalize-target
      (fn [value]
@@ -3022,8 +3035,8 @@
                      "%" (when (and lrt lim (pos? (long lrt)) (pos? (long lim)))
                            (str " (" (fmt-tok lrt) "/" (fmt-tok lim) " tokens)")))))]
 
-           (str saved ctx-pct))
-         (catch Throwable _ "")))
+           {:note (str saved ctx-pct) :reclaimed-tokens toks})
+         (catch Throwable _ {:note "" :reclaimed-tokens 0})))
 
      recover-hint
      (fn [base]
@@ -3102,7 +3115,7 @@
              (if (and (seq omitted) (empty? (get base "scopes")))
                (str "session_fold: nothing else to fold" kept-note)
                (let
-                 [note (priced base)
+                 [{:keys [note reclaimed-tokens]} (priced base)
                   recover (recover-hint base)
                   ;; Stamp the ISSUING turn so `previous-turn-context` never lets
                   ;; a whole-turn fold recorded DURING turn N erase turn N's own
@@ -3120,6 +3133,13 @@
                            (assoc "note" note))]
 
                  (record! intent)
+                 (when (and session-rebase-atom (pos? (long reclaimed-tokens)))
+                   (swap! session-rebase-atom
+                     (fn [{accumulated :reclaimed-tokens :as state}]
+                       (let [total (+ (long (or accumulated 0)) (long reclaimed-tokens))]
+                         (assoc state
+                           :reclaimed-tokens total
+                           :pending? (>= (long total) (long SESSION_REBASE_RECLAIMED_TOKENS)))))))
                  (tel/log! {:level :info :id ::session-fold :data {:intent intent}}
                            "model folded scopes")
                  (str "folded " label note recover kept-note (when g (str " → " g)))))))
@@ -7888,17 +7908,24 @@
                                 ;; appended `session["utilization"] = …` delta (the
                                 ;; frozen block stays util-free for cache stability).
                                 cur (ctx-loop/render-block! environment ctx-renderer/ctx-delta-map)
-                                prev @last-context-atom]
+                                prev @last-context-atom
+                                rebase? (true? (:pending? (some-> (:session-rebase-atom environment)
+                                                                  deref)))]
 
-                               (when (and cur (not= cur prev))
+                               (when (and cur (or rebase? (not= cur prev)))
                                  (reset! last-context-atom cur)
-                                 ;; carry the baseline ACROSS turns so the next turn
-                                 ;; diffs against the last-emitted state, not a re-render.
-                                 (some-> standing-ctx-atom
-                                         (swap! assoc :baseline cur))
-                                 ;; structural Python delta (session[…] = … / del),
-                                 ;; not the whole <context> block — append-only.
-                                 (ctx-renderer/render-ctx-delta prev cur)))
+                                 (if rebase?
+                                   (rebase-session-context! standing-ctx-atom
+                                                            (:session-rebase-atom environment)
+                                                            cur)
+                                   (do
+                                     ;; carry the baseline ACROSS turns so the next turn
+                                     ;; diffs against the last-emitted state, not a re-render.
+                                     (some-> standing-ctx-atom
+                                             (swap! assoc :baseline cur))
+                                     ;; structural Python delta (session[…] = … / del),
+                                     ;; not the whole <context> block — append-only.
+                                     (ctx-renderer/render-ctx-delta prev cur)))))
                              ;; The immediately preceding provider call consumed any
                              ;; reinspection image. Clear old queues before carrying
                              ;; history forward: reinspection is exactly one request.
@@ -9900,6 +9927,12 @@
      ctx-atom
      (ctx-loop/make-ctx-atom session-id)
 
+     ;; Large folds already invalidate the provider cache. Once their cumulative
+     ;; newly reclaimed wire crosses the threshold, rebase the standing session
+     ;; snapshot too instead of retaining an unbounded chain of historical deltas.
+     session-rebase-atom
+     (atom {:reclaimed-tokens 0 :pending? false})
+
      ;; ONE model-driven context-compaction verb, recording a
      ;; `:session/summaries` intent the wire applies via `apply-summaries`:
      ;;
@@ -9919,7 +9952,7 @@
      ;; sentinel) so the fold shows in the Python result. See
      ;; `compaction-verbs` for the intent shape + range handling.
      compaction
-     (compaction-verbs ctx-atom)
+     (compaction-verbs ctx-atom session-rebase-atom)
 
      ;; maki-style in-program concurrency: run each thunk (a Python callable,
      ;; e.g. `lambda: rg({...})`) on a VIRTUAL THREAD and return results in
@@ -10320,11 +10353,13 @@
        ;; per-iter capture / done snapshot can read or stamp them.
        :ctx-atom ctx-atom
        :turn-state-atom turn-state-atom
+       :session-rebase-atom session-rebase-atom
        ;; PROMPT-CACHE STABILITY: the standing `session = {…}` block rides
-       ;; in the cached system prefix, so it is FROZEN once per process and
-       ;; reused across turns — every state change rides as an appended
-       ;; `session[...] = …` delta instead of re-rendering the prefix (which
-       ;; would bust the cache on any change). Holds
+       ;; in the cached system prefix and is normally frozen across turns.
+       ;; State changes ride as appended `session[...] = …` deltas. A large
+       ;; fold deliberately rebases this block to the current materialized
+       ;; session, bounding the delta chain while spending a cache miss that
+       ;; compaction already made useful. Holds
        ;; `{:block <frozen text> :baseline <last-emitted static map>}`;
        ;; nil until the first turn seeds it. A fresh process (resume/restart)
        ;; starts nil → renders fresh from current state (cold cache anyway).

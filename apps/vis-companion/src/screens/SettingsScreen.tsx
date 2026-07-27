@@ -37,7 +37,6 @@ interface Props {
   gateway: GatewayConn;
   isActive: boolean;
   onActivate?: () => void;
-  onDeactivate?: () => void;
   onRename?: (label: string | undefined) => void | Promise<void>;
   onRemove?: () => void | Promise<void>;
   onClose: () => void;
@@ -48,7 +47,6 @@ export function GatewaySettingsDialog({
   gateway,
   isActive,
   onActivate,
-  onDeactivate,
   onRename,
   onRemove,
   onClose,
@@ -232,85 +230,68 @@ export function GatewaySettingsDialog({
               </span>
             }
           >
-            <div className="space-y-3 p-3">
-              <label className="block">
-                <span className="mb-1 block font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
-                  Display name
-                </span>
-                <div className="flex gap-2">
-                  <Input
-                    value={labelDraft}
-                    placeholder={gatewayHost(gateway.url)}
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    className="h-10 min-w-0 flex-1 text-body sm:h-9"
-                    onChange={(event) => setLabelDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') void onRename?.(labelDraft.trim() || undefined);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    disabled={(labelDraft.trim() || undefined) === (gateway.label ?? undefined)}
-                    onClick={() => void onRename?.(labelDraft.trim() || undefined)}
-                    className="h-10 shrink-0 border border-dialog-edge bg-panel px-4 font-mono text-meta font-bold uppercase tracking-[0.12em] text-dialog-hint-key transition-colors hover:border-edge-strong hover:bg-hover hover:text-white disabled:border-dialog-edge disabled:bg-panel disabled:text-dialog-hint disabled:opacity-45 disabled:hover:bg-panel disabled:hover:text-dialog-hint sm:h-9"
-                  >
-                    Save
-                  </button>
-                </div>
-              </label>
+            <div className="space-y-2.5 p-2.5">
+              <Input
+                value={labelDraft}
+                placeholder={gatewayHost(gateway.url)}
+                aria-label="Display name"
+                autoCapitalize="none"
+                autoCorrect="off"
+                className="w-full"
+                onChange={(event) => setLabelDraft(event.target.value)}
+                onBlur={() => {
+                  if ((labelDraft.trim() || undefined) !== (gateway.label ?? undefined))
+                    void onRename?.(labelDraft.trim() || undefined);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') event.currentTarget.blur();
+                  if (event.key === 'Escape') {
+                    setLabelDraft(gateway.label ?? '');
+                    event.currentTarget.blur();
+                  }
+                }}
+              />
 
-              <div className="flex flex-wrap items-center gap-2 border-t border-dialog-edge pt-3">
-                {isActive ? (
-                  <button
-                    type="button"
-                    onClick={() => onDeactivate?.()}
-                    className="h-9 border border-dialog-edge bg-panel px-4 font-mono text-meta font-bold uppercase tracking-[0.12em] text-dialog-hint-key transition-colors hover:border-edge-strong hover:bg-hover hover:text-white"
-                  >
-                    Deactivate
-                  </button>
-                ) : (
-                  <button
-                    type="button"
+              <div className="flex items-center gap-2 border-t border-dialog-edge pt-2">
+                {!isActive && (
+                  <Button
                     onClick={() => {
                       onActivate?.();
                       onClose();
                     }}
-                    className="h-9 border border-accent bg-accent px-4 font-mono text-meta font-bold uppercase tracking-[0.12em] text-accent-foreground transition-opacity hover:opacity-90"
                   >
-                    Activate
-                  </button>
+                    Use this gateway
+                  </Button>
                 )}
+
+                <span className="flex-1" />
+
                 {confirmRemove ? (
-                  <span className="flex items-center gap-2">
-                    <span className="font-mono text-meta font-bold uppercase tracking-[0.12em] text-err">
-                      Remove?
-                    </span>
+                  <>
                     <button
                       type="button"
+                      className="px-1 text-meta text-dialog-hint transition-colors hover:text-white"
+                      onClick={() => setConfirmRemove(false)}
+                    >
+                      Cancel
+                    </button>
+                    <Button
+                      variant="danger"
                       onClick={async () => {
                         await onRemove?.();
                         onClose();
                       }}
-                      className="h-9 border border-err bg-err px-4 font-mono text-meta font-bold uppercase tracking-[0.12em] text-white transition-opacity hover:opacity-90"
                     >
-                      Yes, remove
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmRemove(false)}
-                      className="h-9 border border-dialog-edge bg-panel px-4 font-mono text-meta font-bold uppercase tracking-[0.12em] text-dialog-hint-key transition-colors hover:border-edge-strong hover:bg-hover hover:text-white"
-                    >
-                      Cancel
-                    </button>
-                  </span>
+                      Forget gateway
+                    </Button>
+                  </>
                 ) : (
                   <button
                     type="button"
+                    className="px-1 text-meta text-dialog-hint transition-colors hover:text-err"
                     onClick={() => setConfirmRemove(true)}
-                    className="h-9 border border-err/40 bg-panel px-4 font-mono text-meta font-bold uppercase tracking-[0.12em] text-err transition-colors hover:border-err hover:bg-err hover:text-white"
                   >
-                    Remove
+                    Forget
                   </button>
                 )}
               </div>

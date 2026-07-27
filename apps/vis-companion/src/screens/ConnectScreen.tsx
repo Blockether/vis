@@ -10,6 +10,10 @@ interface Props {
   active: GatewayConn | null;
   onAdd: (conn: GatewayConn, makeActive?: boolean) => Promise<void>;
   onSettings: (conn: GatewayConn) => void;
+  /** Why the active gateway was dropped, when it stopped answering. */
+  offlineError?: string | null;
+  /** Retry the active gateway and go back to sessions if it answers. */
+  onRetry?: () => void;
 }
 
 /**
@@ -24,6 +28,8 @@ export function ConnectScreen({
   active,
   onAdd,
   onSettings,
+  offlineError,
+  onRetry,
 }: Props) {
   const [payload, setPayload] = useState('');
   const [url, setUrl] = useState('');
@@ -32,6 +38,13 @@ export function ConnectScreen({
   const [busy, setBusy] = useState(false);
   const [health, setHealth] = useState<Record<string, GwHealth>>(() => ({ ...lastHealth }));
   const probeInFlight = useRef(false);
+
+  // The live probe is the ONLY truth about reachability. Refs (not deps) so the
+  // 6s sweep below never closes over a stale active gateway or handler.
+  const activeUrlRef = useRef<string | null>(null);
+  const recoverRef = useRef<(() => void) | undefined>(undefined);
+  activeUrlRef.current = active?.url ?? null;
+  recoverRef.current = offlineError ? onRetry : undefined;
 
   // One sweep at a time: a probe fans out to EVERY saved gateway, and an
   // unreachable one only settles when its request times out — well past the 6s
@@ -44,6 +57,9 @@ export function ConnectScreen({
     const remember = (url: string, entry: GwHealth) => {
       lastHealth[url] = entry;
       setHealth((h) => ({ ...h, [url]: entry }));
+      // Answering again IS being back: clear the offline gate the moment the
+      // active gateway pings, instead of showing a red banner over a green dot.
+      if (entry.state === 'online' && url === activeUrlRef.current) recoverRef.current?.();
     };
     try {
       await Promise.all(
@@ -90,36 +106,59 @@ export function ConnectScreen({
   // on a 2xx /healthz, throws GatewayError(401) when reachable-but-unauthorized, and
   // returns false on a genuine network failure. We only persist a gateway that
   // actually answered — an unreachable URL/QR is rejected with a clear reason.
+  //
+  // A pairing payload can carry `alts` (the gateway's other reachable hosts:
+  // Tailscale, LAN, …). The QR names the gateway's own favourite first, which is
+  // useless if this phone isn't on that network — so each candidate is tried in
+  // order and the one that answers is the one we save.
   async function tryConn(conn: GatewayConn) {
     setBusy(true);
     setMsg(null);
+    const { alts, ...base } = conn;
+    const candidates = [base.url, ...(alts ?? [])];
+    let unauthorized = false;
     try {
-      const client = new GatewayClient(conn);
-      const reachable = await client.ping();
-      if (!reachable) {
-        setMsg({
-          kind: 'err',
-          text: `Can't reach ${hostOf(conn.url)}. Check the URL, that you're on the same network/Tailscale, and that the gateway is running.`,
-        });
+      for (const url of candidates) {
+        const candidate: GatewayConn = { ...base, url, label: hostLabel(url) };
+        try {
+          if (!(await new GatewayClient(candidate).ping())) continue;
+        } catch (e) {
+          if (e instanceof GatewayError && e.status === 401) {
+            unauthorized = true;
+            continue;
+          }
+          continue;
+        }
+        await onAdd(candidate);
+        setMsg({ kind: 'ok', text: `Connected to ${candidate.label}` });
+        setPayload('');
+        setUrl('');
+        setToken('');
         return;
       }
-      await onAdd(conn);
-      setMsg({ kind: 'ok', text: `Connected to ${conn.label ?? hostOf(conn.url)}` });
-      setPayload('');
-      setUrl('');
-      setToken('');
-    } catch (e) {
-      if (e instanceof GatewayError && e.status === 401) {
+      if (unauthorized) {
         setMsg({
           kind: 'err',
           text: `${hostOf(conn.url)} is reachable but rejected the token. Check the bearer token from \u2018vis gateway pair\u2019.`,
         });
         return;
       }
+      setMsg({
+        kind: 'err',
+        text:
+          candidates.length > 1
+            ? `Can't reach ${candidates.map(hostOf).join(' or ')}. Check you're on the same network/Tailscale and the gateway is running.`
+            : `Can't reach ${hostOf(conn.url)}. Check the URL, that you're on the same network/Tailscale, and that the gateway is running.`,
+      });
+    } catch (e) {
       setMsg({ kind: 'err', text: `Can't reach ${hostOf(conn.url)}: ${(e as Error).message}` });
     } finally {
       setBusy(false);
     }
+  }
+
+  function hostLabel(url: string): string {
+    return hostOf(url);
   }
 
   async function addFromPayload() {
@@ -249,13 +288,13 @@ export function ConnectScreen({
               />
               <div className="flex gap-2">
                 <Button
-                  className="min-h-9 flex-1 disabled:border-dialog-title disabled:bg-dialog-title disabled:text-dialog-title-foreground disabled:opacity-50 sm:min-h-8"
+                  className="flex-1"
                   onClick={addFromPayload}
                   disabled={busy || !payload}
                 >
                   {busy ? 'Checking\u2026' : 'Pair'}
                 </Button>
-                <Button variant="ghost" className="min-h-9 sm:min-h-8" onClick={scan} disabled={busy}>
+                <Button variant="ghost" onClick={scan} disabled={busy}>
                   Scan QR
                 </Button>
               </div>
@@ -285,7 +324,7 @@ export function ConnectScreen({
                 autoCorrect="off"
               />
               <Button
-                className="min-h-9 w-full disabled:border-dialog-title disabled:bg-dialog-title disabled:text-dialog-title-foreground disabled:opacity-50 sm:min-h-8"
+                className="w-full"
                 onClick={addManual}
                 disabled={busy || !url}
               >

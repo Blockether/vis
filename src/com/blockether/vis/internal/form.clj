@@ -160,19 +160,23 @@
   (some? tool-name))
 
 (defn hide-tool-code?
-  "Should a channel DROP a form's synthesized invocation source (the `name(args)`
-   code block) instead of showing it as code? YES for a SUCCESSFUL native tool
-   call (cat/rg/patch/…) that is NOT `python_execution`: the op-card
-   (`result-card`) already says what ran, so the source is redundant chrome.
-   `python_execution` — the model's OWN program — always keeps its code; an
-   ERRORED form keeps it too (the inline error needs the surrounding source).
-   The ONE predicate the TUI and web both consult so the code-chrome decision
-   can't drift between channels."
+  "Should a channel DROP a form's invocation source instead of showing it as a
+   separate code block? Successful native tools already have a result card, but
+   successful `python_execution` keeps its user-relevant program. Failed native
+   tools keep source context, except failed Python: its runtime error already
+   embeds the numbered source excerpt and caret.
+   This is the shared TUI/channel policy; web mirrors it at the wire boundary."
   [{:keys [error success?] :as form}]
-  (let [errored? (or (some? error) (and (some? success?) (not success?)))]
-    (boolean (and (not errored?)
-                  (native-tool-form? form)
-                  (not= (name (:vis/tool-name form)) "python_execution")))))
+  (let
+    [errored?
+     (or (some? error) (and (some? success?) (not success?)))
+
+     python?
+     (= (some-> (:vis/tool-name form)
+                name)
+        "python_execution")]
+
+    (boolean (and (native-tool-form? form) (= errored? python?)))))
 
 (def ^:private same-path-coalescable-tools
   "Native tools whose ADJACENT op-cards fold only when they target the SAME file."

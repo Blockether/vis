@@ -45,6 +45,10 @@ export function App() {
   const [settingsTarget, setSettingsTarget] = useState<GatewayConn | null>(null);
   const [subscribedIds, setSubscribedIds] = useState<Set<string>>(new Set());
   const [ready, setReady] = useState(false);
+  // Set when the sessions screen finds the active gateway unreachable. While it
+  // holds a message there is nothing to navigate, so the shell shows Gateways
+  // only — no Sessions tab, no session list shaped like an error page.
+  const [offline, setOffline] = useState<string | null>(null);
   const [compat, setCompat] = useState<Compat | null>(null);
   const [compatChecking, setCompatChecking] = useState(false);
   const [compatNonce, setCompatNonce] = useState(0);
@@ -80,6 +84,7 @@ export function App() {
       const next = await upsertConnection(conn);
       if (makeActive) await setActiveUrl(conn.url);
       setConns(next);
+      setOffline(null);
       setActive(await getActiveConnection());
       if (makeActive) setTab('sessions');
     },
@@ -90,12 +95,8 @@ export function App() {
     await setActiveUrl(url);
     setActive(await getActiveConnection());
     setOpenTarget(null);
+    setOffline(null);
     setTab('sessions');
-  }, []);
-
-  const activateConnection = useCallback(async (url: string | null) => {
-    await setActiveUrl(url);
-    setActive(await getActiveConnection());
   }, []);
 
   const openGatewaySession = useCallback(async (conn: GatewayConn, sid: string, fresh = false) => {
@@ -177,8 +178,12 @@ export function App() {
   useEffect(() => {
     let dispose = () => {};
     void onPairingLink((url) => {
-      const conn = parsePairing(url);
-      if (conn) void addConnection(conn);
+      const parsed = parsePairing(url);
+      if (parsed) {
+        // `alts` is pairing-time only: the deep link opens the URL it names.
+        const { alts: _alts, ...conn } = parsed;
+        void addConnection(conn);
+      }
     }).then((d) => (dispose = d));
     return () => dispose();
   }, [addConnection]);
@@ -327,7 +332,10 @@ export function App() {
 
   if (!ready) return <Splash />;
 
-  const hasConn = conns.length > 0 && !!active;
+  // A session already open keeps its own screen; the offline gate is about the
+  // list, not about the transcript you are reading.
+  const blocked = !!offline && !openTarget;
+  const hasConn = conns.length > 0 && !!active && !blocked;
 
   return (
     <div
@@ -343,6 +351,8 @@ export function App() {
             active={active}
             onAdd={addConnection}
             onSettings={setSettingsTarget}
+            offlineError={blocked ? offline : null}
+            onRetry={() => setOffline(null)}
           />
         ) : sessionConn && compat && !compat.isCompatible ? (
           <IncompatibleScreen
@@ -372,7 +382,7 @@ export function App() {
             client={client}
             subscriptions={subscriptions}
             subscribedIds={watchedIds}
-            gatewayCount={conns.length}
+            onUnreachable={setOffline}
             onOpen={openGatewaySession}
           />
         )}
@@ -387,10 +397,6 @@ export function App() {
           gateway={settingsTarget}
           isActive={settingsTarget.url === active?.url}
           onActivate={() => void selectConnection(settingsTarget.url)}
-          onDeactivate={() => {
-            void activateConnection(null);
-            setSettingsTarget(null);
-          }}
           onRename={async (label) => {
             const updated = { ...settingsTarget, label };
             await upsertConnection(updated);

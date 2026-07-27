@@ -30,7 +30,11 @@ export function parsePairingUrl(input: string): GatewayConn | null {
   const url = params.get('url');
   if (!url) return null;
   const token = params.get('token') ?? undefined;
-  return { url, token, label: hostLabel(url) };
+  const alts = (params.get('alt') ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => /^https?:\/\//i.test(s));
+  return { url, token, label: hostLabel(url), ...(alts.length ? { alts } : {}) };
 }
 
 /** Parse the JSON pairing payload into a connection, or null. */
@@ -38,10 +42,24 @@ export function parsePairingJson(input: string): GatewayConn | null {
   try {
     const obj = JSON.parse(input.trim());
     if (obj && obj.type === 'vis-gateway-pairing' && typeof obj.url === 'string') {
+      const alts = Array.isArray(obj.hosts)
+        ? (obj.hosts as unknown[])
+            .filter((h): h is string => typeof h === 'string' && h.length > 0)
+            .map((h) => {
+              try {
+                const u = new URL(obj.url);
+                return `${u.protocol}//${h}${u.port ? `:${u.port}` : ''}`;
+              } catch {
+                return '';
+              }
+            })
+            .filter((u) => u && u !== obj.url)
+        : [];
       return {
         url: obj.url,
         token: typeof obj.token === 'string' ? obj.token : undefined,
         label: hostLabel(obj.url),
+        ...(alts.length ? { alts } : {}),
       };
     }
   } catch {

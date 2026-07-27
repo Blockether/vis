@@ -16,6 +16,12 @@ export interface GatewayConn {
    * instead of embedding the full gateway URL. Never a secret.
    */
   id?: string;
+  /**
+   * Other URLs the same gateway is reachable at (from the pairing `alt=` /
+   * `hosts` list). Tried in order when the primary URL cannot be reached; never
+   * persisted, only used while adding a gateway.
+   */
+  alts?: string[];
 }
 
 export interface Session {

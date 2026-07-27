@@ -106,6 +106,17 @@
       (get-in m ["env" "host" "clock"])
       (update-in ["env" "host"] dissoc "clock"))))
 
+(defn render-ctx-map
+  "Render an already-materialized model-facing session map as the fenced Python
+   baseline block. Used when a large fold deliberately rebases cached context."
+  [m]
+  (when (seq m)
+    (str "```python\n" "# Your live session context (read-only — never reassign `session`).\n"
+         "# The host keeps it current; mid-session changes arrive as later\n"
+         "# `session[...] = …` / `del session[...]` lines. Tool results live in `r`, not here.\n"
+         "session = " (env/ctx->python-str m)
+         "\n" "```")))
+
 (defn render-ctx-static
   "Render the standing session context (workspace / env / language_tools /
    routing / resources / symbols) as a FENCED PYTHON block that binds `session` to its initial value —

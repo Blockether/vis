@@ -70,16 +70,27 @@
   (vec (filter tailscale-ip? (iface-addresses))))
 
 (defn pairing-url
+  "The `vis://gateway` deep link. `url=` is the best guess (Tailscale first), and
+  `alt=` carries the remaining routable hosts so a phone that cannot reach the
+  first one (no Tailscale, different LAN) falls back instead of failing. IPv4
+  link-local (169.254/16) is dropped from the alternates: no phone can route it,
+  and every extra host makes the QR denser."
   [{:keys [host port token]}]
   (let
-    [host
-     (or (first (candidate-hosts host)) host)
+    [hosts
+     (let [c (candidate-hosts host)]
+       (if (seq c) c [host]))
 
-     url
-     (str "http://" host ":" port)]
+     ->url
+     (fn [h]
+       (str "http://" h ":" port))
+
+     alts
+     (into [] (comp (remove #(str/starts-with? (str %) "169.254.")) (map ->url)) (rest hosts))]
 
     (str "vis://gateway?url="
-         (url-encode url)
+         (url-encode (->url (first hosts)))
+         (when (seq alts) (str "&alt=" (url-encode (str/join "," alts))))
          (when-not (str/blank? (str token)) (str "&token=" (url-encode token))))))
 
 (defn pairing-json
@@ -169,4 +180,7 @@
     (when (= "127.0.0.1" (str (:host opts)))
       (emit
         "note: 127.0.0.1 is phone-local; for device pairing start with --host 0.0.0.0 --require-token or use a Tailscale host."))
+    ;; Callers often park (the gateway daemon) right after this; `*out*` does
+    ;; not autoflush, so an unflushed QR is an invisible QR.
+    (flush)
     payload))

@@ -2805,24 +2805,36 @@
   (try ((requiring-resolve 'com.blockether.vis.internal.jfr/maybe-start!) "gateway")
        (catch Throwable _ nil))
   (let
-    [{:keys [port host token-file require-token?]} (start! {:port (some-> port
-                                                                          parse-long)
-                                                            :host host
-                                                            :token-file token-file
-                                                            :require-token? require-token?
-                                                            :db db
-                                                            :managed? managed?})]
-    (println (str "vis gateway listening on http://" host ":" port))
+    [{:keys [port host token-file require-token?]}
+     (start! {:port (some-> port
+                            parse-long)
+              :host host
+              :token-file token-file
+              :require-token? require-token?
+              :db db
+              :managed? managed?})
+
+     ;; `config/init-cli!` has already redirected System/out AND `*out*` into
+     ;; ~/.vis/logs/vis.log, so a plain `println` here is invisible — the
+     ;; daemon looked completely silent (no listen line, no pairing QR).
+     ;; Write the human banner to the process' ORIGINAL stdout instead.
+     emit!
+     (fn [line]
+       (.println config/original-stdout ^String (str line))
+       (.flush config/original-stdout))]
+
+    (emit! (str "vis gateway listening on http://" host ":" port))
     (if require-token?
-      (println (str "bearer token: " token-file))
-      (println "auth: disabled (loopback default; pass --require-token to enable)"))
+      (emit! (str "bearer token: " token-file))
+      (emit! "auth: disabled (loopback default; pass --require-token to enable)"))
     (when pair?
       (pairing/print-pairing! {:host host
                                :port port
                                :token (some-> token-file
                                               slurp
                                               str/trim)
-                               :require-token? require-token?}))
+                               :require-token? require-token?
+                               :emit emit!}))
     (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable stop!))
     @serve-exit
     (System/exit 0)))

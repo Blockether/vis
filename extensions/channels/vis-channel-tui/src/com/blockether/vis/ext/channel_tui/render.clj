@@ -4799,33 +4799,24 @@
           (when error
             (mapv #(line-entry (str c-marker %)) (wrap-text (form-error-headline error) fill-w)))
 
-          ;; NATIVE tool calls (cat/rg/patch/…) already render as an op-card
-          ;; (headline + result body); their synthesized invocation source is
-          ;; redundant chrome, so drop the code block. ONLY `python_execution`
-          ;; — the model's OWN program — keeps its code visible. A blank-code
-          ;; form (or any non-tool form with no code) also drops the chrome.
-          ;; Errors always keep the code so the inline caret has context.
-          ;; The native-tool code-chrome decision lives ONCE in the gateway
-          ;; (`vis/hide-tool-code?`) — a successful native non-python call drops
-          ;; its redundant `name(args)` source — so the TUI and web can't drift.
-          ;; A blank-code non-tool form also drops the (empty) chrome.
+          ;; Native invocation source is redundant beside its op-card. Successful
+          ;; Python is user-relevant and remains visible; failed Python drops the
+          ;; separate source block because its runtime error already embeds the
+          ;; numbered source excerpt + caret. `vis/hide-tool-code?` owns this TUI
+          ;; policy; the web mirrors it at its wire boundary. Blank non-tool code
+          ;; also drops empty chrome.
           hide-code-chrome?
           (or (and (not is-error?) (str/blank? code-text)) (vis/hide-tool-code? form))
 
           code-block
           (cond hide-code-chrome?
-                ;; When raw code is hidden (def-wrapped tool
-                ;; call or any successful tool form), drop the
-                ;; code chrome entirely: the block-level op
-                ;; rows (`▸ <LABEL> <summary>`) speak for the
-                ;; form, and the BLOCK header carries the
-                ;; aggregate status + duration. Only title
-                ;; recap rows (ctx mutations like TITLE) stay,
-                ;; since those are recap text, not code, and
-                ;; have no op row. No per-form footer.
+                ;; Hide only the separate invocation source. A failed Python
+                ;; block still paints its runtime error, whose message already
+                ;; contains the numbered source excerpt and caret.
                 (vec (concat (when (seq title-lines) [(line-entry "")])
                              title-lines
-                             (when (seq title-lines) [(line-entry "")])))
+                             (when (seq title-lines) [(line-entry "")])
+                             (when (seq inline-error-message-lines) inline-error-message-lines)))
                 :else (vec
                         (concat
                           ;; Title-recap call-out: one TRUE neutral

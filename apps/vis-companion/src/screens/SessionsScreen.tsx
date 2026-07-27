@@ -19,11 +19,12 @@ interface Props {
   client: GatewayClient | null;
   subscriptions: SessionSubscriptionHub | null;
   subscribedIds: ReadonlySet<string>;
-  gatewayCount: number;
+  /** The gateway stopped answering — the shell decides what to show instead. */
+  onUnreachable?: (message: string | null) => void;
   onOpen: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
 }
 
-export function SessionsScreen({ active, client, subscriptions, subscribedIds, gatewayCount, onOpen }: Props) {
+export function SessionsScreen({ active, client, subscriptions, subscribedIds, onUnreachable, onOpen }: Props) {
   // Seed from the gateway's last known list so returning to this tab repaints the
   // previous frame instantly; the effect below revalidates and reconciles on top.
   const [sessions, setSessions] = useState<Session[] | null>(() => client?.cachedSessions() ?? null);
@@ -191,29 +192,14 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, g
 
   const groups = groupByProject(visible ?? []);
 
-  if (loadError) {
-    return (
-      <section className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col px-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:py-6">
-        <div className="flex h-full min-h-0 flex-col items-center justify-center gap-4 border-y border-dialog-edge bg-panel px-6 py-16 text-center sm:border">
-          <span className="font-mono text-display text-err" aria-hidden="true">○</span>
-          <div className="space-y-1.5">
-            <p className="font-mono text-title font-black uppercase tracking-[0.1em] text-err">Gateway offline</p>
-            <p className="mx-auto max-w-sm font-mono text-ui text-dialog-hint">
-              {gatewayCount > 1
-                ? 'This gateway is not responding. Switch to another from the Gateways tab, or retry.'
-                : 'The gateway is not responding. Check the URL, your network / Tailscale, or that the gateway is running.'}
-            </p>
-            <p className="mx-auto max-w-sm break-all font-mono text-meta text-dialog-hint/60" title={loadError}>
-              {loadError}
-            </p>
-          </div>
-          <Button variant="ghost" className="px-4 py-1.5 text-body" onClick={() => void load()}>
-            Retry
-          </Button>
-        </div>
-      </section>
-    );
-  }
+  // A dead gateway is not a sessions problem: there is nothing to navigate, so the
+  // shell drops us on the Gateways screen instead of rendering a session list
+  // shaped like an error. Reporting it is this screen's only job here.
+  useEffect(() => {
+    onUnreachable?.(loadError);
+  }, [loadError, onUnreachable]);
+
+  if (loadError) return null;
 
   return (
     <section className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col pb-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:pb-6 sm:pt-6">

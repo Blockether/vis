@@ -615,7 +615,9 @@ function formCode(form: TranscriptForm): string {
 function showFormCode(form: TranscriptForm, code: string): boolean {
   if (!code) return false;
   if (!form.tool_name) return true;
-  return form.tool_name === 'python_execution';
+  // Python failures already carry the numbered source excerpt and caret in the
+  // runtime error. Rendering the submitted source as well repeats the same code.
+  return form.tool_name === 'python_execution' && form.error == null;
 }
 
 const PYTHON_PREVIEW_LINES = 5;

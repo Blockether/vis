@@ -14,15 +14,15 @@ export function Button({
 }) {
   const styles = {
     solid:
-      'border-dialog-title bg-dialog-title text-dialog-title-foreground hover:bg-accent-2',
+      'border-accent bg-accent text-accent-foreground hover:opacity-90',
     ghost:
       'border-dialog-edge bg-panel text-dialog-hint-key hover:border-edge-strong hover:bg-hover hover:text-white',
-    danger: 'border-err/50 bg-panel text-err hover:bg-warn-surface',
+    danger: 'border-err/50 bg-panel text-err hover:border-err hover:bg-err hover:text-white',
   }[variant];
 
   return (
     <button
-      className={`min-h-7 rounded-none border px-2 py-0.5 text-meta font-bold transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:border-dialog-edge disabled:bg-transparent disabled:text-dialog-hint disabled:shadow-none disabled:active:scale-100 motion-reduce:transition-none sm:min-h-6 ${styles} ${className}`}
+      className={`min-h-7 rounded-none border px-2.5 py-0.5 text-meta font-bold transition-[background-color,border-color,color,opacity,transform] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:border-edge disabled:bg-panel-2 disabled:text-muted disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${styles} ${className}`}
       {...props}
     />
   );
@@ -33,7 +33,7 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
     return (
       <input
         ref={ref}
-        className={`min-h-9 w-full rounded-none border border-dialog-edge bg-input px-2.5 py-1.5 font-mono text-ui text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none sm:min-h-8 sm:px-3 ${className}`}
+        className={`min-h-7 w-full rounded-none border border-dialog-edge bg-input px-2.5 py-0.5 font-mono text-meta text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${className}`}
         {...props}
       />
     );

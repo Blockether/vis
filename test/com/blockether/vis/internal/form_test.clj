@@ -125,8 +125,10 @@
       ;; its synthesized `name(args)` source is redundant chrome — hide it.
       (expect (form/hide-tool-code? {:vis/tool-name "cat"}))
       (expect (form/hide-tool-code? {:vis/tool-name "rg" :success? true}))
-      ;; python_execution is the model's OWN program — always keep its code.
+      ;; Successful Python keeps its program; failed Python hides the separate
+      ;; block because the runtime error already embeds source + caret.
       (expect (not (form/hide-tool-code? {:vis/tool-name "python_execution"})))
+      (expect (form/hide-tool-code? {:vis/tool-name "python_execution" :error "1 | boom()\n    ^"}))
       ;; A non-tool form has no card, so there's nothing to hide behind.
       (expect (not (form/hide-tool-code? {:result {:k 1}})))
       ;; An errored tool form keeps its code so the inline error has context.

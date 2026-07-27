@@ -144,8 +144,8 @@
   ;; A FAILED native tool (cat/rg/patch/…) must NOT dump its synthesized
   ;; `name({…args…})` invocation source into the client — that wall of the very
   ;; args that failed is redundant chrome. The user channel shows only the
-  ;; compact error message. `python_execution` (the model's own program) still
-  ;; keeps its code so the inline caret has context.
+  ;; `python_execution` errors embed their own numbered source + caret, so its
+  ;; separate submitted-source block must also be dropped.
   (it "drops the args-source wall for a failed native tool, keeps the message"
       (let
         [txt (str/join "\n"
@@ -183,15 +183,17 @@
       (expect (not (str/includes? txt "clojure.lang.ExceptionInfo")))
       (expect (not (str/includes? txt "java.util.concurrent.ExecutionException")))
       (expect (not (str/includes? txt "{:type :clj/bad-args")))))
-  (it "keeps python_execution code + caret on error"
+  (it "shows failed python_execution source exactly once via its error excerpt"
       (let
         [txt (str/join "\n"
                        (render-forms [{:vis/tool-name "python_execution"
                                        :success? false
                                        :code "print(PYCODEMARKER)\nx = 1/0"
-                                       :error {:message "ZeroDivisionError: division by zero"}
+                                       :error {:message (str "  1 | print(PYCODEMARKER)\n"
+                                                             "      ^\n"
+                                                             "ZeroDivisionError: division by zero")}
                                        :result nil}]))]
-        (expect (str/includes? txt "PYCODEMARKER"))
+        (expect (= 1 (count (re-seq #"PYCODEMARKER" txt))))
         (expect (str/includes? txt "ZeroDivisionError")))))
 
 (defdescribe
