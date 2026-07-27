@@ -1,9 +1,12 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Banner, Button } from '../components/ui';
+import { Banner, Button, DialogFrame, Input } from '../components/ui';
 import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { GatewayConn, Session } from '../lib/types';
 import { homeifyPath } from '../lib/path';
+import { onWake } from '../lib/wake';
+import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
+import { PencilIcon, SwipeActions, TrashIcon } from '../components/SwipeActions';
 
 const SESSION_LIST_EVENTS = new Set([
   'turn.started',
@@ -12,6 +15,13 @@ const SESSION_LIST_EVENTS = new Set([
   'turn.cancelled',
   'session.title_updated',
 ]);
+
+// A background poll issued right before the OS suspended the webview can never
+// settle: it neither resolves nor rejects after the resume. A plain in-flight
+// boolean would then stay latched forever and every later refresh would be
+// skipped — the list froze until the app was restarted. Anything older than
+// this is treated as lost.
+const STALE_POLL_MS = 20_000;
 
 
 interface Props {
@@ -35,7 +45,18 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
   const [transcriptMatches, setTranscriptMatches] = useState<Map<string, SessionMatch> | null>(null);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const pollInFlight = useRef(false);
+  const [refreshPhase, setRefreshPhase] = useState<'idle' | 'busy' | 'done'>('idle');
+  const refreshDoneTimer = useRef<number | null>(null);
+  const pollStartedAt = useRef<number | null>(null);
+  // Swipe-revealed row actions. One dialog serves both: renaming asks for the new
+  // title, deleting asks for consent — a destructive tap two pixels from a thumb
+  // rest position must never be one-way.
+  const [rowAction, setRowAction] = useState<{ mode: 'rename' | 'delete'; session: Session } | null>(
+    null,
+  );
+  const [renameDraft, setRenameDraft] = useState('');
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const refreshAnchorRef = useRef<{ id: string; top: number } | null>(null);
   const activeRef = useRef(active);
@@ -47,6 +68,15 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
     clientRef.current = client;
   });
   const activeKey = active ? `${active.url}\u0000${active.token ?? ''}` : '';
+  // Repaint when a read mark moves — opening a session clears its badge from here.
+  const readMarks = useReadMarks();
+
+  // A session this device has never met is NOT unread: seed it at the turn count
+  // it arrived with, so only answers that land AFTER this point raise a badge.
+  // Without the seed, a fresh install would paint the whole fleet unread.
+  useEffect(() => {
+    if (sessions) seedReadMarks(sessions);
+  }, [sessions]);
 
   const load = useCallback(
     async (signal?: AbortSignal, background = false) => {
@@ -56,8 +86,11 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
         setLoadError(null);
         return;
       }
-      if (background && pollInFlight.current) return;
-      if (background) pollInFlight.current = true;
+      if (background) {
+        const started = pollStartedAt.current;
+        if (started !== null && Date.now() - started < STALE_POLL_MS) return;
+        pollStartedAt.current = Date.now();
+      }
       try {
         const next = await (clientRef.current ?? new GatewayClient(connection)).listSessions(signal);
         if (!signal?.aborted) {
@@ -70,8 +103,36 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
           setLoadError((cause as Error).message);
         }
       } finally {
-        if (background) pollInFlight.current = false;
+        if (background) pollStartedAt.current = null;
       }
+    },
+    [],
+  );
+
+  // A manual refresh has to PROVE it ran: the list usually comes back identical,
+  // so with no busy/settled signal the tap reads as a dead button.
+  const manualRefresh = useCallback(async () => {
+    if (refreshDoneTimer.current !== null) {
+      window.clearTimeout(refreshDoneTimer.current);
+      refreshDoneTimer.current = null;
+    }
+    setRefreshPhase('busy');
+    const startedAt = Date.now();
+    await load();
+    // Floor the spinner: a fast LAN round trip would otherwise flash for one frame
+    // and look like nothing happened at all.
+    const remaining = 450 - (Date.now() - startedAt);
+    if (remaining > 0) await new Promise((resolve) => window.setTimeout(resolve, remaining));
+    setRefreshPhase('done');
+    refreshDoneTimer.current = window.setTimeout(() => {
+      refreshDoneTimer.current = null;
+      setRefreshPhase('idle');
+    }, 1_800);
+  }, [load]);
+
+  useEffect(
+    () => () => {
+      if (refreshDoneTimer.current !== null) window.clearTimeout(refreshDoneTimer.current);
     },
     [],
   );
@@ -90,11 +151,16 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
     if ((sessions === null && !cached) || !active) void load(controller.signal);
     else void load(controller.signal, true);
     const timer = window.setInterval(refreshLiveStates, 5_500);
-    document.addEventListener('visibilitychange', refreshLiveStates);
+    // Waking is the one moment the rows are guaranteed stale, and a suspended
+    // poll may still be latched: drop the latch, then refresh.
+    const stopWake = onWake(() => {
+      pollStartedAt.current = null;
+      refreshLiveStates();
+    });
     return () => {
       controller.abort();
       window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', refreshLiveStates);
+      stopWake();
     };
     // A connection identity change should preserve the existing frame until its data arrives.
   }, [activeKey, load]);
@@ -172,8 +238,11 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
     const shown = visible?.length ?? 0;
     const projects = new Set(sessions?.map(projectLabel) ?? []).size;
     const live = sessions?.filter(sessionIsLive).length ?? 0;
-    return { all, shown, projects, live };
-  }, [sessions, visible]);
+    const unread = sessions?.filter((session) => unreadTurnCount(session) > 0).length ?? 0;
+    return { all, shown, projects, live, unread };
+    // `readMarks` is the store version: marks change outside React, so it is the
+    // dependency that makes the unread tally recompute.
+  }, [sessions, visible, readMarks]);
 
   async function createSession() {
     if (!active) return;
@@ -187,6 +256,45 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
       setCreateError((cause as Error).message);
     } finally {
       setCreateBusy(false);
+    }
+  }
+
+  const startRename = useCallback((session: Session) => {
+    setRowAction({ mode: 'rename', session });
+    setRenameDraft(session.title?.trim() ?? '');
+    setActionError(null);
+  }, []);
+
+  const startDelete = useCallback((session: Session) => {
+    setRowAction({ mode: 'delete', session });
+    setActionError(null);
+  }, []);
+
+  function closeRowAction() {
+    if (actionBusy) return;
+    setRowAction(null);
+    setActionError(null);
+  }
+
+  async function commitRowAction() {
+    if (!rowAction || !active) return;
+    const title = renameDraft.trim();
+    if (rowAction.mode === 'rename' && !title) {
+      setActionError('A session name cannot be empty.');
+      return;
+    }
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      const api = client ?? new GatewayClient(active);
+      if (rowAction.mode === 'rename') await api.renameSession(rowAction.session.id, title);
+      else await api.deleteSession(rowAction.session.id);
+      setRowAction(null);
+      await load();
+    } catch (cause) {
+      setActionError((cause as Error).message);
+    } finally {
+      setActionBusy(false);
     }
   }
 
@@ -224,6 +332,26 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
                     <span className={totals.live > 0 ? 'font-bold text-ok' : ''}>
                       {totals.live > 0 ? '●' : '○'} {totals.live} live
                     </span>
+                    {totals.unread > 0 && (
+                      <>
+                        <span className="opacity-40">·</span>
+                        <span className="font-bold text-accent-ink" role="status" aria-live="polite">
+                          {totals.unread} unread
+                        </span>
+                      </>
+                    )}
+                    {refreshPhase !== 'idle' && (
+                      <>
+                        <span className="opacity-40">·</span>
+                        <span
+                          role="status"
+                          aria-live="polite"
+                          className={refreshPhase === 'done' ? 'font-bold text-ok' : ''}
+                        >
+                          {refreshPhase === 'busy' ? 'refreshing...' : 'updated just now'}
+                        </span>
+                      </>
+                    )}
                   </>
                 )}
               </p>
@@ -232,9 +360,18 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
               <Button
                 variant="ghost"
                 className="min-h-6 px-2 py-0.5 font-mono text-chip sm:min-h-6"
-                onClick={() => void load()}
+                disabled={refreshPhase === 'busy'}
+                onClick={() => void manualRefresh()}
               >
-                Refresh
+                <span className="inline-flex items-center gap-1">
+                  {refreshPhase === 'busy' && (
+                    <span
+                      aria-hidden
+                      className="size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none"
+                    />
+                  )}
+                  {refreshPhase === 'done' ? 'Updated' : refreshPhase === 'busy' ? 'Refreshing' : 'Refresh'}
+                </span>
               </Button>
               <Button
                 variant="solid"
@@ -294,6 +431,8 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
                 matches={matches}
                 needle={deferredQuery.trim()}
                 onOpen={onOpen}
+                onRename={startRename}
+                onDelete={startDelete}
               />
             ))}
           </div>
@@ -304,6 +443,72 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
           <span>{sessions ? `${totals.shown} of ${totals.all} sessions` : 'Reading sessions...'}</span>
         </footer>
       </div>
+
+      {rowAction && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 pb-[env(safe-area-inset-bottom)] sm:items-center sm:p-6"
+          role="presentation"
+          onClick={closeRowAction}
+        >
+          <div
+            className="w-full sm:max-w-md"
+            role="presentation"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <DialogFrame
+              title={rowAction.mode === 'rename' ? 'Rename session' : 'Delete session'}
+              onClose={closeRowAction}
+            >
+              <div className="space-y-3 p-4">
+                <p className="truncate font-mono text-meta text-dialog-hint">
+                  {rowAction.session.title?.trim() || 'Untitled session'} ·{' '}
+                  {shortId(rowAction.session.id)}
+                </p>
+                {rowAction.mode === 'rename' ? (
+                  <label className="block">
+                    <span className="mb-1 block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+                      Session name
+                    </span>
+                    <Input
+                      autoFocus
+                      value={renameDraft}
+                      maxLength={200}
+                      placeholder="Session name"
+                      onChange={(event) => setRenameDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') void commitRowAction();
+                      }}
+                    />
+                  </label>
+                ) : (
+                  <p className="font-mono text-body text-white">
+                    Delete this session and its transcript from the gateway? This cannot be undone.
+                  </p>
+                )}
+                {actionError && <Banner kind="err">{actionError}</Banner>}
+                <div className="flex justify-end gap-2">
+                  <Button variant="ghost" disabled={actionBusy} onClick={closeRowAction}>
+                    Cancel
+                  </Button>
+                  <Button
+                    variant={rowAction.mode === 'delete' ? 'danger' : 'solid'}
+                    disabled={actionBusy}
+                    onClick={() => void commitRowAction()}
+                  >
+                    {actionBusy
+                      ? rowAction.mode === 'rename'
+                        ? 'Saving...'
+                        : 'Deleting...'
+                      : rowAction.mode === 'rename'
+                        ? 'Save'
+                        : 'Delete'}
+                  </Button>
+                </div>
+              </div>
+            </DialogFrame>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -316,6 +521,8 @@ function ProjectGroup({
   matches,
   needle,
   onOpen,
+  onRename,
+  onDelete,
 }: {
   project: string;
   sessions: Session[];
@@ -324,6 +531,8 @@ function ProjectGroup({
   matches: Map<string, SessionMatch> | null;
   needle: string;
   onOpen: Props['onOpen'];
+  onRename: (session: Session) => void;
+  onDelete: (session: Session) => void;
 }) {
   const root = projectRoot(sessions);
   const liveCount = sessions.filter(sessionIsLive).length;
@@ -360,6 +569,8 @@ function ProjectGroup({
             match={matches?.get(session.id) ?? null}
             needle={needle}
             onOpen={onOpen}
+            onRename={onRename}
+            onDelete={onDelete}
           />
         ))}
       </div>
@@ -374,6 +585,8 @@ function SessionRow({
   match,
   needle,
   onOpen,
+  onRename,
+  onDelete,
 }: {
   session: Session;
   conn: GatewayConn;
@@ -381,15 +594,38 @@ function SessionRow({
   match: SessionMatch | null;
   needle: string;
   onOpen: Props['onOpen'];
+  onRename: (session: Session) => void;
+  onDelete: (session: Session) => void;
 }) {
   const status = statusLabel(session);
   const timestamp = session.modified_at ?? session.last_active_at ?? session.created_at;
   const title = session.title?.trim() || 'Untitled session';
   const live = sessionIsLive(session);
   const turns = Number(session.turn_count ?? 0);
+  // Turns that finished while this session was closed: the one thing a relative
+  // timestamp cannot announce.
+  const unread = unreadTurnCount(session);
 
   return (
     <div className="[&+&]:border-t [&+&]:border-dialog-edge">
+      <SwipeActions
+        label={title}
+        actions={[
+          {
+            key: 'rename',
+            label: 'Rename',
+            icon: <PencilIcon />,
+            onSelect: () => onRename(session),
+          },
+          {
+            key: 'delete',
+            label: 'Delete',
+            icon: <TrashIcon />,
+            tone: 'danger',
+            onSelect: () => onDelete(session),
+          },
+        ]}
+      >
       <button
         type="button"
         className="group flex min-h-14 w-full items-start gap-2 px-3 py-2.5 text-left transition-colors duration-150 hover:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:min-h-12 sm:px-4 sm:py-2"
@@ -406,10 +642,17 @@ function SessionRow({
             >
               {title}
             </span>
+          <span className="flex shrink-0 items-center gap-1.5">
+            {unread > 0 && (
+              <span className="inline-flex items-center bg-accent px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
+                {unread > 1 ? `${unread} new` : 'new'}
+              </span>
+            )}
             <span className={`inline-flex shrink-0 items-center gap-1 font-mono text-chip font-bold tracking-[0.08em] ${statusTone(session)}`}>
               <span className={`size-1.5 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`} />
               {status}
             </span>
+          </span>
           </span>
           <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-chip text-dialog-hint">
             <span className="text-white/55">{shortId(session.id)}</span>
@@ -427,6 +670,7 @@ function SessionRow({
           </span>
         </span>
       </button>
+      </SwipeActions>
       {match && <MatchPreview match={match} needle={needle} />}
     </div>
   );

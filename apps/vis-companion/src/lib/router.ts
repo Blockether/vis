@@ -41,6 +41,44 @@ export function sessionHash(sid: string, gatewayId?: string): string {
   return gatewayId ? `${base}?gw=${encodeURIComponent(gatewayId)}` : base;
 }
 
+/**
+ * Deep link that opens a session in the INSTALLED app: `vis://s/<sid>?gw=<id>`.
+ *
+ * Inside the Capacitor WebView `window.location.origin` is `capacitor://localhost`
+ * (iOS) — a private origin nothing outside the app can open — so an http(s) share
+ * URL simply does not exist there. The `vis` scheme is registered by the app
+ * (ios/App/App/Info.plist CFBundleURLSchemes), so this link is the shareable form
+ * on native and is routed by `parseSessionDeepLink` on `appUrlOpen`.
+ */
+export function sessionDeepLink(sid: string, gatewayId?: string): string {
+  const base = `vis://s/${encodeURIComponent(sid)}`;
+  return gatewayId ? `${base}?gw=${encodeURIComponent(gatewayId)}` : base;
+}
+
+/** Parse a `vis://s/<sid>?gw=<id>` deep link into its hash route, or null. */
+export function parseSessionDeepLink(url: string): string | null {
+  const trimmed = (url || '').trim();
+  if (!/^vis:\/\/s\//i.test(trimmed)) return null;
+  const rest = trimmed.replace(/^vis:\/\/s\//i, '');
+  const [sidPart = '', queryPart = ''] = rest.split('?');
+  const sid = decodeURIComponent(sidPart.replace(/\/+$/, ''));
+  if (!sid) return null;
+  const gw = new URLSearchParams(queryPart).get('gw');
+  return sessionHash(sid, gw ?? undefined);
+}
+
+/**
+ * The best link to hand to someone else for the session currently on screen:
+ * the absolute https URL on the web, the `vis://` deep link inside the app.
+ */
+export function shareableSessionLink(): string {
+  if (typeof window === 'undefined') return '';
+  const href = window.location.href;
+  if (/^https?:/i.test(href)) return href;
+  const route = parseRoute(window.location.hash);
+  return route.name === 'session' ? sessionDeepLink(route.sid, route.gw) : href;
+}
+
 /** Build the hash for a top-level tab. */
 export function tabHash(tab: 'sessions' | 'connect'): string {
   return tab === 'connect' ? '#/connect' : '#/';

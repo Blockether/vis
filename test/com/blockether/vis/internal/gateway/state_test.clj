@@ -1901,3 +1901,47 @@
               (expect (= ["turn-3"] (mapv #(get % "turn_id") (:turns earlier))))
               (expect (= 3 (:offset earlier)))
               (expect (:has-more earlier))))))))
+
+(defdescribe
+  submit-turn-sync-terminal-isolation-test
+  "`submit-turn-sync!` subscribes BEFORE it knows its own turn id. Treating an
+   unknown id as \"mine\" hands a sibling turn's terminal to this caller, and a
+   turn that settled at/just-before the cursor leaves the blocking deref
+   parked forever (unlike `attach-turn-sync!`, which recovers from the record)."
+  (it "ignores another turn's terminal that lands before the submit returns"
+      (let [handler (promise)]
+        (with-redefs
+          [state/subscribe! (fn [_ _ h _]
+                              (deliver handler h)
+                              [])
+           state/unsubscribe! (fn [_ _]
+                                nil)
+           state/get-turn (fn [_ _]
+                            nil)
+           state/submit-turn! (fn [_ _]
+                                (@handler {"type" "turn.failed" "turn_id" "OTHER"})
+                                {:turn {"turn_id" "MINE"}})]
+
+          (let [f (future (state/submit-turn-sync! "sid-iso" {}))]
+            (expect (= ::pending (deref f 500 ::pending)))
+            (@handler {"type" "turn.completed" "turn_id" "MINE"})
+            (let [res (deref f 2000 ::pending)]
+              (expect (not= ::pending res))
+              (expect (nil? (get res "error")))
+              (expect (= "MINE" (get res "session_turn_id"))))))))
+  (it "recovers a terminal from the stored record instead of blocking forever"
+      (let [handler (promise)]
+        (with-redefs
+          [state/subscribe! (fn [_ _ h _]
+                              (deliver handler h)
+                              [])
+           state/unsubscribe! (fn [_ _]
+                                nil)
+           state/get-turn (fn [_ _]
+                            {"turn_id" "MINE" "status" "completed"})
+           state/submit-turn! (fn [_ _]
+                                {:turn {"turn_id" "MINE"}})]
+
+          (let [res (deref (future (state/submit-turn-sync! "sid-settled" {})) 2000 ::pending)]
+            (expect (not= ::pending res))
+            (expect (nil? (get res "error"))))))))

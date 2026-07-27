@@ -297,7 +297,7 @@ run('xcodebuild', archiveArgs, { cwd: projectDir });
 
 run(
   'xcodebuild',
-  ['-exportArchive', '-archivePath', archivePath, '-exportOptionsPlist', exportOptions, '-exportPath', ipaDir],
+  ['-exportArchive', '-archivePath', archivePath, '-exportOptionsPlist', exportOptions, '-exportPath', ipaDir, '-allowProvisioningUpdates'],
   { cwd: projectDir },
 );
 

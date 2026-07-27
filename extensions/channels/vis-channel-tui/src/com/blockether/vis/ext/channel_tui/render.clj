@@ -2498,7 +2498,13 @@
                        hovered? (and (= :toggle-details (:kind meta))
                                      (= abs-row (:row (:bounds (cr/hovered)))))
                        row-bg (code-row-bg meta hovered? t/code-block-bg)
-                       row-fg (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
+                       ;; The `▸ PYTHON +N more` disclosure header wears its
+                       ;; TOOL colour, exactly like every other tool heading;
+                       ;; ordinary program rows keep the quiet code foreground.
+                       tool-fg (tool-color-role->fg (:color-role meta))
+                       row-fg (cond hovered? t/link-chrome-hover-fg
+                                    tool-fg tool-fg
+                                    :else t/code-block-fg)]
 
                       (p/set-colors! g row-fg row-bg)
                       (p/fill-rect! g fbx y iw 1)
@@ -4538,11 +4544,8 @@
          [{:keys [code display-code comment error success?]}
           form
 
-          has-status?
-          (some? success?)
-
           is-error?
-          (and has-status? (not success?))
+          (and (some? success?) (not success?))
 
           ;; A NATIVE tool call (cat/rg/patch/…, not python_execution) that
           ;; FAILED: its synthesized `name({…args…})` source is redundant
@@ -4565,15 +4568,16 @@
           expr-hdr
           ""
 
+          ;; Code bands are status-NEUTRAL: one quiet code tint, whether the
+          ;; call is running, succeeded, or failed. Success/failure is carried
+          ;; by the tool heading colour and the result rows — never by a green
+          ;; or red wash behind the source, which made the program read as a
+          ;; verdict instead of as code.
           c-marker
-          (cond (not has-status?) code-marker
-                success? code-ok-marker
-                :else code-err-marker)
+          code-marker
 
           c-pad
-          (cond is-error? code-err-pad-marker
-                success? code-ok-pad-marker
-                :else code-pad-marker)
+          code-pad-marker
 
           comment-lines
           (when (and (string? comment) (not (str/blank? comment)))

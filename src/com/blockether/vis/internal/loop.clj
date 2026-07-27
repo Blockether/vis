@@ -43,8 +43,7 @@
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
   (:import [java.util.concurrent CancellationException ExecutionException ExecutorService Future
-            SynchronousQueue ThreadFactory ThreadPoolExecutor ThreadPoolExecutor$CallerRunsPolicy
-            TimeUnit]
+            SynchronousQueue ThreadFactory ThreadPoolExecutor TimeUnit]
            [java.util.concurrent.atomic AtomicLong]
            [org.graalvm.polyglot Context Value]))
 
@@ -753,6 +752,31 @@
 ;; needs.)
 ;; =============================================================================
 
+(def ^:private GUEST_INTERRUPT_GRACE_MS
+  "How long [[interrupt-guest!]] waits for the GraalPy safepoint to unwind a
+   runaway guest before giving up."
+  5000)
+
+(defn- interrupt-guest!
+  "Cancel whatever is EXECUTING in `python-context` right now, at a Truffle
+   safepoint.
+
+   `Future.cancel(true)` only interrupts the JAVA worker thread, and GraalPy does
+   NOT observe `Thread.interrupt` inside guest code: a model block that spins
+   (`while True: ...`) survived every eval timeout / Esc cancel and kept burning a
+   whole core FOREVER — measured at 1.01 busy cores with BOTH worker futures
+   already cancelled — while its virtual thread stayed pinned to a
+   ForkJoinPool carrier and its frames stayed reachable. Only
+   `Context.interrupt` (or a cancelling close) unwinds guest frames. Safe from
+   any thread that is not itself executing this context (the loop/eval-timeout
+   thread and the canceller are not), never throws, and leaves the context
+   REUSABLE for the next turn."
+  [python-context]
+  (try (when python-context
+         (.interrupt ^org.graalvm.polyglot.Context python-context
+                     (java.time.Duration/ofMillis (long GUEST_INTERRUPT_GRACE_MS))))
+       (catch Throwable _ nil)))
+
 (defn- run-python-code
   "Run an agent code block through the embedded GraalPy sandbox. Wraps the
    worker-future + cancellation + tool-event/render sinks + `*1`/`*e` recovery
@@ -862,7 +886,10 @@
        (cancellation/on-cancel! cancel-token
                                 (fn []
                                   (try (.cancel ^java.util.concurrent.Future exec-future true)
-                                       (catch Throwable _ nil)))))
+                                       (catch Throwable _ nil))
+                                  ;; The Java interrupt alone leaves runaway GUEST
+                                  ;; code spinning forever — unwind it too.
+                                  (interrupt-guest! python-context))))
 
      timeout-ms
      (long (rt/eval-timeout-ms-for-code rt/*eval-timeout-ms* code))
@@ -872,11 +899,15 @@
           (catch Throwable e
             (reset! thrown e)
             (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil))
+            (interrupt-guest! python-context)
             {:result nil :lru {} :error (python-op-error python-context e code)})
           (finally (when dispose-cancel-hook (try (dispose-cancel-hook) (catch Throwable _ nil)))))]
 
     (if (nil? execution-result)
       (do (.cancel ^java.util.concurrent.Future exec-future true)
+          ;; Eval timeout: the worker future is cancelled, but the guest frame is
+          ;; only unwound by a Truffle safepoint interrupt.
+          (interrupt-guest! python-context)
           {:result nil
            :lru {}
            :error {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}

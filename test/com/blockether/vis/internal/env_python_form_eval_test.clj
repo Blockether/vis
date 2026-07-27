@@ -597,6 +597,35 @@ await patch({'path': css})" "t1/i1")]
            "t1/i1")]
         (expect (= nil (:error r)))
         (expect (= "compat-ok" (clojure.string/trim (str (:stdout r)))))))
+    (it "failed/cancelled work releases siblings, call payloads, and exception frames"
+        (let
+          [r
+           (ep/run-python-block
+             (mk)
+             (str
+               "import asyncio\n"
+               "async def boom():\n    raise ValueError('bad')\n" "async def check():\n"
+               "    global held\n" "    held = asyncio.create_task(asyncio.sleep(10))\n"
+               "    try:\n" "        await asyncio.gather(asyncio.create_task(boom()), held)\n"
+               "    except Exception:\n" "        pass\n"
+               "    call = echo('payload')\n" "    assert await call == '<payload>'\n"
+               "    failed = asyncio.to_thread(lambda x: 1 / 0, bytearray(1000000))\n"
+               "    try:\n        await failed\n    except ZeroDivisionError:\n        pass\n"
+               "    pending = asyncio.to_thread(lambda x: x, bytearray(1000000))\n"
+               "    cancelled = asyncio.create_task(pending)\n    cancelled.cancel()\n"
+               "    bad = asyncio.create_task(boom())\n"
+               "    try:\n        await bad\n    except ValueError:\n        pass\n"
+               "    return (held.done(), held.cancelled(), held.get_coro() is None, "
+               "call.fn is None, call.a == (), call.k == {}, "
+               "failed.ran, failed.failed, failed.fn is None, failed.a == (), failed.k == {}, "
+               "pending.ran, pending.failed, pending.fn is None, pending.a == (), pending.k == {}, "
+               "bad.get_coro() is None, bad.exception().__traceback__ is None)\n"
+               "print(asyncio.run(check()))")
+             "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= (str "(True, True, True, True, True, True, True, True, True, "
+                          "True, True, True, True, True, True, True, True, True)")
+                     (clojure.string/trim (str (:stdout r)))))))
     (it "completed and cancelled tasks release coroutine frames without a global registry"
         (let
           [r (ep/run-python-block

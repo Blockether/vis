@@ -462,9 +462,10 @@ def __vis_wrap_tool_exc__(exc):
     return __vis_ToolError__(exc, __vis_clean_msg__(exc))
 
 class __vis_Call__:
-    __slots__ = ('fn', 'a', 'k', 'nm', 'ran', 'res')
+    __slots__ = ('fn', 'a', 'k', 'nm', 'ran', 'failed', 'res')
     def __init__(self, fn, a, k, nm='tool'):
-        self.fn = fn; self.a = a; self.k = k; self.nm = nm; self.ran = False; self.res = None
+        self.fn = fn; self.a = a; self.k = k; self.nm = nm
+        self.ran = False; self.failed = False; self.res = None
     def __await__(self):
         __vis_r__ = yield self
         if type(__vis_r__) is __vis_Raise__:
@@ -532,15 +533,29 @@ def __vis_awaitable__(v):
     return __vis_Already__(v)
 
 def __vis_exec_call__(c):
-    if not c.ran:
+    if c.ran:
+        if c.failed:
+            raise RuntimeError(c.nm + ' deferred call has already failed')
+        return c.res
+    try:
         # Fold Python **kwargs into a TRAILING DICT positional. The host tool
         # callables are foreign ProxyExecutables that accept ONLY positional args, so
         # `c.fn(*a, **k)` would raise `__call__() got an unexpected keyword argument`.
         # vis tools already take a trailing opts dict — `find(\"x\", paths=[...])`,
         # `rg(query=\"x\")`, `struct_patch(op=\"delete\", target=\"foo\")` — so folding
         # kwargs to one dict matches their contract (all-kwargs collapses to a spec map).
-        c.res = c.fn(*c.a, dict(c.k)) if c.k else c.fn(*c.a); c.ran = True
-    return c.res
+        c.res = c.fn(*c.a, dict(c.k)) if c.k else c.fn(*c.a)
+        return c.res
+    except BaseException:
+        # A failed thunk is one-shot too. Do not cache the exception here: a Python
+        # traceback points back through this frame to `c`, which would make a retained
+        # failed call retain itself plus the callable and payload graph.
+        c.failed = True
+        raise
+    finally:
+        c.ran = True
+        # Success, failure, and cancellation all release host callable + arguments.
+        c.fn = None; c.a = (); c.k = {}
 
 def __vis_key_hint__(__vis_d__, __vis_k__):
     # A missing key on a TOOL RESULT is a LOOKUP mistake, not a broken tool: shapes
@@ -710,13 +725,32 @@ def __vis_settle_gather__(v):
         if v.return_exceptions:
             out = []
             for aw in v.aws:
+                failure = None
                 try:
                     out.append(__vis_settle__(aw))
                 except BaseException as exc:
-                    out.append(__vis_wrap_tool_exc__(exc))
+                    failure = exc
+                if failure is not None:
+                    # Cleared OUTSIDE the handler on purpose: while an exception is
+                    # still being handled the interpreter re-attaches its traceback,
+                    # so a returned failure would pin this settle frame (and every
+                    # awaitable reachable from it) for the caller's whole lifetime.
+                    out.append(__vis_clean_exception__(failure))
+                    failure = None
             return out
         thunks = [(lambda a=a: __vis_settle__(a)) for a in v.aws]
         return __vis_pyify__(__vis_par__(thunks))
+    except BaseException:
+        # The host cancels outstanding futures, but user-retained guest Tasks would
+        # otherwise keep coroutine frames after a sibling fails. Dispose every guest
+        # awaitable before dropping gather's own references; this also clears deferred
+        # calls that never started, including their host callable and payload graph.
+        for aw in v.aws:
+            try:
+                __vis_dispose_awaitable__(aw)
+            except BaseException:
+                pass
+        raise
     finally:
         # A completed gather must not retain coroutine frames/tool arguments.
         v.aws.clear()
@@ -805,9 +839,37 @@ class __vis_Sleep__:
         self.delay = float(delay); self.result = result
     def __await__(self):
         __vis_time__.sleep(max(0.0, self.delay))
+        result = self.result
+        # Like a completed coroutine frame, a retained sleep awaitable must not keep
+        # an arbitrary result payload alive after handing it to its caller.
+        self.delay = 0.0; self.result = None
         if False:
             yield
-        return self.result
+        return result
+
+def __vis_clean_exception__(exc):
+    # Stored failures must not retain completed coroutine/driver frames through
+    # traceback, context, or cause links. Clearing those attributes on the RAISED
+    # object is not reliable here: GraalPy materializes `__traceback__` lazily from
+    # the underlying host exception, so it can reappear after the handler unwinds.
+    # Store a semantic COPY instead - same type, args and message, no frames.
+    clean = __vis_clone_exception__(__vis_wrap_tool_exc__(exc))
+    for attr in ('__traceback__', '__context__', '__cause__'):
+        try:
+            setattr(clean, attr, None)
+        except BaseException:
+            pass
+    return clean
+
+def __vis_clone_exception__(exc):
+    # Raising the object stored on a Task would attach a fresh traceback to that same
+    # retained object. Raise a semantic copy while `_exception` remains frame-free.
+    if isinstance(exc, __vis_ToolError__):
+        return __vis_ToolError__(exc.__vis_orig__, str(exc))
+    try:
+        return type(exc)(*getattr(exc, 'args', (str(exc),)))
+    except BaseException:
+        return RuntimeError(str(exc))
 
 class __vis_Task__:
     # A lazy Task-compatible awaitable. It intentionally has NO global task
@@ -833,10 +895,15 @@ class __vis_Task__:
             finally:
                 self._done = True
                 self._aw = None
+            if self._exception is not None:
+                # Cleaned only AFTER the handler has exited: inside `except` the
+                # interpreter re-attaches `__traceback__` on unwind, which would keep
+                # the finished coroutine/driver frames alive on a retained Task.
+                self._exception = __vis_clean_exception__(self._exception)
         if self._cancelled:
             raise CancelledError()
         if self._exception is not None:
-            raise self._exception
+            raise __vis_clone_exception__(self._exception) from None
         return self._result
     def cancel(self, msg=None):
         if self._done:
@@ -845,18 +912,16 @@ class __vis_Task__:
         self._done = True
         aw = self._aw
         self._aw = None
-        try:
-            if hasattr(aw, 'close'):
-                aw.close()
-        except BaseException:
-            pass
+        if aw is not self:
+            __vis_dispose_awaitable__(aw)
         return True
     def cancelled(self): return self._cancelled
     def done(self): return self._done
     def result(self):
         if not self._done: raise InvalidStateError('Result is not ready.')
         if self._cancelled: raise CancelledError()
-        if self._exception is not None: raise self._exception
+        if self._exception is not None:
+            raise __vis_clone_exception__(self._exception) from None
         return self._result
     def exception(self):
         if not self._done: raise InvalidStateError('Exception is not set.')
@@ -865,6 +930,31 @@ class __vis_Task__:
     def get_name(self): return self._name or 'Task'
     def set_name(self, name): self._name = str(name)
     def get_coro(self): return self._aw
+
+def __vis_dispose_awaitable__(aw):
+    # Idempotent, recursive disposal for work abandoned before settlement. There is
+    # deliberately no registry: ownership follows only explicit Task/Gather links.
+    if aw is None:
+        return
+    if isinstance(aw, __vis_Task__):
+        if not aw.done():
+            aw.cancel()
+        return
+    if isinstance(aw, __vis_Call__):
+        if not aw.ran:
+            aw.failed = True; aw.ran = True; aw.res = None
+            aw.fn = None; aw.a = (); aw.k = {}
+        return
+    if isinstance(aw, __vis_Gather__):
+        for child in list(aw.aws):
+            __vis_dispose_awaitable__(child)
+        aw.aws.clear()
+        return
+    try:
+        if hasattr(aw, 'close'):
+            aw.close()
+    except BaseException:
+        pass
 
 class __vis_TaskGroup__:
     __slots__ = ('_tasks', '_entered')

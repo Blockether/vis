@@ -21,7 +21,7 @@ import { SessionsScreen } from './screens/SessionsScreen';
 import { GatewaySettingsDialog } from './screens/SettingsScreen';
 import { SessionScreen } from './screens/SessionScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
-import { parseRoute, sessionHash, tabHash } from './lib/router';
+import { parseRoute, parseSessionDeepLink, sessionHash, tabHash } from './lib/router';
 import { useVisualViewportShell } from './lib/viewport';
 import {
   acquirePushToken,
@@ -175,6 +175,8 @@ export function App() {
   }, []);
 
   // Deep-linked pairing: vis://gateway?url=…&token=…
+  // Deep-linked session: vis://s/<sid>?gw=<id> — the shareable form on native,
+  // where the WebView origin (capacitor://localhost) is not an openable URL.
   useEffect(() => {
     let dispose = () => {};
     void onPairingLink((url) => {
@@ -183,7 +185,12 @@ export function App() {
         // `alts` is pairing-time only: the deep link opens the URL it names.
         const { alts: _alts, ...conn } = parsed;
         void addConnection(conn);
+        return;
       }
+      const hash = parseSessionDeepLink(url);
+      // Route through the hash so a cold start and a warm resume take the same
+      // path as a pasted web link (and browser back still works).
+      if (hash) window.location.hash = hash;
     }).then((d) => (dispose = d));
     return () => dispose();
   }, [addConnection]);

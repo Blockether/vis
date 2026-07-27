@@ -103,7 +103,7 @@ function codeLanguage(node: ReactNode): string {
   return /(?:^|\s)language-([\w-]+)/.exec(node.props.className ?? '')?.[1]?.toLowerCase() ?? '';
 }
 
-const DiffBlock = memo(function DiffBlock({ value, compact }: { value: string; compact: boolean }) {
+const DiffBlock = memo(function DiffBlock({ value, compact, frameless = false }: { value: string; compact: boolean; frameless?: boolean }) {
   const lineClasses: Record<DiffLineKind, string> = {
     meta: 'text-code-duration',
     hunk: 'text-code-syntax-keyword',
@@ -114,7 +114,7 @@ const DiffBlock = memo(function DiffBlock({ value, compact }: { value: string; c
 
   return (
     <div
-      className={`${compact ? 'my-2' : 'my-3'} relative overflow-hidden border border-code-edge bg-code`}
+      className={`${compact ? 'my-2' : 'my-3'} relative overflow-hidden bg-code ${frameless ? '' : 'border border-code-edge'}`}
       aria-label="Unified diff"
     >
       <CopyButton value={value} />
@@ -267,6 +267,7 @@ const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
   compact,
   copyValue,
   bare = false,
+  frameless = false,
 }: {
   value: string;
   language: string;
@@ -274,6 +275,8 @@ const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
   copyValue?: string;
   /** Drop this block's own frame + margin so a parent can own the chrome. */
   bare?: boolean;
+  /** Keep the spacing but drop the frame: an enclosing card already draws one. */
+  frameless?: boolean;
 }) {
   const gutter = splitGutter(value);
   const source = gutter ? gutter.code : value;
@@ -281,7 +284,7 @@ const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
 
   return (
     <div
-      className={`relative overflow-hidden bg-code ${bare ? '' : `${compact ? 'my-2' : 'my-3'} border border-code-edge`}`}
+      className={`relative overflow-hidden bg-code ${bare ? '' : `${compact ? 'my-2' : 'my-3'} ${frameless ? '' : 'border border-code-edge'}`}`}
     >
       <CopyButton value={copyValue ?? source} />
       <pre className={`${compact ? 'py-2 text-meta ' : 'py-2.5 text-ui '} m-0 max-w-full overflow-x-auto overscroll-x-contain font-mono text-code-foreground`}>
@@ -314,10 +317,14 @@ export const Markdown = memo(function Markdown({
   children,
   compact = false,
   hardBreaks = false,
+  nested = false,
 }: {
   children: string;
   compact?: boolean;
   hardBreaks?: boolean;
+  /** Rendered INSIDE an already-framed container (a tool result card): code and
+      diff blocks drop their own border so the card shows ONE frame, not two. */
+  nested?: boolean;
 }) {
   return (
     <div className="min-w-0 break-words [&>:first-child]:mt-0 [&>:last-child]:mb-0">
@@ -371,9 +378,9 @@ export const Markdown = memo(function Markdown({
             const raw = extractText(codeNode).replace(/\n$/, '');
             const language = codeLanguage(codeNode);
             if (language === 'diff' || language === 'patch' || language === 'udiff') {
-              return <DiffBlock value={raw} compact={compact} />;
+              return <DiffBlock value={raw} compact={compact} frameless={nested} />;
             }
-            return <SyntaxCodeBlock value={raw} language={language} compact={compact} />;
+            return <SyntaxCodeBlock value={raw} language={language} compact={compact} frameless={nested} />;
           },
           strong: ({ children: strong }) => <strong className="font-semibold">{strong}</strong>,
           table: ({ children: table }) => (
@@ -595,6 +602,13 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
         {toolLabel(form.tool_name)}
       </span>
       {summary && <ToolSummary className={summaryClass}>{summary}</ToolSummary>}
+      {/* A finished call that produced NO summary and NO body still says so: an
+          otherwise bare "RESULT 39ms" row reads as a rendering bug rather than as
+          the empty result it is. `running` keeps the spinner-less placeholder
+          quiet until the outcome actually lands. */}
+      {!summary && !body && !running && !failed && (
+        <span className="min-w-0 flex-1 truncate font-mono text-chip font-medium text-code-duration">none</span>
+      )}
       {duration && <span className="shrink-0 font-mono text-chip tabular-nums text-code-duration">{duration}</span>}
     </div>
   );
@@ -614,7 +628,7 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
         {headline}
       </summary>
       <div className={`min-w-0 overflow-hidden border-t border-code-edge bg-result px-3 py-2 text-ui text-code-result ${failed ? 'text-code-error-result' : ''}`}>
-        {failed ? <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-words font-mono text-meta ">{body}</pre> : <Markdown compact>{body}</Markdown>}
+        {failed ? <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-words font-mono text-meta ">{body}</pre> : <Markdown compact nested>{body}</Markdown>}
       </div>
     </details>
   );

@@ -1,4 +1,5 @@
 import type { GatewayClient } from './gateway';
+import { onWake } from './wake';
 import type { SseEvent } from './types';
 
 type SessionListener = (event: SseEvent) => void;
@@ -29,9 +30,15 @@ export class SessionSubscriptionHub {
   private connected = false;
   private disposed = false;
   private lastResyncAt = 0;
+  private readonly stopWake: () => void;
 
   constructor(client: GatewayClient) {
     this.client = client;
+    // The stream is the app's only push channel, and a backgrounded webview
+    // parks its fetch body reader without ever erroring. Reconnect on every
+    // wake — no screen has to remember to ask, so a frozen socket can never
+    // outlive the resume and force an app restart.
+    this.stopWake = onWake(() => this.resync());
   }
 
   watchSessions(sessionIds: Iterable<string>): void {
@@ -108,6 +115,7 @@ export class SessionSubscriptionHub {
 
   dispose(): void {
     this.disposed = true;
+    this.stopWake();
     this.stopStream?.();
     this.stopStream = null;
     this.setConnected(false);

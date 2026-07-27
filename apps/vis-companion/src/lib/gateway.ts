@@ -31,7 +31,6 @@ import type {
   TranscriptTurn,
   PushDevice,
   PushDeviceInput,
-  PushSendResult,
   PushStatus,
   VoiceModelState,
   VoiceTranscript,
@@ -368,15 +367,6 @@ export class GatewayClient {
     return this.request('DELETE', `/v1/devices/${encodeURIComponent(token)}`);
   }
 
-  /**
-   * One test alert to every registered device, with APNs' per-device verdict —
-   * the only way to prove key, topic, environment and token line up without
-   * waiting for a real turn to finish.
-   */
-  testPush(): Promise<{ results: PushSendResult[]; push: PushStatus }> {
-    return this.request('POST', '/v1/devices/actions/test', {});
-  }
-
   voiceModel(sid: string, start = false, signal?: AbortSignal): Promise<VoiceModelState> {
     return this.request<VoiceModelState>(
       start ? 'POST' : 'GET',
@@ -540,6 +530,18 @@ export class GatewayClient {
       signal,
     );
     return response.model ?? null;
+  }
+
+  /**
+   * The gateway's DEFAULT provider+model — what a session with no pin actually
+   * runs on. `sessionModel` answers only the explicit pin (null for "default"),
+   * so any surface that names the live model needs this fallback.
+   */
+  async defaultModel(signal?: AbortSignal): Promise<ModelPref | null> {
+    const rows = await this.router(signal);
+    const row = rows.find((p) => p.is_default && p.default_model) ?? rows.find((p) => p.default_model);
+    if (!row?.default_model) return null;
+    return { provider: row.id, model: row.default_model };
   }
 
   async setSessionModel(
@@ -827,6 +829,29 @@ export class GatewayClient {
   }
 
   /**
+   * Rename a session. The gateway echoes the updated meta row, which is written
+   * back into BOTH snapshots so the list and the session header repaint from
+   * cache with the new title instead of the stale one.
+   */
+  async renameSession(sid: string, title: string): Promise<Session> {
+    const row = await this.request<Session>(
+      'PATCH',
+      `/v1/sessions/${encodeURIComponent(sid)}`,
+      { title },
+    );
+    const merged = reconcileRow(this.cachedSession(sid), row);
+    writeSnapshot(this.snapshotKey('session', sid), merged);
+    const rows = this.cachedSessions();
+    if (rows) {
+      writeSnapshot(
+        this.snapshotKey('sessions'),
+        rows.map((entry) => (entry.id === sid ? reconcileRow(entry, row) : entry)),
+      );
+    }
+    return merged;
+  }
+
+  /**
    * Merge a freshly fetched slice onto the rows we already hold, BY TURN ID.
    * Windowed fetches overlap (the newest page re-covers turns we painted an hour
    * ago), so positional splicing would duplicate or reorder them; matching on id
@@ -995,7 +1020,13 @@ export class GatewayClient {
     const key = this.snapshotKey('transcript', sid);
     const stamp = transcriptStamp(row);
     const cached = this.cachedTranscript(sid);
-    if (stamp && cached?.length && transcriptStamps.get(key) === stamp) return null;
+    // A cached transcript holding a 'running' row is PROVISIONAL: that row is a
+    // placeholder the gateway persists while a turn is in flight, and it carries
+    // no outcome. Never let the stamp short-circuit past one — the turn may have
+    // finished, failed or been cancelled since, and the caller would keep
+    // painting a spinner for work that is long over.
+    const provisional = !!cached?.some((turn) => turn.status === 'running');
+    if (stamp && cached?.length && !provisional && transcriptStamps.get(key) === stamp) return null;
     const turns = await this.transcript(sid, signal);
     if (stamp) transcriptStamps.set(key, stamp);
     return turns;

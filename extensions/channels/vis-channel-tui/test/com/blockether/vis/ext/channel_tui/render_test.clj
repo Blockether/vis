@@ -592,7 +592,9 @@
       (expect (not (str/includes? body "Error: Unable")))
       (expect (not (str/includes? body "ERROR — clojure.lang.ExceptionInfo")))
       (expect (= 1 (count (re-seq (re-pattern (java.util.regex.Pattern/quote code)) body))))
-      (expect (= p/MARKER_CODE_ERR (marker-of error-line)))))
+      ;; Code bands are status-neutral now: an error keeps the plain code
+      ;; marker and is signalled by the message rows, not a red wash.
+      (expect (= p/MARKER_CODE (marker-of error-line)))))
   (it
     "renders a form eval error message exactly once"
     (let
@@ -640,9 +642,9 @@
     (with-raw-code-on
       ;; Layout (post status-footer removal):
       ;;   iteration-pad
-      ;;   code-ok-pad
+      ;;   code-pad
       ;;   <code line>
-      ;;   code-ok-pad
+      ;;   code-pad
       ;;   iteration-pad
       ;; Plain `:value` form results no longer render — the trailing
       ;; result row is gone for non-tool forms per user directive.
@@ -667,7 +669,7 @@
 
         (expect (not-any? #(str/includes? % "✓") lines))
         (expect (not-any? #(str/includes? % "1ms") lines))
-        (expect (= 2 (count (filter #(= p/MARKER_CODE_OK_PAD (marker-of %)) lines))))
+        (expect (= 2 (count (filter #(= p/MARKER_CODE_PAD (marker-of %)) lines))))
         (expect (not-any? #(str/includes? (or % "") "3") bodies)))))
   (it "pads displayed form comments by one column"
       (with-raw-code-on
@@ -3922,7 +3924,7 @@
 
                  (expect (some? toggle-i))
                  (expect (some? first-code-i))
-                 (expect (= p/MARKER_CODE_OK_PAD
+                 (expect (= p/MARKER_CODE_PAD
                             (marker-of (:line (nth entries (inc (long toggle-i)))))))
                  (expect (< (long toggle-i) (long first-code-i)))
                  ;; collapsed: exactly the 5-line peek, and the hidden count names the rest

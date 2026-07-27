@@ -190,7 +190,7 @@ export function GatewaySettingsDialog({
       }}
     >
       <section
-        className="flex h-[92dvh] max-h-[calc(100dvh-env(safe-area-inset-top))] w-full max-w-3xl flex-col overflow-hidden border-x border-t border-dialog-edge bg-panel shadow-none transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-6 starting:opacity-0 motion-reduce:transition-none sm:h-auto sm:max-h-[calc(100dvh-2.5rem)] sm:border sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:starting:translate-y-2"
+        className="flex h-[92%] max-h-[calc(100%-env(safe-area-inset-top))] w-full max-w-3xl flex-col overflow-hidden border-x border-t border-dialog-edge bg-panel shadow-none transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-6 starting:opacity-0 motion-reduce:transition-none sm:h-auto sm:max-h-full sm:border sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:starting:translate-y-2"
         role="dialog"
         aria-modal="true"
         aria-labelledby="gateway-settings-title"
@@ -590,11 +590,6 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                     <span className="truncate font-mono text-ui font-bold text-white">
                       {provider.label}
                     </span>
-                    {provider.is_default && (
-                      <span className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-accent">
-                        default
-                      </span>
-                    )}
                   </span>
                   <span className="block truncate font-mono text-meta text-dialog-hint">
                     {provider.is_default && provider.default_model
@@ -625,40 +620,25 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                       htmlFor={`default-model-${provider.id}`}
                       className="block font-mono text-meta font-bold text-dialog-hint"
                     >
-                      Default model
+                      {settingDefault ? 'Default model · saving…' : 'Default model'}
                     </label>
-                    <div className="flex flex-col gap-2 sm:flex-row">
-                      <select
-                        id={`default-model-${provider.id}`}
-                        value={selectedModel}
-                        disabled={provider.models.length === 0 || settingDefault}
-                        onChange={(event) =>
-                          setModelDrafts((drafts) => ({
-                            ...drafts,
-                            [provider.id]: event.target.value,
-                          }))
-                        }
-                        className="min-h-10 min-w-0 flex-1 border border-dialog-edge bg-input px-3 font-mono text-ui text-white outline-none transition-colors focus:border-accent disabled:opacity-50"
-                      >
-                        {orderedModels.map((model) => (
-                          <option key={model} value={model}>
-                            {model}
-                          </option>
-                        ))}
-                      </select>
-                      <Button
-                        className="sm:min-w-32"
-                        variant={provider.is_default ? 'ghost' : 'solid'}
-                        disabled={!selectedModel || settingDefault}
-                        onClick={() => void setDefault(provider.id, selectedModel)}
-                      >
-                        {settingDefault
-                          ? 'Saving…'
-                          : provider.is_default && selectedModel === provider.default_model
-                            ? 'Default'
-                            : 'Set default'}
-                      </Button>
-                    </div>
+                    <select
+                      id={`default-model-${provider.id}`}
+                      value={selectedModel}
+                      disabled={provider.models.length === 0 || settingDefault}
+                      onChange={(event) => {
+                        const model = event.target.value;
+                        setModelDrafts((drafts) => ({ ...drafts, [provider.id]: model }));
+                        void setDefault(provider.id, model);
+                      }}
+                      className="min-h-10 w-full min-w-0 border border-dialog-edge bg-input px-3 font-mono text-ui text-white outline-none transition-colors focus:border-accent disabled:opacity-50"
+                    >
+                      {orderedModels.map((model) => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="flex flex-col gap-2 sm:flex-row">
@@ -697,10 +677,8 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
 }
 
 /**
- * Native push ON THIS GATEWAY: whether it can push at all, whether THIS device
- * is registered, and a live test that proves the whole push chain (APNs key and
- * topic on iOS, the Firebase service account on Android) without waiting for a
- * real turn to finish.
+ * Native push ON THIS GATEWAY: whether it can push at all, and whether THIS
+ * device is registered.
  *
  * The token itself never round-trips through the UI — the gateway masks every
  * token it stores, and the app matches its own row by computing the same mask.
@@ -711,7 +689,7 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
   const [perm, setPerm] = useState<PushPermission>('unsupported');
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [busy, setBusy] = useState<'enable' | 'disable' | 'test' | null>(null);
+  const [busy, setBusy] = useState<'enable' | 'disable' | null>(null);
   // An OLDER gateway simply has no /v1/devices route. That is not an error the
   // user can act on — it is a missing capability upstream — so the whole panel
   // (and every button in it) disappears instead of offering calls that 404.
@@ -778,29 +756,6 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
     try {
       await client.unregisterDevice(current);
       setNote('This device will no longer be notified.');
-      await load();
-    } catch (e) {
-      setErr(e instanceof GatewayError ? e.message : (e as Error).message);
-    } finally {
-      setBusy(null);
-    }
-  }, [client, load]);
-
-  const test = useCallback(async () => {
-    setBusy('test');
-    setErr(null);
-    setNote(null);
-    try {
-      const { results } = await client.testPush();
-      const ok = results.filter((r) => r.is_delivered).length;
-      setNote(
-        results.length === 0
-          ? 'No devices registered yet.'
-          : `Sent to ${ok}/${results.length} device${results.length === 1 ? '' : 's'}` +
-              (ok < results.length
-                ? ` — ${results.find((r) => !r.is_delivered)?.reason ?? 'rejected'}`
-                : '.'),
-      );
       await load();
     } catch (e) {
       setErr(e instanceof GatewayError ? e.message : (e as Error).message);
@@ -878,14 +833,6 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
               {busy === 'disable' ? 'Removing…' : 'Stop notifying this device'}
             </Button>
           )}
-          <Button
-            variant="ghost"
-            className="min-h-9 flex-1 px-3 font-mono text-meta"
-            disabled={busy !== null || !available || (push?.devices ?? 0) === 0}
-            onClick={() => void test()}
-          >
-            {busy === 'test' ? 'Sending…' : 'Send a test'}
-          </Button>
         </div>
 
         {devices === null && (

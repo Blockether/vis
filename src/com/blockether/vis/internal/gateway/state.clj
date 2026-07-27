@@ -2147,7 +2147,10 @@
    overrides the gate."
   ([sid] (drain-next-queued! sid nil))
   ([sid {:keys [force?]}]
-   (let [decision (volatile! nil)]
+   (let [decision (volatile! nil)
+         ;; Read the session pin HERE, as the turn starts — not at submit. A
+         ;; queued turn inherits the model the session is pinned to NOW.
+         pinned-model (:model (session-model sid))]
      (swap! registry update
        sid
        (fn [entry]
@@ -2167,7 +2170,7 @@
                          :request request
                          :display-request display_request
                          :messages messages
-                         :model model
+                         :model (or model pinned-model)
                          :reasoning-default reasoning-default
                          :cancel-token token
                          :extra-body extra-body
@@ -2180,7 +2183,11 @@
                           :last-active started-at)
                    (update-in [:turns tid]
                               merge
-                              {:status "running" :cancel-token token :started_at started-at})))
+                              (cond-> {:status "running"
+                                       :cancel-token token
+                                       :started_at started-at}
+                                (or model pinned-model)
+                                (assoc :model (or model pinned-model))))))
              entry))))
      (when-let
        [{:keys [tid request display-request messages model reasoning-default cancel-token extra-body
@@ -2526,8 +2533,14 @@
        request-preview
        (request-preview-text request previews)
 
-       ;; session pref is {:provider :model}; the engine routes by model name
-       model
+       ;; The pin is resolved when a turn actually STARTS, never frozen here.
+       ;; A turn that waits in the queue must honour a model picked WHILE it
+       ;; waited (companion picker, TUI, another channel) — baking the pin into
+       ;; the queued record made every already-queued message run on the model
+       ;; that happened to be live at submit, so changing the model mid-session
+       ;; appeared to do nothing. Only an EXPLICIT caller model is carried on
+       ;; the queued record; `drain-next-queued!` re-reads the pin at drain.
+       resolved-model
        (or model (:model (session-model sid)))
 
        decision
@@ -2622,8 +2635,8 @@
                                             idempotency-key
                                             (assoc :idempotency_key idempotency-key)
 
-                                            model
-                                            (assoc :model model)
+                                            resolved-model
+                                            (assoc :model resolved-model)
 
                                             reasoning-default
                                             (assoc :reasoning-default reasoning-default)
@@ -2672,7 +2685,7 @@
                                  tid
                                  request
                                  {:messages messages
-                                  :model model
+                                  :model resolved-model
                                   :reasoning-default reasoning-default
                                   :cancel-token (:cancel-token (get-in @registry [sid :turns tid]))
                                   :extra-body extra-body
@@ -2773,11 +2786,15 @@
      terminal
      (promise)
 
-     submitted-turn-id
-     (atom nil)
+     ;; We subscribe BEFORE the turn id exists (the subscription must not miss
+     ;; our own first events). Until `submit-turn!` returns that id, an arriving
+     ;; event cannot be classified, so it is BUFFERED — never assumed to be
+     ;; ours. Assuming it handed a SIBLING turn's terminal to this caller.
+     inbox
+     (atom {:turn-id nil :pending []})
 
-     handle-event!
-     (fn [event]
+     dispatch!
+     (fn [event tid]
        (let
          [type
           (get event "type")
@@ -2785,21 +2802,37 @@
           turn_id
           (get event "turn_id")]
 
-         (cond (or (nil? @submitted-turn-id) (= turn_id @submitted-turn-id))
+         (cond (= turn_id tid)
                (do (when on-event (on-event event))
                    (when (contains? #{"turn.completed" "turn.failed"} type)
                      (deliver terminal event))
                    ;; Our own queued record deleted before it ever ran
                    ;; (pulled back into a sibling's editor): synthesize a
                    ;; cancelled terminal so the blocking submit never hangs.
-                   (when (and (= "turn.queued.deleted" type)
-                              (some? @submitted-turn-id)
-                              (= turn_id @submitted-turn-id))
+                   (when (= "turn.queued.deleted" type)
                      (deliver terminal
                               {"type" "turn.completed" "turn_id" turn_id "status" "cancelled"})))
                ;; ANOTHER turn's queue event: forward so the channel can
                ;; mirror the session's queued backlog; never terminal here.
-               (contains? queue-mirror-event-types type) (when on-event (on-event event)))))]
+               (contains? queue-mirror-event-types type) (when on-event (on-event event)))))
+
+     handle-event!
+     (fn [event]
+       (let
+         [tid (:turn-id (swap! inbox (fn [s]
+                                       (cond-> s
+                                         (nil? (:turn-id s))
+                                         (update :pending conj event)))))]
+         (when tid (dispatch! event tid))))
+
+     ;; Atomically publish the id and take the buffered events, so an event
+     ;; racing this hand-off is dispatched exactly once — by us or by its own
+     ;; caller, never both and never neither.
+     adopt-turn!
+     (fn [tid]
+       (let [[old _] (swap-vals! inbox assoc :turn-id tid :pending [])]
+         (doseq [event (:pending old)]
+           (dispatch! event tid))))]
 
     (try (let
            [replay
@@ -2816,9 +2849,21 @@
 
            (when-let [e (:error submit-result)]
              (throw (ex-info (or (:message submit-result) (str e)) submit-result)))
-           (reset! submitted-turn-id turn-id)
+           (adopt-turn! turn-id)
            (doseq [event replay]
              (handle-event! event))
+           ;; A terminal that landed at/just-before our cursor (an idempotent
+           ;; replay of an already-settled turn, or a turn the gateway drained
+           ;; and finished before we adopted it) never arrives as a live event.
+           ;; Recover it from the stored record so we never block forever.
+           (when-not (realized? terminal)
+             (let [turn (get-turn sid turn-id)]
+               (when (contains? terminal-turn-statuses (get turn "status"))
+                 (deliver terminal
+                          (assoc turn
+                            "type" (if (= "failed" (get turn "status"))
+                                     "turn.failed"
+                                     "turn.completed"))))))
            (terminal-event->result (deref terminal) turn-id))
          (finally (unsubscribe! sid sub-id)))))
 

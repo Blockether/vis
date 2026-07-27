@@ -38,6 +38,10 @@ import type {
   ModelPref,
 } from '../lib/types';
 import { startWavRecording, type WavRecording } from '../lib/voice';
+import { onWake } from '../lib/wake';
+import { markSessionRead } from '../lib/unread';
+import { shareableSessionLink } from '../lib/router';
+import { Capacitor } from '@capacitor/core';
 
 interface LiveActivity {
   kind: string;
@@ -500,48 +504,97 @@ function CopyableId({ id, className }: { id: string; className: string }) {
   );
 }
 
-// Copies the current shareable URL (origin + #/s/<sid>?gw=<gateway>) so another
-// user can open the same session in their own paired app. Prefers the native
-// iOS/Android share sheet, falling back to a clipboard copy with confirmation.
-function ShareLink({ className }: { className: string }) {
-  const [copied, setCopied] = useState(false);
-  async function share() {
-    const url = window.location.href;
-    try {
-      if (typeof navigator.share === 'function') {
-        await navigator.share({ title: 'Vis session', url });
-        return;
-      }
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1_500);
-    } catch {
-      // User dismissed the native share sheet, or clipboard is unavailable.
-    }
+// Hands out a link to this session so another user can open it in their own
+// paired app. Two surfaces, two truths:
+//
+//   * Web: `window.location.href` is a real https URL and the Web Share API
+//     works, so offer the system share sheet.
+//   * Capacitor (iOS/Android): the origin is `capacitor://localhost` — not an
+//     openable URL — and `navigator.share` is NOT implemented by WKWebView: it
+//     rejects with NotAllowedError (or silently no-ops), which the old code
+//     swallowed, so the button did nothing at all. Native therefore copies the
+//     registered `vis://s/<sid>?gw=<id>` deep link instead.
+//
+// Every path ends in visible feedback; failure is never silent.
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // Untrusted webview / no permission — fall back to the legacy selection copy.
   }
+  try {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.className = 'fixed top-0 left-0 size-px opacity-0';
+    document.body.appendChild(area);
+    area.select();
+    area.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(area);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+function ShareLink({ className }: { className: string }) {
+  const [state, setState] = useState<'idle' | 'copied' | 'shared' | 'failed'>('idle');
+  const flashRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function flash(next: 'copied' | 'shared' | 'failed') {
+    setState(next);
+    if (flashRef.current) clearTimeout(flashRef.current);
+    flashRef.current = setTimeout(() => setState('idle'), 1_800);
+  }
+  useEffect(() => () => {
+    if (flashRef.current) clearTimeout(flashRef.current);
+  }, []);
+  async function share() {
+    const url = shareableSessionLink();
+    if (!Capacitor.isNativePlatform() && typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ title: 'Vis session', url });
+        flash('shared');
+        return;
+      } catch (error) {
+        // A dismissed sheet is not a failure — say nothing and leave it alone.
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        // Anything else (unsupported, blocked) falls through to the copy.
+      }
+    }
+    flash((await copyText(url)) ? 'copied' : 'failed');
+  }
+  const label = state === 'copied' ? 'Copied' : state === 'shared' ? 'Shared' : state === 'failed' ? 'Failed' : 'Share';
+  const done = state === 'copied' || state === 'shared';
+  const tone = done
+    ? 'border-ok bg-ok/15 text-ok'
+    : state === 'failed'
+      ? 'border-err bg-err/15 text-err'
+      : 'border-dialog-title bg-dialog-title text-dialog-title-foreground hover:bg-accent-2';
   return (
     <button
       type="button"
       onClick={share}
       title="Share this session"
       aria-label="Share this session"
-      className={`group inline-flex h-6 shrink-0 items-center gap-1 border px-2 font-mono text-chip font-bold uppercase tracking-[0.08em] transition-[background-color,color,border-color,transform,translate,scale,rotate] duration-150 active:scale-[0.97] motion-reduce:transition-none ${copied ? 'border-ok bg-ok/15 text-ok' : 'border-dialog-title bg-dialog-title text-dialog-title-foreground hover:bg-accent-2'} ${className}`}
+      className={`group inline-flex h-6 shrink-0 items-center gap-1 border px-2 font-mono text-chip font-bold uppercase tracking-[0.08em] transition-[background-color,color,border-color,transform,translate,scale,rotate] duration-150 active:scale-[0.97] motion-reduce:transition-none ${tone} ${className}`}
     >
-      {copied ? (
-        <>
-          <svg viewBox="0 0 20 20" className="size-3" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-            <path d="M5 10.5l3.5 3.5L15 6.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          <span>Copied</span>
-        </>
+      {done ? (
+        <svg viewBox="0 0 20 20" className="size-3" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+          <path d="M5 10.5l3.5 3.5L15 6.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
       ) : (
-        <>
-          <svg viewBox="0 0 20 20" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-            <path d="M7.5 10.5l5-3M7.5 9.5l5 3M6 10a2 2 0 11-4 0 2 2 0 014 0zM16 5a2 2 0 11-4 0 2 2 0 014 0zM16 15a2 2 0 11-4 0 2 2 0 014 0z" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          <span>Share</span>
-        </>
+        <svg viewBox="0 0 20 20" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+          <path d="M7.5 10.5l5-3M7.5 9.5l5 3M6 10a2 2 0 11-4 0 2 2 0 014 0zM16 5a2 2 0 11-4 0 2 2 0 014 0zM16 15a2 2 0 11-4 0 2 2 0 014 0z" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
       )}
+      {/* All four labels live in the same grid cell, so the button is sized once by
+         the widest of them and never resizes/jumps when the state flips. */}
+      <span aria-live="polite" className="grid justify-items-center">
+        <span aria-hidden="true" className="invisible col-start-1 row-start-1">Copied</span>
+        <span className="col-start-1 row-start-1">{label}</span>
+      </span>
     </button>
   );
 }
@@ -569,11 +622,18 @@ export function SessionScreen({
   // underneath, instead of holding the loading sheet over an empty view.
   const [session, setSession] = useState<Session | null>(() => client.cachedSession(sid));
   const [turns, setTurns] = useState<TranscriptTurn[]>(() => client.cachedTranscript(sid) ?? []);
+  // Whether the turns on screen were confirmed against the gateway during THIS
+  // visit. Cached rows paint the first frame, but a cached 'running' row is a
+  // placeholder with no outcome: rendered before confirmation it spins and
+  // counts elapsed time for a turn that may already be cancelled or done.
+  const [turnsFresh, setTurnsFresh] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState<string | null>(null);
   // The session's provider/model pick. Read once from the gateway so the header
   // chip is right on open, then written through by the router dialog.
   const [modelPref, setModelPref] = useState<ModelPref | null>(null);
+  // The gateway's default route, shown when this session pins nothing.
+  const [defaultPref, setDefaultPref] = useState<ModelPref | null>(null);
   const [routerOpen, setRouterOpen] = useState(false);
   const [loading, setLoading] = useState(!fresh);
   // The veil outlives `loading` by one transition so it can dissolve.
@@ -595,6 +655,15 @@ export function SessionScreen({
   const [resumingQueue, setResumingQueue] = useState(false);
   const [showJump, setShowJump] = useState(false);
   const [visibleTurnCount, setVisibleTurnCount] = useState(INITIAL_VISIBLE_TURNS);
+  // Reading IS being here. While this transcript is on screen its finished turns
+  // count as read, so an answer that lands while you watch never raises a badge
+  // in the session list — but one that lands with the screen backgrounded does.
+  const readTurns = Math.max(Number(session?.turn_count ?? 0), turns.length);
+  useEffect(() => {
+    if (document.visibilityState !== 'hidden') markSessionRead(sid, readTurns);
+    // Coming back to a screen that stayed mounted through a suspend is also a read.
+    return onWake(() => markSessionRead(sid, readTurns));
+  }, [sid, readTurns]);
   // Turns that exist on the gateway BEFORE the window we hold. The transcript is
   // fetched newest-page-first (a long session is tens of megabytes whole), so
   // "earlier" can mean rows we have but hide, or rows we have not read yet.
@@ -626,6 +695,10 @@ export function SessionScreen({
   const resizeScrollFrameRef = useRef<number | null>(null);
   const disclosureScrollFrameRef = useRef<number | null>(null);
   const prependScrollHeightRef = useRef<number | null>(null);
+  // Open/settle window: while it is in the future the transcript is still being
+  // measured and every scroll inside it is ours, not the user's.
+  const settleUntilRef = useRef(0);
+  const settleTimersRef = useRef<number[]>([]);
   const followingRef = useRef(true);
   const showJumpRef = useRef(false);
   const liveTurnRef = useRef<LiveTurn | null>(null);
@@ -650,6 +723,7 @@ export function SessionScreen({
     void recordingRef.current?.cancel();
     recordingRef.current = null;
     setTurns(client.cachedTranscript(sid) ?? []);
+    setTurnsFresh(false);
     setEarlierRemaining(client.transcriptWindow(sid).offset);
     setLoadingEarlier(false);
     setLiveTurn(null);
@@ -669,6 +743,7 @@ export function SessionScreen({
     setVisibleTurnCount(INITIAL_VISIBLE_TURNS);
     followingRef.current = true;
     initialScrollPendingRef.current = !fresh;
+    settleUntilRef.current = 0;
     showJumpRef.current = false;
     setRouterOpen(false);
     setModelPref(null);
@@ -690,6 +765,24 @@ export function SessionScreen({
       live = false;
     };
   }, [client, sid]);
+
+  // An unpinned session runs on the gateway default, so the chip names THAT
+  // model rather than the placeholder word. Re-read when the picker closes: the
+  // default may have just been changed from it.
+  useEffect(() => {
+    let live = true;
+    void client
+      .defaultModel()
+      .then((pref) => {
+        if (live) setDefaultPref(pref);
+      })
+      .catch(() => {
+        /* Without a readable default the chip simply falls back to the pin. */
+      });
+    return () => {
+      live = false;
+    };
+  }, [client, routerOpen]);
 
   const markQueueBusy = useCallback((turnId: string, busy: boolean) => {
     setQueueBusy((current) => {
@@ -714,6 +807,36 @@ export function SessionScreen({
     }
   }, []);
 
+  // Opening a session must LAND on the latest turn, and one scrollTo cannot do
+  // that: the transcript keeps growing after the first paint (deferred Markdown,
+  // fonts, images, code blocks). Worse, the scroll event produced by that first
+  // scrollTo is delivered AFTER the growth, so `handleScroll` measured a large
+  // distance-to-bottom and cleared `followingRef` — which then vetoed the
+  // ResizeObserver's catch-up scroll and left the session parked mid-history.
+  // Pin instead: re-scroll on a settle schedule and own every scroll event in
+  // that window.
+  const pinToEnd = useCallback(() => {
+    settleTimersRef.current.forEach((id) => window.clearTimeout(id));
+    settleTimersRef.current = [];
+    settleUntilRef.current = Date.now() + 1200;
+    scrollToEnd('auto');
+    for (const delay of [60, 160, 320, 600, 1000]) {
+      settleTimersRef.current.push(
+        window.setTimeout(() => {
+          if (Date.now() > settleUntilRef.current) return;
+          scrollToEnd('auto');
+        }, delay),
+      );
+    }
+  }, [scrollToEnd]);
+
+  // A real gesture ends the pin at once — never fight the finger.
+  const releasePin = useCallback(() => {
+    settleUntilRef.current = 0;
+    settleTimersRef.current.forEach((id) => window.clearTimeout(id));
+    settleTimersRef.current = [];
+  }, []);
+
   // Pass the session's meta `row` and the transcript is re-read ONLY when that
   // row says a turn was persisted since the copy already on screen — a long
   // session's transcript is tens of megabytes, so a blind re-read is the most
@@ -726,6 +849,8 @@ export function SessionScreen({
             ? await client.transcript(sid)
             : await client.transcriptIfMoved(sid, row);
         if (!next) {
+          // Unchanged: the gateway just told us the cache IS its current answer.
+          setTurnsFresh(true);
           // Unchanged: keep the painted turns, their object identities, and the
           // scroll position exactly as they are.
           if (!turnsRef.current.length) {
@@ -735,6 +860,7 @@ export function SessionScreen({
           return turnsRef.current;
         }
         setTurns(next);
+        setTurnsFresh(true);
         setEarlierRemaining(client.transcriptWindow(sid).offset);
         setError(null);
         // With turns present, the scroll effect drops the overlay only after it
@@ -792,7 +918,12 @@ export function SessionScreen({
   // still show a running turn, reload the transcript and drop the live bubble.
   useEffect(() => {
     let cancelled = false;
-    let inflight = false;
+    // A request still in flight when the OS suspends the webview never settles
+    // and never rejects. A plain boolean latch would then block every later
+    // tick for the life of the app — the "restart it before I see anything"
+    // bug. Stamp the start instead and treat an older one as lost.
+    const STALE_RECONCILE_MS = 20_000;
+    let inflightSince: number | null = null;
     const reconcileOnce = async () => {
       if (document.visibilityState === 'hidden') return;
       let next: Session;
@@ -821,7 +952,10 @@ export function SessionScreen({
         nextTurns = null;
       }
       if (cancelled) return;
-      if (nextTurns) setTurns(nextTurns);
+      if (nextTurns) {
+        setTurns(nextTurns);
+        setTurnsFresh(true);
+      }
       // Same reconcile for the queue: a `turn.queued`/`.deleted` frame dropped
       // by a suspended stream would otherwise leave the tray lying until the
       // row drained. Gateway truth wins outright — we never merge in a local
@@ -847,31 +981,28 @@ export function SessionScreen({
     // transcript), so on a slow gateway a fixed 5s tick would overlap and pile
     // requests up. One in flight at a time — a skipped tick self-heals 5s later.
     const reconcile = async () => {
-      if (inflight) return;
-      inflight = true;
+      if (inflightSince !== null && Date.now() - inflightSince < STALE_RECONCILE_MS) return;
+      inflightSince = Date.now();
       try {
         await reconcileOnce();
       } finally {
-        inflight = false;
+        inflightSince = null;
       }
     };
     const timer = window.setInterval(() => void reconcile(), 5000);
-    const onWake = () => {
-      if (document.visibilityState !== 'visible') return;
-      // Force the multiplexed SSE stream to reconnect so a silently frozen
-      // background socket does not sit forever without firing an error.
+    // Every wake signal, DOM *and* native resume (a Capacitor iOS webview can
+    // resume without firing a single DOM event). Force the multiplexed SSE
+    // stream to reconnect so a silently frozen background socket does not sit
+    // there forever, and drop a latch a suspended request left behind.
+    const stopWake = onWake(() => {
+      inflightSince = null;
       subscriptions.resync();
       void reconcile();
-    };
-    document.addEventListener('visibilitychange', onWake);
-    window.addEventListener('online', onWake);
-    window.addEventListener('pageshow', onWake);
+    });
     return () => {
       cancelled = true;
       window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', onWake);
-      window.removeEventListener('online', onWake);
-      window.removeEventListener('pageshow', onWake);
+      stopWake();
     };
   }, [client, sid, loadTranscript, subscriptions]);
 
@@ -1082,14 +1213,16 @@ export function SessionScreen({
       prependScrollHeightRef.current = null;
       return;
     }
-    if (followingRef.current) scrollToEnd('auto');
     if (initialScrollPendingRef.current && turns.length) {
       initialScrollPendingRef.current = false;
+      pinToEnd();
       // Reveal one frame later, after the browser paints the bottom-pinned
       // transcript, so opening a session lands on the latest turn.
       requestAnimationFrame(() => setLoading(false));
+      return;
     }
-  }, [turns, visibleTurnCount, liveTurn?.id, scrollToEnd]);
+    if (followingRef.current) scrollToEnd('auto');
+  }, [turns, visibleTurnCount, liveTurn?.id, scrollToEnd, pinToEnd]);
 
   // The veil must DISSOLVE, not vanish. Unmounting it the instant the transcript
   // is ready swaps a full-bleed `bg-ink` sheet for the whole transcript inside a
@@ -1133,6 +1266,8 @@ export function SessionScreen({
         window.cancelAnimationFrame(disclosureScrollFrameRef.current);
         disclosureScrollFrameRef.current = null;
       }
+      settleTimersRef.current.forEach((id) => window.clearTimeout(id));
+      settleTimersRef.current = [];
     };
   }, [scrollToEnd, sid]);
 
@@ -1414,11 +1549,24 @@ export function SessionScreen({
   }
 
   async function cancel() {
-    setLiveTurn((turn) => turn ? { ...turn, cancelling: true, activity: undefined } : turn);
+    // One stop is one stop. A second press (button re-tap, Escape) while the
+    // request is in flight would re-announce a state the transcript is already
+    // showing as "Vis is cancelling".
+    if (liveTurnRef.current?.cancelling) return;
+    setLiveTurn((turn) => {
+      const next = turn ? { ...turn, cancelling: true, activity: undefined } : turn;
+      liveTurnRef.current = next;
+      return next;
+    });
     try {
       await client.cancelCurrentTurn(sid);
     } catch (cause) {
-      setLiveTurn((turn) => turn ? { ...turn, cancelling: false } : turn);
+      // The stop never landed, so the affordance has to come back.
+      setLiveTurn((turn) => {
+        const next = turn ? { ...turn, cancelling: false } : turn;
+        liveTurnRef.current = next;
+        return next;
+      });
       setError((cause as Error).message);
     }
   }
@@ -1466,6 +1614,16 @@ export function SessionScreen({
   function handleScroll() {
     const viewport = scrollRef.current;
     if (!viewport) return;
+    // Inside the settle window the only scrolls are the ones we issued; a stale
+    // event delivered after the transcript grew must not cancel following.
+    if (Date.now() <= settleUntilRef.current) {
+      followingRef.current = true;
+      if (showJumpRef.current) {
+        showJumpRef.current = false;
+        setShowJump(false);
+      }
+      return;
+    }
     const distance = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
     const following = distance < 64;
     followingRef.current = following;
@@ -1576,6 +1734,12 @@ export function SessionScreen({
   const visibleTurns = useMemo(
     () =>
       turns.slice(visibleStart).filter((turn) => {
+        // A persisted 'running' row is a placeholder, not a result. Painted from
+        // the cache — reopening a session you already left — it resurrects the
+        // working spinner and its elapsed clock for a turn that has since been
+        // cancelled or finished, until the refetch lands seconds later. Only a
+        // transcript confirmed against the gateway this visit may show one.
+        if (turn.status === 'running' && !turnsFresh) return false;
         if (!liveTurn) return true;
         const id = turn.id ?? turn.turn_id;
         // Same turn by id — the live bubble owns it.
@@ -1586,7 +1750,7 @@ export function SessionScreen({
         if (turn.status === 'running') return false;
         return true;
       }),
-    [turns, visibleStart, liveTurn, liveTurnId],
+    [turns, visibleStart, liveTurn, liveTurnId, turnsFresh],
   );
   // Memoized rows keep their element IDENTITY across composer keystrokes
   // (prompt/caret state), so React bails out of the whole transcript subtree
@@ -1717,6 +1881,9 @@ export function SessionScreen({
         className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 bg-ink [overflow-anchor:none]"
         onClickCapture={handleDisclosureClick}
         onScroll={handleScroll}
+        onPointerDown={releasePin}
+        onWheel={releasePin}
+        onTouchMove={releasePin}
         role="log"
       >
         <div
@@ -2162,7 +2329,11 @@ export function SessionScreen({
                 {'↑'}
               </button>
             )}
-            {running && (
+            {/* The stop affordance retires the moment the cancel is accepted: the
+                live bubble then carries the single "Vis is cancelling" line, and
+                the finished turn carries "Cancelled by user." — one state at a
+                time, never a button offering to cancel a cancel. */}
+            {running && !liveTurn?.cancelling && (
               <button
                 type="button"
                 className="grid size-8 shrink-0 place-items-center border border-err bg-cancelled transition-[background-color,transform,translate,scale,rotate] duration-150 hover:bg-warn-surface active:scale-[0.94] motion-reduce:transition-none sm:size-7"
@@ -2185,10 +2356,14 @@ export function SessionScreen({
             className="group inline-flex min-w-0 shrink items-center gap-1.5 px-1 py-1 font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none"
             onClick={() => setRouterOpen(true)}
             aria-label="Change provider and model"
-            title={modelPref ? `${modelPref.provider ?? ''}/${modelPref.model ?? ''}` : 'Change provider and model'}
+            title={
+              modelPref?.model ?? defaultPref?.model
+                ? `${modelPref?.provider ?? defaultPref?.provider ?? ''}/${modelPref?.model ?? defaultPref?.model ?? ''}`
+                : 'Change provider and model'
+            }
           >
             <span aria-hidden="true" className="text-accent-ink/80 transition-colors duration-150 group-hover:text-accent-ink motion-reduce:transition-none">◇</span>
-            <span className="truncate">{modelPref?.model ?? 'model'}</span>
+            <span className="truncate">{modelPref?.model ?? defaultPref?.model ?? 'model'}</span>
             <span aria-hidden="true" className="opacity-40 transition-opacity duration-150 group-hover:opacity-100 motion-reduce:transition-none">▾</span>
           </button>
 

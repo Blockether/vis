@@ -538,6 +538,41 @@
                    (expect (= "repl_eval" (get-in result [:error :data :tool])))
                    (expect (< (- (System/currentTimeMillis) started-at) 2000)))))
 
+(defdescribe guest-interrupt-on-eval-timeout-test
+             ;; REGRESSION: an eval timeout (and Esc cancel) only did `Future.cancel(true)`.
+             ;; GraalPy does NOT observe `Thread.interrupt` inside guest code, so a model
+             ;; block that spins (`while True: ...`) kept burning a whole core FOREVER —
+             ;; measured at 1.01 busy cores with BOTH worker futures already cancelled —
+             ;; and pinned its virtual thread's carrier. Only a Truffle safepoint
+             ;; interrupt unwinds the guest frame, and it must leave the context REUSABLE.
+             (it "unwinds a runaway guest loop and keeps the context usable"
+                 (let
+                   [pc
+                    (:python-context (env/create-python-context {}))
+
+                    cpu-ns
+                    (fn []
+                      (.getProcessCpuTime
+                        ^com.sun.management.OperatingSystemMXBean
+                        (java.lang.management.ManagementFactory/getOperatingSystemMXBean)))
+
+                    busy-cores
+                    (fn [ms]
+                      (let [before (cpu-ns)]
+                        (Thread/sleep (long ms))
+                        (/ (double (- (cpu-ns) before)) (* 1.0e6 (double ms)))))]
+
+                   (try (let
+                          [result (binding [rt/*eval-timeout-ms* 3000]
+                                    ((deref #'lp/run-python-code) pc "while True:\n    pass"))]
+                          (expect (true? (:timeout? result)))
+                          ;; The guest is GONE: no core is still spinning after the timeout.
+                          (expect (< (busy-cores 1500) 0.5))
+                          ;; ...and the interrupt did not poison the context.
+                          (expect (= 42 (:result ((deref #'lp/run-python-code) pc "40 + 2")))))
+                        (finally (try (.close ^org.graalvm.polyglot.Context pc true)
+                                      (catch Throwable _ nil)))))))
+
 (defdescribe nested-outside-tool-wall-test
              ;; REGRESSION: run_tests nests the park — language-surface wraps the
              ;; WHOLE run in run-outside-tool-wall AND clj-test-fn wraps its
