@@ -24,11 +24,15 @@ runs:
         asset_version="25i1-25.0.3"
         base="https://github.com/graalvm/graalvm-ce-builds/releases/download/${graal_tag}"
 
-        case "${RUNNER_OS}" in
-          Linux)   file="graalvm-community-jdk-${asset_version}_linux-x64_bin.tar.gz" ;;
-          macOS)   file="graalvm-community-jdk-${asset_version}_macos-aarch64_bin.tar.gz" ;;
-          Windows) file="graalvm-community-jdk-${asset_version}_windows-x64_bin.zip" ;;
-          *) echo "Unsupported RUNNER_OS=${RUNNER_OS}" >&2; exit 1 ;;
+        # graalvm-ce-builds ships FOUR platforms for 25.1.3: linux-x64,
+        # linux-aarch64, macos-aarch64 and windows-x64 — there is NO macos-x64
+        # (Intel) community build, so that runner cannot be used at all.
+        case "${RUNNER_OS}/${RUNNER_ARCH}" in
+          Linux/X64)     file="graalvm-community-jdk-${asset_version}_linux-x64_bin.tar.gz" ;;
+          Linux/ARM64)   file="graalvm-community-jdk-${asset_version}_linux-aarch64_bin.tar.gz" ;;
+          macOS/ARM64)   file="graalvm-community-jdk-${asset_version}_macos-aarch64_bin.tar.gz" ;;
+          Windows/X64)   file="graalvm-community-jdk-${asset_version}_windows-x64_bin.zip" ;;
+          *) echo "No GraalVM CE ${asset_version} build for ${RUNNER_OS}/${RUNNER_ARCH}" >&2; exit 1 ;;
         esac
 
         dest="${RUNNER_TEMP}/graalvm"
