@@ -2063,12 +2063,12 @@
                           (dissoc "engine_overbudget_hint_turn")))))))
 
 (defn- stamp-iter-universe!
-  "Record the CURRENT wire's iteration universe, token weights, recoverable native
-   result ids, and live skill activations. Skill activations are derived from
-   provider-visible `skill` results rather than trusted from persisted pointers.
-   A matching durable pointer protects its exact scope from a newly recorded fold;
-   stale, already-folded, and cross-turn non-replayed activations are discarded."
-  [ctx-atom trailer-iters]
+  "Record the raw iteration universe, recoverable native result ids, and live skill
+   activations, while pricing only `wire-iters` — the CURRENT provider-visible
+   projection. `wire-iters` defaults to `trailer-iters`. A matching durable skill
+   pointer protects its exact scope from a newly recorded fold; stale,
+   already-folded, and cross-turn non-replayed activations are discarded."
+  [ctx-atom trailer-iters & [wire-iters]]
   (when ctx-atom
     (let
       [scope-of
@@ -2082,17 +2082,21 @@
                    (distinct))
              trailer-iters)
 
+       ;; Keep the raw scope identity, but price the corresponding visible record.
+       ;; `apply-summaries` preserves trailer order while replacing collapsed forms
+       ;; with a zero-weight breadcrumb, so an already-folded scope cannot reclaim
+       ;; its historical raw payload again on a later, broader fold.
        weights
        (persistent!
-         (reduce (fn [m [_ rec]]
-                   (if-let [sc (scope-of rec)]
+         (reduce (fn [m [[_ raw-rec] [_ wire-rec]]]
+                   (if-let [sc (scope-of raw-rec)]
                      (let
                        [chars
-                        (reduce + 0 (map form-wire-chars (remove :summary? (:forms-vec rec))))]
+                        (reduce + 0 (map form-wire-chars (remove :summary? (:forms-vec wire-rec))))]
                        (assoc! m sc (+ (long (get m sc 0)) (quot (long chars) 4))))
                      m))
                  (transient {})
-                 trailer-iters))
+                 (map vector trailer-iters (or wire-iters trailer-iters))))
 
        ntr
        (persistent!
@@ -7186,20 +7190,26 @@
                  ;; near the start (placed by `assemble-initial-messages`); we
                  ;; never repeat it. Matches z.ai's canonical preserved-thinking
                  ;; shape (user → asst → user → asst → user).
-                 _ (stamp-iter-universe! (:ctx-atom environment) trailer-iters)
+                 ;; First derive protected live-skill scopes from the canonical raw
+                 ;; trailer; then apply folds and re-stamp token weights from exactly
+                 ;; the provider-visible projection. Raw universe/NTR recovery stays
+                 ;; intact, while an already-collapsed payload is never priced twice.
+                 _raw-iter-state (stamp-iter-universe! (:ctx-atom environment) trailer-iters)
                  replay-target (replay-context pre-resolved-model)
                  replay-policies (extension/native-tool-replay-policies active-exts environment)
-                 conversation-suffix-msgs (conversation-suffix
-                                            (apply-summaries
-                                              trailer-iters
-                                              (some-> (:ctx-atom environment)
-                                                      deref
-                                                      (get "session_summaries"))
-                                              (some-> (:ctx-atom environment)
-                                                      deref
-                                                      (get "engine_protected_iter_scopes")))
-                                            replay-target
-                                            replay-policies)
+                 summarized-trailer-iters (apply-summaries trailer-iters
+                                                           (some-> (:ctx-atom environment)
+                                                                   deref
+                                                                   (get "session_summaries"))
+                                                           (some->
+                                                             (:ctx-atom environment)
+                                                             deref
+                                                             (get "engine_protected_iter_scopes")))
+                 _visible-iter-state (stamp-iter-universe! (:ctx-atom environment)
+                                                           trailer-iters
+                                                           summarized-trailer-iters)
+                 conversation-suffix-msgs
+                 (conversation-suffix summarized-trailer-iters replay-target replay-policies)
                  provider-messages (into (vec messages) conversation-suffix-msgs)
                  effective-messages-atom (atom provider-messages)
                  context-recovery-attempted? (atom false)

@@ -1080,6 +1080,27 @@
           (expect (true? (:collapsed? (second (nth out 0)))))
           (expect (true? (:collapsed? (second (nth out 1)))))
           (expect (nil? (:collapsed? (second (nth out 2)))))))
+    (it "prices only the projected wire while retaining the raw universe and NTR index"
+        (let
+          [trailer
+           [[0
+             {:forms-vec [{:scope "t1/i1/f1"
+                           :svar/tool-call-id "call-big"
+                           :result (apply str (repeat 4000 "x"))}]}]
+            [1 {:forms-vec [{:scope "t1/i2/f1" :result (apply str (repeat 400 "y"))}]}]]
+
+           ca
+           (atom {"session_summaries" [{"scopes" #{"t1/i1"} "gist" "already folded"}]})
+
+           wire
+           (apply-summaries trailer (get @ca "session_summaries"))]
+
+          (stamp-iter-universe! ca trailer wire)
+          ;; The collapsed payload is still recoverable but no longer contributes
+          ;; its historical 1k-token raw weight to a later broad fold.
+          (expect (= ["t1/i1" "t1/i2"] (get @ca "engine_iter_universe")))
+          (expect (= {"t1/i1" 0 "t1/i2" 100} (get @ca "engine_iter_weights")))
+          (expect (= {"t1/i1" ["call-big"]} (get @ca "engine_iter_ntr")))))
     ;; Frozen-prompt regression (session 0cfd25a7…): a fold recorded under an
     ;; EARLIER/foreign turn numbering kept re-resolving its range cursor against
     ;; every later live turn, collapsing the whole trailer. The model then never
