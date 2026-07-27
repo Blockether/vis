@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.10] - 2026-07-27
+
+### Changed
+- fix(native): ship linux x64 + arm64 from CI, drop the impossible macOS job
+- release: update version files for v0.1.9, bump to next dev version
+
+### Package changes
+
+#### com.blockether/vis
+- fix(native): ship linux x64 + arm64 from CI, drop the impossible macOS job (005b9b806)
+- release: update version files for v0.1.9, bump to next dev version (d00e41718)
+
+
+
 ## [v0.1.9] - 2026-07-27
 
 ### Changed
@@ -1468,7 +1482,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.10...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -1478,3 +1492,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.7]: https://github.com/Blockether/vis/releases/tag/v0.1.7
 [v0.1.8]: https://github.com/Blockether/vis/releases/tag/v0.1.8
 [v0.1.9]: https://github.com/Blockether/vis/releases/tag/v0.1.9
+[v0.1.10]: https://github.com/Blockether/vis/releases/tag/v0.1.10
