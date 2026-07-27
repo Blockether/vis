@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.7] - 2026-07-27
+
+### Changed
+- ci: provision swap for corporate native image
+- release: update version files for v0.1.6, bump to next dev version
+
+### Package changes
+
+#### com.blockether/vis
+- ci: provision swap for corporate native image (2bdc2096a)
+- release: update version files for v0.1.6, bump to next dev version (f977db0da)
+
+
+
 ## [v0.1.6] - 2026-07-27
 
 ### Changed
@@ -1394,10 +1408,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.7...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
 [v0.1.4]: https://github.com/Blockether/vis/releases/tag/v0.1.4
 [v0.1.5]: https://github.com/Blockether/vis/releases/tag/v0.1.5
 [v0.1.6]: https://github.com/Blockether/vis/releases/tag/v0.1.6
+[v0.1.7]: https://github.com/Blockether/vis/releases/tag/v0.1.7
