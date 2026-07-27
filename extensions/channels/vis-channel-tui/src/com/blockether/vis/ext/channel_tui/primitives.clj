@@ -496,12 +496,10 @@
        (let [c (int (.charAt g 0))]
          (and (>= c (long INLINE_SENTINEL_LO)) (<= c (long INLINE_SENTINEL_HI))))))
 
-
 ;; Per-terminal glyph width (VS-16 emoji narrow on Apple Terminal.app, wide
 ;; elsewhere) lives in the lanterna fork's `TextCharacter.isDoubleWidth`
 ;; (auto-detected from TERM_PROGRAM). Everything here defers to it, so
 ;; measurement always matches what the fork's painter/screen emit.
-
 
 (defn display-width
   "Number of terminal columns `s` will occupy when painted by lanterna.

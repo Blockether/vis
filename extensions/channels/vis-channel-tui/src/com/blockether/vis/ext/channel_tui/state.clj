@@ -18,12 +18,14 @@
             TimeUnit]))
 
 (set! *unchecked-math* :warn-on-boxed)
+
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 (defonce app-db (atom nil))
 
 (defonce ^:private event-registry (atom {}))
 
 (defonce ^:private fx-registry (atom {}))
+
 ;;; Render thread coordination.
 ;;
 ;; The TUI runs a dedicated render thread (see `screen/start-render-thread!`).
@@ -255,6 +257,7 @@
               (apply fx-fn args)))))
       (when @bumped? (notify-render!)))
     (throw (ex-info (str "No handler registered for event: " id) {:event event-vec}))))
+
 ;;; ── State shape ────────────────────────────────────────────────────────────
 ;;
 ;; {:config     nil              ;; provider config map or nil
@@ -592,7 +595,6 @@
                                                       reasoning-live-tail-reveal-chars))
               entry))
           timeline)))
-
 
 (defn- make-progress-render-updater
   ([dispatch-fn] (make-progress-render-updater dispatch-fn #(System/currentTimeMillis) nil))
@@ -1075,7 +1077,6 @@
       (and (nil? (:workspace db')) (:workspace entry))
       (assoc :workspace (:workspace entry)))))
 
-
 (defn- activate-tab
   [db workspace-id]
   (-> db
@@ -1180,6 +1181,7 @@
        ;; input thread's scroll handlers know how big the
        ;; messages area is right now. nil before the first paint.
        :layout nil})))
+
 ;;; ── Pure event handlers ────────────────────────────────────────────────────
 (reg-event-db :set-config
               (fn [db [_ config]]
@@ -1692,6 +1694,7 @@
                 (assoc db
                   :provider-limits nil
                   :provider-limits-force? false)))
+
 ;; Ask the background limits poller to refetch on its NEXT tick instead of
 ;; waiting out the 60s stale window — dispatched after an auth flow so the
 ;; footer picks up a just-authenticated provider (or fresh quota) promptly.
@@ -2571,6 +2574,7 @@
               ;; here so memory tracks what the user can still see.
               (fn [db [_ id]]
                 (update db :pastes dissoc id)))
+
 ;; -- Messages-area scroll ---------------------------------------------------
 ;;
 ;; All scroll state is ONE workspace-local tagged value, `:scroll` (see
@@ -4228,6 +4232,7 @@
 
              @restore-pending?
              (conj [:dispatch [:restore-pending-to-input workspace-id]]))})))
+
 ;;; ── Side effects ───────────────────────────────────────────────────────────
 
 (reg-fx :dispatch
@@ -4243,6 +4248,7 @@
 (reg-fx :notify
         (fn [text level ttl-ms]
           (vis/notify! text :level level :ttl-ms ttl-ms)))
+
 ;; Persist the active session's model preference to the shared, channel-neutral
 ;; store. The engine reads it on the next turn (router-for-model) and the web
 ;; rail shows the same value — one source of truth across channels.

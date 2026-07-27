@@ -34,9 +34,8 @@
     (is (some? (ep/compile-policy {:rules [{:host "api.example.com" :access "read-only"}]})))))
 
 (deftest decide-host-allow-deny
-  (let
-    [pol (ep/compile-policy {:allowed-domains ["example.com"]
-                             :denied-domains ["evil.example.com"]})]
+  (let [pol (ep/compile-policy {:allowed-domains ["example.com"]
+                                :denied-domains ["evil.example.com"]})]
     (testing "allow-list confines hosts (subdomains of an allowed apex pass)"
       (is (:allow? (ep/decide pol "GET" "example.com" "/")))
       (is (:allow? (ep/decide pol "GET" "api.example.com" "/")))
@@ -48,11 +47,10 @@
       (is (not (:allow? (ep/decide pol nil "evil.example.com" nil)))))))
 
 (deftest decide-verb-path-rules
-  (let
-    [pol (ep/compile-policy {:allowed-domains ["api.example.com"]
-                             :rules [{:host "api.example.com"
-                                      :access "read-only"
-                                      :allow [{:method "POST" :path "/repos/**"}]}]})]
+  (let [pol (ep/compile-policy {:allowed-domains ["api.example.com"]
+                                :rules [{:host "api.example.com"
+                                         :access "read-only"
+                                         :allow [{:method "POST" :path "/repos/**"}]}]})]
     (testing "read-only preset ⇒ GET/HEAD/OPTIONS pass, other verbs denied"
       (is (:allow? (ep/decide pol "GET" "api.example.com" "/x")))
       (is (:allow? (ep/decide pol "HEAD" "api.example.com" "/x")))
@@ -64,25 +62,22 @@
     (testing "a host with NO rule is verb-unrestricted (still host-gated elsewhere)"
       (is (:allow? (ep/decide pol "POST" "api.example.com" "/repos/a")))))
   (testing ":rules :methods (GET-only)"
-    (let
-      [pol (ep/compile-policy {:rules [{:host "h.example.com" :methods ["GET"]}]
-                               :allowed-domains ["h.example.com"]})]
+    (let [pol (ep/compile-policy {:rules [{:host "h.example.com" :methods ["GET"]}]
+                                  :allowed-domains ["h.example.com"]})]
       (is (:allow? (ep/decide pol "GET" "h.example.com" "/")))
       (is (not (:allow? (ep/decide pol "POST" "h.example.com" "/")))))))
 
 (deftest decide-port-rules
   (testing "a rule's :ports restricts which ports reach the host (CONNECT/SOCKS path)"
-    (let
-      [pol (ep/compile-policy {:allowed-domains ["*"]
-                               :rules [{:host "github.com" :ports [22 443]}]})]
+    (let [pol (ep/compile-policy {:allowed-domains ["*"]
+                                  :rules [{:host "github.com" :ports [22 443]}]})]
       (is (:allow? (ep/decide pol nil "github.com" nil 443)))
       (is (:allow? (ep/decide pol nil "github.com" nil 22)))
       (is (not (:allow? (ep/decide pol nil "github.com" nil 6379))))
       (is (not (:allow? (ep/decide pol nil "github.com" nil 80))))))
   (testing "a ports-only rule leaves verbs unrestricted on an allowed port"
-    (let
-      [pol (ep/compile-policy {:allowed-domains ["*"]
-                               :rules [{:host "db.internal" :ports [5432]}]})]
+    (let [pol (ep/compile-policy {:allowed-domains ["*"]
+                                  :rules [{:host "db.internal" :ports [5432]}]})]
       (is (:allow? (ep/decide pol "POST" "db.internal" "/" 5432)))
       (is (not (:allow? (ep/decide pol "POST" "db.internal" "/" 3306))))))
   (testing "no :ports ⇒ any port (backward compatible)"
@@ -90,20 +85,19 @@
       (is (:allow? (ep/decide pol nil "gh.example" nil 22)))
       (is (:allow? (ep/decide pol nil "gh.example" nil 443)))))
   (testing "4-arity decide ignores ports (legacy callers unaffected)"
-    (let
-      [pol (ep/compile-policy {:allowed-domains ["*"] :rules [{:host "github.com" :ports [443]}]})]
+    (let [pol (ep/compile-policy {:allowed-domains ["*"]
+                                  :rules [{:host "github.com" :ports [443]}]})]
       (is (:allow? (ep/decide pol nil "github.com" nil)))))
   (testing ":ports combine with verb rules on the same host"
-    (let
-      [pol (ep/compile-policy {:allowed-domains ["*"]
-                               :rules
-                               [{:host "api.example.com" :access "read-only" :ports [443]}]})]
+    (let [pol (ep/compile-policy {:allowed-domains ["*"]
+                                  :rules
+                                  [{:host "api.example.com" :access "read-only" :ports [443]}]})]
       (is (:allow? (ep/decide pol "GET" "api.example.com" "/x" 443)))
       (is (not (:allow? (ep/decide pol "POST" "api.example.com" "/x" 443)))) ; verb denied
       (is (not (:allow? (ep/decide pol "GET" "api.example.com" "/x" 8443)))))) ; port denied
   (testing ":ports accepts numeric strings"
-    (let
-      [pol (ep/compile-policy {:allowed-domains ["*"] :rules [{:host "h.example" :ports ["443"]}]})]
+    (let [pol (ep/compile-policy {:allowed-domains ["*"]
+                                  :rules [{:host "h.example" :ports ["443"]}]})]
       (is (:allow? (ep/decide pol nil "h.example" nil 443)))
       (is (not (:allow? (ep/decide pol nil "h.example" nil 80)))))))
 
@@ -112,10 +106,9 @@
   ;; cert-pinned tools and mTLS upstreams (gh/Go-on-macOS, statically-trusted
   ;; binaries). Such hosts are still HOST-allowlisted, but the proxy must NOT
   ;; terminate their TLS — it tunnels opaquely, so verb/path is unenforced there.
-  (let
-    [pol (ep/compile-policy {:allowed-domains ["*"]
-                             :rules [{:host "*" :access "read-only"}]
-                             :exclude-domains ["GitHub.com" "*.pinned.example"]})]
+  (let [pol (ep/compile-policy {:allowed-domains ["*"]
+                                :rules [{:host "*" :access "read-only"}]
+                                :exclude-domains ["GitHub.com" "*.pinned.example"]})]
     (testing "compile-policy carries normalized (lower-cased) :exclude-domains"
       (is (some? pol))
       (is (= ["github.com" "*.pinned.example"] (:exclude-domains pol))))
@@ -142,24 +135,22 @@
   "A one-request-per-connection HTTP origin on 127.0.0.1 that always answers 200 `ok`.
    Returns {:port :stop!}."
   []
-  (let
-    [server
-     (doto (ServerSocket.) (.bind (InetSocketAddress. "127.0.0.1" 0)))
+  (let [server
+        (doto (ServerSocket.) (.bind (InetSocketAddress. "127.0.0.1" 0)))
 
-     running
-     (atom true)
+        running
+        (atom true)
 
-     seen
-     (atom [])
+        seen
+        (atom [])
 
-     loop-fn
-     (fn []
-       (while @running
-         (when-let [c (try (.accept server) (catch Throwable _ nil))]
-           (future (try
-                     (let
-                       [in (BufferedReader. (InputStreamReader. (.getInputStream c)))
-                        line (.readLine in)]
+        loop-fn
+        (fn []
+          (while @running
+            (when-let [c (try (.accept server) (catch Throwable _ nil))]
+              (future
+                (try (let [in (BufferedReader. (InputStreamReader. (.getInputStream c)))
+                           line (.readLine in)]
 
                        (swap! seen conj (first (str/split (str line) #"\s+")))
                        ;; drain remaining headers
@@ -186,15 +177,14 @@
   "Do `method http://localhost:<origin-port>/<path>` via the proxy at `proxy-port`.
    Returns the HTTP status code the client observes."
   [proxy-port method origin-port path]
-  (let
-    [proxy
-     (Proxy. Proxy$Type/HTTP (InetSocketAddress. "127.0.0.1" (int proxy-port)))
+  (let [proxy
+        (Proxy. Proxy$Type/HTTP (InetSocketAddress. "127.0.0.1" (int proxy-port)))
 
-     url
-     (URL. (str "http://localhost:" origin-port path))
+        url
+        (URL. (str "http://localhost:" origin-port path))
 
-     ^HttpURLConnection conn
-     (.openConnection url proxy)]
+        ^HttpURLConnection conn
+        (.openConnection url proxy)]
 
     (doto conn
       (.setRequestMethod method)
@@ -209,18 +199,17 @@
 (deftest proxy-wire-roundtrip
   (run-wire-test
     (fn []
-      (let
-        [origin
-         (start-origin!)
+      (let [origin
+            (start-origin!)
 
-         ;; localhost is allowed; read-only ⇒ GET forwarded, POST denied at the proxy.
-         policy
-         (ep/compile-policy {:allowed-domains ["localhost"]
-                             :rules [{:host "localhost" :access "read-only"}]})
+            ;; localhost is allowed; read-only ⇒ GET forwarded, POST denied at the proxy.
+            policy
+            (ep/compile-policy {:allowed-domains ["localhost"]
+                                :rules [{:host "localhost" :access "read-only"}]})
 
-         proxy
-         (ep/start! {:policy-fn (fn [_token]
-                                  policy)})]
+            proxy
+            (ep/start! {:policy-fn (fn [_token]
+                                     policy)})]
 
         (try (testing "GET to an allowed, read-only host is forwarded (origin 200)"
                (is (= 200 (http-through-proxy (:port proxy) "GET" (:port origin) "/"))))
@@ -236,25 +225,23 @@
   "A one-request-per-connection HTTPS origin on 127.0.0.1 using `server-ctx`. Records
    each request method into `:seen` and always answers 200. Returns {:port :stop! :seen}."
   [^SSLContext server-ctx]
-  (let
-    [server
-     (doto ^SSLServerSocket (.createServerSocket (.getServerSocketFactory server-ctx))
-       (.bind (InetSocketAddress. "127.0.0.1" 0)))
+  (let [server
+        (doto ^SSLServerSocket (.createServerSocket (.getServerSocketFactory server-ctx))
+          (.bind (InetSocketAddress. "127.0.0.1" 0)))
 
-     running
-     (atom true)
+        running
+        (atom true)
 
-     seen
-     (atom [])
+        seen
+        (atom [])
 
-     loop-fn
-     (fn []
-       (while @running
-         (when-let [c (try (.accept server) (catch Throwable _ nil))]
-           (future (try
-                     (let
-                       [in (BufferedReader. (InputStreamReader. (.getInputStream c)))
-                        line (.readLine in)]
+        loop-fn
+        (fn []
+          (while @running
+            (when-let [c (try (.accept server) (catch Throwable _ nil))]
+              (future
+                (try (let [in (BufferedReader. (InputStreamReader. (.getInputStream c)))
+                           line (.readLine in)]
 
                        (swap! seen conj (first (str/split (str line) #"\s+")))
                        (loop []
@@ -279,12 +266,12 @@
 (defn- client-ctx-trusting
   "A client SSLContext that trusts only `ca-cert` (the ephemeral MITM CA)."
   ^SSLContext [ca-cert]
-  (let
-    [ks
-     (doto (KeyStore/getInstance "PKCS12") (.load nil nil) (.setCertificateEntry "ca" ca-cert))
+  (let [ks
+        (doto (KeyStore/getInstance "PKCS12") (.load nil nil) (.setCertificateEntry "ca" ca-cert))
 
-     tmf
-     (doto (TrustManagerFactory/getInstance (TrustManagerFactory/getDefaultAlgorithm)) (.init ks))]
+        tmf
+        (doto (TrustManagerFactory/getInstance (TrustManagerFactory/getDefaultAlgorithm))
+          (.init ks))]
 
     (doto (SSLContext/getInstance "TLS") (.init nil (.getTrustManagers tmf) nil))))
 
@@ -303,9 +290,8 @@
 
         (let [l (.readLine cbr)]
           (when (and l (not= l "")) (recur)))))
-    (let
-      [ssl ^SSLSocket
-           (.createSocket (.getSocketFactory client-ctx) raw "localhost" (int origin-port) true)]
+    (let [ssl ^SSLSocket
+              (.createSocket (.getSocketFactory client-ctx) raw "localhost" (int origin-port) true)]
       (.setSSLParameters ssl
                          (doto (.getSSLParameters ssl)
                            (.setEndpointIdentificationAlgorithm "HTTPS")))
@@ -314,9 +300,8 @@
                    (.getBytes (str method
                                    " / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")))
            (.flush (.getOutputStream ssl))
-           (let
-             [br (BufferedReader. (InputStreamReader. (.getInputStream ssl)))
-              status (.readLine br)]
+           (let [br (BufferedReader. (InputStreamReader. (.getInputStream ssl)))
+                 status (.readLine br)]
 
              (.close ssl)
              status)
@@ -325,27 +310,26 @@
 (deftest proxy-mitm-https-roundtrip
   (run-wire-test
     (fn []
-      (let
-        [cap
-         (tls/create! {:upstream-trust-all? true})
+      (let [cap
+            (tls/create! {:upstream-trust-all? true})
 
-         origin
-         (start-tls-origin! ((:ctx-for cap) "localhost"))
+            origin
+            (start-tls-origin! ((:ctx-for cap) "localhost"))
 
-         client-ctx
-         (client-ctx-trusting (:ca-cert cap))
+            client-ctx
+            (client-ctx-trusting (:ca-cert cap))
 
-         ;; localhost read-only ⇒ GET forwarded, POST denied — over HTTPS via MITM.
-         policy
-         (assoc (ep/compile-policy {:allowed-domains ["localhost"]
-                                    :rules [{:host "localhost" :access "read-only"}]})
-           :mitm? true)
+            ;; localhost read-only ⇒ GET forwarded, POST denied — over HTTPS via MITM.
+            policy
+            (assoc (ep/compile-policy {:allowed-domains ["localhost"]
+                                       :rules [{:host "localhost" :access "read-only"}]})
+              :mitm? true)
 
-         proxy
-         (ep/start! {:mitm (fn []
-                             cap)
-                     :policy-fn (fn [_token]
-                                  policy)})]
+            proxy
+            (ep/start! {:mitm (fn []
+                                cap)
+                        :policy-fn (fn [_token]
+                                     policy)})]
 
         (try (testing "the client accepts the proxy's ephemeral leaf (hostname-verified)"
                (is (= "HTTP/1.1 200 OK"
@@ -378,21 +362,19 @@
     (fn []
       (let [origin (start-origin!)]
         (try (testing "CONNECT to a port in the host's :ports is tunnelled (200)"
-               (let
-                 [proxy (ep/start! {:policy-fn (fn [_]
-                                                 (ep/compile-policy
-                                                   {:allowed-domains ["*"]
-                                                    :rules [{:host "localhost"
-                                                             :ports [(:port origin)]}]}))})]
+               (let [proxy (ep/start! {:policy-fn (fn [_]
+                                                    (ep/compile-policy
+                                                      {:allowed-domains ["*"]
+                                                       :rules [{:host "localhost"
+                                                                :ports [(:port origin)]}]}))})]
                  (try (is (= "HTTP/1.1 200 Connection Established"
                              (connect-status (:port proxy) (:port origin))))
                       (finally ((:stop! proxy))))))
              (testing "CONNECT to a port NOT in :ports is refused (403) before any tunnel"
-               (let
-                 [proxy (ep/start! {:policy-fn (fn [_]
-                                                 (ep/compile-policy {:allowed-domains ["*"]
-                                                                     :rules [{:host "localhost"
-                                                                              :ports [1]}]}))})]
+               (let [proxy (ep/start! {:policy-fn (fn [_]
+                                                    (ep/compile-policy {:allowed-domains ["*"]
+                                                                        :rules [{:host "localhost"
+                                                                                 :ports [1]}]}))})]
                  (try (is (= "HTTP/1.1 403 Forbidden"
                              (connect-status (:port proxy) (:port origin))))
                       (finally ((:stop! proxy))))))
@@ -412,9 +394,8 @@
 
         (let [l (.readLine cbr)]
           (when (and l (not= l "")) (recur)))))
-    (let
-      [ssl ^SSLSocket
-           (.createSocket (.getSocketFactory client-ctx) raw "localhost" (int origin-port) true)]
+    (let [ssl ^SSLSocket
+              (.createSocket (.getSocketFactory client-ctx) raw "localhost" (int origin-port) true)]
       (.setSSLParameters ssl
                          (doto (.getSSLParameters ssl)
                            (.setEndpointIdentificationAlgorithm "HTTPS")))
@@ -427,9 +408,8 @@
                                      "\r\n\r\n")))
              (.write (.getOutputStream ssl) payload)
              (.flush (.getOutputStream ssl)))
-           (let
-             [br (BufferedReader. (InputStreamReader. (.getInputStream ssl)))
-              status (.readLine br)]
+           (let [br (BufferedReader. (InputStreamReader. (.getInputStream ssl)))
+                 status (.readLine br)]
 
              (.close ssl)
              status)
@@ -441,29 +421,28 @@
   ;; (deny bodies containing "SECRET") is enforceable over HTTPS — not just verb/path.
   (run-wire-test
     (fn []
-      (let
-        [cap
-         (tls/create! {:upstream-trust-all? true})
+      (let [cap
+            (tls/create! {:upstream-trust-all? true})
 
-         origin
-         (start-tls-origin! ((:ctx-for cap) "localhost"))
+            origin
+            (start-tls-origin! ((:ctx-for cap) "localhost"))
 
-         client-ctx
-         (client-ctx-trusting (:ca-cert cap))
+            client-ctx
+            (client-ctx-trusting (:ca-cert cap))
 
-         policy
-         (assoc (ep/compile-policy {:allowed-domains ["localhost"]
-                                    :rules [{:host "localhost" :access "full"}]})
-           :mitm? true)
+            policy
+            (assoc (ep/compile-policy {:allowed-domains ["localhost"]
+                                       :rules [{:host "localhost" :access "full"}]})
+              :mitm? true)
 
-         proxy
-         (ep/start! {:mitm (fn []
-                             cap)
-                     :policy-fn (fn [_]
-                                  policy)})
+            proxy
+            (ep/start! {:mitm (fn []
+                                cap)
+                        :policy-fn (fn [_]
+                                     policy)})
 
-         owner
-         ::body-filt]
+            owner
+            ::body-filt]
 
         (try (ep/register-network-filter! owner
                                           (fn [req]
@@ -483,7 +462,6 @@
                       ((:stop! proxy))
                       ((:stop! origin))
                       ((:close! cap))))))))
-
 
 ;; Tier-2 network filters — the extension escape valve above :rules
 ;; ---------------------------------------------------------------------------
@@ -516,27 +494,25 @@
     (fn []
       ;; A registered response filter sees the upstream status + headers and can
       ;; replace the response with a 403 — the child never receives the body.
-      (let
-        [origin
-         (start-origin!)
+      (let [origin
+            (start-origin!)
 
-         policy
-         (ep/compile-policy {:allowed-domains ["localhost"]})
+            policy
+            (ep/compile-policy {:allowed-domains ["localhost"]})
 
-         owner
-         ::resp-wire
+            owner
+            ::resp-wire
 
-         seen
-         (atom nil)]
+            seen
+            (atom nil)]
 
         (ep/register-network-filter!
           owner
           (fn [resp]
             (reset! seen resp)
             (if (= 200 (:status resp)) {:allow? false :reason "200 blocked"} {:allow? true})))
-        (let
-          [proxy (ep/start! {:policy-fn (fn [_token]
-                                          policy)})]
+        (let [proxy (ep/start! {:policy-fn (fn [_token]
+                                             policy)})]
           (try (testing "the upstream 200 is blocked at the proxy — child observes 403"
                  (is (= 403 (http-through-proxy (:port proxy) "GET" (:port origin) "/"))))
                (testing "the filter saw the real upstream status + response headers"
@@ -597,13 +573,12 @@
 
 (deftest denied-domain-blocks-ip
   (testing "a denied domain is blocked whether the child dials the NAME or its resolved IP"
-    (let
-      [pol
-       (ep/compile-policy {:allowed-domains ["*"] :denied-domains ["example.com"]})
+    (let [pol
+          (ep/compile-policy {:allowed-domains ["*"] :denied-domains ["example.com"]})
 
-       ip
-       (try (.getHostAddress (java.net.InetAddress/getByName "example.com"))
-            (catch Throwable _ nil))]
+          ip
+          (try (.getHostAddress (java.net.InetAddress/getByName "example.com"))
+               (catch Throwable _ nil))]
 
       ;; name form: denied at host-level (already worked)
       (is (:blocked (ep/safe-upstream-address "example.com" 443 pol)))
@@ -631,8 +606,8 @@
       (is (not (:allow? (ep/decide pol nil "www.example.com" nil))))
       (is (:allow? (ep/decide pol nil "other.com" nil)))))
   (testing "a host on both specific lists is denied (fail safe)"
-    (let
-      [pol (ep/compile-policy {:allowed-domains ["example.com"] :denied-domains ["example.com"]})]
+    (let [pol (ep/compile-policy {:allowed-domains ["example.com"]
+                                  :denied-domains ["example.com"]})]
       (is (not (:allow? (ep/decide pol nil "example.com" nil))))))
   (testing "both `*` ⇒ deny wins"
     (let [pol (ep/compile-policy {:allowed-domains ["*"] :denied-domains ["*"]})]
@@ -644,15 +619,14 @@
       ;; End-to-end: loopback dev servers are reachable by default (see proxy-wire-roundtrip),
       ;; but the gateway's OWN reserved control-plane/proxy port can NEVER be reached through
       ;; the proxy — even under the friendly allow-all posture.
-      (let
-        [origin
-         (start-origin!)
+      (let [origin
+            (start-origin!)
 
-         ;; Allow-all domains + loopback, but mark THIS origin's port reserved (as if it were
-         ;; the gateway control plane) and prove the confused-deputy proxy refuses it.
-         proxy
-         (ep/start! {:policy-fn (fn [_token]
-                                  {:reserved-loopback-ports #{(:port origin)}})})]
+            ;; Allow-all domains + loopback, but mark THIS origin's port reserved (as if it were
+            ;; the gateway control plane) and prove the confused-deputy proxy refuses it.
+            proxy
+            (ep/start! {:policy-fn (fn [_token]
+                                     {:reserved-loopback-ports #{(:port origin)}})})]
 
         (try (testing "a reserved loopback port is refused (403) even though loopback is allowed"
                (is (= 403 (http-through-proxy (:port proxy) "GET" (:port origin) "/"))))
@@ -663,22 +637,20 @@
 (deftest policy-hot-path-performance-budget
   ;; A generous regression ceiling, not a benchmark claim: policy evaluation must
   ;; remain cheap enough to run synchronously on every decrypted request.
-  (let
-    [policy
-     (ep/compile-policy {:allowed-domains ["*"]
-                         :denied-domains ["evil.example"]
-                         :rules [{:host "api.example.com"
-                                  :access "read-only"
-                                  :allow [{:method "POST" :path "/v1/issues/**"}]}
-                                 {:host "*" :access "read-only"}]})
+  (let [policy
+        (ep/compile-policy {:allowed-domains ["*"]
+                            :denied-domains ["evil.example"]
+                            :rules [{:host "api.example.com"
+                                     :access "read-only"
+                                     :allow [{:method "POST" :path "/v1/issues/**"}]}
+                                    {:host "*" :access "read-only"}]})
 
-     started
-     (System/nanoTime)]
+        started
+        (System/nanoTime)]
 
     (dotimes [i 50000]
-      (let
-        [method (if (zero? (bit-and i 1)) "GET" "POST")
-         path (if (zero? (mod i 3)) "/v1/issues/42" "/v1/other")]
+      (let [method (if (zero? (bit-and i 1)) "GET" "POST")
+            path (if (zero? (mod i 3)) "/v1/issues/42" "/v1/other")]
 
         (ep/decide policy method "api.example.com" path)))
     (let [elapsed-ms (/ (- (System/nanoTime) started) 1000000.0)]
@@ -698,13 +670,12 @@
   [proxy-port host origin-port & {:keys [token]}]
   (with-open [s (Socket. "127.0.0.1" (int proxy-port))]
     (.setSoTimeout s 4000)
-    (let
-      [in (.getInputStream s)
-       out (.getOutputStream s)
-       rd2 (fn []
-             (let [b (byte-array 2)]
-               (.read in b)
-               b))]
+    (let [in (.getInputStream s)
+          out (.getOutputStream s)
+          rd2 (fn []
+                (let [b (byte-array 2)]
+                  (.read in b)
+                  b))]
 
       (if token
         (let [ub (.getBytes ^String token "UTF-8")]
@@ -728,9 +699,8 @@
           (if (zero? code)
             (do (.write out (.getBytes "GET / HTTP/1.0\r\n\r\n" "UTF-8"))
                 (.flush out)
-                (let
-                  [b (byte-array 64)
-                   n (.read in b)]
+                (let [b (byte-array 64)
+                      n (.read in b)]
 
                   {:rep 0 :status (when (re-find #"\b200\b" (String. b 0 (max 0 n) "UTF-8")) 200)}))
             {:rep code}))))))
@@ -741,19 +711,17 @@
       (let [origin (start-origin!)]
         (try
           (testing "no-auth CONNECT to an allowed loopback origin relays raw TCP (HTTP over SOCKS)"
-            (let
-              [proxy (ep/start! {:policy-fn (fn [_]
-                                              (ep/compile-policy {:allowed-domains ["*"]}))})]
+            (let [proxy (ep/start! {:policy-fn (fn [_]
+                                                 (ep/compile-policy {:allowed-domains ["*"]}))})]
               (try (let [r (socks5-http (:port proxy) "localhost" (:port origin))]
                      (is (= 0 (:rep r)) "SOCKS5 CONNECT succeeded")
                      (is (= 200 (:status r)) "bytes relayed end to end"))
                    (finally ((:stop! proxy))))))
           (testing "token attributes the session (RFC 1929 username) — unknown token fails closed"
-            (let
-              [proxy (ep/start! {:policy-fn (fn [t]
-                                              (if (= t "sess")
-                                                (ep/compile-policy {:allowed-domains ["*"]})
-                                                {:deny-all? true}))})]
+            (let [proxy (ep/start! {:policy-fn (fn [t]
+                                                 (if (= t "sess")
+                                                   (ep/compile-policy {:allowed-domains ["*"]})
+                                                   {:deny-all? true}))})]
               (try
                 (is (= 0
                        (:rep (socks5-http (:port proxy) "localhost" (:port origin) :token "sess"))))
@@ -761,25 +729,22 @@
                        (:rep (socks5-http (:port proxy) "localhost" (:port origin) :token "nope"))))
                 (finally ((:stop! proxy))))))
           (testing "host allow/deny is enforced (denied host ⇒ REP 0x02 not-allowed)"
-            (let
-              [proxy (ep/start! {:policy-fn (fn [_]
-                                              (ep/compile-policy {:allowed-domains ["*"]
-                                                                  :denied-domains
-                                                                  ["localhost"]}))})]
+            (let [proxy (ep/start! {:policy-fn (fn [_]
+                                                 (ep/compile-policy {:allowed-domains ["*"]
+                                                                     :denied-domains
+                                                                     ["localhost"]}))})]
               (try (is (= 2 (:rep (socks5-http (:port proxy) "localhost" (:port origin)))))
                    (finally ((:stop! proxy))))))
           (testing "the SSRF floor applies: a reserved gateway/proxy port is refused"
-            (let
-              [proxy (ep/start! {:policy-fn (fn [_]
-                                              {:reserved-loopback-ports #{(:port origin)}})})]
+            (let [proxy (ep/start! {:policy-fn (fn [_]
+                                                 {:reserved-loopback-ports #{(:port origin)}})})]
               (try (is (= 2 (:rep (socks5-http (:port proxy) "localhost" (:port origin)))))
                    (finally ((:stop! proxy))))))
           (testing
             "a registered network_filter intercepts SOCKS (same guard as HTTP): denies on :phase :socks, allows when it doesn't match"
-            (let
-              [owner (gensym "socks-filter")
-               proxy (ep/start! {:policy-fn (fn [_]
-                                              (ep/compile-policy {:allowed-domains ["*"]}))})]
+            (let [owner (gensym "socks-filter")
+                  proxy (ep/start! {:policy-fn (fn [_]
+                                                 (ep/compile-policy {:allowed-domains ["*"]}))})]
 
               (try (ep/register-network-filter! owner
                                                 (fn [ctx]
@@ -793,20 +758,18 @@
                        "no matching filter ⇒ SOCKS connection allowed")
                    (finally (ep/unregister-network-filters-for-owner! owner) ((:stop! proxy))))))
           (testing "a rule's :ports gates which port the SOCKS CONNECT may reach"
-            (let
-              [proxy (ep/start! {:policy-fn (fn [_]
-                                              (ep/compile-policy {:allowed-domains ["*"]
-                                                                  :rules [{:host "localhost"
-                                                                           :ports
-                                                                           [(:port origin)]}]}))})]
+            (let [proxy (ep/start! {:policy-fn (fn [_]
+                                                 (ep/compile-policy
+                                                   {:allowed-domains ["*"]
+                                                    :rules [{:host "localhost"
+                                                             :ports [(:port origin)]}]}))})]
               (try (is (= 0 (:rep (socks5-http (:port proxy) "localhost" (:port origin))))
                        "the origin's port is in :ports ⇒ CONNECT allowed")
                    (finally ((:stop! proxy)))))
-            (let
-              [proxy (ep/start! {:policy-fn (fn [_]
-                                              (ep/compile-policy {:allowed-domains ["*"]
-                                                                  :rules [{:host "localhost"
-                                                                           :ports [1]}]}))})]
+            (let [proxy (ep/start! {:policy-fn (fn [_]
+                                                 (ep/compile-policy {:allowed-domains ["*"]
+                                                                     :rules [{:host "localhost"
+                                                                              :ports [1]}]}))})]
               (try (is (= 2 (:rep (socks5-http (:port proxy) "localhost" (:port origin))))
                        "a port not in :ports ⇒ REP 0x02 not-allowed")
                    (finally ((:stop! proxy))))))
@@ -814,18 +777,17 @@
 
 (deftest probe-engine
   (testing "probe runs tier-1 + each filter individually, no collapse, surfaces per-filter error"
-    (let
-      [pol
-       (ep/compile-policy {:allowed-domains ["*"]})
+    (let [pol
+          (ep/compile-policy {:allowed-domains ["*"]})
 
-       o1
-       (gensym "ok")
+          o1
+          (gensym "ok")
 
-       o2
-       (gensym "blk")
+          o2
+          (gensym "blk")
 
-       o3
-       (gensym "bug")]
+          o3
+          (gensym "bug")]
 
       (try (ep/register-network-filter! o1
                                         (fn [_]
@@ -837,13 +799,13 @@
            (ep/register-network-filter! o3
                                         (fn [_]
                                           (throw (ex-info "boom" {}))))
-           (let
-             [{:keys [tier1 filters final]}
-              (ep/probe pol
-                        {:phase :http :method "POST" :host "api.example.com" :path "/x" :port 443})
+           (let [{:keys [tier1 filters final]}
+                 (ep/probe
+                   pol
+                   {:phase :http :method "POST" :host "api.example.com" :path "/x" :port 443})
 
-              by
-              (into {} (map (juxt :owner identity)) filters)]
+                 by
+                 (into {} (map (juxt :owner identity)) filters)]
 
              (is (:allow? tier1) "host allowed at tier-1")
              (is (= 3 (count filters)) "every registered filter reported, not collapsed")
@@ -857,19 +819,17 @@
            (finally (doseq [o [o1 o2 o3]]
                       (ep/unregister-network-filters-for-owner! o))))))
   (testing "tier-1 deny short-circuits: filters never run"
-    (let
-      [pol
-       (ep/compile-policy {:allowed-domains ["github.com"]})
+    (let [pol
+          (ep/compile-policy {:allowed-domains ["github.com"]})
 
-       o
-       (gensym "should-not-run")]
+          o
+          (gensym "should-not-run")]
 
       (try (ep/register-network-filter! o
                                         (fn [_]
                                           (throw (ex-info "must-not-run" {}))))
-           (let
-             [{:keys [tier1 filters final]}
-              (ep/probe pol {:phase :http :method "GET" :host "evil.com" :path "/" :port 443})]
+           (let [{:keys [tier1 filters final]}
+                 (ep/probe pol {:phase :http :method "GET" :host "evil.com" :path "/" :port 443})]
              (is (false? (:allow? tier1)) "host denied at tier-1")
              (is (empty? filters) "no filter runs once tier-1 denies")
              (is (false? (:allow? final))))
@@ -886,55 +846,55 @@
    which its write first failed — i.e. when the proxy tore the tunnel down.
    Returns {:port :sent :broken-at :stop!}."
   [ticks gap-ms]
-  (let
-    [server
-     (doto (ServerSocket.) (.bind (InetSocketAddress. "127.0.0.1" 0)))
+  (let [server
+        (doto (ServerSocket.) (.bind (InetSocketAddress. "127.0.0.1" 0)))
 
-     running
-     (atom true)
+        running
+        (atom true)
 
-     sent
-     (atom 0)
+        sent
+        (atom 0)
 
-     broken-at
-     (atom nil)
+        broken-at
+        (atom nil)
 
-     t0
-     (System/currentTimeMillis)
+        t0
+        (System/currentTimeMillis)
 
-     loop-fn
-     (fn []
-       (while @running
-         (when-let [^Socket c (try (.accept server) (catch Throwable _ nil))]
-           ;; A REAL streaming origin notices a half-close: it reads the request
-           ;; side, and when that side EOFs it abandons the response. That is what
-           ;; made the pre-fix half-close destructive rather than cosmetic.
-           ;;
-           ;; With NO ticks the origin models the opposite peer: one that never
-           ;; reads, never writes and never sends a FIN (half-open TCP after a
-           ;; NAT/VPN drop) — the shape that used to park a copy thread forever.
-           (when (pos? ticks)
-             (future
-               (try (let [in (.getInputStream c)]
-                      (loop []
+        loop-fn
+        (fn []
+          (while @running
+            (when-let [^Socket c (try (.accept server) (catch Throwable _ nil))]
+              ;; A REAL streaming origin notices a half-close: it reads the request
+              ;; side, and when that side EOFs it abandons the response. That is what
+              ;; made the pre-fix half-close destructive rather than cosmetic.
+              ;;
+              ;; With NO ticks the origin models the opposite peer: one that never
+              ;; reads, never writes and never sends a FIN (half-open TCP after a
+              ;; NAT/VPN drop) — the shape that used to park a copy thread forever.
+              (when (pos? ticks)
+                (future (try (let [in (.getInputStream c)]
+                               (loop []
 
-                        (let [n (.read in)]
-                          (if (neg? n)
-                            (do (compare-and-set! broken-at nil (- (System/currentTimeMillis) t0))
-                                (try (.close c) (catch Throwable _ nil)))
-                            (when @running (recur))))))
-                    (catch Throwable _ nil))))
-           (future (try (let [out (.getOutputStream c)]
-                          (dotimes [i ticks]
-                            (.write out (.getBytes (str "tick " i "\n")))
-                            (.flush out)
-                            (swap! sent inc)
-                            (Thread/sleep (long gap-ms)))
-                          ;; stay connected and silent until the test stops us
-                          (while @running (Thread/sleep 25)))
-                        (catch Throwable _
-                          (compare-and-set! broken-at nil (- (System/currentTimeMillis) t0)))
-                        (finally (try (.close c) (catch Throwable _ nil))))))))]
+                                 (let [n (.read in)]
+                                   (if (neg? n)
+                                     (do (compare-and-set! broken-at
+                                                           nil
+                                                           (- (System/currentTimeMillis) t0))
+                                         (try (.close c) (catch Throwable _ nil)))
+                                     (when @running (recur))))))
+                             (catch Throwable _ nil))))
+              (future (try (let [out (.getOutputStream c)]
+                             (dotimes [i ticks]
+                               (.write out (.getBytes (str "tick " i "\n")))
+                               (.flush out)
+                               (swap! sent inc)
+                               (Thread/sleep (long gap-ms)))
+                             ;; stay connected and silent until the test stops us
+                             (while @running (Thread/sleep 25)))
+                           (catch Throwable _
+                             (compare-and-set! broken-at nil (- (System/currentTimeMillis) t0)))
+                           (finally (try (.close c) (catch Throwable _ nil))))))))]
 
     (doto (Thread. ^Runnable loop-fn "tunnel-origin") (.setDaemon true) (.start))
     {:port (.getLocalPort server)
@@ -955,9 +915,8 @@
             (.getBytes
               (str "CONNECT localhost:" origin-port " HTTP/1.1\r\nHost: localhost\r\n\r\n")))
     (.flush (.getOutputStream s))
-    (let
-      [in (BufferedReader. (InputStreamReader. (.getInputStream s)))
-       status (.readLine in)]
+    (let [in (BufferedReader. (InputStreamReader. (.getInputStream s)))
+          status (.readLine in)]
 
       (loop []
 
@@ -977,12 +936,11 @@
       (with-redefs-fn {#'ep/TUNNEL_READ_TIMEOUT_MS 200 #'ep/TUNNEL_MAX_IDLE_MS 60000}
         (fn []
           (let [origin (start-tunnel-origin! 6 250)]
-            (try (let
-                   [proxy (ep/start! {:policy-fn (fn [_]
-                                                   (ep/compile-policy
-                                                     {:allowed-domains ["*"]
-                                                      :rules [{:host "localhost"
-                                                               :ports [(:port origin)]}]}))})]
+            (try (let [proxy (ep/start! {:policy-fn (fn [_]
+                                                      (ep/compile-policy
+                                                        {:allowed-domains ["*"]
+                                                         :rules [{:host "localhost"
+                                                                  :ports [(:port origin)]}]}))})]
                    (try (open-tunnel!
                           (:port proxy)
                           (:port origin)
@@ -1010,22 +968,20 @@
       (with-redefs-fn {#'ep/TUNNEL_READ_TIMEOUT_MS 150 #'ep/TUNNEL_MAX_IDLE_MS 600}
         (fn []
           (let [origin (start-tunnel-origin! 0 0)]
-            (try (let
-                   [proxy (ep/start! {:policy-fn (fn [_]
-                                                   (ep/compile-policy
-                                                     {:allowed-domains ["*"]
-                                                      :rules [{:host "localhost"
-                                                               :ports [(:port origin)]}]}))})]
+            (try (let [proxy (ep/start! {:policy-fn (fn [_]
+                                                      (ep/compile-policy
+                                                        {:allowed-domains ["*"]
+                                                         :rules [{:host "localhost"
+                                                                  :ports [(:port origin)]}]}))})]
                    (try (open-tunnel!
                           (:port proxy)
                           (:port origin)
                           (fn [status in]
                             (is (= "HTTP/1.1 200 Connection Established" status))
                             (testing "a fully idle tunnel is torn down instead of parking forever"
-                              (let
-                                [t0 (System/currentTimeMillis)
-                                 eof (.readLine in)
-                                 took (- (System/currentTimeMillis) t0)]
+                              (let [t0 (System/currentTimeMillis)
+                                    eof (.readLine in)
+                                    took (- (System/currentTimeMillis) t0)]
 
                                 (is (nil? eof) "the relay closed the idle tunnel")
                                 (is (< took 10000) (str "reclaimed in " took "ms"))))))
@@ -1037,28 +993,27 @@
    a half-close), waits `think-ms` — the model's time-to-first-token — and only
    then streams. Returns {:port :wrote :stop!}."
   [think-ms]
-  (let
-    [server
-     (doto (ServerSocket.) (.bind (InetSocketAddress. "127.0.0.1" 0)))
+  (let [server
+        (doto (ServerSocket.) (.bind (InetSocketAddress. "127.0.0.1" 0)))
 
-     running
-     (atom true)
+        running
+        (atom true)
 
-     wrote
-     (atom nil)
+        wrote
+        (atom nil)
 
-     loop-fn
-     (fn []
-       (while @running
-         (when-let [^Socket c (try (.accept server) (catch Throwable _ nil))]
-           (future (try (Thread/sleep (long think-ms))
-                        (let [out (.getOutputStream c)]
-                          (.write out (.getBytes "late-token\n"))
-                          (.flush out)
-                          (reset! wrote true)
-                          (while @running (Thread/sleep 25)))
-                        (catch Throwable _ (compare-and-set! wrote nil false))
-                        (finally (try (.close c) (catch Throwable _ nil))))))))]
+        loop-fn
+        (fn []
+          (while @running
+            (when-let [^Socket c (try (.accept server) (catch Throwable _ nil))]
+              (future (try (Thread/sleep (long think-ms))
+                           (let [out (.getOutputStream c)]
+                             (.write out (.getBytes "late-token\n"))
+                             (.flush out)
+                             (reset! wrote true)
+                             (while @running (Thread/sleep 25)))
+                           (catch Throwable _ (compare-and-set! wrote nil false))
+                           (finally (try (.close c) (catch Throwable _ nil))))))))]
 
     (doto (Thread. ^Runnable loop-fn "patient-origin") (.setDaemon true) (.start))
     {:port (.getLocalPort server)
@@ -1079,37 +1034,35 @@
       (with-redefs-fn {#'ep/TUNNEL_READ_TIMEOUT_MS 150 #'ep/TUNNEL_MAX_IDLE_MS 60000}
         (fn []
           (let [origin (start-patient-origin! 1500)]
-            (try
-              (let
-                [proxy (ep/start! {:policy-fn (fn [_]
-                                                (ep/compile-policy
-                                                  {:allowed-domains ["*"]
-                                                   :rules [{:host "localhost"
-                                                            :ports [(:port origin)]}]}))})]
-                (try (with-open
-                       [s (doto (Socket.)
-                            (.connect (InetSocketAddress. "127.0.0.1" (int (:port proxy))) 5000))]
-                       (.setSoTimeout s 15000)
-                       (.write (.getOutputStream s)
-                               (.getBytes (str "CONNECT localhost:"
-                                               (:port origin)
-                                               " HTTP/1.1\r\nHost: localhost\r\n\r\n")))
-                       (.flush (.getOutputStream s))
-                       (let
-                         [in (BufferedReader. (InputStreamReader. (.getInputStream s)))
-                          status (.readLine in)]
+            (try (let [proxy (ep/start! {:policy-fn (fn [_]
+                                                      (ep/compile-policy
+                                                        {:allowed-domains ["*"]
+                                                         :rules [{:host "localhost"
+                                                                  :ports [(:port origin)]}]}))})]
+                   (try (with-open [s (doto (Socket.)
+                                        (.connect (InetSocketAddress. "127.0.0.1"
+                                                                      (int (:port proxy)))
+                                                  5000))]
+                          (.setSoTimeout s 15000)
+                          (.write (.getOutputStream s)
+                                  (.getBytes (str "CONNECT localhost:"
+                                                  (:port origin)
+                                                  " HTTP/1.1\r\nHost: localhost\r\n\r\n")))
+                          (.flush (.getOutputStream s))
+                          (let [in (BufferedReader. (InputStreamReader. (.getInputStream s)))
+                                status (.readLine in)]
 
-                         (is (= "HTTP/1.1 200 Connection Established" status))
-                         (loop []
+                            (is (= "HTTP/1.1 200 Connection Established" status))
+                            (loop []
 
-                           (let [l (.readLine in)]
-                             (when (and l (not= l "")) (recur))))
-                         ;; the request is complete — say so at the TCP level
-                         (.shutdownOutput s)
-                         (testing "the response still arrives after the client half-closes"
-                           (let [got (.readLine in)]
-                             (is (= "late-token" got))
-                             (is (true? @(:wrote origin))
-                                 "the origin's write was not torn down by the proxy")))))
-                     (finally ((:stop! proxy)))))
-              (finally ((:stop! origin))))))))))
+                              (let [l (.readLine in)]
+                                (when (and l (not= l "")) (recur))))
+                            ;; the request is complete — say so at the TCP level
+                            (.shutdownOutput s)
+                            (testing "the response still arrives after the client half-closes"
+                              (let [got (.readLine in)]
+                                (is (= "late-token" got))
+                                (is (true? @(:wrote origin))
+                                    "the origin's write was not torn down by the proxy")))))
+                        (finally ((:stop! proxy)))))
+                 (finally ((:stop! origin))))))))))

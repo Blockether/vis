@@ -655,7 +655,6 @@
                :msg (str "Failed to rebuild history: " (ex-message e))})
       [])))
 
-
 (defn- event-get
   "Read field `k` off a canonical string-keyed wire map — ONE deterministic
    lookup: the exact spelling `vis/wire-key` emits (snake_case, `foo?` ->
@@ -1059,8 +1058,6 @@
                                             root
                                             (assoc :root root)))]
     {:id (java.util.UUID/fromString (get resp "id")) :history []}))
-
-
 
 (defn make-session
   "Create a fresh `:tui` session at this client's invocation root. The gateway

@@ -199,44 +199,43 @@
   [language result]
   (if-not (map? result)
     result
-    (let
-      [pass
-       (or (->count (get result "pass")) (->count (get result "passed")))
+    (let [pass
+          (or (->count (get result "pass")) (->count (get result "passed")))
 
-       errored
-       (->count (get result "errored"))
+          errored
+          (->count (get result "errored"))
 
-       fail
-       (or (->count (get result "fail"))
-           (when-let [f (->count (get result "failed"))]
-             (+ (long f) (long (or errored 0))))
-           errored)
+          fail
+          (or (->count (get result "fail"))
+              (when-let [f (->count (get result "failed"))]
+                (+ (long f) (long (or errored 0))))
+              errored)
 
-       skipped
-       (->count (get result "skipped"))
+          skipped
+          (->count (get result "skipped"))
 
-       total
-       (or (->count (get result "total"))
-           (when (and pass fail) (+ (long pass) (long fail) (long (or skipped 0)))))
+          total
+          (or (->count (get result "total"))
+              (when (and pass fail) (+ (long pass) (long fail) (long (or skipped 0)))))
 
-       exit
-       (->count (get result "exit"))
+          exit
+          (->count (get result "exit"))
 
-       is-pass
-       (cond (some? (get result "is_pass")) (boolean (get result "is_pass"))
-             (some? (get result "ok")) (boolean (get result "ok"))
-             (seq (str (get result "error"))) false
-             (some? fail) (zero? (long fail))
-             (some? exit) (zero? (long exit))
-             :else nil)
+          is-pass
+          (cond (some? (get result "is_pass")) (boolean (get result "is_pass"))
+                (some? (get result "ok")) (boolean (get result "ok"))
+                (seq (str (get result "error"))) false
+                (some? fail) (zero? (long fail))
+                (some? exit) (zero? (long exit))
+                :else nil)
 
-       cmd
-       (get result "cmd")
+          cmd
+          (get result "cmd")
 
-       command
-       (or (get result "command")
-           (cond (coll? cmd) (str/join " " (map str cmd))
-                 (some? cmd) (str cmd)))]
+          command
+          (or (get result "command")
+              (cond (coll? cmd) (str/join " " (map str cmd))
+                    (some? cmd) (str cmd)))]
 
       (assoc (merge test-result-base result)
         "language" (or (get result "language") language)

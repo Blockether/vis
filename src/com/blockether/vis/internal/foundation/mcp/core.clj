@@ -79,24 +79,23 @@
    wants: env-interpolated, `:bearer-fn` synthesised for HTTP servers without a
    static `Authorization` header, `:timeout-ms` / `:listen?` forwarded."
   [server-name spec]
-  (let
-    [s
-     (deep-interpolate spec)
+  (let [s
+        (deep-interpolate spec)
 
-     transport
-     (transport-of s)
+        transport
+        (transport-of s)
 
-     headers
-     (or (:headers s) {})
+        headers
+        (or (:headers s) {})
 
-     has-static-auth?
-     (some (fn [[k _]]
-             (= "authorization" (str/lower-case (name k))))
-           headers)
+        has-static-auth?
+        (some (fn [[k _]]
+                (= "authorization" (str/lower-case (name k))))
+              headers)
 
-     bearer-fn
-     (when (and (= :http transport) (not has-static-auth?))
-       (mcp-oauth/make-bearer-fn server-name (:url s) (atom nil) (:auth s)))]
+        bearer-fn
+        (when (and (= :http transport) (not has-static-auth?))
+          (mcp-oauth/make-bearer-fn server-name (:url s) (atom nil) (:auth s)))]
 
     (cond-> s
       (:timeout_ms s)
@@ -117,33 +116,30 @@
    behind the hash of the raw `:mcp` block so a hot loop (per-turn ctx-fn) does
    not re-parse or re-wrap on every call. `${ENV_VAR}` is interpolated."
   []
-  (let
-    [raw
-     (get-in (or (vis/load-config-raw) {}) ["mcp"])
+  (let [raw
+        (get-in (or (vis/load-config-raw) {}) ["mcp"])
 
-     h
-     (hash raw)]
+        h
+        (hash raw)]
 
     (if (= h (:hash @servers-cache))
       (:value @servers-cache)
-      (let
-        [m
-         (get raw "servers")
+      (let [m
+            (get raw "servers")
 
-         coerced
-         (if (map? m)
-           (into {}
-                 (keep (fn [[k v]]
-                         (let
-                           [nm
-                            (str k)
+            coerced
+            (if (map? m)
+              (into {}
+                    (keep (fn [[k v]]
+                            (let [nm
+                                  (str k)
 
-                            rt
-                            (vis/runtime-config v)]
+                                  rt
+                                  (vis/runtime-config v)]
 
-                           (when (enabled? rt) [nm (->client-spec nm rt)]))))
-                 m)
-           {})]
+                              (when (enabled? rt) [nm (->client-spec nm rt)]))))
+                    m)
+              {})]
 
         (reset! servers-cache {:hash h :value coerced})
         coerced))))
@@ -226,11 +222,10 @@
   (ok :mcp/servers
       {"servers" (mapv (fn [[nm spec]]
                          (let [conn (conn-of nm)]
-                           (cond->
-                             {"name" nm
-                              "transport" (name (transport-of spec))
-                              "connected" (boolean conn)
-                              "enabled" true}
+                           (cond-> {"name" nm
+                                    "transport" (name (transport-of spec))
+                                    "connected" (boolean conn)
+                                    "enabled" true}
                              conn
                              (assoc "tools"
                                (count (or (some-> (:tools conn)
@@ -340,15 +335,14 @@
 
 (defn- render-mcp-call-result
   [r]
-  (let
-    [blocks
-     (get r "content")
+  (let [blocks
+        (get r "content")
 
-     text
-     (->> blocks
-          (keep (fn [b]
-                  (get b "text")))
-          (str/join "\n"))]
+        text
+        (->> blocks
+             (keep (fn [b]
+                     (get b "text")))
+             (str/join "\n"))]
 
     {:summary (str "`" (get r "server") "`/" (get r "tool") (when (get r "is_error") " — error"))
      :body (mcp-fence (if (seq text) text (pr-str blocks)))}))

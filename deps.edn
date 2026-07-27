@@ -105,11 +105,11 @@
   com.blockether/vis-workspace-rift {:local/root "extensions/workspaces/vis-workspace-rift"}
   com.blockether/svar {:mvn/version "0.7.84"}
   com.blockether/anomaly {:mvn/version "1.0.1"}
-  org.clojure/tools.deps {:mvn/version "0.31.1629"}
+  org.clojure/tools.deps {:mvn/version "0.31.1638"}
   org.commonmark/commonmark {:mvn/version "0.29.0"}
   org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.29.0"}
   org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.29.0"}
-  org.babashka/http-client {:mvn/version "0.4.23"}
+  org.babashka/http-client {:mvn/version "0.4.24"}
   babashka/process {:mvn/version "0.6.25"}
   babashka/fs {:mvn/version "0.5.34"}
   io.github.java-diff-utils/java-diff-utils {:mvn/version "4.17"}
@@ -132,9 +132,9 @@
   org.graalvm.truffle/truffle-runtime {:mvn/version "25.1.3"}
   com.cnuernber/charred {:mvn/version "1.041"}
   org.flatland/ordered {:mvn/version "1.15.12"}
-  org.yamlstar/yamlstar {:mvn/version "0.1.15"}
+  org.yamlstar/yamlstar {:mvn/version "0.1.17"}
   ;; JVM codecs backing the lazy sandbox nippy_encode/nippy_decode helpers.
-  com.taoensso/nippy {:mvn/version "3.7.0-RC3"}
+  com.taoensso/nippy {:mvn/version "3.8.0"}
   ;; Latest published Vectorz pair; compatibility registration is deferred until
   ;; the first Nippy encode/decode call.
   net.mikera/core.matrix {:mvn/version "0.63.0"}
@@ -144,7 +144,7 @@
   metosin/reitit-ring {:mvn/version "0.10.1"}
   com.google.zxing/core {:mvn/version "3.5.4"}
   ;; Pure-Java SSH2 (mwiede fork of JSch) backing the sandbox `paramiko` shim.
-  com.github.mwiede/jsch {:mvn/version "2.28.4"}
+  com.github.mwiede/jsch {:mvn/version "2.28.5"}
   ;; Apache MINA SSHD server backing the paramiko shim's `Transport.start_server`
   ;; (reverse port-forwarding); JSch above is client-only.
   org.apache.sshd/sshd-core {:mvn/version "2.15.0"}
@@ -153,6 +153,6 @@
   ;; Pure-Java X.509 minting for the egress-proxy MITM CA (ephemeral, per-session)
   ;; — HTTPS verb/path enforcement for jailed shell children. No system provider is
   ;; registered; bcpkix builders use the default JCA signer (native-image friendly).
-  org.bouncycastle/bcprov-jdk18on {:mvn/version "1.78.1"}
-  org.bouncycastle/bcpkix-jdk18on {:mvn/version "1.78.1"}}
+  org.bouncycastle/bcprov-jdk18on {:mvn/version "1.85"}
+  org.bouncycastle/bcpkix-jdk18on {:mvn/version "1.85"}}
  :paths ["src" "resources"]}

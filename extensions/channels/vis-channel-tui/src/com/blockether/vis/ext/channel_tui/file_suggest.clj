@@ -82,7 +82,6 @@
                          (finally (reset! prewarming false)))))
           false)))
 
-
 (def ^:private trigger-regex #"(?:^|\s)@(?!@)(\S*)$")
 
 (defn- head-text

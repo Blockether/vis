@@ -683,11 +683,7 @@
                                (when (seq limit-summary) (str " / " limit-summary)))
                           text-w)))))))
 
-
-
 (defn- remove-provider-by-id [items provider-id] (vec (remove #(= provider-id (:id %)) items)))
-
-
 
 ;; Channel-neutral status / limits / persistence shapes — the core
 ;; provider service (channel-neutral). Aliased privately so

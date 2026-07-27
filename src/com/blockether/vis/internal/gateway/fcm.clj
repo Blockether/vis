@@ -62,9 +62,8 @@
              ;; A redirected push home means a test fixture: never let the
              ;; developer's real keychain leak into it.
              (nil? (System/getProperty "vis.push.home")))
-    (try (let
-           [{:keys [exit out]}
-            (sh/sh "security" "find-generic-password" "-s" "vis-fcm" "-a" account "-w")]
+    (try (let [{:keys [exit out]}
+               (sh/sh "security" "find-generic-password" "-s" "vis-fcm" "-a" account "-w")]
            (when (and (= 0 (long exit)) (not (str/blank? out))) (unhex (str/trim out))))
          (catch Throwable _ nil))))
 
@@ -81,14 +80,13 @@
 (defn- service-account
   "The parsed service-account JSON, or nil. NEVER expose the result."
   []
-  (let
-    [raw (or (keychain "service_account")
-             (env-val "VIS_FCM_SERVICE_ACCOUNT")
-             (some-> (env-val "VIS_FCM_SERVICE_ACCOUNT_PATH")
-                     io/file
-                     (as-> f (when (.isFile ^File f) (slurp f))))
-             (some-> (discovered-file)
-                     slurp))]
+  (let [raw (or (keychain "service_account")
+                (env-val "VIS_FCM_SERVICE_ACCOUNT")
+                (some-> (env-val "VIS_FCM_SERVICE_ACCOUNT_PATH")
+                        io/file
+                        (as-> f (when (.isFile ^File f) (slurp f))))
+                (some-> (discovered-file)
+                        slurp))]
     (when-not (str/blank? raw) (try (wire/parse-json raw) (catch Throwable _ nil)))))
 
 (defn- source
@@ -103,23 +101,22 @@
   "Resolved FCM credentials WITHOUT key material: project id, the service
    account's email, where it came from, and what is still missing."
   []
-  (let
-    [sa
-     (service-account)
+  (let [sa
+        (service-account)
 
-     project-id
-     (or (env-val "VIS_FCM_PROJECT_ID") (get sa "project_id"))
+        project-id
+        (or (env-val "VIS_FCM_PROJECT_ID") (get sa "project_id"))
 
-     missing
-     (cond-> []
-       (str/blank? (str (get sa "private_key")))
-       (conj "service_account")
+        missing
+        (cond-> []
+          (str/blank? (str (get sa "private_key")))
+          (conj "service_account")
 
-       (str/blank? (str (get sa "client_email")))
-       (conj "client_email")
+          (str/blank? (str (get sa "client_email")))
+          (conj "client_email")
 
-       (str/blank? (str project-id))
-       (conj "project_id"))]
+          (str/blank? (str project-id))
+          (conj "project_id"))]
 
     {:project-id project-id
      :client-email (get sa "client_email")
@@ -143,36 +140,34 @@
 (defn- private-key
   "Parse the PKCS#8 PEM Google embeds in the service-account JSON."
   [^String pem]
-  (let
-    [b64 (-> pem
-             (str/replace #"-----[A-Z ]+-----" "")
-             (str/replace #"\s" ""))]
+  (let [b64 (-> pem
+                (str/replace #"-----[A-Z ]+-----" "")
+                (str/replace #"\s" ""))]
     (.generatePrivate (KeyFactory/getInstance "RSA")
                       (PKCS8EncodedKeySpec. (.decode (Base64/getDecoder) b64)))))
 
 (defn- sign-jwt
   [sa]
-  (let
-    [now
-     (quot (System/currentTimeMillis) 1000)
+  (let [now
+        (quot (System/currentTimeMillis) 1000)
 
-     header
-     (b64url (utf8 (wire/json-str {:alg "RS256" :typ "JWT"})))
+        header
+        (b64url (utf8 (wire/json-str {:alg "RS256" :typ "JWT"})))
 
-     claims
-     (b64url (utf8 (wire/json-str {:iss (get sa "client_email")
-                                   :scope SCOPE
-                                   :aud (or (get sa "token_uri") TOKEN_URI)
-                                   :iat now
-                                   :exp (+ now JWT_TTL_SECONDS)})))
+        claims
+        (b64url (utf8 (wire/json-str {:iss (get sa "client_email")
+                                      :scope SCOPE
+                                      :aud (or (get sa "token_uri") TOKEN_URI)
+                                      :iat now
+                                      :exp (+ now JWT_TTL_SECONDS)})))
 
-     signing-input
-     (str header "." claims)
+        signing-input
+        (str header "." claims)
 
-     sig
-     (doto (Signature/getInstance "SHA256withRSA")
-       (.initSign (private-key (get sa "private_key")))
-       (.update (utf8 signing-input)))]
+        sig
+        (doto (Signature/getInstance "SHA256withRSA")
+          (.initSign (private-key (get sa "private_key")))
+          (.update (utf8 signing-input)))]
 
     (str signing-input "." (b64url (.sign sig)))))
 
@@ -195,22 +190,21 @@
 
 (defn- fetch-access-token
   [sa]
-  (let
-    [body
-     (form-encode {"grant_type" "urn:ietf:params:oauth:grant-type:jwt-bearer"
-                   "assertion" (sign-jwt sa)})
+  (let [body
+        (form-encode {"grant_type" "urn:ietf:params:oauth:grant-type:jwt-bearer"
+                      "assertion" (sign-jwt sa)})
 
-     ^HttpResponse resp
-     (.send ^HttpClient @http-client
-            (-> (HttpRequest/newBuilder (URI/create (or (get sa "token_uri") TOKEN_URI)))
-                (.header "content-type" "application/x-www-form-urlencoded")
-                (.timeout (Duration/ofSeconds 15))
-                (.POST (HttpRequest$BodyPublishers/ofString body))
-                (.build))
-            (HttpResponse$BodyHandlers/ofString))
+        ^HttpResponse resp
+        (.send ^HttpClient @http-client
+               (-> (HttpRequest/newBuilder (URI/create (or (get sa "token_uri") TOKEN_URI)))
+                   (.header "content-type" "application/x-www-form-urlencoded")
+                   (.timeout (Duration/ofSeconds 15))
+                   (.POST (HttpRequest$BodyPublishers/ofString body))
+                   (.build))
+               (HttpResponse$BodyHandlers/ofString))
 
-     parsed
-     (wire/parse-json (.body resp))]
+        parsed
+        (wire/parse-json (.body resp))]
 
     (when (= 200 (.statusCode resp)) (get parsed "access_token"))))
 
@@ -250,42 +244,39 @@
    str}` — status 0 for a transport failure, so this never throws. A `reason` of
    `UNREGISTERED` means the caller should drop the token."
   [token notification]
-  (try
-    (let
-      [sa
-       (service-account)
+  (try (let [sa
+             (service-account)
 
-       cfg
-       (config)]
+             cfg
+             (config)]
 
-      (if-not (:is-configured cfg)
-        {:status 0 :reason "not-configured"}
-        (if-let [at (access-token sa)]
-          (let
-            [^HttpResponse resp (.send ^HttpClient @http-client
-                                       (-> (HttpRequest/newBuilder
-                                             (URI/create (str
-                                                           "https://fcm.googleapis.com/v1/projects/"
-                                                           (:project-id cfg)
-                                                           "/messages:send")))
-                                           (.header "authorization" (str "Bearer " at))
-                                           (.header "content-type" "application/json")
-                                           (.timeout (Duration/ofSeconds 15))
-                                           (.POST (HttpRequest$BodyPublishers/ofString
-                                                    (wire/json-str (message token notification))))
-                                           (.build))
-                                       (HttpResponse$BodyHandlers/ofString))
-             status (.statusCode resp)
-             parsed (wire/parse-json (.body resp))
-             reason (or (get-in parsed ["error" "details" 0 "errorCode"])
-                        (get-in parsed ["error" "status"])
-                        "")]
+         (if-not (:is-configured cfg)
+           {:status 0 :reason "not-configured"}
+           (if-let [at (access-token sa)]
+             (let [^HttpResponse resp
+                   (.send ^HttpClient @http-client
+                          (-> (HttpRequest/newBuilder
+                                (URI/create (str "https://fcm.googleapis.com/v1/projects/"
+                                                 (:project-id cfg)
+                                                 "/messages:send")))
+                              (.header "authorization" (str "Bearer " at))
+                              (.header "content-type" "application/json")
+                              (.timeout (Duration/ofSeconds 15))
+                              (.POST (HttpRequest$BodyPublishers/ofString
+                                       (wire/json-str (message token notification))))
+                              (.build))
+                          (HttpResponse$BodyHandlers/ofString))
+                   status (.statusCode resp)
+                   parsed (wire/parse-json (.body resp))
+                   reason (or (get-in parsed ["error" "details" 0 "errorCode"])
+                              (get-in parsed ["error" "status"])
+                              "")]
 
-            (when (not= 200 status)
-              (tel/log! {:level :warn :id ::fcm-failed :data {:status status :reason reason}}))
-            {:status status :reason reason})
-          {:status 0 :reason "oauth-failed"})))
-    (catch Throwable t {:status 0 :reason (or (ex-message t) "transport-error")})))
+               (when (not= 200 status)
+                 (tel/log! {:level :warn :id ::fcm-failed :data {:status status :reason reason}}))
+               {:status status :reason reason})
+             {:status 0 :reason "oauth-failed"})))
+       (catch Throwable t {:status 0 :reason (or (ex-message t) "transport-error")})))
 
 (defn dead-token?
   "True when FCM's verdict means the registration is gone for good."

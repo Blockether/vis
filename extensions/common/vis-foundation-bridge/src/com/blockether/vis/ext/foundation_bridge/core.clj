@@ -359,7 +359,7 @@
   [env]
   (let [projects (->> (:projects (bridge-project-discovery (workspace-root env)))
                       (sort-by (fn [{:keys [root]}]
-                                 [(- (.getNameCount (.toPath (java.io.File. root)))) root])))]
+                                 [(- (.getNameCount (.toPath (java.io.File. ^String root)))) root])))]
     (->> projects
          (mapcat (fn [{:keys [profile-path]}]
                    (let [{:keys [profile policy]} (load-profile+policy env {"profile" profile-path})

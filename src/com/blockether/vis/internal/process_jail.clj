@@ -218,13 +218,12 @@
    temp dir (`/private/var/folders/<hash>/T`), whose `/private/var`,
    `/private/var/folders`, ... chain is granted nowhere else."
   [p]
-  (loop
-    [cur
-     (when-let [s (not-empty p)]
-       (.getParentFile (java.io.File. ^String s)))
+  (loop [cur
+         (when-let [s (not-empty p)]
+           (.getParentFile (java.io.File. ^String s)))
 
-     acc
-     []]
+         acc
+         []]
 
     (if cur
       (recur (.getParentFile ^java.io.File cur) (conj acc (.getPath ^java.io.File cur)))
@@ -240,36 +239,35 @@
   ^String
   [{:keys [rw ro deny-write deny-read deny-exec net-enabled? proxy-port loopback-port
            inbound-ports]}]
-  (let
-    [rw
-     (->> rw
-          (keep real-path)
-          distinct
-          vec)
+  (let [rw
+        (->> rw
+             (keep real-path)
+             distinct
+             vec)
 
-     ro
-     (->> ro
-          (keep real-path)
-          distinct
-          vec)
+        ro
+        (->> ro
+             (keep real-path)
+             distinct
+             vec)
 
-     dw
-     (->> deny-write
-          (keep deny-path)
-          distinct
-          vec)
+        dw
+        (->> deny-write
+             (keep deny-path)
+             distinct
+             vec)
 
-     dr
-     (->> deny-read
-          (keep deny-path)
-          distinct
-          vec)
+        dr
+        (->> deny-read
+             (keep deny-path)
+             distinct
+             vec)
 
-     dex
-     (->> deny-exec
-          (keep deny-path)
-          distinct
-          vec)]
+        dex
+        (->> deny-exec
+             (keep deny-path)
+             distinct
+             vec)]
 
     (str
       "(version 1)"
@@ -309,19 +307,18 @@
       ;; to local IP sockets while inbound traffic is restricted, port by port, to
       ;; the preselected nREPL port plus each `:inbound-ports` entry. Binding is
       ;; broad (any local port); ACCEPTING a connection is the gated capability.
-      (let
-        [inbound
-         (->> (cons loopback-port inbound-ports)
-              (remove nil?)
-              distinct)
+      (let [inbound
+            (->> (cons loopback-port inbound-ports)
+                 (remove nil?)
+                 distinct)
 
-         server-rules
-         (when (seq inbound)
-           (str "(allow network-bind (local ip))"
-                (apply str
-                  (map (fn [p]
-                         (str "(allow network-inbound (local ip \"*:" p "\"))"))
-                       inbound))))]
+            server-rules
+            (when (seq inbound)
+              (str "(allow network-bind (local ip))"
+                   (apply str
+                     (map (fn [p]
+                            (str "(allow network-inbound (local ip \"*:" p "\"))"))
+                          inbound))))]
 
         (cond proxy-port (str "(deny network*)"
                               server-rules
@@ -341,37 +338,35 @@
    granting the same path through both legacy allow lists."
   [{:keys [roots-fn net-enabled? allow-read-write allow-write allow-read deny-write deny-read
            deny-exec proxy-port loopback-port inbound-ports]}]
-  (let
-    [session-roots
-     (when roots-fn (try (roots-fn) (catch Throwable _ nil)))
+  (let [session-roots
+        (when roots-fn (try (roots-fn) (catch Throwable _ nil)))
 
-     tmps
-     [(System/getProperty "java.io.tmpdir") "/tmp"]
+        tmps
+        [(System/getProperty "java.io.tmpdir") "/tmp"]
 
-     rw
-     (->> (concat session-roots tmps allow-read-write allow-write)
-          (keep real-path)
-          distinct
-          vec)
+        rw
+        (->> (concat session-roots tmps allow-read-write allow-write)
+             (keep real-path)
+             distinct
+             vec)
 
-     ro
-     (->> (concat allow-read-write allow-read)
-          (keep real-path)
-          distinct
-          vec)
+        ro
+        (->> (concat allow-read-write allow-read)
+             (keep real-path)
+             distinct
+             vec)
 
-     ;; Extra inbound ports are sanitized to distinct integers in the legal TCP
-     ;; range; anything else (nil, junk, out-of-range) is dropped so a bad config
-     ;; value can never widen the profile or corrupt the emitted SBPL.
-     inbound-ports
-     (->> inbound-ports
-          (keep (fn [p]
-                  (let
-                    [n (cond (integer? p) (long p)
-                             (string? p) (parse-long (str/trim p)))]
-                    (when (and n (<= 1 n 65535)) n))))
-          distinct
-          vec)]
+        ;; Extra inbound ports are sanitized to distinct integers in the legal TCP
+        ;; range; anything else (nil, junk, out-of-range) is dropped so a bad config
+        ;; value can never widen the profile or corrupt the emitted SBPL.
+        inbound-ports
+        (->> inbound-ports
+             (keep (fn [p]
+                     (let [n (cond (integer? p) (long p)
+                                   (string? p) (parse-long (str/trim p)))]
+                       (when (and n (<= 1 n 65535)) n))))
+             distinct
+             vec)]
 
     {:rw rw
      :ro ro
@@ -402,104 +397,103 @@
    shares the host network namespace."
   ^java.util.List
   [{:keys [rw ro deny-write deny-read deny-exec net-enabled? proxy-port loopback-port]}]
-  (let
-    [rw
-     (->> rw
-          (keep real-path)
-          distinct
-          vec)
+  (let [rw
+        (->> rw
+             (keep real-path)
+             distinct
+             vec)
 
-     ro
-     ;; System roots are bound at their LITERAL path (not real-path'd): on merged-usr
-     ;; distros `/lib`,`/lib64`,`/bin`,`/sbin` are symlinks into `/usr`, and the ELF
-     ;; interpreter is hardcoded (`/lib64/ld-linux-x86-64.so.2`, `/lib/ld-linux-aarch64.so.1`).
-     ;; Canonicalizing them collapses the loader mount point so EVERY binary fails to
-     ;; exec (ENOENT on its interpreter). `--ro-bind-try` tolerates any absent on a distro.
-     ;; User `:ro` allow-read paths stay canonicalized for dedup/symlink safety.
-     (->> (concat linux-system-read-roots (keep real-path ro))
-          distinct
-          vec)
+        ro
+        ;; System roots are bound at their LITERAL path (not real-path'd): on merged-usr
+        ;; distros `/lib`,`/lib64`,`/bin`,`/sbin` are symlinks into `/usr`, and the ELF
+        ;; interpreter is hardcoded (`/lib64/ld-linux-x86-64.so.2`, `/lib/ld-linux-aarch64.so.1`).
+        ;; Canonicalizing them collapses the loader mount point so EVERY binary fails to
+        ;; exec (ENOENT on its interpreter). `--ro-bind-try` tolerates any absent on a distro.
+        ;; User `:ro` allow-read paths stay canonicalized for dedup/symlink safety.
+        (->> (concat linux-system-read-roots (keep real-path ro))
+             distinct
+             vec)
 
-     dw
-     (->> deny-write
-          (keep deny-path)
-          distinct
-          vec)
+        dw
+        (->> deny-write
+             (keep deny-path)
+             distinct
+             vec)
 
-     dex
-     (->> deny-exec
-          (keep deny-path)
-          distinct
-          vec)
+        dex
+        (->> deny-exec
+             (keep deny-path)
+             distinct
+             vec)
 
-     ro-flags
-     (mapcat (fn [p]
-               ["--ro-bind-try" p p])
-             ro)
+        ro-flags
+        (mapcat (fn [p]
+                  ["--ro-bind-try" p p])
+                ro)
 
-     rw-flags
-     (mapcat (fn [p]
-               ["--bind-try" p p])
-             rw)
+        rw-flags
+        (mapcat (fn [p]
+                  ["--bind-try" p p])
+                rw)
 
-     dw-flags
-     (mapcat (fn [p]
-               ["--ro-bind-try" p p])
-             dw)
+        dw-flags
+        (mapcat (fn [p]
+                  ["--ro-bind-try" p p])
+                dw)
 
-     dr-flags
-     (mapcat (fn [p]
-               (let [rp (deny-path p)]
-                 (cond (nil? rp) nil
-                       (.isDirectory (File. ^String rp)) ["--tmpfs" rp]
-                       :else ["--ro-bind-try" "/dev/null" rp])))
-             (distinct deny-read))
+        dr-flags
+        (mapcat (fn [p]
+                  (let [rp (deny-path p)]
+                    (cond (nil? rp) nil
+                          (.isDirectory (File. ^String rp)) ["--tmpfs" rp]
+                          :else ["--ro-bind-try" "/dev/null" rp])))
+                (distinct deny-read))
 
-     ;; Mask each denied binary with /dev/null (a char device): `execve` on it fails
-     ;; (exit 126). Bound AFTER the allow binds so it wins over a binary inside an
-     ;; allowed `:ro` root -- the Linux equivalent of macOS `(deny process-exec*)`.
-     ;; On merged-usr distros the same binary is reachable via BOTH `/usr/bin/<n>` and
-     ;; `/bin/<n>` (distinct bwrap mounts), so masking only the canonical path leaves
-     ;; the PATH alias runnable -- mask every EXISTING bin-dir alias of the basename.
-     ;; `--ro-bind-try` aborts if the destination is absent on a read-only bind, so the
-     ;; alias set is filtered to files that actually exist on the host.
-     dex-flags
-     (mapcat (fn [p]
-               (let [n (.getName (File. ^String p))]
-                 (->> (cons p
-                            (map #(str % "/" n)
-                                 ["/usr/bin" "/bin" "/usr/sbin" "/sbin" "/usr/local/bin"
-                                  "/usr/local/sbin"]))
-                      (filter #(.exists (File. ^String %)))
-                      distinct
-                      (mapcat (fn [t]
-                                ["--ro-bind-try" "/dev/null" t])))))
-             dex)
+        ;; Mask each denied binary with /dev/null (a char device): `execve` on it fails
+        ;; (exit 126). Bound AFTER the allow binds so it wins over a binary inside an
+        ;; allowed `:ro` root -- the Linux equivalent of macOS `(deny process-exec*)`.
+        ;; On merged-usr distros the same binary is reachable via BOTH `/usr/bin/<n>` and
+        ;; `/bin/<n>` (distinct bwrap mounts), so masking only the canonical path leaves
+        ;; the PATH alias runnable -- mask every EXISTING bin-dir alias of the basename.
+        ;; `--ro-bind-try` aborts if the destination is absent on a read-only bind, so the
+        ;; alias set is filtered to files that actually exist on the host.
+        dex-flags
+        (mapcat (fn [p]
+                  (let [n (.getName (File. ^String p))]
+                    (->> (cons p
+                               (map #(str % "/" n)
+                                    ["/usr/bin" "/bin" "/usr/sbin" "/sbin" "/usr/local/bin"
+                                     "/usr/local/sbin"]))
+                         (filter #(.exists (File. ^String %)))
+                         distinct
+                         (mapcat (fn [t]
+                                   ["--ro-bind-try" "/dev/null" t])))))
+                dex)
 
-     ;; Network. proxy-port set = FILTERED egress: when pasta is present it gives
-     ;; the child a private net ns reaching ONLY the host proxy port, and bwrap
-     ;; SHARES that ns (no --unshare-net). Without pasta, filtered egress degrades
-     ;; to a full no-egress wall rather than leaving the child open. net-off and
-     ;; the no-pasta fallback both --unshare-net; an explicitly-open network
-     ;; (net-enabled? with no proxy, e.g. a managed nREPL) shares the host ns.
-     pasta?
-     (boolean (and proxy-port linux-pasta))
+        ;; Network. proxy-port set = FILTERED egress: when pasta is present it gives
+        ;; the child a private net ns reaching ONLY the host proxy port, and bwrap
+        ;; SHARES that ns (no --unshare-net). Without pasta, filtered egress degrades
+        ;; to a full no-egress wall rather than leaving the child open. net-off and
+        ;; the no-pasta fallback both --unshare-net; an explicitly-open network
+        ;; (net-enabled? with no proxy, e.g. a managed nREPL) shares the host ns.
+        pasta?
+        (boolean (and proxy-port linux-pasta))
 
-     net
-     (cond pasta? []
-           proxy-port ["--unshare-net"]
-           net-enabled? []
-           :else ["--unshare-net"])
+        net
+        (cond pasta? []
+              proxy-port ["--unshare-net"]
+              net-enabled? []
+              :else ["--unshare-net"])
 
-     bwrap-args
-     (vec (concat ["bwrap" "--die-with-parent" "--proc" "/proc" "--dev" "/dev"]
-                  ro-flags
-                  rw-flags
-                  dw-flags
-                  dr-flags
-                  dex-flags
-                  net
-                  ["--"]))]
+        bwrap-args
+        (vec (concat ["bwrap" "--die-with-parent" "--proc" "/proc" "--dev" "/dev"]
+                     ro-flags
+                     rw-flags
+                     dw-flags
+                     dr-flags
+                     dex-flags
+                     net
+                     ["--"]))]
 
     (if pasta?
       ;; pasta wraps bwrap: `-T <port>` forwards the child's loopback proxy port to
@@ -596,31 +590,28 @@
   [policy]
   (if (:disabled? policy)
     {}
-    (let
-      [jail-env
-       (if (and policy (or (inherited-jail?) (supported?))) {"VIS_SEATBELT_ACTIVE" "1"} {})]
+    (let [jail-env
+          (if (and policy (or (inherited-jail?) (supported?))) {"VIS_SEATBELT_ACTIVE" "1"} {})]
       (if-let [port (:proxy-port policy)]
-        (let
-          [token (:proxy-token policy)
-           url (str "http://" (when token (str token "@")) "127.0.0.1:" port)
-           ;; SOCKS5 shares the SAME loopback port (multiplexed by first byte).
-           ;; `ALL_PROXY` is the fallback for non-HTTP schemes (ssh/git+ssh/db/raw
-           ;; TCP) — it points at the SOCKS lane, while `http(s)_proxy` keep the
-           ;; HTTP proxy so HTTPS verb/path MITM is preserved for web traffic.
-           socks-url (str "socks5h://" (when token (str token "@")) "127.0.0.1:" port)
-           ca (:ca-file policy)
-           java-opts (java-proxy-options policy)]
+        (let [token (:proxy-token policy)
+              url (str "http://" (when token (str token "@")) "127.0.0.1:" port)
+              ;; SOCKS5 shares the SAME loopback port (multiplexed by first byte).
+              ;; `ALL_PROXY` is the fallback for non-HTTP schemes (ssh/git+ssh/db/raw
+              ;; TCP) — it points at the SOCKS lane, while `http(s)_proxy` keep the
+              ;; HTTP proxy so HTTPS verb/path MITM is preserved for web traffic.
+              socks-url (str "socks5h://" (when token (str token "@")) "127.0.0.1:" port)
+              ca (:ca-file policy)
+              java-opts (java-proxy-options policy)]
 
-          (cond->
-            (merge jail-env
-                   {"http_proxy" url
-                    "https_proxy" url
-                    "all_proxy" socks-url
-                    "HTTP_PROXY" url
-                    "HTTPS_PROXY" url
-                    "ALL_PROXY" socks-url
-                    "no_proxy" ""
-                    "NO_PROXY" ""})
+          (cond-> (merge jail-env
+                         {"http_proxy" url
+                          "https_proxy" url
+                          "all_proxy" socks-url
+                          "HTTP_PROXY" url
+                          "HTTPS_PROXY" url
+                          "ALL_PROXY" socks-url
+                          "no_proxy" ""
+                          "NO_PROXY" ""})
             ca
             (merge {"CURL_CA_BUNDLE" ca
                     "SSL_CERT_FILE" ca
@@ -662,15 +653,14 @@
    (unjailed platforms/`sandbox: false`), so non-confined behavior is unchanged."
   [policy]
   (when (and policy (not (:disabled? policy)) (or (inherited-jail?) (supported?)))
-    (let
-      [extra
-       (into #{} (comp (map str) (remove str/blank?)) (:env-passthrough policy))
+    (let [extra
+          (into #{} (comp (map str) (remove str/blank?)) (:env-passthrough policy))
 
-       inherited
-       (into {}
-             (filter (fn [[k _]]
-                       (env-passthrough? extra k)))
-             (System/getenv))]
+          inherited
+          (into {}
+                (filter (fn [[k _]]
+                          (env-passthrough? extra k)))
+                (System/getenv))]
 
       (merge inherited (proxy-env policy)))))
 
@@ -759,12 +749,12 @@
     (when-not policy-fn
       (throw (ex-info "Managed language process denied: session jail is not registered"
                       {:type ::session-jail-missing :session-id session-id})))
-    (let
-      [policy (try (policy-fn)
-                   (catch Throwable t
-                     (throw (ex-info "Managed language process denied: session jail policy failed"
-                                     {:type ::session-jail-failed :session-id session-id}
-                                     t))))]
+    (let [policy (try (policy-fn)
+                      (catch Throwable t
+                        (throw (ex-info
+                                 "Managed language process denied: session jail policy failed"
+                                 {:type ::session-jail-failed :session-id session-id}
+                                 t))))]
       (when-not policy
         (throw (ex-info "Managed language process denied: session jail policy is unavailable"
                         {:type ::session-jail-missing :session-id session-id})))
@@ -781,12 +771,11 @@
    while the policy lookup still must succeed."
   ([session-id argv] (session-process-launch session-id argv nil))
   ([session-id argv {:keys [loopback-port]}]
-   (let
-     [policy
-      (language-process-policy (session-base-policy! session-id) loopback-port)
+   (let [policy
+         (language-process-policy (session-base-policy! session-id) loopback-port)
 
-      full
-      (jailed-child-env policy)]
+         full
+         (jailed-child-env policy)]
 
      ;; Confined child ⇒ FULL scrubbed env replaces the operator's (secrets dropped);
      ;; unenforced platform ⇒ additions merged onto the inherited env (unchanged).

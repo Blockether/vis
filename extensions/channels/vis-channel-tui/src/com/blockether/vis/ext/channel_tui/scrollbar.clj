@@ -20,6 +20,7 @@
            [com.googlecode.lanterna.input MouseAction MouseActionType]))
 
 (def ^:const THUMB_H 1)
+
 ;;; ── Geometry ───────────────────────────────────────────────────────────────
 (defn geometry
   "Compute thumb geometry for a vertical scrollbar.
@@ -65,6 +66,7 @@
           (long (* (- track-h thumb-h) (/ (double eff) max-scroll)))]
 
          {:thumb-top-rel thumb-top :thumb-h thumb-h :max-scroll max-scroll :track-h track-h})))))
+
 ;;; ── Drawing ────────────────────────────────────────────────────────────────
 (defn draw!
   "Paint a vertical scrollbar.\n\n   Required opts: `:col :top :track-h :total-h :inner-h :scroll`.\n   Optional opts: `:track-fg :track-bg :thumb-fg :thumb-bg`\n   (default = dialog palette, used by every modal scrollbar).\n\n   Returns the geometry map (or nil when no overflow, in which case\n   nothing is painted)."
@@ -87,6 +89,7 @@
         (p/set-colors! g thumb-fg thumb-bg)
         (p/set-char! g col (+ top (long thumb-top-rel) (long r)) \█)))
     geom))
+
 ;;; ── Mouse / wheel helpers ──────────────────────────────────────────────────
 (defn wheel-delta
   "Return -1 for SCROLL_UP, +1 for SCROLL_DOWN, else nil. Accepts a

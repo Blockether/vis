@@ -40,21 +40,18 @@
                      ;; Live override survived the re-register.
                      (expect (true? (t/enabled? "test_beta"))))))
              (it "rejects invalid specs with :vis.toggles/invalid-spec"
-                 (let
-                   [thrown? (try (t/register-toggle! {:label "no-id"})
-                                 false
-                                 (catch clojure.lang.ExceptionInfo e
-                                   (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
+                 (let [thrown? (try (t/register-toggle! {:label "no-id"})
+                                    false
+                                    (catch clojure.lang.ExceptionInfo e
+                                      (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
                    (expect thrown?)))
              (it "rejects every non-string or non-snake_case id shape"
-                 (doseq
-                   [id [:ns/kw "ns/name" "kebab-case" "UPPER_CASE" "_leading" "trailing_"
-                        "double__underscore" "" " "]]
-                   (let
-                     [thrown? (try (t/register-toggle! {:id id :label "bad" :default false})
-                                   false
-                                   (catch clojure.lang.ExceptionInfo e
-                                     (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
+                 (doseq [id [:ns/kw "ns/name" "kebab-case" "UPPER_CASE" "_leading" "trailing_"
+                             "double__underscore" "" " "]]
+                   (let [thrown? (try (t/register-toggle! {:id id :label "bad" :default false})
+                                      false
+                                      (catch clojure.lang.ExceptionInfo e
+                                        (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
                      (expect thrown?)))))
 
 (defdescribe
@@ -97,12 +94,11 @@
                  (with-clean-state
                    (fn []
                      (t/register-toggle! {:id "test_epsilon" :label "Epsilon" :default false})
-                     (let
-                       [events
-                        (atom [])
+                     (let [events
+                           (atom [])
 
-                        dispose
-                        (t/add-listener! #(swap! events conj %))]
+                           dispose
+                           (t/add-listener! #(swap! events conj %))]
 
                        (t/set-enabled! "test_epsilon" true)
                        (t/set-enabled! "test_epsilon" true) ;; no-op transition

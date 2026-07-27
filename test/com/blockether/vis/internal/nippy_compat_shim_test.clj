@@ -14,8 +14,8 @@
 
 (defmacro with-python-context
   [& body]
-  `(let
-     [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context {}))]
+  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context
+                                                                         {}))]
      (try ~@body (finally (.close ~'python-context)))))
 
 (defn- encoded-fixture [value] (.encodeToString (Base64/getEncoder) (nippy/freeze value)))
@@ -41,9 +41,9 @@
 (defdescribe
   nippy-codec-test
   (it "decodes a real Vis-shaped Nippy BLOB into native canonical Python data"
-      (let
-        [fixture (encoded-fixture {:tool-calls [{:svar/tool-call-id "toolu_DECODE_ME" :status :ok}]
-                                   :created-at (Date. 0)})]
+      (let [fixture (encoded-fixture {:tool-calls [{:svar/tool-call-id "toolu_DECODE_ME"
+                                                    :status :ok}]
+                                      :created-at (Date. 0)})]
         (with-python-context
           (expect (= [true true "toolu_DECODE_ME" "ok" 0]
                      (ev python-context

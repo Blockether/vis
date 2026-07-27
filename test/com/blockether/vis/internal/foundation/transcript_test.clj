@@ -31,19 +31,18 @@
    prose-in-code error block + a clean follow-up block.
    Returns the session id."
   [s]
-  (let
-    [cid
-     (h/store-session! s
-                       {:channel :tui
-                        :title "Transcript fixture"
-                        :provider :openai
-                        :model "gpt-4o"
-                        :system-prompt "sys"})
+  (let [cid
+        (h/store-session! s
+                          {:channel :tui
+                           :title "Transcript fixture"
+                           :provider :openai
+                           :model "gpt-4o"
+                           :system-prompt "sys"})
 
-     q1
-     (vis/db-store-session-turn!
-       s
-       {:parent-session-id cid :user-request "First turn" :status :running})]
+        q1
+        (vis/db-store-session-turn!
+          s
+          {:parent-session-id cid :user-request "First turn" :status :running})]
 
     ;; Turn 1: terminal iteration with a `(def ...)` var, an `(done ...)`
     ;; block (idx 1), thinking trace, and answer.
@@ -65,10 +64,9 @@
                                  {:status :done
                                   :content [{"id" "b1" "type" "prose" "markdown" "42"}]})
     ;; Turn 2: failure iteration. No vars, no answer.
-    (let
-      [q2 (vis/db-store-session-turn!
-            s
-            {:parent-session-id cid :user-request "Second turn that fails" :status :running})]
+    (let [q2 (vis/db-store-session-turn!
+               s
+               {:parent-session-id cid :user-request "Second turn that fails" :status :running})]
       (h/store-iteration! s
                           {:session-turn-id q2
                            :code "Let"
@@ -99,9 +97,8 @@
              (finally (vis/db-dispose-connection! s)))))
   (it "returns the canonical {:session :totals :turns} shape"
       (let [s (vis/db-create-connection! :memory)]
-        (try (let
-               [cid (seed! s)
-                data (transcript/transcript s cid)]
+        (try (let [cid (seed! s)
+                   data (transcript/transcript s cid)]
 
                (expect (map? data))
                (expect (= #{:session :totals :turns :dialog :calls :timeline} (set (keys data))))
@@ -113,10 +110,9 @@
              (finally (vis/db-dispose-connection! s)))))
   (it "accepts an unambiguous string id prefix and normalizes back to the full UUID"
       (let [s (vis/db-create-connection! :memory)]
-        (try (let
-               [cid (seed! s)
-                prefix (subs (str cid) 0 8)
-                data (transcript/transcript s prefix)]
+        (try (let [cid (seed! s)
+                   prefix (subs (str cid) 0 8)
+                   data (transcript/transcript s prefix)]
 
                (expect (map? data))
                (expect (= cid (:id (:session data))))
@@ -126,11 +122,10 @@
       (let [s (vis/db-create-connection! :memory)]
         (try (doseq [_ (range 17)]
                (h/store-session! s {:channel :tui}))
-             (let
-               [ids (mapv :id (vis/db-list-sessions s :tui))
-                buckets (vals (group-by #(subs (str %) 0 1) ids))
-                matches (first (filter #(> (count %) 1) buckets))
-                prefix (subs (str (first matches)) 0 1)]
+             (let [ids (mapv :id (vis/db-list-sessions s :tui))
+                   buckets (vals (group-by #(subs (str %) 0 1) ids))
+                   matches (first (filter #(> (count %) 1) buckets))
+                   prefix (subs (str (first matches)) 0 1)]
 
                ;; 17 UUIDs guarantee at least one shared first hex digit.
                (expect (> (count matches) 1))
@@ -138,9 +133,8 @@
              (finally (vis/db-dispose-connection! s)))))
   (it "rolls up turn / iteration counts and tokens / cost into :totals"
       (let [s (vis/db-create-connection! :memory)]
-        (try (let
-               [cid (seed! s)
-                totals (:totals (transcript/transcript s cid))]
+        (try (let [cid (seed! s)
+                   totals (:totals (transcript/transcript s cid))]
 
                (expect (= 2 (:turns totals)))
                (expect (= 2 (:iterations totals)))
@@ -156,9 +150,8 @@
              (finally (vis/db-dispose-connection! s)))))
   (it "carries every turn with user request / status / iteration count / failures"
       (let [s (vis/db-create-connection! :memory)]
-        (try (let
-               [cid (seed! s)
-                turns (:turns (transcript/transcript s cid))]
+        (try (let [cid (seed! s)
+                   turns (:turns (transcript/transcript s cid))]
 
                (expect (= 2 (count turns)))
                (expect (= "First turn" (:user-request (first turns))))
@@ -172,11 +165,10 @@
              (finally (vis/db-dispose-connection! s)))))
   (it "embeds every iteration on its turn, with one flat :blocks adapter entry"
       (let [s (vis/db-create-connection! :memory)]
-        (try (let
-               [cid (seed! s)
-                turn-2 (second (:turns (transcript/transcript s cid)))
-                iter (first (:iterations turn-2))
-                blocks (:blocks iter)]
+        (try (let [cid (seed! s)
+                   turn-2 (second (:turns (transcript/transcript s cid)))
+                   iter (first (:iterations turn-2))
+                   blocks (:blocks iter)]
 
                ;; One block per persisted iteration after hard cut.
                (expect (= 1 (count blocks)))
@@ -187,20 +179,18 @@
              (finally (vis/db-dispose-connection! s)))))
   (it "surfaces provider / model on each turn"
       (let [s (vis/db-create-connection! :memory)]
-        (try (let
-               [cid (seed! s)
-                turn (first (:turns (transcript/transcript s cid)))]
+        (try (let [cid (seed! s)
+                   turn (first (:turns (transcript/transcript s cid)))]
 
                (expect (= "blockether" (:provider turn)))
                (expect (= "gpt-4o" (:model turn))))
              (finally (vis/db-dispose-connection! s)))))
   (it "carries thinking + final answer on every iteration / turn"
       (let [s (vis/db-create-connection! :memory)]
-        (try (let
-               [cid (seed! s)
-                data (transcript/transcript s cid)
-                turn (first (:turns data))
-                iter (first (:iterations turn))]
+        (try (let [cid (seed! s)
+                   data (transcript/transcript s cid)
+                   turn (first (:turns data))
+                   iter (first (:iterations turn))]
 
                ;; Reasoning trace surfaces verbatim on the iteration.
                (expect (= "Reasoning about arithmetic" (:thinking iter)))
@@ -211,24 +201,23 @@
              (finally (vis/db-dispose-connection! s)))))
   (it "surfaces :returned-empty-code? as a typed boolean"
       (let [s (vis/db-create-connection! :memory)]
-        (try (let
-               [cid (h/store-session! s {:channel :tui :title "empty" :model "x"})
-                q (vis/db-store-session-turn!
-                    s
-                    {:parent-session-id cid :user-request "empty turn" :status :running})
-                _ (h/store-iteration! s
-                                      {:session-turn-id q
-                                       :code ""
-                                       :llm-returned-empty-code? true
-                                       :duration-ms 1
-                                       :tokens {"input" 10 "output" 0}
-                                       :cost-usd 0.0001})
-                _ (vis/db-update-session-turn! s q {:status :done})
-                iter (-> (transcript/transcript s cid)
-                         :turns
-                         first
-                         :iterations
-                         first)]
+        (try (let [cid (h/store-session! s {:channel :tui :title "empty" :model "x"})
+                   q (vis/db-store-session-turn!
+                       s
+                       {:parent-session-id cid :user-request "empty turn" :status :running})
+                   _ (h/store-iteration! s
+                                         {:session-turn-id q
+                                          :code ""
+                                          :llm-returned-empty-code? true
+                                          :duration-ms 1
+                                          :tokens {"input" 10 "output" 0}
+                                          :cost-usd 0.0001})
+                   _ (vis/db-update-session-turn! s q {:status :done})
+                   iter (-> (transcript/transcript s cid)
+                            :turns
+                            first
+                            :iterations
+                            first)]
 
                ;; Empty-code? is true when the model returned zero executable blocks.
                (expect (true? (:returned-empty-code? iter))))
@@ -237,13 +226,12 @@
     "normalizes dialog, code blocks, and tool-call envelopes into transcript-level timelines"
     (let [s (vis/db-create-connection! :memory)]
       (try
-        (let
-          [cid (h/store-session! s {:channel :tui :title "tool transcript" :model "x"})
-           turn (vis/db-store-session-turn!
-                  s
-                  {:parent-session-id cid :user-request "run a tool" :status :running})
-           code "(v/tool \"echo hi\")"
-           value (tool-result "echo hi")]
+        (let [cid (h/store-session! s {:channel :tui :title "tool transcript" :model "x"})
+              turn (vis/db-store-session-turn!
+                     s
+                     {:parent-session-id cid :user-request "run a tool" :status :running})
+              code "(v/tool \"echo hi\")"
+              value (tool-result "echo hi")]
 
           ;; Cross-turn def survival is gone; the iteration row carries
           ;; the per-form envelope directly. tool-call detection now
@@ -256,11 +244,10 @@
                                        turn
                                        {:status :done
                                         :content [{"id" "b1" "type" "prose" "markdown" "done"}]})
-          (let
-            [data (transcript/transcript s cid)
-             call (first (:calls data))
-             code-row (first (filter #(= :code (:kind %)) (:timeline data)))
-             tool-row (first (filter #(= :tool-call (:kind %)) (:timeline data)))]
+          (let [data (transcript/transcript s cid)
+                call (first (:calls data))
+                code-row (first (filter #(= :code (:kind %)) (:timeline data)))
+                tool-row (first (filter #(= :tool-call (:kind %)) (:timeline data)))]
 
             (expect (= [{:role :user :turn-id turn :content "run a tool"}
                         {:role :assistant
@@ -293,14 +280,13 @@
   (it
     "resolves an unambiguous short id prefix end-to-end (regression for the CLI — the help text advertises prefix support, the code must deliver)"
     (let [s (vis/db-create-connection! :memory)]
-      (try (let
-             [cid (seed! s)
-              resolve (var-get
-                        (resolve
-                          'com.blockether.vis.internal.foundation.transcript/resolve-session-ref))
-              prefix (subs (str cid) 0 8)
-              full (str cid)
-              md (transcript/transcript-md s prefix)]
+      (try (let [cid (seed! s)
+                 resolve
+                 (var-get (resolve
+                            'com.blockether.vis.internal.foundation.transcript/resolve-session-ref))
+                 prefix (subs (str cid) 0 8)
+                 full (str cid)
+                 md (transcript/transcript-md s prefix)]
 
              ;; The prefix-aware resolver returns the canonical UUID.
              (expect (= (str cid) (str (resolve s prefix))))
@@ -324,12 +310,11 @@
       ;; Forensic transcripts never truncate. A 50k-char code block lands
       ;; in the report exactly as the model wrote it.
       (let [s (vis/db-create-connection! :memory)]
-        (try (let
-               [huge (apply str (repeat 50000 "x"))
-                cid (h/store-session! s {:channel :tui :title "Huge"})
-                qid (vis/db-store-session-turn!
-                      s
-                      {:parent-session-id cid :user-request "huge" :status :running})]
+        (try (let [huge (apply str (repeat 50000 "x"))
+                   cid (h/store-session! s {:channel :tui :title "Huge"})
+                   qid (vis/db-store-session-turn!
+                         s
+                         {:parent-session-id cid :user-request "huge" :status :running})]
 
                (h/store-iteration! s
                                    {:session-turn-id qid
@@ -345,11 +330,10 @@
     "renders flat mixed-block code when render segments are not persisted"
     (let [s (vis/db-create-connection! :memory)]
       (try
-        (let
-          [cid (h/store-session! s {:channel :tui :title "Mixed"})
-           qid (vis/db-store-session-turn!
-                 s
-                 {:parent-session-id cid :user-request "mixed" :status :running})]
+        (let [cid (h/store-session! s {:channel :tui :title "Mixed"})
+              qid (vis/db-store-session-turn!
+                    s
+                    {:parent-session-id cid :user-request "mixed" :status :running})]
 
           (let [fence (str "(def x 1)\n" "(set-session-title! \"Mixed\")\n" "(read-file \"a\")")]
             (h/store-iteration!
@@ -372,13 +356,12 @@
         (finally (vis/db-dispose-connection! s)))))
   (it "uses longer Markdown fences when code contains triple-backtick fences"
       (let [s (vis/db-create-connection! :memory)]
-        (try (let
-               [inner "```clojure\n(dead)\n```"
-                code (str "patch({:replace \"" inner "\"})")
-                cid (h/store-session! s {:channel :tui :title "Nested fence"})
-                qid (vis/db-store-session-turn!
-                      s
-                      {:parent-session-id cid :user-request "nested" :status :running})]
+        (try (let [inner "```clojure\n(dead)\n```"
+                   code (str "patch({:replace \"" inner "\"})")
+                   cid (h/store-session! s {:channel :tui :title "Nested fence"})
+                   qid (vis/db-store-session-turn!
+                         s
+                         {:parent-session-id cid :user-request "nested" :status :running})]
 
                (h/store-iteration! s
                                    {:session-turn-id qid
@@ -386,10 +369,9 @@
                                     :forms
                                     [{:scope "t1/i1/f1" :tag :mutation :src code :result :ok}]})
                (vis/db-update-session-turn! s qid {:status :done})
-               (let
-                 [data (transcript/transcript s cid)
-                  out (transcript/transcript->md data)
-                  html (transcript/transcript->html data)]
+               (let [data (transcript/transcript s cid)
+                     out (transcript/transcript->md data)
+                     html (transcript/transcript->html data)]
 
                  (expect (str/includes? out "````python\n"))
                  (expect (str/includes? out inner))
@@ -398,13 +380,13 @@
                  (expect (str/includes? html "<code class=\"language-python\">"))
                  (expect (str/includes? html "```clojure"))))
              (finally (vis/db-dispose-connection! s))))))
+
   ;; Removed: "renders header + per-turn block + per-iteration block
   ;; dump" (was already `#_`-disabled). It asserted on the removed
   ;; prompt-body / LLM-message-envelope render (SYS_PROMPT_TEXT_FIXTURE,
   ;; "LLM messages", role snapshots) which no longer exists. Surviving
   ;; renderer output is covered by the structural data tests above and
   ;; the huge/mixed-block render tests here.
-
 
 ;; ---------------------------------------------------------------------------
 ;; No UUID leaks in the turn-by-turn BODY.
@@ -426,14 +408,13 @@
 (defdescribe transcript-md-no-uuid-leak-test
              (it "turn-by-turn transcript body contains zero UUID substrings"
                  (let [s (vis/db-create-connection! :memory)]
-                   (try (let
-                          [cid (seed! s)
-                           full (transcript/transcript-md s cid)
-                           ;; The summary header intentionally carries the
-                           ;; session ID; scope the leak check to the body.
-                           marker "## Turn-by-turn breakdown"
-                           idx (str/index-of full marker)
-                           body (if idx (subs full idx) full)]
+                   (try (let [cid (seed! s)
+                              full (transcript/transcript-md s cid)
+                              ;; The summary header intentionally carries the
+                              ;; session ID; scope the leak check to the body.
+                              marker "## Turn-by-turn breakdown"
+                              idx (str/index-of full marker)
+                              body (if idx (subs full idx) full)]
 
                           (expect (string? full))
                           ;; Position-based rendering present (sanity).
@@ -454,12 +435,11 @@
    `:stdout` on the envelope, NOT `:result`. The forensic projection must
    surface it (data + Markdown) or every python block reads back as
    `result: None` with its real content lost."
-  (let
-    [->block
-     #'transcript/form-envelope->block
+  (let [->block
+        #'transcript/form-envelope->block
 
-     ->md
-     #'transcript/render-block-section]
+        ->md
+        #'transcript/render-block-section]
 
     (it "projects :stdout onto the block for a printed (result-less) envelope"
         (let [b (->block 0 {:src "print('hi')" :stdout "hi\n" :scope :block})]
@@ -491,30 +471,31 @@
     "joins iteration attachments as lean byte-free descriptors and renders their read-back id"
     (let [s (vis/db-create-connection! :memory)]
       (try
-        (let
-          [cid (h/store-session! s {:channel :cli :title "att" :provider :openai :model "gpt-4o"})
-           tid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "chart me"})
-           png (byte-array (mapv unchecked-byte [0x89 0x50 0x4E 0x47 1 2 3 4]))
-           b64 (.encodeToString (java.util.Base64/getEncoder) png)
-           iid (h/store-iteration!
-                 s
-                 {:session-turn-id tid
-                  :status :done
-                  :idx 0
-                  :code "plt.show()"
-                  :forms [{:scope "t1/i1" :tag :observation :src "plt.show()" :stdout "<figure>\n"}]
-                  :attachments [{:tool-call-id "call_A"
-                                 :media-type "image/png"
-                                 :base64 b64
-                                 :filename "chart.png"
-                                 :size (alength png)}]})
-           data (transcript/transcript s cid)
-           iter (->> (:turns data)
-                     (mapcat :iterations)
-                     first)
-           atts (:attachments iter)
-           att (first atts)
-           md (transcript/transcript-md s cid)]
+        (let [cid (h/store-session! s
+                                    {:channel :cli :title "att" :provider :openai :model "gpt-4o"})
+              tid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "chart me"})
+              png (byte-array (mapv unchecked-byte [0x89 0x50 0x4E 0x47 1 2 3 4]))
+              b64 (.encodeToString (java.util.Base64/getEncoder) png)
+              iid (h/store-iteration!
+                    s
+                    {:session-turn-id tid
+                     :status :done
+                     :idx 0
+                     :code "plt.show()"
+                     :forms
+                     [{:scope "t1/i1" :tag :observation :src "plt.show()" :stdout "<figure>\n"}]
+                     :attachments [{:tool-call-id "call_A"
+                                    :media-type "image/png"
+                                    :base64 b64
+                                    :filename "chart.png"
+                                    :size (alength png)}]})
+              data (transcript/transcript s cid)
+              iter (->> (:turns data)
+                        (mapcat :iterations)
+                        first)
+              atts (:attachments iter)
+              att (first atts)
+              md (transcript/transcript-md s cid)]
 
           ;; Data view: one descriptor, byte-free, with a read-back id + metadata.
           (expect (some? iid))

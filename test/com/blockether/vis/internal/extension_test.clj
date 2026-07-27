@@ -22,27 +22,27 @@
   flat-native-tool-spec-test
   (it
     ":native-tool? + symbol-level :schema/:name/:handler/:render produce the whole native surface"
-    (let
-      [sym
-       (extension/symbol
-         #'flat-native-tool
-         {:tag :observation
-          :native-tool? true
-          :name "flat_tool"
-          :description "Compact routing and result semantics."
-          :result "A map with boolean `ok`."
-          :schema {:type "object" :properties {"x" {:type "string"}}}
-          :replay {:elide-args {"x" 1024} :retry-on #{:too-large} :retry-overrides {"force" true}}
-          :handler (fn [_env _in]
-                     {:ok true})
-          :render a-render
-          :color-role :tool-color/meta})
+    (let [sym
+          (extension/symbol #'flat-native-tool
+                            {:tag :observation
+                             :native-tool? true
+                             :name "flat_tool"
+                             :description "Compact routing and result semantics."
+                             :result "A map with boolean `ok`."
+                             :schema {:type "object" :properties {"x" {:type "string"}}}
+                             :replay {:elide-args {"x" 1024}
+                                      :retry-on #{:too-large}
+                                      :retry-overrides {"force" true}}
+                             :handler (fn [_env _in]
+                                        {:ok true})
+                             :render a-render
+                             :color-role :tool-color/meta})
 
-       ext
-       (ext-with sym)
+          ext
+          (ext-with sym)
 
-       schema
-       (first (filter #(= "flat_tool" (:name %)) (extension/native-tool-schemas [ext])))]
+          schema
+          (first (filter #(= "flat_tool" (:name %)) (extension/native-tool-schemas [ext])))]
 
       (expect (some? schema))
       (expect (= 'flat-native-tool (:symbol (first (extension/native-tools-for [ext])))))
@@ -56,31 +56,29 @@
       (expect (= a-render (get (extension/native-tool-renderers [ext]) "flat_tool")))
       (expect (= :tool-color/meta (get (extension/native-tool-color-roles [ext]) "flat_tool")))))
   (it "a symbol with neither :native-tool? nor a legacy :native-tool map is NOT a native tool"
-      (let
-        [sym
-         (extension/symbol #'flat-native-tool {:tag :observation})
+      (let [sym
+            (extension/symbol #'flat-native-tool {:tag :observation})
 
-         ext
-         (ext-with sym)]
+            ext
+            (ext-with sym)]
 
         (expect (empty? (extension/native-tool-schemas [ext])))
         (expect (empty? (extension/native-tool-handlers [ext])))))
   (it "a native description remains separate from the implementation docstring"
-      (let
-        [sym
-         (extension/symbol #'flat-native-tool
-                           {:tag :observation
-                            :native-tool? true
-                            :name "flat_tool"
-                            :schema {:type "object"}
-                            :description "explicit model-facing desc"
-                            :result "an explicit result map"})
+      (let [sym
+            (extension/symbol #'flat-native-tool
+                              {:tag :observation
+                               :native-tool? true
+                               :name "flat_tool"
+                               :schema {:type "object"}
+                               :description "explicit model-facing desc"
+                               :result "an explicit result map"})
 
-         ext
-         (ext-with sym)
+            ext
+            (ext-with sym)
 
-         schema
-         (first (filter #(= "flat_tool" (:name %)) (extension/native-tool-schemas [ext])))]
+            schema
+            (first (filter #(= "flat_tool" (:name %)) (extension/native-tool-schemas [ext])))]
 
         (expect (= "explicit model-facing desc\n\nRaw result: an explicit result map"
                    (:description schema)))))
@@ -94,50 +92,47 @@
                    false
                    (catch Throwable _ true))))
   (it ":native-tool? true WITHOUT a raw :result contract is rejected at build time"
-      (let
-        [err (try (extension/symbol #'flat-native-tool
-                                    {:tag :observation
-                                     :native-tool? true
-                                     :name "no_result_tool"
-                                     :description "Has semantics."
-                                     :schema {:type "object"}})
-                  nil
-                  (catch clojure.lang.ExceptionInfo e e))]
+      (let [err (try (extension/symbol #'flat-native-tool
+                                       {:tag :observation
+                                        :native-tool? true
+                                        :name "no_result_tool"
+                                        :description "Has semantics."
+                                        :schema {:type "object"}})
+                     nil
+                     (catch clojure.lang.ExceptionInfo e e))]
         (expect (= :extension/native-tool-missing-result (:type (ex-data err))))))
   (it "reserves the Raw result label for centralized projection"
-      (doseq
-        [[opts expected-type] [[{:description "Raw result: duplicated" :result "a map"}
-                                :extension/native-tool-result-in-description]
-                               [{:description "Has semantics." :result "Raw result: duplicated"}
-                                :extension/native-tool-result-has-label]]]
-        (let
-          [err (try (extension/symbol #'flat-native-tool
-                                      (merge {:tag :observation
-                                              :native-tool? true
-                                              :name "bad_result_label_tool"
-                                              :schema {:type "object"}}
-                                             opts))
-                    nil
-                    (catch clojure.lang.ExceptionInfo e e))]
+      (doseq [[opts expected-type] [[{:description "Raw result: duplicated" :result "a map"}
+                                     :extension/native-tool-result-in-description]
+                                    [{:description "Has semantics."
+                                      :result "Raw result: duplicated"}
+                                     :extension/native-tool-result-has-label]]]
+        (let [err (try (extension/symbol #'flat-native-tool
+                                         (merge {:tag :observation
+                                                 :native-tool? true
+                                                 :name "bad_result_label_tool"
+                                                 :schema {:type "object"}}
+                                                opts))
+                       nil
+                       (catch clojure.lang.ExceptionInfo e e))]
           (expect (= expected-type (:type (ex-data err)))))))
   (it "doc text combines compact semantics with schema parameters exactly once"
-      (let
-        [sym
-         (extension/symbol #'flat-native-tool
-                           {:tag :observation
-                            :native-tool? true
-                            :name "flat_tool"
-                            :description "Compact routing and result semantics."
-                            :result "A map with boolean `ok`."
-                            :schema {:type "object"
-                                     :properties {"query" {:oneOf [{:type "string"}
-                                                                   {:type "array"
-                                                                    :items {:type "string"}}]
-                                                           :description "Exact query input."}}
-                                     :required ["query"]}})
+      (let [sym
+            (extension/symbol #'flat-native-tool
+                              {:tag :observation
+                               :native-tool? true
+                               :name "flat_tool"
+                               :description "Compact routing and result semantics."
+                               :result "A map with boolean `ok`."
+                               :schema {:type "object"
+                                        :properties {"query" {:oneOf [{:type "string"}
+                                                                      {:type "array"
+                                                                       :items {:type "string"}}]
+                                                              :description "Exact query input."}}
+                                        :required ["query"]}})
 
-         doc
-         (extension/symbol-doc-text sym)]
+            doc
+            (extension/symbol-doc-text sym)]
 
         (expect (= 1 (count (re-seq #"Compact routing" doc))))
         (expect (= 1 (count (re-seq #"Raw result:" doc))))
@@ -146,20 +141,19 @@
         (expect (= 1 (count (re-seq #"`query`" doc))))
         (expect (re-find #"string\|array<string>, required" doc))))
   (it "generic extension prompts omit native tools and their implementation docstrings"
-      (let
-        [native
-         (extension/symbol #'flat-native-tool
-                           {:tag :observation
-                            :native-tool? true
-                            :description "Native routing only."
-                            :result "A native result."
-                            :schema {:type "object" :properties {}}})
+      (let [native
+            (extension/symbol #'flat-native-tool
+                              {:tag :observation
+                               :native-tool? true
+                               :description "Native routing only."
+                               :result "A native result."
+                               :schema {:type "object" :properties {}}})
 
-         python-only
-         (extension/symbol #'flat-native-tool {:tag :observation})
+            python-only
+            (extension/symbol #'flat-native-tool {:tag :observation})
 
-         prompt
-         (extension/render-prompt {:heading "TOOLS" :symbols [native python-only]})]
+            prompt
+            (extension/render-prompt {:heading "TOOLS" :symbols [native python-only]})]
 
         (expect (re-find #"TOOLS" prompt))
         (expect (re-find #"A native tool declared the STRONG way" prompt))
@@ -174,51 +168,48 @@
                    false
                    (catch Throwable _ true))))
   (it "rejects provider-incompatible top-level schema unions at build time"
-      (let
-        [err (try (extension/symbol #'flat-native-tool
-                                    {:tag :observation
-                                     :native-tool? true
-                                     :description "Bad root union."
-                                     :result "A result map."
-                                     :schema {:type "object" :anyOf [{:required ["x"]}]}})
-                  nil
-                  (catch clojure.lang.ExceptionInfo e e))]
+      (let [err (try (extension/symbol #'flat-native-tool
+                                       {:tag :observation
+                                        :native-tool? true
+                                        :description "Bad root union."
+                                        :result "A result map."
+                                        :schema {:type "object" :anyOf [{:required ["x"]}]}})
+                     nil
+                     (catch clojure.lang.ExceptionInfo e e))]
         (expect (= :extension/native-tool-nonportable-schema (:type (ex-data err)))))))
 
 (defdescribe prompt-normalization-test
              (it "normalizes string and fn extension prompts"
-                 (let
-                   [prompt-text
-                    "\n\n    First line\n\n\n\n      Nested line\n"
+                 (let [prompt-text
+                       "\n\n    First line\n\n\n\n      Nested line\n"
 
-                    string-ext
-                    (extension/extension {:ext/name "test.prompt-string"
-                                          :ext/description "Test prompt string."
-                                          :ext/prompt-fn prompt-text})
+                       string-ext
+                       (extension/extension {:ext/name "test.prompt-string"
+                                             :ext/description "Test prompt string."
+                                             :ext/prompt-fn prompt-text})
 
-                    fn-ext
-                    (extension/extension {:ext/name "test.prompt-fn"
-                                          :ext/description "Test prompt fn."
-                                          :ext/prompt-fn (fn [_]
-                                                           prompt-text)})]
+                       fn-ext
+                       (extension/extension {:ext/name "test.prompt-fn"
+                                             :ext/description "Test prompt fn."
+                                             :ext/prompt-fn (fn [_]
+                                                              prompt-text)})]
 
                    (expect (= "First line\n\n  Nested line" ((:ext/prompt-fn string-ext) {})))
                    (expect (= "First line\n\n  Nested line" ((:ext/prompt-fn fn-ext) {}))))))
 
 (defdescribe ctx-contributions-test
              (it "binds active workspace root while building extension ctx"
-                 (let
-                   [root
-                    (.getCanonicalPath (java.io.File. "target/test-workspace-ctx"))
+                 (let [root
+                       (.getCanonicalPath (java.io.File. "target/test-workspace-ctx"))
 
-                    ext
-                    {:ext/name "test.ctx-workspace"
-                     :ext/ctx-fn (fn [_]
-                                   {:project {:ctx-root workspace/*workspace-root*
-                                              :cwd (.getCanonicalPath (workspace/cwd))}})}
+                       ext
+                       {:ext/name "test.ctx-workspace"
+                        :ext/ctx-fn (fn [_]
+                                      {:project {:ctx-root workspace/*workspace-root*
+                                                 :cwd (.getCanonicalPath (workspace/cwd))}})}
 
-                    ctx
-                    (extension/ctx-contributions {:workspace/root root} [ext])]
+                       ctx
+                       (extension/ctx-contributions {:workspace/root root} [ext])]
 
                    (expect (= root (get-in ctx [:project :ctx-root])))
                    (expect (= root (get-in ctx [:project :cwd]))))))
@@ -226,22 +217,20 @@
 (defdescribe
   channel-contributions-test
   (it "extension accepts channel contributions and derives channel kind"
-      (let
-        [ext (extension/extension {:ext/name "test.channel-contribution"
-                                   :ext/description "Test channel contribution."
-                                   :ext/channel-contributions {:tui.slot/commands
-                                                               [{:id :test/command
-                                                                 :fn #'sample-channel-fn}]}})]
+      (let [ext (extension/extension {:ext/name "test.channel-contribution"
+                                      :ext/description "Test channel contribution."
+                                      :ext/channel-contributions {:tui.slot/commands
+                                                                  [{:id :test/command
+                                                                    :fn #'sample-channel-fn}]}})]
         (expect (= "channels" (:ext/kind ext)))
         (expect (= {:tui.slot/commands [{:id :test/command :fn #'sample-channel-fn}]}
                    (:ext/channel-contributions ext)))))
   (it "normalizes slot keys into channel-id and slot fields"
-      (with-redefs
-        [extension/registered-extensions
-         (fn []
-           [{:ext/channel-contributions
-             {:tui.slot/commands [{:id :voice/input :fn #'sample-channel-fn}]
-              :api.slot/preamble [{:id :api/preamble :fn #'sample-channel-fn}]}}])]
+      (with-redefs [extension/registered-extensions
+                    (fn []
+                      [{:ext/channel-contributions
+                        {:tui.slot/commands [{:id :voice/input :fn #'sample-channel-fn}]
+                         :api.slot/preamble [{:id :api/preamble :fn #'sample-channel-fn}]}}])]
         (expect
           (= [{:id :voice/input :fn #'sample-channel-fn :channel-id :tui :slot :tui.slot/commands}]
              (extension/channel-contributions-for :tui :tui.slot/commands)))
@@ -249,33 +238,31 @@
 
 (defdescribe
   workspace-backend-extension-test
-  (it "registers and deregisters workspace backends with their extension"
-      (let
-        [backend-id
-         :test/extension-workspace
+  (it
+    "registers and deregisters workspace backends with their extension"
+    (let [backend-id
+          :test/extension-workspace
 
-         ext-name
-         "test.workspace-backend"
+          ext-name
+          "test.workspace-backend"
 
-         backend
-         (workspace/workspace-backend {:workspace.backend/id backend-id
-                                       :workspace.backend/priority 500
-                                       :workspace.backend/capabilities #{:isolated-fork :rollback}
-                                       :workspace.backend/available-fn (constantly true)
-                                       :workspace.backend/fork-fn (fn [_]
-                                                                    "/tmp/test-workspace")
-                                       :workspace.backend/discard-fn (fn [_]
-                                                                       nil)})]
+          backend
+          (workspace/workspace-backend {:workspace.backend/id backend-id
+                                        :workspace.backend/priority 500
+                                        :workspace.backend/capabilities #{:isolated-fork :rollback}
+                                        :workspace.backend/available-fn (constantly true)
+                                        :workspace.backend/fork-fn (fn [_]
+                                                                     "/tmp/test-workspace")
+                                        :workspace.backend/discard-fn (fn [_]
+                                                                        nil)})]
 
-        (try (extension/register-extension! {:ext/name ext-name
-                                             :ext/description "Workspace backend registration test."
-                                             :ext/workspace-backends [backend]})
-             (expect (some #(= backend-id (:workspace.backend/id %))
-                           (workspace/registered-backends)))
-             (finally (extension/deregister-extension! ext-name)))
-        (expect (not-any? #(= backend-id (:workspace.backend/id %))
-                          (workspace/registered-backends))))))
-
+      (try (extension/register-extension! {:ext/name ext-name
+                                           :ext/description "Workspace backend registration test."
+                                           :ext/workspace-backends [backend]})
+           (expect (some #(= backend-id (:workspace.backend/id %)) (workspace/registered-backends)))
+           (finally (extension/deregister-extension! ext-name)))
+      (expect (not-any? #(= backend-id (:workspace.backend/id %))
+                        (workspace/registered-backends))))))
 
 (defdescribe
   slash-command-registration-test
@@ -293,16 +280,15 @@
                                                                  :slash/run-fn (fn [_]
                                                                                  {:slash/status
                                                                                   :ok})}]})
-           (let
-             [thrown (try (extension/register-extension!
-                            {:ext/name "test.slash-collide-b"
-                             :ext/description "duplicate owner of /probe"
-                             :ext/slash-commands [{:slash/name "probe"
-                                                   :slash/doc "probe dup"
-                                                   :slash/run-fn (fn [_]
-                                                                   {:slash/status :ok})}]})
-                          nil
-                          (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+           (let [thrown (try (extension/register-extension!
+                               {:ext/name "test.slash-collide-b"
+                                :ext/description "duplicate owner of /probe"
+                                :ext/slash-commands [{:slash/name "probe"
+                                                      :slash/doc "probe dup"
+                                                      :slash/run-fn (fn [_]
+                                                                      {:slash/status :ok})}]})
+                             nil
+                             (catch clojure.lang.ExceptionInfo e (ex-data e)))]
              (expect (= :extension/slash-path-collision (:type thrown)))
              (expect (= ["probe"]
                         (-> thrown
@@ -324,15 +310,14 @@
   op-hook-test
   "Generic cross-cutting operation hooks: any extension may decorate an op it
    does NOT own, wired once at the invoke-symbol-wrapper chokepoint."
-  (let
-    [run-after
-     @#'extension/run-op-after-hooks
+  (let [run-after
+        @#'extension/run-op-after-hooks
 
-     run-before
-     @#'extension/run-op-before-hooks
+        run-before
+        @#'extension/run-op-before-hooks
 
-     run-around
-     @#'extension/run-op-around]
+        run-around
+        @#'extension/run-op-around]
 
     (it "after-hooks compose: the result threads through each registered hook"
         (extension/register-op-hook! {:op :ophtest1
@@ -392,10 +377,9 @@
                                         :owner :a
                                         :fn (fn [_ _ args nxt]
                                               (try (nxt args) (catch Throwable _ (nxt [:fixed]))))})
-          (let
-            [f (fn [a]
-                 (swap! attempts inc)
-                 (if (= a :fixed) :ok (throw (ex-info "nope" {}))))]
+          (let [f (fn [a]
+                    (swap! attempts inc)
+                    (if (= a :fixed) :ok (throw (ex-info "nope" {}))))]
             (expect (= :ok (run-around :ophtest6 {} f [:bad])))
             (expect (= 2 @attempts)))))
     (it "declarative :ext/op-hooks install on register and tear down on deregister"

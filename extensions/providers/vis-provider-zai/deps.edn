@@ -20,7 +20,7 @@
   ;; (charred is already on the runtime classpath via vis itself).
   com.cnuernber/charred {:mvn/version "1.041"}
   ;; Live Coding Plan quota probe.
-  org.babashka/http-client {:mvn/version "0.4.23"}
+  org.babashka/http-client {:mvn/version "0.4.24"}
   com.taoensso/telemere {:mvn/version "1.2.1"}}
 
  :aliases

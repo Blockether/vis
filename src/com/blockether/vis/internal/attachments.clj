@@ -89,9 +89,8 @@
   (loop [offset (long (count png-signature))]
     (if (> (+ offset 8) (alength b))
       false
-      (let
-        [chunk-length (u32-be b offset)
-         type-offset (+ offset 4)]
+      (let [chunk-length (u32-be b offset)
+            type-offset (+ offset 4)]
 
         (cond (ascii-at? b type-offset "acTL") true
               (ascii-at? b type-offset "IDAT") false
@@ -103,23 +102,21 @@
 (defn- bmp?
   [^bytes b]
   (and (>= (alength b) 30)
-       (let
-         [declared-size
-          (u32-le b 2)
+       (let [declared-size
+             (u32-le b 2)
 
-          pixel-data-offset
-          (u32-le b 10)
+             pixel-data-offset
+             (u32-le b 10)
 
-          dib-header-size
-          (u32-le b 14)]
+             dib-header-size
+             (u32-le b 14)]
 
          (and (or (zero? declared-size) (>= declared-size 26))
               (>= pixel-data-offset (+ 14 dib-header-size))
               (or (zero? declared-size) (< pixel-data-offset declared-size))
-              (let
-                [[planes bpp] (cond (= dib-header-size 12) [(u16-le b 22) (u16-le b 24)]
-                                    (<= 40 dib-header-size 124) [(u16-le b 26) (u16-le b 28)]
-                                    :else [nil nil])]
+              (let [[planes bpp] (cond (= dib-header-size 12) [(u16-le b 22) (u16-le b 24)]
+                                       (<= 40 dib-header-size 124) [(u16-le b 26) (u16-le b 28)]
+                                       :else [nil nil])]
                 (and (= 1 planes) (contains? #{1 4 8 16 24 32} bpp)))))))
 
 (defn detect-image-mime
@@ -140,9 +137,8 @@
   "Read the file head and sniff its MIME type. nil on any read failure."
   [^File f]
   (try (with-open [raf (RandomAccessFile. f "r")]
-         (let
-           [n (int (min (.length raf) (long sniff-bytes)))
-            buf (byte-array n)]
+         (let [n (int (min (.length raf) (long sniff-bytes)))
+               buf (byte-array n)]
 
            (.readFully raf buf)
            (detect-image-mime buf)))
@@ -217,12 +213,11 @@
                   (or single double*))
                 (re-seq quoted-span-pattern text))
           (mapcat (fn [tok]
-                    (let
-                      [tok
-                       (unescape-token tok)
+                    (let [tok
+                          (unescape-token tok)
 
-                       trimmed
-                       (strip-edge-punct tok)]
+                          trimmed
+                          (strip-edge-punct tok)]
 
                       (if (= tok trimmed) [tok] [tok trimmed])))
                   (re-seq escaped-token-pattern text))))
@@ -232,16 +227,15 @@
    extension, or nil. Relative candidates resolve against
    `workspace-root` (falling back to cwd)."
   ^File [candidate workspace-root]
-  (let
-    [^String s (-> candidate
-                   str/trim
-                   strip-file-url
-                   paths/expand-home)]
+  (let [^String s (-> candidate
+                      str/trim
+                      strip-file-url
+                      paths/expand-home)]
     (when (and (seq s) (re-find image-extension-pattern s))
-      (let
-        [f (File. s)
-         f
-         (if (.isAbsolute f) f (File. (str (or workspace-root (System/getProperty "user.dir"))) s))]
+      (let [f (File. s)
+            f (if (.isAbsolute f)
+                f
+                (File. (str (or workspace-root (System/getProperty "user.dir"))) s))]
 
         (when (and (.isFile f) (.canRead f)) f)))))
 
@@ -375,27 +369,26 @@
    (reduce
      (fn [acc att]
        (try
-         (let
-           [base64
-            (or (:base64 att) (get att "base64"))
+         (let [base64
+               (or (:base64 att) (get att "base64"))
 
-            filename
-            (or (:filename att) (get att "filename"))
+               filename
+               (or (:filename att) (get att "filename"))
 
-            ^String payload
-            (strip-data-url-prefix (str base64))
+               ^String payload
+               (strip-data-url-prefix (str base64))
 
-            data
-            (.decode (Base64/getDecoder) payload)
+               data
+               (.decode (Base64/getDecoder) payload)
 
-            size
-            (alength data)
+               size
+               (alength data)
 
-            label
-            (or (not-empty (str filename)) "image")
+               label
+               (or (not-empty (str filename)) "image")
 
-            mime
-            (detect-image-mime data)]
+               mime
+               (detect-image-mime data)]
 
            (cond (nil? mime)
                  (update acc :skipped conj {:path label :reason "not a supported still image"})
@@ -444,13 +437,12 @@
       (str/replace s
                    image-path-token-pattern
                    (fn [m]
-                     (let
-                       [clean (-> (str m)
-                                  (str/replace #"^[\"'(\[{<]+" "")
-                                  (str/replace #"[\"')\]}>.,;:!?]+$" "")
-                                  unescape-token
-                                  strip-file-url)
-                        base (last (str/split clean #"[/\\\\]"))]
+                     (let [clean (-> (str m)
+                                     (str/replace #"^[\"'(\[{<]+" "")
+                                     (str/replace #"[\"')\]}>.,;:!?]+$" "")
+                                     unescape-token
+                                     strip-file-url)
+                           base (last (str/split clean #"[/\\\\]"))]
 
                        (if (str/blank? (str base)) clean base)))))))
 

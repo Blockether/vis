@@ -88,23 +88,22 @@
    PrintStream) already flushes explicitly, so nothing can sit in the
    buffer across frames."
   ^OutputStream [^OutputStream raw]
-  (let
-    [initial-capacity
-     (* 64 1024)
+  (let [initial-capacity
+        (* 64 1024)
 
-     ;; `ByteArrayOutputStream/reset` keeps the grown backing array forever,
-     ;; so one outsized frame (full repaint on a huge terminal) would pin
-     ;; megabytes. Over the retention cap the buffer is REPLACED after the
-     ;; flush instead of reset. Mutable holder because the swap needs a new
-     ;; instance; all access goes through `lock`.
-     retain-capacity
-     (* 512 1024)
+        ;; `ByteArrayOutputStream/reset` keeps the grown backing array forever,
+        ;; so one outsized frame (full repaint on a huge terminal) would pin
+        ;; megabytes. Over the retention cap the buffer is REPLACED after the
+        ;; flush instead of reset. Mutable holder because the swap needs a new
+        ;; instance; all access goes through `lock`.
+        retain-capacity
+        (* 512 1024)
 
-     lock
-     (Object.)
+        lock
+        (Object.)
 
-     buf-holder
-     (java.util.concurrent.atomic.AtomicReference. (ByteArrayOutputStream. initial-capacity))]
+        buf-holder
+        (java.util.concurrent.atomic.AtomicReference. (ByteArrayOutputStream. initial-capacity))]
 
     (proxy [OutputStream] []
       (write
@@ -119,12 +118,11 @@
            (.write ^ByteArrayOutputStream (.get buf-holder) ^bytes b (int off) (int len)))))
       (flush []
         (locking lock
-          (let
-            [^ByteArrayOutputStream buf
-             (.get buf-holder)
+          (let [^ByteArrayOutputStream buf
+                (.get buf-holder)
 
-             n
-             (.size buf)]
+                n
+                (.size buf)]
 
             (when (pos? n)
               (.write raw sync-update-begin)
@@ -153,12 +151,11 @@
   (alter-var-root #'*print-level* (constantly 10))
   (alter-var-root #'*print-length* (constantly 100))
   (.mkdirs (io/file config-dir "logs"))
-  (let
-    [raw-out
-     (FileOutputStream. log-path true)
+  (let [raw-out
+        (FileOutputStream. log-path true)
 
-     log-stream
-     (java.io.PrintStream. raw-out true)]
+        log-stream
+        (java.io.PrintStream. raw-out true)]
 
     (System/setOut log-stream)
     (System/setErr log-stream))
@@ -195,12 +192,11 @@
   (alter-var-root #'*print-level* (constantly 10))
   (alter-var-root #'*print-length* (constantly 100))
   (.mkdirs (io/file config-dir "logs"))
-  (let
-    [raw-out
-     (FileOutputStream. log-path true)
+  (let [raw-out
+        (FileOutputStream. log-path true)
 
-     log-stream
-     (java.io.PrintStream. raw-out true)]
+        log-stream
+        (java.io.PrintStream. raw-out true)]
 
     (System/setOut log-stream)
     (System/setErr log-stream))
@@ -258,12 +254,11 @@
    intentionally removed ids."
   [pid]
   (when-not (contains? removed-provider-ids pid)
-    (let
-      [provider-md
-       (registered-provider-metadata pid)
+    (let [provider-md
+          (registered-provider-metadata pid)
 
-       svar-md
-       (get svar-router/KNOWN_PROVIDERS pid)]
+          svar-md
+          (get svar-router/KNOWN_PROVIDERS pid)]
 
       (when (or provider-md svar-md (registry/provider-by-id pid))
         (cond-> {:id pid}
@@ -288,14 +283,13 @@
 (defn provider-presets
   "All known provider presets, sorted for the 'Add Provider' picker."
   []
-  (let
-    [order-rank
-     (zipmap PRESET_ORDER (range))
+  (let [order-rank
+        (zipmap PRESET_ORDER (range))
 
-     ids
-     (into #{}
-           (concat (keys svar-router/KNOWN_PROVIDERS)
-                   (map :provider/id (registry/registered-providers))))]
+        ids
+        (into #{}
+              (concat (keys svar-router/KNOWN_PROVIDERS)
+                      (map :provider/id (registry/registered-providers))))]
 
     (->> ids
          (remove removed-provider-ids)
@@ -371,11 +365,10 @@
   "Coerce a model representation to svar-native `{:name str}`."
   ([model] (->svar-model nil model))
   ([_provider-id model]
-   (when-let
-     [n (some-> (model-name model)
-                str
-                str/trim
-                not-empty)]
+   (when-let [n (some-> (model-name model)
+                        str
+                        str/trim
+                        not-empty)]
      (let [m (when (map? model) model)]
        (cond-> {:name n}
          ;; Carry through model metadata svar honors but vis historically
@@ -407,12 +400,11 @@
    timeout is transport-shaped, never auth-shaped, so it never triggers the
    refresh-before-drop path) rather than hanging first paint."
   [pid thunk]
-  (let
-    [fut
-     (future (thunk))
+  (let [fut
+        (future (thunk))
 
-     v
-     (deref fut boot-token-timeout-ms ::timeout)]
+        v
+        (deref fut boot-token-timeout-ms ::timeout)]
 
     (if (= v ::timeout)
       (do (future-cancel fut)
@@ -466,66 +458,64 @@
    provider-agnostic and never references a concrete provider ns by
    name."
   [provider]
-  (let
-    [pid
-     (:id provider)
+  (let [pid
+        (:id provider)
 
-     template
-     (provider-template pid)
+        template
+        (provider-template pid)
 
-     api-key
-     (:api-key provider)
+        api-key
+        (:api-key provider)
 
-     ;; Local no-auth presets (ollama, lmstudio) ship a dummy api-key in
-     ;; svar's catalog; svar's `models!` sends it as an HTTP header, and a
-     ;; nil value throws (null HTTP header value) — the reason local model
-     ;; catalogs come back empty. Forward the catalog key when the caller
-     ;; configured none. Cloud presets have no catalog key, so unaffected.
-     catalog-api-key
-     (:api-key (get svar-router/KNOWN_PROVIDERS pid))
+        ;; Local no-auth presets (ollama, lmstudio) ship a dummy api-key in
+        ;; svar's catalog; svar's `models!` sends it as an HTTP header, and a
+        ;; nil value throws (null HTTP header value) — the reason local model
+        ;; catalogs come back empty. Forward the catalog key when the caller
+        ;; configured none. Cloud presets have no catalog key, so unaffected.
+        catalog-api-key
+        (:api-key (get svar-router/KNOWN_PROVIDERS pid))
 
-     models
-     (->> (:models provider)
-          (keep #(->svar-model pid %))
-          vec)
+        models
+        (->> (:models provider)
+             (keep #(->svar-model pid %))
+             vec)
 
-     explicit-url
-     (:base-url provider)
+        explicit-url
+        (:base-url provider)
 
-     explicit-api-style
-     (or (:api-style provider) (:api-style template))
+        explicit-api-style
+        (or (:api-style provider) (:api-style template))
 
-     explicit-headers
-     (:llm-headers provider)
+        explicit-headers
+        (:llm-headers provider)
 
-     explicit-responses
-     (:responses-path provider)
+        explicit-responses
+        (:responses-path provider)
 
-     ;; Provider-default request-body params (e.g. LM Studio sampler
-     ;; defaults from the preset). svar merges these as the lowest
-     ;; precedence layer, so an explicit per-provider config override
-     ;; and any per-turn :extra-body still win.
-     merged-extra-body
-     (not-empty (merge (:extra-body template) (:extra-body provider)))
+        ;; Provider-default request-body params (e.g. LM Studio sampler
+        ;; defaults from the preset). svar merges these as the lowest
+        ;; precedence layer, so an explicit per-provider config override
+        ;; and any per-turn :extra-body still win.
+        merged-extra-body
+        (not-empty (merge (:extra-body template) (:extra-body provider)))
 
-     get-token-fn
-     (when (nil? api-key)
-       (some-> (registry/provider-by-id pid)
-               :provider/get-token-fn))]
+        get-token-fn
+        (when (nil? api-key)
+          (some-> (registry/provider-by-id pid)
+                  :provider/get-token-fn))]
 
     (if get-token-fn
-      (let
-        [{:keys [token api-url llm-headers responses-path]}
-         (with-boot-token-timeout pid get-token-fn)
+      (let [{:keys [token api-url llm-headers responses-path]}
+            (with-boot-token-timeout pid get-token-fn)
 
-         url
-         (provider-token-base-url pid explicit-url api-url)
+            url
+            (provider-token-base-url pid explicit-url api-url)
 
-         merged-headers
-         (or explicit-headers llm-headers)
+            merged-headers
+            (or explicit-headers llm-headers)
 
-         merged-response
-         (or explicit-responses responses-path)]
+            merged-response
+            (or explicit-responses responses-path)]
 
         ;; Remember the token this router bakes in, so a later 401 can hand the
         ;; single-flight refresh the EXACT token that failed as `rejected`.
@@ -790,28 +780,27 @@
     (when (.exists f)
       (let [raw (try (yamlstar/load (slurp f)) (catch Exception _ nil))]
         (when (map? raw)
-          (let
-            [legacy-filesystem (get raw "filesystem")
-             legacy-sandbox (get raw "sandbox")
-             legacy-jail (or (get raw "jail") {})
-             legacy-jail* (if (map? legacy-jail) legacy-jail {})
-             normalized-filesystem (if legacy-filesystem
-                                     (-> raw
-                                         (dissoc "filesystem")
-                                         (assoc "jail" (assoc legacy-jail*
-                                                         "filesystem"
-                                                         (if (map? (get legacy-jail* "filesystem"))
-                                                           (merge (get legacy-jail* "filesystem")
-                                                                  legacy-filesystem)
-                                                           legacy-filesystem))))
-                                     (dissoc raw "filesystem"))
-             existing-jail (get normalized-filesystem "jail")
-             with-legacy-sandbox
-             (if (and (boolean? legacy-sandbox)
-                      (or (not (map? existing-jail)) (not (contains? existing-jail "enabled"))))
-               (assoc-in normalized-filesystem ["jail" "enabled"] legacy-sandbox)
-               normalized-filesystem)
-             strip-legacy-sandbox? (boolean? legacy-sandbox)]
+          (let [legacy-filesystem (get raw "filesystem")
+                legacy-sandbox (get raw "sandbox")
+                legacy-jail (or (get raw "jail") {})
+                legacy-jail* (if (map? legacy-jail) legacy-jail {})
+                normalized-filesystem
+                (if legacy-filesystem
+                  (-> raw
+                      (dissoc "filesystem")
+                      (assoc "jail" (assoc legacy-jail*
+                                      "filesystem" (if (map? (get legacy-jail* "filesystem"))
+                                                     (merge (get legacy-jail* "filesystem")
+                                                            legacy-filesystem)
+                                                     legacy-filesystem))))
+                  (dissoc raw "filesystem"))
+                existing-jail (get normalized-filesystem "jail")
+                with-legacy-sandbox
+                (if (and (boolean? legacy-sandbox)
+                         (or (not (map? existing-jail)) (not (contains? existing-jail "enabled"))))
+                  (assoc-in normalized-filesystem ["jail" "enabled"] legacy-sandbox)
+                  normalized-filesystem)
+                strip-legacy-sandbox? (boolean? legacy-sandbox)]
 
             (if strip-legacy-sandbox?
               (dissoc with-legacy-sandbox "sandbox")
@@ -939,11 +928,10 @@
   (mapv (fn [^String p]
           (let [f (io/file p)]
             (if (.isFile f)
-              (let
-                [^java.nio.file.attribute.FileTime ft
-                 (try (Files/getLastModifiedTime (.toPath f)
-                                                 (make-array java.nio.file.LinkOption 0))
-                      (catch Throwable _ nil))]
+              (let [^java.nio.file.attribute.FileTime ft
+                    (try (Files/getLastModifiedTime (.toPath f)
+                                                    (make-array java.nio.file.LinkOption 0))
+                         (catch Throwable _ nil))]
                 [p (if ft (.to ft java.util.concurrent.TimeUnit/NANOSECONDS) (.lastModified f))
                  (.length f)])
               [p nil nil])))
@@ -964,20 +952,18 @@
 
    Memoized against the sources' mtime+size (see `config-raw-cache`)."
   []
-  (let
-    [stamp
-     (config-source-stamp)
+  (let [stamp
+        (config-source-stamp)
 
-     cached
-     @config-raw-cache]
+        cached
+        @config-raw-cache]
 
     (if (and cached (= (:stamp cached) stamp))
       (:value cached)
-      (let
-        [value (deep-merge-config (load-global-yaml-config-raw)
-                                  (load-global-config-raw)
-                                  (load-project-root-config-raw)
-                                  (load-project-config-raw))]
+      (let [value (deep-merge-config (load-global-yaml-config-raw)
+                                     (load-global-config-raw)
+                                     (load-project-root-config-raw)
+                                     (load-project-config-raw))]
         (reset! config-raw-cache {:stamp stamp :value value})
         value))))
 
@@ -1002,15 +988,14 @@
   "Return the search overlay as an internal keyword-keyed map, or nil when unset.
    The source configuration remains string-keyed and spec-validated."
   []
-  (let
-    [search
-     (get (load-config-raw) "search")
+  (let [search
+        (get (load-config-raw) "search")
 
-     include-gitignored-paths
-     (get search "include_gitignored_paths")
+        include-gitignored-paths
+        (get search "include_gitignored_paths")
 
-     always-exclude
-     (get search "always_exclude")]
+        always-exclude
+        (get search "always_exclude")]
 
     (when (or (seq include-gitignored-paths) (seq always-exclude))
       {:include-gitignored-paths (mapv str include-gitignored-paths)
@@ -1022,28 +1007,26 @@
    Persisted model maps win by name so custom metadata survives, while an old
    narrowed list can no longer hide models supplied by the provider preset."
   [provider]
-  (let
-    [template
-     (provider-template (:id provider))
+  (let [template
+        (provider-template (:id provider))
 
-     models
-     (->> (concat (:models provider) (:default-models template))
-          (reduce (fn [{:keys [seen models] :as acc} model]
-                    (if-let
-                      [model-name (some-> (model-name model)
-                                          str
-                                          str/trim
-                                          not-empty)]
-                      (if (contains? seen model-name)
-                        acc
-                        {:seen (conj seen model-name)
-                         :models (conj models
-                                       (if (map? model)
-                                         (assoc model :name model-name)
-                                         {:name model-name}))})
-                      acc))
-                  {:seen #{} :models []})
-          :models)]
+        models
+        (->> (concat (:models provider) (:default-models template))
+             (reduce (fn [{:keys [seen models] :as acc} model]
+                       (if-let [model-name (some-> (model-name model)
+                                                   str
+                                                   str/trim
+                                                   not-empty)]
+                         (if (contains? seen model-name)
+                           acc
+                           {:seen (conj seen model-name)
+                            :models (conj models
+                                          (if (map? model)
+                                            (assoc model :name model-name)
+                                            {:name model-name}))})
+                         acc))
+                     {:seen #{} :models []})
+             :models)]
 
     (cond-> provider
       (and (nil? (:base-url provider)) (:base-url template))
@@ -1077,17 +1060,16 @@
 
 (defn- active-provider-entry
   [config]
-  (let
-    [provider-entries
-     (or (:providers config) (get config "providers"))
+  (let [provider-entries
+        (or (:providers config) (get config "providers"))
 
-     default-id
-     (or (:default-provider config) (get config "default_provider"))
+        default-id
+        (or (:default-provider config) (get config "default_provider"))
 
-     id-str
-     (fn [value]
-       (cond (keyword? value) (name value)
-             (some? value) (str value)))]
+        id-str
+        (fn [value]
+          (cond (keyword? value) (name value)
+                (some? value) (str value)))]
 
     (or (when default-id
           (some #(when (= (id-str default-id) (id-str (or (:id %) (get % "id")))) %)
@@ -1101,10 +1083,9 @@
 
 (defn- emit-provider-selected!
   [{:keys [previous-provider provider config source]}]
-  (when-let
-    [hook (some-> (:id provider)
-                  registry/provider-by-id
-                  :provider/on-selected-fn)]
+  (when-let [hook (some-> (:id provider)
+                          registry/provider-by-id
+                          :provider/on-selected-fn)]
     (try (hook
            {:previous-provider previous-provider :provider provider :config config :source source})
          (catch Throwable t
@@ -1135,12 +1116,11 @@
    write-then-chmod) so a secret is never briefly world-readable, falling
    back to plain `spit` on a non-POSIX filesystem."
   [^String path ^String content]
-  (let
-    [p
-     (.toPath (io/file path))
+  (let [p
+        (.toPath (io/file path))
 
-     attr
-     (PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString "rw-------"))]
+        attr
+        (PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString "rw-------"))]
 
     (try (Files/deleteIfExists p)
          (Files/createFile p (into-array FileAttribute [attr]))
@@ -1179,12 +1159,11 @@
    ;; would bake the secret into `state.yml` and quietly destroy the reference.
    (let [wire-config (restore-env-refs (->yaml-safe config))]
      (config-spec/assert-config! wire-config state-path)
-     (let
-       [previous-provider (some-> (active-provider-entry (load-global-config-raw))
-                                  runtime-config)
-        selected-provider (some-> (active-provider-entry wire-config)
-                                  runtime-config)
-        runtime-config (runtime-config wire-config)]
+     (let [previous-provider (some-> (active-provider-entry (load-global-config-raw))
+                                     runtime-config)
+           selected-provider (some-> (active-provider-entry wire-config)
+                                     runtime-config)
+           runtime-config (runtime-config wire-config)]
 
        (ensure-private-dir! config-dir)
        (spit-private! state-path (yamlstar/dump wire-config))
@@ -1200,18 +1179,17 @@
    machine config, preserving unrelated keys."
   ([provider-id] (remove-config-provider! provider-id nil))
   ([provider-id source]
-   (let
-     [raw
-      (or (load-global-config-raw) {})
+   (let [raw
+         (or (load-global-config-raw) {})
 
-      providers
-      (vec (get raw "providers"))
+         providers
+         (vec (get raw "providers"))
 
-      provider-id'
-      (if (keyword? provider-id) (name provider-id) (str provider-id))
+         provider-id'
+         (if (keyword? provider-id) (name provider-id) (str provider-id))
 
-      providers*
-      (vec (remove #(= provider-id' (get % "id")) providers))]
+         providers*
+         (vec (remove #(= provider-id' (get % "id")) providers))]
 
      (when (not= providers providers*)
        (save-config!
@@ -1286,12 +1264,11 @@
    environment; extension code should call `extension-env-value` when
    it wants config-over-env resolution."
   []
-  (let
-    [raw
-     (load-config-raw)
+  (let [raw
+        (load-config-raw)
 
-     m
-     (when (map? raw) (get raw extension-env-config-key))]
+        m
+        (when (map? raw) (get raw extension-env-config-key))]
 
     (if (map? m)
       (into {}
@@ -1304,12 +1281,11 @@
   "Return source and value metadata for an extension-declared env var.
    `:source` is one of `:config`, `:env`, or `:unset`."
   [name]
-  (let
-    [name'
-     (str name)
+  (let [name'
+        (str name)
 
-     overrides
-     (extension-env-overrides)]
+        overrides
+        (extension-env-overrides)]
 
     (if-let [configured (get overrides name')]
       {:name name' :source :config :value configured}
@@ -1328,23 +1304,22 @@
    Blank/nil `value` removes the override, revealing the process env
    value again if one exists. Preserves all other config keys."
   [name value]
-  (let
-    [name'
-     (str name)
+  (let [name'
+        (str name)
 
-     raw
-     (or (load-global-config-raw) {})
+        raw
+        (or (load-global-config-raw) {})
 
-     value'
-     (when (string? value) (not-empty (str/trim value)))
+        value'
+        (when (string? value) (not-empty (str/trim value)))
 
-     envs
-     (cond-> (or (get raw extension-env-config-key) {})
-       value'
-       (assoc name' value')
+        envs
+        (cond-> (or (get raw extension-env-config-key) {})
+          value'
+          (assoc name' value')
 
-       (not value')
-       (dissoc name'))]
+          (not value')
+          (dissoc name'))]
 
     (save-config! (if (seq envs)
                     (assoc raw extension-env-config-key envs)

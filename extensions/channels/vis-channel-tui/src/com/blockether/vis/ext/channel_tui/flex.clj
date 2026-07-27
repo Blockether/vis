@@ -37,6 +37,7 @@
   (and (map? x) (contains? x :w) (contains? x :paint)))
 
 (defn width ^long [n] (long (:w n 0)))
+
 (defn height ^long [n] (long (:h n 1)))
 
 (defn text

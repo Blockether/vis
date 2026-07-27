@@ -302,12 +302,11 @@
   #(and (closed-map? mcp-server-schema %)
         ;; Exactly ONE transport-defining key. Prevents a stdio spec with a
         ;; stray :url silently switching to http via inference.
-        (let
-          [has-cmd?
-           (non-blank-string? (get % "command"))
+        (let [has-cmd?
+              (non-blank-string? (get % "command"))
 
-           has-url?
-           (non-blank-string? (get % "url"))]
+              has-url?
+              (non-blank-string? (get % "url"))]
 
           (and (or has-cmd? has-url?) (not (and has-cmd? has-url?))))))
 (s/def ::mcp-servers
@@ -384,9 +383,8 @@
          #(rooted-path-list? (or (:deny-exec %) []))
          #(s/valid? (get network-schema "inbound_ports") (:inbound-ports %))
          #(env-var-name-list? (or (:env-passthrough %) []))
-         #(let
-            [d
-             (:path-descriptions %)]
+         #(let [d
+                (:path-descriptions %)]
 
             (or (nil? d) (string-map? d)))))
 
@@ -408,9 +406,8 @@
    A bare name is looked up on every PATH directory (all matches denied); an
    absolute/home path is denied verbatim."
   [names]
-  (let
-    [dirs (some-> (System/getenv "PATH")
-                  (str/split (re-pattern java.io.File/pathSeparator)))]
+  (let [dirs (some-> (System/getenv "PATH")
+                     (str/split (re-pattern java.io.File/pathSeparator)))]
     (into []
           (comp (mapcat (fn [n]
                           (let [n (str n)]
@@ -444,42 +441,42 @@
    `search: false` marks it out of the default search sweep."
   [config]
   (assert-config! config)
-  (let
-    [jail
-     (get config "jail" {})
+  (let [jail
+        (get config "jail" {})
 
-     entries
-     (get-in config ["workspace" "filesystem"] [])
+        entries
+        (get-in config ["workspace" "filesystem"] [])
 
-     by-id
-     (reduce (fn [m e]
-               (assoc m (get e "id") e))
-             {}
-             entries)
+        by-id
+        (reduce (fn [m e]
+                  (assoc m (get e "id") e))
+                {}
+                entries)
 
-     allowed
-     ;; The workspace catalog is the single source of roots. When the jail is
-     ;; DISABLED it confines nothing, so the whole catalog is available and must
-     ;; still appear in the session — `jail.filesystem.allow` is irrelevant and a
-     ;; stale/renamed id in it can never deny-safe the config. Only a live
-     ;; (enabled) jail narrows to the `allow` subset and treats an unknown id as
-     ;; a hard config error.
-     (if (true? (get jail "enabled"))
-       (into []
-             (keep (fn [id]
-                     (or (get by-id id)
-                         (throw (ex-info
-                                  (str "jail.filesystem.allow references unknown workspace id: " id)
-                                  {:type :vis/invalid-config :id id})))))
-             (get-in jail ["filesystem" "allow"] []))
-       entries)
+        allowed
+        ;; The workspace catalog is the single source of roots. When the jail is
+        ;; DISABLED it confines nothing, so the whole catalog is available and must
+        ;; still appear in the session — `jail.filesystem.allow` is irrelevant and a
+        ;; stale/renamed id in it can never deny-safe the config. Only a live
+        ;; (enabled) jail narrows to the `allow` subset and treats an unknown id as
+        ;; a hard config error.
+        (if (true? (get jail "enabled"))
+          (into []
+                (keep (fn [id]
+                        (or (get by-id id)
+                            (throw (ex-info
+                                     (str "jail.filesystem.allow references unknown workspace id: "
+                                          id)
+                                     {:type :vis/invalid-config :id id})))))
+                (get-in jail ["filesystem" "allow"] []))
+          entries)
 
-     descriptions
-     (into {}
-           (keep (fn [e]
-                   (when-let [d (get e "description")]
-                     [(get e "path") d])))
-           allowed)]
+        descriptions
+        (into {}
+              (keep (fn [e]
+                      (when-let [d (get e "description")]
+                        [(get e "path") d])))
+              allowed)]
 
     (assert-process-jail-config!
       {:disabled? (not (true? (get jail "enabled")))
@@ -523,12 +520,11 @@
    is enforced alongside the filesystem and inbound-port confinement."
   [config]
   (assert-config! config)
-  (let
-    [jail
-     (get config "jail" {})
+  (let [jail
+        (get config "jail" {})
 
-     net
-     (get jail "network" {})]
+        net
+        (get jail "network" {})]
 
     (if-not (true? (get jail "enabled"))
       {}

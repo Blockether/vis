@@ -70,14 +70,13 @@
         (expect (not-any? #(str/ends-with? % "?") ks))))
   (it
     "the string-keyed tokens/cost/utilization maps ride the wire IDENTICAL (no re-keying anywhere)"
-    (let
-      [m
-       {:tokens {"input" 1 "cache_created" 2}
-        :cost {"total_cost" 0.1 "model" "m"}
-        :utilization {"saturation" 9 "headroom_tokens" 10}}
+    (let [m
+          {:tokens {"input" 1 "cache_created" 2}
+           :cost {"total_cost" 0.1 "model" "m"}
+           :utilization {"saturation" 9 "headroom_tokens" 10}}
 
-       c
-       (wire/canonical m)]
+          c
+          (wire/canonical m)]
 
       (expect (= (:tokens m) (get c "tokens")))
       (expect (= (:cost m) (get c "cost")))
@@ -88,23 +87,22 @@
   "Transcript-search matches carry a NESTED `hits` vector. Nesting is exactly
    where a hand-rolled encoder drifts back into keywords, so pin it."
   (it "encodes a match and its nested hits as snake_case STRING keys"
-      (let
-        [match
-         {:session_id "abc"
-          :is_in_request true
-          :is_in_reply false
-          :request_snippet "…needle…"
-          :reply_snippet nil
-          :hits [{:side "request" :snippet "…needle…" :at 1700000000000}]}
+      (let [match
+            {:session_id "abc"
+             :is_in_request true
+             :is_in_reply false
+             :request_snippet "…needle…"
+             :reply_snippet nil
+             :hits [{:side "request" :snippet "…needle…" :at 1700000000000}]}
 
-         w
-         (wire/canonical [match])
+            w
+            (wire/canonical [match])
 
-         hit
-         (-> w
-             first
-             (get "hits")
-             first)]
+            hit
+            (-> w
+                first
+                (get "hits")
+                first)]
 
         (expect (= #{"session_id" "is_in_request" "is_in_reply" "request_snippet" "reply_snippet"
                      "hits"}
@@ -132,18 +130,16 @@
   (it "a BigDecimal keeps the canonical == roundtrip invariant"
       (expect (= {"v" 1.5} (wire/canonical {:v 1.5M}))))
   (it "an event carrying such values still renders an SSE frame and a poll batch"
-      (let
-        [event (wire/canonical {:seq 1
-                                :type "iteration.completed"
-                                :tool-result {:counts {1 "a"} :ratio (/ 0.0 0.0)}})]
+      (let [event (wire/canonical {:seq 1
+                                   :type "iteration.completed"
+                                   :tool-result {:counts {1 "a"} :ratio (/ 0.0 0.0)}})]
         (expect (str/starts-with? (wire/sse-frame event)
                                   "id: 1\nevent: iteration.completed\ndata: "))
         (expect (= [event] (wire/parse-json (wire/json-str [event]))))))
   (it "the invariant holds for every awkward scalar"
-      (doseq
-        [x [{1 :a} {nil 1} {true 1} {[1 2] :k} {:v 1.0M} {:v (/ 0.0 0.0)}
-            {:v Double/POSITIVE_INFINITY} {:v (float 0.5)} {:v (/ 1 3)} {:v (biginteger 10)}
-            {:v #{1 2}} {:v \c} {:v Long/MAX_VALUE}]]
+      (doseq [x [{1 :a} {nil 1} {true 1} {[1 2] :k} {:v 1.0M} {:v (/ 0.0 0.0)}
+                 {:v Double/POSITIVE_INFINITY} {:v (float 0.5)} {:v (/ 1 3)} {:v (biginteger 10)}
+                 {:v #{1 2}} {:v \c} {:v Long/MAX_VALUE}]]
         (expect (= (wire/canonical x) (wire/parse-json (wire/json-str x)))
                 (str "roundtrip differs for " (pr-str x))))))
 
@@ -152,15 +148,14 @@
   "Truncation must never emit a LONE surrogate: half an emoji is not valid text
    and corrupts every UTF-8 consumer downstream."
   (it "a cut landing inside a surrogate pair steps back instead of splitting it"
-      (let
-        [s
-         (str "okxxxxxxxxxx" "😀😀")
+      (let [s
+            (str "okxxxxxxxxxx" "😀😀")
 
-         ;; A LONE surrogate cannot be encoded: the UTF-8 round-trip
-         ;; replaces it with `?`, which is exactly how it reaches a client.
-         utf8-clean?
-         (fn [^String t]
-           (= t (String. (.getBytes t "UTF-8") "UTF-8")))]
+            ;; A LONE surrogate cannot be encoded: the UTF-8 round-trip
+            ;; replaces it with `?`, which is exactly how it reaches a client.
+            utf8-clean?
+            (fn [^String t]
+              (= t (String. (.getBytes t "UTF-8") "UTF-8")))]
 
         (doseq [limit [11 12 13 14 15]]
           (expect (utf8-clean? (wire/bounded-str s limit))

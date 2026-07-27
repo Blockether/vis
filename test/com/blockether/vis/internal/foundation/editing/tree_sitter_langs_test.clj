@@ -52,9 +52,8 @@
 (defdescribe parse-coverage-test
              (doseq [[ext src] lang-bank]
                (it (str ext " parses to a clean named tree")
-                   (let
-                     [lang (lang-of ext)
-                      r (z/inspect lang src [])]
+                   (let [lang (lang-of ext)
+                         r (z/inspect lang src [])]
 
                      (expect (some? lang))
                      (expect (:ok? r))
@@ -67,9 +66,8 @@
   [lang src]
   (let [root (z/inspect lang src [])]
     (every? (fn [{:keys [idx]}]
-              (let
-                [node (z/inspect lang src [idx])
-                 r (z/edit lang src [idx] :replace (:text node))]
+              (let [node (z/inspect lang src [idx])
+                    r (z/edit lang src [idx] :replace (:text node))]
 
                 (and (:ok? r) (= src (:new-source r)))))
             (:children root))))
@@ -106,13 +104,12 @@
 (defdescribe content-edit-test
              (doseq [{:keys [ext needle code want gone]} edit-cases]
                (it (str ext " replaces a node and the file still parses")
-                   (let
-                     [lang (lang-of ext)
-                      src (some (fn [[e s]]
-                                  (when (= e ext) s))
-                                lang-bank)
-                      i (child-idx lang src needle)
-                      r (z/edit lang src [i] :replace code)]
+                   (let [lang (lang-of ext)
+                         src (some (fn [[e s]]
+                                     (when (= e ext) s))
+                                   lang-bank)
+                         i (child-idx lang src needle)
+                         r (z/edit lang src [i] :replace code)]
 
                      (expect (some? i))
                      (expect (:ok? r))
@@ -129,14 +126,13 @@
 (defdescribe syntax-refusal-test
              (doseq [{:keys [ext code]} refusal-cases]
                (it (str ext " refuses a syntax-breaking splice")
-                   (let
-                     [lang (lang-of ext)
-                      src (some (fn [[e s]]
-                                  (when (= e ext) s))
-                                lang-bank)
-                      i (child-idx lang src "add")
-                      i (or i 0)
-                      r (z/edit lang src [i] :replace code)]
+                   (let [lang (lang-of ext)
+                         src (some (fn [[e s]]
+                                     (when (= e ext) s))
+                                   lang-bank)
+                         i (child-idx lang src "add")
+                         i (or i 0)
+                         r (z/edit lang src [i] :replace code)]
 
                      (expect (= :syntax-broken (get-in r [:error :reason])))))))
 
@@ -190,9 +186,8 @@
                (it (str ext " round-trips EVERY nested node byte-for-byte")
                    (let [lang (lang-of ext)]
                      (expect (true? (every? (fn [p]
-                                              (let
-                                                [node (z/inspect lang src p)
-                                                 r (z/edit lang src p :replace (:text node))]
+                                              (let [node (z/inspect lang src p)
+                                                    r (z/edit lang src p :replace (:text node))]
 
                                                 (and (:ok? r) (= src (:new-source r)))))
                                             (all-node-paths lang src))))))))
@@ -202,10 +197,9 @@
 (defdescribe deep-condition-edit-test
              (doseq [[ext src] deep-bank]
                (it (str ext " edits a deep if-condition (acc > 10 -> acc > 5)")
-                   (let
-                     [lang (lang-of ext)
-                      p (find-path lang src #(= "acc > 10" (str/trim (:text %))))
-                      r (when p (z/edit lang src p :replace "acc > 5"))]
+                   (let [lang (lang-of ext)
+                         p (find-path lang src #(= "acc > 10" (str/trim (:text %))))
+                         r (when p (z/edit lang src p :replace "acc > 5"))]
 
                      (expect (some? p))
                      (expect (:ok? r))
@@ -215,18 +209,16 @@
 
 ;; Deep statement edit: rewrite the loop body accumulator.
 (defdescribe deep-loop-body-edit-test
-             (doseq
-               [[ext needle code] [["py" "acc += x" "acc -= x"] ["js" "acc += x" "acc -= x"]
-                                   ["java" "acc += x" "acc -= x"] ["rs" "acc += x" "acc -= x"]
-                                   ["go" "acc += x" "acc -= x"]]]
+             (doseq [[ext needle code] [["py" "acc += x" "acc -= x"] ["js" "acc += x" "acc -= x"]
+                                        ["java" "acc += x" "acc -= x"] ["rs" "acc += x" "acc -= x"]
+                                        ["go" "acc += x" "acc -= x"]]]
                (it (str ext " edits the loop-body accumulator statement")
-                   (let
-                     [lang (lang-of ext)
-                      src (some (fn [[e s]]
-                                  (when (= e ext) s))
-                                deep-bank)
-                      p (find-path lang src #(= needle (str/trim (:text %))))
-                      r (when p (z/edit lang src p :replace code))]
+                   (let [lang (lang-of ext)
+                         src (some (fn [[e s]]
+                                     (when (= e ext) s))
+                                   deep-bank)
+                         p (find-path lang src #(= needle (str/trim (:text %))))
+                         r (when p (z/edit lang src p :replace code))]
 
                      (expect (some? p))
                      (expect (:ok? r))
@@ -238,10 +230,9 @@
   comment-node-test
   (doseq [[ext src] deep-bank]
     (it (str ext " exposes a comment node that round-trips")
-        (let
-          [lang (lang-of ext)
-           p (find-path lang src #(str/includes? (str/lower-case (str (:kind %))) "comment"))
-           node (when p (z/inspect lang src p))]
+        (let [lang (lang-of ext)
+              p (find-path lang src #(str/includes? (str/lower-case (str (:kind %))) "comment"))
+              node (when p (z/inspect lang src p))]
 
           (expect (some? p))
           (expect (str/includes? (str/lower-case (:kind node)) "comment"))

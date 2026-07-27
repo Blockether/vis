@@ -50,15 +50,14 @@
 
 (defn- pin-session!
   [store workspace-id]
-  (let
-    [sid
-     (str (random-uuid))
+  (let [sid
+        (str (random-uuid))
 
-     state-id
-     (str (random-uuid))
+        state-id
+        (str (random-uuid))
 
-     ds
-     (:datasource store)]
+        ds
+        (:datasource store)]
 
     (jdbc/execute! ds
                    ["INSERT INTO session_soul (id, channel, created_at) VALUES (?,?,?)" sid "tui"
@@ -91,41 +90,37 @@
     "an added root reaches every channel in the canonical string-keyed shape"
     (with-store
       (fn [store]
-        (let
-          [base
-           (temp-dir "vis-rt-base")
+        (let [base
+              (temp-dir "vis-rt-base")
 
-           extra
-           (temp-dir "vis-rt-extra")]
+              extra
+              (temp-dir "vis-rt-extra")]
 
           (try
-            (let
-              [seed
-               (ps/db-workspace-insert! store
-                                        {:id (str (random-uuid))
-                                         :repo-id "rt"
-                                         :repo-root base
-                                         :root base
-                                         :state :active
-                                         :fork-ms 0})
+            (let [seed
+                  (ps/db-workspace-insert! store
+                                           {:id (str (random-uuid))
+                                            :repo-id "rt"
+                                            :repo-root base
+                                            :root base
+                                            :state :active
+                                            :fork-ms 0})
 
-               wid
-               (:id seed)]
+                  wid
+                  (:id seed)]
 
               ;; C-a: add `extra` as an extra filesystem root (trunk session → live).
-              (with-redefs
-                [ws/select-backend (fn [_ _ _]
-                                     (local-test-backend))]
+              (with-redefs [ws/select-backend (fn [_ _ _]
+                                                (local-test-backend))]
                 (ws/add-filesystem-root! store wid extra))
-              (let
-                [info
-                 (session-workspace-shape (ws/get store wid))
+              (let [info
+                    (session-workspace-shape (ws/get store wid))
 
-                 decoded
-                 (hop info)
+                    decoded
+                    (hop info)
 
-                 raw
-                 (wire/parse-json (wire/json-str info))]
+                    raw
+                    (wire/parse-json (wire/json-str info))]
 
                 ;; The decode is a VERBATIM passthrough — one canonical shape.
                 (expect (= raw decoded))
@@ -161,31 +156,30 @@
   draft-list-survives-the-wire-test
   (it
     "a parked draft reaches every channel's picker in the canonical string shape"
-    (let
-      [d1
-       {:id (str (random-uuid))
-        :repo-id "rt"
-        :repo-root "/repo"
-        :root "/repo/.vis/draft-a"
-        :label "feature-a"
-        :fork-ms 111
-        :state :active}
+    (let [d1
+          {:id (str (random-uuid))
+           :repo-id "rt"
+           :repo-root "/repo"
+           :root "/repo/.vis/draft-a"
+           :label "feature-a"
+           :fork-ms 111
+           :state :active}
 
-       d2
-       {:id (str (random-uuid))
-        :repo-id "rt"
-        :repo-root "/repo"
-        :root "/repo/.vis/draft-b"
-        :label "feature-b"
-        :fork-ms 222
-        :state :active}
+          d2
+          {:id (str (random-uuid))
+           :repo-id "rt"
+           :repo-root "/repo"
+           :root "/repo/.vis/draft-b"
+           :label "feature-b"
+           :fork-ms 222
+           :state :active}
 
-       ;; the session is currently IN d2 — it rides is_current true.
-       info
-       [(draft-list-shape d1 false) (draft-list-shape d2 true)]
+          ;; the session is currently IN d2 — it rides is_current true.
+          info
+          [(draft-list-shape d1 false) (draft-list-shape d2 true)]
 
-       decoded
-       (wire/parse-json (wire/json-str info))]
+          decoded
+          (wire/parse-json (wire/json-str info))]
 
       ;; Verbatim passthrough — ONE canonical shape on both transports.
       (expect (= decoded info))
@@ -204,50 +198,46 @@
     "creates and abandons through daemon state while rejecting foreign-repo ids"
     (with-store
       (fn [store]
-        (let
-          [base
-           (temp-dir "vis-gateway-draft-base")
+        (let [base
+              (temp-dir "vis-gateway-draft-base")
 
-           drafts-home
-           (temp-dir "vis-gateway-drafts")
+              drafts-home
+              (temp-dir "vis-gateway-drafts")
 
-           foreign-root
-           (temp-dir "vis-gateway-foreign")]
+              foreign-root
+              (temp-dir "vis-gateway-foreign")]
 
           (try
             (spit (io/file base "seed.txt") "seed")
-            (let
-              [trunk
-               (ps/db-workspace-insert! store
-                                        {:repo-id "seed-repo"
-                                         :repo-root base
-                                         :root base
-                                         :workspace-kind :trunk
-                                         :workspace-backend :live
-                                         :state :active})
+            (let [trunk
+                  (ps/db-workspace-insert! store
+                                           {:repo-id "seed-repo"
+                                            :repo-root base
+                                            :root base
+                                            :workspace-kind :trunk
+                                            :workspace-backend :live
+                                            :state :active})
 
-               {:keys [sid state-id]}
-               (pin-session! store (:id trunk))
+                  {:keys [sid state-id]}
+                  (pin-session! store (:id trunk))
 
-               foreign
-               (ps/db-workspace-insert! store
-                                        {:repo-id "foreign-repo"
-                                         :repo-root foreign-root
-                                         :root (str foreign-root "/draft")
-                                         :workspace-kind :draft
-                                         :workspace-backend :rift
-                                         :state :active
-                                         :fork-ms 1
-                                         :apply-fork-ms 1})]
+                  foreign
+                  (ps/db-workspace-insert! store
+                                           {:repo-id "foreign-repo"
+                                            :repo-root foreign-root
+                                            :root (str foreign-root "/draft")
+                                            :workspace-kind :draft
+                                            :workspace-backend :rift
+                                            :state :active
+                                            :fork-ms 1
+                                            :apply-fork-ms 1})]
 
               (binding [ws/*drafts-home* (io/file drafts-home)]
                 (with-redefs [lp/db-info (constantly store)]
-                  (let
-                    [created (with-redefs
-                               [ws/select-backend (fn [_ _ _]
-                                                    (local-test-backend))]
-                               (state/create-draft! sid "picker-created" false))
-                     draft-id (get created "id")]
+                  (let [created (with-redefs [ws/select-backend (fn [_ _ _]
+                                                                  (local-test-backend))]
+                                  (state/create-draft! sid "picker-created" false))
+                        draft-id (get created "id")]
 
                     (expect (true? (get created "is_draft")))
                     (expect (= "picker-created" (get created "label")))
@@ -256,14 +246,13 @@
                       (expect (false? (get abandoned "is_draft")))
                       (expect (= :discarded (:state (ws/get store draft-id))))
                       (expect (empty? (state/list-drafts sid))))
-                    (let
-                      [before (:id (ws/for-session store state-id))
-                       resume-error (try (state/resume-draft! sid (:id foreign))
-                                         nil
-                                         (catch clojure.lang.ExceptionInfo e (ex-data e)))
-                       abandon-error (try (state/abandon-draft! sid (:id foreign) "wrong repo")
-                                          nil
-                                          (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                    (let [before (:id (ws/for-session store state-id))
+                          resume-error (try (state/resume-draft! sid (:id foreign))
+                                            nil
+                                            (catch clojure.lang.ExceptionInfo e (ex-data e)))
+                          abandon-error (try (state/abandon-draft! sid (:id foreign) "wrong repo")
+                                             nil
+                                             (catch clojure.lang.ExceptionInfo e (ex-data e)))]
 
                       (expect (= :workspace/draft-repo-mismatch (:type resume-error)))
                       (expect (= :workspace/draft-repo-mismatch (:type abandon-error)))

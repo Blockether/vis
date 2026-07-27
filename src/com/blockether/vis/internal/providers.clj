@@ -85,40 +85,38 @@
    (resolving OAuth tokens via the provider's `:provider/get-token-fn`
    when `:api-key` is absent) and ask svar."
   [provider]
-  (try
-    (let
-      [provider-id
-       (:id provider)
+  (try (let [provider-id
+             (:id provider)
 
-       ;; ->svar-provider needs at least one model on the provider
-       ;; for `normalize-provider` not to throw. The concrete model
-       ;; doesn't matter for `/models`.
-       probe
-       (cond-> provider
-         (empty? (:models provider))
-         (assoc :models [{:name "probe"}]))
+             ;; ->svar-provider needs at least one model on the provider
+             ;; for `normalize-provider` not to throw. The concrete model
+             ;; doesn't matter for `/models`.
+             probe
+             (cond-> provider
+               (empty? (:models provider))
+               (assoc :models [{:name "probe"}]))
 
-       svar-provider
-       (config/->svar-provider probe)
+             svar-provider
+             (config/->svar-provider probe)
 
-       ;; Honor `:router` opts (retry/network/budget) so the probe
-       ;; respects the same policy a real turn would.
-       router
-       (svar/make-router [svar-provider] (config/router-opts (config/current-config)))
+             ;; Honor `:router` opts (retry/network/budget) so the probe
+             ;; respects the same policy a real turn would.
+             router
+             (svar/make-router [svar-provider] (config/router-opts (config/current-config)))
 
-       raw
-       (svar/models! router)]
+             raw
+             (svar/models! router)]
 
-      (->> raw
-           (map (fn [m]
-                  (or (:id m) (:name m) (str m))))
-           (filter string?)
-           (filter chat-model?)
-           (filter #(config/provider-model-visible? provider-id %))
-           distinct
-           sort
-           vec))
-    (catch Exception _ nil)))
+         (->> raw
+              (map (fn [m]
+                     (or (:id m) (:name m) (str m))))
+              (filter string?)
+              (filter chat-model?)
+              (filter #(config/provider-model-visible? provider-id %))
+              distinct
+              sort
+              vec))
+       (catch Exception _ nil)))
 
 (def ^:private dated-variant-pattern
   "Matches model IDs that are dated snapshots, e.g. gpt-4o-2024-08-06."
@@ -153,27 +151,26 @@
    their own 'show all' affordance from `:hidden-count`."
   ([provider] (model-options provider (default-model-names provider) false))
   ([provider default-models show-all?]
-   (let
-     [provider-id
-      (:id provider)
+   (let [provider-id
+         (:id provider)
 
-      fetched
-      (or (fetch-models provider) [])
+         fetched
+         (or (fetch-models provider) [])
 
-      defaults
-      (filterv #(config/provider-model-visible? provider-id %) (or default-models []))
+         defaults
+         (filterv #(config/provider-model-visible? provider-id %) (or default-models []))
 
-      all-ids
-      (->> (concat fetched defaults)
-           distinct
-           sort
-           vec)
+         all-ids
+         (->> (concat fetched defaults)
+              distinct
+              sort
+              vec)
 
-      pinned
-      (pin-default all-ids)
+         pinned
+         (pin-default all-ids)
 
-      visible
-      (if show-all? pinned (filterv (complement dated-variant?) pinned))]
+         visible
+         (if show-all? pinned (filterv (complement dated-variant?) pinned))]
 
      {:models visible :hidden-count (- (count pinned) (count visible))})))
 
@@ -196,51 +193,48 @@
    `{:is-authenticated false :error \"<human hint>\"}` so the channel can
    SAY why the dot is red. Blocking ≤ ~2.5s — call off the render path."
   [provider]
-  (let
-    [base
-     (or (config/provider-base-url provider) (:base-url provider))
+  (let [base
+        (or (config/provider-base-url provider) (:base-url provider))
 
-     label
-     (config/display-label (:id provider))
+        label
+        (config/display-label (:id provider))
 
-     base*
-     {:is-authenticated false :source :local :provider-id (:id provider) :base-url base}]
+        base*
+        {:is-authenticated false :source :local :provider-id (:id provider) :base-url base}]
 
     (if (str/blank? base)
       (assoc base* :error (str label ": no base URL configured"))
-      (let
-        [url
-         (str (str/replace base #"/+$" "") "/models")
+      (let [url
+            (str (str/replace base #"/+$" "") "/models")
 
-         host
-         (url-host base)]
+            host
+            (url-host base)]
 
-        (try (let
-               [client
-                (-> (HttpClient/newBuilder)
-                    (.connectTimeout (Duration/ofMillis 1500))
-                    ;; Force HTTP/1.1: the default client negotiates h2c
-                    ;; (`Upgrade` on plain http) and LM Studio's server
-                    ;; hangs on that upgrade instead of answering — the
-                    ;; probe then times out against a perfectly live
-                    ;; endpoint and the health gate demotes it every turn.
-                    (.version HttpClient$Version/HTTP_1_1)
-                    (.build))
+        (try (let [client
+                   (-> (HttpClient/newBuilder)
+                       (.connectTimeout (Duration/ofMillis 1500))
+                       ;; Force HTTP/1.1: the default client negotiates h2c
+                       ;; (`Upgrade` on plain http) and LM Studio's server
+                       ;; hangs on that upgrade instead of answering — the
+                       ;; probe then times out against a perfectly live
+                       ;; endpoint and the health gate demotes it every turn.
+                       (.version HttpClient$Version/HTTP_1_1)
+                       (.build))
 
-                ^HttpRequest$Builder rb
-                (HttpRequest/newBuilder (URI/create url))
+                   ^HttpRequest$Builder rb
+                   (HttpRequest/newBuilder (URI/create url))
 
-                req
-                (-> rb
-                    (.timeout (Duration/ofMillis 2500))
-                    (.GET)
-                    (.build))
+                   req
+                   (-> rb
+                       (.timeout (Duration/ofMillis 2500))
+                       (.GET)
+                       (.build))
 
-                resp
-                (.send client req (HttpResponse$BodyHandlers/discarding))
+                   resp
+                   (.send client req (HttpResponse$BodyHandlers/discarding))
 
-                code
-                (.statusCode resp)]
+                   code
+                   (.statusCode resp)]
 
                ;; Any answer below 500 means the server is up — even a
                ;; 401/404 proves the port is live. 5xx is the server failing.
@@ -366,21 +360,20 @@
 
 (defn format-limit-row
   [{:keys [label scope kind is-unlimited used limit remaining note window]}]
-  (let
-    [quota
-     (cond is-unlimited "unlimited"
-           (number? limit) (str (when (number? used) (str used "/"))
-                                limit
-                                (when (number? remaining) (str " (" remaining " left)")))
-           (number? used) (str "used " used)
-           :else nil)
+  (let [quota
+        (cond is-unlimited "unlimited"
+              (number? limit) (str (when (number? used) (str used "/"))
+                                   limit
+                                   (when (number? remaining) (str " (" remaining " left)")))
+              (number? used) (str "used " used)
+              :else nil)
 
-     attrs
-     (->> [(some-> scope
-                   name)
-           (some-> kind
-                   name) (format-limit-window window)]
-          (remove nil?))]
+        attrs
+        (->> [(some-> scope
+                      name)
+              (some-> kind
+                      name) (format-limit-window window)]
+             (remove nil?))]
 
     (str label
          (when (seq attrs) (str " [" (str/join ", " attrs) "]"))
@@ -393,26 +386,25 @@
    web status view."
   ([provider] (status-text provider (provider-status provider) (provider-limits-safe provider)))
   ([provider status limits]
-   (let
-     [status
-      (wire/canonical (or status (initial-provider-status provider)))
+   (let [status
+         (wire/canonical (or status (initial-provider-status provider)))
 
-      limits
-      (or limits (initial-provider-limits provider))
+         limits
+         (or limits (initial-provider-limits provider))
 
-      title
-      (str (config/display-label (:id provider)) " Status")
+         title
+         (str (config/display-label (:id provider)) " Status")
 
-      rows
-      (->> status
-           (remove (fn [[k _]]
-                     (= k "is_authenticated")))
-           (sort-by (comp str key))
-           (map (fn [[k v]]
-                  (str (status-entry-label k) ": " (format-status-value v)))))
+         rows
+         (->> status
+              (remove (fn [[k _]]
+                        (= k "is_authenticated")))
+              (sort-by (comp str key))
+              (map (fn [[k v]]
+                     (str (status-entry-label k) ": " (format-status-value v)))))
 
-      dynamic
-      (get-in limits [:dynamic :limits])]
+         dynamic
+         (get-in limits [:dynamic :limits])]
 
      (str/join
        "\n"
@@ -463,27 +455,26 @@
    facts as [[status-text]], structured instead of flat."
   ([provider] (status-md provider (provider-status provider) (provider-limits-safe provider)))
   ([provider status limits]
-   (let
-     [status
-      (wire/canonical (or status (initial-provider-status provider)))
+   (let [status
+         (wire/canonical (or status (initial-provider-status provider)))
 
-      limits
-      (or limits (initial-provider-limits provider))
+         limits
+         (or limits (initial-provider-limits provider))
 
-      label
-      (config/display-label (:id provider))
+         label
+         (config/display-label (:id provider))
 
-      ok?
-      (boolean (get status "is_authenticated"))
+         ok?
+         (boolean (get status "is_authenticated"))
 
-      dynamic
-      (get-in limits [:dynamic :limits])
+         dynamic
+         (get-in limits [:dynamic :limits])
 
-      rpm
-      (get-in limits [:static :rpm])
+         rpm
+         (get-in limits [:static :rpm])
 
-      tpm
-      (get-in limits [:static :tpm])]
+         tpm
+         (get-in limits [:static :tpm])]
 
      (str/join
        "\n"
@@ -582,12 +573,11 @@
    - COLD (first read / just invalidated) → enumerates synchronously ONCE, so
      callers always get a real fleet, never a nil-because-cold."
   []
-  (let
-    [now
-     (System/currentTimeMillis)
+  (let [now
+        (System/currentTimeMillis)
 
-     {:keys [at val]}
-     @fleet-cache]
+        {:keys [at val]}
+        @fleet-cache]
 
     (cond (nil? at) (let [v (configured-providers)]
                       (reset! fleet-cache {:at now :val v})
@@ -625,11 +615,10 @@
   [preset]
   (->> (:default-models preset)
        (keep (fn [model]
-               (when-let
-                 [name (some-> (config/model-name model)
-                               str
-                               str/trim
-                               not-empty)]
+               (when-let [name (some-> (config/model-name model)
+                                       str
+                                       str/trim
+                                       not-empty)]
                  (if (map? model) (assoc model :name name) {:name name}))))
        distinct
        vec))
@@ -650,9 +639,8 @@
                              (not (contains? configured id))
                              detect-fn
                              (try (boolean (detect-fn)) (catch Throwable _ false)))
-                    (let
-                      [tmpl (config/provider-template id)
-                       models (default-model-configs tmpl)]
+                    (let [tmpl (config/provider-template id)
+                          models (default-model-configs tmpl)]
 
                       (when (seq models)
                         (cond-> {:id id :models models}
@@ -678,14 +666,13 @@
    worst — it NEVER throws and NEVER blanks the picker of already-configured
    providers."
   []
-  (let
-    [base
-     (or (try (configured-providers-cached) (catch Throwable _ nil))
-         (try (configured-providers) (catch Throwable _ nil))
-         [])
+  (let [base
+        (or (try (configured-providers-cached) (catch Throwable _ nil))
+            (try (configured-providers) (catch Throwable _ nil))
+            [])
 
-     extras
-     (try (authenticated-preset-providers) (catch Throwable _ nil))]
+        extras
+        (try (authenticated-preset-providers) (catch Throwable _ nil))]
 
     (into (vec base) extras)))
 
@@ -694,31 +681,30 @@
    wins; legacy configs fall back to the first provider and its first model."
   ([] (default-selection (picker-fleet)))
   ([fleet]
-   (let
-     [cfg
-      (or (config/load-config) {})
+   (let [cfg
+         (or (config/load-config) {})
 
-      requested-provider
-      (some-> (:default-provider cfg)
-              keyword)
+         requested-provider
+         (some-> (:default-provider cfg)
+                 keyword)
 
-      selected-provider
-      (or (some #(when (= requested-provider (:id %)) %) fleet) (first fleet))
+         selected-provider
+         (or (some #(when (= requested-provider (:id %)) %) fleet) (first fleet))
 
-      model-names
-      (into []
-            (keep #(some-> (config/model-name %)
-                           str
-                           not-empty))
-            (:models selected-provider))
+         model-names
+         (into []
+               (keep #(some-> (config/model-name %)
+                              str
+                              not-empty))
+               (:models selected-provider))
 
-      requested-model
-      (some-> (:default-model cfg)
-              str
-              not-empty)
+         requested-model
+         (some-> (:default-model cfg)
+                 str
+                 not-empty)
 
-      selected-model
-      (if (some #{requested-model} model-names) requested-model (first model-names))]
+         selected-model
+         (if (some #{requested-model} model-names) requested-model (first model-names))]
 
      (when (and selected-provider selected-model)
        {:provider-id (:id selected-provider) :model selected-model}))))
@@ -738,12 +724,11 @@
    unrelated keys, then refresh runtime provider state."
   ([providers] (save-providers! providers nil))
   ([providers source]
-   (let
-     [raw
-      (or (config/load-global-config-raw) {})
+   (let [raw
+         (or (config/load-global-config-raw) {})
 
-      providers*
-      (mapv persisted-provider-config providers)]
+         providers*
+         (mapv persisted-provider-config providers)]
 
      (config/save-config!
        (if (seq providers*) (assoc raw "providers" providers*) (dissoc raw "providers"))
@@ -758,29 +743,28 @@
    yet configured. Provider/model ordering is not changed."
   ([provider-id model] (save-default-selection! provider-id model nil))
   ([provider-id model source]
-   (let
-     [provider-id*
-      (cond (keyword? provider-id) provider-id
-            (string? provider-id) (keyword provider-id))
+   (let [provider-id*
+         (cond (keyword? provider-id) provider-id
+               (string? provider-id) (keyword provider-id))
 
-      model*
-      (some-> model
-              str
-              str/trim
-              not-empty)
+         model*
+         (some-> model
+                 str
+                 str/trim
+                 not-empty)
 
-      fleet
-      (picker-fleet)
+         fleet
+         (picker-fleet)
 
-      selected
-      (some #(when (= provider-id* (:id %)) %) fleet)
+         selected
+         (some #(when (= provider-id* (:id %)) %) fleet)
 
-      model-names
-      (into #{}
-            (keep #(some-> (config/model-name %)
-                           str
-                           not-empty))
-            (:models selected))]
+         model-names
+         (into #{}
+               (keep #(some-> (config/model-name %)
+                              str
+                              not-empty))
+               (:models selected))]
 
      (when-not selected (throw (ex-info "Unknown provider" {:provider provider-id})))
      (when-not (and model* (contains? model-names model*))
@@ -792,26 +776,25 @@
      (when-let [env-vars (config/provider-env-gap selected)]
        (throw (ex-info (config/provider-env-message provider-id* env-vars)
                        {:type :vis/provider-env-unset :provider provider-id* :env-vars env-vars})))
-     (let
-       [raw
-        (or (config/load-global-config-raw) {})
+     (let [raw
+           (or (config/load-global-config-raw) {})
 
-        current
-        (vec (:providers (config/runtime-config raw)))
+           current
+           (vec (:providers (config/runtime-config raw)))
 
-        existing
-        (some #(when (= provider-id* (:id %)) %) current)
+           existing
+           (some #(when (= provider-id* (:id %)) %) current)
 
-        selected-config
-        (merge selected existing {:models (:models selected)})
+           selected-config
+           (merge selected existing {:models (:models selected)})
 
-        providers*
-        (if existing
-          (mapv #(if (= provider-id* (:id %)) selected-config %) current)
-          (conj current selected-config))
+           providers*
+           (if existing
+             (mapv #(if (= provider-id* (:id %)) selected-config %) current)
+             (conj current selected-config))
 
-        selection
-        {:provider-id provider-id* :model model*}]
+           selection
+           {:provider-id provider-id* :model model*}]
 
        (config/save-config! (assoc raw
                               "providers" (mapv persisted-provider-config providers*)
@@ -847,9 +830,8 @@
    (let [current (vec (:providers (config/runtime-config (or (config/load-global-config-raw) {}))))]
      (if (some #(= provider-id (:id %)) current)
        (update-config-provider! provider-id #(assoc % :api-key api-key) source)
-       (let
-         [tmpl (config/provider-template provider-id)
-          models (default-model-configs tmpl)]
+       (let [tmpl (config/provider-template provider-id)
+             models (default-model-configs tmpl)]
 
          (save-providers! (conj current
                                 (cond-> {:id provider-id :api-key api-key}

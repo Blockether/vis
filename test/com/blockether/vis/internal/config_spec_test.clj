@@ -193,14 +193,13 @@
       (expect (= {} (config-spec/network-config (update full-config "jail" dissoc "enabled")))))
   (it
     "resolves jail.deny-exec into a separate deny-exec list (rooted passthrough, drops unresolvable)"
-    (let
-      [pol
-       (config-spec/process-jail-config (assoc-in full-config
-                                          ["jail" "deny_exec"]
-                                          ["/opt/nope/curl" "definitely-not-a-real-binary-xyz"]))
+    (let [pol
+          (config-spec/process-jail-config (assoc-in full-config
+                                             ["jail" "deny_exec"]
+                                             ["/opt/nope/curl" "definitely-not-a-real-binary-xyz"]))
 
-       denied
-       (set (:deny-exec pol))]
+          denied
+          (set (:deny-exec pol))]
 
       ;; absolute/home entries pass through verbatim (deny fails safe)
       (expect (contains? denied "/opt/nope/curl"))
@@ -213,15 +212,14 @@
     ;; jail.enabled off => nothing is confined, so every catalog root is
     ;; available and shows in the session, whatever `allow` says. A
     ;; stale/renamed id in `allow` is irrelevant and never deny-safes.
-    (let
-      [with-ghost
-       (assoc-in full-config ["jail" "filesystem" "allow"] ["svar" "ghost-id"])
+    (let [with-ghost
+          (assoc-in full-config ["jail" "filesystem" "allow"] ["svar" "ghost-id"])
 
-       disabled
-       (assoc-in with-ghost ["jail" "enabled"] false)
+          disabled
+          (assoc-in with-ghost ["jail" "enabled"] false)
 
-       enabled
-       (assoc-in with-ghost ["jail" "enabled"] true)]
+          enabled
+          (assoc-in with-ghost ["jail" "enabled"] true)]
 
       ;; disabled => full catalog RW roots (svar, gen, cache), allow ignored.
       (expect (= ["/opt/svar" "~/generated" "~/.m2"]
@@ -233,24 +231,22 @@
                       nil
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
   (it "redacts credentials from validation failures"
-      (let
-        [bad
-         (assoc-in full-config ["providers" 0 "unknown"] true)
+      (let [bad
+            (assoc-in full-config ["providers" 0 "unknown"] true)
 
-         data
-         (try (config-spec/assert-config! bad "vis.yml") nil (catch Exception e (ex-data e)))]
+            data
+            (try (config-spec/assert-config! bad "vis.yml") nil (catch Exception e (ex-data e)))]
 
         (expect (= :vis/invalid-config (:type data)))
         (expect (not (.contains (pr-str data) "secret")))
         (expect (.contains (pr-str data) "<redacted>"))))
   (it "validates parser output before any runtime adaptation"
       (require 'com.blockether.vis.internal.config :reload)
-      (let
-        [file
-         (io/file "target/invalid-vis-config.yml")
+      (let [file
+            (io/file "target/invalid-vis-config.yml")
 
-         read-yaml
-         (var-get (ns-resolve 'com.blockether.vis.internal.config 'read-yaml-config-map))]
+            read-yaml
+            (var-get (ns-resolve 'com.blockether.vis.internal.config 'read-yaml-config-map))]
 
         (try (.mkdirs (.getParentFile file))
              (spit file "jail:\n  filesystem:\n    allow_reed:\n      - ../escape\n")
@@ -262,82 +258,85 @@
 (defdescribe
   config-completeness-test
   (it "registers specs for every fixed and dynamic configuration block"
-      (doseq
-        [spec-name [:config :model-map :model :models :provider :providers :rate-limit
-                    :router-network :budget :tokens :router :workspace-entry :workspace-entries
-                    :workspace :jail-filesystem :jail :network-rule-allow :network-rule-allows
-                    :network-rule :network-rules :network :prompt-map :system-prompt :search
-                    :db-spec :tui-settings :mcp-server :mcp-servers :mcp]]
+      (doseq [spec-name [:config :model-map :model :models :provider :providers :rate-limit
+                         :router-network :budget :tokens :router :workspace-entry :workspace-entries
+                         :workspace :jail-filesystem :jail :network-rule-allow :network-rule-allows
+                         :network-rule :network-rules :network :prompt-map :system-prompt :search
+                         :db-spec :tui-settings :mcp-server :mcp-servers :mcp]]
         (expect (s/get-spec (keyword "com.blockether.vis.internal.config-spec" (name spec-name))))))
   (it
     "keeps every declared key set, schema, and exhaustive fixture in sync"
-    (let
-      [provider
-       (first (get full-config "providers"))
+    (let [provider
+          (first (get full-config "providers"))
 
-       model
-       (first (get provider "models"))
+          model
+          (first (get provider "models"))
 
-       router
-       (get full-config "router")
+          router
+          (get full-config "router")
 
-       jail
-       (get full-config "jail")
+          jail
+          (get full-config "jail")
 
-       filesystem
-       (get jail "filesystem")
+          filesystem
+          (get jail "filesystem")
 
-       network
-       (get jail "network")
+          network
+          (get jail "network")
 
-       rule
-       (first (get network "rules"))
+          rule
+          (first (get network "rules"))
 
-       rule-allow
-       (first (get rule "allow"))
+          rule-allow
+          (first (get rule "allow"))
 
-       mcp
-       (get full-config "mcp")
+          mcp
+          (get full-config "mcp")
 
-       servers
-       (vals (get mcp "servers"))
+          servers
+          (vals (get mcp "servers"))
 
-       workspace
-       (get full-config "workspace")
+          workspace
+          (get full-config "workspace")
 
-       ws-entry
-       (first (get workspace "filesystem"))
+          ws-entry
+          (first (get workspace "filesystem"))
 
-       cases
-       [[config-spec/config-keys config-spec/config-schema (set (keys full-config))]
-        [config-spec/model-keys config-spec/model-schema (set (keys model))]
-        [config-spec/provider-keys config-spec/provider-schema (set (keys provider))]
-        [config-spec/rate-limit-keys config-spec/rate-limit-schema
-         (set (keys (get router "rate_limit")))]
-        [config-spec/router-network-keys config-spec/router-network-schema
-         (set (keys (get router "network")))]
-        [config-spec/budget-keys config-spec/budget-schema (set (keys (get router "budget")))]
-        [config-spec/token-keys config-spec/token-schema (set (keys (get router "tokens")))]
-        [config-spec/router-keys config-spec/router-schema (set (keys router))]
-        [config-spec/workspace-entry-keys config-spec/workspace-entry-schema (set (keys ws-entry))]
-        [config-spec/workspace-keys config-spec/workspace-schema (set (keys workspace))]
-        [config-spec/jail-filesystem-keys config-spec/jail-filesystem-schema
-         (set (keys filesystem))] [config-spec/jail-keys config-spec/jail-schema (set (keys jail))]
-        [config-spec/network-rule-allow-keys config-spec/network-rule-allow-schema
-         (set (keys rule-allow))]
-        [config-spec/network-rule-keys config-spec/network-rule-schema (set (keys rule))]
-        [config-spec/network-keys config-spec/network-schema (set (keys network))]
-        [config-spec/prompt-keys config-spec/prompt-schema
-         (set (keys (get full-config "system_prompt")))]
-        [config-spec/search-keys config-spec/search-schema (set (keys (get full-config "search")))]
-        [config-spec/db-keys config-spec/db-schema (set (keys (get full-config "db_spec")))]
-        [config-spec/tui-keys config-spec/tui-schema (set (keys (get full-config "tui_settings")))]
-        [config-spec/mcp-keys config-spec/mcp-schema (set (keys mcp))]
-        [config-spec/python-keys config-spec/python-schema (set (keys (get full-config "python")))]
-        [config-spec/message-queue-keys config-spec/message-queue-schema
-         (set (keys (get full-config "message_queue")))]
-        [config-spec/mcp-server-keys config-spec/mcp-server-schema
-         (into #{} (mapcat keys) servers)]]]
+          cases
+          [[config-spec/config-keys config-spec/config-schema (set (keys full-config))]
+           [config-spec/model-keys config-spec/model-schema (set (keys model))]
+           [config-spec/provider-keys config-spec/provider-schema (set (keys provider))]
+           [config-spec/rate-limit-keys config-spec/rate-limit-schema
+            (set (keys (get router "rate_limit")))]
+           [config-spec/router-network-keys config-spec/router-network-schema
+            (set (keys (get router "network")))]
+           [config-spec/budget-keys config-spec/budget-schema (set (keys (get router "budget")))]
+           [config-spec/token-keys config-spec/token-schema (set (keys (get router "tokens")))]
+           [config-spec/router-keys config-spec/router-schema (set (keys router))]
+           [config-spec/workspace-entry-keys config-spec/workspace-entry-schema
+            (set (keys ws-entry))]
+           [config-spec/workspace-keys config-spec/workspace-schema (set (keys workspace))]
+           [config-spec/jail-filesystem-keys config-spec/jail-filesystem-schema
+            (set (keys filesystem))]
+           [config-spec/jail-keys config-spec/jail-schema (set (keys jail))]
+           [config-spec/network-rule-allow-keys config-spec/network-rule-allow-schema
+            (set (keys rule-allow))]
+           [config-spec/network-rule-keys config-spec/network-rule-schema (set (keys rule))]
+           [config-spec/network-keys config-spec/network-schema (set (keys network))]
+           [config-spec/prompt-keys config-spec/prompt-schema
+            (set (keys (get full-config "system_prompt")))]
+           [config-spec/search-keys config-spec/search-schema
+            (set (keys (get full-config "search")))]
+           [config-spec/db-keys config-spec/db-schema (set (keys (get full-config "db_spec")))]
+           [config-spec/tui-keys config-spec/tui-schema
+            (set (keys (get full-config "tui_settings")))]
+           [config-spec/mcp-keys config-spec/mcp-schema (set (keys mcp))]
+           [config-spec/python-keys config-spec/python-schema
+            (set (keys (get full-config "python")))]
+           [config-spec/message-queue-keys config-spec/message-queue-schema
+            (set (keys (get full-config "message_queue")))]
+           [config-spec/mcp-server-keys config-spec/mcp-server-schema
+            (into #{} (mapcat keys) servers)]]]
 
       (doseq [[declared schema fixture] cases]
         (expect (= declared (set (keys schema))))

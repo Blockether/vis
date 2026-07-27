@@ -105,31 +105,31 @@
                      {:type :ext.foundation.editing/invalid-rg-root :path (.getPath root)})))
    (with-scan-permit*
      (fn []
-       (let
-         [k
-          (.getCanonicalPath root)
+       (let [k
+             (.getCanonicalPath root)
 
-          idx
-          (try (fff/create {:base-path k
-                            :watch? true
-                            :ai-mode? true
-                            :enable-content-indexing? true
-                            :enable-mmap-cache? false
-                            ;; see docstring — never open fff's LMDB dbs.
-                            :frecency-db-path nil
-                            :history-db-path nil
-                            :respect-ignore-files? (boolean respect-ignore-files?)
-                            ;; ignore overlay — fff honors it in BOTH the scan
-                            ;; walk and the live watcher, which is why vis no
-                            ;; longer walks trees in Clojure for `.rgignore` or
-                            ;; the `:search` config overlay.
-                            :custom-ignore-filenames (:custom-ignore-filenames overlay)
-                            :exclude-globs (:exclude-globs overlay)
-                            :unignore-globs (:unignore-globs overlay)})
-               (catch Throwable t
-                 (throw (ex-info (str "rg requires fff for directory search, but fff failed for " k)
-                                 {:type :ext.foundation.editing/fff-unavailable :path k}
-                                 t))))]
+             idx
+             (try (fff/create {:base-path k
+                               :watch? true
+                               :ai-mode? true
+                               :enable-content-indexing? true
+                               :enable-mmap-cache? false
+                               ;; see docstring — never open fff's LMDB dbs.
+                               :frecency-db-path nil
+                               :history-db-path nil
+                               :respect-ignore-files? (boolean respect-ignore-files?)
+                               ;; ignore overlay — fff honors it in BOTH the scan
+                               ;; walk and the live watcher, which is why vis no
+                               ;; longer walks trees in Clojure for `.rgignore` or
+                               ;; the `:search` config overlay.
+                               :custom-ignore-filenames (:custom-ignore-filenames overlay)
+                               :exclude-globs (:exclude-globs overlay)
+                               :unignore-globs (:unignore-globs overlay)})
+                  (catch Throwable t
+                    (throw (ex-info (str "rg requires fff for directory search, but fff failed for "
+                                         k)
+                                    {:type :ext.foundation.editing/fff-unavailable :path k}
+                                    t))))]
 
          (when-not (fff/wait-for-scan idx scan-timeout-ms)
            (.close ^java.io.Closeable idx)
@@ -177,43 +177,41 @@
    `swap-vals!` so the victim set is derived from the map that actually landed,
    not from a swap body that may have been retried."
   [keep-key]
-  (let
-    [now
-     (System/currentTimeMillis)
+  (let [now
+        (System/currentTimeMillis)
 
-     [old new]
-     (swap-vals!
-       pool
-       (fn [m]
-         (let
-           [live
-            (reduce-kv
-              (fn [acc k e]
-                (if (and (not= k keep-key)
-                         (> (- now (.get ^java.util.concurrent.atomic.AtomicLong (:last-used e)))
-                            (long idle-ttl-ms)))
-                  acc
-                  (assoc acc k e)))
-              {}
-              m)
+        [old new]
+        (swap-vals!
+          pool
+          (fn [m]
+            (let [live
+                  (reduce-kv (fn [acc k e]
+                               (if (and (not= k keep-key)
+                                        (> (- now
+                                              (.get ^java.util.concurrent.atomic.AtomicLong
+                                                    (:last-used e)))
+                                           (long idle-ttl-ms)))
+                                 acc
+                                 (assoc acc k e)))
+                             {}
+                             m)
 
-            over
-            (- (count live) (long pool-size))]
+                  over
+                  (- (count live) (long pool-size))]
 
-           (if (pos? over)
-             (->> (dissoc live keep-key)
-                  (sort-by (fn [[_ e]]
-                             (.get ^java.util.concurrent.atomic.AtomicLong (:last-used e))))
-                  (take over)
-                  (map key)
-                  (apply dissoc live))
-             live))))]
+              (if (pos? over)
+                (->> (dissoc live keep-key)
+                     (sort-by (fn [[_ e]]
+                                (.get ^java.util.concurrent.atomic.AtomicLong (:last-used e))))
+                     (take over)
+                     (map key)
+                     (apply dissoc live))
+                live))))]
 
-    (doseq
-      [[k e]
-       old
+    (doseq [[k e]
+            old
 
-       :when (not (contains? new k))]
+            :when (not (contains? new k))]
 
       (.set ^java.util.concurrent.atomic.AtomicBoolean (:dead e) true)
       (retire! e))))
@@ -268,70 +266,67 @@
    lease holder instead of yanking a live index. A build that THROWS is removed
    from the pool (a poisoned slot would fail every later search)."
   [lease f]
-  (let
-    [^File root
-     (:root lease)
+  (let [^File root
+        (:root lease)
 
-     respect-ignore-files?
-     (:respect-ignore-files? lease)
+        respect-ignore-files?
+        (:respect-ignore-files? lease)
 
-     k
-     (pool-key lease)
+        k
+        (pool-key lease)
 
-     entry
-     ;; Claim the slot and TAKE the lease under the entry's monitor, retrying
-     ;; when we raced an eviction that already closed this index. Without the
-     ;; retry a >TTL-idle entry could be closed between the pool lookup and the
-     ;; lease increment, and the search would run against a closed handle.
-     (loop []
+        entry
+        ;; Claim the slot and TAKE the lease under the entry's monitor, retrying
+        ;; when we raced an eviction that already closed this index. Without the
+        ;; retry a >TTL-idle entry could be closed between the pool lookup and the
+        ;; lease increment, and the search would run against a closed handle.
+        (loop []
 
-       (let
-         [e
-          (-> (swap! pool
-                (fn [m]
-                  (cond-> m
-                    (not (contains? m k))
-                    (assoc k
-                      {:idx (delay (open! root respect-ignore-files? (:overlay lease)))
-                       :leases (java.util.concurrent.atomic.AtomicInteger. 0)
-                       ;; born "just used": a 0 here would look ancient to a
-                       ;; concurrent sweep and evict the entry before its first
-                       ;; search.
-                       :last-used (java.util.concurrent.atomic.AtomicLong.
-                                    (System/currentTimeMillis))
-                       :closed (java.util.concurrent.atomic.AtomicBoolean. false)
-                       :dead (java.util.concurrent.atomic.AtomicBoolean. false)
-                       ;; A fresh index is built AFTER this entry lands, so it
-                       ;; already reflects the epoch we record here.
-                       :synced-epoch (java.util.concurrent.atomic.AtomicLong.
-                                       (.get ^java.util.concurrent.atomic.AtomicLong
-                                             write-epoch))}))))
-              (get k))
+          (let [e
+                (-> (swap! pool
+                      (fn [m]
+                        (cond-> m
+                          (not (contains? m k))
+                          (assoc k
+                            {:idx (delay (open! root respect-ignore-files? (:overlay lease)))
+                             :leases (java.util.concurrent.atomic.AtomicInteger. 0)
+                             ;; born "just used": a 0 here would look ancient to a
+                             ;; concurrent sweep and evict the entry before its first
+                             ;; search.
+                             :last-used (java.util.concurrent.atomic.AtomicLong.
+                                          (System/currentTimeMillis))
+                             :closed (java.util.concurrent.atomic.AtomicBoolean. false)
+                             :dead (java.util.concurrent.atomic.AtomicBoolean. false)
+                             ;; A fresh index is built AFTER this entry lands, so it
+                             ;; already reflects the epoch we record here.
+                             :synced-epoch (java.util.concurrent.atomic.AtomicLong.
+                                             (.get ^java.util.concurrent.atomic.AtomicLong
+                                                   write-epoch))}))))
+                    (get k))
 
-          ^java.util.concurrent.atomic.AtomicBoolean lock
-          (:closed e)
+                ^java.util.concurrent.atomic.AtomicBoolean lock
+                (:closed e)
 
-          taken?
-          (locking lock
-            (when-not (.get lock)
-              (.set ^java.util.concurrent.atomic.AtomicLong (:last-used e)
-                    (System/currentTimeMillis))
-              (.incrementAndGet ^java.util.concurrent.atomic.AtomicInteger (:leases e))
-              true))]
+                taken?
+                (locking lock
+                  (when-not (.get lock)
+                    (.set ^java.util.concurrent.atomic.AtomicLong (:last-used e)
+                          (System/currentTimeMillis))
+                    (.incrementAndGet ^java.util.concurrent.atomic.AtomicInteger (:leases e))
+                    true))]
 
-         (if taken?
-           e
-           (do (swap! pool (fn [m]
-                             (if (identical? (get m k) e) (dissoc m k) m)))
-               (recur)))))]
+            (if taken?
+              e
+              (do (swap! pool (fn [m]
+                                (if (identical? (get m k) e) (dissoc m k) m)))
+                  (recur)))))]
 
-    (try (let
-           [idx (try @(:idx entry)
-                     (catch Throwable t
-                       (swap! pool (fn [m]
-                                     (if (identical? (get m k) entry) (dissoc m k) m)))
-                       (.set ^java.util.concurrent.atomic.AtomicBoolean (:dead entry) true)
-                       (throw t)))]
+    (try (let [idx (try @(:idx entry)
+                        (catch Throwable t
+                          (swap! pool (fn [m]
+                                        (if (identical? (get m k) entry) (dissoc m k) m)))
+                          (.set ^java.util.concurrent.atomic.AtomicBoolean (:dead entry) true)
+                          (throw t)))]
            (sweep! k)
            (resync! entry idx)
            (f idx))

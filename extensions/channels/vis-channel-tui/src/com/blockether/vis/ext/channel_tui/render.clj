@@ -14,6 +14,7 @@
            [com.googlecode.lanterna.graphics TextGraphics]
            [java.util LinkedHashMap]
            [java.util.concurrent.atomic AtomicLong]))
+
 ;;; ── Render caches ──────────────────────────────────────────────────────────
 ;;
 ;; The TUI's main render path is hot: every visible frame used to
@@ -174,6 +175,7 @@
    showing up on the flame graph."
   ^String [ch ^long n]
   (if (<= n 0) "" (String. (char-array n ch))))
+
 ;;; ── Text wrapping ───────────────────────────────────────────────────────────
 (defn- structural-line-marker?
   "True for invisible first-column markers consumed by `draw-chat-bubble!`.
@@ -413,8 +415,10 @@
 (def ^:private ^:const phi 1.618)
 
 (def ^:private dialog-chrome-w 4)
+
 ;; border(1) + pad(1) each side
 (def ^:private dialog-chrome-h 6)
+
 ;; top-border + title-bar + top-sep + ... + bot-sep + hint + bottom-border
 (defn golden-dialog-size
   "Compute golden-ratio dialog size [w h] sized to fit content.
@@ -462,6 +466,7 @@
      (min box-h (- rows 11))]
 
     [box-w box-h]))
+
 ;;; ── Box drawing ────────────────────────────────────────────────────────────
 (defn- embed-in-bar
   "Centre `label` in `bar` (a string of horizontal box characters) and
@@ -476,6 +481,7 @@
 
         (str (subs bar 0 start) label (subs bar end)))
       bar)))
+
 ;; ----------------------------------------------------------------------------
 ;; Sideless box-border padding
 ;;
@@ -576,6 +582,7 @@
     (.setForegroundColor g t/box-fg)
     (.setBackgroundColor g t/box-bg)
     (.fillRectangle g (TerminalPosition. 1 text-top) (TerminalSize. inner-w rows) \space)))
+
 ;;; ── Messages box ───────────────────────────────────────────────────────────
 (defn draw-messages-box!
   "Draw bordered message area with top-anchored scrollable messages."
@@ -610,6 +617,7 @@
                   (inc (long t/pad-x))
                   (+ (long text-top) (long i))
                   (p/truncate-cols message text-w)))))
+
 ;;; ── Input box ──────────────────────────────────────────────────────────────
 (def input-pad-y
   "Internal vertical padding (rows above/below text) inside the input
@@ -1290,6 +1298,7 @@
                              :inner-h n
                              :scroll first-idx
                              :thumb-fg t/dialog-title-bg})))))))
+
 ;;; ── Background fill ────────────────────────────────────────────────────────
 (defn fill-background!
   "Fill entire screen with the terminal background color."
@@ -1297,6 +1306,7 @@
   (.setBackgroundColor g t/terminal-bg)
   (.setForegroundColor g t/text-fg)
   (.fillRectangle g (TerminalPosition. 0 0) (TerminalSize. cols rows) \space))
+
 ;;; ── Dialog ─────────────────────────────────────────────────────────────────
 (defn draw-dialog!
   "Draw a centered confirmation dialog with text wrapping.
@@ -1377,6 +1387,7 @@
                    (int (+ (long box-left) 3))
                    (int (+ (long box-top) 3 (long i)))
                    ^String line)))))
+
 ;;; ── Chat bubble ────────────────────────────────────────────────────────────
 ;; Line markers live in primitives - aliases for local readability.
 (def ^:private thinking-marker p/MARKER_THINKING)
@@ -1738,6 +1749,7 @@
                    (+ col-pos g-cols)
                    (or seg-start-char char-pos)
                    (or seg-start-col col-pos))))))))
+
 ;; ---------------------------------------------------------------------------
 (defn- tool-color-role->fg
   [role]
@@ -3227,6 +3239,7 @@
   "Calculate total row height for a vec of structured messages."
   [messages max-w]
   (reduce + 0 (map #(bubble-height % max-w) messages)))
+
 ;;; ── Progress timeline formatting ───────────────────────────────────────────
 (defn- label-text
   "Format a label string: UPPERCASED text + plain number.
@@ -4075,6 +4088,7 @@
     {:lines lines :line-meta line-meta :text (str/join "\n" (map strip-paint-markers-line lines))}))
 
 (declare paste-aware-ast->entries)
+
 ;;; ── Inline markdown tokenizer (mid-line bold / italic / strike / code) ──
 ;;
 ;; `markdown->inline` is forward-declared once at the top of the
@@ -5077,6 +5091,7 @@
 (defn format-iteration-entry
   [entry code-width iteration-number & [opts]]
   (mapv :line (apply format-iteration-entry-entries entry code-width iteration-number [opts])))
+
 ;;; ── Spinner glyph (used by the in-bubble “working...” row) ──────────────────
 (def ^:private spinner-frames
   "Braille-dot spinner frames; one frame advances every ~100ms."
@@ -5745,6 +5760,7 @@
   ([progress bubble-w settings] (progress->text progress bubble-w settings nil))
   ([progress bubble-w settings extra]
    (:text (progress->lines-data progress bubble-w settings extra))))
+
 ;;; ── Markdown table parsing ───────────────────────────────────────────────
 ;; **prefix:** value
 (defn- assert-markdown!
@@ -6260,6 +6276,7 @@
 (defn format-answer-markdown
   ([answer bubble-w] (format-answer-markdown answer bubble-w nil))
   ([answer bubble-w opts] (:text (format-answer-markdown-data answer bubble-w opts))))
+
 ;;; ── Messages area (bubble-based) ───────────────────────────────────────────
 ;; -- Messages-area layout constants ----------------------------------------
 ;;
@@ -6274,15 +6291,20 @@
 ;; required to derive its own width from `MESSAGE_SIDE_PAD` rather than a
 ;; literal.
 (def ^:const MESSAGE_MARGIN_TOP 1)
+
 ;; rows above first message
 (def ^:const MESSAGE_MARGIN_BOTTOM 1)
+
 ;; rows below last message
 (def ^:const MESSAGE_MARGIN_LEFT 2)
+
 ;; cols left gutter
 (def ^:const MESSAGE_MARGIN_RIGHT 3)
+
 ;; cols right gutter (1 col padding before
 ;; the scrollbar at cols-2, then 1 col edge after).
 (def ^:const MESSAGE_SIDE_PAD (+ MESSAGE_MARGIN_LEFT MESSAGE_MARGIN_RIGHT))
+
 ;; ^ Convenience: the total horizontal gutter consumed on each row.
 ;; `bubble-w = cols - MESSAGE_SIDE_PAD`. Both this file's painter and
 ;; `screen.clj`'s height calculator MUST use this exact derivation.

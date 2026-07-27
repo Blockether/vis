@@ -97,15 +97,14 @@
    once-per-second steady-state sweep allocation-light. Nil-pid leases remain
    independent because they cannot be associated with an OS process."
   [clients]
-  (let
-    [seen-pids
-     (java.util.HashSet.)
+  (let [seen-pids
+        (java.util.HashSet.)
 
-     removed-ids
-     (transient [])
+        removed-ids
+        (transient [])
 
-     counts
-     (long-array 2)]
+        counts
+        (long-array 2)]
 
     ; [dead duplicates]
     (reduce-kv (fn [_ client-id {:keys [pid]}]
@@ -129,10 +128,9 @@
    release. A skipped CAS is harmless; the one-second reaper retries."
   []
   (when-let [state @server-state]
-    (let
-      [before (:clients state)
-       {:keys [clients dead duplicates]} (compact-client-leases before)
-       removed (+ (long dead) (long duplicates))]
+    (let [before (:clients state)
+          {:keys [clients dead duplicates]} (compact-client-leases before)
+          removed (+ (long dead) (long duplicates))]
 
       (when (pos? removed)
         (let [applied? (volatile! false)]
@@ -156,11 +154,10 @@
 
 (defn- gateway-client-metrics
   []
-  (let
-    [{:keys [clients sse-clients client-registrations-total client-releases-total
-             client-replacements-total client-leases-reaped-total client-dead-reaped-total
-             client-duplicates-reaped-total]}
-     @server-state]
+  (let [{:keys [clients sse-clients client-registrations-total client-releases-total
+                client-replacements-total client-leases-reaped-total client-dead-reaped-total
+                client-duplicates-reaped-total]}
+        @server-state]
     {:gateway-client-leases (count clients)
      :gateway-sse-clients (count sse-clients)
      :gateway-client-registrations-total (long (or client-registrations-total 0))
@@ -188,29 +185,27 @@
    Distinct data stores (distinct machines/homes) get distinct ids. Opaque and
    non-secret: it only names *which* gateway, never grants access."
   [db host port]
-  (let
-    [seed
-     (or (some-> db
-                 discovery/db-target
-                 str)
-         (str host ":" port))
+  (let [seed
+        (or (some-> db
+                    discovery/db-target
+                    str)
+            (str host ":" port))
 
-     raw
-     (.digest (MessageDigest/getInstance "SHA-256")
-              (.getBytes ^String seed StandardCharsets/UTF_8))]
+        raw
+        (.digest (MessageDigest/getInstance "SHA-256")
+                 (.getBytes ^String seed StandardCharsets/UTF_8))]
 
     (subs (.formatHex (java.util.HexFormat/of) ^bytes raw) 0 16)))
 
 (defn- status-map
   []
-  (let
-    [{:keys [port host db require-token? managed?]}
-     @server-state
+  (let [{:keys [port host db require-token? managed?]}
+        @server-state
 
-     {:keys [gateway-client-leases gateway-sse-clients gateway-client-registrations-total
-             gateway-client-releases-total gateway-client-replacements-total
-             gateway-client-leases-reaped-total]}
-     (gateway-client-metrics)]
+        {:keys [gateway-client-leases gateway-sse-clients gateway-client-registrations-total
+                gateway-client-releases-total gateway-client-replacements-total
+                gateway-client-leases-reaped-total]}
+        (gateway-client-metrics)]
 
     {:status (if @server-state "running" "stopped")
      :id (gateway-instance-id db host port)
@@ -239,19 +234,19 @@
   []
   (when-let [{:keys [^Server server db port host token]} @server-state]
     (when (and server db (.isStarted server))
-      (try (let
-             [entry (discovery/read-registry db)
+      (try
+        (let [entry (discovery/read-registry db)
               owner-pid (:pid entry)
               self-pid (discovery/current-pid)
               ours? (= owner-pid self-pid)
               complete?
               (and ours? (= port (:port entry)) (= host (:host entry)) (= token (:secret entry)))]
 
-             (when (and (not complete?)
-                        (or (nil? owner-pid) ours? (not (discovery/pid-alive? owner-pid))))
-               (discovery/register-self! db {:port port :host host :secret token})))
-           (catch Throwable t
-             (tel/log! :warn ["gateway: registry self-repair failed" (ex-message t)]))))))
+          (when (and (not complete?)
+                     (or (nil? owner-pid) ours? (not (discovery/pid-alive? owner-pid))))
+            (discovery/register-self! db {:port port :host host :secret token})))
+        (catch Throwable t
+          (tel/log! :warn ["gateway: registry self-repair failed" (ex-message t)]))))))
 
 (defn- idle-shutdown-eligible?
   "True when this daemon is allowed to stop itself. Foreground `vis gateway start`
@@ -317,12 +312,11 @@
   ^String [^Path path]
   (if (Files/exists path (make-array LinkOption 0))
     (str/trim (String. (Files/readAllBytes path) StandardCharsets/UTF_8))
-    (let
-      [token
-       (str (java.util.UUID/randomUUID))
+    (let [token
+          (str (java.util.UUID/randomUUID))
 
-       owner-only
-       (PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString "rw-------"))]
+          owner-only
+          (PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString "rw-------"))]
 
       (some-> (.getParent path)
               (Files/createDirectories (make-array FileAttribute 0)))
@@ -445,31 +439,30 @@
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
-        (let
-          [^OutputStream out
-           output-stream
+        (let [^OutputStream out
+              output-stream
 
-           sub-id
-           (str (java.util.UUID/randomUUID))
+              sub-id
+              (str (java.util.UUID/randomUUID))
 
-           last-seq
-           (atom (long cursor))
+              last-seq
+              (atom (long cursor))
 
-           queue
-           (ArrayBlockingQueue. (int SSE_QUEUE_CAP))
+              queue
+              (ArrayBlockingQueue. (int SSE_QUEUE_CAP))
 
-           dead?
-           (volatile! false)
+              dead?
+              (volatile! false)
 
-           sink
-           (sse-sink out queue dead? #(state/unsubscribe! sid sub-id))
+              sink
+              (sse-sink out queue dead? #(state/unsubscribe! sid sub-id))
 
-           write!
-           (fn [event]
-             (when (> (long (get event "seq")) (long @last-seq))
-               (.write out (.getBytes (wire/sse-frame event) StandardCharsets/UTF_8))
-               (.flush out)
-               (reset! last-seq (long (get event "seq")))))]
+              write!
+              (fn [event]
+                (when (> (long (get event "seq")) (long @last-seq))
+                  (.write out (.getBytes (wire/sse-frame event) StandardCharsets/UTF_8))
+                  (.flush out)
+                  (reset! last-seq (long (get event "seq")))))]
 
           (swap! server-state (fn [st]
                                 (-> st
@@ -535,30 +528,28 @@
    `sids=` param and never send `Last-Event-ID`, so they are unaffected: a single
    header cannot disambiguate N independent per-session seq counters."
   [request]
-  (let
-    [parsed
-     (let [raw (get-in request [:query-params "sids"])]
-       (when (seq raw)
-         (->> (str/split raw #",")
-              (keep (fn [tok]
-                      (let
-                        [[sid c] (str/split (str/trim tok) #":" 2)
-                         sid (some-> (str/trim (str sid))
-                                     parse-uuid)]
+  (let [parsed
+        (let [raw (get-in request [:query-params "sids"])]
+          (when (seq raw)
+            (->> (str/split raw #",")
+                 (keep (fn [tok]
+                         (let [[sid c] (str/split (str/trim tok) #":" 2)
+                               sid (some-> (str/trim (str sid))
+                                           parse-uuid)]
 
-                        (when (and sid (state/soul sid))
-                          [sid
-                           (or (some-> c
-                                       str/trim
-                                       parse-long)
-                               0)]))))
-              (distinct)
-              (vec))))
+                           (when (and sid (state/soul sid))
+                             [sid
+                              (or (some-> c
+                                          str/trim
+                                          parse-long)
+                                  0)]))))
+                 (distinct)
+                 (vec))))
 
-     last-event-id
-     (some-> (get-in request [:headers "last-event-id"])
-             str/trim
-             parse-long)]
+        last-event-id
+        (some-> (get-in request [:headers "last-event-id"])
+                str/trim
+                parse-long)]
 
     (if (and last-event-id (= 1 (count parsed))) [[(ffirst parsed) last-event-id]] parsed)))
 
@@ -575,83 +566,82 @@
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
-        (let
-          [^OutputStream out
-           output-stream
+        (let [^OutputStream out
+              output-stream
 
-           sub-id
-           (str (java.util.UUID/randomUUID))
+              sub-id
+              (str (java.util.UUID/randomUUID))
 
-           last-seqs
-           (atom {})
+              last-seqs
+              (atom {})
 
-           queue
-           (ArrayBlockingQueue. (int SSE_QUEUE_CAP))
+              queue
+              (ArrayBlockingQueue. (int SSE_QUEUE_CAP))
 
-           dead?
-           (volatile! false)
+              dead?
+              (volatile! false)
 
-           unsubscribe-all!
-           (fn []
-             (doseq [[sid _] sid+cursors]
-               (state/unsubscribe! sid sub-id)))
+              unsubscribe-all!
+              (fn []
+                (doseq [[sid _] sid+cursors]
+                  (state/unsubscribe! sid sub-id)))
 
-           sink
-           (sse-sink out queue dead? unsubscribe-all!)
+              sink
+              (sse-sink out queue dead? unsubscribe-all!)
 
-           write!
-           (fn [event]
-             (let [esid (str (get event "session_id"))]
-               (when (> (long (get event "seq")) (long (get @last-seqs esid Long/MIN_VALUE)))
-                 (.write out (.getBytes (wire/sse-frame event) StandardCharsets/UTF_8))
-                 (.flush out)
-                 (swap! last-seqs assoc esid (long (get event "seq"))))))]
+              write!
+              (fn [event]
+                (let [esid (str (get event "session_id"))]
+                  (when (> (long (get event "seq")) (long (get @last-seqs esid Long/MIN_VALUE)))
+                    (.write out (.getBytes (wire/sse-frame event) StandardCharsets/UTF_8))
+                    (.flush out)
+                    (swap! last-seqs assoc esid (long (get event "seq"))))))]
 
           (swap! server-state (fn [st]
                                 (-> st
                                     (assoc :saw-client? true)
                                     (update :sse-clients (fnil conj #{}) sub-id))))
-          (try
-            (when proxied?
-              (.write out
-                      (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
-                                 StandardCharsets/UTF_8))
-              (.flush out))
-            (doseq [[sid requested-cursor] sid+cursors]
-              ;; A negative cursor means live-only. It lets a client restore a
-              ;; bounded visited-session watch list without replaying every
-              ;; ring buffer or issuing N `/seq` requests first.
-              (let
-                [cursor (if (neg? (long requested-cursor))
-                          ;; A live-only join to a session with a turn already
-                          ;; running (started in the TUI or another client)
-                          ;; rewinds to that turn's `turn.started` so the
-                          ;; in-flight bubble replays in full — same live
-                          ;; 'Vis is running: …' the originating channel shows —
-                          ;; not a bare post-connect tail.
-                          (long (or (state/running-turn-start-cursor sid) (state/current-seq sid)))
-                          (long requested-cursor))]
-                ;; Seed the guard before atomic registration. A ready control
-                ;; frame returns the effective cursor so a live-only client can
-                ;; resume losslessly after its first connection.
-                (swap! last-seqs assoc (str sid) cursor)
-                (let [replay (state/subscribe! sid sub-id sink cursor)]
-                  (.write out
-                          (.getBytes (wire/sse-frame (wire/canonical {:type "subscription.ready"
-                                                                      :session_id (str sid)
-                                                                      :cursor cursor
-                                                                      :server_time_ms
-                                                                      (System/currentTimeMillis)}))
-                                     StandardCharsets/UTF_8))
-                  (.flush out)
-                  (doseq [event replay]
-                    (write! event)))))
-            (pump-sse! out queue dead? write!)
-            (catch Throwable _ nil)
-            (finally (unsubscribe-all!)
-                     (swap! server-state update :sse-clients disj sub-id)
-                     (maybe-stop-when-idle!)
-                     (try (.close out) (catch Throwable _ nil))))))))
+          (try (when proxied?
+                 (.write out
+                         (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
+                                    StandardCharsets/UTF_8))
+                 (.flush out))
+               (doseq [[sid requested-cursor] sid+cursors]
+                 ;; A negative cursor means live-only. It lets a client restore a
+                 ;; bounded visited-session watch list without replaying every
+                 ;; ring buffer or issuing N `/seq` requests first.
+                 (let [cursor (if (neg? (long requested-cursor))
+                                ;; A live-only join to a session with a turn already
+                                ;; running (started in the TUI or another client)
+                                ;; rewinds to that turn's `turn.started` so the
+                                ;; in-flight bubble replays in full — same live
+                                ;; 'Vis is running: …' the originating channel shows —
+                                ;; not a bare post-connect tail.
+                                (long (or (state/running-turn-start-cursor sid)
+                                          (state/current-seq sid)))
+                                (long requested-cursor))]
+                   ;; Seed the guard before atomic registration. A ready control
+                   ;; frame returns the effective cursor so a live-only client can
+                   ;; resume losslessly after its first connection.
+                   (swap! last-seqs assoc (str sid) cursor)
+                   (let [replay (state/subscribe! sid sub-id sink cursor)]
+                     (.write out
+                             (.getBytes (wire/sse-frame (wire/canonical
+                                                          {:type "subscription.ready"
+                                                           :session_id (str sid)
+                                                           :cursor cursor
+                                                           :server_time_ms
+                                                           (System/currentTimeMillis)}))
+                                        StandardCharsets/UTF_8))
+                     (.flush out)
+                     (doseq [event replay]
+                       (write! event)))))
+               (pump-sse! out queue dead? write!)
+               (catch Throwable _ nil)
+               (finally (unsubscribe-all!)
+                        (swap! server-state update :sse-clients disj sub-id)
+                        (maybe-stop-when-idle!)
+                        (try (.close out) (catch Throwable _ nil))))))))
 
 (defn- multi-events-handler
   "GET /v1/events?sids=a:10,b,c:3 — ONE SSE stream carrying every listed
@@ -677,31 +667,32 @@
 
 (defn- prometheus-text
   [snapshot]
-  (let
-    [series
-     [[:turns-total "vis_turns_total" "counter"] [:turns-failed "vis_turns_failed_total" "counter"]
-      [:cost-total "vis_turn_cost_usd_total" "counter"]
-      [:duration-ms-total "vis_turn_duration_ms_total" "counter"]
-      [:sessions-tracked "vis_sessions_tracked" "gauge"]
-      [:turns-running "vis_turns_running" "gauge"] [:turns-executing "vis_turns_executing" "gauge"]
-      [:turns-waiting "vis_turns_waiting" "gauge"] [:turns-queued "vis_turns_queued" "gauge"]
-      [:turn-concurrency-limit "vis_turn_concurrency_limit" "gauge"]
-      [:replay-events-retained "vis_replay_events_retained" "gauge"]
-      [:env-cache-size "vis_env_cache_size" "gauge"]
-      [:env-heap-pressure "vis_env_heap_pressure" "gauge"]
-      [:jvm-heap-used-bytes "vis_jvm_heap_used_bytes" "gauge"]
-      [:process-rss-bytes "vis_process_rss_bytes" "gauge"]
-      [:jvm-heap-committed-bytes "vis_jvm_heap_committed_bytes" "gauge"]
-      [:jvm-heap-max-bytes "vis_jvm_heap_max_bytes" "gauge"]
-      [:jvm-gc-count-total "vis_jvm_gc_count_total" "counter"]
-      [:jvm-gc-time-ms-total "vis_jvm_gc_time_ms_total" "counter"]
-      [:jvm-thread-count "vis_jvm_thread_count" "gauge"]
-      [:gateway-client-leases "vis_gateway_client_leases" "gauge"]
-      [:gateway-sse-clients "vis_gateway_sse_clients" "gauge"]
-      [:gateway-client-registrations-total "vis_gateway_client_registrations_total" "counter"]
-      [:gateway-client-releases-total "vis_gateway_client_releases_total" "counter"]
-      [:gateway-client-replacements-total "vis_gateway_client_replacements_total" "counter"]
-      [:gateway-client-leases-reaped-total "vis_gateway_client_leases_reaped_total" "counter"]]]
+  (let [series
+        [[:turns-total "vis_turns_total" "counter"]
+         [:turns-failed "vis_turns_failed_total" "counter"]
+         [:cost-total "vis_turn_cost_usd_total" "counter"]
+         [:duration-ms-total "vis_turn_duration_ms_total" "counter"]
+         [:sessions-tracked "vis_sessions_tracked" "gauge"]
+         [:turns-running "vis_turns_running" "gauge"]
+         [:turns-executing "vis_turns_executing" "gauge"]
+         [:turns-waiting "vis_turns_waiting" "gauge"] [:turns-queued "vis_turns_queued" "gauge"]
+         [:turn-concurrency-limit "vis_turn_concurrency_limit" "gauge"]
+         [:replay-events-retained "vis_replay_events_retained" "gauge"]
+         [:env-cache-size "vis_env_cache_size" "gauge"]
+         [:env-heap-pressure "vis_env_heap_pressure" "gauge"]
+         [:jvm-heap-used-bytes "vis_jvm_heap_used_bytes" "gauge"]
+         [:process-rss-bytes "vis_process_rss_bytes" "gauge"]
+         [:jvm-heap-committed-bytes "vis_jvm_heap_committed_bytes" "gauge"]
+         [:jvm-heap-max-bytes "vis_jvm_heap_max_bytes" "gauge"]
+         [:jvm-gc-count-total "vis_jvm_gc_count_total" "counter"]
+         [:jvm-gc-time-ms-total "vis_jvm_gc_time_ms_total" "counter"]
+         [:jvm-thread-count "vis_jvm_thread_count" "gauge"]
+         [:gateway-client-leases "vis_gateway_client_leases" "gauge"]
+         [:gateway-sse-clients "vis_gateway_sse_clients" "gauge"]
+         [:gateway-client-registrations-total "vis_gateway_client_registrations_total" "counter"]
+         [:gateway-client-releases-total "vis_gateway_client_releases_total" "counter"]
+         [:gateway-client-replacements-total "vis_gateway_client_replacements_total" "counter"]
+         [:gateway-client-leases-reaped-total "vis_gateway_client_leases_reaped_total" "counter"]]]
     (str "# TYPE vis_turn_tokens_total counter\n"
          "vis_turn_tokens_total{kind=\"input\"} "
          (get snapshot :tokens-input 0)
@@ -710,9 +701,8 @@
          "\n" (apply str
                 (map
                   (fn [[k metric-name metric-type]]
-                    (let
-                      [value (get snapshot k 0)
-                       value (if (boolean? value) (if value 1 0) value)]
+                    (let [value (get snapshot k 0)
+                          value (if (boolean? value) (if value 1 0) value)]
 
                       (str "# TYPE " metric-name " " metric-type "\n" metric-name " " value "\n")))
                   series)))))
@@ -736,12 +726,11 @@
   ;; the stable token but found the registry missing. Restore ownership before
   ;; answering so subsequent discovery calls attach instead of bind-racing us.
   (ensure-self-registered!)
-  (let
-    [{:keys [token]}
-     @server-state
+  (let [{:keys [token]}
+        @server-state
 
-     supplied
-     (get-in request [:headers "x-vis-gateway-secret"])]
+        supplied
+        (get-in request [:headers "x-vis-gateway-secret"])]
 
     (json-response (assoc (status-map)
                      :status "ok"
@@ -753,37 +742,35 @@
   [clients client-id {:keys [pid] :as lease}]
   (if (nil? pid)
     {:clients (assoc clients client-id lease) :replaced 0}
-    (let
-      [stale-ids (persistent! (reduce-kv (fn [ids existing-id existing]
-                                           (if (= pid (:pid existing)) (conj! ids existing-id) ids))
-                                         (transient [])
-                                         clients))]
+    (let [stale-ids (persistent! (reduce-kv
+                                   (fn [ids existing-id existing]
+                                     (if (= pid (:pid existing)) (conj! ids existing-id) ids))
+                                   (transient [])
+                                   clients))]
       {:clients (assoc (reduce dissoc clients stale-ids) client-id lease)
        :replaced (count stale-ids)})))
 
 (defn- client-register-handler
   [request]
-  (let
-    [{:strs [pid kind]}
-     (body-json request)
+  (let [{:strs [pid kind]}
+        (body-json request)
 
-     client-id
-     (str (java.util.UUID/randomUUID))
+        client-id
+        (str (java.util.UUID/randomUUID))
 
-     lease
-     {:pid pid :kind kind :connected-at (System/currentTimeMillis)}
+        lease
+        {:pid pid :kind kind :connected-at (System/currentTimeMillis)}
 
-     replacement-stats
-     (long-array 2)]
+        replacement-stats
+        (long-array 2)]
 
     ; [this registration, cumulative]
     (swap! server-state (fn [st]
-                          (let
-                            [{:keys [clients replaced]}
-                             (register-client-lease (:clients st) client-id lease)
+                          (let [{:keys [clients replaced]}
+                                (register-client-lease (:clients st) client-id lease)
 
-                             total
-                             (+ (long (or (:client-replacements-total st) 0)) (long replaced))]
+                                total
+                                (+ (long (or (:client-replacements-total st) 0)) (long replaced))]
 
                             (aset-long replacement-stats 0 (long replaced))
                             (aset-long replacement-stats 1 (long total))
@@ -792,12 +779,11 @@
                                        :clients clients)
                                 (update :client-registrations-total (fnil inc 0))
                                 (assoc :client-replacements-total total)))))
-    (let
-      [replaced
-       (aget replacement-stats 0)
+    (let [replaced
+          (aget replacement-stats 0)
 
-       replacement-total
-       (aget replacement-stats 1)]
+          replacement-total
+          (aget replacement-stats 1)]
 
       (when (and (pos? replaced)
                  (or (= 1 replacement-total) (zero? (long (mod replacement-total 100)))))
@@ -867,16 +853,14 @@
 
 (defn- provider-status-handler
   [request]
-  (let
-    [provider-id (some-> (get-in request [:path-params :provider-id])
-                         keyword)]
+  (let [provider-id (some-> (get-in request [:path-params :provider-id])
+                            keyword)]
     (json-response {:status (providers/provider-status (configured-provider provider-id))})))
 
 (defn- provider-limits-handler
   [request]
-  (let
-    [provider-id (some-> (get-in request [:path-params :provider-id])
-                         keyword)]
+  (let [provider-id (some-> (get-in request [:path-params :provider-id])
+                            keyword)]
     (json-response {:report (provider-limits/provider-limits provider-id)})))
 
 (defn- provider-models-handler
@@ -887,21 +871,20 @@
    file — never in a thin client. Returns `{models [id …] hidden_count n}` with
    snake_case STRING wire keys."
   [request]
-  (let
-    [provider-id
-     (some-> (get-in request [:path-params :provider-id])
-             keyword)
+  (let [provider-id
+        (some-> (get-in request [:path-params :provider-id])
+                keyword)
 
-     show-all?
-     (contains? #{"1" "true" "yes"}
-                (some-> (get-in request [:query-params "show_all"])
-                        str/lower-case))
+        show-all?
+        (contains? #{"1" "true" "yes"}
+                   (some-> (get-in request [:query-params "show_all"])
+                           str/lower-case))
 
-     provider
-     (configured-provider provider-id)
+        provider
+        (configured-provider provider-id)
 
-     {:keys [models hidden-count]}
-     (providers/model-options provider (providers/default-model-names provider) show-all?)]
+        {:keys [models hidden-count]}
+        (providers/model-options provider (providers/default-model-names provider) show-all?)]
 
     (json-response {:models (vec models) :hidden-count (long (or hidden-count 0))})))
 
@@ -930,13 +913,12 @@
    (finish by polling `auth/poll`). The PKCE verifier and device code stay in
    the daemon and never appear in this response."
   [request]
-  (let
-    [provider-id
-     (some-> (get-in request [:path-params :provider-id])
-             keyword)
+  (let [provider-id
+        (some-> (get-in request [:path-params :provider-id])
+                keyword)
 
-     result
-     (provider-auth/start-auth! provider-id)]
+        result
+        (provider-auth/start-auth! provider-id)]
 
     (if (:ok? result) (json-response (:flow result)) (auth-error-response result))))
 
@@ -947,21 +929,20 @@
    typed. Credentials are exchanged and persisted DAEMON-side; the response
    carries only `{status}`."
   [request]
-  (let
-    [body
-     (try (body-json request) (catch Throwable _ nil))
+  (let [body
+        (try (body-json request) (catch Throwable _ nil))
 
-     flow-id
-     (or (get body "flow_id") (get-in request [:query-params "flow_id"]))
+        flow-id
+        (or (get body "flow_id") (get-in request [:query-params "flow_id"]))
 
-     input
-     (or (get body "redirect_url")
-         (get body "api_key")
-         (get body "code")
-         (get-in request [:query-params "redirect_url"]))
+        input
+        (or (get body "redirect_url")
+            (get body "api_key")
+            (get body "code")
+            (get-in request [:query-params "redirect_url"]))
 
-     result
-     (provider-auth/complete-auth! flow-id input)]
+        result
+        (provider-auth/complete-auth! flow-id input)]
 
     (if (:ok? result) (json-response {:status (:status result)}) (auth-error-response result))))
 
@@ -971,15 +952,14 @@
    runs on a daemon thread from the moment `auth/start` returned, so a phone
    can poll this on any cadence it likes."
   [request]
-  (let
-    [body
-     (try (body-json request) (catch Throwable _ nil))
+  (let [body
+        (try (body-json request) (catch Throwable _ nil))
 
-     flow-id
-     (or (get body "flow_id") (get-in request [:query-params "flow_id"]))
+        flow-id
+        (or (get body "flow_id") (get-in request [:query-params "flow_id"]))
 
-     result
-     (provider-auth/poll-auth! flow-id)]
+        result
+        (provider-auth/poll-auth! flow-id)]
 
     (if (:ok? result)
       (json-response (select-keys result [:status :message]))
@@ -989,12 +969,11 @@
   "POST /v1/providers/:provider-id/auth/cancel {flow_id} — forget an abandoned
    flow. Idempotent, so a client that lost track of its flow can always call it."
   [request]
-  (let
-    [body
-     (try (body-json request) (catch Throwable _ nil))
+  (let [body
+        (try (body-json request) (catch Throwable _ nil))
 
-     flow-id
-     (or (get body "flow_id") (get-in request [:query-params "flow_id"]))]
+        flow-id
+        (or (get body "flow_id") (get-in request [:query-params "flow_id"]))]
 
     (json-response (select-keys (provider-auth/cancel-auth! flow-id) [:status]))))
 
@@ -1003,25 +982,23 @@
    credentials through its registered logout and invalidate the cached fleet,
    so the very next `/v1/router` read shows `is_authenticated` false."
   [request]
-  (let
-    [provider-id
-     (some-> (get-in request [:path-params :provider-id])
-             keyword)
+  (let [provider-id
+        (some-> (get-in request [:path-params :provider-id])
+                keyword)
 
-     result
-     (provider-auth/logout! provider-id)]
+        result
+        (provider-auth/logout! provider-id)]
 
     (if (:ok? result) (json-response {:status (:status result)}) (auth-error-response result))))
 
 (defn- router-provider-entry
   "One row of the unified router payload, including the explicit global default."
   [provider default]
-  (let
-    [id
-     (:id provider)
+  (let [id
+        (:id provider)
 
-     is-default
-     (= id (:provider-id default))]
+        is-default
+        (= id (:provider-id default))]
 
     {:id (name id)
      :label (config/display-label id)
@@ -1035,12 +1012,11 @@
 (defn- router-handler
   "GET /v1/router — the whole provider catalog and explicit default pair."
   [_]
-  (let
-    [fleet
-     (providers/picker-fleet)
+  (let [fleet
+        (providers/picker-fleet)
 
-     default
-     (providers/default-selection fleet)]
+        default
+        (providers/default-selection fleet)]
 
     (json-response {:providers (mapv #(router-provider-entry % default) fleet)})))
 
@@ -1050,9 +1026,8 @@
   (let [{:strs [provider model]} (body-json request)]
     (if (or (str/blank? (str provider)) (str/blank? (str model)))
       (error-response 400 :invalid-request "provider and model must be non-blank strings")
-      (try (let
-             [{:keys [provider-id model]}
-              (providers/save-default-selection! provider model :gateway)]
+      (try (let [{:keys [provider-id model]}
+                 (providers/save-default-selection! provider model :gateway)]
              (json-response {:default-provider (name provider-id) :default-model model}))
            (catch clojure.lang.ExceptionInfo e
              (error-response 400 :invalid-request (ex-message e)))))))
@@ -1062,19 +1037,20 @@
    `toggle-row` hiccup: boolean rows carry `enabled`, enum rows carry
    `value` + `choices`."
   [{:keys [id label description type]}]
-  (let
-    [choices
-     (try (toggles/choices-of id) (catch Throwable _ nil))
+  (let [choices
+        (try (toggles/choices-of id) (catch Throwable _ nil))
 
-     value
-     (try (toggles/value-of id) (catch Throwable _ nil))
+        value
+        (try (toggles/value-of id) (catch Throwable _ nil))
 
-     pretty
-     (fn [v]
-       (if (keyword? v) (name v) (str v)))
+        pretty
+        (fn [v]
+          (if (keyword? v) (name v) (str v)))
 
-     base
-     {:id id :label (str (or label id)) :type (name (or type (if (seq choices) :enum :boolean)))}]
+        base
+        {:id id
+         :label (str (or label id))
+         :type (name (or type (if (seq choices) :enum :boolean)))}]
 
     (cond-> base
       description
@@ -1095,18 +1071,17 @@
    `*`, or omitting the param) ships every visible toggle regardless of
    channel — the cross-channel view a remote companion wants."
   [request]
-  (let
-    [raw
-     (get-in request [:query-params "channel"])
+  (let [raw
+        (get-in request [:query-params "channel"])
 
-     channel
-     (when (and raw (not (contains? #{"all" "*"} (str/lower-case raw)))) (keyword raw))
+        channel
+        (when (and raw (not (contains? #{"all" "*"} (str/lower-case raw)))) (keyword raw))
 
-     specs
-     (if channel (toggles/toggles-for-channel channel) (toggles/visible-toggles))
+        specs
+        (if channel (toggles/toggles-for-channel channel) (toggles/visible-toggles))
 
-     grouped
-     (sort-by (comp str key) (group-by #(or (:group %) :other) specs))]
+        grouped
+        (sort-by (comp str key) (group-by #(or (:group %) :other) specs))]
 
     (json-response {:groups (into []
                                   (map (fn [[group group-specs]]
@@ -1122,24 +1097,23 @@
    registered toggle; answers with the refreshed row. JSON body or query
    params both work."
   [request]
-  (let
-    [body
-     (try (body-json request) (catch Throwable _ nil))
+  (let [body
+        (try (body-json request) (catch Throwable _ nil))
 
-     id-str
-     (or (get body "id") (get-in request [:query-params "id"]))
+        id-str
+        (or (get body "id") (get-in request [:query-params "id"]))
 
-     action
-     (str (or (get body "action") (get-in request [:query-params "action"]) "toggle"))
+        action
+        (str (or (get body "action") (get-in request [:query-params "action"]) "toggle"))
 
-     raw-value
-     (or (get body "value") (get-in request [:query-params "value"]))
+        raw-value
+        (or (get body "value") (get-in request [:query-params "value"]))
 
-     id
-     (when (string? id-str) (str/trim id-str))
+        id
+        (when (string? id-str) (str/trim id-str))
 
-     spec
-     (when (seq id) (toggles/toggle-spec id))]
+        spec
+        (when (seq id) (toggles/toggle-spec id))]
 
     (cond (not (toggles/toggle-id? id))
           (error-response 400 :bad-setting-id "settings id must be a snake_case string")
@@ -1148,14 +1122,13 @@
                           ;; Set an EXACT choice. The wire carries an enum choice as its
                           ;; string name (e.g. "balanced"); map it back to the registered
                           ;; choice (keyword or string) before `set-value!` validates it.
-                          (let
-                            [choices
-                             (toggles/choices-of id)
+                          (let [choices
+                                (toggles/choices-of id)
 
-                             chosen
-                             (if (seq choices)
-                               (some #(when (= (name %) (str raw-value)) %) choices)
-                               raw-value)]
+                                chosen
+                                (if (seq choices)
+                                  (some #(when (= (name %) (str raw-value)) %) choices)
+                                  raw-value)]
 
                             (when (some? chosen) (toggles/set-value! id chosen)))
                           (= action "cycle") (toggles/cycle-value! id)
@@ -1166,14 +1139,13 @@
   "Theme selected by the TUI's persisted settings, normalized to a theme that
    this gateway process can actually render."
   []
-  (let
-    [saved
-     (get-in (or (config/load-config-raw) {}) ["tui_settings" "theme_name"])
+  (let [saved
+        (get-in (or (config/load-config-raw) {}) ["tui_settings" "theme_name"])
 
-     id
-     (cond (keyword? saved) (name saved)
-           (string? saved) (str/trim saved)
-           :else nil)]
+        id
+        (cond (keyword? saved) (name saved)
+              (string? saved) (str/trim saved)
+              :else nil)]
 
     (if (contains? (theme/theme-registry) id) id theme/default-theme-id)))
 
@@ -1203,14 +1175,13 @@
   "POST /v1/theme {id} — persist the shared TUI/companion theme and return its
    browser-ready palette. The next TUI start reads the same value."
   [request]
-  (let
-    [body
-     (try (body-json request) (catch Throwable _ nil))
+  (let [body
+        (try (body-json request) (catch Throwable _ nil))
 
-     id
-     (some-> (get body "id")
-             str
-             str/trim)]
+        id
+        (some-> (get body "id")
+                str
+                str/trim)]
 
     (cond (str/blank? id) (error-response 400 :invalid-theme "theme id must be a non-blank string")
           (not (contains? (theme/theme-registry) id))
@@ -1237,27 +1208,25 @@
    request + assistant text) matches `q`. The heavy assistant text stays
    server-side; clients union these ids into their local title/project filter."
   [request]
-  (let
-    [q
-     (str (get-in request [:query-params "q"]))
+  (let [q
+        (str (get-in request [:query-params "q"]))
 
-     channel
-     (or (some-> (get-in request [:query-params "channel"])
-                 keyword)
-         :all)
+        channel
+        (or (some-> (get-in request [:query-params "channel"])
+                    keyword)
+            :all)
 
-     ;; ONE search per request: `session_ids` is derived from the matches
-     ;; instead of re-running the identical (previously full-table) scan.
-     matches
-     (state/search-session-matches channel q)]
+        ;; ONE search per request: `session_ids` is derived from the matches
+        ;; instead of re-running the identical (previously full-table) scan.
+        matches
+        (state/search-session-matches channel q)]
 
     (json-response {:session_ids (mapv :session_id matches) :matches matches})))
 
 (defn- soul-handler
   [request]
-  (if-let
-    [soul (some-> (path-sid request)
-                  state/soul)]
+  (if-let [soul (some-> (path-sid request)
+                        state/soul)]
     (json-response soul)
     (session-404 (get-in request [:path-params :sid]))))
 
@@ -1265,19 +1234,17 @@
   "PATCH /v1/sessions/:sid — rename (`{title}`) OR change project membership
    (`{project_id}`, null to remove from project). Membership takes precedence."
   [request]
-  (let
-    [sid
-     (path-sid request)
+  (let [sid
+        (path-sid request)
 
-     body
-     (body-json request)]
+        body
+        (body-json request)]
 
     (cond (not sid) (session-404 (get-in request [:path-params :sid]))
-          (contains? body "project_id") (if-let
-                                          [soul (state/assign-project! sid
-                                                                       (some-> (get body
-                                                                                    "project_id")
-                                                                               parse-uuid))]
+          (contains? body "project_id") (if-let [soul (state/assign-project!
+                                                        sid
+                                                        (some-> (get body "project_id")
+                                                                parse-uuid))]
                                           (json-response soul)
                                           (session-404 (get-in request [:path-params :sid])))
           (str/blank? (str (get body "title")))
@@ -1317,12 +1284,11 @@
   "GET /v1/projects[?owner=…&archived=true] — the owner's projects (projects
    are CROSS-CHANNEL), each with a live session_count."
   [request]
-  (let
-    [owner
-     (not-empty (get-in request [:query-params "owner"]))
+  (let [owner
+        (not-empty (get-in request [:query-params "owner"]))
 
-     archived?
-     (= "true" (get-in request [:query-params "archived"]))]
+        archived?
+        (= "true" (get-in request [:query-params "archived"]))]
 
     (json-response {:projects (state/list-projects (cond-> {:include-archived? archived?}
                                                      owner
@@ -1359,38 +1325,36 @@
 (defn- get-project-handler
   [request]
   (let [pid-str (get-in request [:path-params :pid])]
-    (if-let
-      [p (some-> (path-pid request)
-                 state/get-project)]
+    (if-let [p (some-> (path-pid request)
+                       state/get-project)]
       (json-response p)
       (project-404 pid-str))))
 
 (defn- patch-project-handler
   "PATCH /v1/projects/:pid {name?, color?, position?, archived?} — patch a project."
   [request]
-  (let
-    [pid-str
-     (get-in request [:path-params :pid])
+  (let [pid-str
+        (get-in request [:path-params :pid])
 
-     pid
-     (path-pid request)
+        pid
+        (path-pid request)
 
-     body
-     (body-json request)
+        body
+        (body-json request)
 
-     opts
-     (cond-> {}
-       (contains? body "name")
-       (assoc :name (get body "name"))
+        opts
+        (cond-> {}
+          (contains? body "name")
+          (assoc :name (get body "name"))
 
-       (contains? body "color")
-       (assoc :color (get body "color"))
+          (contains? body "color")
+          (assoc :color (get body "color"))
 
-       (contains? body "position")
-       (assoc :position (get body "position"))
+          (contains? body "position")
+          (assoc :position (get body "position"))
 
-       (contains? body "archived")
-       (assoc :archived? (boolean (get body "archived"))))]
+          (contains? body "archived")
+          (assoc :archived? (boolean (get body "archived"))))]
 
     (cond (not pid) (project-404 pid-str)
           (and (contains? opts :name) (str/blank? (str (:name opts))))
@@ -1413,19 +1377,18 @@
    LOOSE sessions named in `order` are ADOPTED into the project atomically; guests
    owned by another project are never stolen."
   [request]
-  (let
-    [pid-str
-     (get-in request [:path-params :pid])
+  (let [pid-str
+        (get-in request [:path-params :pid])
 
-     pid
-     (path-pid request)
+        pid
+        (path-pid request)
 
-     order
-     (->> (get (body-json request) "order")
-          (keep #(some-> %
-                         str
-                         parse-uuid))
-          vec)]
+        order
+        (->> (get (body-json request) "order")
+             (keep #(some-> %
+                            str
+                            parse-uuid))
+             vec)]
 
     (cond (not pid) (project-404 pid-str)
           (empty? order)
@@ -1433,31 +1396,28 @@
           :else (let [count (state/reorder-project-sessions! pid order)]
                   (json-response {:project_id (str pid) :count count})))))
 
-
 (defn- submit-turn-handler
   [request]
-  (let
-    [sid
-     (path-sid request)
+  (let [sid
+        (path-sid request)
 
-     body
-     (body-json request)]
+        body
+        (body-json request)]
 
     (if (nil? sid)
       (session-404 (get-in request [:path-params :sid]))
-      (let
-        [result (state/submit-turn! sid
-                                    {:request (get body "request")
-                                     :idempotency-key (get body "idempotency_key")
-                                     :model (get body "model")
-                                     :reasoning-default (get body "reasoning_default")
-                                     :extra-body (get body "extra_body")
-                                     :turn-features (get body "turn_features")
-                                     :workspace (get body "workspace")
-                                     :attachments (get body "attachments")
-                                     ;; The submitter's own pre-expansion prose. Dropping it here
-                                     ;; is what made a queued image render as a raw /var/folders path.
-                                     :display-request (get body "display_request")})]
+      (let [result (state/submit-turn! sid
+                                       {:request (get body "request")
+                                        :idempotency-key (get body "idempotency_key")
+                                        :model (get body "model")
+                                        :reasoning-default (get body "reasoning_default")
+                                        :extra-body (get body "extra_body")
+                                        :turn-features (get body "turn_features")
+                                        :workspace (get body "workspace")
+                                        :attachments (get body "attachments")
+                                        ;; The submitter's own pre-expansion prose. Dropping it here
+                                        ;; is what made a queued image render as a raw /var/folders path.
+                                        :display-request (get body "display_request")})]
         (cond (:turn result) (json-response (if (:idempotent? result) 200 202) (:turn result))
               (= :turn-in-progress (:error result))
               (error-response 409
@@ -1475,12 +1435,11 @@
    ships the FULL history (every completed turn's content), so a poller that
    only wants the backlog must pass it."
   [request]
-  (let
-    [sid
-     (path-sid request)
+  (let [sid
+        (path-sid request)
 
-     queued-only?
-     (= "queued" (get-in request [:query-params "status"]))]
+        queued-only?
+        (= "queued" (get-in request [:query-params "status"]))]
 
     (if (and sid (state/soul sid))
       (json-response {:turns
@@ -1489,12 +1448,11 @@
 
 (defn- get-turn-handler
   [request]
-  (let
-    [sid
-     (path-sid request)
+  (let [sid
+        (path-sid request)
 
-     tid
-     (path-tid request)]
+        tid
+        (path-tid request)]
 
     (if-let [turn (and sid (state/get-turn sid tid))]
       (json-response turn)
@@ -1502,17 +1460,16 @@
 
 (defn- update-queued-turn-handler
   [request]
-  (let
-    [sid
-     (path-sid request)
+  (let [sid
+        (path-sid request)
 
-     tid
-     (path-tid request)
+        tid
+        (path-tid request)
 
-     result
-     (if sid
-       (state/update-queued-turn! sid tid (get (body-json request) "request"))
-       {:error :turn-not-found})]
+        result
+        (if sid
+          (state/update-queued-turn! sid tid (get (body-json request) "request"))
+          {:error :turn-not-found})]
 
     (cond (:turn result) (json-response (:turn result))
           (= :turn-not-found (:error result))
@@ -1525,15 +1482,14 @@
 
 (defn- delete-queued-turn-handler
   [request]
-  (let
-    [sid
-     (path-sid request)
+  (let [sid
+        (path-sid request)
 
-     tid
-     (path-tid request)
+        tid
+        (path-tid request)
 
-     result
-     (if sid (state/delete-queued-turn! sid tid) {:error :turn-not-found})]
+        result
+        (if sid (state/delete-queued-turn! sid tid) {:error :turn-not-found})]
 
     (cond (= "deleted" (:status result)) (json-response 200 result)
           (= :turn-not-found (:error result))
@@ -1546,15 +1502,14 @@
 
 (defn- cancel-turn-handler
   [request]
-  (let
-    [sid
-     (path-sid request)
+  (let [sid
+        (path-sid request)
 
-     tid
-     (path-tid request)
+        tid
+        (path-tid request)
 
-     result
-     (if sid (state/cancel-turn! sid tid) {:error :turn-not-found})]
+        result
+        (if sid (state/cancel-turn! sid tid) {:error :turn-not-found})]
 
     (cond (:status result) (json-response 202 result)
           (= :turn-not-found (:error result))
@@ -1607,9 +1562,8 @@
 
 (defn- context-handler
   [request]
-  (if-let
-    [snapshot (some-> (path-sid request)
-                      state/context-snapshot)]
+  (if-let [snapshot (some-> (path-sid request)
+                            state/context-snapshot)]
     (json-response snapshot)
     (session-404 (get-in request [:path-params :sid]))))
 
@@ -1630,11 +1584,10 @@
   zero rows."
   [request]
   (if-let [sid (path-sid request)]
-    (let
-      [given? (fn [k]
-                (some? (get-in request [:query-params k])))
-       limit (query-long request "limit")
-       offset (query-long request "offset")]
+    (let [given? (fn [k]
+                   (some? (get-in request [:query-params k])))
+          limit (query-long request "limit")
+          offset (query-long request "offset")]
 
       (if (or (and (given? "limit") (nil? limit)) (and (given? "offset") (nil? offset)))
         (error-response 400 :invalid-window "limit and offset must be integers")
@@ -1752,19 +1705,18 @@
    safely `immutable`-cacheable."
   [request]
   (if (path-sid request)
-    (let
-      [idx
-       (path-idx request)
+    (let [idx
+          (path-idx request)
 
-       atts
-       (state/iteration-attachments (path-iid request))
+          atts
+          (state/iteration-attachments (path-iid request))
 
-       att
-       (when (and idx (nat-int? idx)) (nth atts idx nil))
+          att
+          (when (and idx (nat-int? idx)) (nth atts idx nil))
 
-       ^bytes bs
-       (some-> att
-               state/attachment-bytes)]
+          ^bytes bs
+          (some-> att
+                  state/attachment-bytes)]
 
       (if bs
         {:status 200
@@ -1778,8 +1730,6 @@
                         :iteration_id (str (path-iid request))
                         :index idx)))
     (session-404 (get-in request [:path-params :sid]))))
-
-
 
 (defn- session-model-handler
   [request]
@@ -1800,13 +1750,12 @@
    offers models that are not pinned in vis.yml."
   [request]
   (if-let [sid (path-sid request)]
-    (let
-      [{:strs [provider model]} (body-json request)
-       pid (some-> provider
-                   str
-                   str/trim
-                   not-empty)
-       known (into #{} (map (comp name :id)) (providers/configured-providers-cached))]
+    (let [{:strs [provider model]} (body-json request)
+          pid (some-> provider
+                      str
+                      str/trim
+                      not-empty)
+          known (into #{} (map (comp name :id)) (providers/configured-providers-cached))]
 
       (if (and pid (not (contains? known pid)))
         (error-response 400
@@ -1876,9 +1825,8 @@
 (defn- abandon-draft-handler
   [request]
   (if-let [sid (path-sid request)]
-    (let
-      [workspace-id (get-in request [:path-params :workspace-id])
-       {reason "reason"} (body-json request)]
+    (let [workspace-id (get-in request [:path-params :workspace-id])
+          {reason "reason"} (body-json request)]
 
       (try (json-response {:workspace (state/abandon-draft! sid workspace-id reason)})
            (catch clojure.lang.ExceptionInfo e
@@ -1946,25 +1894,23 @@
    `{token, platform?, environment?, client?, client_version?, label?, bundle_id?}`.
    Re-registering the same token refreshes it instead of duplicating."
   [request]
-  (let
-    [body
-     (body-json request)
+  (let [body
+        (body-json request)
 
-     token
-     (some-> (get body "token")
-             str
-             str/trim)]
+        token
+        (some-> (get body "token")
+                str
+                str/trim)]
 
     (if (str/blank? token)
       (error-response 400 :bad-request "token is required")
-      (if-let
-        [device (push/register-device! {:token token
-                                        :platform (get body "platform")
-                                        :environment (get body "environment")
-                                        :client (get body "client")
-                                        :client-version (get body "client_version")
-                                        :label (get body "label")
-                                        :bundle-id (get body "bundle_id")})]
+      (if-let [device (push/register-device! {:token token
+                                              :platform (get body "platform")
+                                              :environment (get body "environment")
+                                              :client (get body "client")
+                                              :client-version (get body "client_version")
+                                              :label (get body "label")
+                                              :bundle-id (get body "bundle_id")})]
         (json-response {:device (device-wire device) :push (push/status)})
         (error-response 400 :bad-request "unusable device token")))))
 
@@ -2000,15 +1946,14 @@
    second QR. The port/scheme come from the request when the bind is unknown, so
    a tunnel sees itself correctly."
   [request]
-  (let
-    [{:keys [host port]}
-     @server-state
+  (let [{:keys [host port]}
+        @server-state
 
-     port
-     (or port (:server-port request) 7890)
+        port
+        (or port (:server-port request) 7890)
 
-     scheme
-     (name (or (:scheme request) :http))]
+        scheme
+        (name (or (:scheme request) :http))]
 
     (->> (pairing/candidate-hosts (or host "0.0.0.0"))
          (remove str/blank?)
@@ -2024,28 +1969,27 @@
    ([[protocol/handshake]]) and `compatibility` this gateway's verdict on the
    CALLER, so one request answers both \"what can you do\" and \"can we talk\"."
   [request]
-  (let
-    [model-state
-     (voice-asr-resolve "model-state")
+  (let [model-state
+        (voice-asr-resolve "model-state")
 
-     transcribe
-     (voice-asr-resolve "transcribe-file!")
+        transcribe
+        (voice-asr-resolve "transcribe-file!")
 
-     voice
-     (if (and model-state transcribe)
-       (try {:enabled true
-             :transport "audio/wav"
-             :transcription "gateway-local"
-             :model (voice-state->json (model-state))}
-            (catch Throwable t
-              {:enabled false
-               :transport "audio/wav"
-               :transcription "gateway-local"
-               :model {:status "unavailable" :error (or (ex-message t) "voice unavailable")}}))
-       {:enabled false
-        :transport "audio/wav"
-        :transcription "gateway-local"
-        :model {:status "unavailable"}})]
+        voice
+        (if (and model-state transcribe)
+          (try {:enabled true
+                :transport "audio/wav"
+                :transcription "gateway-local"
+                :model (voice-state->json (model-state))}
+               (catch Throwable t
+                 {:enabled false
+                  :transport "audio/wav"
+                  :transcription "gateway-local"
+                  :model {:status "unavailable" :error (or (ex-message t) "voice unavailable")}}))
+          {:enabled false
+           :transport "audio/wav"
+           :transcription "gateway-local"
+           :model {:status "unavailable"}})]
 
     (json-response {:version 1
                     :protocol (protocol/handshake)
@@ -2081,15 +2025,14 @@
         is absent (idempotent; returns immediately).
    JSON: {:status \"ready|downloading|failed|absent|unavailable\" :progress 0..100? :error \"…\"?}."
   [request]
-  (let
-    [sid
-     (path-sid request)
+  (let [sid
+        (path-sid request)
 
-     model-state
-     (voice-asr-resolve "model-state")
+        model-state
+        (voice-asr-resolve "model-state")
 
-     start-dl
-     (voice-asr-resolve "start-download!")]
+        start-dl
+        (voice-asr-resolve "start-download!")]
 
     (cond (not (and sid (state/soul sid)))
           (json-response 404 {:status "unavailable" :error "unknown session"})
@@ -2108,29 +2051,27 @@
    via /voice/model; a not-ready model answers 425 (Too Early) with the model state,
    NEVER blocking the request thread on the ~465MB download."
   [request]
-  (let
-    [sid
-     (path-sid request)
+  (let [sid
+        (path-sid request)
 
-     transcribe
-     (voice-asr-resolve "transcribe-file!")
+        transcribe
+        (voice-asr-resolve "transcribe-file!")
 
-     clean
-     (try (requiring-resolve (symbol "com.blockether.vis.ext.foundation-voice.input"
-                                     "clean-transcript"))
-          (catch Throwable _ nil))
+        clean
+        (try (requiring-resolve (symbol "com.blockether.vis.ext.foundation-voice.input"
+                                        "clean-transcript"))
+             (catch Throwable _ nil))
 
-     model-state
-     (voice-asr-resolve "model-state")]
+        model-state
+        (voice-asr-resolve "model-state")]
 
     (cond (not (and sid (state/soul sid))) (json-response 404 {:error "unknown session"})
           (or (nil? transcribe) (nil? model-state))
           (json-response 501 {:error "voice extension is not on the classpath"})
           (not= :ready (:state (model-state))) (json-response 425 (voice-state->json (model-state)))
           :else (let [tmp (java.io.File/createTempFile "vis-voice" ".wav")]
-                  (try (with-open
-                         [in ^java.io.InputStream (:body request)
-                          out (io/output-stream tmp)]
+                  (try (with-open [in ^java.io.InputStream (:body request)
+                                   out (io/output-stream tmp)]
 
                          (io/copy in out))
                        (if-not (wav-file? tmp)
@@ -2164,12 +2105,11 @@
   (if-not (some-> (path-sid request)
                   state/soul)
     (session-404 (get-in request [:path-params :sid]))
-    (let
-      [kind
-       (or (not-empty (get-in request [:query-params "kind"])) "file")
+    (let [kind
+          (or (not-empty (get-in request [:query-params "kind"])) "file")
 
-       q
-       (str (get-in request [:query-params "q"]))]
+          q
+          (str (get-in request [:query-params "q"]))]
 
       (case kind
         "file"
@@ -2295,28 +2235,28 @@
     (fn [request]
       (if-not (auth-required?)
         (handler request)
-        (let
-          [uri (str (:uri request))
-           open? (or (= "/healthz" uri)
-                     ;; The embedded docs site is public content (the vis.dev
-                     ;; pages) — viewable on the tunnel without the token.
-                     (= "/docs" uri)
-                     (str/starts-with? uri "/docs/")
-                     (some #(contains? (or (:open-uris %) #{}) uri) contribs))
-           authed? (or (constant-time=? expected
-                                        (some-> (get-in request [:headers "authorization"])
-                                                str/trim))
-                       ;; The internal same-machine client (TUI/CLI) carries the
-                       ;; SAME secret in X-Vis-Gateway-Secret (read from the on-disk
-                       ;; registry) — the header it already sends on the /healthz
-                       ;; probe. Accept it so a token-gated gateway (any non-loopback
-                       ;; bind like --host 0.0.0.0) doesn't 401 its own local clients.
-                       (constant-time=? (str token)
-                                        (some-> (get-in request [:headers "x-vis-gateway-secret"])
-                                                str/trim))
-                       (some (fn [{:keys [request-authed-fn]}]
-                               (when request-authed-fn (request-authed-fn request token)))
-                             contribs))]
+        (let [uri (str (:uri request))
+              open? (or (= "/healthz" uri)
+                        ;; The embedded docs site is public content (the vis.dev
+                        ;; pages) — viewable on the tunnel without the token.
+                        (= "/docs" uri)
+                        (str/starts-with? uri "/docs/")
+                        (some #(contains? (or (:open-uris %) #{}) uri) contribs))
+              authed? (or (constant-time=? expected
+                                           (some-> (get-in request [:headers "authorization"])
+                                                   str/trim))
+                          ;; The internal same-machine client (TUI/CLI) carries the
+                          ;; SAME secret in X-Vis-Gateway-Secret (read from the on-disk
+                          ;; registry) — the header it already sends on the /healthz
+                          ;; probe. Accept it so a token-gated gateway (any non-loopback
+                          ;; bind like --host 0.0.0.0) doesn't 401 its own local clients.
+                          (constant-time=? (str token)
+                                           (some-> (get-in request
+                                                           [:headers "x-vis-gateway-secret"])
+                                                   str/trim))
+                          (some (fn [{:keys [request-authed-fn]}]
+                                  (when request-authed-fn (request-authed-fn request token)))
+                                contribs))]
 
           (if (or open? authed?)
             (handler request)
@@ -2371,19 +2311,17 @@
    is legal for the web channel's cookie — and fall back to `*` for callers
    that send no Origin (curl, native clients)."
   [request]
-  (let
-    [origin
-     (get-in request [:headers "origin"])
+  (let [origin
+        (get-in request [:headers "origin"])
 
-     req-headers
-     (get-in request [:headers "access-control-request-headers"])]
+        req-headers
+        (get-in request [:headers "access-control-request-headers"])]
 
-    (cond->
-      {"Access-Control-Allow-Methods" cors-allow-methods
-       "Access-Control-Allow-Headers" (or req-headers
-                                          "Authorization, Content-Type, X-Vis-Gateway-Secret")
-       "Access-Control-Max-Age" "600"
-       "Vary" "Origin"}
+    (cond-> {"Access-Control-Allow-Methods" cors-allow-methods
+             "Access-Control-Allow-Headers" (or req-headers
+                                                "Authorization, Content-Type, X-Vis-Gateway-Secret")
+             "Access-Control-Max-Age" "600"
+             "Vary" "Origin"}
       origin
       (assoc "Access-Control-Allow-Origin"
         origin "Access-Control-Allow-Credentials"
@@ -2504,11 +2442,10 @@
   [handler contribs]
   (let [form-handler (ring-params/wrap-params handler)]
     (fn [request]
-      (let
-        [uri (str (:uri request))
-         form? (some (fn [{:keys [prefix form-params?]}]
-                       (and form-params? prefix (str/starts-with? uri prefix)))
-                     contribs)]
+      (let [uri (str (:uri request))
+            form? (some (fn [{:keys [prefix form-params?]}]
+                          (and form-params? prefix (str/starts-with? uri prefix)))
+                        contribs)]
 
         (if form?
           (form-handler request)
@@ -2523,15 +2460,13 @@
    composer posts, and no temp-file cleanup. Non-multipart requests pass
    straight through, so JSON/urlencoded routes are never touched."
   [handler contribs]
-  (let
-    [mp-handler (ring-multipart/wrap-multipart-params handler
-                                                      {:store (multipart-ba/byte-array-store)})]
+  (let [mp-handler (ring-multipart/wrap-multipart-params handler
+                                                         {:store (multipart-ba/byte-array-store)})]
     (fn [request]
-      (let
-        [uri (str (:uri request))
-         multipart? (some (fn [{:keys [prefix multipart?]}]
-                            (and multipart? prefix (str/starts-with? uri prefix)))
-                          contribs)]
+      (let [uri (str (:uri request))
+            multipart? (some (fn [{:keys [prefix multipart?]}]
+                               (and multipart? prefix (str/starts-with? uri prefix)))
+                             contribs)]
 
         (if multipart? (mp-handler request) (handler request))))))
 
@@ -2651,12 +2586,12 @@
   [handler opts deadline-ms]
   (loop []
 
-    (let
-      [outcome (try {:server (jetty/run-jetty handler opts)}
-                    (catch Throwable t
-                      (if (and (bind-failure? t) (< (System/currentTimeMillis) (long deadline-ms)))
-                        ::retry
-                        (throw t))))]
+    (let [outcome (try {:server (jetty/run-jetty handler opts)}
+                       (catch Throwable t
+                         (if (and (bind-failure? t)
+                                  (< (System/currentTimeMillis) (long deadline-ms)))
+                           ::retry
+                           (throw t))))]
       (if (= outcome ::retry) (do (Thread/sleep 150) (recur)) (:server outcome)))))
 
 (defn- loopback-mirror-configurator
@@ -2672,20 +2607,19 @@
    must not get a mirror (the bind would collide with itself)."
   [^long port]
   (fn [^Server server]
-    (let
-      [^ServerConnector primary
-       (first (.getConnectors server))
+    (let [^ServerConnector primary
+          (first (.getConnectors server))
 
-       ^HttpConnectionFactory http
-       (.getConnectionFactory primary HttpConnectionFactory)
+          ^HttpConnectionFactory http
+          (.getConnectionFactory primary HttpConnectionFactory)
 
-       factories
-       ^"[Lorg.eclipse.jetty.server.ConnectionFactory;"
-       (into-array ConnectionFactory
-                   [(HttpConnectionFactory. (HttpConfiguration. (.getHttpConfiguration http)))])
+          factories
+          ^"[Lorg.eclipse.jetty.server.ConnectionFactory;"
+          (into-array ConnectionFactory
+                      [(HttpConnectionFactory. (HttpConfiguration. (.getHttpConfiguration http)))])
 
-       mirror
-       (ServerConnector. server factories)]
+          mirror
+          (ServerConnector. server factories)]
 
       (.setHost mirror DEFAULT_HOST)
       (.setPort mirror (int port))
@@ -2699,96 +2633,96 @@
   ([] (start! {}))
   ([{:keys [port host token-file require-token? db managed?]}]
    (when @server-state (throw (ex-info "gateway already running" {:type :gateway/already-running})))
-   (let
-     [port
-      (int (or port DEFAULT_PORT))
+   (let [port
+         (int (or port DEFAULT_PORT))
 
-      host
-      (or host DEFAULT_HOST)
+         host
+         (or host DEFAULT_HOST)
 
-      loopback?
-      (= host DEFAULT_HOST)
+         loopback?
+         (= host DEFAULT_HOST)
 
-      ;; Keep 127.0.0.1 served even when the primary bind is a concrete remote
-      ;; IP, so a `--pair` daemon is still the one gateway the local TUI finds.
-      mirror-loopback?
-      (not (or loopback? (= host "0.0.0.0")))
+         ;; Keep 127.0.0.1 served even when the primary bind is a concrete remote
+         ;; IP, so a `--pair` daemon is still the one gateway the local TUI finds.
+         mirror-loopback?
+         (not (or loopback? (= host "0.0.0.0")))
 
-      ;; Loopback default: NO token (single local user; the dance is
-      ;; friction). Non-loopback: token MANDATORY, not overridable —
-      ;; an open bind without auth is never a sane default.
-      require-token?
-      (if loopback? (boolean require-token?) true)
+         ;; Loopback default: NO token (single local user; the dance is
+         ;; friction). Non-loopback: token MANDATORY, not overridable —
+         ;; an open bind without auth is never a sane default.
+         require-token?
+         (if loopback? (boolean require-token?) true)
 
-      path
-      (if token-file (Path/of token-file (make-array String 0)) (default-token-path))
+         path
+         (if token-file (Path/of token-file (make-array String 0)) (default-token-path))
 
-      token
-      (ensure-token! path)
+         token
+         (ensure-token! path)
 
-      db
-      (or db (config/resolve-db-spec))
+         db
+         (or db (config/resolve-db-spec))
 
-      _
-      (when-let [db-path (and (map? db) (:path db))]
-        (System/setProperty "vis.db.path" (str db-path)))
+         _
+         (when-let [db-path (and (map? db) (:path db))]
+           (System/setProperty "vis.db.path" (str db-path)))
 
-      ;; :token must be visible to rebuild-app! before Jetty serves the
-      ;; first request; a failed boot must roll the state back so a
-      ;; retry isn't refused as "already running".
-      _
-      (reset! server-state {:token token
-                            :require-token? require-token?
-                            :managed? (boolean managed?)
-                            :started-at-ms (System/currentTimeMillis)})
+         ;; :token must be visible to rebuild-app! before Jetty serves the
+         ;; first request; a failed boot must roll the state back so a
+         ;; retry isn't refused as "already running".
+         _
+         (reset! server-state {:token token
+                               :require-token? require-token?
+                               :managed? (boolean managed?)
+                               :started-at-ms (System/currentTimeMillis)})
 
-      _
-      (rebuild-app!)
+         _
+         (rebuild-app!)
 
-      ;; Load the persistence backend NOW, single-threaded, so the
-      ;; first DB touch never happens on N concurrent request threads.
-      _
-      (do (state/warm-db!)
-          (try (state/start-prewarming! [:api :tui])
-               (catch Throwable t
-                 (tel/log! :warn ["gateway: startup session prewarm failed" (ex-message t)]))))
+         ;; Load the persistence backend NOW, single-threaded, so the
+         ;; first DB touch never happens on N concurrent request threads.
+         _
+         (do (state/warm-db!)
+             (try (state/start-prewarming! [:api :tui])
+                  (catch Throwable t
+                    (tel/log! :warn ["gateway: startup session prewarm failed" (ex-message t)]))))
 
-      ;; A dead process can leave durable turn rows marked :running. Clear
-      ;; those stale flags to :interrupted, but NEVER reconstruct or resubmit
-      ;; their requests: queued work is intentionally process-memory only.
-      _
-      (try (state/reconcile-orphaned-turns!)
-           (catch Throwable t
-             (tel/log! :warn
-                       ["gateway: orphan-running-turn reconciliation failed" (ex-message t)])))
+         ;; A dead process can leave durable turn rows marked :running. Clear
+         ;; those stale flags to :interrupted, but NEVER reconstruct or resubmit
+         ;; their requests: queued work is intentionally process-memory only.
+         _
+         (try (state/reconcile-orphaned-turns!)
+              (catch Throwable t
+                (tel/log! :warn
+                          ["gateway: orphan-running-turn reconciliation failed" (ex-message t)])))
 
-      ;; Hydrate persisted toggles + install the state.yml save
-      ;; listener so web/gateway-driven flips survive restarts.
-      _
-      (install-toggle-persistence!)
+         ;; Hydrate persisted toggles + install the state.yml save
+         ;; listener so web/gateway-driven flips survive restarts.
+         _
+         (install-toggle-persistence!)
 
-      ;; Native push: one tap on the event appender turns every terminal turn
-      ;; into an APNs alert. Silent no-op until a device registers AND an APNs
-      ;; key is configured, so this costs one set lookup per event otherwise.
-      _
-      (do (push/set-session-describer! (fn [sid tid]
-                                         (try {:title (get (state/soul sid) "title")
-                                               ;; the ANSWER itself, so the banner says what
-                                               ;; vis said rather than that it said something.
-                                               :answer (state/turn-answer-text sid tid)}
-                                              (catch Throwable _ nil))))
-          (state/add-event-tap! ::push push/on-event!))
+         ;; Native push: one tap on the event appender turns every terminal turn
+         ;; into an APNs alert. Silent no-op until a device registers AND an APNs
+         ;; key is configured, so this costs one set lookup per event otherwise.
+         _
+         (do (push/set-session-describer! (fn [sid tid]
+                                            (try {:title (get (state/soul sid) "title")
+                                                  ;; the ANSWER itself, so the banner says what
+                                                  ;; vis said rather than that it said something.
+                                                  :answer (state/turn-answer-text sid tid)}
+                                                 (catch Throwable _ nil))))
+             (state/add-event-tap! ::push push/on-event!))
 
-      server
-      (try
-        (start-jetty!
-          serving-handler
-          (cond->
-            {:port port :host host :join? false :virtual-threads? true :send-server-version? false}
-            mirror-loopback?
-            (assoc :configurator (loopback-mirror-configurator port)))
-          (+ (System/currentTimeMillis) 6000))
-        (catch Throwable t (reset! server-state nil) (reset! live-app nil) (throw t)))]
+         server
+         (try (start-jetty! serving-handler
+                            (cond-> {:port port
+                                     :host host
+                                     :join? false
+                                     :virtual-threads? true
+                                     :send-server-version? false}
+                              mirror-loopback?
+                              (assoc :configurator (loopback-mirror-configurator port)))
+                            (+ (System/currentTimeMillis) 6000))
+              (catch Throwable t (reset! server-state nil) (reset! live-app nil) (throw t)))]
 
      (when-not (= host DEFAULT_HOST)
        (tel/log! :warn ["gateway: binding to non-loopback host" host]))
@@ -2903,32 +2837,31 @@
   ;; client that spawned us (idempotent with the -main call for direct callers).
   (try ((requiring-resolve 'com.blockether.vis.internal.jfr/maybe-start!) "gateway")
        (catch Throwable _ nil))
-  (let
-    [;; `--pair` is a request for PHONE access, so it selects the bind. With no
-     ;; explicit `--host` the loopback default printed a QR for an address
-     ;; nothing listened on — the failure landed on the phone, looking like a
-     ;; broken app. Bind every interface, which is what the QR's `alt=` hosts
-     ;; promise; it is non-loopback, so `start!` forces the bearer token.
-     auto-host
-     (when (and pair? (str/blank? host)) (pairing/pair-bind-host))
+  (let [;; `--pair` is a request for PHONE access, so it selects the bind. With no
+        ;; explicit `--host` the loopback default printed a QR for an address
+        ;; nothing listened on — the failure landed on the phone, looking like a
+        ;; broken app. Bind every interface, which is what the QR's `alt=` hosts
+        ;; promise; it is non-loopback, so `start!` forces the bearer token.
+        auto-host
+        (when (and pair? (str/blank? host)) (pairing/pair-bind-host))
 
-     {:keys [port host token-file require-token?]}
-     (start! {:port (some-> port
-                            parse-long)
-              :host (or auto-host host)
-              :token-file token-file
-              :require-token? require-token?
-              :db db
-              :managed? managed?})
+        {:keys [port host token-file require-token?]}
+        (start! {:port (some-> port
+                               parse-long)
+                 :host (or auto-host host)
+                 :token-file token-file
+                 :require-token? require-token?
+                 :db db
+                 :managed? managed?})
 
-     ;; `config/init-cli!` has already redirected System/out AND `*out*` into
-     ;; ~/.vis/logs/vis.log, so a plain `println` here is invisible — the
-     ;; daemon looked completely silent (no listen line, no pairing QR).
-     ;; Write the human banner to the process' ORIGINAL stdout instead.
-     emit!
-     (fn [line]
-       (.println config/original-stdout ^String (str line))
-       (.flush config/original-stdout))]
+        ;; `config/init-cli!` has already redirected System/out AND `*out*` into
+        ;; ~/.vis/logs/vis.log, so a plain `println` here is invisible — the
+        ;; daemon looked completely silent (no listen line, no pairing QR).
+        ;; Write the human banner to the process' ORIGINAL stdout instead.
+        emit!
+        (fn [line]
+          (.println config/original-stdout ^String (str line))
+          (.flush config/original-stdout))]
 
     (emit! (str "vis gateway listening on http://" host ":" port))
     (if require-token?

@@ -35,6 +35,7 @@
            [java.util.concurrent TimeUnit]
            [java.util.concurrent.locks ReentrantLock]
            [sun.misc Signal SignalHandler]))
+
 ;;; ── Threading model ─────────────────────────────────────────────────────────────
 ;;
 ;; The TUI now runs two threads against the Lanterna screen:
@@ -79,6 +80,7 @@
    treated as the DUPLICATE of the Esc that closed the dialog and swallowed,
    so it can't fall through to `handle-key` and wipe the editor draft."
   250)
+
 ;; Input box auto-sizing: starts at one row when empty (the smallest
 ;; surface that still reads as an input field) and grows by one row
 ;; per soft-wrap line of typed content, capped at four rows. Beyond
@@ -567,6 +569,7 @@
    results are cached so a transient registry hiccup (caught → []) can't
    poison the cell; the next call simply retries."
   (atom nil))
+
 ;; "Session-stable" has ONE exception: a `/reload` of Python extensions can
 ;; add/remove slash commands mid-session. Drop the memo when that happens so
 ;; the next `/` re-harvests and the new commands show up without a restart.
@@ -1150,7 +1153,6 @@
              :col (bubble-line-text-col (:role message) bubble-left line)
              :width content-w
              :text visible}))))))
-
 
 (defn- selected-transcript-text
   "Extract selected transcript text from virtual document rows, not only
@@ -1815,6 +1817,7 @@
                (try (.refresh screen Screen$RefreshType/DELTA) (catch Exception _ nil))))
         new-size)
     (.getTerminalSize screen)))
+
 ;; `apply-settings` was retired in favour of
 ;; `com.blockether.vis.ext.channel-tui.virtual/layout`, which
 ;; projects ONLY the messages whose viewport interval is non-empty
@@ -1898,7 +1901,6 @@
         label (str (render/spinner-frame (long now-ms)) "  Loading session…")]
     (p/set-colors! g t/text-fg t/terminal-bg)
     (p/put-str! g 0 row (p/center-text label (long cols)))))
-
 
 (defn- render-frame!
   "Draw one frame: background, messages area (bubbles), input box,
@@ -4287,6 +4289,7 @@
   ;; Restore shell tty semantics even when another teardown action failed.
   (try (input/restore-software-flow-control!) (catch Throwable _ nil))
   (try (input/restore-literal-next!) (catch Throwable _ nil)))
+
 ;; ---------------------------------------------------------------------------
 ;; Encrypted SSH key passphrase prompt — retired.
 ;;
@@ -4323,7 +4326,6 @@
     (cond (nil? t) false
           (= :svar/no-providers (:type (ex-data t))) true
           :else (recur (.getCause t)))))
-
 
 (def ^:private boot-splash-frames ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
 
@@ -4430,7 +4432,6 @@
                          (catch Throwable _ nil)
                          (finally (.unlock ^ReentrantLock draw-lock))))))))
 
-
 (defn- authenticated-provider-config
   "Return a runtime provider config when OAuth presets are already authenticated.
    Their credentials live outside config, so a missing config file is not a missing provider."
@@ -4439,7 +4440,6 @@
     (when-let [providers (seq (vis/authenticated-preset-providers))]
       {:providers (vec providers)})
     (catch Throwable _ nil)))
-
 
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
@@ -7147,6 +7147,7 @@
              (when-let [cleanup @ssh-passphrase-cleanup]
                (try (cleanup) (catch Throwable _ nil)))
              (.stopScreen screen))))))))
+
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 (def ^:private tui-usage "vis channels tui [--session-id ID | --resume | --continue]")
 
@@ -7288,6 +7289,7 @@
                   ;; not, so the hang was channel-specific.
                   (try (shutdown-agents) (catch Throwable _ nil))))
     (when (pos? (long @exit-code)) (System/exit (int @exit-code)))))
+
 ;;; Channel registration lives in com.blockether.vis.ext.channel-tui.core.
 ;;; Keep this namespace as the heavyweight runtime implementation loaded only
 ;;; when the TUI channel actually runs.

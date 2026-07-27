@@ -29,19 +29,18 @@
       (expect (= "anthropic/claude-opus-4: 429 rate-limit · openai/gpt-5: 401 auth"
                  (perr/provider-error-attempts-summary exhausted-err))))
   (it "no attempts (older svar / non-routing failure) → empty + nil summary"
-      (let
-        [bare {:message "All providers exhausted" :data {:type :svar.llm/all-providers-exhausted}}]
+      (let [bare {:message "All providers exhausted"
+                  :data {:type :svar.llm/all-providers-exhausted}}]
         (expect (empty? (perr/provider-error-attempts bare)))
         (expect (nil? (perr/provider-error-attempts-summary bare)))))
   (it "title for exhausted is the specific headline"
       (expect (= "All providers unavailable" (perr/provider-error-title exhausted-err))))
   (it "emits one structured provider error block"
-      (let
-        [blocks
-         (perr/provider-error-content exhausted-err)
+      (let [blocks
+            (perr/provider-error-content exhausted-err)
 
-         block
-         (first blocks)]
+            block
+            (first blocks)]
 
         (expect (= 1 (count blocks)))
         (expect (= "error" (get block "type")))
@@ -192,9 +191,8 @@
 
 (defdescribe empty-content-kind-test
              (it "typed :svar.llm/empty-content → honest empty-response card, no 'rejected' wording"
-                 (let
-                   [err {:message "The model produced neither text nor a tool call"
-                         :data {:type :svar.llm/empty-content :empty-reply-resends 2}}]
+                 (let [err {:message "The model produced neither text nor a tool call"
+                            :data {:type :svar.llm/empty-content :empty-reply-resends 2}}]
                    (expect (= :empty-content (perr/provider-error-kind err)))
                    (expect (= "Model returned an empty response" (perr/provider-error-title err)))
                    (expect (re-find #"no text and no tool" (perr/provider-error-explanation err)))
@@ -210,16 +208,15 @@
 (defdescribe
   stream-timeout-kind-test
   (it "typed :svar.core/stream-semantic-timeout → honest stall card, never 'Provider unavailable'"
-      (let
-        [err
-         {:message "Stream semantic timeout (300000ms without model/progress event): closed"
-          :data {:type :svar.core/stream-semantic-timeout
-                 :stream? true
-                 :semantic-timeout-ms 300000
-                 :cause-class "java.io.IOException"}}
+      (let [err
+            {:message "Stream semantic timeout (300000ms without model/progress event): closed"
+             :data {:type :svar.core/stream-semantic-timeout
+                    :stream? true
+                    :semantic-timeout-ms 300000
+                    :cause-class "java.io.IOException"}}
 
-         next-step
-         (perr/provider-error-next-step err)]
+            next-step
+            (perr/provider-error-next-step err)]
 
         (expect (perr/stream-timeout-error? err))
         (expect (= :stream-timeout (perr/provider-error-kind err)))
@@ -241,9 +238,8 @@
         (expect (nil? (re-find #"idle-timeout-ms" next-step)))
         (expect (true? (get (first (perr/provider-error-content err)) "retryable")))))
   (it "the idle-timeout sibling classifies the same way"
-      (let
-        [err {:message "Stream idle timeout (180000ms with no bytes)."
-              :data {:type :svar.core/stream-idle-timeout :idle-timeout-ms 180000}}]
+      (let [err {:message "Stream idle timeout (180000ms with no bytes)."
+                 :data {:type :svar.core/stream-idle-timeout :idle-timeout-ms 180000}}]
         (expect (= :stream-timeout (perr/provider-error-kind err)))
         (expect (re-find #"180s" (perr/provider-error-explanation err)))))
   (it "a real generic failure is untouched"
@@ -253,21 +249,20 @@
 
 (defdescribe
   context-overflow-presentation-test
-  (let
-    [data
-     {:type :svar.tokens/context-overflow
-      :source :provider
-      :status 400
-      :provider-error-code "context_length_exceeded"
-      :provider-message "maximum context length exceeded"
-      :input-tokens 210000
-      :max-input-tokens 200000}
+  (let [data
+        {:type :svar.tokens/context-overflow
+         :source :provider
+         :status 400
+         :provider-error-code "context_length_exceeded"
+         :provider-message "maximum context length exceeded"
+         :input-tokens 210000
+         :max-input-tokens 200000}
 
-     map-err
-     {:message "Provider stream failed" :data data}
+        map-err
+        {:message "Provider stream failed" :data data}
 
-     throwable
-     (ex-info "Provider stream failed" data)]
+        throwable
+        (ex-info "Provider stream failed" data)]
 
     (doseq [[label err] [["trace map" map-err] ["throwable" throwable]]]
       (it (str "recognizes canonical type from " label)
@@ -284,9 +279,9 @@
             (expect (str/includes? next-step "larger-context model"))
             (expect (not (re-find #"(?i)next step: retry" next-step))))))
     (it "supports provider-confirmed overflow without local token counts"
-        (let
-          [err {:message "failed"
-                :data {:type :svar.tokens/context-overflow :provider-error-code "prompt_too_long"}}]
+        (let [err {:message "failed"
+                   :data {:type :svar.tokens/context-overflow
+                          :provider-error-code "prompt_too_long"}}]
           (expect (= :context-overflow (perr/provider-error-kind err)))
           (expect (str/includes? (perr/provider-error-explanation err) "context window"))))
     (it "does not classify matching prose without the canonical type"
@@ -294,11 +289,10 @@
           (expect (false? (perr/context-overflow-error? err)))
           (expect (= :generic (perr/provider-error-kind err)))))
     (it "keeps the separate Extra inputs request-schema failure generic"
-        (let
-          [err {:message "Provider stream failed"
-                :data {:type :svar.core/stream-failed
-                       :status 400
-                       :provider-error-code "invalid_request_error"
-                       :provider-message "Extra inputs are not permitted"}}]
+        (let [err {:message "Provider stream failed"
+                   :data {:type :svar.core/stream-failed
+                          :status 400
+                          :provider-error-code "invalid_request_error"
+                          :provider-message "Extra inputs are not permitted"}}]
           (expect (= :generic (perr/provider-error-kind err)))
           (expect (not= "Context window exceeded" (perr/provider-error-title err)))))))

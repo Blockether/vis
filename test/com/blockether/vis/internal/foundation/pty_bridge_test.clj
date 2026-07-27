@@ -13,12 +13,11 @@
    (records subscribers so a test can drive live output) and `:send` (records
    bytes forwarded from a client)."
   []
-  (let
-    [listeners
-     (atom [])
+  (let [listeners
+        (atom [])
 
-     sent
-     (atom [])]
+        sent
+        (atom [])]
 
     {:listeners listeners
      :sent sent
@@ -43,12 +42,11 @@
   "Read whatever's available after a short settle, as a String."
   [^SocketChannel ch]
   (Thread/sleep 150)
-  (let
-    [buf
-     (ByteBuffer/allocate 1024)
+  (let [buf
+        (ByteBuffer/allocate 1024)
 
-     _n
-     (.read ch buf)]
+        _n
+        (.read ch buf)]
 
     (.flip buf)
     (let [ba (byte-array (.remaining buf))]
@@ -61,18 +59,17 @@
                    (expect (str/ends-with? (str (.getFileName p)) "__dev-server.sock"))
                    (expect (str/includes? (str (.getFileName p)) "sess-abc"))))
              (it "replays recent output, tees live output, and forwards client input"
-                 (let
-                   [{:keys [sent handle listeners]}
-                    (fake-pty)
+                 (let [{:keys [sent handle listeners]}
+                       (fake-pty)
 
-                    path
-                    (tmp-sock)
+                       path
+                       (tmp-sock)
 
-                    {:keys [stop] sp :path}
-                    (pb/serve! {:pty handle
-                                :path path
-                                :replay-fn (fn []
-                                             (.getBytes "REPLAY\n"))})]
+                       {:keys [stop] sp :path}
+                       (pb/serve! {:pty handle
+                                   :path path
+                                   :replay-fn (fn []
+                                                (.getBytes "REPLAY\n"))})]
 
                    (try (expect (.exists (File. ^String sp)))
                         (with-open [ch (connect sp)]
@@ -91,15 +88,14 @@
                    ;; stop unlinks the socket file
                    (expect (not (.exists (File. ^String sp))))))
              (it "find-socket resolves an explicit socket path"
-                 (let
-                   [{:keys [handle]}
-                    (fake-pty)
+                 (let [{:keys [handle]}
+                       (fake-pty)
 
-                    path
-                    (tmp-sock)
+                       path
+                       (tmp-sock)
 
-                    {:keys [stop] sp :path}
-                    (pb/serve! {:pty handle :path path})]
+                       {:keys [stop] sp :path}
+                       (pb/serve! {:pty handle :path path})]
 
                    (try (expect (= sp (str (pb/find-socket {:socket sp})))) (finally (stop)))))
              (it "attach! returns exit code 2 for a missing socket"

@@ -274,23 +274,22 @@
    tiny registrar + heavy implementation pair. Throws a useful error
    when the backend is missing the fn."
   [db-spec-or-store fn-name]
-  (let
-    [bid
-     (pick-backend-id db-spec-or-store)
+  (let [bid
+        (pick-backend-id db-spec-or-store)
 
-     ns-sym
-     (get-in @backends [bid :ns])
+        ns-sym
+        (get-in @backends [bid :ns])
 
-     _
-     (when-not ns-sym
-       (throw (ex-info (str "Backend " bid " not registered")
-                       {:backend bid :registered (vec (keys @backends))})))
+        _
+        (when-not ns-sym
+          (throw (ex-info (str "Backend " bid " not registered")
+                          {:backend bid :registered (vec (keys @backends))})))
 
-     _
-     (require-backend-ns! bid ns-sym)
+        _
+        (require-backend-ns! bid ns-sym)
 
-     v
-     (ns-resolve ns-sym fn-name)]
+        v
+        (ns-resolve ns-sym fn-name)]
 
     (when-not v
       (throw (ex-info (str "Backend " bid " (" ns-sym ") does not implement '" fn-name "'")
@@ -314,12 +313,11 @@
    selection still throws because the store/spec itself is invalid.
    Auto-loads the backend ns the same way `resolve-impl` does."
   [db-spec-or-store fn-name]
-  (let
-    [bid
-     (pick-backend-id db-spec-or-store)
+  (let [bid
+        (pick-backend-id db-spec-or-store)
 
-     ns-sym
-     (get-in @backends [bid :ns])]
+        ns-sym
+        (get-in @backends [bid :ns])]
 
     (when-not ns-sym
       (throw (ex-info (str "Backend " bid " not registered")
@@ -351,18 +349,17 @@
    any backend-providing namespaces from the classpath."
   [db-spec]
   (manifest/scan-extensions!)
-  (let
-    [normalized
-     (normalize-spec db-spec)
+  (let [normalized
+        (normalize-spec db-spec)
 
-     bid
-     (pick-backend-id (if (map? normalized) normalized {:backend (pick-backend-id {})}))
+        bid
+        (pick-backend-id (if (map? normalized) normalized {:backend (pick-backend-id {})}))
 
-     f
-     @(resolve-impl {:backend bid} 'db-open!)
+        f
+        @(resolve-impl {:backend bid} 'db-open!)
 
-     store
-     (f normalized)]
+        store
+        (f normalized)]
 
     (cond (nil? store) nil
           (map? store) (assoc store :backend bid)
@@ -412,6 +409,7 @@
 (defdelegate db-workspace-insert! [db-info opts])
 
 (defdelegate db-workspace-update-state! [db-info workspace-id new-state])
+
 ;; Label override + focus stamp + per-repo focus pointer.
 (defdelegate db-workspace-update-label! [db-info workspace-id label])
 
@@ -446,6 +444,7 @@
 (defdelegate db-list-sessions [db-info channel])
 
 (defdelegate db-search-session-ids [db-info channel query])
+
 (defdelegate db-search-session-matches [db-info channel query])
 
 (defdelegate db-find-session-by-external [db-info channel ext-id])
@@ -463,6 +462,7 @@
 (defdelegate db-list-session-states [db-info session-id])
 
 (defdelegate db-latest-session-state-id [db-info session-id])
+
 ;; Per-session model preference (session_soul.llm_pref_provider + llm_pref_model) — shared by every
 ;; channel; read by the engine at turn start (see session-model + loop.clj).
 (defdelegate db-get-session-model-pref [db-info session-id])
@@ -601,6 +601,7 @@
 ;; loads every iteration's Nippy `:forms`; the matching form's `:result` is
 ;; returned. Absent id ⇒ absent key (caller raises a clean miss).
 (defdelegate db-native-results-for-tool-ids [db-info session-id tool-ids])
+
 ;; List EVERY native tool_use id persisted in the session branch (newest first,
 ;; de-duped) — backs iteration over `ntr` (keys/items/…).
 (defdelegate db-native-result-ids-for-session [db-info session-id])

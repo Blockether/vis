@@ -25,6 +25,7 @@
             [com.blockether.vis.internal.format :as fmt]))
 
 (set! *unchecked-math* :warn-on-boxed)
+
 ;; ── text layout ─────────────────────────────────────────────────────────────
 (defn truncate-with-ellipsis
   "Truncate `s` so its display width fits in `max-cols`. When truncation
@@ -69,6 +70,7 @@
      (- pad-total left)]
 
     (str (apply str (repeat left \space)) text (apply str (repeat right \space)))))
+
 ;; ── close button ────────────────────────────────────────────────────────────
 (def ^{:const true} close-button-width
   "Cells a `close-button!` occupies: a leading space + 1-col `✕` + a\n  trailing space. No divider — the bare ✕ reads as a button, not `|x`."
@@ -387,6 +389,7 @@
   (p/set-colors! g t/text-fg t/terminal-bg)
   (p/put-str! g col row tab-group-divider-glyph)
   (p/clear-styles! g))
+
 ;; ── tab cell ────────────────────────────────────────────────────────────────
 (defn- tab-border-cols
   "Column offsets 0..width-1 to underline for a `:ready` tab — the WHOLE
@@ -559,6 +562,7 @@
       (running-border! g left row inner-w)
 
       nil)))
+
 ;; ── inert title ─────────────────────────────────────────────────────────────
 (defn title!
   "Paint an INERT, centered header title in [left,row] over `width` cells —
@@ -582,6 +586,7 @@
       (p/enable! g p/BOLD)
       (p/put-str! g col row shown)
       (p/clear-styles! g))))
+
 ;; ── nav arrow ───────────────────────────────────────────────────────────────
 (defn nav-arrow!
   "Paint a workspace-overflow navigation arrow `glyph` at (col,row) as a FILLED
@@ -598,6 +603,7 @@
            :workspace-entry
            {:extra {:index direction :workspace-id direction :text direction}
             :register? register?}))
+
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (def ^:private help-sections
   "Sections of `[keys description]` rows shown in the C-x h help card, grouped
@@ -642,6 +648,7 @@
            ["↑ · ↓ · ← · →" "History / move cursor (Alt+←/→ by word where supported)"]
            ["Copy / paste" "Use your terminal — select to copy, its paste key"]
            ["Mouse" "Click a tab to switch · ✕ close · + new session · ↓ latest to jump down"]]}])
+
 ;; ── header band chrome ──────────────────────────────────────────────────────
 (defn band-rule!
   "Paint a full-width single-line horizontal rule across `cols` on `row`."
@@ -721,6 +728,7 @@
     (p/clear-styles! g)
     (when register? (cr/register! {:bounds {:row row :col col :width w} :kind kind :enabled? true}))
     w))
+
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (defn- pad-right
   ^String [^String s ^long w]
@@ -982,6 +990,7 @@
     (dialog-close-button! g bounds :toggle-help)
     (p/clear-styles! g)
     (select-keys geom [:scroll :max-scroll])))
+
 ;; ── tasks overlay (W3: user-visible :session/tasks) ──────────────────────────
 (defn- task-status-glyph
   [status]

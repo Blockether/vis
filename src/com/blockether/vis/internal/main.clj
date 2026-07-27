@@ -68,36 +68,35 @@
    and converts ids/keywords through `persistance.base`, so this fn
    only carries the semantic payload."
   [signal]
-  (let
-    [ctx
-     (or (:ctx signal) {})
+  (let [ctx
+        (or (:ctx signal) {})
 
-     level
-     (or (:level signal) :info)
+        level
+        (or (:level signal) :info)
 
-     event
-     (or (some-> (:id signal)
-                 str)
-         (some-> (:ns signal)
-                 str)
-         "unknown")
+        event
+        (or (some-> (:id signal)
+                    str)
+            (some-> (:ns signal)
+                    str)
+            "unknown")
 
-     data
-     ;; Persisted payload boundary: the log table's `data` column is JSON —
-     ;; encode via the canonical wire (snake_case STRING keys, `foo?` -> is_foo).
-     (try (wire/json-str (cond-> {}
-                           (:msg_ signal)
-                           (assoc :msg (force (:msg_ signal)))
+        data
+        ;; Persisted payload boundary: the log table's `data` column is JSON —
+        ;; encode via the canonical wire (snake_case STRING keys, `foo?` -> is_foo).
+        (try (wire/json-str (cond-> {}
+                              (:msg_ signal)
+                              (assoc :msg (force (:msg_ signal)))
 
-                           (:data signal)
-                           (assoc :data (:data signal))
+                              (:data signal)
+                              (assoc :data (:data signal))
 
-                           (:ns signal)
-                           (assoc :ns (str (:ns signal)))
+                              (:ns signal)
+                              (assoc :ns (str (:ns signal)))
 
-                           (:error signal)
-                           (assoc :error (str (:error signal)))))
-          (catch Throwable _ nil))]
+                              (:error signal)
+                              (assoc :error (str (:error signal)))))
+             (catch Throwable _ nil))]
 
     (cond-> {:level level :event event :data data}
       (:session-soul-id ctx)
@@ -129,11 +128,9 @@
        (tel/log! :info \"something happened\"))"
   ([] (handler:db nil))
   ([_opts]
-   (fn handler
-     ([signal]
-      (when-let [db-info (get-in signal [:ctx :db-info])]
-        (try (persistance/db-log! db-info (signal->entry signal)) (catch Throwable _ nil))))
-     ([] nil))))
+   (fn handler ([signal] (when-let [db-info (get-in signal [:ctx :db-info])]
+                           (try (persistance/db-log! db-info (signal->entry signal))
+                                (catch Throwable _ nil)))) ([] nil))))
 
 (defn setup-db-handler!
   "Install the `:db` Telemere handler. Idempotent - reusing the same
@@ -276,34 +273,31 @@
    :kind :positional args are matched in declaration order.
    :kind :flag args are matched by --name. Boolean flags need no value."
   [arg-specs raw-args]
-  (let
-    [positional
-     (vec (filter #(= :positional (:kind %)) arg-specs))
+  (let [positional
+        (vec (filter #(= :positional (:kind %)) arg-specs))
 
-     flags
-     (into {}
-           (map (fn [a]
-                  [(:name a) a]))
-           (filter #(= :flag (:kind %)) arg-specs))]
+        flags
+        (into {}
+              (map (fn [a]
+                     [(:name a) a]))
+              (filter #(= :flag (:kind %)) arg-specs))]
 
-    (loop
-      [args
-       (seq raw-args)
+    (loop [args
+           (seq raw-args)
 
-       pos-idx
-       0
+           pos-idx
+           0
 
-       result
-       {}]
+           result
+           {}]
 
       (if-not args
         result
-        (let
-          [arg
-           (first args)
+        (let [arg
+              (first args)
 
-           more
-           (next args)]
+              more
+              (next args)]
 
           (if (flag-arg? arg)
             ;; Flag
@@ -325,12 +319,11 @@
 (defn validate-ext-args
   "Validate parsed args against spec. Returns nil on success, error string on failure."
   [arg-specs parsed]
-  (let
-    [required
-     (filter :required arg-specs)
+  (let [required
+        (filter :required arg-specs)
 
-     missing
-     (remove #(contains? parsed (:name %)) required)]
+        missing
+        (remove #(contains? parsed (:name %)) required)]
 
     (when (seq missing)
       (str "Missing required argument(s): " (str/join ", " (map :name missing))))))
@@ -344,35 +337,34 @@
 (defn format-cmd-help
   "Build help text for a single extension CLI command."
   [{:keys [cmd doc args ext-ns]}]
-  (let
-    [positional
-     (filter #(= :positional (:kind %)) (or args []))
+  (let [positional
+        (filter #(= :positional (:kind %)) (or args []))
 
-     flags
-     (filter #(= :flag (:kind %)) (or args []))
+        flags
+        (filter #(= :flag (:kind %)) (or args []))
 
-     usage-pos
-     (str/join " "
-               (map (fn [{:keys [name required]}]
-                      (if required (str "<" name ">") (str "[" name "]")))
-                    positional))
+        usage-pos
+        (str/join " "
+                  (map (fn [{:keys [name required]}]
+                         (if required (str "<" name ">") (str "[" name "]")))
+                       positional))
 
-     usage-flags
-     (when (seq flags) "[flags]")
+        usage-flags
+        (when (seq flags) "[flags]")
 
-     usage
-     (str/join " " (remove nil? [usage-pos usage-flags]))
+        usage
+        (str/join " " (remove nil? [usage-pos usage-flags]))
 
-     fmt-arg
-     (fn [{:keys [name type required doc]}]
-       (str "    "
-            (pad name 20)
-            (pad (or (some-> type
-                             clojure.core/name)
-                     "string")
-                 10)
-            (if required "required  " "optional  ")
-            (or doc "")))]
+        fmt-arg
+        (fn [{:keys [name type required doc]}]
+          (str "    "
+               (pad name 20)
+               (pad (or (some-> type
+                                clojure.core/name)
+                        "string")
+                    10)
+               (if required "required  " "optional  ")
+               (or doc "")))]
 
     (str "  vis extension "
          cmd
@@ -402,16 +394,14 @@
    Returns {:ok result} or {:error message}."
   [cmd-name raw-args]
   (if-let [{:keys [cmd]} (find-extension-cmd cmd-name)]
-    (let
-      [arg-specs (or (:args cmd) [])
-       ;; --help on any command
-       help? (some #{"--help" "-h"} raw-args)]
+    (let [arg-specs (or (:args cmd) [])
+          ;; --help on any command
+          help? (some #{"--help" "-h"} raw-args)]
 
       (if help?
         {:help (format-cmd-help (assoc cmd :ext-ns (:ext-ns cmd)))}
-        (let
-          [parsed (parse-ext-args arg-specs raw-args)
-           err (validate-ext-args arg-specs parsed)]
+        (let [parsed (parse-ext-args arg-specs raw-args)
+              err (validate-ext-args arg-specs parsed)]
 
           (if err {:error (str err "\n\n" (format-cmd-help cmd))} {:ok ((:fn cmd) parsed)}))))
     {:error (str "Unknown command: " cmd-name "\n\n" (extension-help))}))
@@ -447,34 +437,31 @@
 (defn- split-provider-model
   "Return `[provider-id model-name]` for `provider/model`; nil for bare model names."
   [model]
-  (when-let
-    [model* (some-> model
-                    str
-                    str/trim
-                    not-empty)]
+  (when-let [model* (some-> model
+                            str
+                            str/trim
+                            not-empty)]
     (when-let [idx (str/index-of model* "/")]
-      (let
-        [provider-name (subs model* 0 idx)
-         model-name (subs model* (inc (long idx)))]
+      (let [provider-name (subs model* 0 idx)
+            model-name (subs model* (inc (long idx)))]
 
         (when (and (not (str/blank? provider-name)) (not (str/blank? model-name)))
           [(keyword provider-name) model-name])))))
 
 (defn- select-model
   [provider model-name]
-  (let
-    [model-name*
-     (str model-name)
+  (let [model-name*
+        (str model-name)
 
-     existing
-     (some #(when (= (str/lower-case model-name*)
-                     (some-> (config/model-name %)
-                             str/lower-case))
-              %)
-           (:models provider))
+        existing
+        (some #(when (= (str/lower-case model-name*)
+                        (some-> (config/model-name %)
+                                str/lower-case))
+                 %)
+              (:models provider))
 
-     selected
-     (if (map? existing) (assoc existing :name model-name*) {:name model-name*})]
+        selected
+        (if (map? existing) (assoc existing :name model-name*) {:name model-name*})]
 
     (assoc provider
       :models (vec (cons selected
@@ -493,12 +480,12 @@
    Resolves from configured providers first, falling back to provider templates.
    Throws if the provider is unknown."
   [config provider-id]
-  (let
-    [providers
-     (vec (:providers config))
+  (let [providers
+        (vec (:providers config))
 
-     provider
-     (or (some #(when (= provider-id (:id %)) %) providers) (provider-from-template provider-id))]
+        provider
+        (or (some #(when (= provider-id (:id %)) %) providers)
+            (provider-from-template provider-id))]
 
     (if-not provider
       (throw (ex-info (str "Unknown provider: " (name provider-id))
@@ -512,22 +499,20 @@
    names (`provider/model`) move or synthesize that provider as the one-shot
    root provider. This does not persist to `~/.vis/config.edn`."
   [config model]
-  (if-let
-    [model* (some-> model
-                    str
-                    str/trim
-                    not-empty)]
+  (if-let [model* (some-> model
+                          str
+                          str/trim
+                          not-empty)]
     (let [providers (vec (:providers config))]
       (if-let [[provider-id model-name] (split-provider-model model*)]
-        (let
-          [provider (or (some #(when (= provider-id (:id %)) %) providers)
-                        (provider-from-template provider-id)
-                        (throw (ex-info (str "Unknown provider in --model: " (name provider-id))
-                                        {:type :vis.cli/unknown-model-provider
-                                         :vis/user-error true
-                                         :provider provider-id
-                                         :model model*})))
-           selected (select-model provider model-name)]
+        (let [provider (or (some #(when (= provider-id (:id %)) %) providers)
+                           (provider-from-template provider-id)
+                           (throw (ex-info (str "Unknown provider in --model: " (name provider-id))
+                                           {:type :vis.cli/unknown-model-provider
+                                            :vis/user-error true
+                                            :provider provider-id
+                                            :model model*})))
+              selected (select-model provider model-name)]
 
           (assoc config
             :providers (vec (cons selected (remove #(= provider-id (:id %)) providers)))))
@@ -549,18 +534,16 @@
 
 (defn- run-error-result
   [session-id e]
-  (let
-    [data
-     (ex-data e)
+  (let [data
+        (ex-data e)
 
-     unsupported?
-     (= :vis/unsupported-reasoning-effort (:type data))]
+        unsupported?
+        (= :vis/unsupported-reasoning-effort (:type data))]
 
-    (cond->
-      {:session-id session-id
-       :error (persistance/db-error->user-message e)
-       :type (str (type e))
-       :exception e}
+    (cond-> {:session-id session-id
+             :error (persistance/db-error->user-message e)
+             :type (str (type e))
+             :exception e}
       unsupported?
       (assoc :eval
         {:valid? false
@@ -618,57 +601,56 @@
    [{:keys [spec model provider reasoning-effort on-chunk debug? config db persist? no-persist?
             session-id]
      :as _opts}]]
-  (let
-    [mdl
-     (or model (:model agent-def))
+  (let [mdl
+        (or model (:model agent-def))
 
-     cfg-base
-     (config/resolve-config config)
+        cfg-base
+        (config/resolve-config config)
 
-     cfg
-     (cond-> cfg-base
-       provider
-       (config-with-provider-override (keyword provider))
+        cfg
+        (cond-> cfg-base
+          provider
+          (config-with-provider-override (keyword provider))
 
-       mdl
-       (config-with-model-override mdl))
+          mdl
+          (config-with-model-override mdl))
 
-     local-router?
-     (boolean (or config mdl provider))
+        local-router?
+        (boolean (or config mdl provider))
 
-     prompt-s
-     (if (string? prompt) prompt (pr-str prompt))
+        prompt-s
+        (if (string? prompt) prompt (pr-str prompt))
 
-     tracker
-     (when on-chunk
-       (progress/make-progress-tracker {:on-update (fn [_timeline chunk]
-                                                     (on-chunk chunk))}))
+        tracker
+        (when on-chunk
+          (progress/make-progress-tracker {:on-update (fn [_timeline chunk]
+                                                        (on-chunk chunk))}))
 
-     on-chunk*
-     (when tracker (:on-chunk tracker))
+        on-chunk*
+        (when tracker (:on-chunk tracker))
 
-     q-opts
-     (cond-> {}
-       spec
-       (assoc :spec spec)
+        q-opts
+        (cond-> {}
+          spec
+          (assoc :spec spec)
 
-       mdl
-       (assoc :model mdl)
+          mdl
+          (assoc :model mdl)
 
-       reasoning-effort
-       (assoc :reasoning-effort reasoning-effort)
+          reasoning-effort
+          (assoc :reasoning-effort reasoning-effort)
 
-       on-chunk*
-       (assoc :hooks {:on-chunk on-chunk*})
+          on-chunk*
+          (assoc :hooks {:on-chunk on-chunk*})
 
-       debug?
-       (assoc :debug? true))
+          debug?
+          (assoc :debug? true))
 
-     messages
-     (if (string? prompt) [(svar/user prompt)] prompt)
+        messages
+        (if (string? prompt) [(svar/user prompt)] prompt)
 
-     persistent?
-     (and (or persist? session-id) (not no-persist?))]
+        persistent?
+        (and (or persist? session-id) (not no-persist?))]
 
     (if-not persistent?
       ;; Ephemeral path: build a fresh env on a `:memory` SQLite DB so
@@ -683,18 +665,16 @@
       ;; persistent path already creates a `:cli` session). The prompt keys
       ;; off it to drop the candidate propose-and-STOP-for-approval gate —
       ;; there is no human here to approve, so a candidate plan would stall.
-      (let
-        [env (lp/create-environment (router-for-run cfg local-router?)
-                                    {:db (or db :memory) :channel :cli})]
+      (let [env (lp/create-environment (router-for-run cfg local-router?)
+                                       {:db (or db :memory) :channel :cli})]
         (try (let [result (lp/turn! env messages q-opts)]
-               (cond->
-                 {:session-id nil
-                  :content (content/answer-content (:answer result))
-                  :iteration-count (:iteration-count result)
-                  :duration-ms (:duration-ms result)
-                  :tokens (:tokens result)
-                  :cost (:cost result)
-                  :trace (:trace result)}
+               (cond-> {:session-id nil
+                        :content (content/answer-content (:answer result))
+                        :iteration-count (:iteration-count result)
+                        :duration-ms (:duration-ms result)
+                        :tokens (:tokens result)
+                        :cost (:cost result)
+                        :trace (:trace result)}
                  (:status result)
                  (assoc :status (:status result))
 
@@ -708,63 +688,58 @@
       ;; Persistent path: route through the canonical in-process gateway so
       ;; CLI, TUI, web, and transport clients share the same session/turn
       ;; machinery.
-      (let
-        [_
-         (when local-router? (lp/rebuild-router! cfg))
+      (let [_
+            (when local-router? (lp/rebuild-router! cfg))
 
-         resolve-session
-         (fn [input]
-           (let
-             [s (some-> input
-                        str
-                        str/trim)]
-             (when (seq s)
-               (or (when-let [session (gateway-state/soul s)]
-                     (:id session))
-                   (let
-                     [matches (->> (gateway-state/list-sessions)
-                                   (map :id)
-                                   (filter #(str/starts-with? (str %) s))
-                                   distinct
-                                   vec)]
-                     (when (= 1 (count matches)) (first matches)))))))
+            resolve-session
+            (fn [input]
+              (let [s (some-> input
+                              str
+                              str/trim)]
+                (when (seq s)
+                  (or (when-let [session (gateway-state/soul s)]
+                        (:id session))
+                      (let [matches (->> (gateway-state/list-sessions)
+                                         (map :id)
+                                         (filter #(str/starts-with? (str %) s))
+                                         distinct
+                                         vec)]
+                        (when (= 1 (count matches)) (first matches)))))))
 
-         resolved-session-id
-         (when session-id
-           (or (resolve-session session-id)
-               (throw (ex-info (str "Session not found: " session-id)
-                               {:type :vis.cli/session-not-found
-                                :vis/user-error true
-                                :session-id session-id}))))
+            resolved-session-id
+            (when session-id
+              (or (resolve-session session-id)
+                  (throw (ex-info (str "Session not found: " session-id)
+                                  {:type :vis.cli/session-not-found
+                                   :vis/user-error true
+                                   :session-id session-id}))))
 
-         created-session
-         (when-not resolved-session-id
-           ;; Create title-less so the async `maybe-auto-title!`
-           ;; side-channel (fired during the turn, same as TUI/web)
-           ;; generates a real LLM title. Passing a crude
-           ;; truncated-prompt title here used to satisfy
-           ;; `usable-existing-title` and SUPPRESS auto-titling,
-           ;; leaving every persisted CLI session stuck on the
-           ;; raw prompt text.
-           (gateway-state/create-session! {:channel :cli}))
+            created-session
+            (when-not resolved-session-id
+              ;; Create title-less so the async `maybe-auto-title!`
+              ;; side-channel (fired during the turn, same as TUI/web)
+              ;; generates a real LLM title. Passing a crude
+              ;; truncated-prompt title here used to satisfy
+              ;; `usable-existing-title` and SUPPRESS auto-titling,
+              ;; leaving every persisted CLI session stuck on the
+              ;; raw prompt text.
+              (gateway-state/create-session! {:channel :cli}))
 
-         session-id
-         (or resolved-session-id (:id created-session))]
+            session-id
+            (or resolved-session-id (:id created-session))]
 
-        (try (let
-               [result (gateway-state/submit-turn-sync!
-                         session-id
-                         {:request prompt-s :messages messages :engine-opts q-opts})]
+        (try (let [result (gateway-state/submit-turn-sync!
+                            session-id
+                            {:request prompt-s :messages messages :engine-opts q-opts})]
                ;; The gateway result is canonical string-keyed; pick the
                ;; fields into the CLI envelope explicitly.
-               (cond->
-                 {:session-id session-id
-                  :content (vec (or (get result "content") []))
-                  :iteration-count (get result "iteration_count")
-                  :duration-ms (get result "duration_ms")
-                  :tokens (get result "tokens")
-                  :cost (get result "cost")
-                  :trace (get result "trace")}
+               (cond-> {:session-id session-id
+                        :content (vec (or (get result "content") []))
+                        :iteration-count (get result "iteration_count")
+                        :duration-ms (get result "duration_ms")
+                        :tokens (get result "tokens")
+                        :cost (get result "cost")
+                        :trace (get result "trace")}
                  (get result "status")
                  (assoc :status
                    (case (get result "status")
@@ -866,12 +841,11 @@
 
 (defn- trace-pr-str
   [x]
-  (let
-    [s
-     (trace-value-str x)
+  (let [s
+        (trace-value-str x)
 
-     c
-     (long (count s))]
+        c
+        (long (count s))]
 
     (if (> c (long trace-max-inline-chars))
       (str (subs s 0 trace-max-inline-chars)
@@ -957,31 +931,28 @@
 
 (defn- expand-tabs
   [s]
-  (let
-    [^String s
-     (str s)
+  (let [^String s
+        (str s)
 
-     n
-     (.length s)
+        n
+        (.length s)
 
-     sb
-     (StringBuilder.)]
+        sb
+        (StringBuilder.)]
 
-    (loop
-      [i
-       0
+    (loop [i
+           0
 
-       col
-       0]
+           col
+           0]
 
       (if (>= i n)
         (.toString sb)
-        (let
-          [cp
-           (.codePointAt s i)
+        (let [cp
+              (.codePointAt s i)
 
-           step
-           (Character/charCount cp)]
+              step
+              (Character/charCount cp)]
 
           (cond (= cp 9) (let [spaces (- 4 (long (mod (long col) 4)))]
                            (.append sb (apply str (repeat spaces \space)))
@@ -994,45 +965,42 @@
 
 (defn- wrap-plain-line
   [s max-cols]
-  (let
-    [^String s
-     (str s)
+  (let [^String s
+        (str s)
 
-     n
-     (.length s)
+        n
+        (.length s)
 
-     max-cols
-     (max 8 (long max-cols))]
+        max-cols
+        (max 8 (long max-cols))]
 
-    (loop
-      [i
-       0
+    (loop [i
+           0
 
-       col
-       0
+           col
+           0
 
-       line
-       (StringBuilder.)
+           line
+           (StringBuilder.)
 
-       acc
-       []]
+           acc
+           []]
 
       (if (>= i n)
         (cond-> acc
           (pos? (.length line))
           (conj (.toString line)))
-        (let
-          [cp
-           (.codePointAt s i)
+        (let [cp
+              (.codePointAt s i)
 
-           step
-           (Character/charCount cp)
+              step
+              (Character/charCount cp)
 
-           piece
-           (String. (Character/toChars cp))
+              piece
+              (String. (Character/toChars cp))
 
-           w
-           (codepoint-width cp)]
+              w
+              (codepoint-width cp)]
 
           (if (and (pos? (.length line)) (> (+ col w) max-cols))
             (recur i 0 (StringBuilder.) (conj acc (.toString line)))
@@ -1041,15 +1009,14 @@
 (defn- pretty-block
   [label body]
   (when-not (str/blank? (strip-ansi body))
-    (let
-      [cols
-       (max 40 (- (long (terminal-width)) 4))
+    (let [cols
+          (max 40 (- (long (terminal-width)) 4))
 
-       lines
-       (->> (str/split-lines (expand-tabs body))
-            (mapcat (fn [line]
-                      (let [wrapped (wrap-plain-line line cols)]
-                        (if (seq wrapped) wrapped [""])))))]
+          lines
+          (->> (str/split-lines (expand-tabs body))
+               (mapcat (fn [line]
+                         (let [wrapped (wrap-plain-line line cols)]
+                           (if (seq wrapped) wrapped [""])))))]
 
       (str "\n" (trace-dim (str "  ┌─ " label))
            "\n" (->> lines
@@ -1059,19 +1026,18 @@
 
 (defn- print-pretty-trace-chunk!
   [chunk]
-  (let
-    [phase
-     (:phase chunk)
+  (let [phase
+        (:phase chunk)
 
-     iter
-     (:iteration chunk)
+        iter
+        (:iteration chunk)
 
-     head
-     (str (trace-dim "\n┌─")
-          " "
-          (trace-title "λ" "trace")
-          (when iter (str " " (trace-dim (str "iteration " iter))))
-          " ")]
+        head
+        (str (trace-dim "\n┌─")
+             " "
+             (trace-title "λ" "trace")
+             (when iter (str " " (trace-dim (str "iteration " iter))))
+             " ")]
 
     (case phase
       :provider-call
@@ -1189,37 +1155,36 @@
    EDN/JSON stream modes; the terminal trace should read like a tiny run
    report, not like dumped data."
   [result]
-  (let
-    [failed?
-     (boolean (:error result))
+  (let [failed?
+        (boolean (:error result))
 
-     iters
-     (fmt/format-iterations (:iteration-count result))
+        iters
+        (fmt/format-iterations (:iteration-count result))
 
-     duration
-     (fmt/format-duration (:duration-ms result))
+        duration
+        (fmt/format-duration (:duration-ms result))
 
-     tokens
-     (fmt/format-tokens (:tokens result))
+        tokens
+        (fmt/format-tokens (:tokens result))
 
-     cost
-     (fmt/format-cost (:cost result))
+        cost
+        (fmt/format-cost (:cost result))
 
-     confidence
-     (some-> (:confidence result)
-             name)
+        confidence
+        (some-> (:confidence result)
+                name)
 
-     status
-     (some-> (:status result)
-             name)
+        status
+        (some-> (:status result)
+                name)
 
-     where
-     (str/join " in " (remove str/blank? [iters duration]))
+        where
+        (str/join " in " (remove str/blank? [iters duration]))
 
-     opener
-     (str (if failed? "The run stopped with an error" "The run completed successfully")
-          (when-not (str/blank? where) (str " after " where))
-          ".")]
+        opener
+        (str (if failed? "The run stopped with an error" "The run completed successfully")
+             (when-not (str/blank? where) (str " after " where))
+             ".")]
 
     (str/join "\n"
               (remove str/blank?
@@ -1243,16 +1208,15 @@
 
 (defn- make-pretty-trace-printer
   []
-  (let
-    [;; Per-iteration display state:
-     ;;   :reasoning-open? - whether the `┌─ λ trace iteration N 🧠
-     ;;                      reasoning` header + `┌─ thinking` rail have
-     ;;                      already been printed; subsequent deltas
-     ;;                      append directly with the dim left rail.
-     ;;   :pending-line    - in-flight partial line (no trailing newline)
-     ;;                      so we can re-prefix correctly when more
-     ;;                      delta text arrives.
-     state (atom {})]
+  (let [;; Per-iteration display state:
+        ;;   :reasoning-open? - whether the `┌─ λ trace iteration N 🧠
+        ;;                      reasoning` header + `┌─ thinking` rail have
+        ;;                      already been printed; subsequent deltas
+        ;;                      append directly with the dim left rail.
+        ;;   :pending-line    - in-flight partial line (no trailing newline)
+        ;;                      so we can re-prefix correctly when more
+        ;;                      delta text arrives.
+        state (atom {})]
     (letfn
       [(close-reasoning! [iter]
          (let [s (get @state iter)]
@@ -1291,22 +1255,20 @@
              (when (and tail (pos? (count tail))) (write-stdout! tail))
              (swap! state update-in [iter :pending-line] #(str (or % "") tail)))))]
       (fn pretty-trace-on-chunk [chunk]
-        (let
-          [phase (:phase chunk)
-           iter (:iteration chunk)]
+        (let [phase (:phase chunk)
+              iter (:iteration chunk)]
 
           (case phase
             :reasoning
-            (let
-              [delta (:delta chunk)
-               thinking (str (:thinking chunk))
-               done? (boolean (:done? chunk))
-               ;; Backward-compat: if `:delta` was not provided (older
-               ;; host), fall back to printing the full text only on
-               ;; `:done?` — still better than re-printing on every tick.
-               effective (cond (some? delta) delta
-                               (and done? (not (str/blank? thinking))) thinking
-                               :else "")]
+            (let [delta (:delta chunk)
+                  thinking (str (:thinking chunk))
+                  done? (boolean (:done? chunk))
+                  ;; Backward-compat: if `:delta` was not provided (older
+                  ;; host), fall back to printing the full text only on
+                  ;; `:done?` — still better than re-printing on every tick.
+                  effective (cond (some? delta) delta
+                                  (and done? (not (str/blank? thinking))) thinking
+                                  :else "")]
 
               (when-not (str/blank? effective) (emit-reasoning-delta! iter effective))
               (when done? (close-reasoning! iter)))
@@ -1321,31 +1283,28 @@
    whitespace; tokens longer than `width` are hard-broken so a single
    long URL or symbol can't blow the column out."
   [s ^long width]
-  (let
-    [s
-     (str s)
+  (let [s
+        (str s)
 
-     s-count
-     (long (count s))]
+        s-count
+        (long (count s))]
 
     (cond (str/blank? s) [""]
           (<= s-count width) [s]
           :else
           (let [tokens (str/split s #"\s+")]
-            (loop
-              [tokens tokens
-               line ""
-               lines []]
+            (loop [tokens tokens
+                   line ""
+                   lines []]
 
               (if-let [tok (first tokens)]
                 (cond
                   ;; token longer than the column -> hard-split it
-                  (> (long (count tok)) width) (let
-                                                 [head (subs tok 0 width)
-                                                  tail (subs tok width)
-                                                  lines' (cond-> lines
-                                                           (seq line)
-                                                           (conj line))]
+                  (> (long (count tok)) width) (let [head (subs tok 0 width)
+                                                     tail (subs tok width)
+                                                     lines' (cond-> lines
+                                                              (seq line)
+                                                              (conj line))]
 
                                                  (recur (cons tail (rest tokens)) head lines'))
                   ;; fits on the current line
@@ -1363,10 +1322,9 @@
 
 (defn- parse-positive-long
   [s]
-  (try (let
-         [n (some-> s
-                    str/trim
-                    parse-long)]
+  (try (let [n (some-> s
+                       str/trim
+                       parse-long)]
          (when (and n (pos? (long n))) n))
        (catch Throwable _ nil)))
 
@@ -1374,12 +1332,11 @@
   "Run a tiny terminal-size probe and return its first stdout line.
    Kept private and timeout-bounded so table rendering never hangs CLI startup."
   [cmd]
-  (try (let
-         [p
-          (process/process {:cmd ["sh" "-c" cmd] :out :string :err :out})
+  (try (let [p
+             (process/process {:cmd ["sh" "-c" cmd] :out :string :err :out})
 
-          proc
-          (:proc p)]
+             proc
+             (:proc p)]
 
          (if (.waitFor ^Process proc 250 java.util.concurrent.TimeUnit/MILLISECONDS)
            (some-> @p
@@ -1418,37 +1375,34 @@
    share extra width; otherwise the final column grows. This keeps all
    CLI tables full-width while preserving fixed ID/count/date columns."
   [cols ^long target-width]
-  (let
-    [cols
-     (vec cols)
+  (let [cols
+        (vec cols)
 
-     extra
-     (max 0 (- target-width (table-width cols)))]
+        extra
+        (max 0 (- target-width (table-width cols)))]
 
     (if (zero? (long extra))
       cols
-      (let
-        [grow-idxs
-         (let
-           [marked (keep-indexed (fn [idx col]
-                                   (when (:grow? col) idx))
-                                 cols)]
-           (if (seq marked) (vec marked) [(dec (long (count cols)))]))
+      (let [grow-idxs
+            (let [marked (keep-indexed (fn [idx col]
+                                         (when (:grow? col) idx))
+                                       cols)]
+              (if (seq marked) (vec marked) [(dec (long (count cols)))]))
 
-         n
-         (long (count grow-idxs))
+            n
+            (long (count grow-idxs))
 
-         base
-         (quot (long extra) n)
+            base
+            (quot (long extra) n)
 
-         remainder
-         (rem (long extra) n)
+            remainder
+            (rem (long extra) n)
 
-         additions
-         (into {}
-               (map-indexed (fn [i idx]
-                              [idx (+ base (if (< (long i) (long remainder)) 1 0))]))
-               grow-idxs)]
+            additions
+            (into {}
+                  (map-indexed (fn [i idx]
+                                 [idx (+ base (if (< (long i) (long remainder)) 1 0))]))
+                  grow-idxs)]
 
         (mapv (fn [idx col]
                 (update col :width + (get additions idx 0)))
@@ -1462,28 +1416,26 @@
    visible across multiple physical lines. Tables expand to terminal
    width by growing `:grow?` columns (or the final column by default)."
   [cols rows]
-  (let
-    [cols
-     (expand-table-cols cols (terminal-width))
+  (let [cols
+        (expand-table-cols cols (terminal-width))
 
-     align-line
-     (fn [s {:keys [width align]}]
-       (if (= align :right) (commandline/pad-left s width) (commandline/pad-right s width)))
+        align-line
+        (fn [s {:keys [width align]}]
+          (if (= align :right) (commandline/pad-left s width) (commandline/pad-right s width)))
 
-     sep
-     (str "─" (str/join "─┼─" (map #(apply str (repeat (:width %) \─)) cols)) "─")
+        sep
+        (str "─" (str/join "─┼─" (map #(apply str (repeat (:width %) \─)) cols)) "─")
 
-     header
-     (str " " (str/join " │ " (map #(commandline/pad-right (:label %) (:width %)) cols)) " ")]
+        header
+        (str " " (str/join " │ " (map #(commandline/pad-right (:label %) (:width %)) cols)) " ")]
 
     (stdout! header)
     (stdout! sep)
     (doseq [row rows]
-      (let
-        [wrapped (mapv (fn [c]
-                         (wrap-str (get row (:key c)) (:width c)))
-                       cols)
-         row-lines (apply max 1 (map count wrapped))]
+      (let [wrapped (mapv (fn [c]
+                            (wrap-str (get row (:key c)) (:width c)))
+                          cols)
+            row-lines (apply max 1 (map count wrapped))]
 
         (dotimes [i row-lines]
           (stdout! (str " "
@@ -1500,12 +1452,11 @@
    sub-tables. `width` is the total visible width of the surrounding
    table so the rule under the label spans the same column run."
   [label width]
-  (let
-    [label-str
-     (str " " label " ")
+  (let [label-str
+        (str " " label " ")
 
-     rule-len
-     (max 4 (- (long width) (long (count label-str)) 2))]
+        rule-len
+        (max 4 (- (long width) (long (count label-str)) 2))]
 
     (stdout! "")
     (stdout! (str "── " label " " (apply str (repeat rule-len \─))))))
@@ -1518,24 +1469,22 @@
    Bespoke instead of `commandline.base/parse-args` because everything
    that ISN'T a known flag is glued together as the prompt body."
   [args]
-  (loop
-    [args
-     (seq args)
+  (loop [args
+         (seq args)
 
-     opts
-     {}
+         opts
+         {}
 
-     prompt-parts
-     []]
+         prompt-parts
+         []]
 
     (if-not args
       (assoc opts :prompt (str/join " " prompt-parts))
-      (let
-        [arg
-         (first args)
+      (let [arg
+            (first args)
 
-         more
-         (next args)]
+            more
+            (next args)]
 
         (case arg
           "--json"
@@ -1646,15 +1595,14 @@
    the CLI error path renders it as a user mistake, not a crash."
   [s]
   (reduce (fn [acc pair]
-            (let
-              [[k v]
-               (str/split pair #"=" 2)
+            (let [[k v]
+                  (str/split pair #"=" 2)
 
-               id
-               (or k "")
+                  id
+                  (or k "")
 
-               spec
-               (toggles/toggle-spec id)]
+                  spec
+                  (toggles/toggle-spec id)]
 
               (when-not spec
                 (throw (ex-info (str "Unknown toggle: " k)
@@ -1700,11 +1648,10 @@
   [overrides f]
   (if (empty? overrides)
     (f)
-    (let
-      [previous (into {}
-                      (map (fn [[id _]]
-                             [id (toggles/value-of id)]))
-                      overrides)]
+    (let [previous (into {}
+                         (map (fn [[id _]]
+                                [id (toggles/value-of id)]))
+                         overrides)]
       (try (doseq [[id v] overrides]
              (toggles/set-value! id v))
            (f)
@@ -1718,12 +1665,11 @@
 
 (defn- cli-result-exit-code
   [result]
-  (let
-    [invalid-reasons
-     (get-in result [:eval :invalid-reasons])
+  (let [invalid-reasons
+        (get-in result [:eval :invalid-reasons])
 
-     unsupported?
-     (some #(= :unsupported-reasoning-effort (:type %)) invalid-reasons)]
+        unsupported?
+        (some #(= :unsupported-reasoning-effort (:type %)) invalid-reasons)]
 
     (cond unsupported? 2
           (or (:error result) (contains? #{:error :cancelled} (:status result))) 1
@@ -1735,48 +1681,46 @@
    ourselves so anything that isn't a flag falls into the prompt."
   [_parsed residual]
   (config/init-cli!)
-  (let
-    [{:keys [prompt json? code? raw? full-trace-stream? full-trace-json-stream? help? agent-name db
-             toggles]
-      :as opts}
-     (parse-run-args residual)]
+  (let [{:keys [prompt json? code? raw? full-trace-stream? full-trace-json-stream? help? agent-name
+                db toggles]
+         :as opts}
+        (parse-run-args residual)]
     (when (or help? (str/blank? prompt)) (print-run-usage!) (System/exit 0))
     ;; Auto-promote to raw when stdout is NOT a TTY (piped/redirected).
     ;; Otherwise `vis ... > out.txt` leaves bold/italic ANSI markers in
     ;; the file. Structured output flags (--json/--edn/--code) win, and an
     ;; explicit --raw stays raw. The trace-stream flags own their own
     ;; output path and are unaffected.
-    (let
-      [structured-output? (or json? code? full-trace-stream? full-trace-json-stream?)
-       effective-raw? (or raw? (and (not structured-output?) (not (trace-terminal?))))
-       agent-def (agent {:name (or agent-name "cli")})
-       trace-on-chunk (cond full-trace-json-stream? #(print-full-trace-json-frame! :trace-chunk %)
-                            full-trace-stream? (make-pretty-trace-printer))
-       run-opts (cond->
-                  (dissoc opts
-                    :prompt
-                    :json?
-                    :code?
-                    :raw?
-                    :full-trace-stream?
-                    :full-trace-json-stream?
-                    :compact?
-                    :agent-name
-                    :db
-                    :toggles)
-                  trace-on-chunk
-                  (assoc :on-chunk trace-on-chunk)
+    (let [structured-output? (or json? code? full-trace-stream? full-trace-json-stream?)
+          effective-raw? (or raw? (and (not structured-output?) (not (trace-terminal?))))
+          agent-def (agent {:name (or agent-name "cli")})
+          trace-on-chunk (cond full-trace-json-stream? #(print-full-trace-json-frame! :trace-chunk
+                                                                                      %)
+                               full-trace-stream? (make-pretty-trace-printer))
+          run-opts (cond-> (dissoc opts
+                             :prompt
+                             :json?
+                             :code?
+                             :raw?
+                             :full-trace-stream?
+                             :full-trace-json-stream?
+                             :compact?
+                             :agent-name
+                             :db
+                             :toggles)
+                     trace-on-chunk
+                     (assoc :on-chunk trace-on-chunk)
 
-                  db
-                  (assoc :db
-                    (config/resolve-db-spec
-                      (if (= db ":memory") :memory {:backend :sqlite :path db}))))
-       result (call-with-toggle-overrides (parse-toggle-overrides toggles)
-                                          #(run! agent-def prompt run-opts))
-       exit-code (cli-result-exit-code result)
-       trace-result (select-keys result
-                                 [:session-id :content :trace :iteration-count :duration-ms :tokens
-                                  :cost :confidence :status :error :type :eval])]
+                     db
+                     (assoc :db
+                       (config/resolve-db-spec
+                         (if (= db ":memory") :memory {:backend :sqlite :path db}))))
+          result (call-with-toggle-overrides (parse-toggle-overrides toggles)
+                                             #(run! agent-def prompt run-opts))
+          exit-code (cli-result-exit-code result)
+          trace-result (select-keys result
+                                    [:session-id :content :trace :iteration-count :duration-ms
+                                     :tokens :cost :confidence :status :error :type :eval])]
 
       (cond full-trace-json-stream? (print-full-trace-json-frame! :result trace-result)
             full-trace-stream?
@@ -1795,10 +1739,9 @@
                     (.printStackTrace ^Throwable ex ^java.io.PrintStream config/original-stdout))))
             json? (stdout! (result->json result))
             code?
-            (let
-              [blocks (->> (result-content result)
-                           (keep #(when (= "code" (get % "type")) (get % "text")))
-                           vec)]
+            (let [blocks (->> (result-content result)
+                              (keep #(when (= "code" (get % "type")) (get % "text")))
+                              vec)]
               (cond (:error result) (stdout! (error/format-error (:error result)))
                     (empty? blocks)
                     (do (stdout!
@@ -1826,20 +1769,18 @@
    it. Returns nil on miss or ambiguous prefix. Existence-checks full
    UUID strings; backend `db-resolve-session-id` only parses them."
   [d input]
-  (let
-    [s (some-> input
-               str
-               str/trim)]
+  (let [s (some-> input
+                  str
+                  str/trim)]
     (when (seq s)
       (letfn [(existing-id [id]
                 (when (and id (try (persistance/db-get-session d id) (catch Throwable _ nil))) id))]
         (or (try (existing-id (persistance/db-resolve-session-id d s)) (catch Throwable _ nil))
-            (let
-              [matches (->> (or (persistance/db-list-sessions d :all) [])
-                            (filter #(str/starts-with? (str (:id %)) s))
-                            (map :id)
-                            distinct
-                            vec)]
+            (let [matches (->> (or (persistance/db-list-sessions d :all) [])
+                               (filter #(str/starts-with? (str (:id %)) s))
+                               (map :id)
+                               distinct
+                               vec)]
               (when (= 1 (count matches)) (existing-id (first matches)))))))))
 
 (defn- cli-fork-session!
@@ -1849,12 +1790,11 @@
    id (soul-id) stays the same so `vis channels tui --session-id
    <ID>` keeps working and now resumes from the fork."
   [cid-input title]
-  (let
-    [d
-     (lp/db-info)
+  (let [d
+        (lp/db-info)
 
-     resolved
-     (resolve-session-by-prefix d cid-input)]
+        resolved
+        (resolve-session-by-prefix d cid-input)]
 
     (cond (nil? resolved) (do (stdout! (str "Session not found: " cid-input))
                               (stdout! "")
@@ -1862,19 +1802,18 @@
                               (stdout! "  vis sessions")
                               (shutdown-agents)
                               (System/exit 1))
-          :else (let
-                  [;; Fork = new session_state = new workspace pin (1:1).
-                   ;; Mint a fresh isolated workspace for the fork.
-                   ws-id
-                   (:id (workspace/ensure-workspace! d {}))
+          :else (let [;; Fork = new session_state = new workspace pin (1:1).
+                      ;; Mint a fresh isolated workspace for the fork.
+                      ws-id
+                      (:id (workspace/ensure-workspace! d {}))
 
-                   opts
-                   (cond-> {:workspace-id ws-id}
-                     (and title (not (str/blank? title)))
-                     (assoc :title title))
+                      opts
+                      (cond-> {:workspace-id ws-id}
+                        (and title (not (str/blank? title)))
+                        (assoc :title title))
 
-                   new-state
-                   (persistance/db-fork-session! d resolved opts)]
+                      new-state
+                      (persistance/db-fork-session! d resolved opts)]
 
                   (if new-state
                     (do (stdout! "")
@@ -1902,15 +1841,14 @@
 
 (defn- session-row
   [d c]
-  (let
-    [turns
-     (or (persistance/db-list-session-turns d (:id c)) [])
+  (let [turns
+        (or (persistance/db-list-session-turns d (:id c)) [])
 
-     last-turn
-     (last turns)
+        last-turn
+        (last turns)
 
-     channel-name
-     (name (or (:channel c) :unknown))]
+        channel-name
+        (name (or (:channel c) :unknown))]
 
     {:id (str (:id c))
      :title (or (:title c) "-")
@@ -1941,15 +1879,14 @@
    nil lists every known channel. Rows sort by most recent turn first,
    with empty sessions after sessions that have turns."
   [channel-input]
-  (let
-    [channel-label
-     (or channel-input "all")
+  (let [channel-label
+        (or channel-input "all")
 
-     sessions
-     (sessions-for-listing channel-input)
+        sessions
+        (sessions-for-listing channel-input)
 
-     d
-     (lp/db-info)]
+        d
+        (lp/db-info)]
 
     (if (empty? sessions)
       (stdout! (if channel-input (str "No " channel-input " sessions found.") "No sessions found."))
@@ -1975,12 +1912,11 @@
 (defn- cli-sessions-list!
   [parsed _residual]
   (config/init-cli!)
-  (let
-    [channel
-     (get parsed "channel")
+  (let [channel
+        (get parsed "channel")
 
-     ch
-     (when (and channel (not= "all" channel)) (when (contains? known-channels channel) channel))]
+        ch
+        (when (and channel (not= "all" channel)) (when (contains? known-channels channel) channel))]
 
     (when (and channel (not (contains? known-channel-filters channel)))
       (stdout! (str "Unknown channel: "
@@ -2008,18 +1944,17 @@
 (defn- cli-show-session!
   [parsed _residual]
   (config/init-cli!)
-  (let
-    [d
-     (lp/db-info)
+  (let [d
+        (lp/db-info)
 
-     session
-     (session-or-exit! d (get parsed "session-id"))
+        session
+        (session-or-exit! d (get parsed "session-id"))
 
-     row
-     (session-detail-row d session)
+        row
+        (session-detail-row d session)
 
-     states
-     (persistance/db-list-session-states d (:id session))]
+        states
+        (persistance/db-list-session-states d (:id session))]
 
     (stdout! (str "\n  Session " (:id session)))
     (stdout! "  ─────────────────────────────────")
@@ -2036,9 +1971,8 @@
     ;; Workspace: trunk vs draft, and any extra filesystem roots (auto-cloned in
     ;; a draft). This is the CLI/JSON surface for "what drafts + filesystem roots
     ;; does this session have".
-    (when-let
-      [ws (when-let [sid (persistance/db-latest-session-state-id d (:id session))]
-            (workspace/for-session d sid))]
+    (when-let [ws (when-let [sid (persistance/db-latest-session-state-id d (:id session))]
+                    (workspace/for-session d sid))]
       (stdout! (str "  Workspace:    "
                     (if (workspace/draft? ws) "draft (isolated workspace)" "trunk (live)")))
       (stdout! (str "  Root:         " (:root ws)))
@@ -2110,32 +2044,31 @@
 (defn- cli-export-session!
   [parsed _residual]
   (config/init-cli!)
-  (let
-    [d
-     (lp/db-info)
+  (let [d
+        (lp/db-info)
 
-     session
-     (session-or-exit! d (get parsed "session-id"))
+        session
+        (session-or-exit! d (get parsed "session-id"))
 
-     md?
-     (boolean (get parsed "md"))
+        md?
+        (boolean (get parsed "md"))
 
-     html-path
-     (some-> (get parsed "html")
-             str/trim
-             not-empty
-             (ensure-ext "html")
-             resolve-out-path)
+        html-path
+        (some-> (get parsed "html")
+                str/trim
+                not-empty
+                (ensure-ext "html")
+                resolve-out-path)
 
-     mp4-path
-     (some-> (get parsed "mp4")
-             str/trim
-             not-empty
-             (ensure-ext "mp4")
-             resolve-out-path)
+        mp4-path
+        (some-> (get parsed "mp4")
+                str/trim
+                not-empty
+                (ensure-ext "mp4")
+                resolve-out-path)
 
-     chosen
-     (filterv some? [(when md? :md) (when html-path :html) (when mp4-path :mp4)])]
+        chosen
+        (filterv some? [(when md? :md) (when html-path :html) (when mp4-path :mp4)])]
 
     (when (> (count chosen) 1)
       (stdout! "Choose exactly one of --md, --html PATH, or --mp4 PATH.")
@@ -2147,15 +2080,14 @@
                       (spit target (export-html-str d (:id session)))
                       (stdout! (str "Exported HTML: " (paths/abbreviate-home (.getPath target)))))
           mp4-path
-          (let
-            [fmt
-             :mp4
+          (let [fmt
+                :mp4
 
-             path
-             mp4-path
+                path
+                mp4-path
 
-             export!
-             (cinema-export-fn)]
+                export!
+                (cinema-export-fn)]
 
             (when-let [parent (.getParentFile ^java.io.File (io/file path))]
               (.mkdirs parent))
@@ -2180,12 +2112,11 @@
 (defn- cli-delete-session!
   [parsed _residual]
   (config/init-cli!)
-  (let
-    [d
-     (lp/db-info)
+  (let [d
+        (lp/db-info)
 
-     session
-     (session-or-exit! d (get parsed "session-id"))]
+        session
+        (session-or-exit! d (get parsed "session-id"))]
 
     ;; DELETE removes the draft too: trash the session's draft clones (primary
     ;; + auto-cloned filesystem roots) before the DB tree. Draft-only — a trunk
@@ -2205,21 +2136,20 @@
    filesystem roots) run isolated until `/draft apply` or `/draft abandon`."
   [parsed _residual]
   (config/init-cli!)
-  (let
-    [d
-     (lp/db-info)
+  (let [d
+        (lp/db-info)
 
-     session
-     (session-or-exit! d (get parsed "session-id"))
+        session
+        (session-or-exit! d (get parsed "session-id"))
 
-     label
-     (some-> (get parsed "label")
-             str
-             str/trim
-             not-empty)
+        label
+        (some-> (get parsed "label")
+                str
+                str/trim
+                not-empty)
 
-     state-id
-     (persistance/db-latest-session-state-id d (:id session))]
+        state-id
+        (persistance/db-latest-session-state-id d (:id session))]
 
     (cond
       (nil? state-id)
@@ -2237,11 +2167,10 @@
                     (stdout! "  Apply or abandon it first (TUI: /draft apply | /draft abandon).")
                     (shutdown-agents)
                     (System/exit 1))
-                (let
-                  [draft (workspace/create! d
-                                            (cond-> {:session-state-id state-id :from current}
-                                              label
-                                              (assoc :label label)))]
+                (let [draft (workspace/create! d
+                                               (cond-> {:session-state-id state-id :from current}
+                                                 label
+                                                 (assoc :label label)))]
                   (stdout! (str "\n  Started draft for session " (:id session)))
                   (stdout! (str "    Clone: " (:root draft)))
                   (stdout! (str "    Trunk: " (:repo-root draft) "  (where /draft apply lands)"))
@@ -2266,16 +2195,15 @@
    result count (default 25)."
   [parsed _residual]
   (config/init-cli!)
-  (let
-    [query
-     (or (get parsed "query") "")
+  (let [query
+        (or (get parsed "query") "")
 
-     limit
-     (max 1
-          (long (or (some-> (get parsed "limit")
-                            str/trim
-                            Long/parseLong)
-                    25)))]
+        limit
+        (max 1
+             (long (or (some-> (get parsed "limit")
+                               str/trim
+                               Long/parseLong)
+                       25)))]
 
     (cond (str/blank? query) (do (stdout! "vis sessions search <query> [--limit N]")
                                  (stdout! "")
@@ -2284,16 +2212,15 @@
                                  (shutdown-agents)
                                  (System/exit 1))
           :else
-          (let
-            [d
-             (lp/db-info)
+          (let [d
+                (lp/db-info)
 
-             hits
-             (->> (persistance/db-search-session-matches d :all query)
-                  (mapcat (fn [{:keys [id hits]}]
-                            (map #(assoc % :session-id id) hits)))
-                  (take limit)
-                  vec)]
+                hits
+                (->> (persistance/db-search-session-matches d :all query)
+                     (mapcat (fn [{:keys [id hits]}]
+                               (map #(assoc % :session-id id) hits)))
+                     (take limit)
+                     vec)]
 
             (cond (empty? hits) (do (stdout! (str "No matches for: " query)) (shutdown-agents))
                   :else (do (stdout! (str (count hits)
@@ -2301,10 +2228,9 @@
                                           " for: " query))
                             (stdout! "")
                             (doseq [{:keys [session-id side snippet]} hits]
-                              (let
-                                [id-pref (let [s (str session-id)]
-                                           (subs s 0 (min 8 (count s))))
-                                 snippet (str/replace (or snippet "") #"\s+" " ")]
+                              (let [id-pref (let [s (str session-id)]
+                                              (subs s 0 (min 8 (count s))))
+                                    snippet (str/replace (or snippet "") #"\s+" " ")]
 
                                 (stdout!
                                   (str id-pref "  " (format "%-8s" (name side)) "  " snippet))))
@@ -2391,21 +2317,20 @@
 
 (defn- format-limit-row
   [{:keys [label scope kind is-unlimited used limit remaining note window]}]
-  (let
-    [quota
-     (cond is-unlimited "unlimited"
-           (number? limit) (str (when (number? used) (str used "/"))
-                                limit
-                                (when (number? remaining) (str " (" remaining " left)")))
-           (number? used) (str "used " used)
-           :else nil)
+  (let [quota
+        (cond is-unlimited "unlimited"
+              (number? limit) (str (when (number? used) (str used "/"))
+                                   limit
+                                   (when (number? remaining) (str " (" remaining " left)")))
+              (number? used) (str "used " used)
+              :else nil)
 
-     attrs
-     (->> [(some-> scope
-                   name)
-           (some-> kind
-                   name) (format-limit-window window)]
-          (remove nil?))]
+        attrs
+        (->> [(some-> scope
+                      name)
+              (some-> kind
+                      name) (format-limit-window window)]
+             (remove nil?))]
 
     (str label
          (when (seq attrs) (str " [" (str/join ", " attrs) "]"))
@@ -2414,21 +2339,20 @@
 
 (defn- provider-limit-lines
   [provider-id]
-  (let
-    [report
-     (gateway-provider-limits-safe provider-id)
+  (let [report
+        (gateway-provider-limits-safe provider-id)
 
-     static
-     (:static report)
+        static
+        (:static report)
 
-     dynamic
-     (get-in report [:dynamic :limits])
+        dynamic
+        (get-in report [:dynamic :limits])
 
-     note
-     (get-in report [:dynamic :note])
+        note
+        (get-in report [:dynamic :note])
 
-     error*
-     (:error report)]
+        error*
+        (:error report)]
 
     (vec (concat [(str "  Limits status: " (name (:status report)))]
                  (when-let [rpm (:rpm static)]
@@ -2445,21 +2369,20 @@
 
 (defn- print-provider-status!
   [provider]
-  (let
-    [status
-     (or (configured-provider-status provider) {"is_authenticated" false})
+  (let [status
+        (or (configured-provider-status provider) {"is_authenticated" false})
 
-     provider-id
-     (:provider/id provider)
+        provider-id
+        (:provider/id provider)
 
-     base-url
-     (configured-provider-base-url provider-id)
+        base-url
+        (configured-provider-base-url provider-id)
 
-     rows
-     (->> status
-          (remove (fn [[k _]]
-                    (= k "is_authenticated")))
-          (sort-by (comp str key)))]
+        rows
+        (->> status
+             (remove (fn [[k _]]
+                       (= k "is_authenticated")))
+             (sort-by (comp str key)))]
 
     (stdout! (str "\n  " (:provider/label provider) " Provider Status"))
     (stdout! "  ─────────────────────────────────")
@@ -2487,15 +2410,14 @@
        (sort-by :provider/id)
        (mapv
          (fn [provider]
-           (let
-             [status
-              (configured-provider-status provider)
+           (let [status
+                 (configured-provider-status provider)
 
-              report
-              (gateway-provider-limits-safe (:provider/id provider))
+                 report
+                 (gateway-provider-limits-safe (:provider/id provider))
 
-              base-url
-              (configured-provider-base-url (:provider/id provider))]
+                 base-url
+                 (configured-provider-base-url (:provider/id provider))]
 
              {:id (name (:provider/id provider))
               :label (:provider/label provider)
@@ -2539,21 +2461,20 @@
 (defn- cli-providers-status!
   [_parsed residual]
   (config/init-cli!)
-  (let
-    [provider-name
-     (first residual)
+  (let [provider-name
+        (first residual)
 
-     provider-id
-     (some-> provider-name
-             keyword)
+        provider-id
+        (some-> provider-name
+                keyword)
 
-     provider
-     (when provider-id (registry/provider-by-id provider-id))
+        provider
+        (when provider-id (registry/provider-by-id provider-id))
 
-     providers
-     (if provider-name
-       (if provider [provider] [])
-       (sort-by :provider/id (registry/registered-providers)))]
+        providers
+        (if provider-name
+          (if provider [provider] [])
+          (sort-by :provider/id (registry/registered-providers)))]
 
     (cond (and provider-name (nil? provider)) (do (stdout! (str "Unknown provider: " provider-name))
                                                   (stdout! "")
@@ -2567,22 +2488,20 @@
 (defn- cli-providers-limits!
   [_parsed residual]
   (config/init-cli!)
-  (let
-    [provider-name
-     (first residual)
+  (let [provider-name
+        (first residual)
 
-     registered
-     (sort-by :provider/id (registry/registered-providers))]
+        registered
+        (sort-by :provider/id (registry/registered-providers))]
 
     (if provider-name
-      (let
-        [provider-id
-         (keyword provider-name)
+      (let [provider-id
+            (keyword provider-name)
 
-         known?
-         (or (registry/provider-by-id provider-id)
-             (config/provider-template provider-id)
-             (seq (:static (gateway-provider-limits-safe provider-id))))]
+            known?
+            (or (registry/provider-by-id provider-id)
+                (config/provider-template provider-id)
+                (seq (:static (gateway-provider-limits-safe provider-id))))]
 
         (if known?
           (print-provider-limits! provider-id)
@@ -2598,16 +2517,15 @@
 (defn- cli-providers-auth!
   [parsed residual]
   (config/init-cli!)
-  (let
-    [provider-name
-     (or (get parsed "provider") (first residual))
+  (let [provider-name
+        (or (get parsed "provider") (first residual))
 
-     provider-id
-     (some-> provider-name
-             keyword)
+        provider-id
+        (some-> provider-name
+                keyword)
 
-     provider
-     (when provider-id (registry/provider-by-id provider-id))]
+        provider
+        (when provider-id (registry/provider-by-id provider-id))]
 
     (cond (nil? provider-id) (do (stdout! "Usage: vis providers auth <provider>")
                                  (stdout! "")
@@ -2628,20 +2546,19 @@
 (defn- cli-providers-logout!
   [parsed residual]
   (config/init-cli!)
-  (let
-    [provider-name
-     (or (get parsed "provider") (first residual))
+  (let [provider-name
+        (or (get parsed "provider") (first residual))
 
-     provider-id
-     (some-> provider-name
-             keyword)
+        provider-id
+        (some-> provider-name
+                keyword)
 
-     provider
-     (when provider-id (registry/provider-by-id provider-id))
+        provider
+        (when provider-id (registry/provider-by-id provider-id))
 
-     configured?
-     (boolean (some #(= (name provider-id) (get % "id"))
-                    (get (config/load-config-raw) "providers")))]
+        configured?
+        (boolean (some #(= (name provider-id) (get % "id"))
+                       (get (config/load-config-raw) "providers")))]
 
     (cond (nil? provider-id) (do (stdout! "Usage: vis providers logout <provider>")
                                  (stdout! "")
@@ -2664,12 +2581,11 @@
 (defn- cli-doctor!
   [_parsed _residual]
   (config/init-cli!)
-  (let
-    [env
-     {:db-info (config/resolve-db-spec)}
+  (let [env
+        {:db-info (config/resolve-db-spec)}
 
-     msgs
-     (doctor/run-checks env)]
+        msgs
+        (doctor/run-checks env)]
 
     (stdout! (doctor/format-output msgs))
     (System/exit (int (doctor/exit-code msgs)))))
@@ -2688,15 +2604,14 @@
 (defn- cli-extensions!
   [_parsed _residual]
   (config/init-cli!)
-  (let
-    [exts
-     (list-extensions)
+  (let [exts
+        (list-extensions)
 
-     cols
-     (expand-table-cols extensions-table-cols (terminal-width))
+        cols
+        (expand-table-cols extensions-table-cols (terminal-width))
 
-     width
-     (table-width cols)]
+        width
+        (table-width cols)]
 
     (if (empty? exts)
       (stdout! "No extensions registered.")
@@ -2709,25 +2624,23 @@
 
 (defn- safe-extension-name
   [s]
-  (let
-    [name (some-> s
-                  str
-                  str/trim
-                  (str/replace #"[^A-Za-z0-9._-]+" "-")
-                  (str/replace #"^-+|-+$" ""))]
+  (let [name (some-> s
+                     str
+                     str/trim
+                     (str/replace #"[^A-Za-z0-9._-]+" "-")
+                     (str/replace #"^-+|-+$" ""))]
     (when (seq name) name)))
 
 (defn- extension-namespace
   [name explicit]
-  (let
-    [base (or (some-> explicit
-                      str/trim
-                      not-empty)
-              (str "vis.ext."
-                   (-> name
-                       str/lower-case
-                       (str/replace #"[^a-z0-9._-]+" "-")
-                       (str/replace #"[-_]+" "-"))))]
+  (let [base (or (some-> explicit
+                         str/trim
+                         not-empty)
+                 (str "vis.ext."
+                      (-> name
+                          str/lower-case
+                          (str/replace #"[^a-z0-9._-]+" "-")
+                          (str/replace #"[-_]+" "-"))))]
     (symbol base)))
 
 (defn- namespace->path
@@ -2739,12 +2652,11 @@
 
 (defn- scaffold-extension-files
   [{:keys [name namespace]}]
-  (let
-    [ns-sym
-     (extension-namespace name namespace)
+  (let [ns-sym
+        (extension-namespace name namespace)
 
-     ns-path
-     (namespace->path ns-sym)]
+        ns-path
+        (namespace->path ns-sym)]
 
     {"deps.edn" (str "{:paths [\"src\" \"resources\"]\n" " :deps {}}\n")
      "resources/META-INF/vis-extension/vis.edn" (pr-str {(symbol name) {:nses [ns-sym]}})
@@ -2770,55 +2682,53 @@
 
 (defn- parse-scaffold-opts
   [parsed residual]
-  (let
-    [argv
-     (vec residual)
+  (let [argv
+        (vec residual)
 
-     parsed-name
-     (:name parsed)
+        parsed-name
+        (:name parsed)
 
-     parsed-dir
-     (:dir parsed)
+        parsed-dir
+        (:dir parsed)
 
-     parsed-namespace
-     (:namespace parsed)
+        parsed-namespace
+        (:namespace parsed)
 
-     force?
-     (boolean (or (:force parsed) (some #{"--force"} argv)))
+        force?
+        (boolean (or (:force parsed) (some #{"--force"} argv)))
 
-     parsed-argv
-     (loop
-       [xs
-        argv
+        parsed-argv
+        (loop [xs
+               argv
 
-        positional
-        []
+               positional
+               []
 
-        opts
-        {}]
+               opts
+               {}]
 
-       (if-let [x (first xs)]
-         (case x
-           "--force"
-           (recur (rest xs) positional opts)
+          (if-let [x (first xs)]
+            (case x
+              "--force"
+              (recur (rest xs) positional opts)
 
-           "--dir"
-           (recur (nnext xs) positional (assoc opts :dir (second xs)))
+              "--dir"
+              (recur (nnext xs) positional (assoc opts :dir (second xs)))
 
-           "--namespace"
-           (recur (nnext xs) positional (assoc opts :namespace (second xs)))
+              "--namespace"
+              (recur (nnext xs) positional (assoc opts :namespace (second xs)))
 
-           (recur (rest xs) (conj positional x) opts))
-         (assoc opts :positional positional)))
+              (recur (rest xs) (conj positional x) opts))
+            (assoc opts :positional positional)))
 
-     dir
-     (or parsed-dir (:dir parsed-argv))
+        dir
+        (or parsed-dir (:dir parsed-argv))
 
-     namespace
-     (or parsed-namespace (:namespace parsed-argv))
+        namespace
+        (or parsed-namespace (:namespace parsed-argv))
 
-     name
-     (safe-extension-name (or parsed-name (first (:positional parsed-argv))))]
+        name
+        (safe-extension-name (or parsed-name (first (:positional parsed-argv))))]
 
     {:name name :dir dir :namespace namespace :force? force?}))
 
@@ -2829,11 +2739,10 @@
     (when-not name
       (throw (ex-info "Usage: vis extension scaffold <name> [--dir DIR] [--namespace NS] [--force]"
                       {:type :cli/usage})))
-    (let
-      [target-path (or dir (str ".vis/vis-extensions/" name))
-       target (let [f (io/file target-path)]
-                (if (.isAbsolute f) f (io/file (System/getProperty "user.dir") target-path)))
-       files (scaffold-extension-files opts)]
+    (let [target-path (or dir (str ".vis/vis-extensions/" name))
+          target (let [f (io/file target-path)]
+                   (if (.isAbsolute f) f (io/file (System/getProperty "user.dir") target-path)))
+          files (scaffold-extension-files opts)]
 
       (doseq [[rel content] files]
         (let [f (io/file target rel)]
@@ -2854,15 +2763,13 @@
   (or (some-> (System/getenv "VIS_SOURCE_ROOT")
               not-empty
               io/file)
-      (when-let
-        [^java.io.File f (some-> (io/resource "com/blockether/vis/internal/main.clj")
-                                 str
-                                 (str/replace-first #"^file:" "")
-                                 java.net.URLDecoder/decode
-                                 io/file)]
-        (loop
-          [^java.io.File d f
-           n 6]
+      (when-let [^java.io.File f (some-> (io/resource "com/blockether/vis/internal/main.clj")
+                                         str
+                                         (str/replace-first #"^file:" "")
+                                         java.net.URLDecoder/decode
+                                         io/file)]
+        (loop [^java.io.File d f
+               n 6]
 
           (if (or (nil? d) (zero? n)) d (recur (.getParentFile d) (dec n)))))
       (io/file ".")))
@@ -2871,18 +2778,17 @@
 
 (defn- process-result
   [cmd dir]
-  (let
-    [p
-     (process/process {:cmd cmd :dir (.getPath (io/file dir)) :out :string :err :string})
+  (let [p
+        (process/process {:cmd cmd :dir (.getPath (io/file dir)) :out :string :err :string})
 
-     proc
-     (:proc p)
+        proc
+        (:proc p)
 
-     _
-     (.waitFor ^Process proc)
+        _
+        (.waitFor ^Process proc)
 
-     result
-     @p]
+        result
+        @p]
 
     {:exit (:exit result) :out (:out result) :err (:err result)}))
 
@@ -2894,9 +2800,8 @@
       (throw (ex-info "Vis update requires a git source checkout"
                       {:type :update/not-git-checkout :path (.getPath root)})))
     (stdout! (str "Updating Vis source at " (.getPath root)))
-    (let
-      [fetch (process-result ["git" "fetch" "--tags" "origin"] root)
-       pull (when (zero? (long (:exit fetch))) (process-result ["git" "pull" "--ff-only"] root))]
+    (let [fetch (process-result ["git" "fetch" "--tags" "origin"] root)
+          pull (when (zero? (long (:exit fetch))) (process-result ["git" "pull" "--ff-only"] root))]
 
       (when-not (zero? (long (:exit fetch)))
         (throw (ex-info
@@ -2931,9 +2836,8 @@
   (config/init-cli!)
   (when-let [db (get parsed "db")]
     (System/setProperty "vis.db.path" db))
-  (let
-    [{:keys [status pid host port db clients running_turns require_token] :as m}
-     ((requiring-resolve 'com.blockether.vis.internal.gateway.client/status))]
+  (let [{:keys [status pid host port db clients running_turns require_token] :as m}
+        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/status))]
     (if (= "running" status)
       (stdout! (str "gateway running pid=" pid
                     " url=http://" host
@@ -2954,9 +2858,8 @@
   (config/init-cli!)
   (when-let [db (get parsed "db")]
     (System/setProperty "vis.db.path" db))
-  (let
-    [{:keys [running? host port token loopback?]}
-     ((requiring-resolve 'com.blockether.vis.internal.gateway.client/pairing-info))]
+  (let [{:keys [running? host port token loopback?]}
+        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/pairing-info))]
     (cond
       (not running?) (throw (ex-info
                               (str "no gateway is running for this DB. Start one reachable first:\n"
@@ -2965,9 +2868,8 @@
       loopback?
       (throw
         (ex-info
-          (let
-            [ts (first ((requiring-resolve
-                          'com.blockether.vis.internal.gateway.pairing/tailscale-hosts)))]
+          (let [ts (first ((requiring-resolve
+                             'com.blockether.vis.internal.gateway.pairing/tailscale-hosts)))]
             (str "the running gateway is bound to " host
                  " (loopback) \u2014 a phone cannot reach it.\n" "Restart it on a reachable host:\n"
                  "  vis gateway stop\n"
@@ -2985,9 +2887,8 @@
   (config/init-cli!)
   (when-let [db (get parsed "db")]
     (System/setProperty "vis.db.path" db))
-  (let
-    [{:keys [stopping status] :as m} ((requiring-resolve
-                                        'com.blockether.vis.internal.gateway.client/stop-daemon!))]
+  (let [{:keys [stopping status] :as m}
+        ((requiring-resolve 'com.blockether.vis.internal.gateway.client/stop-daemon!))]
     (stdout! (cond stopping "gateway stopping"
                    (= "stopped" status) "gateway stopped"
                    :else (str "gateway stop requested: " (pr-str m))))))
@@ -3013,16 +2914,15 @@
    `env/seed-cli-runtime!`. The process stdin is wired to the guest
    `sys.stdin`, so `sys.stdin.read()` works alongside `-c`/FILE."
   [{:keys [network? argv env]}]
-  (let
-    [cwd
-     (.getCanonicalPath (io/file "."))
+  (let [cwd
+        (.getCanonicalPath (io/file "."))
 
-     {:keys [python-context]}
-     (env/create-python-context {}
-                                (fn []
-                                  [cwd])
-                                {:enabled? (boolean network?)}
-                                System/in)]
+        {:keys [python-context]}
+        (env/create-python-context {}
+                                   (fn []
+                                     [cwd])
+                                   {:enabled? (boolean network?)}
+                                   System/in)]
 
     ;; Bind an empty standing `ctx` dict so the async runtime has it available.
     (env/bind-ctx! python-context {})
@@ -3054,16 +2954,16 @@
     (loop []
 
       (write-stdout! ">>> ")
-      (let
-        [buf (StringBuilder.)
-         eof? (loop []
+      (let [buf (StringBuilder.)
+            eof?
+            (loop []
 
-                (let [line (.readLine reader)]
-                  (cond (nil? line) true
-                        (str/blank? line) false
-                        :else
-                        (do (.append buf line) (.append buf "\n") (write-stdout! "... ") (recur)))))
-         code (str/trim (.toString buf))]
+              (let [line (.readLine reader)]
+                (cond (nil? line) true
+                      (str/blank? line) false
+                      :else
+                      (do (.append buf line) (.append buf "\n") (write-stdout! "... ") (recur)))))
+            code (str/trim (.toString buf))]
 
         (when (seq code) (run-python-source! ctx code))
         (if eof? (stdout! "") (recur))))))
@@ -3098,18 +2998,17 @@
    (mirrors CPython: trailing args land in `sys.argv`, flags included).
    With no selector the mode is `:interactive` (REPL on a TTY, else stdin)."
   [residual]
-  (loop
-    [network?
-     true
+  (loop [network?
+         true
 
-     inherit-env?
-     true
+         inherit-env?
+         true
 
-     env-overrides
-     []
+         env-overrides
+         []
 
-     args
-     (vec residual)]
+         args
+         (vec residual)]
 
     (let [a (first args)]
       (cond (nil? a) {:network? network?
@@ -3142,37 +3041,36 @@
    (`--no-env` scrubs it, `--env K=V` sets/overrides one var)."
   [_parsed residual]
   (config/init-cli!)
-  (let
-    [{:keys [network? inherit-env? env-overrides mode code file argv]}
-     (parse-python-cli-args residual)
+  (let [{:keys [network? inherit-env? env-overrides mode code file argv]}
+        (parse-python-cli-args residual)
 
-     env
-     (merge (if inherit-env? (into {} (System/getenv)) {})
-            (python-cli-env-overrides->map env-overrides))
+        env
+        (merge (if inherit-env? (into {} (System/getenv)) {})
+               (python-cli-env-overrides->map env-overrides))
 
-     ctx
-     (python-cli-context {:network? network? :argv argv :env env})
+        ctx
+        (python-cli-context {:network? network? :argv argv :env env})
 
-     exit
-     (case mode
-       :code
-       (if code
-         (run-python-source! ctx code)
-         (do (stdout! "vis python -c requires a CODE argument.") 2))
+        exit
+        (case mode
+          :code
+          (if code
+            (run-python-source! ctx code)
+            (do (stdout! "vis python -c requires a CODE argument.") 2))
 
-       :stdin
-       (run-python-source! ctx (slurp System/in))
+          :stdin
+          (run-python-source! ctx (slurp System/in))
 
-       :file
-       (let [f (io/file file)]
-         (if (.isFile f)
-           (run-python-source! ctx (slurp f))
-           (do (stdout! (str "vis python: no such file: " file)) 2)))
+          :file
+          (let [f (io/file file)]
+            (if (.isFile f)
+              (run-python-source! ctx (slurp f))
+              (do (stdout! (str "vis python: no such file: " file)) 2)))
 
-       :interactive
-       (if (some? (System/console))
-         (do (python-repl! ctx) 0)
-         (run-python-source! ctx (slurp System/in))))]
+          :interactive
+          (if (some? (System/console))
+            (do (python-repl! ctx) 0)
+            (run-python-source! ctx (slurp System/in))))]
 
     (shutdown-agents)
     (System/exit exit)))
@@ -3186,48 +3084,48 @@
 ;; `register-cmd!` is the right plumbing here; vis-runtime is the host,
 ;; not an extension contributing to `vis extension`.
 
-(doseq
-  [spec [{:cmd/name "providers"
-          :cmd/doc "Inspect, authenticate, and introspect LLM providers."
-          :cmd/usage "vis providers <list|status|limits|auth|logout> [...]"
-          :cmd/subcommands #(registry/registered-under ["providers"])}
-         {:cmd/name "sessions"
-          :cmd/doc "List, show, fork, delete, search, or export persisted sessions."
-          :cmd/usage "vis sessions <list|show|fork|delete|search|export> [...]"
-          :cmd/examples
-          ["vis sessions" "vis sessions list" "vis sessions show 3a7b2c1d"
-           "vis sessions fork 3a7b2c1d --title \"Branch A\"" "vis sessions export 3a7b2c1d --md"
-           "vis sessions export 3a7b2c1d --html out.html" "vis sessions search \"foo bar\""]
-          :cmd/subcommands #(registry/registered-under ["sessions"])
-          :cmd/run-fn cli-sessions!}
-         {:cmd/name "doctor"
-          :cmd/doc "Run cross-extension diagnostics."
-          :cmd/usage "vis doctor"
-          :cmd/run-fn cli-doctor!}
-         {:cmd/name "extension"
-          :cmd/doc "Inspect, scaffold, or run an extension-contributed CLI command."
-          :cmd/usage "vis extension <list|scaffold|...> [args...]"
-          :cmd/subcommands #(registry/registered-under ["extension"])}
-         {:cmd/name "update"
-          :cmd/doc "Update the source checkout used by this Vis installation."
-          :cmd/usage "vis update"
-          :cmd/run-fn cli-update!}
-         {:cmd/name "gateway"
-          :cmd/doc "Start, inspect, or stop the long-lived gateway daemon."
-          :cmd/usage "vis gateway <start|status|stop|pair> [--db PATH]"
-          :cmd/subcommands #(registry/registered-under ["gateway"])}
-         {:cmd/name "python"
-          :cmd/doc "Run code in the embedded GraalPy sandbox (all shims, no tool bindings)."
-          :cmd/usage "vis python [OPTS] [-c CODE | FILE.py | -] [ARG...]"
-          :cmd/examples
-          ["vis python -c \"import requests; print(requests.__version__)\""
-           "vis python script.py --flag foo   # ARGs land in sys.argv"
-           "vis python -c \"import os; print(os.environ['HOME'])\"   # env inherited"
-           "vis python --no-env -c \"import os; print(dict(os.environ))\"   # scrubbed"
-           "vis python --env FOO=bar -c \"import os; print(os.environ['FOO'])\""
-           "echo 'print(1 + 1)' | vis python" "vis python   # interactive REPL"]
-          :cmd/owns-tty? true
-          :cmd/run-fn cli-python!}]]
+(doseq [spec [{:cmd/name "providers"
+               :cmd/doc "Inspect, authenticate, and introspect LLM providers."
+               :cmd/usage "vis providers <list|status|limits|auth|logout> [...]"
+               :cmd/subcommands #(registry/registered-under ["providers"])}
+              {:cmd/name "sessions"
+               :cmd/doc "List, show, fork, delete, search, or export persisted sessions."
+               :cmd/usage "vis sessions <list|show|fork|delete|search|export> [...]"
+               :cmd/examples ["vis sessions" "vis sessions list" "vis sessions show 3a7b2c1d"
+                              "vis sessions fork 3a7b2c1d --title \"Branch A\""
+                              "vis sessions export 3a7b2c1d --md"
+                              "vis sessions export 3a7b2c1d --html out.html"
+                              "vis sessions search \"foo bar\""]
+               :cmd/subcommands #(registry/registered-under ["sessions"])
+               :cmd/run-fn cli-sessions!}
+              {:cmd/name "doctor"
+               :cmd/doc "Run cross-extension diagnostics."
+               :cmd/usage "vis doctor"
+               :cmd/run-fn cli-doctor!}
+              {:cmd/name "extension"
+               :cmd/doc "Inspect, scaffold, or run an extension-contributed CLI command."
+               :cmd/usage "vis extension <list|scaffold|...> [args...]"
+               :cmd/subcommands #(registry/registered-under ["extension"])}
+              {:cmd/name "update"
+               :cmd/doc "Update the source checkout used by this Vis installation."
+               :cmd/usage "vis update"
+               :cmd/run-fn cli-update!}
+              {:cmd/name "gateway"
+               :cmd/doc "Start, inspect, or stop the long-lived gateway daemon."
+               :cmd/usage "vis gateway <start|status|stop|pair> [--db PATH]"
+               :cmd/subcommands #(registry/registered-under ["gateway"])}
+              {:cmd/name "python"
+               :cmd/doc "Run code in the embedded GraalPy sandbox (all shims, no tool bindings)."
+               :cmd/usage "vis python [OPTS] [-c CODE | FILE.py | -] [ARG...]"
+               :cmd/examples
+               ["vis python -c \"import requests; print(requests.__version__)\""
+                "vis python script.py --flag foo   # ARGs land in sys.argv"
+                "vis python -c \"import os; print(os.environ['HOME'])\"   # env inherited"
+                "vis python --no-env -c \"import os; print(dict(os.environ))\"   # scrubbed"
+                "vis python --env FOO=bar -c \"import os; print(os.environ['FOO'])\""
+                "echo 'print(1 + 1)' | vis python" "vis python   # interactive REPL"]
+               :cmd/owns-tty? true
+               :cmd/run-fn cli-python!}]]
   (registry/register-cmd! spec))
 
 ;;; ── `vis gateway` subcommands ──────────────────────────────────────────
@@ -3296,49 +3194,49 @@
 
 ;;; ── `vis providers` subcommands ─────────────────────────────────────────
 
-(doseq
-  [spec [{:cmd/name "list"
-          :cmd/parent ["providers"]
-          :cmd/doc "List registered providers with auth state, static limits, and base URLs."
-          :cmd/usage "vis providers list"
-          :cmd/run-fn cli-providers-list!}
-         {:cmd/name "status"
-          :cmd/parent ["providers"]
-          :cmd/doc "Show provider authentication status together with static/dynamic limits."
-          :cmd/usage "vis providers status [provider]"
-          :cmd/examples ["vis providers status" "vis providers status github-copilot-business"
-                         "vis providers status openai-codex"]
-          :cmd/run-fn cli-providers-status!}
-         {:cmd/name "limits"
-          :cmd/parent ["providers"]
-          :cmd/doc "Show provider rate-limit metadata and any dynamic quota report."
-          :cmd/usage "vis providers limits [provider]"
-          :cmd/examples ["vis providers limits" "vis providers limits openai-codex"
-                         "vis providers limits ollama"]
-          :cmd/run-fn cli-providers-limits!}
-         {:cmd/name "auth"
-          :cmd/parent ["providers"]
-          :cmd/doc "Run a provider's interactive authentication flow."
-          :cmd/usage "vis providers auth <provider>"
-          :cmd/args
-          [{:name "provider"
-            :kind :positional
-            :type :string
-            :doc "Registered provider id (for example: github-copilot-business or openai-codex)."}]
-          :cmd/examples ["vis providers auth github-copilot-business"
-                         "vis providers auth github-copilot-individual"
-                         "vis providers auth openai-codex"]
-          :cmd/run-fn cli-providers-auth!}
-         {:cmd/name "logout"
-          :cmd/parent ["providers"]
-          :cmd/doc "Clear saved credentials for a provider."
-          :cmd/usage "vis providers logout <provider>"
-          :cmd/args
-          [{:name "provider" :kind :positional :type :string :doc "Registered provider id."}]
-          :cmd/examples ["vis providers logout github-copilot-business"
-                         "vis providers logout github-copilot-individual"
-                         "vis providers logout openai-codex"]
-          :cmd/run-fn cli-providers-logout!}]]
+(doseq [spec [{:cmd/name "list"
+               :cmd/parent ["providers"]
+               :cmd/doc "List registered providers with auth state, static limits, and base URLs."
+               :cmd/usage "vis providers list"
+               :cmd/run-fn cli-providers-list!}
+              {:cmd/name "status"
+               :cmd/parent ["providers"]
+               :cmd/doc "Show provider authentication status together with static/dynamic limits."
+               :cmd/usage "vis providers status [provider]"
+               :cmd/examples ["vis providers status" "vis providers status github-copilot-business"
+                              "vis providers status openai-codex"]
+               :cmd/run-fn cli-providers-status!}
+              {:cmd/name "limits"
+               :cmd/parent ["providers"]
+               :cmd/doc "Show provider rate-limit metadata and any dynamic quota report."
+               :cmd/usage "vis providers limits [provider]"
+               :cmd/examples ["vis providers limits" "vis providers limits openai-codex"
+                              "vis providers limits ollama"]
+               :cmd/run-fn cli-providers-limits!}
+              {:cmd/name "auth"
+               :cmd/parent ["providers"]
+               :cmd/doc "Run a provider's interactive authentication flow."
+               :cmd/usage "vis providers auth <provider>"
+               :cmd/args
+               [{:name "provider"
+                 :kind :positional
+                 :type :string
+                 :doc
+                 "Registered provider id (for example: github-copilot-business or openai-codex)."}]
+               :cmd/examples ["vis providers auth github-copilot-business"
+                              "vis providers auth github-copilot-individual"
+                              "vis providers auth openai-codex"]
+               :cmd/run-fn cli-providers-auth!}
+              {:cmd/name "logout"
+               :cmd/parent ["providers"]
+               :cmd/doc "Clear saved credentials for a provider."
+               :cmd/usage "vis providers logout <provider>"
+               :cmd/args
+               [{:name "provider" :kind :positional :type :string :doc "Registered provider id."}]
+               :cmd/examples ["vis providers logout github-copilot-business"
+                              "vis providers logout github-copilot-individual"
+                              "vis providers logout openai-codex"]
+               :cmd/run-fn cli-providers-logout!}]]
   (registry/register-cmd! spec))
 
 ;;; ── `vis sessions` subcommands ──────────────────────────────────────────
@@ -3446,21 +3344,21 @@
 ;; tell host-owned canonical commands apart from extension-contributed
 ;; ones at a glance.
 
-(doseq
-  [spec [{:cmd/name "list"
-          :cmd/parent ["extension"]
-          :cmd/internal? true
-          :cmd/doc "List every registered extension with metadata."
-          :cmd/usage "vis extension list"
-          :cmd/run-fn cli-extensions!}
-         {:cmd/name "scaffold"
-          :cmd/parent ["extension"]
-          :cmd/internal? true
-          :cmd/doc "Create a user extension project scaffold."
-          :cmd/usage "vis extension scaffold <name> [--dir DIR] [--namespace NS] [--force]"
-          :cmd/examples ["vis extension scaffold my-tools"
-                         "vis extension scaffold my-tools --dir ~/.vis/vis-extensions/my-tools"]
-          :cmd/run-fn cli-extensions-scaffold!}]]
+(doseq [spec [{:cmd/name "list"
+               :cmd/parent ["extension"]
+               :cmd/internal? true
+               :cmd/doc "List every registered extension with metadata."
+               :cmd/usage "vis extension list"
+               :cmd/run-fn cli-extensions!}
+              {:cmd/name "scaffold"
+               :cmd/parent ["extension"]
+               :cmd/internal? true
+               :cmd/doc "Create a user extension project scaffold."
+               :cmd/usage "vis extension scaffold <name> [--dir DIR] [--namespace NS] [--force]"
+               :cmd/examples
+               ["vis extension scaffold my-tools"
+                "vis extension scaffold my-tools --dir ~/.vis/vis-extensions/my-tools"]
+               :cmd/run-fn cli-extensions-scaffold!}]]
   (registry/register-cmd! spec))
 
 ;; =============================================================================
@@ -3501,12 +3399,11 @@
    logs never spray to stdout. We re-add it here only when `--debug`
    / `--verbose` / `-v` / `VIS_DEBUG=1` is set. Idempotent."
   [args]
-  (let
-    [debug?
-     (debug-mode? args)
+  (let [debug?
+        (debug-mode? args)
 
-     path
-     (log-file-path)]
+        path
+        (log-file-path)]
 
     ;; File handler ALWAYS on, so post-mortem reads always have data.
     (try (tel/add-handler! :file (tel/handler:file {:path path}) {:min-level :info})
@@ -3691,15 +3588,14 @@
    channel-providing extensions first; otherwise the dynamic `channels`
    subtree is empty and help cannot list the available channels."
   [args]
-  (let
-    [[parent & more]
-     (vec args)
+  (let [[parent & more]
+        (vec args)
 
-     help?
-     (boolean (some #{"--help" "-h"} more))
+        help?
+        (boolean (some #{"--help" "-h"} more))
 
-     before-help
-     (take-while #(not (#{"--help" "-h"} %)) more)]
+        before-help
+        (take-while #(not (#{"--help" "-h"} %)) more)]
 
     (and (= "channels" parent) help? (empty? before-help))))
 
@@ -3714,9 +3610,9 @@
 
 (defn- discover-fast-help-deps!
   [args]
-  (cond (channel-help-request? args)
-        (when-let [ns-sym (get first-party-channel-bootstrap-nses (second (vec args)))]
-          (require ns-sym))
+  (cond (channel-help-request? args) (when-let [ns-sym (get first-party-channel-bootstrap-nses
+                                                            (second (vec args)))]
+                                       (require ns-sym))
         (channel-parent-help-request? args) (discover-all!)
         (ext-help-request? args) (discover-all!)))
 
@@ -3724,18 +3620,17 @@
   [_measure? args]
   (when (help-request? args)
     (discover-fast-help-deps! args)
-    (let
-      [root
-       (root-command)
+    (let [root
+          (root-command)
 
-       full-args
-       (cons "vis" args)
+          full-args
+          (cons "vis" args)
 
-       {:keys [residual]}
-       (commandline/find-leaf root full-args)
+          {:keys [residual]}
+          (commandline/find-leaf root full-args)
 
-       unresolved
-       (take-while #(not (#{"--help" "-h"} %)) residual)]
+          unresolved
+          (take-while #(not (#{"--help" "-h"} %)) residual)]
 
       (when-not (seq unresolved)
         (let [{:keys [status]} (commandline/dispatch! root full-args)]
@@ -3779,12 +3674,11 @@
 
 (defn- exit-with-fatal-error!
   [^Throwable t]
-  (let
-    [rc
-     (root-cause t)
+  (let [rc
+        (root-cause t)
 
-     same?
-     (identical? rc t)]
+        same?
+        (identical? rc t)]
 
     (stdout! (str "vis: fatal error - " (or (ex-message t) (.getName (class t)))))
     ;; ExceptionInInitializerError etc. carry no message; surface the root cause
@@ -3883,18 +3777,17 @@
 
 (defn- summarize-startup-registries!
   []
-  (let
-    [extensions
-     (extension/registered-extensions)
+  (let [extensions
+        (extension/registered-extensions)
 
-     channels
-     (registry/registered-channels)
+        channels
+        (registry/registered-channels)
 
-     providers
-     (registry/registered-providers)
+        providers
+        (registry/registered-providers)
 
-     commands
-     (registry/registered-commands)]
+        commands
+        (registry/registered-commands)]
 
     (startup-measure-line! "registry totals"
                            (str "extensions=" (count extensions))
@@ -3932,19 +3825,18 @@
    the generic dispatcher stays a pure command tree while the binary owns
    CLI ergonomics (`vis fix this`, `vis --json summarize`)."
   [& raw-args]
-  (let
-    [main-started
-     (System/nanoTime)
+  (let [main-started
+        (System/nanoTime)
 
-     measure?
-     (startup-measure? raw-args)
+        measure?
+        (startup-measure? raw-args)
 
-     args
-     (-> raw-args
-         strip-global-args
-         rewrite-session-shortcuts
-         rewrite-tui-shortcut
-         rewrite-ext-alias)]
+        args
+        (-> raw-args
+            strip-global-args
+            rewrite-session-shortcuts
+            rewrite-tui-shortcut
+            rewrite-ext-alias)]
 
     (when measure? (System/setProperty "vis.measure" "1"))
     ;; Opt-in JFR profiling (VIS_JFR set by `bin/vis --jfr`). Role-tagged so a
@@ -3964,15 +3856,14 @@
             :else (do (timed-startup! measure? "discover-all+extensions" #(discover-all!))
                       (when measure? (summarize-startup-registries!))
                       (timed-startup! measure? "pre-redirect-stderr" #(pre-redirect-stderr! args))
-                      (let
-                        [root
-                         (root-command)
+                      (let [root
+                            (root-command)
 
-                         full-args
-                         (cons "vis" args)
+                            full-args
+                            (cons "vis" args)
 
-                         unknown-root?
-                         (unknown-command? root args)]
+                            unknown-root?
+                            (unknown-command? root args)]
 
                         (cond (and unknown-root? (root-run-shortcut? root args))
                               (timed-startup! measure? "run-shortcut" #(cli-run! {} args))
@@ -3991,11 +3882,10 @@
                               ;; exit code 2 (POSIX convention for usage errors); `:no-match`
                               ;; can't actually fire here because `unknown-command?` above
                               ;; already short-circuited that case.
-                              (let
-                                [{:keys [status]} (timed-startup!
-                                                    measure?
-                                                    "dispatch"
-                                                    #(commandline/dispatch! root full-args))]
+                              (let [{:keys [status]} (timed-startup!
+                                                       measure?
+                                                       "dispatch"
+                                                       #(commandline/dispatch! root full-args))]
                                 (case status
                                   :error
                                   (System/exit 2)

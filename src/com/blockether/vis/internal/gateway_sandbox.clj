@@ -26,6 +26,7 @@
 
 ;; token -> 0-arg policy fn (returns the session's compiled policy value, or nil)
 (defonce ^:private registry (atom {}))
+
 ;; {:port <int> :stop! (fn [])} | nil — the ONE shared proxy
 (defonce ^:private proxy-state (atom nil))
 
@@ -33,12 +34,14 @@
 ;; language processes whose HTTP stacks cannot attach Proxy-Authorization.
 ;; They share the policy engine + CA; only attribution moves from header to port.
 (defonce ^:private session-proxy-states (atom {}))
+
 (def ^:private session-proxy-lock (Object.))
 
 ;; tls-mitm capability {:ca-file :ctx-for :close! …} | nil — the ONE shared CA
 (defonce ^:private ca-state (atom nil))
 
 (def ^:private proxy-lock (Object.))
+
 (def ^:private ca-lock (Object.))
 
 ;; Extra loopback ports a jailed child can NEVER reach even though loopback egress is
@@ -130,10 +133,9 @@
   (or (:port @proxy-state)
       (locking proxy-lock
         (or (:port @proxy-state)
-            (let
-              [srv (egress/start! {:policy-fn resolve-policy
-                                   :mitm (fn []
-                                           @ca-state)})]
+            (let [srv (egress/start! {:policy-fn resolve-policy
+                                      :mitm (fn []
+                                              @ca-state)})]
               (reset! proxy-state srv)
               (:port srv))))))
 
@@ -150,11 +152,10 @@
   (or (get-in @session-proxy-states [token :port])
       (locking session-proxy-lock
         (or (get-in @session-proxy-states [token :port])
-            (let
-              [srv (egress/start! {:policy-fn (fn [_]
-                                                (resolve-policy token))
-                                   :mitm (fn []
-                                           @ca-state)})]
+            (let [srv (egress/start! {:policy-fn (fn [_]
+                                                   (resolve-policy token))
+                                      :mitm (fn []
+                                              @ca-state)})]
               (swap! session-proxy-states assoc token srv)
               (:port srv))))))
 

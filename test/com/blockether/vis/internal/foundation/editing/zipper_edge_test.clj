@@ -19,12 +19,11 @@
 (defn- roundtrip-every-node?
   [lang src]
   (every? (fn [p]
-            (let
-              [n
-               (z/inspect lang src p)
+            (let [n
+                  (z/inspect lang src p)
 
-               r
-               (z/edit lang src p :replace (:text n))]
+                  r
+                  (z/edit lang src p :replace (:text n))]
 
               (and (:ok? r) (= src (:new-source r)))))
           (all-paths lang src)))
@@ -80,9 +79,8 @@
 (defdescribe utf8-multibyte-test
              (doseq [{:keys [ext lang src needle code want keep]} utf8-cases]
                (it (str ext " splices correctly past multibyte content")
-                   (let
-                     [i (child-idx lang src needle)
-                      r (z/edit lang src [i] :replace code)]
+                   (let [i (child-idx lang src needle)
+                         r (z/edit lang src [i] :replace code)]
 
                      (expect (some? i))
                      (expect (:ok? r))
@@ -93,9 +91,8 @@
                (it (str ext " round-trips EVERY node byte-for-byte with multibyte present")
                    (expect (true? (roundtrip-every-node? lang src))))
                (it (str ext " node text reads multibyte uncorrupted (no mojibake)")
-                   (let
-                     [i (child-idx lang src needle)
-                      t (:text (z/inspect lang src [i]))]
+                   (let [i (child-idx lang src needle)
+                         t (:text (z/inspect lang src [i]))]
 
                      ;; the located node's own text is a real substring of the source
                      (expect (str/includes? src t))))))
@@ -104,76 +101,70 @@
 (defdescribe
   insert-ops-test
   (it "insert_before places a node just before the target (clj)"
-      (let
-        [src
-         "(defn a [] 1)\n(defn b [] 2)\n"
+      (let [src
+            "(defn a [] 1)\n(defn b [] 2)\n"
 
-         ib
-         (child-idx "clojure" src "defn b")
+            ib
+            (child-idx "clojure" src "defn b")
 
-         r
-         (z/edit "clojure" src [ib] :insert-before "(def M 0)\n")]
+            r
+            (z/edit "clojure" src [ib] :insert-before "(def M 0)\n")]
 
         (expect (:ok? r))
         (expect (str/includes? (:new-source r) "(def M 0)\n(defn b"))
         (expect (str/includes? (:new-source r) "(defn a [] 1)")) ; untouched
         (expect (not (:has-error? (z/inspect "clojure" (:new-source r) []))))))
   (it "insert_after places a node just after the target (clj)"
-      (let
-        [src
-         "(defn a [] 1)\n(defn b [] 2)\n"
+      (let [src
+            "(defn a [] 1)\n(defn b [] 2)\n"
 
-         r
-         (z/edit "clojure" src [0] :insert-after "\n(def N 9)")]
+            r
+            (z/edit "clojure" src [0] :insert-after "\n(def N 9)")]
 
         (expect (:ok? r))
         (expect (str/includes? (:new-source r) "(defn a [] 1)\n(def N 9)"))
         (expect (not (:has-error? (z/inspect "clojure" (:new-source r) []))))))
   (it "insert reuses the file's blank-line rhythm (no gluing between top-level forms)"
-      (let
-        [src
-         "(defn a [] 1)\n\n(defn b [] 2)\n"
+      (let [src
+            "(defn a [] 1)\n\n(defn b [] 2)\n"
 
-         r
-         (z/edit "clojure" src [0] :insert-after "(def N 9)")]
+            r
+            (z/edit "clojure" src [0] :insert-after "(def N 9)")]
 
         (expect (:ok? r))
         ;; a blank line BEFORE and AFTER the inserted form — the \n\n rhythm, not a glued \n
         (expect (str/includes? (:new-source r) "(defn a [] 1)\n\n(def N 9)\n\n(defn b [] 2)"))
         (expect (not (:has-error? (z/inspect "clojure" (:new-source r) []))))))
   (it "delete reclaims the trailing gap (no orphaned blank line between the survivors)"
-      (let
-        [src
-         "(defn a [] 1)\n\n(defn b [] 2)\n\n(defn c [] 3)\n"
+      (let [src
+            "(defn a [] 1)\n\n(defn b [] 2)\n\n(defn c [] 3)\n"
 
-         r
-         (z/edit "clojure" src [1] :replace "")]
+            r
+            (z/edit "clojure" src [1] :replace "")]
 
         (expect (:ok? r))
         ;; b and its trailing \n\n go; the leading \n\n stays as the single separator
         (expect (= "(defn a [] 1)\n\n(defn c [] 3)\n" (:new-source r)))
         (expect (not (:has-error? (z/inspect "clojure" (:new-source r) []))))))
   (it "delete of the LAST form reclaims the LEADING gap (no trailing blank line)"
-      (let
-        [src
-         "(defn a [] 1)\n\n(defn b [] 2)\n"
+      (let [src
+            "(defn a [] 1)\n\n(defn b [] 2)\n"
 
-         r
-         (z/edit "clojure" src [1] :replace "")]
+            r
+            (z/edit "clojure" src [1] :replace "")]
 
         (expect (:ok? r))
         (expect (= "(defn a [] 1)\n" (:new-source r)))
         (expect (not (:has-error? (z/inspect "clojure" (:new-source r) []))))))
   (it "insert works language-neutrally (python)"
-      (let
-        [src
-         "def a():\n    return 1\n\ndef b():\n    return 2\n"
+      (let [src
+            "def a():\n    return 1\n\ndef b():\n    return 2\n"
 
-         ib
-         (child-idx "python" src "def b")
+            ib
+            (child-idx "python" src "def b")
 
-         r
-         (z/edit "python" src [ib] :insert-before "M = 0\n\n")]
+            r
+            (z/edit "python" src [ib] :insert-before "M = 0\n\n")]
 
         (expect (:ok? r))
         (expect (str/includes? (:new-source r) "M = 0"))
@@ -182,15 +173,14 @@
       (let [r (z/edit "clojure" "(defn a [] 1)\n" [0] :insert-before "(((")]
         (expect (= :syntax-broken (get-in r [:error :reason])))))
   (it "an inline sibling insert keeps a single-space separator (never fuses onto a token)"
-      (let
-        [after
-         (z/edit "clojure" "(+ p q)\n" [0 2] :insert-after "r")
+      (let [after
+            (z/edit "clojure" "(+ p q)\n" [0 2] :insert-after "r")
 
-         before
-         (z/edit "clojure" "(+ p q)\n" [0 2] :insert-before "r")
+            before
+            (z/edit "clojure" "(+ p q)\n" [0 2] :insert-before "r")
 
-         vec-ch
-         (z/edit "clojure" "[a]\n" [0] :append-child "b")]
+            vec-ch
+            (z/edit "clojure" "[a]\n" [0] :append-child "b")]
 
         (expect (= "(+ p q r)\n" (:new-source after)))
         (expect (= "(+ p r q)\n" (:new-source before)))
@@ -199,17 +189,16 @@
 ;; ── 3. path-move arithmetic (pure; the cursor the model drives) ──────────────
 (defdescribe
   zipper-navigate-test
-  (let
-    [src
-     "(ns x)\n(defn a [p q] (+ p q))\n(defn b [] 2)\n(defn c [] 3)\n"
+  (let [src
+        "(ns x)\n(defn a [p q] (+ p q))\n(defn b [] 2)\n(defn c [] 3)\n"
 
-     nav
-     (fn [at moves]
-       (z/navigate "clojure" src at moves))
+        nav
+        (fn [at moves]
+          (z/navigate "clojure" src at moves))
 
-     p
-     (fn [at moves]
-       (:path (nav at moves)))]
+        p
+        (fn [at moves]
+          (:path (nav at moves)))]
 
     (it "directional moves + single-letter aliases resolve against the real tree"
         (expect (= [0] (p [] ["d"])))           ; down
@@ -294,14 +283,13 @@
 ;; ── 4. large file — the motivating case cat TRUNCATED ──────────────────────
 (defdescribe large-file-test
              (it "parses + edits a 1500-def file with no window truncation"
-                 (let
-                   [src
-                    (apply str
-                      (for [i (range 1500)]
-                        (str "(defn f" i " [x] (+ x " i "))\n")))
+                 (let [src
+                       (apply str
+                         (for [i (range 1500)]
+                           (str "(defn f" i " [x] (+ x " i "))\n")))
 
-                    root
-                    (z/inspect "clojure" src [])]
+                       root
+                       (z/inspect "clojure" src [])]
 
                    (expect (:ok? root))
                    (expect (= 1500 (:named-child-count root)))
@@ -326,13 +314,12 @@
         (expect (= 0 (:named-child-count r))))
       (expect (:ok? (z/inspect "clojure" "   \n\n  " []))))
   (it "editing an ALREADY-broken file is allowed — only NEWLY-introduced breakage is refused"
-      (let
-        [broken
-         "(defn a [] 1) (oops [\n"
+      (let [broken
+            "(defn a [] 1) (oops [\n"
 
-         ; valid first form, broken tail
-         root
-         (z/inspect "clojure" broken [])]
+            ; valid first form, broken tail
+            root
+            (z/inspect "clojure" broken [])]
 
         (expect (:has-error? root))
         ;; replace the valid first node; the file stays broken, but because it was

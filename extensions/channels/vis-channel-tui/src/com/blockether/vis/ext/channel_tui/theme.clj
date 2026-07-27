@@ -117,9 +117,11 @@
 (def code-ok-bg (rgb :code-ok-bg))
 
 (def code-err-bg (rgb :code-err-bg))
+
 ;; Distinct RESULT-zone band — warmer than the cool code-bg / thinking gray, so a
 ;; tool op-card / eval output reads as its own zone (restores the lost stdout band).
 (def result-bg (rgb :result-bg))
+
 ;; Filename / path chips inside a RESULT body (rg per-file headers, patch/move
 ;; targets): a distinct band so paths read as headers, not blended result ink.
 (def result-path-bg (rgb :result-path-bg))

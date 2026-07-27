@@ -65,10 +65,9 @@
       (expect (not (contract/valid? :lint-fn (assoc lint-ok "findings" [{"file" "a.clj"}]))))
       (expect (not (contract/valid? :lint-fn (dissoc lint-ok "findings")))))
   (it "check throws a tagged contract-violation ex-info on a bad result"
-      (let
-        [ed (try (contract/check :lint-fn (dissoc lint-ok "findings"))
-                 nil
-                 (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+      (let [ed (try (contract/check :lint-fn (dissoc lint-ok "findings"))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e (ex-data e)))]
         (expect (= :surface/contract-violation (:type ed)))
         (expect (= :lint-fn (:capability ed)))
         (expect (some? (:explain-data ed)))))
@@ -100,22 +99,22 @@
                                     (assoc test-ok "failures" [{"message" "boom" "line" "12"}]))))
       (expect (not (contract/valid? :test-fn
                                     (assoc test-ok "failures" [{"message" "boom" "ns" 7}])))))
-  (it "accepts a test result carrying the shared by-dir grouping"
-      (let
-        [fail
-         {"ns" "my.core-test" "file" "src/com/blockether/vis/core.clj" "line" 12 "message" "boom"}
+  (it
+    "accepts a test result carrying the shared by-dir grouping"
+    (let [fail
+          {"ns" "my.core-test" "file" "src/com/blockether/vis/core.clj" "line" 12 "message" "boom"}
 
-         err
-         {"message" "kaboom"}
+          err
+          {"message" "kaboom"}
 
-         by-dir
-         {"src/com/blockether/vis" {"core.clj" {"failures" [fail]}}
-          "." {"<unknown>" {"errors" [err]}}}]
+          by-dir
+          {"src/com/blockether/vis" {"core.clj" {"failures" [fail]}}
+           "." {"<unknown>" {"errors" [err]}}}]
 
-        (expect (contract/valid? :test-fn
-                                 (assoc test-ok
-                                   "fail" 1
-                                   "by-dir" by-dir)))))
+      (expect (contract/valid? :test-fn
+                               (assoc test-ok
+                                 "fail" 1
+                                 "by-dir" by-dir)))))
   (it "rejects a test result whose by-dir is not a nested dir->file->map"
       (expect (not (contract/valid? :test-fn (assoc test-ok "by-dir" ["oops"]))))
       (expect (not (contract/valid? :test-fn (assoc test-ok "by-dir" {"." ["flat"]})))))
@@ -127,10 +126,9 @@
   (it "completes an error-branch test result onto the TOTAL key set"
       ;; The reported crash: a run that errored out returned NO "failures" key, so
       ;; `r["failures"][:3]` in ordinary model Python blew up on None.
-      (let
-        [r (contract/complete-test-result
-             "clojure"
-             {"mode" "repl" "ns" "my.app.core-test" "port" 7888 "error" "nREPL is down"})]
+      (let [r (contract/complete-test-result
+                "clojure"
+                {"mode" "repl" "ns" "my.app.core-test" "port" 7888 "error" "nREPL is down"})]
         (expect (every? #(contains? r %) (keys contract/test-result-base)))
         (expect (= [] (get r "failures")))
         (expect (= [] (get r "errors")))
@@ -147,16 +145,15 @@
         (expect (true? (get r "is_pass")))
         (expect (contract/valid? :test-fn r))))
   (it "folds pytest/bun key vocabulary onto the canonical count names"
-      (let
-        [r (contract/complete-test-result "python"
-                                          {"mode" "cli"
-                                           "runner" "project"
-                                           "cmd" ["pytest" "tests"]
-                                           "exit" 1
-                                           "passed" 7
-                                           "failed" 2
-                                           "errored" 1
-                                           "skipped" 3})]
+      (let [r (contract/complete-test-result "python"
+                                             {"mode" "cli"
+                                              "runner" "project"
+                                              "cmd" ["pytest" "tests"]
+                                              "exit" 1
+                                              "passed" 7
+                                              "failed" 2
+                                              "errored" 1
+                                              "skipped" 3})]
         (expect (= 7 (get r "pass")))
         (expect (= 3 (get r "fail"))) ; failed + errored
         (expect (= 13 (get r "total"))) ; derived: pass + fail + skipped

@@ -101,4 +101,3 @@
                                  fmt/meta-separator
                                  (fmt/meta-fallback-note fallback-result))
                             (fmt/format-meta-line fallback-result)))))
-

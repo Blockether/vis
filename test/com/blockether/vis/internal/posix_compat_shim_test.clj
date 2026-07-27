@@ -12,18 +12,30 @@
 (defn- fake-shell
   "Records canonical command/opts calls and returns small lifecycle-shaped results."
   [calls]
-  (fn shell ([arg] (if (map? arg) (shell nil arg) (shell arg nil)))
-    ([cmd opts] (swap! calls conj {:cmd cmd :opts opts})
-     (case (get opts "op")
-       "logs"
-       {"status" "running" "exit" nil "lines" []}
+  (fn shell ([arg] (if (map? arg) (shell nil arg) (shell arg nil))) ([cmd opts] (swap! calls conj
+                                                                                  {:cmd cmd
+                                                                                   :opts opts})
+                                                                     (case (get opts "op")
+                                                                       "logs"
+                                                                       {"status" "running"
+                                                                        "exit" nil
+                                                                        "lines" []}
 
-       "stop"
-       {"status" "stopped" "stopped" true}
+                                                                       "stop"
+                                                                       {"status" "stopped"
+                                                                        "stopped" true}
 
-       (if (str/includes? (str cmd) "boom")
-         {"cmd" cmd "exit" 7 "stdout" "partial\n" "stderr" "boom!\n" "duration_ms" 3}
-         {"cmd" cmd "exit" 0 "stdout" "hello\n" "duration_ms" 2})))))
+                                                                       (if (str/includes? (str cmd)
+                                                                                          "boom")
+                                                                         {"cmd" cmd
+                                                                          "exit" 7
+                                                                          "stdout" "partial\n"
+                                                                          "stderr" "boom!\n"
+                                                                          "duration_ms" 3}
+                                                                         {"cmd" cmd
+                                                                          "exit" 0
+                                                                          "stdout" "hello\n"
+                                                                          "duration_ms" 2})))))
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
 
@@ -31,12 +43,11 @@
   subprocess-bridge-test
   (it
     "routes subprocess.run through the shell tool and returns a CompletedProcess"
-    (let
-      [calls
-       (atom [])
+    (let [calls
+          (atom [])
 
-       {:keys [^Context python-context]}
-       (ep/create-python-context {'shell (fake-shell calls)})]
+          {:keys [^Context python-context]}
+          (ep/create-python-context {'shell (fake-shell calls)})]
 
       (.eval python-context "python" "import subprocess")
       (expect
@@ -49,12 +60,11 @@
       (expect (= "echo hi" (:cmd (last @calls))))))
   (it
     "passes run options and keeps Popen lifecycle ids inside the options map"
-    (let
-      [calls
-       (atom [])
+    (let [calls
+          (atom [])
 
-       {:keys [^Context python-context]}
-       (ep/create-python-context {'shell (fake-shell calls)})]
+          {:keys [^Context python-context]}
+          (ep/create-python-context {'shell (fake-shell calls)})]
 
       (.eval python-context "python" "import subprocess")
       (.eval python-context "python" "subprocess.run('sleep 1', shell=True, timeout=30, cwd='src')")
@@ -71,28 +81,25 @@
         (expect (nil? (:cmd (last @calls))))
         (expect (= {"op" "stop" "id" popen-id} (:opts (last @calls)))))))
   (it "check_output returns stdout and raises on a non-zero exit"
-      (let
-        [calls
-         (atom [])
+      (let [calls
+            (atom [])
 
-         {:keys [^Context python-context]}
-         (ep/create-python-context {'shell (fake-shell calls)})]
+            {:keys [^Context python-context]}
+            (ep/create-python-context {'shell (fake-shell calls)})]
 
         (.eval python-context "python" "import subprocess")
         (expect (= "hello\n" (ev python-context "subprocess.check_output('echo hi', shell=True)")))
-        (let
-          [msg (try (.eval python-context "python" "subprocess.check_output('boom', shell=True)")
-                    nil
-                    (catch Throwable t (.getMessage t)))]
+        (let [msg (try (.eval python-context "python" "subprocess.check_output('boom', shell=True)")
+                       nil
+                       (catch Throwable t (.getMessage t)))]
           (expect (some? msg))
           (expect (str/includes? (str msg) "non-zero")))))
   (it "os.system returns the exit code"
-      (let
-        [calls
-         (atom [])
+      (let [calls
+            (atom [])
 
-         {:keys [^Context python-context]}
-         (ep/create-python-context {'shell (fake-shell calls)})]
+            {:keys [^Context python-context]}
+            (ep/create-python-context {'shell (fake-shell calls)})]
 
         (expect (= 7 (ev python-context "import os\nos.system('boom')"))))))
 
@@ -100,10 +107,9 @@
              (it "raises a helpful 'enable the shell tool' message when `shell` is absent"
                  (let [{:keys [^Context python-context]} (ep/create-python-context {})]
                    (.eval python-context "python" "import subprocess")
-                   (let
-                     [msg (try (.eval python-context "python" "subprocess.run(['echo','hi'])")
-                               nil
-                               (catch Throwable t (.getMessage t)))]
+                   (let [msg (try (.eval python-context "python" "subprocess.run(['echo','hi'])")
+                                  nil
+                                  (catch Throwable t (.getMessage t)))]
                      (expect (some? msg))
                      (expect (or (str/includes? (str msg) "not enabled")
                                  (str/includes? (str msg) "Shell commands"))))))

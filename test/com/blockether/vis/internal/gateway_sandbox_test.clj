@@ -34,12 +34,11 @@
            (is (:deny-all? p))
            (is (:proxy-auth-required? p))))
        (testing "a registered token resolves to THAT session's policy"
-         (let
-           [tok
-            "sess-A"
+         (let [tok
+               "sess-A"
 
-            pol
-            (ep/compile-policy {:allowed-domains ["example.com"]})]
+               pol
+               (ep/compile-policy {:allowed-domains ["example.com"]})]
 
            (is (not (gs/registered? tok)))
            (gs/register-session! tok
@@ -69,19 +68,18 @@
 (defn- start-origin!
   "A one-request-per-connection HTTP origin on 127.0.0.1 that always answers 200 `ok`."
   []
-  (let
-    [server
-     (doto (ServerSocket.) (.bind (InetSocketAddress. "127.0.0.1" 0)))
+  (let [server
+        (doto (ServerSocket.) (.bind (InetSocketAddress. "127.0.0.1" 0)))
 
-     running
-     (atom true)
+        running
+        (atom true)
 
-     loop-fn
-     (fn []
-       (while @running
-         (when-let [c (try (.accept server) (catch Throwable _ nil))]
-           (future (try
-                     (let [in (BufferedReader. (InputStreamReader. (.getInputStream c)))]
+        loop-fn
+        (fn []
+          (while @running
+            (when-let [c (try (.accept server) (catch Throwable _ nil))]
+              (future
+                (try (let [in (BufferedReader. (InputStreamReader. (.getInputStream c)))]
                        (loop []
 
                          (let [l (.readLine in)]
@@ -110,13 +108,12 @@
   [proxy-port origin-port token]
   (with-open [s (Socket.)]
     (.connect s (InetSocketAddress. "127.0.0.1" (int proxy-port)) 5000)
-    (let
-      [req (str "GET http://localhost:"
-                origin-port
-                "/ HTTP/1.1\r\n"
-                "Host: localhost\r\n"
-                (when token (str "Proxy-Authorization: " (basic-token token) "\r\n"))
-                "Connection: close\r\n\r\n")]
+    (let [req (str "GET http://localhost:"
+                   origin-port
+                   "/ HTTP/1.1\r\n"
+                   "Host: localhost\r\n"
+                   (when token (str "Proxy-Authorization: " (basic-token token) "\r\n"))
+                   "Connection: close\r\n\r\n")]
       (.write (.getOutputStream s) (.getBytes req))
       (.flush (.getOutputStream s))
       (str (.readLine (BufferedReader. (InputStreamReader. (.getInputStream s))))))))
@@ -124,12 +121,11 @@
 (deftest wire-token-attribution
   (run-wire-test
     (fn []
-      (let
-        [origin
-         (start-origin!)
+      (let [origin
+            (start-origin!)
 
-         tok
-         (str (java.util.UUID/randomUUID))]
+            tok
+            (str (java.util.UUID/randomUUID))]
 
         (gs/register-session! tok
                               (fn []

@@ -20,6 +20,7 @@
            [java.util Locale TimeZone]))
 
 (set! *unchecked-math* :warn-on-boxed)
+
 ;;; ── Shared dialog chrome & components ───────────────────────────────────────
 
 (defn- abbreviate-home
@@ -37,6 +38,7 @@
       (let [suffix (subs path (count home))]
         (if (str/blank? suffix) "~/" (str "~" suffix)))
       path)))
+
 ;;; ── Default modal footprint ─────────────────────────────────────────────────
 ;;
 ;; Every modal in the TUI shares ONE default WIDTH. HEIGHT is now ADAPTIVE:
@@ -831,6 +833,7 @@
      :bottom box-bottom
      :inner-w inner-w
      :inner-h (- box-h 2)}))
+
 ;;; ── Selection dialog ────────────────────────────────────────────────────────
 (defn dialog-bounds
   "Pure geometry twin of `draw-dialog-chrome!` (explicit width+height arity):
@@ -1084,6 +1087,7 @@
    `items` is a vec of `{:label str, …}` maps. Thin wrapper over `list-dialog!`."
   [^TerminalScreen screen title items]
   (list-dialog! screen title items {}))
+
 ;;; ── Multi-select dialog ─────────────────────────────────────────────────────
 (defn multi-select-dialog!
   "Checkbox multi-select over `items` (vec of strings). Space toggles the
@@ -1190,9 +1194,8 @@
                                    (recur))
                       :else (recur)))
               (recur))))))))
+
 ;;; ── Managed-resource dialog (stop / restart by id) ─────────────────────────
-
-
 
 (declare text-view-dialog!)
 
@@ -1702,6 +1705,7 @@
                       KeyType/ArrowRight (do (swap! cursor #(min (count @text) (inc (long %))))
                                              (recur))
                       (recur)))))))))
+
 ;;; ── Confirm dialog ──────────────────────────────────────────────────────────
 (defn- draw-button!
   "Draw a confirm-dialog action button in the shared blockether look (mirroring
@@ -1954,7 +1958,6 @@
    render/input loop."
   [busy! label thunk]
   (run-async-with-ticker! thunk #(busy! label) 80))
-
 
 (defn- magit-section-action!
   "Apply `f` (a `path → result` action) to every file row under the `:section`
@@ -2342,7 +2345,6 @@
                 :action
                 {:action (:id (:item r)) :switches (:switches state) :options (:options state)}))
             (recur state)))))))
-
 
 (defn- magit-push-flow!
   "Magit-style push transient (`magit-transient!`). SWITCHES (all optional):
@@ -4388,6 +4390,7 @@
                                      (activate-settings-row! screen values callbacks selected-row))
                                    (recur))
                  (recur))))))))))
+
 ;;; ── Session picker ─────────────────────────────────────────────────────
 (defn- short-session-id
   [session]
@@ -4747,6 +4750,7 @@
 
                                       (recur)))
                 (recur)))))))))
+
 ;;; ── Global navigator (Ctrl+G) ───────────────────────────────────────────────
 ;; One row per session. Per the locked 1:1 session<->workspace model a
 ;; session IS its workspace, so the navigator shows a single unified list:
@@ -4946,8 +4950,6 @@
                                       :group-count n))
                                   group)))
                  (partition-by :dir matched)))))
-
-
 
 (defn- navigator-highlight-segments
   "Split `s` into `[text bold?]` segments, bolding case-insensitive occurrences
@@ -5550,6 +5552,7 @@
         (finally (swap! search-generation inc)
                  (when-let [running @search-task]
                    (future-cancel running)))))))
+
 ;;; ── Command palette ─────────────────────────────────────────────────────────
 
 (defn draft-picker-items
@@ -6040,6 +6043,7 @@
                    :placeholder "Type to filter models…"
                    :enter-label "choose"
                    :height :content})))
+
 ;;; ── Text viewer dialog ─────────────────────────────────────────────────────────
 (defn text-viewer-dialog!
   "Show a scrollable read-only text viewer dialog.
@@ -6121,6 +6125,7 @@
               KeyType/ArrowDown (do (swap! scroll #(min max-scroll (inc (long %)))) (recur))
               KeyType/Character (recur)
               (recur))))))))
+
 ;;; ── Markdown viewer dialog ──────────────────────────────────────────────────
 (defn- md-run-paint!
   "Paint one styled IR run at column `x`; returns the next x. Style →
@@ -6275,6 +6280,7 @@
                 KeyType/ArrowDown (do (swap! scroll #(min max-scroll (inc (long %)))) (recur))
                 KeyType/Character (recur)
                 (recur)))))))))
+
 ;;; ── Copy dialog ─────────────────────────────────────────────────────────────
 (defn- role-label [role] (name (or role :assistant)))
 

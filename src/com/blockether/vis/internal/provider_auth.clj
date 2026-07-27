@@ -57,10 +57,9 @@
   "Forget every flow matching `pred?` and stop its background poll. The ONLY way
    a flow leaves the atom, so no removal path can leak a running future."
   [pred?]
-  (let
-    [[before _] (swap-vals! flows
-                            (fn [m]
-                              (into {} (remove (comp pred? val)) m)))]
+  (let [[before _] (swap-vals! flows
+                               (fn [m]
+                                 (into {} (remove (comp pred? val)) m)))]
     (run! stop-await! (filter pred? (vals before)))
     nil))
 
@@ -120,11 +119,10 @@
   "The ONLY fields that may cross the wire. Allowlisted on purpose: the
    provider's `:flow` secret is structurally unable to leak through here."
   [{:keys [id provider-id kind public expires-at]}]
-  (cond->
-    {:flow-id id
-     :provider-id (name provider-id)
-     :kind (name (or kind :pkce))
-     :expires-at (long (or expires-at 0))}
+  (cond-> {:flow-id id
+           :provider-id (name provider-id)
+           :kind (name (or kind :pkce))
+           :expires-at (long (or expires-at 0))}
     (:url public)
     (assoc :url (:url public))
 
@@ -177,33 +175,31 @@
           {:ok? false
            :error :auth-unsupported
            :message (str (name provider-id) " has no headless auth flow")}
-          (nil? start) (let
-                         [id (new-flow-id)
-                          entry {:id id
-                                 :provider-id provider-id
-                                 :kind :api-key
-                                 :public {:instructions (api-key-instructions provider-id)}
-                                 :created-at (now-ms)
-                                 :expires-at (+ (now-ms) (long default-flow-ttl-ms))}]
+          (nil? start) (let [id (new-flow-id)
+                             entry {:id id
+                                    :provider-id provider-id
+                                    :kind :api-key
+                                    :public {:instructions (api-key-instructions provider-id)}
+                                    :created-at (now-ms)
+                                    :expires-at (+ (now-ms) (long default-flow-ttl-ms))}]
 
                          (swap! flows assoc id entry)
                          (tel/log! :info ["provider-auth: flow started" provider-id "api-key"])
                          {:ok? true :flow (public-view entry)})
           :else
-          (try (let
-                 [{:keys [kind flow expires-in-ms] :as started} (start)
-                  id (new-flow-id)
-                  entry {:id id
-                         :provider-id provider-id
-                         :kind (or kind :pkce)
-                         :flow flow
-                         :public (dissoc started :flow)
-                         :created-at (now-ms)
-                         :expires-at (+ (now-ms) (long (or expires-in-ms default-flow-ttl-ms)))
-                         :result (atom {:status :pending})}
-                  entry (if (and (= :device (:kind entry)) await)
-                          (assoc entry :await-future (start-await! entry await))
-                          entry)]
+          (try (let [{:keys [kind flow expires-in-ms] :as started} (start)
+                     id (new-flow-id)
+                     entry {:id id
+                            :provider-id provider-id
+                            :kind (or kind :pkce)
+                            :flow flow
+                            :public (dissoc started :flow)
+                            :created-at (now-ms)
+                            :expires-at (+ (now-ms) (long (or expires-in-ms default-flow-ttl-ms)))
+                            :result (atom {:status :pending})}
+                     entry (if (and (= :device (:kind entry)) await)
+                             (assoc entry :await-future (start-await! entry await))
+                             entry)]
 
                  (swap! flows assoc id entry)
                  (tel/log! :info ["provider-auth: flow started" provider-id (name (:kind entry))])
@@ -265,18 +261,17 @@
    spend it twice; a failed exchange puts it back so a mistyped paste is
    retryable. Returns `{:ok? true :status \"ok\"}` or an error map."
   [flow-id input]
-  (let
-    [{:keys [provider-id kind] :as peek}
-     (flow-by-id flow-id)
+  (let [{:keys [provider-id kind] :as peek}
+        (flow-by-id flow-id)
 
-     complete-fn
-     (:complete (auth-kinds provider-id))
+        complete-fn
+        (:complete (auth-kinds provider-id))
 
-     api-key?
-     (= :api-key kind)
+        api-key?
+        (= :api-key kind)
 
-     cleaned
-     (clean-input input api-key?)]
+        cleaned
+        (clean-input input api-key?)]
 
     (cond (nil? peek) {:ok? false :error :unknown-flow :message "unknown or expired flow"}
           (and (not api-key?) (nil? complete-fn))
@@ -293,13 +288,12 @@
                                               max-input-chars
                                               " characters")}
           :else (if-let [{:keys [flow] :as entry} (claim-flow! flow-id)]
-                  (let
-                    [value (first cleaned)
-                     failure (try (if api-key?
-                                    (providers/save-provider-api-key! provider-id value)
-                                    (complete-fn flow value))
-                                  nil
-                                  (catch Throwable t t))]
+                  (let [value (first cleaned)
+                        failure (try (if api-key?
+                                       (providers/save-provider-api-key! provider-id value)
+                                       (complete-fn flow value))
+                                     nil
+                                     (catch Throwable t t))]
 
                     (if failure
                       (do

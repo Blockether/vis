@@ -20,12 +20,11 @@
 
 (defmacro with-push-home
   [binding & body]
-  `(let
-     [~(first binding)
-      (temp-home)
+  `(let [~(first binding)
+         (temp-home)
 
-      prev#
-      (System/getProperty "vis.push.home")]
+         prev#
+         (System/getProperty "vis.push.home")]
 
      (try (System/setProperty "vis.push.home" (.getAbsolutePath ~(first binding)))
           (push/reload-devices!)
@@ -39,21 +38,20 @@
   "Write a real RSA service-account JSON where the gateway looks, and return the
    public key its assertion can be verified against."
   [home]
-  (let
-    [kp
-     (.generateKeyPair (doto (KeyPairGenerator/getInstance "RSA") (.initialize 2048)))
+  (let [kp
+        (.generateKeyPair (doto (KeyPairGenerator/getInstance "RSA") (.initialize 2048)))
 
-     pem
-     (str "-----BEGIN PRIVATE KEY-----\n"
-          (.encodeToString (Base64/getMimeEncoder) (.getEncoded (.getPrivate kp)))
-          "\n-----END PRIVATE KEY-----\n")
+        pem
+        (str "-----BEGIN PRIVATE KEY-----\n"
+             (.encodeToString (Base64/getMimeEncoder) (.getEncoded (.getPrivate kp)))
+             "\n-----END PRIVATE KEY-----\n")
 
-     json
-     (str "{\"type\":\"service_account\",\"project_id\":\"vis-test-proj\","
-          "\"client_email\":\"pusher@vis-test-proj.iam.gserviceaccount.com\","
-          "\"private_key\":"
-          (pr-str pem)
-          "}")]
+        json
+        (str "{\"type\":\"service_account\",\"project_id\":\"vis-test-proj\","
+             "\"client_email\":\"pusher@vis-test-proj.iam.gserviceaccount.com\","
+             "\"private_key\":"
+             (pr-str pem)
+             "}")]
 
     (spit (io/file home "fcm" "service-account.json") json)
     (.getPublic kp)))
@@ -80,21 +78,20 @@
 
 (deftest assertion-is-a-verifiable-rs256-jwt
   (with-push-home [home]
-                  (let
-                    [pub
-                     (write-service-account! home)
+                  (let [pub
+                        (write-service-account! home)
 
-                     sa
-                     (#'fcm/service-account)
+                        sa
+                        (#'fcm/service-account)
 
-                     jwt
-                     (#'fcm/sign-jwt sa)
+                        jwt
+                        (#'fcm/sign-jwt sa)
 
-                     [h c s]
-                     (str/split jwt #"\.")
+                        [h c s]
+                        (str/split jwt #"\.")
 
-                     decode
-                     #(String. (.decode (Base64/getUrlDecoder) ^String %) "UTF-8")]
+                        decode
+                        #(String. (.decode (Base64/getUrlDecoder) ^String %) "UTF-8")]
 
                     (is (str/includes? (decode h) "\"RS256\""))
                     (is (str/includes? (decode c) "firebase.messaging"))
@@ -106,13 +103,12 @@
                                         (.decode (Base64/getUrlDecoder) ^String s)))))))
 
 (deftest message-shape-matches-fcm-v1
-  (let
-    [m (:message (#'fcm/message
-                  "TOK"
-                  {:title "Turn finished"
-                   :body "vis"
-                   :data {:session_id "s1" :turn_id 7}
-                   :collapse-id "s1"}))]
+  (let [m (:message (#'fcm/message
+                     "TOK"
+                     {:title "Turn finished"
+                      :body "vis"
+                      :data {:session_id "s1" :turn_id 7}
+                      :collapse-id "s1"}))]
     (is (= "TOK" (:token m)))
     (is (= {:title "Turn finished" :body "vis"} (:notification m)))
     (is (= "HIGH" (get-in m [:android :priority])))

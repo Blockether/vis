@@ -29,7 +29,7 @@
         nrepl/nrepl {:mvn/version "1.7.0"}
         ;; clj-kondo: static analysis / linter, run via its programmatic API
         ;; (clj-kondo.core/run!) for the `lint_code` language-surface verb.
-        clj-kondo/clj-kondo {:mvn/version "2026.05.25"}
+        clj-kondo/clj-kondo {:mvn/version "2026.07.24"}
         ;; --- Jackson override (audit) ---
         ;; clj-kondo -> cheshire 5.13.0 drags in Jackson 2.17.0 transitively
         ;; (vis itself uses charred for JSON, not cheshire). Pin the whole

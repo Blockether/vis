@@ -515,6 +515,7 @@
           (sort-by generic-limit-sort-key))]
 
     (if (seq rows) (format-generic-limit-rows now-ms rows) (limits-status-text db provider))))
+
 ;;; ── Segment list ───────────────────────────────────────────────────────────
 (comment
   "Channel statuses and transient notifications render in the header; footer owns model, git, and budgets only.")
@@ -695,6 +696,7 @@
             text
             (conj {:text text :fg t/footer-fg-muted :bold? false :region :left :priority 1}))
           (build-usage-segments db))))
+
 ;;; ── Echo area (which-key strip + transient messages) ────────────────
 (defn- hint-segment
   [text priority]
@@ -888,6 +890,7 @@
   ;; it for this contribution so the user never accidentally hides the model
   ;; label.
   (extension-segments :tui.slot/footer-segment #{:tui.builtin.model/footer} db now-ms row))
+
 ;;; ── Width fitting ──────────────────────────────────────────────────────────
 (def ^:private sep "  /  ")
 
@@ -1014,6 +1017,7 @@
                                     (if-let [smaller (truncate-widest segs over)]
                                       (recur smaller)
                                       (recur dropped))))))))))
+
 ;;; ── Drawing ────────────────────────────────────────────────────────────────
 (defn- draw-spans!
   "Draw spans left-to-right starting at `col`. Each span uses its own
