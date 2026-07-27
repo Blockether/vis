@@ -36,8 +36,8 @@ jobs:
       matrix:
         include:
           # Sizing here is MEASURED, not guessed. The same build was reproduced
-          # locally (GraalVM 25.1.3, `clojure -T:build native-image-only`, 4
-          # builder threads) to find what the [2/8] analysis actually needs for
+          # locally (GraalVM 25.1.3, `clojure -T:build native :profile :community`)
+          # to find what the [2/8] analysis actually needs for
           # this image (313k reachable methods, 84.6k types, 425 MB image heap):
           #   -J-Xmx5g   -> OutOfMemoryError: Java heap space        (7 min in)
           #   -J-Xmx8g   -> OutOfMemoryError: GC overhead limit      (9 min in)
@@ -46,6 +46,10 @@ jobs:
           # So the v0.1.0..v0.1.8 failures were never reflection/resource config
           # or thread counts: the builder was simply short of heap, and the
           # DeadlockWatchdog then aborted a build that was only GC-thrashing.
+          # We therefore do NOT cap builder threads (-H:NumberOfThreads): capping
+          # them only stretches the wall clock while the peak live set — the
+          # thing that actually OOMs — stays the same. Let the builder use every
+          # core the runner has.
           # Free standard runners that can host it (larger runners are a paid
           # Team/Enterprise feature this community project does not use):
           #   ubuntu-latest    4 cores / 16 GB x64    -> proven: v0.1.8, 1 h 58 m
@@ -54,8 +58,13 @@ jobs:
           # -H:DeadlockWatchdogInterval=0 keeps a slow-but-progressing analysis
           # alive; -J-Xms == -Xmx commits the heap up front instead of paying
           # repeated full GCs while it ratchets up under an already-full old gen.
-          - { os: ubuntu-latest, profile: community, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx12g -J-Xms12g -J-XX:+UseParallelGC -H:NumberOfThreads=4 -H:DeadlockWatchdogInterval=0' }
-          - { os: ubuntu-24.04-arm, profile: community, bin: target/vis, asset: vis-linux-arm64-community, extra_args: '-J-Xmx12g -J-Xms12g -J-XX:+UseParallelGC -H:NumberOfThreads=4 -H:DeadlockWatchdogInterval=0' }
+          # arm64 measurement (v0.1.10, run 30257185005): the SAME -J-Xmx12g that
+          # passes on x64 died with "OutOfMemoryError: Java heap space" 2 h 07 m in
+          # — the aarch64 backend's analysis/compile graphs simply need more heap
+          # than x64 for this image — so arm64 gets 14 GB and starts smaller
+          # (-J-Xms8g) so the 16 GB runner is not fully committed up front.
+          - { os: ubuntu-latest, profile: community, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx12g -J-Xms12g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-24.04-arm, profile: community, bin: target/vis, asset: vis-linux-arm64-community, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
           # NO macOS job, and that is a hard constraint, not an oversight:
           #   * the only free arm64 macOS runners have 7 GB — less than half of
           #     what the builder needs (v0.1.6/v0.1.8 each burned 4 h there);
@@ -89,14 +98,14 @@ jobs:
           key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       # community: full agent, model downloads on first use (lean binary).
-      # GitHub's Linux runner ships ~4 GB of swap; back the 12 GB builder heap with
-      # a real swapfile instead of letting the JVM die on GC overhead.
+      # GitHub's Linux runner ships ~4 GB of swap; back the 12-14 GB builder heap
+      # with a real swapfile instead of letting the JVM die on GC overhead.
       - name: Enlarge builder swap (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo swapoff -a || true
           sudo rm -f /mnt/swapfile
-          sudo fallocate -l 24G /mnt/swapfile
+          sudo fallocate -l 32G /mnt/swapfile
           sudo chmod 600 /mnt/swapfile
           sudo mkswap /mnt/swapfile
           sudo swapon /mnt/swapfile
