@@ -56,7 +56,12 @@ jobs:
           #   • -H:DeadlockWatchdogInterval=0 disables the watchdog: a slow but
           #     progressing analysis must not be killed as a false deadlock.
           - { os: ubuntu-latest, profile: community, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx12g -J-Xms12g -J-XX:+UseParallelGC -H:NumberOfThreads=4 -H:DeadlockWatchdogInterval=0' }
-          - { os: ubuntu-latest, profile: corporate, bin: target/vis, asset: vis-linux-x64-corporate, extra_args: '-J-Xmx12g -J-Xms12g -J-XX:+UseParallelGC -H:NumberOfThreads=4 -H:DeadlockWatchdogInterval=0' }
+          # corporate embeds the Parakeet model, so its analysis heap peak is the
+          # largest of the four: 12 GB still ended in `OutOfMemoryError: GC overhead
+          # limit exceeded` after 44 min on v0.1.6 (community, same flags, passed).
+          # A 24 GB swapfile (see the step below) backs a 20 GB builder heap on the
+          # 16 GB runner, and 2 analysis threads halve the concurrent working set.
+          - { os: ubuntu-latest, profile: corporate, bin: target/vis, asset: vis-linux-x64-corporate, extra_args: '-J-Xmx20g -J-Xms4g -J-XX:+UseParallelGC -H:NumberOfThreads=2 -H:DeadlockWatchdogInterval=0' }
           # macos-15: FREE Apple-silicon runner (M1, 7 GB). The paid macos-15-xlarge
           # (14 GB) is blocked by the org spending limit, so free runners are the only
           # option. 6 GB of builder heap on a 7 GB host still OOM'd, so lean harder on
@@ -87,6 +92,19 @@ jobs:
       # community: full agent, model downloads on first use (lean binary).
       # corporate: `search` dropped + Parakeet model embedded by the profile
       # itself (no :with-assets flag needed), so the binary is fully offline.
+      # GitHub's Linux runner ships ~4 GB of swap; the corporate image needs a
+      # builder heap larger than the 16 GB of RAM, so back it with a real swapfile
+      # instead of letting the JVM die on GC overhead.
+      - name: Enlarge builder swap (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l 24G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
       - name: Build native image
         env:
           VIS_NATIVE_EXTRA_ARGS: ${{ matrix.extra_args }}
