@@ -6,7 +6,9 @@
             [yamlstar.core :as yamlstar]))
 
 (def full-config
-  {"providers" [{"id" "anthropic"
+  {"default_provider" "anthropic"
+   "default_model" "claude"
+   "providers" [{"id" "anthropic"
                  "api_key" "secret"
                  "models"
                  [{"name" "claude" "context" 200000 "output_limit" 8192 "is_tool_call" true}]
@@ -101,6 +103,8 @@
                    (assoc-in full-config ["providers" 0 "base-url"] "https://x"))))
     (expect (not (config-spec/valid? (assoc full-config "system-prompt" "hi"))))
     (expect (not (config-spec/valid? (assoc full-config "db-spec" {"backend" "sqlite"}))))
+    (expect (not (config-spec/valid? (assoc full-config "default_provider" "  "))))
+    (expect (not (config-spec/valid? (assoc full-config "default_model" ""))))
     ;; Workspace entries: a rooted path is required and unknown keys are rejected.
     (expect (not (config-spec/valid? (assoc-in full-config
                                        ["workspace" "filesystem"]

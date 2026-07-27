@@ -11,8 +11,8 @@ interface Props {
 }
 
 /**
- * The one screen a user sees when this app and its gateway no longer speak the
- * same wire protocol. It replaces the whole UI on purpose: a half-working
+ * The one screen a user sees when this app and the machine it talks to no longer
+ * speak the same wire protocol. It replaces the whole UI on purpose: a half-working
  * session that silently drops fields is worse than an honest stop.
  *
  * It answers the three questions in order — WHAT is mismatched (two versions
@@ -46,11 +46,11 @@ export function IncompatibleScreen({ compat, conn, onRetry, onBack, isChecking =
           name="vis-companion"
           version={compat.clientVersion}
           protocol={compat.clientProtocol}
-          requires={`gateway protocol ≥ ${compat.clientMinGateway}`}
+          requires={`machine protocol ≥ ${compat.clientMinGateway}`}
           isStale={appStale}
         />
         <VersionCard
-          role="Gateway"
+          role="Machine"
           name={hostOf(conn.url)}
           version={compat.gatewayVersion ?? 'unknown'}
           protocol={compat.gatewayProtocol}
@@ -93,7 +93,7 @@ export function IncompatibleScreen({ compat, conn, onRetry, onBack, isChecking =
           </Button>
         )}
         <Button type="button" variant="ghost" onClick={onBack}>
-          Choose another gateway
+          Choose another machine
         </Button>
       </footer>
     </div>

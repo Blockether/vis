@@ -1265,19 +1265,17 @@
 (defn- park-scroll-for-toggle
   "Pin the viewport before a disclosure toggle mutates message heights.
 
-   In FOLLOW mode the painter pins the BOTTOM of the transcript, so
-   expanding a fold pushes every row above it UP by the body height — the
-   clicked row runs away from the cursor (worse the bigger the result
-   body). Parking at the currently painted offset flips the pin to the
-   TOP-of-viewport message (the layout's prev-offsets anchoring), so the
-   clicked row stays put and the body grows DOWNWARD off-screen — the
-   browser `<details>` behaviour. Already-parked scrolls are left alone;
-   they anchor correctly as-is. No-op before the first paint (no layout)."
+   Always snap the scroll intent to the row that is CURRENTLY painted. In
+   FOLLOW mode this switches from bottom-pinning to the layout's top-message
+   anchor, so an expanded body grows downward instead of pushing the clicked
+   row up. For an already-parked scroll it also cancels any latent ease target:
+   retaining `:offset` while `:pos` is on screen would keep racing the content
+   upward immediately after the click. A settled parked scroll is unchanged in
+   value. No-op before the first paint (no layout)."
   [db]
-  (let [eff (get-in db [:layout :eff-scroll])]
-    (if (and (not (scroll/scrolled-up? (:scroll db))) (some? eff))
-      (assoc db :scroll (scroll/parked (long eff)))
-      db)))
+  (if-some [eff (get-in db [:layout :eff-scroll])]
+    (assoc db :scroll (scroll/parked (long eff)))
+    db))
 
 (reg-event-db :toggle-detail
               (fn [db [_ session-id node-id explicit-expand?]]
@@ -4464,7 +4462,7 @@
                             :else (stage!)))
                     (catch Throwable t
                       (stage!)
-                      (try (vis/notify! (str "Queue via gateway failed — kept locally: "
+                      (try (vis/notify! (str "Queueing failed — kept locally: "
                                              (or (ex-message t) (str t)))
                                         :level :warn
                                         :ttl-ms 3000)

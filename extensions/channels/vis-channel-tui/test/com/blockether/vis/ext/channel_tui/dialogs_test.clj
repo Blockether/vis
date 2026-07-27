@@ -489,21 +489,62 @@
            hit (fn [n]
                  {:transcript-match {:hits (vec (repeat n {:side :reply :snippet "x"}))}})
            vis [(hit 3) (hit 0) (hit 2)]
-           hs (heights vis)]
+           hs (heights vis)
+           shape (fn [plan]
+                   (mapv (juxt #(count (:hits %)) :spacer?) plan))]
 
-          ;; two session lines per row plus one per snippet
-          (expect (= [5 2 4] hs))
-          ;; a block that only partly fits keeps title + metadata and clips hits
-          (expect (= [1] (mapv #(count (:hits %)) (blocks vis 0 3))))
-          (expect (= [3] (mapv #(count (:hits %)) (blocks vis 0 5))))
-          ;; Never leave a project heading orphaned at the bottom of the viewport.
+          ;; Two content lines + one spacer per session, plus one line per snippet.
+          (expect (= [6 3 5] hs))
+          ;; The content base always survives. Snippets clip before the spacer;
+          ;; only a viewport filled exactly by the base omits that spacer.
+          (expect (= [[0 false]] (shape (blocks vis 0 2))))
+          (expect (= [[0 true]] (shape (blocks vis 0 3))))
+          (expect (= [[2 true]] (shape (blocks vis 0 5))))
+          (expect (= [[3 true]] (shape (blocks vis 0 6))))
+          ;; A project heading keeps one top-margin row with its first session.
           (let [grouped [(assoc (hit 0) :group-start? true)]]
-            (expect (empty? (blocks grouped 0 2)))
-            (expect (= 1 (count (blocks grouped 0 3)))))
+            (expect (empty? (blocks grouped 0 3)))
+            (expect (= [[0 false]] (shape (blocks grouped 0 4))))
+            (expect (= [[0 true]] (shape (blocks grouped 0 5)))))
           ;; scroll advances only as far as the selected row needs
           (expect (= 1 (scroll-start hs 2 0 4)))
           (expect (= 2 (scroll-start hs 2 2 4)))
           (expect (= 0 (scroll-start hs 0 0 99)))))
+    (it
+      "keeps selection plain while sessions retain one row of breathing room"
+      (let
+        [{:keys [^TerminalScreen screen]} (virtual-screen)
+         draw-session (var-get #'dlg/draw-navigator-session!)
+         draw-hit (var-get #'dlg/draw-navigator-hit-line!)
+         entry {:focused? false
+                :status "idle"
+                :title "First session"
+                :session "abc1234"
+                :draft "trunk"
+                :modified "now"}
+         x 4
+         row 6
+         width 16]
+
+        (try (let [g (.newTextGraphics screen)]
+               (draw-session g x row width entry true)
+               (draw-hit g x (+ row 2) width "needle" {:label "U" :role :user :text "needle match"})
+               (draw-session g x (+ row 4) width entry false)
+               (let
+                 [selected-title-bg (.getBackgroundColor
+                                      (.getBackCharacter screen (int (+ x 2)) (int row)))
+                  selected-meta-bg (.getBackgroundColor
+                                     (.getBackCharacter screen (int (+ x 2)) (int (inc row))))
+                  selected-hit-bg (.getBackgroundColor
+                                    (.getBackCharacter screen (int (+ x 2)) (int (+ row 2))))
+                  inactive-bg (.getBackgroundColor
+                                (.getBackCharacter screen (int (+ x 2)) (int (+ row 4))))
+                  spacer-glyph (.getCharacterString
+                                 (.getBackCharacter screen (int x) (int (+ row 3))))]
+
+                 (expect (= selected-title-bg selected-meta-bg selected-hit-bg inactive-bg))
+                 (expect (= " " spacer-glyph))))
+             (finally (.stopScreen screen)))))
     (it "highlight segments bold only the case-insensitive needle occurrences"
         (let [segs (var-get #'dlg/navigator-highlight-segments)]
           (expect (= [["a " false] ["Search" true] [" b" false]] (segs "a Search b" "search")))

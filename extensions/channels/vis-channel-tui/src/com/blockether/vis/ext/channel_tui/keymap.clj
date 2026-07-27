@@ -7,7 +7,7 @@
    silently did nothing. Ctrl always reaches the app.
 
    ONE registry, ONE exception: every vis-side chord is defined HERE — verbs in
-   `bindings`, structural keys (palette / help / quit / picker-reorder) as the
+   `bindings`, structural keys (palette / help / quit) as the constants below.
    constants below. The SOLE exception is the Emacs EDITING chords
    (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-u/C-w/C-d), which live in lanterna's
    `TextEditKeymap` so they work in EVERY input (prompt + dialogs); they are
@@ -202,10 +202,3 @@
    Emacs command launcher; needs \"Use Option as Meta\" on macOS).
    `x` = `execute-extended-command`."
   \x)
-;; List pickers (providers / models) reorder the SELECTED row with the Emacs
-;; prev/next-line keys. This is a MODAL context (no text being edited), so
-;; reusing C-p / C-n for up / down is intentional and consistent — NOT a clash
-;; with the editor, which never runs at the same time as a picker.
-(def ^:const picker-reorder-up "C-p — move the selected picker row up." \p)
-
-(def ^:const picker-reorder-down "C-n — move the selected picker row down." \n)

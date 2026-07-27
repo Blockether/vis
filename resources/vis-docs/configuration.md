@@ -70,6 +70,29 @@ Per-model keys Vis honors: `:context` (window override for local servers that ca
 
 Vis is model-agnostic: anything that speaks an OpenAI- or Anthropic-style chat API works, including fully local models.
 
+### Environment references
+
+Any string value may reference an environment variable as `${NAME}`. Vis resolves it while loading config, so a key never has to sit in the file:
+
+```yaml
+providers:
+  - id: anthropic
+    api_key: ${ANTHROPIC_API_KEY}
+    base_url: https://${LLM_HOST}/v1
+```
+
+`${NAME}` is the only spelling — bare `$NAME` is deliberately not recognised, because it cannot be told apart from a value that legitimately starts with `$`. References work in any string, nested anywhere; map keys are left alone.
+
+An **unset** variable is not a load failure. Vis is a long-lived gateway whose config is re-read live and on `/reload`, so one unused provider's missing key must never kill a session running happily on a healthy provider. The reference is left verbatim instead, and that provider is reported unusable in three places:
+
+- the **provider manager** shows `NEEDS ENV · ANTHROPIC_API_KEY` instead of an authenticated verdict;
+- **`vis doctor`** warns `can't use anthropic: ANTHROPIC_API_KEY is not set` and names the export to run;
+- one warning is logged at load time, once per set of missing variables.
+
+The provider is also dropped from the router fleet, so it can never be picked implicitly. Reaching for it **explicitly** — selecting it in the provider picker — is the one place that hard-errors, with the same message. Failure lands at the point of intent, never globally.
+
+A value resolved from a whole-value `${NAME}` is written back as `${NAME}` whenever Vis re-saves config, so a theme flip or a toggle change cannot bake the plaintext secret into `~/.vis/state.yml`.
+
 ### Provider-native evaluation effort
 
 Use `--reasoning-effort high|max` when a controlled evaluation must send the

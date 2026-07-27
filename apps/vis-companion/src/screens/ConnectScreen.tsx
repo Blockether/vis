@@ -147,8 +147,8 @@ export function ConnectScreen({
         kind: 'err',
         text:
           candidates.length > 1
-            ? `Can't reach ${candidates.map(hostOf).join(' or ')}. Check you're on the same network/Tailscale and the gateway is running.`
-            : `Can't reach ${hostOf(conn.url)}. Check the URL, that you're on the same network/Tailscale, and that the gateway is running.`,
+            ? `Can't reach ${candidates.map(hostOf).join(' or ')}. Check you're on the same network/Tailscale and that vis is running there.`
+            : `Can't reach ${hostOf(conn.url)}. Check the URL, that you're on the same network/Tailscale, and that vis is running on that machine.`,
       });
     } catch (e) {
       setMsg({ kind: 'err', text: `Can't reach ${hostOf(conn.url)}: ${(e as Error).message}` });
@@ -164,7 +164,7 @@ export function ConnectScreen({
   async function addFromPayload() {
     const conn = parsePairing(payload);
     if (!conn) {
-      setMsg({ kind: 'err', text: 'Not a vis:// pairing link or gateway URL' });
+      setMsg({ kind: 'err', text: 'Not a vis:// pairing link or machine URL' });
       return;
     }
     await tryConn(conn);
@@ -205,7 +205,7 @@ export function ConnectScreen({
       {conns.length > 0 && (
         <section className="overflow-hidden border border-dialog-edge bg-panel shadow-none sm:shadow-[4px_4px_0_var(--dialog-shadow)]">
           <header className="flex min-h-9 items-center bg-dialog-title px-3 py-2 text-dialog-title-foreground">
-            <h2 className="font-mono text-body font-black uppercase tracking-[0.12em]">Saved gateways</h2>
+            <h2 className="font-mono text-body font-black uppercase tracking-[0.12em]">Saved machines</h2>
           </header>
           <div className="divide-y divide-dialog-edge border-t border-dialog-edge">
             {conns.map((conn) => {
@@ -265,7 +265,7 @@ export function ConnectScreen({
       <section className="transition-[opacity,transform,translate,scale,rotate] delay-75 duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
         <div className="mb-3 flex items-center gap-3">
           <h2 className="font-mono text-body font-black uppercase tracking-[0.12em] text-white">
-            Add a gateway
+            Add a machine
           </h2>
           <span className="h-px flex-1 bg-dialog-edge" />
         </div>
@@ -275,7 +275,8 @@ export function ConnectScreen({
             <header className="border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
               <h3 className="font-mono text-body font-bold text-white">Pairing link</h3>
               <p className="mt-0.5 text-ui text-dialog-hint">
-                Paste the link from <code className="text-accent-ink">vis gateway pair</code>.
+                Paste the link from <code className="text-accent-ink">vis gateway pair</code> on
+                that machine.
               </p>
             </header>
             <div className="space-y-2.5 p-3">
@@ -310,7 +311,7 @@ export function ConnectScreen({
             </header>
             <div className="space-y-2.5 p-3">
               <Input
-                placeholder="https://gateway.example.com"
+                placeholder="https://my-machine.example.com"
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
                 autoCapitalize="none"

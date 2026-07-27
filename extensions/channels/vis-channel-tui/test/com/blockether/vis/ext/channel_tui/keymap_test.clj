@@ -106,9 +106,4 @@
                  ;; with nothing. M-x is Alt+x — a META chord, again a different keyspace, so
                  ;; reusing `x` there is fine too (Ctrl+X is the prefix, never an editing key).
                  (expect (= \p keymap/prefix-palette-key))
-                 (expect (= \x keymap/palette-meta-key)))
-             (it "picker reorder reuses the Emacs prev/next-line keys (intentional modal reuse)"
-                 ;; A picker is modal — the text editor never runs at the same time — so
-                 ;; reusing C-p/C-n for row up/down is consistent, not a clash.
-                 (expect (= \p keymap/picker-reorder-up))
-                 (expect (= \n keymap/picker-reorder-down))))
+                 (expect (= \x keymap/palette-meta-key))))

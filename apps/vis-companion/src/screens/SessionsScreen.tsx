@@ -193,7 +193,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
   const groups = groupByProject(visible ?? []);
 
   // A dead gateway is not a sessions problem: there is nothing to navigate, so the
-  // shell drops us on the Gateways screen instead of rendering a session list
+  // shell drops us on the Machines screen instead of rendering a session list
   // shaped like an error. Reporting it is this screen's only job here.
   useEffect(() => {
     onUnreachable?.(loadError);

@@ -3,12 +3,10 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
-            [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.providers :as providers]
-            [lazytest.core :refer [defdescribe expect it]])
-  (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
+            [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- eventually
   [pred]
@@ -25,18 +23,6 @@
              (it "uses the concise Providers title"
                  (expect (= "Providers" @#'provider/provider-dialog-title))))
 
-(defdescribe swap-items-test
-             (it "swaps two positions without touching the others"
-                 (let [swap-items @#'provider/swap-items]
-                   (expect (= [:a :c :b :d] (swap-items [:a :b :c :d] 1 2))))))
-
-(defdescribe reorder-modifier-test
-             (it "accepts Shift+arrow as macOS-friendly provider/model reorder modifier"
-                 (expect (input/reorder-modifier? (KeyStroke. KeyType/ArrowUp false true false)))
-                 (expect (input/reorder-modifier? (KeyStroke. KeyType/ArrowUp false false true)))
-                 (expect (input/reorder-modifier? (KeyStroke. KeyType/ArrowUp false true true)))
-                 (expect (not (input/reorder-modifier?
-                                (KeyStroke. KeyType/ArrowUp false false false))))))
 
 (defdescribe remove-provider-by-id-test
              (it "removes a logged-out provider from the router list"
@@ -45,15 +31,9 @@
                               (remove-provider-by-id [{:id :anthropic-coding-plan} {:id :openai}]
                                                      :anthropic-coding-plan))))))
 
-(defdescribe move-model-to-front-test
-             (it "moves the selected model to the first slot"
-                 (let [move-model-to-front @#'provider/move-model-to-front]
-                   (expect (= [{:name "beta"} {:name "alpha"} {:name "gamma"}]
-                              (move-model-to-front [{:name "alpha"} {:name "beta"} {:name "gamma"}]
-                                                   1))))))
 
 (defdescribe provider-card-scroll-test
-             (it "keeps selected model cards inside a visible scroll window"
+             (it "keeps selected provider cards inside a visible scroll window"
                  (let
                    [card-visible-count
                     @#'provider/card-visible-count
@@ -143,7 +123,7 @@
                      (expect (= [(vis/provider-persisted-config item)]
                                 (get @saved "providers")))))))
 
-(defdescribe provider-dialog-reorder-keeps-daemon-owned-credentials-test
+(defdescribe provider-dialog-save-keeps-daemon-owned-credentials-test
              (it "merges each row onto the persisted entry so the gateway-written key survives"
                  (let
                    [saved
@@ -279,7 +259,7 @@
 
 (defdescribe
   provider-action-items-test
-  (it "offers auth actions for remote providers and only status for local providers"
+  (it "offers one default action, auth actions for remote providers, and no model configuration"
       (with-redefs
         [vis/provider-by-id
          (fn [provider-id]
@@ -296,11 +276,11 @@
          (fn [provider-id]
            (if (= :openai provider-id) {"is_authenticated" true} {"is_authenticated" false}))]
 
-        (expect (= [:models :authenticate :status :logout]
+        (expect (= [:default :authenticate :status :logout]
                    (mapv :id (provider/provider-action-items {:id :openai :api-key "sk-test"}))))
-        (expect (= ["Configure Models" "Re-authenticate" "Show Status + Limits" "Log Out"]
+        (expect (= ["Set as Default..." "Re-authenticate" "Show Status + Limits" "Log Out"]
                    (mapv :label (provider/provider-action-items {:id :openai :api-key "sk-test"}))))
-        (expect (= [:models :status] (mapv :id (provider/provider-action-items {:id :ollama})))))))
+        (expect (= [:default :status] (mapv :id (provider/provider-action-items {:id :ollama})))))))
 
 (defdescribe
   logout-provider-test

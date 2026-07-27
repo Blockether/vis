@@ -11,13 +11,21 @@
                           (rules silently absent is worth flagging
                           even though it isn't an error per se).
 
+     ::provider-env      providers whose `${NAME}` config references point at
+                          environment variables that are not set. Config loads
+                          leniently by design, so `vis doctor` is the moment a
+                          user actually LOOKS — the right place to fail fast
+                          without failing the gateway.
+
    These section fns are pure data -> message-seq; they don't mutate
    anything and don't depend on the runtime environment beyond
    what's needed to read the existing scanners. Activation
    contract per plan: every registered extension's `:ext/doctor-fn`
    runs regardless of `:ext/activation-fn`, so the section fns must
    NOT assume `:db-info` or other env keys are present."
-  (:require [com.blockether.vis.internal.foundation.environment.agents :as agents]))
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.foundation.environment.agents :as agents]))
 
 (defn- format-bytes
   [^long n]
@@ -64,6 +72,27 @@
         "Add `AGENTS.md` to your repo root with the rules / conventions you want vis to follow every turn."}])))
 
 ;; ---------------------------------------------------------------------------
+;; ::provider-env - unresolved ${NAME} references in provider config
+;; ---------------------------------------------------------------------------
+
+(defn- provider-env-diagnostics
+  [_environment]
+  ;; Never throws: a broken/absent config must not take the whole doctor run
+  ;; down, and "no config" is simply nothing to report here.
+  (let [gaps (try (config/provider-env-gaps (config/load-config)) (catch Throwable _ nil))]
+    (mapv (fn [[provider-id env-vars]]
+            {:level :warn
+             :message (str (config/provider-env-message provider-id env-vars)
+                           " — the provider is configured but stays unusable")
+             :remediation (str "export "
+                               (str/join " and " env-vars)
+                               ", or remove the '"
+                               (name provider-id)
+                               "' provider from your config.")
+             :data {:provider provider-id :env-vars env-vars}})
+          gaps)))
+
+;; ---------------------------------------------------------------------------
 ;; The single fn the foundation extension wires into
 ;; `:ext/doctor-fn`. Order is intentional and scoped to foundation-owned
 ;; diagnostics. Each section stamps its own `:check-id` for formatter labels.
@@ -75,4 +104,5 @@
   "Foundation's `:ext/doctor-fn`. Concatenates the foundation
    diagnostic streams into a single message seq."
   [environment]
-  (vec (stamp ::agents-md (agents-md-diagnostics environment))))
+  (vec (concat (stamp ::agents-md (agents-md-diagnostics environment))
+               (stamp ::provider-env (provider-env-diagnostics environment)))))

@@ -169,7 +169,17 @@
       (expect (nil? (get-in next-db [:tab-locals :first :input-history-index])))
       (expect (nil? (get-in next-db [:tab-locals :first :input-history-draft])))
       (expect (= 0 (get-in next-db [:tab-locals :first :slash-command-index])))
-      (expect (false? (get-in next-db [:tab-locals :first :slash-command-hidden?]))))))
+      (expect (false? (get-in next-db [:tab-locals :first :slash-command-hidden?])))))
+  (it "snaps an in-flight parked scroll to the painted row before expanding"
+      ;; A wheel/PageDown ease can leave `:offset` far below the row currently
+      ;; painted in `:pos`. Keeping that latent target makes the transcript
+      ;; continue racing upward as soon as the disclosure changes height.
+      (reset! state/app-db {:detail-expansions {}
+                            :layout {:eff-scroll 40}
+                            :scroll {:mode :at :offset 100 :pos 40}
+                            :render-version 0})
+      (state/dispatch [:toggle-detail "cid" "answer:t11111111:details:d1" true])
+      (expect (= (scroll/parked 40) (:scroll @state/app-db)))))
 
 (defdescribe
   resync-toggle-settings-test

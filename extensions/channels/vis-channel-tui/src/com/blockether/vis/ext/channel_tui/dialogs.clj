@@ -5030,11 +5030,11 @@
   (vec (take navigator-inline-hits (navigator-preview-entries (:transcript-match entry)))))
 
 (defn- navigator-block-heights
-  "Painted line count per session: optional project heading, title row, compact
-   metadata row, then its transcript snippets."
+  "Painted line count per session: optional project heading and top margin,
+   title row, compact metadata row, transcript snippets, then one blank line."
   [visible-rows]
   (mapv (fn [entry]
-          (+ 2 (if (:group-start? entry) 1 0) (count (navigator-hit-entries entry))))
+          (+ 3 (if (:group-start? entry) 2 0) (count (navigator-hit-entries entry))))
         visible-rows))
 
 (defn- navigator-scroll-start
@@ -5079,7 +5079,8 @@
 
 (defn- navigator-visible-blocks
   "Paint plan from `start`, clipped by terminal lines. Every emitted session
-   keeps its hierarchy/title/metadata base; only overflow snippets are dropped."
+   keeps its hierarchy/title/metadata base. Overflow snippets are clipped first;
+   the blank spacer is omitted only when that base exactly fills the viewport."
   [visible-rows start budget]
   (let
     [n
@@ -5105,7 +5106,7 @@
            (nth visible-rows i)
 
            base
-           (+ 2 (if (:group-start? entry) 1 0))]
+           (+ 2 (if (:group-start? entry) 2 0))]
 
           (if (> (+ (long used) base) budget)
             acc
@@ -5113,12 +5114,18 @@
               [remaining
                (max 0 (- budget (long used) base))
 
+               spacer?
+               (pos? remaining)
+
+               hit-capacity
+               (max 0 (- remaining (if spacer? 1 0)))
+
                hits
-               (vec (take remaining (navigator-hit-entries entry)))]
+               (vec (take hit-capacity (navigator-hit-entries entry)))]
 
               (recur (inc i)
-                     (+ (long used) base (count hits))
-                     (conj acc {:idx i :entry entry :hits hits})))))))))
+                     (+ (long used) base (count hits) (if spacer? 1 0))
+                     (conj acc {:idx i :entry entry :hits hits :spacer? spacer?})))))))))
 
 (defn- draw-navigator-group!
   [g x row width {:keys [dir work-dir group-count]}]
@@ -5385,12 +5392,13 @@
                   [remaining blocks
                    row body-top]
 
-                  (when-let [{:keys [idx entry hits]} (first remaining)]
+                  (when-let [{:keys [idx entry hits spacer?]} (first remaining)]
                     (let
                       [row (long row)
                        row (if (:group-start? entry)
-                             (do (draw-navigator-group! g body-x row body-w entry) (inc row))
-                             row)]
+                             (do (draw-navigator-group! g body-x row body-w entry) (+ row 2))
+                             row)
+                       spacer-row (+ row 2 (count hits))]
 
                       (when (< row (+ body-top list-budget))
                         (draw-navigator-session! g body-x row body-w entry (= idx @selected)))
@@ -5398,7 +5406,7 @@
                         (let [hit-row (+ row 2 (long hit-idx))]
                           (when (< hit-row (+ body-top list-budget))
                             (draw-navigator-hit-line! g body-x hit-row body-w @query hit))))
-                      (recur (rest remaining) (+ row 2 (count hits)))))))
+                      (recur (rest remaining) (+ spacer-row (if spacer? 1 0)))))))
               (when (> total page-rows)
                 (scrollbar/draw! g
                                  {:col scrollbar-col

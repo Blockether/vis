@@ -5741,6 +5741,21 @@
     ;; warning and keep every provider that DID resolve. Falling through with
     ;; the others (or none) lets the app start and surface a fixable message.
     (->> provider-fleet
+         ;; A provider whose `${NAME}` never resolved CANNOT authenticate: its
+         ;; `:api-key` is still the literal reference. Drop it here rather than
+         ;; letting it 401 on a real turn, and — crucially — keep every other
+         ;; provider. One unset var must never cost you a session running on a
+         ;; healthy provider. If it was the ONLY provider, svar raises
+         ;; `:svar/no-providers`, which already routes to the provider manager
+         ;; (see `screen/svar-no-providers-cause?`), and that dialog now names
+         ;; the exact variable.
+         (remove (fn [p]
+                   (when-let [env-vars (config/provider-env-gap p)]
+                     (tel/log! {:level :warn
+                                :id ::provider-env-unresolved-skipped
+                                :data {:provider (:id p) :env-vars env-vars}
+                                :msg (config/provider-env-message (:id p) env-vars)})
+                     true)))
          (keep
            (fn [p]
              (letfn [(build [] (enrich-provider-models (config/->svar-provider p) ropts))]
@@ -5767,38 +5782,53 @@
          vec)))
 
 (defn- honor-config-primary!
-  "svar's `make-router` PREPENDS each known provider's catalog `:default-models`
-   to the front of its model list (`:prepend-default-models?`, read from svar's
-   template — the user's provider map can't override it). So `(first :models)` —
-   the effective/root model `resolve-effective-model` returns — is svar's default,
-   NOT the model the user put first in their config. The user reorders a model to
-   primary and it silently has no effect.
-
-   This re-seats each provider: float the user's FIRST-CONFIGURED model back to
-   the front (and set `:root`), leaving svar's other models behind it as
-   fallbacks. No-op for a provider the user didn't configure, or whose first
-   model svar dropped (unknown/excluded) — so it can never empty a provider."
+  "Make the explicit default provider/model pair the router's effective root.
+   Provider/model vector order is otherwise left alone and has no configuration
+   meaning. Configs written before explicit defaults fall back to their former
+   first provider/first model selection."
   [router config]
   (let
-    [primary (into {}
-                   (keep (fn [p]
-                           (when-let [m (first (:models p))]
-                             [(:id p) (config/model-name m)])))
-                   (:providers config))]
-    (update router
-            :providers
-            (fn [provs]
-              (mapv (fn [p]
-                      (let
-                        [want (get primary (:id p))
-                         hit (and want (some #(when (= want (:name %)) %) (:models p)))]
+    [configured
+     (:providers config)
 
-                        (if hit
-                          (assoc p
-                            :models (into [hit] (remove #(= want (:name %)) (:models p)))
-                            :root want)
-                          p)))
-                    provs)))))
+     default-provider-value
+     (or (:default-provider config) (:id (first configured)))
+
+     default-provider
+     (cond (keyword? default-provider-value) default-provider-value
+           (string? default-provider-value) (keyword default-provider-value))
+
+     configured-default
+     (some #(when (= default-provider (:id %)) %) configured)
+
+     default-model
+     (or (:default-model config)
+         (some-> configured-default
+                 :models
+                 first
+                 config/model-name))]
+
+    (if (and default-provider default-model)
+      (update router
+              :providers
+              (fn [provider-entries]
+                (let
+                  [selected
+                   (some #(when (= default-provider (:id %)) %) provider-entries)
+
+                   hit
+                   (some #(when (= default-model (:name %)) %) (:models selected))]
+
+                  (if (and selected hit)
+                    (let
+                      [selected* (assoc selected
+                                   :models (into [hit]
+                                                 (remove #(= default-model (:name %))
+                                                   (:models selected)))
+                                   :root default-model)]
+                      (into [selected*] (remove #(= default-provider (:id %)) provider-entries)))
+                    provider-entries))))
+      router)))
 
 (defn get-router
   "Get or create the shared LLM router.

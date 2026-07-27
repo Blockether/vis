@@ -18,7 +18,6 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.input :as input]
-            [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.limits-fmt :as lfmt]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
@@ -149,8 +148,7 @@
 
      lines
      ["Waiting for authorization..." "" "Finish login in the browser."
-      "This dialog closes when the gateway confirms authorization." ""
-      (str "Elapsed: " elapsed-s "s")]]
+      "This dialog closes when vis confirms authorization." "" (str "Elapsed: " elapsed-s "s")]]
 
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc left) content-top inner-w content-h)
@@ -319,9 +317,7 @@
           (max 1000 (long (or (get flow "interval_ms") 5000)))]
 
          (cond (not (and flow-id uri user-code))
-               (do
-                 (dlg/text-view-dialog! screen label ["The gateway did not return a device code."])
-                 nil)
+               (do (dlg/text-view-dialog! screen label ["No device code came back from vis."]) nil)
                (not (device-auth-instructions! screen label uri user-code))
                (do (vis/gateway-provider-auth-cancel! provider-id flow-id) nil)
                :else (let
@@ -380,9 +376,7 @@
        (get flow "url")]
 
       (if-not (and flow-id url)
-        (do
-          (dlg/text-view-dialog! screen label ["The gateway did not return an authorization URL."])
-          nil)
+        (do (dlg/text-view-dialog! screen label ["No authorization URL came back from vis."]) nil)
         (do (opener/open! url)
             (let
               [pasted
@@ -510,11 +504,6 @@
 ;; dlg/dlg/draw-dialog-chrome!, dlg/dlg/dialog-layout, dlg/dlg/draw-hint-bar!,
 ;; dlg/dlg/ellipsize, p/clamp, dlg/visible-window-start, dlg/clear-screen!
 
-(defn- priority-label
-  "Compact priority badge — the 1-based rank in parentheses, e.g. `(1)`."
-  [^long idx]
-  (str "(" (inc idx) ")"))
-
 (def ^:private url-host vis/provider-url-host)
 
 (def ^:private ^:const card-rows 3)   ;; lines per card
@@ -542,15 +531,10 @@
   (dlg/visible-window-start selected current-start (card-visible-count content-h) total))
 
 (defn- draw-provider-card!
-  "Draw a 2-line provider card.
-    Line 1: ① Label  url.host  ●
-    Line 2:    ★ root-model  (+N models) / RPM/TMP summary"
-  [g left row inner-w idx selected? provider status limits]
+  "Draw a two-line provider card with the explicit default highlighted."
+  [g left row inner-w _idx selected? provider status limits default-selection]
   ;; Reserve `p/SELECTION_WIDTH` cols at the start of the card row
-  ;; for the selection gutter (`>` glyph at `(inc left)` + 1 margin
-  ;; col). Card body text shifts right by the gutter so the marker
-  ;; sits inside the dialog's inner edge with breathing room before
-  ;; the priority label.
+  ;; for the selection gutter (`>` glyph plus breathing room).
   (let
     [left
      (long left)
@@ -561,17 +545,17 @@
      inner-w
      (long inner-w)
 
-     idx
-     (long idx)
+     default?
+     (= (some-> (:id provider)
+                name)
+        (some-> (:provider-id default-selection)
+                name))
 
      text-w
      (max 0 (- inner-w 2 p/SELECTION_WIDTH))
 
      text-x
      (+ left 2 p/SELECTION_WIDTH)
-
-     pri
-     (priority-label idx)
 
      host
      (url-host (or (vis/provider-base-url provider) ""))
@@ -594,13 +578,11 @@
      model-count
      (count (or models []))
 
-     root-name
-     (or (:name (first models)) "--")
+     default-model
+     (:model default-selection)
 
-     suffix
-     (cond (<= model-count 1) "(1 model)"
-           (= model-count 2) "(+1 model)"
-           :else (str "(+" (dec model-count) " models)"))
+     catalog-summary
+     (str model-count (if (= 1 model-count) " model available" " models available"))
 
      ;; Dynamic per-account rows (e.g. `:zai-coding-plan-5h`, `:codex-7d`)
      ;; come from `[:dynamic :limits]`; they're what the footer shows
@@ -624,9 +606,9 @@
           (remove nil?)
           (str/join " / "))
 
-     ;; Layout line 1:  "① Label" ... "host  ●"
+     ;; Layout line 1: label/default badge ... host/status.
      left-part
-     (str pri " " (or label "?"))
+     (str (when default? "★ ") (or label "?") (when default? "  DEFAULT"))
 
      right-part
      (str host "  ●")]
@@ -679,103 +661,16 @@
             (p/put-str! g
                         text-x
                         (inc row)
-                        (dlg/ellipsize (str "   ★ "
-                                            root-name
-                                            "  "
-                                            suffix
-                                            (when (seq limit-summary) (str " / " limit-summary)))
-                                       text-w)))))))
+                        (dlg/ellipsize
+                          (str "   "
+                               (if default? (str "★ " default-model "  DEFAULT") catalog-summary)
+                               (when (seq limit-summary) (str " / " limit-summary)))
+                          text-w)))))))
 
-(defn- draw-model-card!
-  "Two-line model card. Mirrors `draw-provider-card!` layout:
-     Line 1: ① model-name                         ★ Primary
-     Line 2:    -> then {next}  /  after {previous} -> then {next}  /  ...
 
-   Line 2 spells out the **default fallback chain**: svar's default
-   routing picks `(first candidates)` from this provider's `:models`
-   after filtering, so list order = chain order.
-
-   `previous-name` and `next-name` are the names of the model just before /
-   after this one in the chain (nil at the ends)."
-  [g left row inner-w idx selected? is-root? _provider-id model previous-name next-name]
-  ;; Same selection-gutter convention as `draw-provider-card!`.
-  (let
-    [left
-     (long left)
-
-     row
-     (long row)
-
-     inner-w
-     (long inner-w)
-
-     idx
-     (long idx)
-
-     model-name
-     (or (:name model) (str "model-" (inc idx)))
-
-     text-w
-     (max 0 (- inner-w 2 p/SELECTION_WIDTH))
-
-     text-x
-     (+ left 2 p/SELECTION_WIDTH)
-
-     pri
-     (priority-label idx)
-
-     left-part
-     (str pri " " model-name)
-
-     tag
-     (when is-root? "★ Primary")
-
-     ;; Build the chain breadcrumb. Use Unicode arrows so the flow
-     ;; reads left-to-right at a glance: "after X -> then Y".
-     subtitle
-     (cond (and (nil? previous-name) (nil? next-name)) "   only model -- no fallback configured"
-           (nil? previous-name) (str "   -> then " next-name)
-           (nil? next-name) (str "   after " previous-name " -- last fallback")
-           :else (str "   after " previous-name " -> then " next-name))]
-
-    ;; See `draw-provider-card!` for the rationale: keep the body in
-    ;; the normal palette and paint a `> ` cursor glyph in the dialog
-    ;; padding column instead of inverting the entire card.
-    (p/set-bg! g t/dialog-bg)
-    (dotimes [r card-rows]
-      (p/fill-rect! g (inc left) (+ row r) inner-w 1))
-    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-    (p/draw-selection-marker! g (inc left) row selected?)
-    ;; Line 1 left - priority + model name (bold), trimmed to leave room
-    ;; for the right-aligned tag.
-    (let [reserved (if tag (+ (count tag) 1) 0)]
-      (p/set-fg! g t/dialog-fg)
-      (p/styled g
-                [p/BOLD]
-                (p/put-str! g text-x row (dlg/ellipsize left-part (max 0 (- text-w reserved))))))
-    ;; Line 1 right - ★ Primary tag, right-aligned in status-ok green.
-    (when tag
-      (let [tag-col (+ text-x (- text-w (count tag)))]
-        (p/set-fg! g t/status-ok)
-        (p/styled g [p/BOLD] (p/put-str! g tag-col row tag))))
-    ;; Line 2 - dimmed italic chain breadcrumb.
-    (p/set-fg! g t/dialog-hint)
-    (p/styled g [p/ITALIC] (p/put-str! g text-x (inc row) (dlg/ellipsize subtitle text-w)))))
-
-(defn- swap-items
-  [items i j]
-  (-> items
-      (assoc i (nth items j))
-      (assoc j (nth items i))))
 
 (defn- remove-provider-by-id [items provider-id] (vec (remove #(= provider-id (:id %)) items)))
 
-(defn- move-model-to-front
-  [models idx]
-  (if (or (neg? (long idx)) (>= (long idx) (count models)) (zero? (long idx)))
-    models
-    (let [m (nth models idx)]
-      (vec (cons m (concat (subvec models 0 idx) (subvec models (inc (long idx)))))))))
 
 
 ;; Channel-neutral status / limits / persistence shapes — the core
@@ -784,10 +679,10 @@
 (def ^:private persisted-provider-config vis/provider-persisted-config)
 
 (defn- save-provider-config!
-  "Persist provider ORDER in the raw config, then return the reloaded domain
-   config. Credentials are the DAEMON's (`auth/complete` writes them), so every
-   row is merged ONTO its persisted entry: a field the TUI does not carry —
-   notably `:api-key` — survives the reorder write."
+  "Persist the current provider set, then return the reloaded domain config.
+   Credentials are the DAEMON's (`auth/complete` writes them), so every row is
+   merged ONTO its persisted entry: fields the TUI does not carry — notably
+   `:api-key` — survive the write."
   [items]
   (let
     [persisted
@@ -892,7 +787,7 @@
       auth-label
       (if is-authenticated "Re-authenticate" "Authenticate")]
 
-     (cond-> [{:id :models :label "Configure Models" :key \m}]
+     (cond-> [{:id :default :label "Set as Default..." :key \d}]
        (provider-supports-auth? provider)
        (conj {:id :authenticate :label auth-label :key \a :force? is-authenticated})
 
@@ -937,7 +832,7 @@
           (do (dlg/text-view-dialog! screen
                                      label
                                      [(str (vis/display-label pid)
-                                           " cannot be authenticated through the gateway.")])
+                                           " cannot be authenticated through vis.")])
               nil)
           (let
             [raw
@@ -1169,8 +1064,8 @@
 
 (defn show-provider-dialog!
   "Provider manager dialog.
-   Esc saves and closes, returning {:providers [...]} in priority order.
-   Optional `current-config` seeds the dialog with current state."
+   Esc saves and closes. Provider order has no routing semantics; choose exactly
+   one default provider/model pair."
   ([^TerminalScreen screen] (show-provider-dialog! screen nil nil))
   ([^TerminalScreen screen current-config] (show-provider-dialog! screen current-config nil))
   ([^TerminalScreen screen current-config _opts]
@@ -1194,6 +1089,28 @@
               (into base
                     (remove #(contains? configured-ids (:id %)))
                     (try (vis/authenticated-preset-providers) (catch Throwable _ nil)))))
+
+      default-selection
+      (atom
+        (let
+          [provider-id
+           (or (:default-provider seed) (:id (first @items)))
+
+           provider
+           (first (filter #(= (some-> (:id %)
+                                      name)
+                              (some-> provider-id
+                                      name))
+                          @items))]
+
+          {:provider-id (some-> provider-id
+                                name
+                                keyword)
+           :model (or (:default-model seed)
+                      (some-> provider
+                              :models
+                              first
+                              vis/model-name))}))
 
       statuses
       (atom (into {}
@@ -1223,16 +1140,7 @@
       (atom 0)
 
       pending
-      (atom nil)
-
-      model-items
-      (atom nil)
-
-      model-sel
-      (atom 0)
-
-      model-scroll
-      (atom 0)]
+      (atom nil)]
 
      (refresh-providers-diagnostics! @items statuses limits)
      (loop []
@@ -1250,14 +1158,9 @@
           g
           (.newTextGraphics screen)
 
-          ;; Do NOT clear the whole terminal here - keep the chat
-          ;; visible behind the dialog. Sub-dialog artifact concern is
-          ;; moot: the remaining sub-modals (`add-provider!`,
-          ;; `select-model!`, the OAuth flows) repaint their own chrome on
-          ;; every frame and on return the parent loop's next iteration
-          ;; redraws the parent chrome on top of any leftovers. The model
-          ;; editor and every provider action now live inline as bottom
-          ;; transients / a full-content `:models` sub-view of THIS chrome.
+          ;; Do NOT clear the whole terminal here - keep the chat visible behind
+          ;; the dialog. Sub-dialogs repaint their own chrome; on return this
+          ;; parent loop redraws the provider cards.
           total
           (long (count @items))
 
@@ -1317,143 +1220,92 @@
          ;; Clear content area
          (p/set-bg! g t/dialog-bg)
          (p/fill-rect! g (inc left) content-top inner-w content-h)
-         (cond
-           (= @mode :status)
-           ;; Inline status + limits — the selected provider card on top, its
-           ;; markdown Status & Limits report as plain rows below, scrollable.
-           ;; Replaces the separate markdown-viewer popup.
-           (let
-             [provider
-              (nth @items @selected)
-
-              body-top
-              (+ content-top card-rows card-gap)
-
-              body-h
-              (max 1 (- content-h card-rows card-gap))
-
-              raw
-              (str (vis/provider-status-md provider
-                                           (get @statuses (:id provider))
-                                           (get @limits (:id provider))))
-
-              lines
-              (mapv status-md->line (str/split-lines raw))
-
-              total-l
-              (count lines)
-
-              maxw
-              (max 0 (- inner-w 2))
-
-              sc
-              (p/clamp (long @status-scroll) 0 (max 0 (- total-l body-h)))]
-
-             (reset! status-scroll sc)
-             (draw-provider-card! g
-                                  left
-                                  content-top
-                                  inner-w
-                                  @selected
-                                  false
-                                  provider
-                                  (get @statuses (:id provider))
-                                  (get @limits (:id provider)))
-             (doseq [i (range body-h)]
+         (cond (= @mode :status)
+               ;; Inline status + limits — the selected provider card on top, its
+               ;; markdown Status & Limits report as plain rows below, scrollable.
+               ;; Replaces the separate markdown-viewer popup.
                (let
-                 [li (+ sc (long i))
-                  row (+ (long body-top) (long i))]
+                 [provider
+                  (nth @items @selected)
 
-                 (p/set-colors! g t/dialog-fg t/dialog-bg)
-                 (p/fill-rect! g (inc left) row inner-w 1)
-                 (when (< li total-l)
+                  body-top
+                  (+ content-top card-rows card-gap)
+
+                  body-h
+                  (max 1 (- content-h card-rows card-gap))
+
+                  raw
+                  (str (vis/provider-status-md provider
+                                               (get @statuses (:id provider))
+                                               (get @limits (:id provider))))
+
+                  lines
+                  (mapv status-md->line (str/split-lines raw))
+
+                  total-l
+                  (count lines)
+
+                  maxw
+                  (max 0 (- inner-w 2))
+
+                  sc
+                  (p/clamp (long @status-scroll) 0 (max 0 (- total-l body-h)))]
+
+                 (reset! status-scroll sc)
+                 (draw-provider-card! g
+                                      left
+                                      content-top
+                                      inner-w
+                                      @selected
+                                      false
+                                      provider
+                                      (get @statuses (:id provider))
+                                      (get @limits (:id provider))
+                                      @default-selection)
+                 (doseq [i (range body-h)]
                    (let
-                     [ln (nth lines li)
-                      shown (subs ln 0 (min (count ln) maxw))]
+                     [li (+ sc (long i))
+                      row (+ (long body-top) (long i))]
 
-                     (p/put-str! g (+ left 2) row shown))))))
-           (= @mode :models)
-           (let
-             [ms
-              @model-items
+                     (p/set-colors! g t/dialog-fg t/dialog-bg)
+                     (p/fill-rect! g (inc left) row inner-w 1)
+                     (when (< li total-l)
+                       (let
+                         [ln (nth lines li)
+                          shown (subs ln 0 (min (count ln) maxw))]
 
-              mtotal
-              (long (count ms))
+                         (p/put-str! g (+ left 2) row shown))))))
+               :else (if (zero? total)
+                       (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                           (p/draw-centered! g
+                                             (inc left)
+                                             (+ content-top (quot content-h 2))
+                                             inner-w
+                                             "No providers. Press A to add."))
+                       ;; Draw visible cards
+                       (doseq [idx (range @scroll (min total (+ (long @scroll) visible-count)))]
+                         (let
+                           [idx (long idx)
+                            card-y (+ content-top (card-start-row (- idx (long @scroll))))]
 
-              _
-              (swap! model-sel #(p/clamp % 0 (max 0 (dec mtotal))))
-
-              _
-              (swap! model-scroll #(card-window-start @model-sel % content-h mtotal))
-
-              mvis
-              (card-visible-count content-h)
-
-              mscrollable?
-              (> mtotal mvis)
-
-              mci
-              (if mscrollable? (max 1 (dec inner-w)) inner-w)
-
-              pid
-              (:id (nth @items @selected))]
-
-             (if (zero? mtotal)
-               (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                   (p/draw-centered! g
-                                     (inc left)
-                                     (+ content-top (quot content-h 2))
-                                     inner-w
-                                     "No models. Press A to add."))
-               (doseq [idx (range @model-scroll (min mtotal (+ (long @model-scroll) mvis)))]
-                 (let
-                   [idx (long idx)
-                    card-y (+ content-top (card-start-row (- idx (long @model-scroll))))
-                    model (nth ms idx)
-                    previous-name (when (pos? idx) (:name (nth ms (dec idx))))
-                    next-name (when (< idx (dec mtotal)) (:name (nth ms (inc idx))))]
-
-                   (draw-model-card! g
-                                     left
-                                     card-y
-                                     mci
-                                     idx
-                                     (= idx @model-sel)
-                                     (zero? idx)
-                                     pid
-                                     model
-                                     previous-name
-                                     next-name)))))
-           :else (if (zero? total)
-                   (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                       (p/draw-centered! g
-                                         (inc left)
-                                         (+ content-top (quot content-h 2))
-                                         inner-w
-                                         "No providers. Press A to add."))
-                   ;; Draw visible cards
-                   (doseq [idx (range @scroll (min total (+ (long @scroll) visible-count)))]
-                     (let
-                       [idx (long idx)
-                        card-y (+ content-top (card-start-row (- idx (long @scroll))))]
-
-                       (draw-provider-card! g
-                                            left
-                                            card-y
-                                            card-inner-w
-                                            idx
-                                            (= idx @selected)
-                                            (nth @items idx)
-                                            (get @statuses (:id (nth @items idx)))
-                                            (get @limits (:id (nth @items idx))))))))
+                           (draw-provider-card! g
+                                                left
+                                                card-y
+                                                card-inner-w
+                                                idx
+                                                (= idx @selected)
+                                                (nth @items idx)
+                                                (get @statuses (:id (nth @items idx)))
+                                                (get @limits (:id (nth @items idx)))
+                                                @default-selection)))))
          (when (not= @mode :status)
            (scrollbar/draw! g
                             {:col (+ left inner-w)
                              :top content-top
                              :track-h content-h
-                             :total-h (if (= @mode :models) (count @model-items) total)
+                             :total-h total
                              :inner-h (card-visible-count content-h)
-                             :scroll (if (= @mode :models) @model-scroll @scroll)}))
+                             :scroll @scroll}))
          ;; Bottom-anchored magit-style transients painted OVER the card list —
          ;; the provider stays visible above, actions/confirm live at the base.
          (cond (and (= @mode :actions) (pos? total))
@@ -1545,12 +1397,8 @@
                                :confirm
                                [["y" "confirm"] ["n/Esc" "cancel"]]
 
-                               :models
-                               [["↑/↓" "move"] ["^P/^N" "reorder"] ["R" "primary"] ["A" "add"]
-                                ["D" "del"] ["Esc" "back"]]
-
-                               [["↑/↓" "move"] ["^P/^N" "reorder"] ["A" "add"] ["D" "del"]
-                                ["Enter" "actions"] ["Esc" "done"]]))
+                               [["↑/↓" "move"] ["A" "add"] ["D" "del"] ["Enter" "actions"]
+                                ["Esc" "done"]]))
          (.setCursorPosition screen (p/cursor-pos 0 0))
          (.refresh screen Screen$RefreshType/DELTA)
          (let
@@ -1607,13 +1455,11 @@
                     run-action!
                     (fn [action]
                       (case (:id action)
-                        :models
-                        (do (reset! model-items (->> (:models provider)
-                                                     (keep vis/->svar-model)
-                                                     vec))
-                            (reset! model-sel 0)
-                            (reset! model-scroll 0)
-                            (reset! mode :models))
+                        :default
+                        (when-let [model (select-provider-model! screen provider)]
+                          (reset! default-selection (vis/gateway-set-router-default! (:id provider)
+                                                                                     model))
+                          (reset! mode :list))
 
                         :authenticate
                         (do (when (authenticate-provider! screen provider (:force? action))
@@ -1661,103 +1507,14 @@
                              (recur))
                          (= ktype KeyType/Character)
                          (let
-                           [c (Character/toLowerCase
-                                (.getCharacter ^com.googlecode.lanterna.input.KeyStroke key))]
+                           [^Character c (Character/valueOf
+                                           (Character/toLowerCase
+                                             (.getCharacter ^com.googlecode.lanterna.input.KeyStroke
+                                                            key)))]
                            (if-let [action (some #(when (= c (:key %)) %) actions)]
                              (do (run-action! action) (recur))
                              (recur)))
                          :else (recur))))
-               (= @mode :models)
-               (if (instance? MouseAction key)
-                 (let
-                   [^MouseAction ma key
-                    at (.getActionType ma)]
-
-                   (cond (= at MouseActionType/SCROLL_UP)
-                         (do (swap! model-sel #(p/clamp (dec (long %))
-                                                        0
-                                                        (max 0 (dec (count @model-items)))))
-                             (recur))
-                         (= at MouseActionType/SCROLL_DOWN)
-                         (do (swap! model-sel #(p/clamp (inc (long %))
-                                                        0
-                                                        (max 0 (dec (count @model-items)))))
-                             (recur))
-                         :else (recur)))
-                 (let
-                   [ktype (.getKeyType ^com.googlecode.lanterna.input.KeyStroke key)
-                    ms @model-items
-                    n (long (count ms))
-                    provider (nth @items @selected)]
-
-                   (cond
-                     (= ktype KeyType/Escape) (do (swap! items assoc
-                                                    @selected
-                                                    (assoc (nth @items @selected)
-                                                      :models (vec @model-items)))
-                                                  (reset! mode :list)
-                                                  (recur))
-                     (= ktype KeyType/ArrowUp)
-                     (if (input/reorder-modifier? key)
-                       (do (when (pos? (long @model-sel))
-                             (swap! model-items swap-items @model-sel (dec (long @model-sel)))
-                             (swap! model-sel dec))
-                           (recur))
-                       (do (swap! model-sel #(p/clamp (dec (long %)) 0 (max 0 (dec n)))) (recur)))
-                     (= ktype KeyType/ArrowDown)
-                     (if (input/reorder-modifier? key)
-                       (do (when (< (long @model-sel) (dec n))
-                             (swap! model-items swap-items @model-sel (inc (long @model-sel)))
-                             (swap! model-sel inc))
-                           (recur))
-                       (do (swap! model-sel #(p/clamp (inc (long %)) 0 (max 0 (dec n)))) (recur)))
-                     (= ktype KeyType/Character)
-                     (let
-                       [c (Character/toLowerCase (.getCharacter
-                                                   ^com.googlecode.lanterna.input.KeyStroke key))
-                        ctrl (.isCtrlDown ^com.googlecode.lanterna.input.KeyStroke key)]
-
-                       (cond (and ctrl (= c keymap/picker-reorder-up))
-                             (do (when (pos? (long @model-sel))
-                                   (swap! model-items swap-items @model-sel (dec (long @model-sel)))
-                                   (swap! model-sel dec))
-                                 (recur))
-                             (and ctrl (= c keymap/picker-reorder-down))
-                             (do (when (< (long @model-sel) (dec n))
-                                   (swap! model-items swap-items @model-sel (inc (long @model-sel)))
-                                   (swap! model-sel inc))
-                                 (recur))
-                             (= c \r) (do (when (pos? n)
-                                            (swap! model-items move-model-to-front @model-sel)
-                                            (reset! model-sel 0))
-                                          (recur))
-                             (= c \d) (do (when (pos? n)
-                                            (let [sel (long @model-sel)]
-                                              (swap! model-items #(vec (concat (subvec % 0 sel)
-                                                                               (subvec %
-                                                                                       (inc sel)))))
-                                              (swap! model-sel
-                                                #(p/clamp % 0 (max 0 (dec (count @model-items)))))))
-                                          (recur))
-                             (= c \a) (do (when-let
-                                            [model-name
-                                             (select-model!
-                                               screen
-                                               provider
-                                               (->> (concat (map vis/model-name @model-items)
-                                                            (:default-models (vis/provider-template
-                                                                               (:id provider)))
-                                                            (:default-models provider))
-                                                    (remove nil?)
-                                                    distinct
-                                                    vec))]
-                                            (when-not (some #(= model-name (vis/model-name %))
-                                                            @model-items)
-                                              (swap! model-items conj {:name model-name})
-                                              (reset! model-sel (dec (count @model-items)))))
-                                          (recur))
-                             :else (recur)))
-                     :else (recur))))
                (instance? MouseAction key)
                (let
                  [^MouseAction ma key
@@ -1782,45 +1539,19 @@
                (let [ktype (.getKeyType ^com.googlecode.lanterna.input.KeyStroke key)]
                  (cond
                    (= ktype KeyType/Escape) (save-provider-config! @items)
-                   ;; ↑/↓ navigate; Ctrl+P/Ctrl+N (or Shift/Alt+↑/↓ where supported) reorder
+                   ;; Provider order is display-only; arrows only navigate.
                    (= ktype KeyType/ArrowUp)
-                   (if (input/reorder-modifier? key)
-                     (do (when (pos? (long @selected))
-                           (swap! items swap-items @selected (dec (long @selected)))
-                           (swap! selected dec))
-                         (recur))
-                     (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur)))
+                   (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur))
                    (= ktype KeyType/ArrowDown)
-                   (if (input/reorder-modifier? key)
-                     (do (when (< (long @selected) (dec total))
-                           (swap! items swap-items @selected (inc (long @selected)))
-                           (swap! selected inc))
-                         (recur))
-                     (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur)))
+                   (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
                    ;; Enter - open the inline actions view for the selected provider
                    (= ktype KeyType/Enter)
                    (do (when (pos? total) (reset! action-sel 0) (reset! mode :actions)) (recur))
                    (= ktype KeyType/Character)
                    (let
                      [c (Character/toLowerCase (.getCharacter
-                                                 ^com.googlecode.lanterna.input.KeyStroke key))
-                      ctrl (.isCtrlDown ^com.googlecode.lanterna.input.KeyStroke key)]
-
+                                                 ^com.googlecode.lanterna.input.KeyStroke key))]
                      (cond
-                       ;; Ctrl+P / Ctrl+N - reorder the selected provider up / down,
-                       ;; the SAME Emacs prev/next-line keys used in every input
-                       ;; (modified arrows are unreliable on stock macOS terminals;
-                       ;; this replaces the old vim-style K/J).
-                       (and ctrl (= c keymap/picker-reorder-up))
-                       (do (when (pos? (long @selected))
-                             (swap! items swap-items @selected (dec (long @selected)))
-                             (swap! selected dec))
-                           (recur))
-                       (and ctrl (= c keymap/picker-reorder-down))
-                       (do (when (< (long @selected) (dec total))
-                             (swap! items swap-items @selected (inc (long @selected)))
-                             (swap! selected inc))
-                           (recur))
                        ;; A - add provider
                        (= c \a) (do (when-let [p (add-provider! screen (into #{} (map :id) @items))]
                                       (swap! items conj p)

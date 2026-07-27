@@ -148,3 +148,58 @@
     (let [sorted (sort idxs)]
       (is (= sorted (range (first sorted) (inc (last sorted))))
           "the three Copilot tiers form one contiguous run — no other preset splits them"))))
+
+(deftest configured-provider-catalog-cannot-be-narrowed
+  (with-redefs
+    [config/load-config-raw
+     (constantly {"providers" [{"id" "openai"
+                                "models" [{"name" "gpt-custom" "output_limit" 123}]}]})
+
+     config/provider-template
+     (constantly {:id :openai :default-models ["gpt-default" "gpt-custom" "gpt-extra"]})]
+
+    (is (= [{:name "gpt-custom" :output-limit 123} {:name "gpt-default"} {:name "gpt-extra"}]
+           (:models (first (:providers (config/load-config)))))
+        "persisted metadata wins, while every preset model remains available")))
+
+(deftest explicit-default-selection-is-order-independent-and-persists-without-reordering
+  (let
+    [fleet
+     [{:id :openai :models [{:name "gpt-5"}]}
+      {:id :anthropic-coding-plan :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]
+
+     saved
+     (atom nil)]
+
+    (with-redefs
+      [config/load-config (constantly {:default-provider "anthropic-coding-plan"
+                                       :default-model "claude-fable-5"
+                                       :providers fleet})]
+      (is (= {:provider-id :anthropic-coding-plan :model "claude-fable-5"}
+             (providers/default-selection fleet))))
+    (with-redefs
+      [providers/picker-fleet
+       (constantly fleet)
+
+       config/load-global-config-raw
+       (constantly {"theme" "dark"
+                    "providers" [{"id" "openai" "models" [{"name" "gpt-5"}]}
+                                 {"id" "anthropic-coding-plan"
+                                  "models" [{"name" "claude-opus-4-8"}]}]})
+
+       config/save-config!
+       (fn [wire _]
+         (reset! saved wire))
+
+       config/reload-config!
+       (constantly nil)]
+
+      (is (= {:provider-id :anthropic-coding-plan :model "claude-fable-5"}
+             (providers/save-default-selection! :anthropic-coding-plan "claude-fable-5" :test)))
+      (is (= "anthropic-coding-plan" (get @saved "default_provider")))
+      (is (= "claude-fable-5" (get @saved "default_model")))
+      (is (= [:openai :anthropic-coding-plan] (mapv :id (get @saved "providers")))
+          "choosing a default does not reorder providers")
+      (is (= ["claude-opus-4-8" "claude-fable-5"]
+             (mapv :name (get-in @saved ["providers" 1 :models])))
+          "the complete selected-provider catalog is persisted"))))

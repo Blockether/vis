@@ -46,7 +46,7 @@ export function App() {
   const [subscribedIds, setSubscribedIds] = useState<Set<string>>(new Set());
   const [ready, setReady] = useState(false);
   // Set when the sessions screen finds the active gateway unreachable. While it
-  // holds a message there is nothing to navigate, so the shell shows Gateways
+  // holds a message there is nothing to navigate, so the shell shows Machines
   // only — no Sessions tab, no session list shaped like an error page.
   const [offline, setOffline] = useState<string | null>(null);
   const [compat, setCompat] = useState<Compat | null>(null);
@@ -436,7 +436,7 @@ function Header({ tab, hasConn, onTab }: { tab: Tab; hasConn: boolean; onTab: (t
               aria-current={tab === item ? 'page' : undefined}
             >
               <NavIcon id={item} />
-              {item === 'sessions' ? 'Sessions' : 'Gateways'}
+              {item === 'sessions' ? 'Sessions' : 'Machines'}
             </button>
           ))}
         </nav>
@@ -448,7 +448,7 @@ function Header({ tab, hasConn, onTab }: { tab: Tab; hasConn: boolean; onTab: (t
 function TabBar({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) {
   const items: { id: Tab; label: string }[] = [
     { id: 'sessions', label: 'Sessions' },
-    { id: 'connect', label: 'Gateways' },
+    { id: 'connect', label: 'Machines' },
   ];
 
   return (

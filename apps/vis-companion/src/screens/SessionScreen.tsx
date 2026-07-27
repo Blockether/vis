@@ -1692,7 +1692,7 @@ export function SessionScreen({
             <span
               className={`size-1.5 ${connected ? 'bg-ok' : 'animate-pulse bg-turn-edge motion-reduce:animate-none'}`}
             />
-            {connected ? 'Gateway connected' : 'Reconnecting'}
+            {connected ? 'Connected' : 'Reconnecting'}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1 self-center pr-2 pl-1 sm:pr-3">
@@ -2026,7 +2026,7 @@ export function SessionScreen({
               {voicePhase === 'recording' ? (
                 <><span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" /> Listening · tap the microphone to finish</>
               ) : voicePhase === 'transcribing' ? (
-                <><span className="size-1.5 animate-pulse bg-accent motion-reduce:animate-none" /> Transcribing on the gateway…</>
+                <><span className="size-1.5 animate-pulse bg-accent motion-reduce:animate-none" /> Transcribing on your machine…</>
               ) : composerNotice ? composerNotice : voiceModel?.status === 'downloading' ? (
                 <>Downloading voice model{voiceModel.progress == null ? '…' : ` · ${Math.round(voiceModel.progress)}%`}</>
               ) : voiceModel?.status === 'failed' ? (

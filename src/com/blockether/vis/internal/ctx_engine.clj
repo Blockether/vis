@@ -815,7 +815,7 @@
           "Fold settled search/tool sweeps and superseded reads NOW with one broad session_fold through the last completed scope"
           (str "Use one broad session_fold through the last completed scope"
                (when urgent? " before another large tool call")))
-        "; preserve decisions, edits, and verification, then confirm the receipt saved tokens."))))
+        "; preserve decisions, edits, and verification; preserve exact physical paths—never bare or abbreviated filenames—then confirm the receipt saved tokens."))))
 
 (defn session-view
   "THE single projection from engine-internal ctx to the model-facing

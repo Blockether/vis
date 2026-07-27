@@ -2496,45 +2496,41 @@
 (defdescribe
   honor-config-primary-test
   (describe
-    "honor-config-primary! — the USER's first-configured model wins as primary"
-    ;; Bug: svar's make-router PREPENDS a provider's catalog :default-models, so
-    ;; (first :models) — the effective model — was always svar's default, never
-    ;; the model the user put first. The user reorders to primary, nothing happens.
+    "honor-config-primary! — one explicit provider/model pair is the global default"
     (let [f (var-get #'lp/honor-config-primary!)]
-      (it
-        "floats the user's config-first model to the front (+ :root), keeping the rest as fallbacks"
-        (let
-          [;; svar prepended opus-4-8; user actually configured fable-5 first
-           router {:providers [{:id :anthropic-coding-plan
-                                :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]}
-           config {:providers [{:id :anthropic-coding-plan
-                                :models [{:name "claude-fable-5"} {:name "claude-opus-4-8"}]}]}
-           p (first (:providers (f router config)))]
+      (it "honors string-valued defaults without treating provider/model order as configuration"
+          (let
+            [router {:providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}
+                                 {:id :anthropic-coding-plan
+                                  :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]}
+             config {:default-provider "anthropic-coding-plan"
+                     :default-model "claude-fable-5"
+                     :providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}
+                                 {:id :anthropic-coding-plan
+                                  :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]}
+             routed (f router config)
+             p (first (:providers routed))]
 
-          (expect (= ["claude-fable-5" "claude-opus-4-8"] (mapv :name (:models p))))
-          (expect (= "claude-fable-5" (:root p)))
-          (expect (= "claude-fable-5" (:name (lp/resolve-effective-model (f router config)))))))
-      (it "accepts a string model in config (model-name coercion)"
+            (expect (= [:anthropic-coding-plan :zai-coding-plan] (mapv :id (:providers routed))))
+            (expect (= ["claude-fable-5" "claude-opus-4-8"] (mapv :name (:models p))))
+            (expect (= "claude-fable-5" (:root p)))
+            (expect (= "claude-fable-5" (:name (lp/resolve-effective-model routed))))))
+      (it "keeps legacy first-provider/first-model behavior when explicit defaults are absent"
           (let
             [router {:providers [{:id :anthropic-coding-plan
                                   :models [{:name "claude-opus-4-8"} {:name "claude-sonnet-4-6"}]}]}
-             config {:providers [{:id :anthropic-coding-plan :models ["claude-sonnet-4-6"]}]}]
+             config {:providers [{:id :anthropic-coding-plan :models ["claude-sonnet-4-6"]}]}
+             routed (f router config)]
 
-            (expect (= "claude-sonnet-4-6"
-                       (:name (lp/resolve-effective-model (f router config)))))))
-      (it "no-op when the config-first model isn't in the built provider (never empties it)"
+            (expect (= "claude-sonnet-4-6" (:name (lp/resolve-effective-model routed))))))
+      (it "leaves the router intact when the explicit pair is not in its catalog"
           (let
-            [router {:providers [{:id :anthropic-coding-plan :models [{:name "claude-opus-4-8"}]}]}
-             config {:providers [{:id :anthropic-coding-plan :models [{:name "totally-unknown"}]}]}
-             p (first (:providers (f router config)))]
+            [router {:providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}]}
+             config {:default-provider "anthropic-coding-plan"
+                     :default-model "claude-fable-5"
+                     :providers [{:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}]
 
-            (expect (= ["claude-opus-4-8"] (mapv :name (:models p))))))
-      (it "leaves a provider the user didn't configure untouched"
-          (let
-            [router {:providers [{:id :zai-coding-plan :models [{:name "glm-4"}]}]}
-             config {:providers [{:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}]
-
-            (expect (= [{:name "glm-4"}] (:models (first (:providers (f router config)))))))))))
+            (expect (= router (f router config))))))))
 
 (defdescribe
   router-for-model-test

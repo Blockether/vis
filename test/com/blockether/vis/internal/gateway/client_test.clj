@@ -703,3 +703,17 @@
             (is (= 3 (:hidden-count r))))
           (client/provider-models :anthropic-coding-plan true)
           (is (= "/v1/providers/anthropic-coding-plan/models?show_all=true" @request)))))))
+
+(deftest set-router-default-proxies-and-decodes-the-explicit-pair
+  (let [request (atom nil)]
+    (with-redefs-fn {(rv 'ensure-gateway-serving!) (constantly fake-entry)
+                     (rv 'ensure-client!) (constantly "client-id")
+                     (rv 'send-json-with-entry!) (fn [_ method path body]
+                                                   (reset! request [method path body])
+                                                   {"default_provider" "anthropic-coding-plan"
+                                                    "default_model" "claude-fable-5"})}
+      (fn []
+        (is (= {:provider-id :anthropic-coding-plan :model "claude-fable-5"}
+               (client/set-router-default! :anthropic-coding-plan "claude-fable-5")))
+        (is (= ["PATCH" "/v1/router" {"provider" "anthropic-coding-plan" "model" "claude-fable-5"}]
+               @request))))))

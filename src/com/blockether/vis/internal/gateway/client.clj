@@ -271,15 +271,13 @@
     (fn [{:keys [phase mode elapsed-ms]}]
       (try (case phase
              :spawning
-             (start "starting gateway daemon" "starting gateway daemon…")
+             (start "starting vis" "starting vis…")
 
              :awaiting
-             (start "another vis is starting the gateway — waiting"
-                    "another vis is starting the gateway — waiting…")
+             (start "another vis is starting up — waiting" "another vis is starting up — waiting…")
 
              :recovering
-             (start "existing gateway missed a health check — waiting"
-                    "existing gateway missed a health check — waiting…")
+             (start "vis missed a health check — waiting" "vis missed a health check — waiting…")
 
              :tick
              (when (and tty (:active @state))
@@ -298,10 +296,10 @@
                  (.flush err)))
 
              :ready
-             (finish (str "✓ gateway ready" (when (= mode :awaited) " (started by another vis)")))
+             (finish (str "✓ vis ready" (when (= mode :awaited) " (started by another vis)")))
 
              :timeout
-             (finish "✗ gateway did not become ready in time")
+             (finish "✗ vis did not become ready in time")
 
              nil)
            (catch Throwable _ nil)))))
@@ -1247,6 +1245,26 @@
 
     (ensure-client! entry)
     (get (send-json-with-entry! entry "GET" path) "providers")))
+
+(defn set-router-default!
+  "PATCH /v1/router — set the single default provider/model pair."
+  [provider-id model]
+  (let
+    [path
+     "/v1/router"
+
+     entry
+     (ensure-gateway-serving! path)]
+
+    (ensure-client! entry)
+    (let
+      [response (send-json-with-entry! entry
+                                       "PATCH"
+                                       path
+                                       {"provider" (name provider-id) "model" (str model)})]
+      {:provider-id (some-> (get response "default_provider")
+                            keyword)
+       :model (get response "default_model")})))
 
 (defn current-seq [sid] (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/seq")) "seq"))
 

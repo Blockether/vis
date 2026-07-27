@@ -101,7 +101,9 @@
           "Never expose or log secrets" "commit, push, publish" "Treat context as a budget"
           "do not wait for provider failure" "approaches `auto_compress_above`"
           "immediately when its `hint` asks" "one broad `through`/range fold"
-          "Fold settled search sweeps" "superseded reads" "Never fold the live iteration"
+          "Fold settled search sweeps" "superseded reads" "Preserve decisions, findings"
+          "exact physical paths" "never abbreviate" "breadcrumb lacks a needed path"
+          "`grep` before any path-taking tool" "Never fold the live iteration"
           "last completed scope" "confirm meaningful reduction" "saved nothing"
           ;; REPL lifecycle: the agent must reuse managed REPLs and STOP the ones
           ;; it started, or every session leaks a JVM/interpreter child.

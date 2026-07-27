@@ -199,7 +199,7 @@ export function GatewaySettingsDialog({
               id="gateway-settings-title"
               className="shrink-0 font-mono text-body font-black uppercase tracking-[0.12em]"
             >
-              Gateway settings
+              Machine settings
             </h2>
             <p className="truncate font-mono text-meta opacity-65">{gateway.url}</p>
           </div>
@@ -207,7 +207,7 @@ export function GatewaySettingsDialog({
             type="button"
             className="grid min-w-10 self-stretch place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
             onClick={onClose}
-            aria-label="Close gateway settings"
+            aria-label="Close machine settings"
           >
             ✕
           </button>
@@ -215,7 +215,7 @@ export function GatewaySettingsDialog({
 
         <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
           <p className="text-ui text-dialog-hint">
-            Providers, notifications and appearance live on the gateway — shared with
+            Providers, notifications and appearance live on the machine — shared with
             its TUI and every other client.
           </p>
         </div>
@@ -234,8 +234,8 @@ export function GatewaySettingsDialog({
             <div className="space-y-2 p-2.5">
               <Input
                 value={labelDraft}
-                placeholder="Name this gateway"
-                aria-label="Name this gateway"
+                placeholder="Name this machine"
+                aria-label="Name this machine"
                 autoCapitalize="none"
                 autoCorrect="off"
                 className="w-full"
@@ -256,7 +256,7 @@ export function GatewaySettingsDialog({
               <p className="font-mono text-meta text-dialog-hint">
                 This device remembers{' '}
                 <span className="text-white">{gatewayHost(gateway.url)}</span> and its
-                access token. The name is only shown in your gateway list — the gateway
+                access token. The name is only shown in your machine list — the machine
                 never sees it.
               </p>
 
@@ -268,7 +268,7 @@ export function GatewaySettingsDialog({
                       onClose();
                     }}
                   >
-                    Use this gateway
+                    Use this machine
                   </Button>
                 )}
 
@@ -295,7 +295,7 @@ export function GatewaySettingsDialog({
                   </>
                 ) : (
                   <Button variant="danger" onClick={() => setConfirmRemove(true)}>
-                    Forget this gateway
+                    Forget this machine
                   </Button>
                 )}
               </div>
@@ -309,14 +309,14 @@ export function GatewaySettingsDialog({
           {!unreachable && !unauthorized && theme && (
             <SettingsPanel
               title="Theme"
-              meta={pref === 'gateway' ? `gateway · ${theme.display_name}` : 'saved on this device'}
+              meta={pref === 'gateway' ? `machine · ${theme.display_name}` : 'saved on this device'}
             >
               {(() => {
                 const resolved = resolveTheme(theme, pref);
                 const options: { key: ThemePref; name: string; sub: string }[] = [
                   {
                     key: 'gateway',
-                    name: 'Follow gateway',
+                    name: 'Follow machine',
                     sub: theme.display_name,
                   },
                   ...theme.themes.map((t) => ({
@@ -372,9 +372,9 @@ export function GatewaySettingsDialog({
           {unreachable ? (
             <SettingsPanel title="Settings">
               <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
-                <p className="font-mono text-body font-bold text-err">Gateway unreachable</p>
+                <p className="font-mono text-body font-bold text-err">Machine unreachable</p>
                 <p className="font-mono text-meta text-dialog-hint">
-                  Can't load settings — the gateway isn't responding.
+                  Can't load settings — vis isn't responding on this machine.
                 </p>
                 <button
                   type="button"
@@ -392,7 +392,7 @@ export function GatewaySettingsDialog({
                   Token missing or invalid
                 </p>
                 <p className="max-w-sm font-mono text-meta text-dialog-hint">
-                  The gateway is online, but rejected this token. Re-pair from{' '}
+                  The machine is online, but rejected this token. Re-pair from{' '}
                   <code className="text-accent-ink">vis gateway pair</code> and paste the fresh link
                   to load its settings.
                 </p>
@@ -416,7 +416,7 @@ export function GatewaySettingsDialog({
           ) : groups.length === 0 ? (
             <SettingsPanel title="Settings">
               <p className="px-4 py-6 text-center font-mono text-body text-dialog-hint">
-                No settings exposed by this gateway.
+                No settings exposed by this machine.
               </p>
             </SettingsPanel>
           ) : (
@@ -521,7 +521,24 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
   const auth = useProviderAuth(client);
   const { providers, err, note, pending } = auth;
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({});
   const signedIn = providers?.filter(isProviderAuthed).length ?? 0;
+
+  const setDefault = async (providerId: string, model: string) => {
+    if (!model) return;
+    auth.setPending(`default:${providerId}`);
+    auth.setErr(null);
+    auth.setNote(null);
+    try {
+      await client.setDefaultModel(providerId, model);
+      await auth.reload(undefined, { force: true });
+      auth.setNote(`Default set to ${providerId} / ${model}.`);
+    } catch (e) {
+      auth.setErr(e instanceof GatewayError ? e.message : String(e));
+    } finally {
+      auth.setPending(null);
+    }
+  };
 
   return (
     <SettingsPanel
@@ -541,7 +558,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
 
         {providers?.length === 0 && (
           <p className="py-4 text-center font-mono text-meta text-dialog-hint">
-            No providers configured on this gateway.
+            No providers configured on this machine.
           </p>
         )}
 
@@ -550,6 +567,9 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
           const authed = isProviderAuthed(provider);
           const limits = providerLimitsLine(provider);
           const open = expanded === provider.id;
+          const selectedModel =
+            modelDrafts[provider.id] ?? provider.default_model ?? provider.models[0] ?? '';
+          const settingDefault = pending === `default:${provider.id}`;
 
           return (
             <div key={provider.id} className="border border-dialog-edge bg-panel-2">
@@ -563,27 +583,80 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                   {dot.glyph}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate font-mono text-ui font-bold text-white">
-                    {provider.label}
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-mono text-ui font-bold text-white">
+                      {provider.label}
+                    </span>
+                    {provider.is_default && (
+                      <span className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-accent">
+                        default
+                      </span>
+                    )}
                   </span>
                   <span className="block truncate font-mono text-meta text-dialog-hint">
-                    {providerStatusLine(provider)}
+                    {provider.is_default && provider.default_model
+                      ? `${provider.default_model} · ${providerStatusLine(provider)}`
+                      : providerStatusLine(provider)}
                   </span>
                 </span>
-                <span className="shrink-0 font-mono text-meta text-dialog-hint" aria-hidden="true">
+                <span
+                  className="shrink-0 font-mono text-meta text-dialog-hint"
+                  aria-hidden="true"
+                >
                   {open ? '▾' : '▸'}
                 </span>
               </button>
 
               {open && (
-                <div className="space-y-2 border-t border-dialog-edge p-3">
+                <div className="space-y-3 border-t border-dialog-edge p-3">
                   {limits && (
                     <p className="break-words font-mono text-meta text-dialog-hint">{limits}</p>
                   )}
                   <p className="break-words font-mono text-chip text-dialog-hint">
                     {provider.id} · {provider.models.length}{' '}
-                    {provider.models.length === 1 ? 'model' : 'models'}
+                    {provider.models.length === 1 ? 'model' : 'models'} available
                   </p>
+
+                  <div className="space-y-2">
+                    <label
+                      htmlFor={`default-model-${provider.id}`}
+                      className="block font-mono text-meta font-bold text-dialog-hint"
+                    >
+                      Default model
+                    </label>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <select
+                        id={`default-model-${provider.id}`}
+                        value={selectedModel}
+                        disabled={provider.models.length === 0 || settingDefault}
+                        onChange={(event) =>
+                          setModelDrafts((drafts) => ({
+                            ...drafts,
+                            [provider.id]: event.target.value,
+                          }))
+                        }
+                        className="min-h-10 min-w-0 flex-1 border border-dialog-edge bg-input px-3 font-mono text-ui text-white outline-none transition-colors focus:border-accent disabled:opacity-50"
+                      >
+                        {provider.models.map((model) => (
+                          <option key={model} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                      </select>
+                      <Button
+                        className="sm:min-w-32"
+                        variant={provider.is_default ? 'ghost' : 'solid'}
+                        disabled={!selectedModel || settingDefault}
+                        onClick={() => void setDefault(provider.id, selectedModel)}
+                      >
+                        {settingDefault
+                          ? 'Saving…'
+                          : provider.is_default && selectedModel === provider.default_model
+                            ? 'Default'
+                            : 'Set default'}
+                      </Button>
+                    </div>
+                  </div>
 
                   <div className="flex flex-col gap-2 sm:flex-row">
                     <Button
@@ -759,13 +832,13 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
         {note && <Banner kind="ok">{note}</Banner>}
 
         <p className="font-mono text-meta text-dialog-hint">
-          The gateway sends one alert when a turn finishes or fails, to every device you
-          register with it.
+          vis sends one alert when a turn finishes or fails, to every device you
+          register with this machine.
         </p>
 
         {push && !available && (
           <Banner kind="warn">
-            This gateway cannot push to {pushPlatform() === 'android' ? 'Android' : 'iOS'} yet — missing{' '}
+            This machine cannot push to {pushPlatform() === 'android' ? 'Android' : 'iOS'} yet — missing{' '}
             {(missing ?? ['push credentials']).join(', ')}.
           </Banner>
         )}
@@ -842,7 +915,7 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
 
         {devices?.length === 0 && (
           <p className="py-4 text-center font-mono text-meta text-dialog-hint">
-            No devices registered with this gateway.
+            No devices registered with this machine.
           </p>
         )}
       </div>

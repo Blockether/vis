@@ -2,6 +2,12 @@
 
 Keep only non-obvious project contracts here; inspect nearby source and tests for detail.
 
+## Clojure tests (Lazytest)
+
+- Tests use Lazytest. Prefer the `run_tests` language tool with the smallest relevant test namespace; `only` entries are fully qualified top-level test vars (usually `defdescribe` vars).
+- A managed Clojure REPL runs already-loaded Vars and does **not** reload edited namespaces. After disk edits, evaluate `(require 'changed.production.ns :reload)` for every changed production namespace and then `(require 'changed.test.ns :reload)` for every changed test namespace before `run_tests`. Restart the REPL when a clean load is safer; do not use `:reload-all`.
+- For a clean-JVM CLI run from the owning project directory: full suite `clojure -M:test`; namespace `clojure -M:test --namespace my.ns-test`; top-level var `clojure -M:test --var my.ns-test/my-test`. Repeat `--namespace` or `--var` to select several. Use the CLI when there is no suitable REPL or when clean process state matters.
+
 ## Companion UI (`apps/vis-companion`)
 
 - One web/iOS/Android product. UI changes must handle phone and desktop widths, touch, overflow, safe areas, virtual keyboards, and light/dark themes.

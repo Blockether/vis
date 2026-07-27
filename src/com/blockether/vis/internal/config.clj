@@ -596,21 +596,21 @@
    Unknown/user-owned keys remain strings; no YAML key is passed to `keyword`."
   (merge (into {}
                (map (juxt (comp #(str/replace % "-" "_") name) identity))
-               #{:providers :router :system-prompt :workspace :enabled :filesystem :jail :network
-                 :environment :db-spec :search :toggles :tui-settings :mcp :name :context
-                 :output-limit :id :api-key :models :base-url :api-style :responses-path
-                 :llm-headers :extra-body :rate-limit :budget :tokens :same-provider-delays-ms
-                 :fallback-after-ms :timeout-ms :ttft-timeout-ms :idle-timeout-ms
-                 :semantic-timeout-ms :max-retries :initial-delay-ms :max-delay-ms :multiplier
-                 :max-tokens :max-cost :pricing :context-limits :output-reserve :failure-threshold
-                 :recovery-ms :transient-status-codes :window-ms :cooldown-ms :max-wait-ms
-                 :allow-read-write :allow-read :allow-write :deny-read :deny-write :path :access
-                 :description :inbound-ports :deny-exec :allowed-domains :denied-domains
-                 :exclude-domains :allow-private :rules :host :methods :allow :method :text
-                 :is-replace :include-gitignored-paths :always-exclude :backend :theme-name
-                 :contributors-disabled :servers :transport :command :args :cwd :env :url :headers
-                 :python :resource-cache :message-queue :breaker-threshold :retry-backoff-ms
-                 :halfopen-probe-ms :retry-after-cap-ms})
+               #{:providers :default-provider :default-model :router :system-prompt :workspace
+                 :enabled :filesystem :jail :network :environment :db-spec :search :toggles
+                 :tui-settings :mcp :name :context :output-limit :id :api-key :models :base-url
+                 :api-style :responses-path :llm-headers :extra-body :rate-limit :budget :tokens
+                 :same-provider-delays-ms :fallback-after-ms :timeout-ms :ttft-timeout-ms
+                 :idle-timeout-ms :semantic-timeout-ms :max-retries :initial-delay-ms :max-delay-ms
+                 :multiplier :max-tokens :max-cost :pricing :context-limits :output-reserve
+                 :failure-threshold :recovery-ms :transient-status-codes :window-ms :cooldown-ms
+                 :max-wait-ms :allow-read-write :allow-read :allow-write :deny-read :deny-write
+                 :path :access :description :inbound-ports :deny-exec :allowed-domains
+                 :denied-domains :exclude-domains :allow-private :rules :host :methods :allow
+                 :method :text :is-replace :include-gitignored-paths :always-exclude :backend
+                 :theme-name :contributors-disabled :servers :transport :command :args :cwd :env
+                 :url :headers :python :resource-cache :message-queue :breaker-threshold
+                 :retry-backoff-ms :halfopen-probe-ms :retry-after-cap-ms})
          svar-yaml->runtime))
 
 (defn runtime-config
@@ -629,6 +629,157 @@
                        v)
         (sequential? v) (mapv runtime-config v)
         :else v))
+
+;; =============================================================================
+;; `${NAME}` environment interpolation
+;;
+;; A config file must never have to CARRY a secret. `api_key: ${OPENAI_API_KEY}`
+;; resolves from the process environment when config is read, in every tier
+;; (`vis.yml`, `.vis/config.yml`, `~/.vis/config.yml`, `~/.vis/state.yml`).
+;;
+;; An UNSET var is deliberately NOT a load failure. Vis is a long-lived gateway
+;; whose config is re-read live and on `/reload`, so aborting the load would let
+;; ONE unused provider's missing var kill a session running happily on a healthy
+;; provider — the same class of collateral damage `read-yaml-config-map-lenient`
+;; exists to prevent. The reference is left VERBATIM instead, which makes the
+;; result self-describing: after interpolation, anything still matching
+;; `env-ref-pattern` IS, by construction, an unresolved reference. That is what
+;; `unresolved-env-refs` reads back for the provider verdict
+;; (`providers/provider-status`), for `vis doctor`, and for the hard error raised
+;; the moment a user EXPLICITLY selects such a provider
+;; (`providers/save-default-selection!`). Fail at the point of intent, never
+;; globally.
+;; =============================================================================
+
+(def ^:private env-ref-pattern
+  "`${NAME}` — the ONE supported spelling. Bare `$NAME` is deliberately NOT
+   recognised: it cannot be told apart from a value that legitimately starts
+   with `$`, and two spellings for one feature is exactly the ambiguity the
+   snake_case-only key contract exists to rule out."
+  #"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+(defn env-refs
+  "Distinct env var names referenced as `${NAME}` inside string `s`, in order.
+   nil for a non-string."
+  [s]
+  (when (string? s) (into [] (comp (map second) (distinct)) (re-seq env-ref-pattern s))))
+
+(defonce ^:private env-ref-values
+  ;; resolved-value -> the `${NAME}` spelling that produced it, recorded ONLY for
+  ;; WHOLE-value references (`api_key: ${K}`, never `url: https://${H}/v1`) —
+  ;; the only shape a write can unambiguously map back. Read by
+  ;; `restore-env-refs`; see its docstring for why the inverse must exist.
+  (atom {}))
+
+(defn- interpolate-env-string
+  [^String s]
+  (if-let [whole (re-matches env-ref-pattern s)]
+    (if-let [v (System/getenv (second whole))]
+      (do (swap! env-ref-values assoc v s) v)
+      s)
+    (str/replace s
+                 env-ref-pattern
+                 (fn [[all var-name]]
+                   (or (System/getenv var-name) all)))))
+
+(defn interpolate-env
+  "Replace every `${NAME}` inside every STRING of `v` with `(System/getenv NAME)`.
+   Map KEYS are left alone — the contract's key set is finite and snake_case, so
+   a `${}` key is a typo, not a feature. An unset var is left verbatim."
+  [v]
+  (cond (string? v) (interpolate-env-string v)
+        (map? v) (into (empty v)
+                       (map (fn [[k val]]
+                              [k (interpolate-env val)]))
+                       v)
+        (sequential? v) (mapv interpolate-env v)
+        :else v))
+
+(defn restore-env-refs
+  "Inverse of `interpolate-env`, applied on the WRITE path: any string equal to a
+   value this process resolved from a WHOLE-value `${NAME}` reference is written
+   back as `${NAME}`.
+
+   Without this the feature would silently DE-reference itself. Every
+   read-modify-write into `~/.vis/state.yml` — a theme flip, a toggle listener, a
+   provider edit — re-serializes maps that may have travelled through
+   `load-config`, and would bake the PLAINTEXT secret onto disk. The entire point
+   of `${NAME}` is that the secret never lands in a file, so the guard belongs at
+   the single write boundary (`save-config!`) rather than in every caller."
+  [v]
+  (let [by-value @env-ref-values]
+    (if (empty? by-value)
+      v
+      (letfn [(walk [x]
+                (cond (string? x) (get by-value x x)
+                      (map? x) (into (empty x)
+                                     (map (fn [[k val]]
+                                            [k (walk val)]))
+                                     x)
+                      (sequential? x) (mapv walk x)
+                      :else x))]
+        (walk v)))))
+
+(defn unresolved-env-refs
+  "Env var names still spelled `${NAME}` anywhere in `v` AFTER interpolation —
+   i.e. exactly the referenced vars this process has no value for. Sorted and
+   distinct. Walks strings, map VALUES, and sequences."
+  [v]
+  (letfn [(walk [acc x]
+            (cond (string? x) (into acc (env-refs x))
+                  (map? x) (reduce walk acc (vals x))
+                  (sequential? x) (reduce walk acc x)
+                  :else acc))]
+    (vec (sort (walk #{} v)))))
+
+(defn provider-env-gap
+  "Sorted vec of env vars ONE provider map still references but that are unset,
+   or nil when the provider resolved completely."
+  [provider]
+  (not-empty (unresolved-env-refs provider)))
+
+(defn provider-env-message
+  "The message shown when an env-gapped provider is reached for. Names the
+   provider and every unset var and NOTHING else — it carries no config value, so
+   a half-resolved secret can never leak through it into a log or a dialog."
+  [provider-id env-vars]
+  (str "can't use "
+       (if (keyword? provider-id) (name provider-id) (str provider-id))
+       ": "
+       (str/join ", " env-vars)
+       (if (next env-vars) " are not set" " is not set")))
+
+(defn provider-env-gaps
+  "`provider-id -> unset env vars` for every provider in `config` carrying an
+   unresolved reference; an empty map when the fleet resolved completely."
+  [config]
+  (into (sorted-map)
+        (keep (fn [p]
+                (when-let [env-vars (provider-env-gap p)]
+                  [(:id p) env-vars])))
+        (:providers config)))
+
+(defonce ^:private warned-env-gaps
+  ;; Sets of missing vars already warned about. `load-config` runs on the live
+  ;; per-turn path, so an unconditional log would repeat the same line every turn.
+  (atom #{}))
+
+(defn- warn-unresolved-env-refs!
+  [resolved]
+  (when-let [env-vars (not-empty (unresolved-env-refs resolved))]
+    (when-not (contains? @warned-env-gaps env-vars)
+      (swap! warned-env-gaps conj env-vars)
+      (tel/log! {:level :warn
+                 :id ::config-env-unresolved
+                 :data {:env-vars env-vars}
+                 :msg (str "config references unset environment variables: "
+                           (str/join ", " env-vars)
+                           " — left verbatim; providers that need them stay unusable")}))))
+
+(defn- resolve-env-config
+  "Interpolate a merged raw config and warn ONCE per missing-var set."
+  [raw]
+  (doto (interpolate-env raw) warn-unresolved-env-refs!))
 
 (defn- parse-yaml-config-map
   "Parse+normalize one YAML file to its string-keyed representation WITHOUT spec
@@ -867,30 +1018,81 @@
        (mapv str (if (some? always-exclude) always-exclude default-search-always-exclude))})))
 
 (defn- apply-provider-metadata
-  "Attach catalog metadata needed by the runtime while preserving the
-   user's provider map exactly otherwise."
+  "Attach catalog metadata and the provider's complete preset model catalog.
+   Persisted model maps win by name so custom metadata survives, while an old
+   narrowed list can no longer hide models supplied by the provider preset."
   [provider]
-  (let [template (provider-template (:id provider))]
+  (let
+    [template
+     (provider-template (:id provider))
+
+     models
+     (->> (concat (:models provider) (:default-models template))
+          (reduce (fn [{:keys [seen models] :as acc} model]
+                    (if-let
+                      [model-name (some-> (model-name model)
+                                          str
+                                          str/trim
+                                          not-empty)]
+                      (if (contains? seen model-name)
+                        acc
+                        {:seen (conj seen model-name)
+                         :models (conj models
+                                       (if (map? model)
+                                         (assoc model :name model-name)
+                                         {:name model-name}))})
+                      acc))
+                  {:seen #{} :models []})
+          :models)]
+
     (cond-> provider
       (and (nil? (:base-url provider)) (:base-url template))
       (assoc :base-url (:base-url template))
 
       (and (nil? (:api-style provider)) (:api-style template))
-      (assoc :api-style (:api-style template)))))
+      (assoc :api-style (:api-style template))
+
+      (seq models)
+      (assoc :models models))))
 
 (defn- apply-config-metadata [config] (update config :providers #(mapv apply-provider-metadata %)))
 
 (defn load-config
   "Load the validated YAML config and adapt its finite schema keys to internal
-   keyword-keyed domain maps. `load-config-raw` retains the original string keys."
+   keyword-keyed domain maps. `load-config-raw` retains the original string keys.
+
+   This is also the `${NAME}` interpolation boundary. It is done HERE and not in
+   `load-config-raw` on purpose: the raw loaders are the read half of every
+   read-modify-write into `~/.vis/state.yml`, so resolving there would write the
+   plaintext secret straight back to disk. `save-config!` runs
+   `restore-env-refs` as the matching guard for values that still reach a write
+   through this keywordized view."
   []
   (some-> (load-config-raw)
           ((fn [raw]
              (when (seq (get raw "providers")) raw)))
+          resolve-env-config
           runtime-config
           apply-config-metadata))
 
-(defn- active-provider-entry [config] (first (or (:providers config) (get config "providers"))))
+(defn- active-provider-entry
+  [config]
+  (let
+    [provider-entries
+     (or (:providers config) (get config "providers"))
+
+     default-id
+     (or (:default-provider config) (get config "default_provider"))
+
+     id-str
+     (fn [value]
+       (cond (keyword? value) (name value)
+             (some? value) (str value)))]
+
+    (or (when default-id
+          (some #(when (= (id-str default-id) (id-str (or (:id %) (get % "id")))) %)
+                provider-entries))
+        (first provider-entries))))
 
 (defn- provider-selection-changed?
   [previous-provider selected-provider]
@@ -972,7 +1174,10 @@
    the exact string-keyed map that is written."
   ([config] (save-config! config nil))
   ([config source]
-   (let [wire-config (->yaml-safe config)]
+   ;; `restore-env-refs` FIRST: a caller may hand us a map that travelled through
+   ;; `load-config`, where `${NAME}` was already resolved. Writing that verbatim
+   ;; would bake the secret into `state.yml` and quietly destroy the reference.
+   (let [wire-config (restore-env-refs (->yaml-safe config))]
      (config-spec/assert-config! wire-config state-path)
      (let
        [previous-provider (some-> (active-provider-entry (load-global-config-raw))

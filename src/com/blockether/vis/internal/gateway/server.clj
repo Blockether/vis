@@ -1013,27 +1013,48 @@
     (if (:ok? result) (json-response {:status (:status result)}) (auth-error-response result))))
 
 (defn- router-provider-entry
-  "One row of the unified router payload for `provider` (a configured or
-   authenticated-preset fleet entry): display label, base URL, model names, live
-   auth status, and limits report. Emitted as EDN; `json-response` snake_cases
-   every key to a wire STRING (`is_authenticated`, `base_url`, …)."
-  [provider]
-  (let [id (:id provider)]
+  "One row of the unified router payload, including the explicit global default."
+  [provider default]
+  (let
+    [id
+     (:id provider)
+
+     is-default
+     (= id (:provider-id default))]
+
     {:id (name id)
      :label (config/display-label id)
      :base-url (or (config/provider-base-url provider) (:base-url provider))
      :models (into [] (keep :name) (:models provider))
+     :is-default is-default
+     :default-model (when is-default (:model default))
      :status (providers/provider-status provider)
      :limits (providers/provider-limits-safe provider)}))
 
 (defn- router-handler
-  "GET /v1/router — the WHOLE router dialog payload assembled server-side in ONE
-   call: the never-nil unified fleet (configured providers first, then
-   authenticated-but-unsaved OAuth presets), each row carrying label, base URL,
-   model names, live auth status, and limits. No per-provider round trips, no
-   channel-side config re-parse. Wire keys are snake_case STRINGS throughout."
+  "GET /v1/router — the whole provider catalog and explicit default pair."
   [_]
-  (json-response {:providers (mapv router-provider-entry (providers/picker-fleet))}))
+  (let
+    [fleet
+     (providers/picker-fleet)
+
+     default
+     (providers/default-selection fleet)]
+
+    (json-response {:providers (mapv #(router-provider-entry % default) fleet)})))
+
+(defn- router-default-handler
+  "PATCH /v1/router — set the one default provider/model pair."
+  [request]
+  (let [{:strs [provider model]} (body-json request)]
+    (if (or (str/blank? (str provider)) (str/blank? (str model)))
+      (error-response 400 :invalid-request "provider and model must be non-blank strings")
+      (try (let
+             [{:keys [provider-id model]}
+              (providers/save-default-selection! provider model :gateway)]
+             (json-response {:default-provider (name provider-id) :default-model model}))
+           (catch clojure.lang.ExceptionInfo e
+             (error-response 400 :invalid-request (ex-message e)))))))
 
 (defn- toggle-json
   "One settings row as JSON — the wire twin of the server-side
@@ -2386,7 +2407,8 @@
         ["/providers/:provider-id/auth/poll" {:post provider-auth-poll-handler}]
         ["/providers/:provider-id/auth/cancel" {:post provider-auth-cancel-handler}]
         ["/providers/:provider-id/logout" {:post provider-logout-handler}]
-        ["/router" {:get router-handler}] ["/clients" {:post client-register-handler}]
+        ["/router" {:get router-handler :patch router-default-handler}]
+        ["/clients" {:post client-register-handler}]
         ["/clients/:cid" {:delete client-release-handler}] ["/admin/status" {:get status-handler}]
         ["/admin/stop" {:post stop-handler}]
         ["/sessions" {:get list-sessions-handler :post create-session-handler}]

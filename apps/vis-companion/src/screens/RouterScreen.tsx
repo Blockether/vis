@@ -170,7 +170,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
 
                     {!authed && (
                       <Button className="w-full" onClick={manageProviders}>
-                        Sign in — gateway settings
+                        Sign in — machine settings
                       </Button>
                     )}
 
@@ -207,7 +207,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
 
         <footer className="flex shrink-0 flex-col gap-2 border-t border-dialog-edge p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-between sm:p-4">
           <p className="font-mono text-meta text-dialog-hint">
-            Sign-in, OAuth, and API keys live in gateway settings.
+            Sign-in, OAuth, and API keys live in machine settings.
           </p>
           <div className="flex gap-2">
             <Button

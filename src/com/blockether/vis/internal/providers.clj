@@ -263,6 +263,16 @@
   [provider]
   (let [registered (registry/provider-by-id (:id provider))]
     (cond
+      ;; FIRST, ahead of the `:api-key` trust branch: an unresolved `${NAME}`
+      ;; leaves the literal reference sitting in `:api-key`, which is `some?` and
+      ;; would otherwise read as "authenticated from config" — the worst possible
+      ;; verdict, since the truth only surfaces as a 401 on the first real turn.
+      (config/provider-env-gap provider) (let [env-vars (config/provider-env-gap provider)]
+                                           {:is-authenticated false
+                                            :source :env
+                                            :needs-env (str/join ", " env-vars)
+                                            :error (config/provider-env-message (:id provider)
+                                                                                env-vars)})
       ;; Local no-auth providers (Ollama / LM Studio) have no key and
       ;; their registered status-fn is a hardcoded stub — probe the
       ;; endpoint for real.
@@ -316,11 +326,18 @@
           :error {:message (or (ex-message e) (str e))}})))
 
 (defn initial-provider-status
-  "Placeholder status while a real probe runs in the background."
+  "Placeholder status while a real probe runs in the background. An env gap is
+   decided synchronously — it is a pure read of the config already in hand — so
+   the card never flashes an authenticated verdict it is about to retract."
   [provider]
-  (wire/canonical (if (some? (:api-key provider))
-                    {:is-authenticated true :source :config :config-path config/state-path}
-                    {:is-authenticated nil :loading? true})))
+  (wire/canonical (if-let [env-vars (config/provider-env-gap provider)]
+                    {:is-authenticated false
+                     :source :env
+                     :needs-env (str/join ", " env-vars)
+                     :error (config/provider-env-message (:id provider) env-vars)}
+                    (if (some? (:api-key provider))
+                      {:is-authenticated true :source :config :config-path config/state-path}
+                      {:is-authenticated nil :loading? true}))))
 
 (defn initial-provider-limits
   "Placeholder limits report while the real fetch runs."
@@ -672,12 +689,49 @@
 
     (into (vec base) extras)))
 
+(defn default-selection
+  "Return the valid default provider/model pair for `fleet`. Explicit config
+   wins; legacy configs fall back to the first provider and its first model."
+  ([] (default-selection (picker-fleet)))
+  ([fleet]
+   (let
+     [cfg
+      (or (config/load-config) {})
+
+      requested-provider
+      (some-> (:default-provider cfg)
+              keyword)
+
+      selected-provider
+      (or (some #(when (= requested-provider (:id %)) %) fleet) (first fleet))
+
+      model-names
+      (into []
+            (keep #(some-> (config/model-name %)
+                           str
+                           not-empty))
+            (:models selected-provider))
+
+      requested-model
+      (some-> (:default-model cfg)
+              str
+              not-empty)
+
+      selected-model
+      (if (some #{requested-model} model-names) requested-model (first model-names))]
+
+     (when (and selected-provider selected-model)
+       {:provider-id (:id selected-provider) :model selected-model}))))
+
 (defn provider-config-with-models
-  "Minimal persistable provider config for a preset + chosen models."
+  "Persistable provider config carrying the provider's complete catalog."
   [preset models]
-  (cond-> {:id (:id preset) :models models}
+  (cond-> {:id (:id preset) :models (vec models)}
     (:base-url preset)
-    (assoc :base-url (:base-url preset))))
+    (assoc :base-url (:base-url preset))
+
+    (:api-style preset)
+    (assoc :api-style (:api-style preset))))
 
 (defn save-providers!
   "Replace the provider vector in the global string-keyed config while preserving
@@ -697,6 +751,76 @@
      (try (config/reload-config!) (catch Throwable _ nil))
      (invalidate-configured-providers!)
      providers*)))
+
+(defn save-default-selection!
+  "Persist exactly one default provider/model pair. The selected provider is
+   persisted with its complete model catalog when it was authenticated but not
+   yet configured. Provider/model ordering is not changed."
+  ([provider-id model] (save-default-selection! provider-id model nil))
+  ([provider-id model source]
+   (let
+     [provider-id*
+      (cond (keyword? provider-id) provider-id
+            (string? provider-id) (keyword provider-id))
+
+      model*
+      (some-> model
+              str
+              str/trim
+              not-empty)
+
+      fleet
+      (picker-fleet)
+
+      selected
+      (some #(when (= provider-id* (:id %)) %) fleet)
+
+      model-names
+      (into #{}
+            (keep #(some-> (config/model-name %)
+                           str
+                           not-empty))
+            (:models selected))]
+
+     (when-not selected (throw (ex-info "Unknown provider" {:provider provider-id})))
+     (when-not (and model* (contains? model-names model*))
+       (throw (ex-info "Unknown model for provider" {:provider provider-id* :model model})))
+     ;; The one place an unresolved `${NAME}` IS fatal: the user is explicitly
+     ;; reaching for THIS provider, so the error is actionable rather than
+     ;; collateral. Loading stays lenient (see `config/interpolate-env`); only
+     ;; intent hard-fails.
+     (when-let [env-vars (config/provider-env-gap selected)]
+       (throw (ex-info (config/provider-env-message provider-id* env-vars)
+                       {:type :vis/provider-env-unset :provider provider-id* :env-vars env-vars})))
+     (let
+       [raw
+        (or (config/load-global-config-raw) {})
+
+        current
+        (vec (:providers (config/runtime-config raw)))
+
+        existing
+        (some #(when (= provider-id* (:id %)) %) current)
+
+        selected-config
+        (merge selected existing {:models (:models selected)})
+
+        providers*
+        (if existing
+          (mapv #(if (= provider-id* (:id %)) selected-config %) current)
+          (conj current selected-config))
+
+        selection
+        {:provider-id provider-id* :model model*}]
+
+       (config/save-config! (assoc raw
+                              "providers" (mapv persisted-provider-config providers*)
+                              "default_provider" (name provider-id*)
+                              "default_model" model*)
+                            source)
+       (try (config/reload-config!) (catch Throwable _ nil))
+       (invalidate-configured-providers!)
+       selection))))
 
 (defn add-config-provider!
   "Append a provider config to the persisted fleet (no-op when its id exists)."

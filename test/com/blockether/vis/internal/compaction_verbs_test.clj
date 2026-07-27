@@ -826,8 +826,8 @@
           (doseq
             [text ["ACTION REQUIRED" "210k" "144k" "Fold settled search/tool sweeps"
                    "one broad session_fold" "last completed scope"
-                   "preserve decisions, edits, and verification"
-                   "confirm the receipt saved tokens"]]
+                   "preserve decisions, edits, and verification" "preserve exact physical paths"
+                   "never bare or abbreviated filenames" "confirm the receipt saved tokens"]]
             (expect (str/includes? hint text)))))
     (it "never silently expires while pressure remains"
         (expect (some? (eng/over-budget-hint required 6 6)))

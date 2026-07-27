@@ -507,9 +507,9 @@ export class GatewayClient {
     // daemon one probe, and an aborted caller never cancels the others.
     let inflight = routerInflight.get(key);
     if (!inflight) {
-      inflight = this.request<{ providers?: RouterProvider[] }>('GET', '/v1/router')
+      inflight = this.request<{ providers: RouterProvider[] }>('GET', '/v1/router')
         .then((response) => {
-          const rows = response.providers ?? [];
+          const rows = response.providers;
           routerCache.set(key, { at: Date.now(), rows });
           return rows;
         })
@@ -522,6 +522,14 @@ export class GatewayClient {
     // callers check `signal.aborted` after awaiting instead.
     void signal;
     return inflight;
+  }
+
+  async setDefaultModel(provider: string, model: string): Promise<void> {
+    await this.request<{ default_provider: string; default_model: string }>('PATCH', '/v1/router', {
+      provider,
+      model,
+    });
+    this.invalidateRouter();
   }
 
   async sessionModel(sid: string, signal?: AbortSignal): Promise<ModelPref | null> {

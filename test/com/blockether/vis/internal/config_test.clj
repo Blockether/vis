@@ -427,3 +427,81 @@
                (config/invalidate-config-cache!)
                (expect (= "THREE" (get (config/load-config-raw) "system_prompt")))))
            (finally (config/invalidate-config-cache!) (rm-rf! dir))))))
+
+(defdescribe
+  env-interpolation-test
+  "`${NAME}` references in config values. An UNSET var is deliberately NOT a load
+   failure: Vis is a long-lived gateway whose config is re-read live and on
+   `/reload`, so aborting would let one unused provider's missing key kill a
+   session running on a healthy provider. The reference is left VERBATIM, which
+   makes the resolved map self-describing — the provider verdict, `vis doctor`,
+   and the hard error on explicit selection all read it back."
+  (it "reads distinct references out of strings only, and never sees bare $NAME"
+      (expect (= ["HOME"] (config/env-refs "${HOME}")))
+      (expect (= ["A" "B"] (config/env-refs "${A}/x/${B}/${A}")))
+      (expect (= [] (config/env-refs "plain value")))
+      (expect (= [] (config/env-refs "$HOME")))
+      (expect (nil? (config/env-refs :not-a-string))))
+  (it "resolves set vars, leaves unset ones verbatim, and never touches map keys"
+      (let [home (System/getenv "HOME")]
+        (expect (= home (config/interpolate-env "${HOME}")))
+        (expect (= (str "https://" home "/v1") (config/interpolate-env "https://${HOME}/v1")))
+        (expect (= "${VIS_TEST_UNSET_A}" (config/interpolate-env "${VIS_TEST_UNSET_A}")))
+        (expect (= (str "a" home "b${VIS_TEST_UNSET_A}")
+                   (config/interpolate-env "a${HOME}b${VIS_TEST_UNSET_A}")))
+        ;; the key set is finite and snake_case, so a `${}` KEY is a typo
+        (expect (= {"${HOME}" home} (config/interpolate-env {"${HOME}" "${HOME}"})))
+        (expect (= {"a" [{"b" home}]} (config/interpolate-env {"a" [{"b" "${HOME}"}]})))
+        (expect (= 7 (config/interpolate-env 7)))))
+  (it "writes a whole-value reference back so a re-save cannot bake the secret in"
+      (let
+        [home
+         (System/getenv "HOME")
+
+         resolved
+         (config/interpolate-env {"providers" [{"api_key" "${HOME}"
+                                                "base_url" "https://x/${HOME}/v1"}]})]
+
+        (expect (= [{"api_key" home "base_url" (str "https://x/" home "/v1")}]
+                   (get resolved "providers")))
+        ;; only the WHOLE-value reference maps back unambiguously; an embedded one
+        ;; stays resolved, which is why `${NAME}` belongs on the key itself
+        (expect (= [{"api_key" "${HOME}" "base_url" (str "https://x/" home "/v1")}]
+                   (get (config/restore-env-refs resolved) "providers")))))
+  (it "reports, sorted, exactly the unset vars each provider still needs"
+      (let
+        [gapped
+         {:id :gapped :api-key "${VIS_TEST_UNSET_B}"}
+
+         two
+         {:id :two :api-key "${VIS_TEST_UNSET_B}" :base-url "https://${VIS_TEST_UNSET_A}/v1"}
+
+         fine
+         {:id :fine :api-key "sk-literal"}]
+
+        (expect (= ["VIS_TEST_UNSET_B"] (config/provider-env-gap gapped)))
+        (expect (= ["VIS_TEST_UNSET_A" "VIS_TEST_UNSET_B"] (config/provider-env-gap two)))
+        (expect (nil? (config/provider-env-gap fine)))
+        (expect (= {:gapped ["VIS_TEST_UNSET_B"] :two ["VIS_TEST_UNSET_A" "VIS_TEST_UNSET_B"]}
+                   (config/provider-env-gaps {:providers [gapped fine two]})))
+        (expect (= {} (config/provider-env-gaps {:providers [fine]})))))
+  (it "names the provider and the vars, and carries no config VALUE that could leak"
+      (expect (= "can't use rbi-genai: RBI_GENAI_API_KEY is not set"
+                 (config/provider-env-message :rbi-genai ["RBI_GENAI_API_KEY"])))
+      (expect (= "can't use rbi-genai: A_KEY, B_KEY are not set"
+                 (config/provider-env-message "rbi-genai" ["A_KEY" "B_KEY"]))))
+  (it "resolves through `load-config`, marking the gapped provider without failing"
+      (try (config/invalidate-config-cache!)
+           (with-redefs
+             [config/load-config-raw
+              (constantly {"providers"
+                           [{"id" "gapped" "api_key" "${VIS_TEST_UNSET_A}" "models" [{"name" "m1"}]}
+                            {"id" "fine" "api_key" "${HOME}" "models" [{"name" "m2"}]}]})]
+             (let
+               [cfg (config/load-config)
+                [gapped fine] (:providers cfg)]
+
+               (expect (= "${VIS_TEST_UNSET_A}" (:api-key gapped)))
+               (expect (= (System/getenv "HOME") (:api-key fine)))
+               (expect (= {:gapped ["VIS_TEST_UNSET_A"]} (config/provider-env-gaps cfg)))))
+           (finally (config/invalidate-config-cache!)))))

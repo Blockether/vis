@@ -148,6 +148,8 @@ export interface RouterProvider {
   label: string;
   base_url?: string;
   models: string[];
+  is_default: boolean;
+  default_model: string | null;
   status?: ProviderStatus;
   limits?: ProviderLimits;
 }

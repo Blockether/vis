@@ -4394,7 +4394,7 @@
   250)
 
 (defn- paint-boot-splash!
-  "Paint ONE centered 'Connecting to gateway…' frame. The caller MUST hold
+  "Paint ONE centered 'Starting vis…' frame. The caller MUST hold
    `draw-lock` (this touches `screen-size`/`refresh`). Best-effort — the
    animation loop swallows throws so a paint hiccup can never kill startup."
   [^TerminalScreen screen frame]
@@ -4415,7 +4415,7 @@
      (nth boot-splash-frames (mod (long frame) (count boot-splash-frames)))
 
      label
-     (str spin "  Connecting to gateway…")
+     (str spin "  Starting vis…")
 
      row
      (max 0 (quot (dec rows) 2))]
@@ -4428,7 +4428,7 @@
     (.refresh screen Screen$RefreshType/DELTA)))
 
 (defn- with-boot-splash!
-  "Run `thunk` while animating a centered 'Connecting to gateway…' splash on
+  "Run `thunk` while animating a centered 'Starting vis…' splash on
    `screen`, then clear it and return `thunk`'s value.
 
    Bridges the one window where the user is otherwise staring at a blank screen:

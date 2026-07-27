@@ -777,13 +777,14 @@
             (is (= [nil "glm-5.2"] @wrote))))))))
 
 (deftest router-handler-assembles-string-keyed-fleet-with-status
-  (testing
-    "GET /v1/router returns the whole fleet in ONE payload; wire keys are snake_case STRINGS and the connection verdict rides as is_authenticated"
+  (testing "GET /v1/router returns every model plus the one explicit default pair"
     (with-redefs-fn
       {#'providers/picker-fleet (constantly [{:id :anthropic-coding-plan
                                               :base-url "https://api.anthropic.com/v1"
                                               :models [{:name "claude-opus-4-8"}
                                                        {:name "claude-sonnet-5"}]}])
+       #'providers/default-selection (constantly {:provider-id :anthropic-coding-plan
+                                                  :model "claude-sonnet-5"})
        #'providers/provider-status (constantly {:is-authenticated true :source :auth-file})
        #'providers/provider-limits-safe
        (constantly
@@ -803,12 +804,39 @@
           (is (= "anthropic-coding-plan" (get p0 "id")))
           (is (= "https://api.anthropic.com/v1" (get p0 "base_url")))
           (is (= ["claude-opus-4-8" "claude-sonnet-5"] (get p0 "models")))
+          (is (true? (get p0 "is_default")))
+          (is (= "claude-sonnet-5" (get p0 "default_model")))
           ;; connection verdict is the snake_case STRING key — no keyword restore
           (is (true? (get-in p0 ["status" "is_authenticated"])))
           (is (= "auth-file" (get-in p0 ["status" "source"])))
           (is (every? string? (keys (get p0 "status"))))
           ;; limits ride embedded, string-keyed too
           (is (= "ok" (get-in p0 ["limits" "status"]))))))))
+
+(deftest router-default-handler-persists-one-pair
+  (let
+    [saved
+     (atom nil)
+
+     request
+     {:body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str {"provider"
+                                                                      "anthropic-coding-plan"
+                                                                      "model" "claude-fable-5"})
+                                                      "UTF-8"))}]
+
+    (with-redefs
+      [providers/save-default-selection! (fn [provider model source]
+                                           (reset! saved [provider model source])
+                                           {:provider-id :anthropic-coding-plan
+                                            :model "claude-fable-5"})]
+      (let
+        [resp ((rv 'router-default-handler) request)
+         body (wire/parse-json (:body resp))]
+
+        (is (= 200 (:status resp)))
+        (is (= ["anthropic-coding-plan" "claude-fable-5" :gateway] @saved))
+        (is (= "anthropic-coding-plan" (get body "default_provider")))
+        (is (= "claude-fable-5" (get body "default_model")))))))
 
 (deftest gateway-prometheus-runtime-metrics-test
   (let
