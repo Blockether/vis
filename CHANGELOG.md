@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.9] - 2026-07-27
+
+### Changed
+- fix(native): build macOS on the 14 GB Intel runner, delete stale target/vis
+- feat(companion): header-first python card and live transcript entrance
+- fix(loop): price fold weights from the visible wire projection
+- fix(shell): normalize captured terminal output before fencing
+- fix(tui): make the code-band accordion reachable and header-first
+- release: update version files for v0.1.8, bump to next dev version
+
+### Package changes
+
+#### com.blockether/vis
+- fix(native): build macOS on the 14 GB Intel runner, delete stale target/vis (9883cb0c4)
+- feat(companion): header-first python card and live transcript entrance (b9263165f)
+- fix(loop): price fold weights from the visible wire projection (c4aa24331)
+- fix(shell): normalize captured terminal output before fencing (a386197d2)
+- release: update version files for v0.1.8, bump to next dev version (44518611d)
+
+#### com.blockether/vis-channel-tui
+- fix(tui): make the code-band accordion reachable and header-first (928ab62ea)
+
+
+
 ## [v0.1.8] - 2026-07-27
 
 ### Changed
@@ -1444,7 +1468,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.9...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -1453,3 +1477,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.6]: https://github.com/Blockether/vis/releases/tag/v0.1.6
 [v0.1.7]: https://github.com/Blockether/vis/releases/tag/v0.1.7
 [v0.1.8]: https://github.com/Blockether/vis/releases/tag/v0.1.8
+[v0.1.9]: https://github.com/Blockether/vis/releases/tag/v0.1.9
