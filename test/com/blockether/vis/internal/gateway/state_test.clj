@@ -558,12 +558,14 @@
           (fn []
             (let [page (state/transcript-page sid {:limit 10})]
               ;; ~930 encoded bytes per row against a 2000-byte budget: two rows
-              ;; fit, the third busts it and is left for the next page.
-              (expect (= ["turn-8" "turn-9"] (mapv #(get % "turn_id") (:turns page))))
+              ;; fit and the third busts it. The buster is KEPT — deferring it
+              ;; silently swallowed the newest turn carrying a user image, so a
+              ;; re-entered session painted no image at all.
+              (expect (= ["turn-7" "turn-8" "turn-9"] (mapv #(get % "turn_id") (:turns page))))
               (expect (= 10 (:total page)))
               ;; The dropped rows raise the offset — which is exactly where the
               ;; client's next `load earlier` resumes, so nothing is skipped.
-              (expect (= 8 (:offset page)))
+              (expect (= 7 (:offset page)))
               (expect (:has-more page))
               ;; Newest-first hydration: the seven rows older than the buster are
               ;; never hydrated at all.

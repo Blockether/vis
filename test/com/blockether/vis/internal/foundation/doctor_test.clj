@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.foundation.doctor-test
   "Unit tests for foundation's `:ext/doctor-fn` sections:
-   ::agents-md.
+   ::agents-md and ::housekeeping.
 
    Plan §6: each section returns expected message shapes for every
    input scenario; the composite `doctor-fn` stamps the right
@@ -34,10 +34,10 @@
                        ids
                        (distinct (mapv :check-id msgs))]
 
-                   (expect (every? #{::doctor/agents-md} ids))
+                   (expect (every? #{::doctor/agents-md ::doctor/housekeeping} ids))
                    ;; Sections appear in documented order.
                    (let [section-order
-                         [::doctor/agents-md]
+                         [::doctor/agents-md ::doctor/housekeeping]
 
                          present
                          (filter (set ids) section-order)]

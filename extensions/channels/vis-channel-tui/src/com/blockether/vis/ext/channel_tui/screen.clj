@@ -3547,6 +3547,19 @@
 (defn- active-provider-id
   []
   (or
+    ;; Resolve the provider EXACTLY like the footer does
+    ;; (`footer/session-effective-provider`): the local per-session pick in
+    ;; app-db FIRST, then the gateway's stored session model, then the router
+    ;; default. Reading the gateway first made the poller fetch limits for a
+    ;; DIFFERENT provider than the one the footer renders (the gateway still
+    ;; said claude while the just-cycled session pref said openai-codex), and
+    ;; `report-for-current-provider` drops a report stamped with another
+    ;; provider — so the usage row sat on "limits: loading…" forever while the
+    ;; poller happily refreshed the wrong plan.
+    (some-> (:session-model-pref @state/app-db)
+            :provider
+            not-empty
+            keyword)
     ;; Poll the provider the ACTIVE SESSION routes through — the unified
     ;; per-session pref the footer model label and the engine already use.
     ;; Polling the global router default (resolve-effective-model) made the

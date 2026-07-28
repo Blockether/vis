@@ -31,12 +31,22 @@ type Box = { height: number; top: number };
  */
 export type RotationPhase = 'start' | 'settle' | 'end';
 
-/** Re-check schedule across the OS rotation animation (~400ms on iOS). */
-const ROTATION_SETTLE_MS = [0, 60, 160, 300, 520];
-const ROTATION_END_MS = 700;
+/**
+ * The rotation window cannot be a fixed timeout. The OS animation is roughly
+ * 300-500ms on iOS, the webview keeps re-laying out for a while after it, and
+ * Android is done much sooner. A blind schedule therefore either closes while
+ * the metrics are still moving — the shell re-pins to a box that is already
+ * stale, which is the lurch — or long after they stopped, so the app keeps
+ * re-measuring and visibly breathes. Watch the metrics instead and close the
+ * window the frame they hold still.
+ */
+const ROTATION_MIN_MS = 220;
+const ROTATION_MAX_MS = 1200;
+const ROTATION_STABLE_FRAMES = 3;
 
 const rotationListeners = new Set<(phase: RotationPhase) => void>();
-let rotationTimers: number[] = [];
+let rotationFrame: number | null = null;
+let rotationGuard: number | null = null;
 let rotating = false;
 let rotationWatched = false;
 
@@ -44,25 +54,59 @@ function emitRotation(phase: RotationPhase) {
   for (const listener of [...rotationListeners]) listener(phase);
 }
 
+/** Everything a consumer could measure, as one comparable string. */
+function viewportSample(): string {
+  const vv = window.visualViewport;
+  const width = vv ? Math.round(vv.width) : 0;
+  const height = vv ? Math.round(vv.height) : 0;
+  return `${window.innerWidth}x${window.innerHeight}x${width}x${height}`;
+}
+
+function endRotation() {
+  if (rotationFrame !== null) window.cancelAnimationFrame(rotationFrame);
+  if (rotationGuard !== null) window.clearTimeout(rotationGuard);
+  rotationFrame = null;
+  rotationGuard = null;
+  if (!rotating) return;
+  rotating = false;
+  emitRotation('end');
+}
+
+function watchSettle(startedAt: number, previous: string, held: number) {
+  rotationFrame = window.requestAnimationFrame((now) => {
+    rotationFrame = null;
+    const sample = viewportSample();
+    const stable = sample === previous ? held + 1 : 0;
+    // Only a real geometry change is worth a settle: subscribers re-anchor on
+    // it, and replaying that every frame is what made the content jitter.
+    if (stable === 0) emitRotation('settle');
+    const elapsed = now - startedAt;
+    const done =
+      (stable >= ROTATION_STABLE_FRAMES && elapsed >= ROTATION_MIN_MS) ||
+      elapsed >= ROTATION_MAX_MS;
+    if (done) {
+      endRotation();
+      return;
+    }
+    watchSettle(startedAt, sample, stable);
+  });
+}
+
 function beginRotation() {
-  for (const t of rotationTimers) window.clearTimeout(t);
-  rotationTimers = [];
+  if (typeof window === 'undefined') return;
+  if (rotationFrame !== null) window.cancelAnimationFrame(rotationFrame);
+  if (rotationGuard !== null) window.clearTimeout(rotationGuard);
+  rotationFrame = null;
   // `orientationchange` and the media query both fire for one physical
   // rotation; the second must extend the window, not restart the snapshot.
   if (!rotating) {
     rotating = true;
     emitRotation('start');
   }
-  for (const delay of ROTATION_SETTLE_MS) {
-    rotationTimers.push(window.setTimeout(() => emitRotation('settle'), delay));
-  }
-  rotationTimers.push(
-    window.setTimeout(() => {
-      rotating = false;
-      rotationTimers = [];
-      emitRotation('end');
-    }, ROTATION_END_MS),
-  );
+  // rAF stalls in a hidden webview, so the loop above could never close the
+  // window and the shell would stay frozen. This always runs.
+  rotationGuard = window.setTimeout(endRotation, ROTATION_MAX_MS + 200);
+  watchSettle(performance.now(), viewportSample(), 0);
 }
 
 /**
@@ -150,6 +194,22 @@ export function onViewportRotation(listener: (phase: RotationPhase) => void): ()
   return () => {
     rotationListeners.delete(listener);
   };
+}
+
+/**
+ * True for the whole rotation window.
+ *
+ * The intermediate frames are real layout — two font sizes, two column widths,
+ * a scroller that has not been re-anchored yet — so there is nothing to animate
+ * between: any transition on them would interpolate boxes that never existed,
+ * which is exactly the floating/resizing wobble. The honest move is to not show
+ * them: hide the shell for the window (the page background is the same ink, so
+ * the OS rotation animation is all you see) and fade the settled layout back.
+ */
+export function useIsViewportRotating(): boolean {
+  const [isRotating, setRotating] = useState(false);
+  useEffect(() => onViewportRotation((phase) => setRotating(phase !== 'end')), []);
+  return isRotating;
 }
 
 /**

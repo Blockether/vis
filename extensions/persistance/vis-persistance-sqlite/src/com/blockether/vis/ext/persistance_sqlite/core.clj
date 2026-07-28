@@ -831,6 +831,20 @@
                db-info
                {:select [:*] :from :workspace :where where :order-by [[:created_at :desc]]}))))))
 
+(defn db-workspace-list-drafts
+  "Every draft workspace across all repos, newest first. Housekeeping reads
+   this to decide which draft clones on disk have gone stale; it is
+   deliberately repo-agnostic because the drafts store is a single
+   `~/.vis/drafts` tree shared by every trunk."
+  [db-info]
+  (when (ds db-info)
+    (mapv row->workspace
+          (query! db-info
+                  {:select [:*]
+                   :from :workspace
+                   :where [:= :workspace_kind (->kw :draft)]
+                   :order-by [[:created_at :desc]]}))))
+
 (defn db-workspace-for-session
   "Return the workspace pinned to `session-state-id`, or nil. Always
    non-nil after step-4 wiring (1:1 invariant); nil only during the

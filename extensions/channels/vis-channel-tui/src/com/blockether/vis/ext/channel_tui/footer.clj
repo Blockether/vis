@@ -342,10 +342,19 @@
           :else "↺--")))
 
 (defn- report-for-current-provider
-  "Report belonging to `provider`, or nil when the polled report is for
-   a different provider (stale after a provider switch). Callers can
-   treat nil as \"loading\" — the polling thread populates it on its
-   next tick."
+  "Report belonging to `provider`.
+
+   The active poller slot wins when it is stamped with `provider`.
+   Otherwise fall back to the last report REMEMBERED for that provider
+   (`:provider-limits-cache`): right after a per-session model switch the
+   active slot still belongs to the previous provider and the refetch is
+   in flight, and flashing \"limits: loading…\" on every cycle is worse
+   than showing the quota we already fetched — the gateway itself serves
+   these reports from a 15s cache, so the remembered rows are what a
+   fresh request would return anyway.
+
+   nil only when this provider was never polled; callers treat that as
+   \"loading\" and the polling thread populates it on its next tick."
   [db provider]
   (let
     [provider-limits
@@ -357,7 +366,10 @@
      report-provider
      (or (:provider-id provider-limits) (:provider-id report))]
 
-    (when (and report (= provider report-provider)) report)))
+    (if (and report (= provider report-provider))
+      report
+      (when provider
+        (get-in db [:provider-limits-cache provider :report])))))
 
 (defn- limits-status-text
   "Render an explicit placeholder when the report is missing or the
@@ -370,21 +382,19 @@
    side channel — it just reads the envelope."
   [db provider]
   (let
-    [provider-limits
-     (:provider-limits db)
+    [report
 
-     report
      (report-for-current-provider db provider)
 
      status
      (:status report)]
 
     (cond
-      ;; No envelope at all (first paint after launch / provider switch),
-      ;; or polled report is for a different provider — show "loading".
-      ;; A headless cinema replay never polls, so keep that row clean
-      ;; instead of a forever-stuck "loading…".
-      (or (nil? provider-limits) (nil? report)) (when-not (:cinema? db) "limits: loading…")
+      ;; Nothing ever polled for THIS provider (first paint after launch),
+      ;; so there is not even a remembered report to show. A headless
+      ;; cinema replay never polls, so keep that row clean instead of a
+      ;; forever-stuck "loading…".
+      (nil? report) (when-not (:cinema? db) "limits: loading…")
       (= :error status) (let [msg (or (get-in report [:error :message]) "unavailable")]
                           (str "limits: error (" msg ")"))
       (= :unauthenticated status) "limits: sign in required"

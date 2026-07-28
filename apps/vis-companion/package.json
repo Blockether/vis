@@ -24,6 +24,7 @@
     "build:android": "npm run build && npm run sync && node scripts/android-prepare.mjs",
     "build:ios": "npm run build && npm run sync",
     "release:ios": "node scripts/ios-release.mjs",
+    "release:notes": "node scripts/release-notes.mjs",
     "secrets": "node scripts/secrets.mjs"
   },
   "dependencies": {

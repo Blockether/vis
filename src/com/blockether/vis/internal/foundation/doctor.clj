@@ -25,22 +25,8 @@
    NOT assume `:db-info` or other env keys are present."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.foundation.environment.agents :as agents]))
-
-(defn- format-bytes
-  [^long n]
-  ;; Locale-stable formatting - explicit Locale.US so output is
-  ;; deterministic across machines (no `253,1 MB` from a comma-decimal
-  ;; locale).
-  (cond (< n 1024) (str n " B")
-        (< n (* 1024 1024))
-        (String/format java.util.Locale/US "%.1f KB" (object-array [(/ (double n) 1024.0)]))
-        (< n (* 1024 1024 1024)) (String/format java.util.Locale/US
-                                                "%.1f MB"
-                                                (object-array [(/ (double n) (* 1024.0 1024.0))]))
-        :else (String/format java.util.Locale/US
-                             "%.1f GB"
-                             (object-array [(/ (double n) (* 1024.0 1024.0 1024.0))]))))
+            [com.blockether.vis.internal.foundation.environment.agents :as agents]
+            [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]))
 
 ;; ---------------------------------------------------------------------------
 ;; ::agents-md - project guidance presence
@@ -56,12 +42,12 @@
         :message (if (> (count files) 1)
                    (str "Project guidance loaded from " (count files)
                         " stacked files (user-global → ancestors → workspace root), "
-                        (format-bytes (long (or bytes 0)))
+                        (housekeeping/format-bytes (long (or bytes 0)))
                         " total; innermost: " path)
                    (str "Project guidance loaded from "
                         path
                         " ("
-                        (format-bytes (long (or bytes 0)))
+                        (housekeeping/format-bytes (long (or bytes 0)))
                         ", source: "
                         (name source)
                         ")"))}]
@@ -93,6 +79,50 @@
           gaps)))
 
 ;; ---------------------------------------------------------------------------
+;; ::housekeeping - stale drafts and gateway journals
+;; ---------------------------------------------------------------------------
+
+(defn- housekeeping-diagnostics
+  "Vis owns two directories that only ever grow: `~/.vis/drafts` (a full
+   working-tree clone per draft, the biggest thing on disk by far) and
+   `~/.vis/gateway/events` (one NDJSON journal per session). Nothing reclaims
+   an abandoned draft the operator never abandoned explicitly, so after a few
+   busy days the store quietly holds gigabytes nobody is going to open again.
+
+   Reported as :info, never :warn: stale state is untidy, not broken, and
+   `vis doctor` must not start exiting 1 on a machine that is working fine."
+  [environment]
+  (let
+    [{:keys [days bytes drafts journals] :as report}
+     (try (housekeeping/scan {:db-info (:db-info environment)
+                              :days (:housekeeping-days environment)})
+          (catch Throwable _ nil))
+
+     n
+     (long (or (:count report) 0))]
+
+    (when (pos? n)
+      [{:level :info
+        :message (str n
+                      (if (= 1 n) " item" " items")
+                      " untouched for over "
+                      days
+                      " days: "
+                      (count (:reclaimable drafts))
+                      " draft workspace(s) and "
+                      (count (:reclaimable journals))
+                      " session journal(s), "
+                      (housekeeping/format-bytes (long (or bytes 0)))
+                      " reclaimable.")
+        :remediation
+        "Review with `vis doctor --purge --dry-run`, then reclaim with `vis doctor --purge` (add `--days N` to change the 14-day cutoff)."
+        :data {:days days
+               :count n
+               :bytes bytes
+               :drafts-root (:root drafts)
+               :journals-root (:root journals)}}])))
+
+;; ---------------------------------------------------------------------------
 ;; The single fn the foundation extension wires into
 ;; `:ext/doctor-fn`. Order is intentional and scoped to foundation-owned
 ;; diagnostics. Each section stamps its own `:check-id` for formatter labels.
@@ -105,4 +135,5 @@
    diagnostic streams into a single message seq."
   [environment]
   (vec (concat (stamp ::agents-md (agents-md-diagnostics environment))
-               (stamp ::provider-env (provider-env-diagnostics environment)))))
+               (stamp ::provider-env (provider-env-diagnostics environment))
+               (stamp ::housekeeping (housekeeping-diagnostics environment)))))

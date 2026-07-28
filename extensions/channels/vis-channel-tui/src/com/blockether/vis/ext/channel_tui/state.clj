@@ -1683,13 +1683,24 @@
 
 (reg-event-db :set-provider-limits
               (fn [db [_ provider-id report]]
-                (assoc db
-                  :provider-limits {:provider-id provider-id
-                                    :report report
-                                    :updated-at-ms (System/currentTimeMillis)}
-                  :provider-limits-force? false)))
+                (let [entry {:provider-id provider-id
+                             :report report
+                             :updated-at-ms (System/currentTimeMillis)}]
+                  (cond-> (assoc db
+                            :provider-limits entry
+                            :provider-limits-force? false)
+                    ;; Keep the LAST report per provider, not just the active
+                    ;; slot: cycling the per-session model (C-x c) retargets the
+                    ;; poller, and without this the footer would blank to
+                    ;; "limits: loading…" on every switch even though the gateway
+                    ;; still has that provider's report warm in its own 15s
+                    ;; cache. The footer renders the remembered rows while the
+                    ;; refetch is in flight.
+                    provider-id (assoc-in [:provider-limits-cache provider-id] entry)))))
 
 (reg-event-db :clear-provider-limits
+              ;; Only the ACTIVE slot goes; the per-provider cache survives so a
+              ;; switch back to a known provider paints instantly.
               (fn [db _]
                 (assoc db
                   :provider-limits nil

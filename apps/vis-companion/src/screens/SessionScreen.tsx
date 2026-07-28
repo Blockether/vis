@@ -1337,8 +1337,17 @@ export function SessionScreen({
   // Deferred Markdown, fonts, and content-visibility can change the transcript's
   // measured height after React commits. Keep a newly opened/followed session at
   // its actual bottom as those measurements settle.
+  //
+  // The SCROLLER itself must be observed too, not just its content. Focusing the
+  // composer raises the keyboard, which shrinks the shell and therefore the
+  // scroller's `clientHeight` while the transcript's own height never changes —
+  // so a content-only observer stays silent, `scrollTop` is left where it was,
+  // and the bottom of the conversation slides under the keyboard. That is the
+  // "I tapped the input and got scrolled up" jump: nothing scrolled, the window
+  // shrank around a reader who was pinned to the end.
   useEffect(() => {
     const transcript = transcriptRef.current;
+    const viewport = scrollRef.current;
     if (!transcript || typeof ResizeObserver === 'undefined') return;
 
     const observer = new ResizeObserver(() => {
@@ -1349,6 +1358,7 @@ export function SessionScreen({
       });
     });
     observer.observe(transcript);
+    if (viewport) observer.observe(viewport);
 
     return () => {
       observer.disconnect();
@@ -1769,6 +1779,18 @@ export function SessionScreen({
         }
       });
     });
+  }
+
+  // Tapping the composer must not move the conversation. The keyboard slides up
+  // over ~300ms and the shell shrinks with it, so the scroller loses height in
+  // several steps while the transcript keeps its own — the reader who was parked
+  // at the end ends up looking at the middle. Worse, the first shrink can be
+  // observed as a large distance-to-bottom and clear `followingRef`, which then
+  // vetoes the catch-up. Re-pin instead, on the same settle schedule the session
+  // opens with, but ONLY for a reader who was already at the bottom: someone
+  // reading history and tapping reply keeps their place.
+  function handleComposerFocus() {
+    if (followingRef.current) pinToEnd();
   }
 
   function handleScroll() {
@@ -2431,6 +2453,7 @@ export function SessionScreen({
               aria-expanded={slashMatches.length > 0}
               className="h-8 min-h-8 max-h-20 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-ui text-dialog-foreground outline-none placeholder:text-dialog-hint disabled:text-cancelled-foreground sm:h-7 sm:min-h-7 sm:py-[0.4375rem] sm:text-meta"
               onPaste={handlePaste}
+              onFocus={handleComposerFocus}
               onSelect={(event) =>
                 setCaret((event.target as HTMLTextAreaElement).selectionStart ?? 0)
               }

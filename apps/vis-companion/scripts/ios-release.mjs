@@ -36,6 +36,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+import { buildNotes, publishNotes } from './release-notes.mjs';
 
 // Release credentials live in the macOS login keychain (scripts/secrets.mjs),
 // never in a dotfile or this repo. An env var still wins, so CI can inject one.
@@ -125,6 +126,19 @@ rmSync(ipaDir, { recursive: true, force: true });
 console.log(
   `\nVis Companion → TestFlight\n  version ${marketingVersion} (build ${buildNumber})\n  team    ${teamId}\n  archive ${archivePath}`,
 );
+
+// Generated BEFORE the archive so a bad/empty changelog fails fast rather than after a
+// 10-minute build, and so `--prepare` / `--no-upload` still show what testers would read.
+// `--no-changelog` keeps CHANGELOG.md untouched (dry runs, re-exports of the same build).
+const notes = has('no-notes')
+  ? { text: '', bullets: [] }
+  : buildNotes({
+      version: marketingVersion,
+      build: buildNumber,
+      scope: flag('notes-scope') ? [flag('notes-scope')] : [],
+      write: !has('no-changelog'),
+    });
+if (notes.text) console.log(`\nWhat to Test${notes.reused ? ' (from CHANGELOG.md)' : ''}:\n${notes.text}\n`);
 
 if (!has('skip-web')) {
   run('npm', ['run', 'build']);
@@ -349,3 +363,32 @@ console.log(
   `\n✓ uploaded ${marketingVersion} (${buildNumber}) to App Store Connect.\n` +
     '  Processing takes a few minutes; then it appears in TestFlight.\n',
 );
+
+// TestFlight shows "What to Test" to every tester on the update card, so the changelog
+// must ride along with the build. The build only exists in App Store Connect AFTER
+// processing, hence the poll inside publishNotes.
+if (!has('no-notes')) {
+  if (!notes.text) {
+    console.log('· no release notes to publish (nothing quotable since the last entry)');
+  } else if (!keyId || !issuerId || !(keyPem || process.env.VIS_ASC_KEY_PATH)) {
+    console.log(
+      '· no App Store Connect API key — What to Test not published.\n' +
+        `  Notes are in ${join(appDir, 'CHANGELOG.md')}; paste them into TestFlight ▸ the build ▸ What to Test,\n` +
+        '  or store a key (`npm run secrets`) and run `npm run release:notes`.',
+    );
+  } else {
+    const res = await publishNotes({
+      keyId,
+      issuerId,
+      keyPem: keyPem ?? readFileSync(process.env.VIS_ASC_KEY_PATH, 'utf8'),
+      bundleId,
+      version: marketingVersion,
+      build: buildNumber,
+      notes: notes.text,
+      timeoutMs: Number(flag('notes-timeout') ?? 15 * 60 * 1000),
+      log: (m) => console.log(`· ${m}`),
+    });
+    if (res.ok) console.log(`\n✓ TestFlight "What to Test" set for build ${buildNumber}.\n`);
+    else console.log(`\n! notes not published: ${res.reason}\n  They are in CHANGELOG.md — paste them in App Store Connect.\n`);
+  }
+}

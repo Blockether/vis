@@ -1422,11 +1422,12 @@
 
 (defn- budgeted-page-turns
   "Hydrate `window` (oldest-first rows) from its NEWEST row BACKWARDS, stopping
-   before the canonical rows exceed `TRANSCRIPT_PAGE_MAX_BYTES` (the first row is
-   always kept, so a page is never empty). Hydration is where a page's cost
-   lives, so a stopped page never pays for the rows it does
-   not send. Returns `[rows dropped]` — `rows` still oldest-first, `dropped` the
-   number of OLDEST window rows left out, which the caller adds to `:offset`."
+   AT the row that first exceeds `TRANSCRIPT_PAGE_MAX_BYTES` — that row is still
+   INCLUDED, so the page overshoots by at most one turn and a page is never
+   empty. Hydration is where a page's cost lives, so a stopped page never pays
+   for the rows it does not send. Returns `[rows dropped]` — `rows` still
+   oldest-first, `dropped` the number of OLDEST window rows left out, which the
+   caller adds to `:offset`."
   [db att-by-soul window]
   (loop [i
          (dec (count window))
@@ -1447,12 +1448,14 @@
                (long (alength (.getBytes ^String (wire/json-str row)
                                          java.nio.charset.StandardCharsets/UTF_8))))]
 
-        ;; The row that busts the budget is left for the NEXT page rather than
-        ;; overshooting by its whole size — one 5 MB turn would otherwise blow a
-        ;; nearly-full page out to 7 MB. It costs re-hydrating that one row when
-        ;; the client pages back, and it is what keeps a page a page.
-        (if (and (seq rows) (> bytes' (long TRANSCRIPT_PAGE_MAX_BYTES)))
-          [(vec rows) (inc i)]
+        ;; The busting row is KEPT, not deferred. Deferring it silently ate the
+        ;; newest turn that carried a user image: one 3 MB inline upload two
+        ;; turns from the head cut a 24-turn page down to the one turn above it,
+        ;; so re-entering the session showed no image at all until the user
+        ;; happened to scroll back. Overshoot is bounded by that single row, and
+        ;; the page still always advances (`dropped` counts the rows below it).
+        (if (> bytes' (long TRANSCRIPT_PAGE_MAX_BYTES))
+          [(vec (conj rows row)) i]
           (recur (dec i) (conj rows row) bytes'))))))
 
 (defn transcript-page

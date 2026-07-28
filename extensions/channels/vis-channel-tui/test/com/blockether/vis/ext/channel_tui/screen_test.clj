@@ -1574,3 +1574,27 @@
                      (let [got (:img (first (fit (band 10 0 5) 0 15)))]
                        (expect (= 10 (long (:rows got)))))
                      (expect (empty? (fit (band 20 20 0) 0 30)))))))
+
+(defdescribe
+  provider-limits-active-provider-test
+  "The background limits poller must resolve the SAME provider the footer
+   renders. When it read the gateway's stored session model first, a session
+   whose local pref had just been cycled to Codex got a report stamped
+   `:anthropic-coding-plan`; `footer/report-for-current-provider` drops a
+   foreign-provider report, so the usage row sat on \"limits: loading…\"
+   forever while the poller kept refreshing the wrong plan."
+  (it "prefers the local per-session model pref over the gateway session model"
+      (let [active-provider-id (deref #'screen/active-provider-id)
+
+            old-db @state/app-db]
+
+        (try (with-redefs [vis/gateway-session-model (fn [_]
+                                                       {:provider "anthropic-coding-plan"
+                                                        :model "claude-opus-5"})]
+               (reset! state/app-db
+                       {:session {:id "s1"}
+                        :session-model-pref {:provider "openai-codex" :model "gpt-5.6-terra"}})
+               (expect (= :openai-codex (active-provider-id)))
+               (swap! state/app-db dissoc :session-model-pref)
+               (expect (= :anthropic-coding-plan (active-provider-id))))
+             (finally (reset! state/app-db old-db))))))

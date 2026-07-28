@@ -25,7 +25,7 @@ import { GatewaySettingsDialog } from './screens/SettingsScreen';
 import { SessionScreen } from './screens/SessionScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
 import { parseRoute, parseSessionDeepLink, sessionHash, tabHash } from './lib/router';
-import { useVisualViewportShell } from './lib/viewport';
+import { useIsViewportRotating, useVisualViewportShell } from './lib/viewport';
 import {
   acquirePushToken,
   clearDeliveredPushes,
@@ -415,6 +415,11 @@ export function App() {
   // iOS shrinks the visual viewport for the keyboard instead of the layout one;
   // without this the header slides up under the status bar while typing.
   const shellStyle = useVisualViewportShell();
+  // A rotation relayouts everything at once and the in-between frames are not
+  // interpolatable, so they are hidden rather than animated: the body is the
+  // same ink, so what you see is the OS rotation, then the settled layout
+  // fading in. Nothing floats or resizes on screen any more.
+  const isRotating = useIsViewportRotating();
 
   if (!ready) return <Splash />;
 
@@ -425,7 +430,7 @@ export function App() {
 
   return (
     <div
-      className="isolate fixed inset-x-0 top-0 flex h-dvh min-h-0 flex-col overflow-hidden bg-ink text-body"
+      className={`isolate fixed inset-x-0 top-0 flex h-dvh min-h-0 flex-col overflow-hidden bg-ink text-body transition-opacity ease-out ${isRotating ? 'opacity-0 duration-0' : 'opacity-100 duration-200'}`}
       style={shellStyle}
     >
       {!openTarget && <Header tab={hasConn ? tab : 'connect'} hasConn={hasConn} onTab={setTab} />}
