@@ -7,6 +7,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.12] - 2026-07-28
+
+### Changed
+- feat(config): provider `compatibility` key, svar model limits, vis.yml model order
+- turn failures: fail once, fail legibly; session_fold kwargs; repo-wide format
+- session_fold: accept keyword arguments from the Python sandbox
+- config: name the failing fields and stop dumping a stack trace
+- gateway state test: assert the budget-busting turn is kept, not deferred
+- release notes: keep one preamble in CHANGELOG.md, human-readable 2707 entry
+- Restore images on transcript reload, smooth rotation, auto TestFlight notes
+- shell logs: return the tail once as plain strings
+- docs(language-surface): note lint_code also reports reflection + boxed-math
+- Lint clean, dependency refresh, repo-wide format and top-level spacing pass
+- Tailscale address preference, persisted draft messages, rotation-aware viewport, shell send keystroke labels, nippy shim merge
+- fix(companion,gateway): resume/keyboard/scroll fixes, unread marks, swipe actions
+- fix(tui): preserve terminal cancellation notice
+- fix(bridge): unblock nested workspace searches
+- feat(bridge): discover projects across workspace sessions
+- refactor(bridge): remove redundant next surface
+- Native QR scanning on iOS, wider pairing bind, companion fixes
+- feat(gateway,companion): self-configuring pairing, loopback mirror, and answer-bearing push
+- release: update version files for v0.1.11, bump to next dev version
+
+### Package changes
+
+#### com.blockether/vis
+- feat(config): provider `compatibility` key, svar model limits, vis.yml model order (1c2478678)
+- turn failures: fail once, fail legibly; session_fold kwargs; repo-wide format (18cadf1f9)
+- session_fold: accept keyword arguments from the Python sandbox (1fbad6b56)
+- config: name the failing fields and stop dumping a stack trace (5d270615b)
+- gateway state test: assert the budget-busting turn is kept, not deferred (d361085f1)
+- release notes: keep one preamble in CHANGELOG.md, human-readable 2707 entry (3df9a77cb)
+- Restore images on transcript reload, smooth rotation, auto TestFlight notes (16c287e2e)
+- shell logs: return the tail once as plain strings (9c94b083a)
+- docs(language-surface): note lint_code also reports reflection + boxed-math (27e66a4ba)
+- Lint clean, dependency refresh, repo-wide format and top-level spacing pass (947e61281)
+- Tailscale address preference, persisted draft messages, rotation-aware viewport, shell send keystroke labels, nippy shim merge (89ffa1761)
+- fix(companion,gateway): resume/keyboard/scroll fixes, unread marks, swipe actions (c8cface3a)
+- fix(bridge): unblock nested workspace searches (64637a76c)
+- feat(bridge): discover projects across workspace sessions (4e4560352)
+- Native QR scanning on iOS, wider pairing bind, companion fixes (e710ee571)
+- feat(gateway,companion): self-configuring pairing, loopback mirror, and answer-bearing push (12be0911e)
+- release: update version files for v0.1.11, bump to next dev version (53c36bbf4)
+
+#### com.blockether/vis-channel-tui
+- turn failures: fail once, fail legibly; session_fold kwargs; repo-wide format (18cadf1f9)
+- session_fold: accept keyword arguments from the Python sandbox (1fbad6b56)
+- config: name the failing fields and stop dumping a stack trace (5d270615b)
+- Restore images on transcript reload, smooth rotation, auto TestFlight notes (16c287e2e)
+- Lint clean, dependency refresh, repo-wide format and top-level spacing pass (947e61281)
+- Tailscale address preference, persisted draft messages, rotation-aware viewport, shell send keystroke labels, nippy shim merge (89ffa1761)
+- fix(companion,gateway): resume/keyboard/scroll fixes, unread marks, swipe actions (c8cface3a)
+- fix(tui): preserve terminal cancellation notice (8a25d5e84)
+- feat(bridge): discover projects across workspace sessions (4e4560352)
+- Native QR scanning on iOS, wider pairing bind, companion fixes (e710ee571)
+- feat(gateway,companion): self-configuring pairing, loopback mirror, and answer-bearing push (12be0911e)
+
+#### com.blockether/vis-foundation-bridge
+- turn failures: fail once, fail legibly; session_fold kwargs; repo-wide format (18cadf1f9)
+- Lint clean, dependency refresh, repo-wide format and top-level spacing pass (947e61281)
+- fix(bridge): unblock nested workspace searches (64637a76c)
+- feat(bridge): discover projects across workspace sessions (4e4560352)
+- refactor(bridge): remove redundant next surface (102d26a1f)
+
+#### com.blockether/vis-foundation-search
+- Lint clean, dependency refresh, repo-wide format and top-level spacing pass (947e61281)
+
+#### com.blockether/vis-foundation-voice
+- turn failures: fail once, fail legibly; session_fold kwargs; repo-wide format (18cadf1f9)
+- config: name the failing fields and stop dumping a stack trace (5d270615b)
+- Lint clean, dependency refresh, repo-wide format and top-level spacing pass (947e61281)
+- Tailscale address preference, persisted draft messages, rotation-aware viewport, shell send keystroke labels, nippy shim merge (89ffa1761)
+
+#### com.blockether/vis-language-clojure
+- Lint clean, dependency refresh, repo-wide format and top-level spacing pass (947e61281)
+
+#### com.blockether/vis-language-python
+- turn failures: fail once, fail legibly; session_fold kwargs; repo-wide format (18cadf1f9)
+
+#### com.blockether/vis-language-typescript-bun
+- turn failures: fail once, fail legibly; session_fold kwargs; repo-wide format (18cadf1f9)
+
+#### com.blockether/vis-persistance-sqlite
+- turn failures: fail once, fail legibly; session_fold kwargs; repo-wide format (18cadf1f9)
+- config: name the failing fields and stop dumping a stack trace (5d270615b)
+- Restore images on transcript reload, smooth rotation, auto TestFlight notes (16c287e2e)
+- Lint clean, dependency refresh, repo-wide format and top-level spacing pass (947e61281)
+- Tailscale address preference, persisted draft messages, rotation-aware viewport, shell send keystroke labels, nippy shim merge (89ffa1761)
+
+#### com.blockether/vis-provider-anthropic
+- Lint clean, dependency refresh, repo-wide format and top-level spacing pass (947e61281)
+
+#### com.blockether/vis-provider-github-copilot
+- Lint clean, dependency refresh, repo-wide format and top-level spacing pass (947e61281)
+
+#### com.blockether/vis-provider-openai-codex
+- Lint clean, dependency refresh, repo-wide format and top-level spacing pass (947e61281)
+
+#### com.blockether/vis-provider-zai
+- Lint clean, dependency refresh, repo-wide format and top-level spacing pass (947e61281)
+
+
+
 ### Changed
 - feat(workspace): move `/draft-blank` under the draft tree as `/draft blank <label>`
 
@@ -1511,7 +1614,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.11...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.12...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -1523,3 +1626,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.9]: https://github.com/Blockether/vis/releases/tag/v0.1.9
 [v0.1.10]: https://github.com/Blockether/vis/releases/tag/v0.1.10
 [v0.1.11]: https://github.com/Blockether/vis/releases/tag/v0.1.11
+[v0.1.12]: https://github.com/Blockether/vis/releases/tag/v0.1.12
