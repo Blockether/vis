@@ -2344,6 +2344,78 @@
           (expect (= [] (persistance/db-native-result-ids-for-session s nil)))
           (expect (= [] (persistance/db-native-result-ids-for-session s (random-uuid))))))))
 
+(defdescribe
+  native-result-index-for-session-test
+  "`db-native-result-index-for-session` backs `ntr.describe()`: the SAME
+   newest-first branch walk as the id list, but each id already labelled with
+   the tool that ran and its op-card gist — so a window of opaque `toolu_…`
+   ids can be read WITHOUT thawing a single stored payload."
+  (it
+    "labels every id with its tool and gist, newest first, de-duped"
+    (let
+      [s
+       (h/store)
+
+       cid
+       (h/store-session! s {:channel :cli})
+
+       tid1
+       (vis/db-store-session-turn! s {:parent-session-id cid :user-request "t1"})
+
+       _
+       (h/store-iteration! s
+                           {:session-turn-id tid1
+                            :status :done
+                            :idx 0
+                            :code "grep"
+                            :forms [{:scope "t1/i1"
+                                     :tag :observation
+                                     :src "grep(\"x\")"
+                                     :svar/tool-call-id "toolu_OLD"
+                                     :vis/tool-name "grep"
+                                     :result-summary "closed-map?, 26 hits in 1 file"
+                                     :result {:op "grep"}}
+                                    ;; print-only: no :result, so no index entry
+                                    {:scope "t1/i1"
+                                     :tag :observation
+                                     :src "print(1)"
+                                     :svar/tool-call-id "toolu_P"
+                                     :stdout "1\n"}]})
+
+       tid2
+       (vis/db-store-session-turn! s {:parent-session-id cid :user-request "t2"})
+
+       _
+       (h/store-iteration! s
+                           {:session-turn-id tid2
+                            :status :done
+                            :idx 0
+                            :code "cat"
+                            :forms [{:scope "t2/i1"
+                                     :tag :observation
+                                     :src "cat(\"y\")"
+                                     :svar/tool-call-id "toolu_NEW"
+                                     :vis/tool-name "cat"
+                                     :result {:op "cat"}}]})
+
+       index
+       (persistance/db-native-result-index-for-session s cid)]
+
+      ;; newest turn first, print-only form absent
+      (expect (= ["toolu_NEW" "toolu_OLD"] (mapv :id index)))
+      (expect (= ["cat" "grep"] (mapv :tool index)))
+      ;; the gist rides along; an unsummarised call simply carries none
+      (expect (= "closed-map?, 26 hits in 1 file" (:gist (second index))))
+      (expect (nil? (:gist (first index))))
+      ;; internal row id never leaks to the sandbox
+      (expect (every? #(nil? (:row-id %)) index))
+      ;; the id list is exactly this index, so both views can never drift
+      (expect (= (mapv :id index) (persistance/db-native-result-ids-for-session s cid)))))
+  (it "unknown / nil session is a safe empty index"
+      (let [s (h/store)]
+        (expect (= [] (persistance/db-native-result-index-for-session s nil)))
+        (expect (= [] (persistance/db-native-result-index-for-session s (random-uuid)))))))
+
 ;; ─── projects (cross-channel) + movable project sessions + ownership (V6/V7) ───
 
 (defdescribe

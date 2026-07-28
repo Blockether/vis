@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GatewayConn } from './lib/types';
 import { type Compat, compatOf } from './lib/compat';
 import { GatewayClient, ROUTER_TTL_MS } from './lib/gateway';
@@ -26,6 +26,7 @@ import { SessionScreen } from './screens/SessionScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
 import { parseRoute, parseSessionDeepLink, sessionHash, tabHash } from './lib/router';
 import { useIsViewportRotating, useVisualViewportShell } from './lib/viewport';
+import { App as CapacitorApp } from '@capacitor/app';
 import {
   acquirePushToken,
   clearDeliveredPushes,
@@ -118,12 +119,20 @@ export function App() {
     setTab('sessions');
   }, []);
 
-  const openGatewaySession = useCallback(async (conn: GatewayConn, sid: string, fresh = false) => {
-    await setActiveUrl(conn.url);
-    const ids = await rememberSubscribedSession(conn.url, sid);
-    setSubscribedIds(new Set(ids));
+  // The tap must paint the session on the frame it happens on. Remembering the
+  // active gateway and the watch list are Capacitor Preferences writes — bridge
+  // round trips — and awaiting them BEFORE the state flip is exactly the lag
+  // between tapping a row and seeing the transcript. Nothing on this path reads
+  // them back, so they are persisted underneath the navigation, not in front of
+  // it; the watch list is applied optimistically and reconciled when it lands.
+  const openGatewaySession = useCallback((conn: GatewayConn, sid: string, fresh = false) => {
     setActive(conn);
     setOpenTarget({ conn, sid, fresh });
+    setSubscribedIds((ids) => (ids.has(sid) ? ids : new Set([sid, ...ids])));
+    void setActiveUrl(conn.url);
+    void rememberSubscribedSession(conn.url, sid)
+      .then((ids) => setSubscribedIds(new Set(ids)))
+      .catch(() => undefined);
   }, []);
 
   // Hash routing: a session is a shareable URL (#/s/<sid>?gw=<gateway-url>).
@@ -152,6 +161,11 @@ export function App() {
 
   // Apply the initial hash once connections are loaded, then track hashchange.
   const [routeApplied, setRouteApplied] = useState(false);
+  // True only while a history entry WE pushed (the list → session step) is on
+  // top of the stack. Nothing else may be popped: a session reached by deep link
+  // or cold start has no entry of ours beneath it, and going back from there
+  // would leave the app.
+  const pushedSessionRef = useRef(false);
   useEffect(() => {
     if (!ready) return;
     if (!routeApplied) {
@@ -160,7 +174,12 @@ export function App() {
       applyRoute(window.location.hash);
       setRouteApplied(true);
     }
-    const onHash = () => applyRoute(window.location.hash);
+    const onHash = () => {
+      // Any arrival at a non-session URL (our own pop, browser back, a pasted
+      // link) means our pushed entry is gone from the top.
+      if (parseRoute(window.location.hash).name !== 'session') pushedSessionRef.current = false;
+      applyRoute(window.location.hash);
+    };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, [ready, routeApplied, applyRoute]);
@@ -176,10 +195,79 @@ export function App() {
       ? sessionHash(openTarget.sid, gwId)
       : tabHash(tab === 'connect' ? 'connect' : 'sessions');
     const current = window.location.hash || '#/';
-    if (current !== desired) {
-      history.replaceState(null, '', desired);
+    if (current === desired) return;
+    // Opening a session is this app's ONE forward navigation, so it is the one
+    // that earns a history entry. Rewriting every route in place left the stack
+    // empty, which is why Android's back gesture quit the app from inside a
+    // session instead of returning to the list. Everything else — tab switches,
+    // the gateway id backfilled into an already-open session — still rewrites
+    // the current entry, so back never walks through cosmetic URL repairs.
+    if (openTarget && parseRoute(current).name !== 'session') {
+      history.pushState(null, '', desired);
+      pushedSessionRef.current = true;
+      return;
     }
+    history.replaceState(null, '', desired);
   }, [openTarget, tab, ready, routeApplied, conns]);
+
+  // Leaving a session is a history STEP, not a state reset: entering pushed an
+  // entry, so popping it is what keeps the address bar, the back gesture and the
+  // in-app arrow telling the same story. With no entry of ours on top (deep
+  // link, cold start) the state flip is the whole navigation.
+  const leaveSession = useCallback(() => {
+    if (pushedSessionRef.current) {
+      pushedSessionRef.current = false;
+      history.back();
+      return;
+    }
+    setOpenTarget(null);
+  }, []);
+
+  // Android's hardware/gesture back. Registering a listener REPLACES Capacitor's
+  // default, which is `history.back()` — the thing that did nothing here. One
+  // handler for the whole shell: dismiss what is on top, then walk the shell
+  // back, and only leave the app from the root. Kept in a ref so the native
+  // listener is registered once instead of re-crossing the bridge per render.
+  const backRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    backRef.current = () => {
+      if (settingsTarget) {
+        setSettingsTarget(null);
+        return;
+      }
+      if (openTarget) {
+        leaveSession();
+        return;
+      }
+      if (tab !== 'sessions' && conns.length > 0 && active) {
+        setTab('sessions');
+        return;
+      }
+      try {
+        void CapacitorApp.exitApp().catch(() => undefined);
+      } catch {
+        /* web build: nothing to exit */
+      }
+    };
+  });
+  useEffect(() => {
+    let removed = false;
+    let sub: { remove: () => void } | null = null;
+    try {
+      void CapacitorApp.addListener('backButton', () => backRef.current())
+        .then((handle) => {
+          if (removed) handle.remove();
+          else sub = handle;
+        })
+        .catch(() => undefined);
+    } catch {
+      /* plugin unavailable */
+    }
+    return () => {
+      removed = true;
+      sub?.remove();
+    };
+  }, []);
 
   useEffect(() => {
     // Mount-time gateway load: the flag flips only when the request settles.
@@ -488,7 +576,7 @@ export function App() {
             subscriptions={subscriptions}
             sid={openTarget.sid}
             fresh={openTarget.fresh}
-            onBack={() => setOpenTarget(null)}
+            onBack={leaveSession}
             onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
             onManageProviders={() => openSettings(openTarget.conn)}
           />

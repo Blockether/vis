@@ -3672,59 +3672,109 @@
                                :limit 1}))]
           (<-blob (:ctx row)))))))
 
-(defn db-native-results-for-tool-ids
-  "Batched read for `ntr[tool_id]`: given a SET of provider
-   tool_use ids (`:svar/tool-call-id`, e.g. Anthropic `toolu_…`, OpenAI Chat
-   `call_…`, OpenAI Responses composite `call_…|fc_…`), return
-   `{tool-id -> result}` for every id whose persisted form is found in THIS
-   session's iterations.
+;; ── `ntr[tool_id]` branch index ──────────────────────────────────────────────
+;;
+;; `session_turn_iteration.tool_calls` is written ONCE, by
+;; `prepare-iteration-columns` at INSERT time, and never UPDATEd — a fold
+;; rewrites the live ctx, never a stored row. So a row's decoded form index is
+;; immutable and can be cached for the process lifetime, keyed by row id.
+;;
+;; That matters because every `ntr` browse (`keys`/`len`/iteration/`describe`)
+;; used to re-run ONE query that pulled and Nippy-thawed EVERY iteration blob in
+;; the branch. Measured on a real 2 375-iteration session (~14 MB of blobs):
+;; 76 ms per browse, every single time. With the index a browse is one skinny
+;; id-only query (no BLOB leaves SQLite) plus the decode of rows added since the
+;; last call, and a single-id fetch decodes exactly the ONE row that holds it
+;; instead of scanning the branch until it hits.
 
-   ONE query loads every iteration's `tool_calls` Nippy BLOB across the whole
-   session branch (all prior turns AND all earlier iterations of the current
-   turn — both are already persisted by the time a later iteration runs, since
-   the loop `db-store-iteration!`s each iteration before asking the model
-   again). The Nippy `:forms` are decoded in Clojure and the form whose
-   `:svar/tool-call-id` matches a requested id yields its `:result`.
+(def ^:private ^java.util.concurrent.ConcurrentHashMap ntr-index-cache
+  "Iteration row id → immutable vector of light index entries
+   (`{:row-id :id :tool :gist}`) for that row's result-bearing forms. Holds NO
+   `:result` payloads, so it stays small (a few hundred bytes per call)."
+  (java.util.concurrent.ConcurrentHashMap.))
 
-   Only ids in `tool-ids` are decoded/returned; an id with no matching form (a
-   hallucinated or python_execution-only id — those carry `:stdout`, not
-   `:result`) is simply ABSENT from the returned map, so the caller can raise a
-   clean KeyError-style miss. A form present but with no `:result` key (a
-   print-only python_execution form) is also absent by construction."
-  [db-info session-id tool-ids]
-  (let [wanted (into #{} (filter some?) tool-ids)]
-    (if (and (ds db-info) session-id (seq wanted))
-      (let [state-ids (session-state-chain db-info session-id)]
-        (if (seq state-ids)
-          (let
-            [rows (query!
-                    db-info
-                    {:select [:qti.tool_calls]
-                     :from [[:session_turn_iteration :qti]]
-                     :join [[:session_turn_state :qts] [:= :qts.id :qti.session_turn_state_id]
-                            [:session_turn_soul :qs] [:= :qs.id :qts.session_turn_soul_id]]
-                     :where [:and [:in :qs.session_state_id state-ids] [:<> :qti.tool_calls nil]]
-                     ;; NEWEST first so, if the same id ever appeared
-                     ;; twice, the latest write wins the `reduce`.
-                     :order-by [[:qs.position :desc] [:qts.version :desc] [:qti.position :desc]]})]
-            (reduce (fn [acc row]
-                      (if (= (count acc) (count wanted))
-                        (reduced acc) ; found them all — stop decoding blobs
-                        (let [forms (<-blob (:tool_calls row))]
-                          (reduce (fn [m form]
-                                    (let [id (:svar/tool-call-id form)]
-                                      (if (and id
-                                               (contains? wanted id)
-                                               (not (contains? m id))
-                                               (some? (:result form)))
-                                        (assoc m id (:result form))
-                                        m)))
-                                  acc
-                                  forms))))
-                    {}
-                    rows))
-          {}))
-      {})))
+(def ^:private ntr-index-cache-max
+  "Row ceiling. On overflow the whole cache is dropped: a rebuild costs one
+   decode pass, never correctness."
+  20000)
+
+(defn- ntr-entries-of-forms
+  "Light index entries for ONE iteration's decoded `:forms`: every form carrying
+   both a provider tool_use id and a `:result`, labelled with the tool that ran
+   and that call's own op-card summary so a stored result can be CHOSEN before
+   it is fetched. Print-only `python_execution` forms (`:stdout`, no `:result`)
+   are skipped — exactly the rule `db-native-results-for-tool-ids` looks up by."
+  [row-id forms]
+  (into []
+        (keep (fn [form]
+                (let [id (:svar/tool-call-id form)]
+                  (when (and id (some? (:result form)))
+                    (cond-> {:row-id row-id :id id}
+                      (not (str/blank? (str (:vis/tool-name form))))
+                      (assoc :tool (str (:vis/tool-name form)))
+
+                      (not (str/blank? (str (:result-summary form))))
+                      (assoc :gist (str (:result-summary form))))))))
+        forms))
+
+(defn- ntr-branch-index
+  "NEWEST-first index entries for every result-bearing native form in THIS
+   session branch — all prior turns AND all earlier iterations of the current
+   turn. Only rows missing from `ntr-index-cache` are fetched and decoded."
+  [db-info session-id]
+  (if (and (ds db-info) session-id)
+    (let [state-ids (session-state-chain db-info session-id)]
+      (if (seq state-ids)
+        (let
+          [;; Skinny: ids only, so an already-indexed blob never crosses the
+           ;; JDBC boundary again.
+           row-ids
+           (mapv :id
+                 (query!
+                   db-info
+                   {:select [:qti.id]
+                    :from [[:session_turn_iteration :qti]]
+                    :join [[:session_turn_state :qts] [:= :qts.id :qti.session_turn_state_id]
+                           [:session_turn_soul :qs] [:= :qs.id :qts.session_turn_soul_id]]
+                    :where [:and [:in :qs.session_state_id state-ids] [:<> :qti.tool_calls nil]]
+                    ;; NEWEST first so a de-dup keeps the latest occurrence.
+                    :order-by [[:qs.position :desc] [:qts.version :desc] [:qti.position :desc]]}))
+           missing (into [] (remove #(.containsKey ntr-index-cache %)) row-ids)]
+
+          (when (seq missing)
+            (when (> (.size ntr-index-cache) (long ntr-index-cache-max)) (.clear ntr-index-cache))
+            (doseq [chunk (partition-all 400 missing)]
+              (doseq
+                [row (query! db-info
+                             {:select [:qti.id :qti.tool_calls]
+                              :from [[:session_turn_iteration :qti]]
+                              :where [:and [:in :qti.id (vec chunk)] [:<> :qti.tool_calls nil]]})]
+                (.put ntr-index-cache
+                      (:id row)
+                      (ntr-entries-of-forms (:id row) (<-blob (:tool_calls row)))))
+              ;; A row that vanished between the two queries indexes as empty —
+              ;; never re-queried, never a miss loop.
+              (doseq [rid chunk]
+                (when-not (.containsKey ntr-index-cache rid) (.put ntr-index-cache rid [])))))
+          (into [] (mapcat #(.get ntr-index-cache %)) row-ids))
+        []))
+    []))
+
+(defn db-native-result-index-for-session
+  "Browseable index behind `ntr.describe()`: `[{:id :tool :gist}]` for every
+   persisted NATIVE tool result in this session branch, NEWEST first, de-duped
+   by id. `:tool` is the tool that ran, `:gist` its op-card summary; either is
+   absent when the stored form carried none.
+
+   Costs no payload thaw at all — the sandbox can label a whole window of
+   opaque `toolu_…` ids WITHOUT fetching a single result."
+  [db-info session-id]
+  (let [seen (volatile! #{})]
+    (into []
+          (keep (fn [entry]
+                  (let [id (:id entry)]
+                    (when-not (contains? @seen id) (vswap! seen conj id) (dissoc entry :row-id)))))
+          (ntr-branch-index db-info session-id))))
 
 (defn db-native-result-ids-for-session
   "List every persisted NATIVE tool_use id (`:svar/tool-call-id`) in THIS
@@ -3734,33 +3784,66 @@
    carry `:stdout`, not `:result`) are skipped, exactly as
    `db-native-results-for-tool-ids` skips them on lookup.
 
-   Backs iteration over `ntr` (keys/items/values/len/iter):
-   the sandbox can now DISCOVER what's in the store instead of needing every
-   id up front."
+   Backs iteration over `ntr` (keys/items/values/len/iter): the sandbox can
+   DISCOVER what's in the store instead of needing every id up front."
   [db-info session-id]
-  (if (and (ds db-info) session-id)
-    (let [state-ids (session-state-chain db-info session-id)]
-      (if (seq state-ids)
-        (let
-          [rows (query!
-                  db-info
-                  {:select [:qti.tool_calls]
-                   :from [[:session_turn_iteration :qti]]
-                   :join [[:session_turn_state :qts] [:= :qts.id :qti.session_turn_state_id]
-                          [:session_turn_soul :qs] [:= :qs.id :qts.session_turn_soul_id]]
-                   :where [:and [:in :qs.session_state_id state-ids] [:<> :qti.tool_calls nil]]
-                   ;; NEWEST first so a de-dup keeps the latest occurrence.
-                   :order-by [[:qs.position :desc] [:qts.version :desc] [:qti.position :desc]]})]
-          (->> rows
-               (mapcat (fn [row]
-                         (<-blob (:tool_calls row))))
-               (keep (fn [form]
-                       (let [id (:svar/tool-call-id form)]
-                         (when (and id (some? (:result form))) id))))
-               distinct
-               vec))
-        []))
-    []))
+  (mapv :id (db-native-result-index-for-session db-info session-id)))
+
+(defn db-native-results-for-tool-ids
+  "Batched read for `ntr[tool_id]`: given a SET of provider
+   tool_use ids (`:svar/tool-call-id`, e.g. Anthropic `toolu_…`, OpenAI Chat
+   `call_…`, OpenAI Responses composite `call_…|fc_…`), return
+   `{tool-id -> result}` for every id whose persisted form is found in THIS
+   session's iterations.
+
+   The branch index resolves each wanted id to the ONE iteration row that holds
+   it (newest wins if an id somehow appeared twice), so only those rows are
+   fetched and thawed — a fetch of an OLD id no longer decodes the whole branch
+   on the way to it.
+
+   Only ids in `tool-ids` are decoded/returned; an id with no matching form (a
+   hallucinated or python_execution-only id — those carry `:stdout`, not
+   `:result`) is simply ABSENT from the returned map, so the caller can raise a
+   clean KeyError-style miss. A form present but with no `:result` key (a
+   print-only python_execution form) is also absent by construction."
+  [db-info session-id tool-ids]
+  (let [wanted (into #{} (filter some?) tool-ids)]
+    (if (and (ds db-info) session-id (seq wanted))
+      (let
+        [;; id → row id, newest occurrence wins (the index is newest-first).
+         id->row (reduce (fn [m entry]
+                           (let [id (:id entry)]
+                             (if (and (contains? wanted id) (not (contains? m id)))
+                               (assoc m id (:row-id entry))
+                               m)))
+                         {}
+                         (ntr-branch-index db-info session-id))
+         rows-wanted (into #{} (vals id->row))]
+
+        (if (seq rows-wanted)
+          (persistent!
+            (reduce (fn [acc chunk]
+                      (reduce (fn [acc row]
+                                (reduce (fn [acc form]
+                                          (let [id (:svar/tool-call-id form)]
+                                            (if (and id
+                                                     (contains? wanted id)
+                                                     (= (:id row) (get id->row id))
+                                                     (some? (:result form)))
+                                              (assoc! acc id (:result form))
+                                              acc)))
+                                        acc
+                                        (<-blob (:tool_calls row))))
+                              acc
+                              (query! db-info
+                                      {:select [:qti.id :qti.tool_calls]
+                                       :from [[:session_turn_iteration :qti]]
+                                       :where [:and [:in :qti.id (vec chunk)]
+                                               [:<> :qti.tool_calls nil]]})))
+                    (transient {})
+                    (partition-all 400 rows-wanted)))
+          {}))
+      {})))
 
 ;; =============================================================================
 ;; Backend registration

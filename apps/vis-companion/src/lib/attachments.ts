@@ -60,13 +60,16 @@ interface PreparedImage {
 }
 
 /**
- * Blob -> the exact envelope the gateway is given, SHRUNK first.
+ * Blob -> the exact envelope the gateway is given.
  *
- * The size limit is checked against the OPTIMIZED bytes, never the original:
- * a 6 MB phone photo is a perfectly ordinary thing to send and lands well under
- * the cap once its long edge is bounded, so rejecting it up front (what this
- * did before) only ever punished the good case. What genuinely cannot be shrunk
- * under the cap is still refused, with a message that says so.
+ * OPTIMIZATION LIVES ON THE GATEWAY, not here: it optimizes every attachment on
+ * ingest, so the TUI, this app and any HTTP client all get the same bytes stored,
+ * replayed and uploaded without each re-implementing a policy. What stays here is
+ * purely a TRANSPORT guard — a payload the gateway would refuse to accept in one
+ * request is shrunk just enough to fit, because a 6 MB phone photo is a perfectly
+ * ordinary thing to send and rejecting it up front only ever punished the good
+ * case. Anything already under the cap is uploaded verbatim, and the gateway does
+ * the real work on the original pixels.
  */
 async function prepareImage(
   blob: Blob,
@@ -77,7 +80,7 @@ async function prepareImage(
   if (blob.size > MAX_DECODE_BYTES) {
     throw new Error(`too large to process (${Math.round(blob.size / 1024 / 1024)} MB)`);
   }
-  const optimized = await optimizeImage(blob, mimeType);
+  const optimized = blob.size > maxFileBytes ? await optimizeImage(blob, mimeType) : null;
   const payload = optimized?.blob ?? blob;
   const mediaType = optimized?.mediaType ?? mimeType;
   if (payload.size > maxFileBytes) {

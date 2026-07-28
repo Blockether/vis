@@ -557,3 +557,74 @@
                          "        return 'leaked'\n" "    except AttributeError:\n"
                          "        return 'safe'\n" "print(_t())"))]
           (expect (re-find #"safe" out))))))
+
+(defdescribe
+  ntr-browse-test
+  "`ntr` must be browseable by MEANING, not by opaque id. `keys()` hands back
+   24-character tool_use ids that say nothing about what they hold, and
+   `items()`/`values()` thaw the ENTIRE store to find out. `describe()` sits
+   between them: a bounded, newest-first window primed in ONE batched query,
+   each id labelled with its `op` plus a couple of that result's own salient
+   fields — so a stored result can be CHOSEN before it is fetched in full."
+  (let
+    [ctx
+     (:python-context (ep/create-python-context {}))
+
+     run
+     (fn [code]
+       (str (:stdout (ep/run-python-block ctx code))))]
+
+    (it "describe() labels each id with its op and salient fields"
+        ;; No host callbacks in a bare context: seed the in-process cache and
+        ;; describe THOSE ids, which is the same path a primed read takes.
+        (let
+          [out (run
+                 (str
+                   "_c = getattr(ntr, '__vis_cache__')\n" "_c['toolu_A'] = "
+                   "{'op': 'grep', 'query': 'session-fold-card', 'hit_count': 2, 'file_count': 1}\n"
+                   "_c['toolu_B'] = {'op': 'cat', 'path': 'src/loop.clj'}\n"
+                   "for line in ntr.describe(ids=['toolu_A', 'toolu_B', 'toolu_ZZ']):\n"
+                   "    print(line)\n"))]
+          (expect (str/includes? out "toolu_A · grep · query=session-fold-card · hit_count=2"))
+          (expect (str/includes? out "toolu_B · cat · path=src/loop.clj"))
+          ;; An unknown id is reported, never raised — browsing must not blow up.
+          (expect (str/includes? out "toolu_ZZ · <missing>"))))
+    (it "describe() labels from the host INDEX without fetching any payload"
+        ;; The index is the whole point of the fast path: labelling a window of
+        ;; ids must cost ZERO result thaws. A throwing prime proves it — it may
+        ;; only ever run for an id the index cannot label.
+        (let
+          [own
+           (:python-context (ep/create-python-context {}))
+
+           primed
+           (atom [])]
+
+          (ep/set-python-binding!
+            own
+            (symbol "__vis_native_result_index__")
+            (fn []
+              [{"id" "toolu_A" "tool" "grep" "gist" "closed-map?, 26 hits in 1 file"}
+               {"id" "toolu_B" "tool" "cat"}]))
+          (ep/set-python-binding! own
+                                  (symbol "__vis_native_result_prime__")
+                                  (fn [ids]
+                                    (swap! primed conj (vec ids))
+                                    nil))
+          (let
+            [out (str (:stdout
+                        (ep/run-python-block
+                          own
+                          (str "for line in ntr.describe(ids=['toolu_A', 'toolu_B', 'toolu_ZZ']):\n"
+                               "    print(line)\n"))))]
+            (expect (str/includes? out "toolu_A · grep · closed-map?, 26 hits in 1 file"))
+            (expect (str/includes? out "toolu_B · cat"))
+            ;; only the id the index does not know is ever primed
+            (expect (= [["toolu_ZZ"]] @primed)))))
+    (it "repr says how many results are stored and how to browse them"
+        (let
+          [out (run (str "_c = getattr(ntr, '__vis_cache__')\n"
+                         "_c['toolu_A'] = {'op': 'grep'}\n"
+                         "print(repr(ntr))\n"))]
+          (expect (str/includes? out "stored native results"))
+          (expect (str/includes? out "ntr.describe()"))))))

@@ -2180,6 +2180,32 @@
                           (not pressured?)
                           (dissoc "engine_overbudget_hint_turn")))))))
 
+(defn- ntr-entries-of
+  "Recoverable `ntr[<id>]` ENTRIES for ONE iteration record: every result-bearing
+   native call it made, each carrying WHAT it was — the tool that ran plus that
+   call's own op-card summary. A bare accessor says nothing on scroll-back
+   (`ntr[\"toolu_01Tc…\"]` is 24 opaque characters), so an unlabelled breadcrumb
+   forces a fetch just to learn whether a handle is worth fetching at all.
+
+   python_execution PRINTS instead of returning a `:result`, so it stores nothing
+   and contributes no accessor. Distinct, wire order."
+  [rec]
+  (into []
+        (comp (filter (fn [f]
+                        (and (:svar/tool-call-id f) (some? (:result f)))))
+              (map (fn [f]
+                     (cond-> {"id" (str (:svar/tool-call-id f))}
+                       (not (str/blank? (str (:vis/tool-name f))))
+                       (assoc "tool" (str (:vis/tool-name f)))
+
+                       (not (str/blank? (str (:result-summary f))))
+                       (assoc "gist" (str (:result-summary f))))))
+              (distinct))
+        (or (seq (:forms-vec rec))
+            (mapcat (fn [b]
+                      (or (seq (:forms b)) [b]))
+                    (:blocks rec)))))
+
 (defn- stamp-iter-universe!
   "Record the raw iteration universe, recoverable native result ids, and live skill
    activations, while pricing only `wire-iters` — the CURRENT provider-visible
@@ -2217,23 +2243,13 @@
                  (map vector trailer-iters (or wire-iters trailer-iters))))
 
        ntr
-       (persistent!
-         (reduce (fn [m [_ rec]]
-                   (if-let [sc (scope-of rec)]
-                     (let
-                       [ids (into []
-                                  (comp (filter (fn [f]
-                                                  (and (:svar/tool-call-id f) (some? (:result f)))))
-                                        (map :svar/tool-call-id)
-                                        (distinct))
-                                  (or (seq (:forms-vec rec))
-                                      (mapcat (fn [b]
-                                                (or (seq (:forms b)) [b]))
-                                              (:blocks rec))))]
-                       (if (seq ids) (assoc! m sc (into (vec (get m sc [])) ids)) m))
-                     m))
-                 (transient {})
-                 trailer-iters))
+       (persistent! (reduce (fn [m [_ rec]]
+                              (if-let [sc (scope-of rec)]
+                                (let [ids (ntr-entries-of rec)]
+                                  (if (seq ids) (assoc! m sc (into (vec (get m sc [])) ids)) m))
+                                m))
+                            (transient {})
+                            trailer-iters))
 
        skill-candidates
        (into []
@@ -3290,26 +3306,258 @@
                 "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
                 "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}"))))}))
 
-(def ^:private MAX_FOLD_NTR_HINTS 6)
+(def ^:private MAX_FOLD_NTR_HINTS 5)
+
+(def ^:private MAX_FOLD_NTR_GIST_CHARS 44)
+
+(defn- split-on
+  "Split `s` on the LITERAL separator `sep`. Plain index scanning, no regex:
+   fold receipts are assembled from known separators, so pattern matching buys
+   nothing and only hides the contract."
+  [^String s ^String sep]
+  (let [n (count sep)]
+    (loop
+      [from 0
+       acc []]
+
+      (if-let [i (str/index-of s sep from)]
+        (recur (+ (long i) (long n)) (conj acc (subs s from (long i))))
+        (conj acc (subs s from))))))
+
+(defn- flatten-card-summary
+  "One-line squeeze of a card summary: markdown emphasis dropped, ` · `/`•`/`|`
+   separators turned into commas, runs of whitespace collapsed. Single character
+   walk — the fold card splits its own body on ` · `, so a summary that keeps
+   those separators would fracture into phantom metrics."
+  [s]
+  (let
+    [^String s
+     (str s)
+
+     n
+     (count s)
+
+     sb
+     (StringBuilder.)
+
+     last-ch
+     (fn []
+       (when (pos? (.length sb)) (.charAt sb (dec (.length sb)))))]
+
+    (loop
+      [i
+       0
+
+       gap?
+       false]
+
+      (if (>= i n)
+        (str/trim (.toString sb))
+        (let [ch (.charAt s i)]
+          (cond (or (= ch \`) (= ch \*)) (recur (inc i) gap?)
+                (Character/isWhitespace ch) (recur (inc i) true)
+                (or (= ch \·) (= ch \•) (= ch \|))
+                (do (while (and (pos? (.length sb)) (= \space (last-ch)))
+                      (.setLength sb (dec (.length sb))))
+                    (when (and (pos? (.length sb)) (not= \, (last-ch))) (.append sb \,))
+                    (recur (inc i) true))
+                :else (do (when (and gap? (pos? (.length sb)) (not= \space (last-ch)))
+                            (.append sb \space))
+                          (.append sb ch)
+                          (recur (inc i) false))))))))
+
+(defn- ntr-hint-label
+  "The WHAT of one recovery accessor: the tool that produced the result plus a
+   squeezed slice of its op-card summary, so a breadcrumb reads
+   `ntr[\"toolu_01Tc…\"] grep: session_fold, 6 file names` instead of 24 opaque
+   characters. nil for a legacy bare-id entry (older breadcrumbs carried strings).
+
+   The slice is FLATTENED on purpose: card summaries carry their own markdown and
+   ` · ` separators, and the fold card splits its body bullets on exactly that
+   separator — an unsqueezed summary would fracture into phantom metrics."
+  [entry]
+  (when (map? entry)
+    (let
+      [tool
+       (not-empty (str/trim (str (get entry "tool"))))
+
+       gist
+       (some-> (get entry "gist")
+               flatten-card-summary
+               not-empty)
+
+       gist
+       (when gist
+         (if (> (count gist) (long MAX_FOLD_NTR_GIST_CHARS))
+           (str (str/trimr (subs gist 0 (dec (long MAX_FOLD_NTR_GIST_CHARS)))) "…")
+           gist))]
+
+      (cond (and tool gist) (str tool ": " gist)
+            tool tool
+            gist gist
+            :else nil))))
 
 (defn- ntr-recover-hint
   "Compact `ntr[<id>]` accessor clause stamped onto a FOLD breadcrumb so the
    folded steps' native results stay reachable AFTER their per-call
    `# saved: ntr[…]` lines collapse off the wire — or a harness restart drops
-   every in-context breadcrumb. Each id is DB-resolvable with no re-run; the
-   inline list is capped and points at `ntr.keys()` for the overflow. Returns a
-   leading-` · ` fragment, or nil when the fold covered no result-bearing calls
-   (a pure python_execution fold stores nothing to recover)."
+   every in-context breadcrumb. Each id is DB-resolvable with no re-run.
+
+   Every shown accessor is LABELLED with what it holds (`ntr[\"toolu_…\"] cat:
+   loop.clj lines 3300-3370`): the point of the clause is deciding WHICH handle to
+   spend a fetch on, and an id alone can't be decided about. The list is capped
+   and the overflow points at `ntr.describe()`, which browses the whole store the
+   same labelled way — not at bare `ntr.keys()`. Accepts labelled entry maps and
+   legacy bare id strings. Returns a leading-` · ` fragment, or nil when the fold
+   covered no result-bearing calls (a pure python_execution fold stores nothing)."
   [ids]
-  (let [ids (into [] (comp (filter some?) (distinct)) ids)]
+  (let
+    [ids (into []
+               (comp (filter some?) (distinct))
+               (map (fn [e]
+                      (if (map? e) e {"id" (str e)}))
+                    ids))]
     (when (seq ids)
       (let
         [shown (vec (take MAX_FOLD_NTR_HINTS ids))
          extra (- (count ids) (count shown))]
 
         (str " · recover "
-             (str/join ", " (map #(str "ntr[" (pr-str (str %)) "]") shown))
-             (when (pos? extra) (str " (+" extra " more via ntr.keys())")))))))
+             (str/join "; "
+                       (map (fn [e]
+                              (str "ntr[" (pr-str (str (get e "id")))
+                                   "]" (when-let [label (ntr-hint-label e)]
+                                         (str " " label))))
+                            shown))
+             (when (pos? extra) (str "; +" extra " more via ntr.describe()")))))))
+
+(defn- scope-token-end
+  "Index just PAST the iteration address starting at `i` (`t12`, `t1/i2`,
+   `t2/i3-i7`), or nil when `i` doesn't open one. Hand-rolled scan: the address
+   grammar is three optional pieces and reads plainer here than as a pattern."
+  [^String s i]
+  (let
+    [n
+     (count s)
+
+     digits
+     (fn [j]
+       (loop [k (long j)]
+         (if (and (< k n) (Character/isDigit (.charAt s k)))
+           (recur (inc k))
+           (when (> k (long j)) k))))]
+
+    (when (and (< (long i) n) (= \t (.charAt s (long i))))
+      (when-let [after-turn (digits (inc (long i)))]
+        (let
+          [after-iter (when (and (< (inc (long after-turn)) n)
+                                 (= \/ (.charAt s (long after-turn)))
+                                 (= \i (.charAt s (inc (long after-turn)))))
+                        (digits (+ (long after-turn) 2)))
+           end (long (or after-iter after-turn))
+           after-range
+           (when
+             (and after-iter (< (inc end) n) (= \- (.charAt s end)) (= \i (.charAt s (inc end))))
+             (digits (+ end 2)))]
+
+          (or after-range end))))))
+
+(defn- word-char? [ch] (or (Character/isLetterOrDigit ^char ch) (= ch \_)))
+
+(defn- code-scopes
+  "Monospace every iteration address in `s` so `t11/i24` reads as one token at any
+   width instead of blending into the sentence."
+  [x]
+  (let
+    [^String s
+     (str x)
+
+     n
+     (count s)
+
+     sb
+     (StringBuilder.)]
+
+    (loop [i 0]
+      (if (>= (long i) n)
+        (.toString sb)
+        (let
+          [start? (or (zero? (long i)) (not (word-char? (.charAt s (dec (long i))))))
+           end (when start? (scope-token-end s i))
+           end (when (and end (or (>= (long end) n) (not (word-char? (.charAt s (long end))))))
+                 (long end))]
+
+          (if end
+            (do (.append sb \`) (.append sb (subs s (long i) end)) (.append sb \`) (recur end))
+            (do (.append sb (.charAt s (long i))) (recur (inc (long i))))))))))
+
+(defn- ntr-accessor-end
+  "Index just PAST an `ntr[…]` subscript or an `ntr.foo()` call opening at `i`,
+   else nil."
+  [^String s i]
+  (let
+    [n
+     (count s)
+
+     i
+     (long i)]
+
+    (when (and (<= (+ i 4) n) (= "ntr" (subs s i (+ i 3))))
+      (let [ch (.charAt s (+ i 3))]
+        (cond (= \[ ch) (when-let [close (str/index-of s "]" (+ i 3))]
+                          (inc (long close)))
+              (= \. ch) (let
+                          [name-end (long (loop [k (long (+ i 4))]
+                                            (if (and (< k (long n)) (word-char? (.charAt s k)))
+                                              (recur (inc k))
+                                              k)))]
+                          (when (and (> name-end (+ i 4))
+                                     (<= (+ name-end 2) (long n))
+                                     (= "()" (subs s name-end (+ name-end 2))))
+                            (+ name-end 2)))
+              :else nil)))))
+
+(defn- code-ntr
+  "Monospace the recovery accessors — they are literally code to paste back."
+  [x]
+  (let
+    [^String s
+     (str x)
+
+     n
+     (count s)
+
+     sb
+     (StringBuilder.)]
+
+    (loop [i 0]
+      (if (>= (long i) n)
+        (.toString sb)
+        (let
+          [start? (or (zero? (long i)) (not (word-char? (.charAt s (dec (long i))))))
+           end (when start? (ntr-accessor-end s i))]
+
+          (if end
+            (do (.append sb \`)
+                (.append sb (subs s (long i) (long end)))
+                (.append sb \`)
+                (recur (long end)))
+            (do (.append sb (.charAt s (long i))) (recur (inc (long i))))))))))
+
+(defn- bold-lead-word
+  "Bold the leading whitespace-delimited word of `seg` — each metric opens with
+   its keyword (saved / context / recover / kept), so this turns the bullet list
+   into a scannable label → value table."
+  [^String seg]
+  (let
+    [n
+     (count seg)
+
+     end
+     (loop [k 0]
+       (if (and (< k n) (not (Character/isWhitespace (.charAt seg k)))) (recur (inc k)) k))]
+
+    (if (pos? (long end)) (str "**" (subs seg 0 (long end)) "**" (subs seg (long end))) seg)))
 
 (defn- session-fold-card
   "Presentation split of a `session_fold` receipt into an op-card.
@@ -3325,7 +3573,15 @@
    reclaim figure) and a body of prose — the gist as its own paragraph, the
    metrics as a bullet list. Markdown paragraphs soft-wrap to whatever width the
    channel actually has, so ONE engine-side shape reads correctly in the TUI and
-   on the web without either client learning anything about folds."
+   on the web without either client learning anything about folds.
+
+   The receipt is also MARKED UP here, where the wording is decided, not in the
+   channels: scope labels (`t2`, `t1/i1`, `t2/i3-i7`) and `ntr[…]` accessors are
+   identifiers the reader retypes, so they get code spans, and each metric's
+   leading keyword is bolded. Both surfaces already render inline markdown in a
+   card summary AND body (TUI `tool-card-entries`, companion `ToolSummary` /
+   `<Markdown compact nested>`), so a fold finally reads like every other card
+   instead of a wall of plain text."
   [result]
   (let
     [s
@@ -3341,7 +3597,7 @@
      (when arrow (not-empty (str/trim (subs s (+ (long arrow) 3)))))
 
      [head & segs]
-     (str/split receipt #" · ")
+     (split-on receipt " · ")
 
      ;; `~P% of budget` only qualifies the `saved …` it follows — keep the
      ;; pair on ONE bullet instead of stranding a bare percentage.
@@ -3353,11 +3609,20 @@
              []
              segs)
 
+     markup-bullet
+     (fn [seg]
+       (code-ntr (bold-lead-word seg)))
+
      ;; Collapsed view = WHAT was folded + HOW MUCH it reclaimed; the rest
      ;; (context level, recovery accessors, kept skills) reads fine one
      ;; disclosure away and would only push the headline past truncation.
      saved
      (first (filter #(str/starts-with? % "saved ") segs))
+
+     saved
+     (when saved
+       (let [figure (str/triml (subs saved (count "saved ")))]
+         (if (seq figure) (str "saved **" figure "**") saved)))
 
      body
      (str/join "\n\n"
@@ -3366,9 +3631,9 @@
                  (conj gist)
 
                  (seq bullets)
-                 (conj (str/join "\n" (map #(str "- " %) bullets)))))]
+                 (conj (str/join "\n" (map #(str "- " (markup-bullet %)) bullets)))))]
 
-    (cond-> {:summary (str head (when saved (str " · " saved)))}
+    (cond-> {:summary (str (code-scopes head) (when saved (str " · " saved)))}
       (seq body)
       (assoc :body (str "\n" body)))))
 
@@ -3394,20 +3659,11 @@
        (fn [rec]
          (some iter-of-scope (keep :scope (:forms-vec rec))))
 
-       ;; NATIVE tool_use ids a rec's result-bearing calls stored (`ntr[<id>]`
-       ;; resolvable). python_execution prints (no `:result`) → stores nothing,
-       ;; so it contributes no accessor. Distinct, wire order.
+       ;; NATIVE tool_use accessors a rec's result-bearing calls stored
+       ;; (`ntr[<id>]` resolvable), each LABELLED with the tool + its op-card
+       ;; summary so the breadcrumb says what a handle holds.
        rec-ntr-ids
-       (fn [rec]
-         (into []
-               (comp (filter (fn [f]
-                               (and (:svar/tool-call-id f) (some? (:result f)))))
-                     (map :svar/tool-call-id)
-                     (distinct))
-               (or (seq (:forms-vec rec))
-                   (mapcat (fn [b]
-                             (or (seq (:forms b)) [b]))
-                           (:blocks rec)))))
+       ntr-entries-of
 
        ;; Turn this trailer belongs to. A fold intent is a POINT-IN-TIME
        ;; statement, but its range cursor is RE-RESOLVED on every later request
@@ -4434,12 +4690,14 @@
         "live iteration you are emitting right now, and any future step, is not settled and "
         "blocks the call — fold through the last finished iteration instead "
         "({\"through\": \"tN/iK\"}). Recover a folded result via `ntr[tool_id]` (one native "
-        "result, no re-run, survives a restart; the breadcrumb lists its accessors), else walk "
+        "result, no re-run, survives a restart; the breadcrumb lists its accessors, each "
+        "labelled with the tool and gist of what it holds, and `ntr.describe()` browses the "
+        "rest the same way), else walk "
         "`await session_state()` → `transcript/turns/iterations/blocks` (`code`/`result`). "
         "Broader/newer folds supersede fully covered breadcrumbs; equal scopes keep the newer "
         "gist; partial overlaps remain.")
    :result
-   "String receipt naming the folded scope and, when retained, its `ntr[...]` recovery accessors."
+   "String receipt naming the folded scope and, when retained, its labelled `ntr[...]` recovery accessors."
    :schema
    {:type "object"
     :properties
@@ -10394,7 +10652,21 @@
         ;; store (keys/items/values/len) instead of needing ids up front.
         (symbol "__vis_native_result_ids__")
         (fn native-result-ids []
-          (vec (persistance/db-native-result-ids-for-session db-info session-id)))}
+          (vec (persistance/db-native-result-ids-for-session db-info session-id)))
+        ;; `index` is the LABELLED discovery callback behind `ntr.describe()`:
+        ;; {"id" "tool" "gist"} per stored native result, newest first, and NOT
+        ;; one payload is thawed to build it — a whole window of opaque
+        ;; `toolu_…` ids gets named without a single fetch.
+        (symbol "__vis_native_result_index__")
+        (fn native-result-index []
+          (mapv (fn [e]
+                  (cond-> {"id" (str (:id e))}
+                    (:tool e)
+                    (assoc "tool" (str (:tool e)))
+
+                    (:gist e)
+                    (assoc "gist" (str (:gist e)))))
+                (persistance/db-native-result-index-for-session db-info session-id)))}
        ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
        ;; binding map so none of the child-dispatch verbs are
        ;; bound (sub_loop + parallel/sequence/selector/retry).

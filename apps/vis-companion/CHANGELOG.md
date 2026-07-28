@@ -2,6 +2,13 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 1.0.1 (2713) — 2026-07-28
+<!-- commit: 1c2478678779fb1647676e015e388b2554d1247a -->
+
+- Provider `compatibility` key, svar model limits, vis.yml model order
+- Turn failures: fail once, fail legibly; session_fold kwargs; repo-wide format
+- Session_fold: accept keyword arguments from the Python sandbox
+
 ## 1.0.1 (2710) — 2026-07-28
 <!-- commit: 5d270615be75c17b8651ffbf567d9b1bba2b63be -->
 

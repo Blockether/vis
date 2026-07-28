@@ -612,6 +612,20 @@
         :else nil))
 
 (defn- quota-row
+  "Normalize one `quota_snapshots` entry into a limit row.
+
+   GitHub lies twice in this payload, and both lies used to reach the footer:
+
+   1. UNLIMITED buckets (`unlimited true`, `entitlement 0`, `remaining 0`) are
+      reported with `percent_remaining 100.0`. Rendering that verbatim claims a
+      full tank on a bucket that has no tank at all — that is the \"shows 100,
+      I really have 0\" report. Such a row is now flagged `:is-unlimited true`
+      and carries NO numbers, so every renderer prints `unlimited`.
+   2. A metered bucket goes NEGATIVE once overspent (`remaining -32` of
+      `entitlement 1500`, `has_quota false`). `:remaining` is clamped at 0 and
+      the row says it is exhausted, instead of quietly rendering `-32 left`.
+
+   `:used` keeps the raw (unclamped) spend so overage stays visible."
   [reset-ms [quota-key quota]]
   (let
     [id
@@ -622,14 +636,43 @@
          (str/replace #"[_-]" " ")
          str/capitalize)
 
-     remaining
+     raw-remaining
      (response-field quota :remaining)
 
      limit
      (or (response-field quota :entitlement) (response-field quota :limit))
 
      pct
-     (response-field quota :percent_remaining)]
+     (response-field quota :percent_remaining)
+
+     unlimited?
+     (true? (response-field quota :unlimited))
+
+     exhausted?
+     (and (not unlimited?)
+          (or (and (number? raw-remaining) (not (pos? (double raw-remaining))))
+              (false? (response-field quota :has_quota))))
+
+     overage?
+     (and (number? raw-remaining) (neg? (double raw-remaining)))
+
+     note
+     (cond unlimited? "unlimited (token-based billing)"
+           exhausted? (str (when (number? pct)
+                             (String/format java.util.Locale/ROOT
+                                            "%.1f%% remaining - "
+                                            (object-array [(double pct)])))
+                           "quota exhausted"
+                           (when overage?
+                             (String/format java.util.Locale/ROOT
+                                            " (%.0f over)"
+                                            (object-array [(- (double raw-remaining))])))
+                           (if (true? (response-field quota :overage_permitted))
+                             "; overage billing applies"
+                             "; requests are rejected until it resets"))
+           (number? pct)
+           (String/format java.util.Locale/ROOT "%.1f%% remaining" (object-array [(double pct)]))
+           :else nil)]
 
     (cond->
       {:id id
@@ -638,19 +681,18 @@
        :kind :requests
        :precision :exact
        :source :provider-api
-       :is-unlimited false}
-      (number? remaining)
-      (assoc :remaining (double remaining))
+       :is-unlimited unlimited?}
+      (and (not unlimited?) (number? raw-remaining))
+      (assoc :remaining (max 0.0 (double raw-remaining)))
 
-      (number? limit)
+      (and (not unlimited?) (number? limit))
       (assoc :limit (double limit))
 
-      (and (number? remaining) (number? limit))
-      (assoc :used (double (- (double limit) (double remaining))))
+      (and (not unlimited?) (number? raw-remaining) (number? limit))
+      (assoc :used (double (- (double limit) (double raw-remaining))))
 
-      (number? pct)
-      (assoc :note
-        (String/format java.util.Locale/ROOT "%.1f%% remaining" (object-array [(double pct)])))
+      note
+      (assoc :note note)
 
       reset-ms
       (assoc :window {:kind :calendar :unit :month :resets-at-ms reset-ms}))))

@@ -313,3 +313,73 @@
                     att))
               atts
               futures)))))
+
+;; =============================================================================
+;; Ingest: the gateway wire shape
+;; =============================================================================
+
+(defn- wire-key
+  "The key `att` actually uses for the logical field `candidates`, in ITS key
+   style, or `fallback` when the field is absent."
+  [att candidates fallback]
+  (or (some #(when (contains? att %) %) candidates) fallback))
+
+(defn- rewrite-wire-attachment
+  "Write an optimized envelope back onto the ORIGINAL wire map, keeping that
+   map's own key style and every key we never touched."
+  [att {:keys [base64 media-type size filename]}]
+  (let
+    [b64-key
+     (wire-key att ["base64" :base64] "base64")
+
+     mt-key
+     (wire-key att ["media_type" :media-type :media_type] "media_type")
+
+     name-key
+     (wire-key att ["filename" :filename] nil)
+
+     size-key
+     (wire-key att ["size" :size] nil)]
+
+    (cond->
+      (assoc att
+        b64-key base64
+        mt-key media-type)
+      (and name-key filename)
+      (assoc name-key filename)
+
+      size-key
+      (assoc size-key size))))
+
+(defn optimize-wire-attachments
+  "INGEST twin of [[optimize-attachments]] for attachments exactly as a CHANNEL
+   posts them: wire maps with `\"base64\"` / `\"media_type\"` / `\"filename\"` string
+   keys (the companion, any HTTP client) or their keyword mirrors (the TUI).
+
+   The gateway is the ONE boundary every writer crosses, so this is where the
+   policy belongs: the TUI, the phone and a curl one-liner all get the same
+   shrink without each re-implementing it, and what is stored, replayed and sent
+   to the provider is the optimized payload for all of them.
+
+   Key style, unknown keys and order are preserved; a non-image, an undecodable
+   payload or one nothing was gained on comes back IDENTICAL."
+  [atts]
+  (let [atts (vec (or atts []))]
+    (if (empty? atts)
+      atts
+      (let
+        [envelopes (mapv (fn [a]
+                           (if (map? a)
+                             {:base64 (or (get a "base64") (get a :base64))
+                              :media-type
+                              (or (get a "media_type") (get a :media-type) (get a :media_type))
+                              :filename (or (get a "filename") (get a :filename))}
+                             {}))
+                         atts)
+         optimized (optimize-attachments envelopes)]
+
+        (mapv (fn [a before after]
+                (if (or (not (map? a)) (= before after)) a (rewrite-wire-attachment a after)))
+              atts
+              envelopes
+              optimized)))))

@@ -1343,7 +1343,9 @@ print = __vis_print__
 # It is ALSO a read-only mapping: `__vis_native_result_ids__()` (Clojure) lists
 # every persisted tool_use id in the session (newest first), backing keys() /
 # items() / values() / __iter__ / __len__ so the store is BROWSEABLE without
-# knowing an id up front.
+# knowing an id up front. Ids alone are opaque, so `describe()` labels a bounded
+# newest-first window with each result's op and salient fields — browse by what a
+# result HOLDS, then spend one fetch on the id worth fetching.
 class __VisNativeResults__:
     def __init__(self):
         self.__vis_cache__ = {}          # id -> pyified __VisResult__ (already fetched)
@@ -1370,7 +1372,12 @@ class __VisNativeResults__:
             __vis_hits__ = __vis_native_result_prime__(__vis_need__)
         except Exception:
             __vis_hits__ = None
-        __vis_hits__ = __vis_hits__ or {}
+        try:
+            # A host value that is neither a map nor None (a deferred call proxy
+            # settling to None) must never break a browse.
+            __vis_hits__ = __vis_hits__ or {}
+        except Exception:
+            __vis_hits__ = {}
         for __vis_id__ in __vis_need__:
             if __vis_id__ in __vis_hits__ and __vis_hits__[__vis_id__] is not None:
                 self.__vis_store__(__vis_id__, __vis_hits__[__vis_id__])
@@ -1427,6 +1434,20 @@ class __VisNativeResults__:
                 __vis_out__.append(__vis_i__)
         return __vis_out__
 
+    def __vis_index__(self):
+        # LABELLED newest-first index from the host: [{'id','tool','gist'}, …].
+        # Built from the same rows keys() walks, but it thaws NO result payload,
+        # so a whole window of opaque ids can be named without one fetch.
+        # None when the callback isn't bound (bare test context) → callers fall
+        # back to labelling from fetched payloads.
+        try:
+            # list() SETTLES the host call into a plain list; a callback that is
+            # unbound or yields nothing degrades to None, never to a raise.
+            __vis_raw__ = __vis_native_result_index__()
+            return list(__vis_raw__) if __vis_raw__ is not None else None
+        except Exception:
+            return None
+
     def keys(self):
         return self.__vis_all_ids__()
 
@@ -1449,6 +1470,80 @@ class __VisNativeResults__:
 
     def values(self):
         return [__vis_v__ for __vis_k__, __vis_v__ in self.items()]
+
+    # ── Browse by MEANING, not by opaque id. keys() hands back 24-char tool_use
+    # ids that say nothing about what they hold, and items()/values() thaw the
+    # ENTIRE store to find out. describe() sits between them: ONE batched prime of
+    # a bounded newest-first window, each id labelled with its op plus a couple of
+    # that result's own salient fields, so a stored result can be CHOSEN before it
+    # is fetched and read in full.
+    def __vis_gist_of__(self, __vis_v__):
+        try:
+            if not isinstance(__vis_v__, dict):
+                return type(__vis_v__).__name__
+            __vis_bits__ = []
+            __vis_op__ = __vis_v__.get('op')
+            for __vis_k__ in ('path', 'query', 'cmd', 'name', 'target', 'code', 'dir', 'language'):
+                __vis_x__ = __vis_v__.get(__vis_k__)
+                if isinstance(__vis_x__, str) and __vis_x__.strip():
+                    __vis_s__ = ' '.join(__vis_x__.split())
+                    if len(__vis_s__) > 48:
+                        __vis_s__ = __vis_s__[:47] + '…'
+                    __vis_bits__.append(__vis_k__ + '=' + __vis_s__)
+                    break
+            for __vis_k__ in ('hit_count', 'file_count', 'line_count', 'count', 'total',
+                              'pass', 'fail', 'exit', 'changed', 'is_pass', 'error'):
+                if len(__vis_bits__) >= 3:
+                    break
+                __vis_x__ = __vis_v__.get(__vis_k__)
+                if isinstance(__vis_x__, (int, float, bool)):
+                    __vis_bits__.append(__vis_k__ + '=' + str(__vis_x__))
+            __vis_head__ = [str(__vis_op__)] if __vis_op__ else []
+            return ' · '.join(__vis_head__ + __vis_bits__) or 'result'
+        except Exception:
+            return 'result'
+
+    def describe(self, limit=20, ids=None):
+        # ['toolu_01Tc… · grep · session_fold, 6 file names', …]
+        __vis_idx__ = self.__vis_index__()
+        __vis_lbl__ = {}
+        if __vis_idx__ is not None:
+            for __vis_e__ in __vis_idx__:
+                try:
+                    __vis_lbl__[__vis_e__.get('id')] = ' · '.join(
+                        [__vis_x__ for __vis_x__
+                         in (__vis_e__.get('tool'), __vis_e__.get('gist')) if __vis_x__]) or 'result'
+                except Exception:
+                    pass
+        if ids is not None:
+            __vis_sel__ = [__vis_i__ for __vis_i__ in ids]
+        elif __vis_idx__ is not None:
+            __vis_sel__ = [__vis_e__.get('id') for __vis_e__ in __vis_idx__][:max(0, int(limit))]
+        else:
+            __vis_sel__ = self.__vis_all_ids__()[:max(0, int(limit))]
+        # Only ids the index could NOT label cost a payload — normally none, and
+        # those go in ONE batched fetch.
+        __vis_need__ = [__vis_i__ for __vis_i__ in __vis_sel__ if __vis_i__ not in __vis_lbl__]
+        if __vis_need__:
+            self.__vis_prime__(__vis_need__)
+        __vis_out__ = []
+        for __vis_i__ in __vis_sel__:
+            if __vis_i__ in __vis_lbl__:
+                __vis_gist__ = __vis_lbl__[__vis_i__]
+            else:
+                __vis_v__ = self.get(__vis_i__)
+                __vis_gist__ = ('<missing>' if __vis_v__ is None
+                                else self.__vis_gist_of__(__vis_v__))
+            __vis_out__.append(str(__vis_i__) + ' · ' + __vis_gist__)
+        return __vis_out__
+
+    def __repr__(self):
+        try:
+            __vis_n__ = len(self.__vis_all_ids__())
+        except Exception:
+            __vis_n__ = len(self.__vis_cache__)
+        return ('<ntr: ' + str(__vis_n__) + ' stored native results · ntr[tool_id] fetches one '
+                'with no re-run · ntr.describe() lists the newest with what each holds>')
 
 ntr = __VisNativeResults__()
 native_tools_results = ntr  # backwards-compatible verbose alias
@@ -2162,7 +2257,7 @@ def __vis_native_result_scan__(__vis_tree__):
       'session-fold
       (str
         "session_fold(target, gist=None) -> str. Collapse SETTLED wire steps into a breadcrumb: any prior turn, PLUS the current turn's already-completed iterations. The live iteration you are emitting right now (and any future step) is not settled and cannot be folded; trim the current turn up to the last finished iteration (e.g. {'through': 'tN/iK'}).\n"
-        "Targets may be step/turn ids or through/from/to/since selectors. Folding changes rendering, not stored history; there is no destructive unfold command. Recover a folded step the cheap way: the fold breadcrumb itself lists its folded steps' `ntr[<id>]` accessors, and `ntr[tool_id]` retrieves that one prior native result from storage with no re-run — it SURVIVES a harness restart (`ntr.keys()` browses every stored id). Only if an id isn't in view, walk raw content — `s = await session_state()`, select `s['transcript']['turns']` by numeric `position`, then filter `['iterations'][...]['blocks']` (`code`/`result`). For another conversation, use `await sessions()` then `await session_state(id)`.\n"
+        "Targets may be step/turn ids or through/from/to/since selectors. Folding changes rendering, not stored history; there is no destructive unfold command. Recover a folded step the cheap way: the fold breadcrumb itself lists its folded steps' `ntr[<id>]` accessors, each LABELLED with the tool and gist of what it holds, and `ntr[tool_id]` retrieves that one prior native result from storage with no re-run — it SURVIVES a harness restart (`ntr.describe()` browses the newest stored results the same labelled way; `ntr.keys()` is the bare-id form). Only if an id isn't in view, walk raw content — `s = await session_state()`, select `s['transcript']['turns']` by numeric `position`, then filter `['iterations'][...]['blocks']` (`code`/`result`). For another conversation, use `await sessions()` then `await session_state(id)`.\n"
         "Fold of fold: a broader newer fold supersedes fully covered narrower breadcrumbs; equal scopes keep the newer gist. Partial overlaps remain separate."))))
 
 
@@ -3515,7 +3610,7 @@ def network_probe(method='GET', url=None, headers=None, body=None):
                                   ;; ntr/native_tools_results host callbacks:
                                   ;; plain sync lookups, never awaitable thunks.
                                   "__vis_native_result_prime__" "__vis_native_result_fetch__"
-                                  "__vis_native_result_ids__"})
+                                  "__vis_native_result_ids__" "__vis_native_result_index__"})
                         distinct
                         vec)]
       (.putMember g "__vis_defer_names__" (->py defer-names))

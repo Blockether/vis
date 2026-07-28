@@ -20,6 +20,7 @@ import {
   collapsePastePlaceholders,
   createComposerPaste,
   expandPastePlaceholders,
+  pasteSummary,
   shouldCollapsePaste,
   type ComposerPaste,
 } from '../lib/paste';
@@ -56,6 +57,7 @@ import {
   onViewportRotation,
   scrollAnchorFor,
   type ScrollAnchor,
+  useVisualViewportShell,
 } from '../lib/viewport';
 import { answeredTurnCount, markSessionRead } from '../lib/unread';
 import { App } from '@capacitor/app';
@@ -101,6 +103,13 @@ const LIVE_BODY_THROTTLE_MS = 150;
 const TURN_LIVENESS_IDLE_MS = 10000;
 const TURN_LIVENESS_PROBE_INTERVAL_MS = 5000;
 const INITIAL_VISIBLE_TURNS = 24;
+// A transcript of 24 turns is tens of thousands of DOM nodes; building all of
+// them before the first paint is what made opening a session feel slow — the
+// wait was never the network. Only the newest turns are on screen when a
+// session opens (it lands pinned to the bottom), so mount just those, then fill
+// the rest of the window in ABOVE the fold once the reader already has pixels.
+const FIRST_PAINT_TURNS = 3;
+const HYDRATE_TURNS_PER_FRAME = 10;
 
 function stringField(event: SseEvent, key: string): string {
   const value = event[key];
@@ -717,6 +726,10 @@ export function SessionScreen({
   const [resumingQueue, setResumingQueue] = useState(false);
   const [showJump, setShowJump] = useState(false);
   const [visibleTurnCount, setVisibleTurnCount] = useState(INITIAL_VISIBLE_TURNS);
+  // How much of that window is actually mounted right now. Ramps to
+  // `visibleTurnCount` off the critical path; never shrinks the window itself,
+  // so the "load earlier" affordance and its counts stay stable while it fills.
+  const [hydratedTurnCount, setHydratedTurnCount] = useState(FIRST_PAINT_TURNS);
   // Reading IS being here. While this transcript is on screen its FINISHED turns
   // count as read, so an answer that lands while you watch never raises a badge
   // in the session list — but one that lands with the screen backgrounded does.
@@ -752,6 +765,15 @@ export function SessionScreen({
     () =>
       new Map(peekDraftMessage(draftMessageId).pastes.map((paste) => [paste.id, paste])),
   );
+  // A paste chip is a HANDLE on its payload, not a tombstone: tapping it opens the
+  // content for editing (the same affordance other agent composers give a collapsed
+  // paste). `draft` is the live textarea buffer — `pastes`/`prompt` only move on Save.
+  const [editingPaste, setEditingPaste] = useState<{ id: number; draft: string } | null>(null);
+  // That editor is a `fixed` overlay, so it resolves against the LAYOUT viewport — the
+  // one iOS does NOT shrink for the keyboard. Unpinned, the sheet keeps its full box
+  // under the keyboard and only the couple of lines above it stay usable. The app shell
+  // already solves this; the overlay borrows the very same pin.
+  const pasteEditorStyle = useVisualViewportShell();
   const [composerNotice, setComposerNotice] = useState<string | null>(null);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [voiceModel, setVoiceModel] = useState<VoiceModelState | null>(null);
@@ -784,6 +806,28 @@ export function SessionScreen({
   // into a live turn minutes later, and the SSE rail never replays attachments,
   // so the sender keeps them until the persisted transcript row takes over.
   const sentAttachmentsRef = useRef<Map<string, GatewayAttachment[]>>(new Map());
+  // turn id -> what THIS device authored for a message it queued behind the running
+  // turn. A user cancel drops the whole pre-cancel backlog server-side
+  // (`drop-cancelled-backlog!`), so without a local copy the text, its pastes and its
+  // images would simply be gone. Keyed by turn id, so rows queued from the TUI or
+  // another device are absent here and stay THEIR editor's business.
+  const authoredQueueRef = useRef<
+    Map<string, { request: string; attachments: PendingAttachment[]; pastes: Map<number, ComposerPaste> }>
+  >(new Map());
+  const rememberQueued = (
+    turnId: string | undefined,
+    authored: { request: string; attachments: PendingAttachment[]; pastes: Map<number, ComposerPaste> },
+  ) => {
+    if (!turnId) return;
+    const map = authoredQueueRef.current;
+    map.set(turnId, authored);
+    // Bounded like `sentAttachmentsRef`: a backlog this long is not coming back.
+    while (map.size > 16) {
+      const oldest = map.keys().next();
+      if (oldest.done) break;
+      map.delete(oldest.value);
+    }
+  };
   const rememberSent = (turnId: string | undefined, sent: GatewayAttachment[]) => {
     if (!turnId || !sent.length) return;
     const map = sentAttachmentsRef.current;
@@ -829,6 +873,7 @@ export function SessionScreen({
     setSession(client.cachedSession(sid));
     setAttachments([]);
     setPastes(new Map());
+    setEditingPaste(null);
     pasteCounterRef.current = 0;
     // The composer belongs to ONE session. Everything else here is reset per sid;
     // leaving the prompt behind meant the text typed for the previous session
@@ -843,6 +888,7 @@ export function SessionScreen({
     setLoading(!fresh);
     setVeiled(!fresh);
     setVisibleTurnCount(INITIAL_VISIBLE_TURNS);
+    setHydratedTurnCount(FIRST_PAINT_TURNS);
     followingRef.current = true;
     initialScrollPendingRef.current = !fresh;
     settleUntilRef.current = 0;
@@ -1028,6 +1074,13 @@ export function SessionScreen({
     // costs one small request and no re-render, instead of refetching, reparsing
     // and re-rendering the whole history every time you walk back into it.
     void (async () => {
+      // A COLD open holds no cached rows, so the meta row cannot save the
+      // transcript read — it can only delay it by a whole round trip on a link
+      // that is often a phone on someone else's network. Ask for both at once
+      // there. A re-entry keeps the meta-first order, where the stamp is exactly
+      // what makes the transcript read free.
+      const cold = !client.cachedTranscript(sid)?.length;
+      const body = cold ? loadTranscript() : null;
       let row: Session | null = null;
       try {
         row = await client.session(sid, controller.signal);
@@ -1036,7 +1089,7 @@ export function SessionScreen({
         /* Unreachable gateway: fall through, the transcript read reports it. */
       }
       if (controller.signal.aborted) return;
-      await loadTranscript(row);
+      await (body ?? loadTranscript(row));
     })();
     // The queue tray paints ONLY gateway truth, and SSE carries just the
     // deltas that happen while we are subscribed — so read the existing
@@ -1553,7 +1606,26 @@ export function SessionScreen({
       return;
     }
     if (followingRef.current) scrollToEnd('auto');
-  }, [turns, visibleTurnCount, liveTurn?.id, scrollToEnd, pinToEnd]);
+  }, [turns, visibleTurnCount, hydratedTurnCount, liveTurn?.id, scrollToEnd, pinToEnd]);
+
+  // Fill the render window back up to `visibleTurnCount`, a chunk per frame,
+  // once the first paint is out. Rows land ABOVE the viewport, so a reader at
+  // the bottom sees nothing; a reader who scrolled up in the meantime is held
+  // by the same prepend anchor the "load earlier" button uses.
+  useEffect(() => {
+    if (hydratedTurnCount >= visibleTurnCount) return;
+    let frame: number | null = window.requestAnimationFrame(() => {
+      frame = null;
+      const viewport = scrollRef.current;
+      if (viewport && !followingRef.current && prependScrollHeightRef.current === null) {
+        prependScrollHeightRef.current = viewport.scrollHeight;
+      }
+      setHydratedTurnCount((count) => count + HYDRATE_TURNS_PER_FRAME);
+    });
+    return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [hydratedTurnCount, visibleTurnCount]);
 
   // The veil must DISSOLVE, not vanish. Unmounting it the instant the transcript
   // is ready swaps a full-bleed `bg-ink` sheet for the whole transcript inside a
@@ -1742,6 +1814,53 @@ export function SessionScreen({
       next.delete(id);
       return next;
     });
+    if (editingPaste?.id === id) setEditingPaste(null);
+  }
+
+  function openPasteEditor(id: number) {
+    const paste = pastes.get(id);
+    if (!paste) return;
+    setEditingPaste({ id, draft: paste.content });
+  }
+
+  function closePasteEditor() {
+    setEditingPaste(null);
+    window.requestAnimationFrame(() => composerRef.current?.focus());
+  }
+
+  function savePasteEdit() {
+    const editing = editingPaste;
+    if (!editing) return;
+    const previous = pastes.get(editing.id);
+    if (!previous) {
+      closePasteEditor();
+      return;
+    }
+    const content = editing.draft;
+    if (!content.trim()) {
+      removePaste(editing.id);
+      closePasteEditor();
+      return;
+    }
+    // The token carries the line/byte count, so an edit rewrites it. Swap the OLD
+    // token for the new one in place — literal split/join, never a pattern, so a
+    // token containing regex metacharacters can never corrupt the prompt.
+    if (!shouldCollapsePaste(content)) {
+      // Edited down to something that reads fine inline: drop the chip and let the
+      // text live in the composer, exactly as if it had been typed.
+      setPrompt((current) => current.split(previous.token).join(content));
+      setPastes((current) => {
+        const next = new Map(current);
+        next.delete(editing.id);
+        return next;
+      });
+      closePasteEditor();
+      return;
+    }
+    const updated = createComposerPaste(editing.id, content);
+    setPrompt((current) => current.split(previous.token).join(updated.token));
+    setPastes((current) => new Map(current).set(updated.id, updated));
+    closePasteEditor();
   }
 
   async function addPastedImages(files: File[]) {
@@ -1908,7 +2027,16 @@ export function SessionScreen({
           displayRequest,
           attachments: sent,
         });
-        rememberSent(submitted.turn_id ?? submitted.id, sent);
+        const queuedId = submitted.turn_id ?? submitted.id;
+        rememberSent(queuedId, sent);
+        // Keep the AUTHORED shape (raw text, pastes, image bytes) so a cancel can
+        // hand it straight back to the composer instead of losing it with the
+        // backlog the gateway drops.
+        rememberQueued(queuedId, {
+          request: authoredRequest,
+          attachments: pendingAttachments,
+          pastes: pendingPastes,
+        });
       } catch (cause) {
         setPrompt(authoredRequest);
         setPastes(pendingPastes);
@@ -1961,11 +2089,50 @@ export function SessionScreen({
     }
   }
 
+  // Cancel is "stop", not "stop and then run the rest": the gateway terminally drops
+  // every turn queued BEFORE a user cancel, so anything this device authored has to
+  // come back to the composer or it is lost outright. Same contract the TUI honours
+  // with `:restore-pending-to-input` — appended after whatever is already typed,
+  // never auto-sent.
+  function restoreQueuedToComposer(rows: QueuedTurn[]) {
+    const mine = rows.flatMap((row) => {
+      const authored = authoredQueueRef.current.get(row.turnId);
+      return authored ? [{ row, authored }] : [];
+    });
+    if (!mine.length) return;
+    for (const { row } of mine) authoredQueueRef.current.delete(row.turnId);
+
+    const texts = mine.map(({ row, authored }) => authored.request || row.request).filter(Boolean);
+    if (texts.length) {
+      setPrompt((current) => [current.trimEnd(), ...texts].filter(Boolean).join('\n\n'));
+    }
+    const restoredPastes = mine.flatMap(({ authored }) => [...authored.pastes]);
+    if (restoredPastes.length) {
+      setPastes((current) => {
+        const next = new Map(current);
+        for (const [id, paste] of restoredPastes) if (!next.has(id)) next.set(id, paste);
+        return next;
+      });
+    }
+    const restoredAttachments = mine.flatMap(({ authored }) => authored.attachments);
+    if (restoredAttachments.length) {
+      setAttachments((current) => {
+        const seen = new Set(current.map((item) => item.id));
+        return [...current, ...restoredAttachments.filter((item) => !seen.has(item.id))];
+      });
+    }
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }
+
   async function cancel() {
     // One stop is one stop. A second press (button re-tap, Escape) while the
     // request is in flight would re-announce a state the transcript is already
     // showing as "Vis is cancelling".
     if (liveTurnRef.current?.cancelling) return;
+    // Snapshot BEFORE the request: every row queued from here on is the opposite
+    // intent ("stop that, run THIS"), survives the drop server-side and drains on
+    // its own — stealing it into the composer would send it twice.
+    const backlog = queued;
     setLiveTurn((turn) => {
       const next = turn ? { ...turn, cancelling: true, activity: undefined } : turn;
       liveTurnRef.current = next;
@@ -1973,6 +2140,7 @@ export function SessionScreen({
     });
     try {
       await client.cancelCurrentTurn(sid);
+      restoreQueuedToComposer(backlog);
     } catch (cause) {
       // The stop never landed, so the affordance has to come back.
       setLiveTurn((turn) => {
@@ -2154,6 +2322,8 @@ export function SessionScreen({
     .filter((part): part is string => Boolean(part))
     .join(' · ');
   const visibleStart = Math.max(0, turns.length - visibleTurnCount);
+  // What is mounted this frame: the window, clamped by the hydration ramp.
+  const renderStart = Math.max(visibleStart, turns.length - hydratedTurnCount);
   // Everything older than the first bubble on screen, wherever it lives.
   const earlierTotal = visibleStart + earlierRemaining;
   const liveTurnId = liveTurn?.id;
@@ -2162,7 +2332,7 @@ export function SessionScreen({
   // twice — the live bubble owns it until `settle` confirms the finished row.
   const visibleTurns = useMemo(
     () =>
-      turns.slice(visibleStart).filter((turn) => {
+      turns.slice(renderStart).filter((turn) => {
         // A persisted 'running' row is a placeholder, not a result. Painted from
         // the cache — reopening a session you already left — it resurrects the
         // working spinner and its elapsed clock for a turn that has since been
@@ -2179,7 +2349,7 @@ export function SessionScreen({
         if (turn.status === 'running') return false;
         return true;
       }),
-    [turns, visibleStart, liveTurn, liveTurnId, turnsFresh],
+    [turns, renderStart, liveTurn, liveTurnId, turnsFresh],
   );
   // Memoized rows keep their element IDENTITY across composer keystrokes
   // (prompt/caret state), so React bails out of the whole transcript subtree
@@ -2320,6 +2490,84 @@ export function SessionScreen({
           onPicked={setModelPref}
           onManageProviders={onManageProviders}
         />
+      )}
+
+      {editingPaste && (
+        <div
+          className="fixed inset-x-0 top-0 z-50 flex h-dvh items-stretch justify-center bg-ink/85 p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:p-5"
+          style={pasteEditorStyle}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closePasteEditor();
+          }}
+        >
+          <section
+            className="flex h-full w-full max-w-3xl flex-col overflow-hidden border-dialog-edge bg-panel shadow-none transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-6 starting:opacity-0 motion-reduce:transition-none sm:h-[70%] sm:max-h-[calc(100%-2rem)] sm:border sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:starting:translate-y-2"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="paste-editor-title"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.stopPropagation();
+                closePasteEditor();
+              } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                savePasteEdit();
+              }
+            }}
+          >
+            <header className="flex min-h-12 shrink-0 items-center bg-dialog-title pt-[env(safe-area-inset-top)] text-dialog-title-foreground sm:pt-0">
+              <div className="min-w-0 flex-1 px-3 py-2 sm:px-4">
+                <h2
+                  id="paste-editor-title"
+                  className="truncate font-mono text-body font-bold tracking-wide"
+                >
+                  {`Pasted #${editingPaste.id}`}
+                </h2>
+                <p className="truncate font-mono text-meta text-dialog-title-foreground/70">
+                  {pasteSummary(editingPaste.id, editingPaste.draft)}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="grid min-h-10 min-w-10 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
+                onClick={closePasteEditor}
+                aria-label="Close paste editor"
+              >
+                ✕
+              </button>
+            </header>
+
+            <textarea
+              // eslint-disable-next-line jsx-a11y/no-autofocus
+              autoFocus
+              value={editingPaste.draft}
+              onChange={(event) => setEditingPaste({ id: editingPaste.id, draft: event.target.value })}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              className="min-h-0 flex-1 resize-none touch-pan-y overflow-y-auto overscroll-contain border-t border-dialog-edge bg-input p-3 font-mono text-body text-dialog-foreground outline-none sm:p-4"
+              aria-label={`Content of pasted block ${editingPaste.id}`}
+            />
+
+            <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-dialog-edge bg-panel-2 px-3 py-2 pb-[max(0.5rem,var(--safe-bottom,env(safe-area-inset-bottom)))] font-mono text-meta text-dialog-hint sm:px-4">
+              <span className="mr-auto hidden truncate sm:block">Esc cancels · ⌘↵ saves</span>
+              <button
+                type="button"
+                className="min-h-9 border border-dialog-edge px-3 text-ui text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err focus-visible:outline-none"
+                onClick={closePasteEditor}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="min-h-9 border border-accent bg-accent px-3 text-ui text-accent-foreground transition-colors hover:bg-accent/85 focus-visible:outline-none"
+                onClick={savePasteEdit}
+              >
+                Save
+              </button>
+            </footer>
+          </section>
+        </div>
       )}
 
       <div className="relative flex min-h-0 flex-1 flex-col">
@@ -2601,7 +2849,15 @@ export function SessionScreen({
             <div className="flex gap-1 overflow-x-auto overscroll-x-contain border-b border-dialog-edge px-1.5 py-1 [scrollbar-width:thin]">
               {activePastes.map((paste) => (
                 <span key={paste.id} className="inline-flex min-h-7 shrink-0 items-center border border-code-edge bg-code font-mono text-chip text-accent-ink">
-                  <span className="max-w-56 truncate px-2">{paste.token}</span>
+                  <button
+                    type="button"
+                    className="max-w-56 truncate px-2 text-left underline decoration-dotted underline-offset-2 transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none"
+                    onClick={() => openPasteEditor(paste.id)}
+                    aria-label={`Edit pasted block ${paste.id}`}
+                    title="Edit this paste"
+                  >
+                    {paste.token}
+                  </button>
                   <button
                     type="button"
                     className="grid min-h-7 w-7 place-items-center border-l border-code-edge text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err"

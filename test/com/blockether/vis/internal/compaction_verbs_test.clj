@@ -1081,8 +1081,15 @@
       ;; result) carry none.
       (let
         [tr
-         [[1 {:forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "toolu_A" :result "a"}]}]
-          [2 {:forms-vec [{:scope "t1/i2/f1" :svar/tool-call-id "toolu_B" :result "b"}]}]]
+         [[1 {:forms-vec [{:scope "t1/i1/f1"
+                          :svar/tool-call-id "toolu_A"
+                          :result "a"
+                          :vis/tool-name "grep"
+                          :result-summary "`ntr` · 2 files"}]}]
+          [2 {:forms-vec [{:scope "t1/i2/f1"
+                          :svar/tool-call-id "toolu_B"
+                          :result "b"
+                          :vis/tool-name "cat"}]}]]
 
          folded
          (apply-summaries tr [{"scopes" #{"t1/i1" "t1/i2"} "gist" "did it"}])
@@ -1094,7 +1101,8 @@
          (apply-summaries [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "p"}]}]]
                           [{"scopes" #{"t1/i1"} "gist" "no store"}])]
 
-        (expect (= "# ⋯ folded t1/i1-i2 · recover ntr[\"toolu_A\"], ntr[\"toolu_B\"] · did it"
+        (expect (= (str "# ⋯ folded t1/i1-i2 · recover ntr[\"toolu_A\"] grep: ntr, 2 files; "
+                        "ntr[\"toolu_B\"] cat · did it")
                    (:content (irm (second (first folded))))))
         (expect (= "# ⋯ dropped t1/i1 · misread" (:content (irm (second (first dropped))))))
         (expect (= "# ⋯ folded t1/i1 · no store" (:content (irm (second (first printed))))))))
@@ -1110,8 +1118,54 @@
                                           "engine_iter_universe" ["t1/i1"]
                                           "engine_iter_ntr" {"t1/i1" ["toolu_A" "toolu_B"]}}))
                  'session-fold)]
-        (expect (= "folded t1/i1 · recover ntr[\"toolu_A\"], ntr[\"toolu_B\"] → g"
-                   (sf ["t1/i1"] "g"))))))
+        (expect (= "folded t1/i1 · recover ntr[\"toolu_A\"]; ntr[\"toolu_B\"] → g"
+                   (sf ["t1/i1"] "g")))))
+  (it "every shown accessor says WHAT it holds, and the overflow points at ntr.describe()"
+      ;; An id alone can't be decided about — the clause exists so the model picks
+      ;; WHICH handle is worth one fetch. Card summaries carry their own markdown
+      ;; and ` · ` separators, so a label is flattened and capped: the fold card
+      ;; splits its body bullets on exactly that separator.
+      (let
+        [entry (fn [i tool gist]
+                 (cond-> {"id" i "tool" tool} gist (assoc "gist" gist)))
+
+         sf (get (compaction-verbs
+                   (atom {"session_turn" 2
+                          "engine_iter_universe" ["t1/i1"]
+                          "engine_iter_ntr"
+                          {"t1/i1" [(entry "toolu_A" "grep" "`session_fold` · 6 file names")
+                                    (entry "toolu_B" "cat" nil)
+                                    (entry "toolu_C" "run_tests" "94 pass")
+                                    (entry "toolu_D" "shell" nil)
+                                    (entry "toolu_E" "lint_code" nil)
+                                    (entry "toolu_F" "write" nil)
+                                    (entry "toolu_G"
+                                           "repl_eval"
+                                           (apply str (repeat 12 "long ")))]}}))
+                 'session-fold)
+
+         out (sf ["t1/i1"] "g")]
+
+        (expect (str/includes? out "recover ntr[\"toolu_A\"] grep: session_fold, 6 file names; "))
+        ;; No summary → the tool name alone still beats a bare id.
+        (expect (str/includes? out "ntr[\"toolu_B\"] cat;"))
+        ;; Capped list, and the overflow browses the store the same labelled way.
+        (expect (str/includes? out "; +2 more via ntr.describe()"))
+        (expect (not (str/includes? out "toolu_G")))))
+  (it "a long label is truncated instead of drowning the breadcrumb"
+      (let
+        [sf (get (compaction-verbs
+                   (atom {"session_turn" 2
+                          "engine_iter_universe" ["t1/i1"]
+                          "engine_iter_ntr"
+                          {"t1/i1" [{"id" "toolu_A"
+                                     "tool" "repl_eval"
+                                     "gist" (apply str (repeat 12 "long "))}]}}))
+                 'session-fold)
+
+         out (sf ["t1/i1"] "g")]
+
+        (expect (str/includes? out "repl_eval: long long long long long long long long lon…")))))
 
 (defdescribe
   session-fold-card-render-test
@@ -1126,26 +1180,26 @@
                                       " · context 94% (90k/96k tokens) · recover ntr[\"toolu_A\"]"
                                       " → bigger task"))]
         ;; Collapsed view: WHAT was folded + HOW MUCH it reclaimed.
-        (expect (= "folded t1/i1 · saved ~60k tokens" (:summary card)))
+        (expect (= "folded `t1/i1` · saved **~60k tokens**" (:summary card)))
         ;; `~67% of budget` qualifies the `saved …` it follows, so the pair
         ;; stays on ONE bullet instead of stranding a bare percentage.
-        (expect (= (str "\nbigger task\n\n" "- saved ~60k tokens · ~67% of budget\n"
-                        "- context 94% (90k/96k tokens)\n" "- recover ntr[\"toolu_A\"]")
+        (expect (= (str "\nbigger task\n\n" "- **saved** ~60k tokens · ~67% of budget\n"
+                        "- **context** 94% (90k/96k tokens)\n" "- **recover** `ntr[\"toolu_A\"]`")
                    (:body card)))
         (expect (not (str/includes? (:body card) "```")))))
   (it "a gist-less fold still renders its metrics as wrapping bullets"
       (let
         [card (session-fold-card "folded t1/i1 · saved ~0 tokens · context 44% (42k/96k tokens)")]
-        (expect (= "folded t1/i1 · saved ~0 tokens" (:summary card)))
-        (expect (= "\n- saved ~0 tokens\n- context 44% (42k/96k tokens)" (:body card)))))
+        (expect (= "folded `t1/i1` · saved **~0 tokens**" (:summary card)))
+        (expect (= "\n- **saved** ~0 tokens\n- **context** 44% (42k/96k tokens)" (:body card)))))
   (it "a bare confirmation (no metrics, no gist) stays a headline with NO body"
       ;; With no stamped utilization the verb returns just `folded <label>`;
       ;; an empty disclosure would be a rendering bug, not a card.
       (let [card (session-fold-card "folded t1/i1")]
-        (expect (= "folded t1/i1" (:summary card)))
+        (expect (= "folded `t1/i1`" (:summary card)))
         (expect (nil? (:body card)))))
   (it "the gist is the FIRST thing the body says"
       ;; The breadcrumb the model wrote is why the human expands the card; the
       ;; accounting reads underneath it.
       (let [card (session-fold-card "folded t2 · saved ~12k tokens → traced the wedge")]
-        (expect (str/starts-with? (:body card) "\ntraced the wedge\n\n- saved ~12k tokens")))))
+        (expect (str/starts-with? (:body card) "\ntraced the wedge\n\n- **saved** ~12k tokens")))))

@@ -149,3 +149,44 @@
              (it "handles nil and empty input"
                  (expect (= [] (io/optimize-attachments nil)))
                  (expect (= [] (io/optimize-attachments [])))))
+
+;; The gateway is the ONE ingest boundary: the TUI posts keyword wire maps, the
+;; companion / any HTTP client posts snake_case string maps, and both must come
+;; out shrunk WITHOUT either channel re-implementing the policy.
+(defdescribe
+  optimize-wire-attachments-test
+  (it "shrinks string-keyed and keyword-keyed wire maps alike, keeping key style"
+      (let
+        [snake
+         {"base64" (b64 @opaque-big) "media_type" "image/png" "filename" "a.png" "note" "kept"}
+
+         kw
+         {:base64 (b64 @opaque-big) :media-type "image/png" :filename "b.png"}
+
+         [out-snake out-kw]
+         (io/optimize-wire-attachments [snake kw])]
+
+        (expect (= "image/jpeg" (get out-snake "media_type")))
+        (expect (= "a.jpg" (get out-snake "filename")))
+        (expect (= "kept" (get out-snake "note")) "unknown keys survive")
+        (expect (< (count (get out-snake "base64")) (count (get snake "base64"))))
+        (expect (= "image/jpeg" (:media-type out-kw)) "keyword style is preserved")
+        (expect (= "b.jpg" (:filename out-kw)))
+        (expect (nil? (get out-kw "media_type")) "no snake_case key is grafted on")))
+  (it "returns a non-image, an undecodable payload and a small image untouched"
+      (let
+        [in [{"base64" (b64 (.getBytes "a,b" "UTF-8")) "media_type" "text/csv"}
+             {"base64" "not base64 at all" "media_type" "image/png"}
+             {"base64" (b64 @tiny) "media_type" "image/png" "filename" "c.png"} "not a map"]]
+        (expect (= in (io/optimize-wire-attachments in)))))
+  (it "carries a declared size forward and handles nil / empty input"
+      (let
+        [in
+         [{"base64" (b64 @opaque-big) "media_type" "image/png" "size" 999999}]
+
+         out
+         (first (io/optimize-wire-attachments in))]
+
+        (expect (< (long (get out "size")) 999999))
+        (expect (= [] (io/optimize-wire-attachments nil)))
+        (expect (= [] (io/optimize-wire-attachments []))))))

@@ -611,6 +611,11 @@
 ;; de-duped) — backs iteration over `ntr` (keys/items/…).
 (defdelegate db-native-result-ids-for-session [db-info session-id])
 
+;; Same branch scan, but LABELLED: [{:id :tool :gist}] newest-first, de-duped —
+;; what each stored result actually holds, with NO payload thaw. Backs
+;; `ntr.describe()`.
+(defdelegate db-native-result-index-for-session [db-info session-id])
+
 ;; --- Extension aggregate sidecars ---
 (defdelegate db-create-extension-aggregate! [db-info opts])
 

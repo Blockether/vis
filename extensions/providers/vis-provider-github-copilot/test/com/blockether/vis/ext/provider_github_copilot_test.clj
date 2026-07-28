@@ -174,6 +174,57 @@
                    (expect (= 60.0 (:used row)))))))
 
 (defdescribe
+  copilot-unlimited-and-overspent-quota-test
+  (it "flags unlimited buckets instead of reporting their fake 100% remaining"
+      ;; Verbatim shape returned by api.github.com/copilot_internal/user for a
+      ;; token-based-billing account: `chat` is UNLIMITED with entitlement 0 and
+      ;; percent_remaining 100.0, while the metered `premium_interactions` bucket
+      ;; is overspent (remaining -32 of 1500, has_quota false). Rendering the
+      ;; former verbatim told the user "100" on a bucket with no tank at all.
+      (with-redefs
+        [sut/detect-oauth-token
+         (fn []
+           {:oauth-token "ghu_test"})
+
+         sut/fetch-user-usage!
+         (fn [_]
+           {:copilot_plan "individual"
+            :quota_reset_date "2026-08-01"
+            :quota_snapshots
+            {:chat
+             {:unlimited true :entitlement 0 :remaining 0 :has_quota true :percent_remaining 100.0}
+             :premium_interactions {:unlimited false
+                                    :entitlement 1500
+                                    :remaining -32
+                                    :has_quota false
+                                    :overage_permitted false
+                                    :percent_remaining 0.0}}})]
+
+        (let
+          [rows
+           (get-in (#'sut/dynamic-limits!) [:dynamic :limits])
+
+           chat
+           (first (filter #(= :chat (:id %)) rows))
+
+           premium
+           (first (filter #(= :premium_interactions (:id %)) rows))]
+
+          (expect (true? (:is-unlimited chat)))
+          (expect (nil? (:remaining chat)))
+          (expect (nil? (:limit chat)))
+          (expect (nil? (:used chat)))
+          (expect (= "unlimited (token-based billing)" (:note chat)))
+          (expect (false? (:is-unlimited premium)))
+          ;; clamped: never render "-32 left"
+          (expect (= 0.0 (:remaining premium)))
+          (expect (= 1500.0 (:limit premium)))
+          (expect (= 1532.0 (:used premium)))
+          (expect
+            (= "0.0% remaining - quota exhausted (32 over); requests are rejected until it resets"
+               (:note premium)))))))
+
+(defdescribe
   copilot-refresh-margin-test
   (it "subtracts REFRESH_MARGIN_MS from the refresh_in soft deadline on mint (issue #21)"
       ;; GitHub's refresh_in (soft, proxy-reject) is shorter than expires_at (hard).
