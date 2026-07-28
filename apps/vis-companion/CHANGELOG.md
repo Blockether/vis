@@ -2,6 +2,14 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 1.0.1 (2732) — 2026-07-28
+<!-- commit: b8e0e98751afd64601391aa7f49a6b966c31406b -->
+
+- Images you attach are now sent exactly as they are — no silent shrinking or re-compression, so screenshots keep their full detail
+- SVG attachments are converted to PNG at their real aspect ratio (a wide diagram is no longer squashed into a square)
+- A picture over the size limit is now rejected with a clear reason instead of being quietly resampled
+- New provider: OpenRouter
+
 ## 1.0.1 (2729) — 2026-07-28
 <!-- commit: ffdb768f54f4941281115f156092aace45e1e9f1 -->
 
