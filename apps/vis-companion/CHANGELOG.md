@@ -2,6 +2,13 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 1.0.1 (2725) — 2026-07-28
+<!-- commit: 80f263b819ff90eee2cbafd0cccdc2b4e086e39c -->
+
+- Reopening the app paints your sessions and the last part of the transcript straight from the device instead of re-downloading them, so a cold start is instant again
+- Coming back to a running turn shows the whole answer that is being written, not just the tail
+- Folded tool cards read as proper paragraphs — text is justified and wraps correctly
+
 ## 1.0.1 (2723) — 2026-07-28
 <!-- commit: d9c943e479f8e74cc891d36ce7805ad52e5bbb38 -->
 
