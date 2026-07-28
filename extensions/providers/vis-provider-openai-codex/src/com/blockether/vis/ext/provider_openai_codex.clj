@@ -19,6 +19,7 @@
             [clojure.string :as str]
             [com.blockether.vis.ext.provider-openai-codex.limits :as codex-limits]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.oauth :as oauth]
             [taoensso.telemere :as tel])
   (:import [java.net URLDecoder URLEncoder]
@@ -238,16 +239,25 @@
 ;; Token persistence
 ;; =============================================================================
 
+(defn- auth-json-key
+  "JSON key -> engine keyword. What we write is snake_case (`refresh_token`);
+   the kebab spelling older builds persisted reads back onto the same key."
+  [k]
+  (keyword (str/replace (name k) "_" "-")))
+
 (defn- load-auth-file
   []
   (let [f (io/file AUTH_FILE)]
-    (when (.exists f) (try (json/read-json (slurp f) :key-fn keyword) (catch Exception _ nil)))))
+    (when (.exists f)
+      (try (json/read-json (slurp f) :key-fn auth-json-key) (catch Exception _ nil)))))
 
 (defn- save-auth-file!
+  "Persist credentials through the ONE JSON boundary (`wire/json-str`):
+   snake_case string keys, total encoding."
   [credentials]
   (let [dir (io/file (str (System/getProperty "user.home") "/.vis"))]
     (when-not (.exists dir) (.mkdirs dir))
-    (spit AUTH_FILE (json/write-json-str (assoc credentials :saved-at (System/currentTimeMillis))))
+    (spit AUTH_FILE (wire/json-str (assoc credentials :saved-at (System/currentTimeMillis))))
     credentials))
 
 (defn- delete-auth-file!

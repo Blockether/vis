@@ -18,8 +18,8 @@
    Auth lifecycle:
      1. `vis providers auth zai-coding` (or `vis providers auth zai`) prompts for the API
         key once and persists it under `~/.vis/zai-auth.json`,
-        `{:coding {:api-key str :saved-at long}
-          :pass   {:api-key str :saved-at long}}`.
+        as canonical snake_case JSON - top-level plan tag, then
+        `api_key` / `saved_at` (never kebab, never keyword keys).
      2. Subsequent runs read the configured provider key, env var, or
         persisted key. A TUI/config `:api-key` wins so status/limits
         match the key used for model calls; env vars
@@ -34,6 +34,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -73,20 +74,28 @@
 ;; Persistence
 ;; =============================================================================
 
+(defn- auth-json-key
+  "JSON key -> engine keyword. What we write is snake_case (`api_key`); the
+   kebab spelling older builds persisted reads back onto the same key."
+  [k]
+  (keyword (str/replace (name k) "_" "-")))
+
 (defn- load-auth-file
   "Load `~/.vis/zai-auth.json` or nil. Returns the WHOLE map (both
    plans) so a single read serves callers querying any sibling plan."
   []
   (let [f (io/file AUTH_FILE)]
-    (when (.exists f) (try (json/read-json (slurp f) :key-fn keyword) (catch Exception _ nil)))))
+    (when (.exists f)
+      (try (json/read-json (slurp f) :key-fn auth-json-key) (catch Exception _ nil)))))
 
 (defn- save-auth-file!
-  "Persist the WHOLE auth map. Caller is responsible for merging the
-   per-plan slice into the existing file via `update-plan!`."
+  "Persist the WHOLE auth map through the ONE JSON boundary (`wire/json-str`):
+   snake_case string keys, total encoding. Caller is responsible for merging
+   the per-plan slice into the existing file via `update-plan!`."
   [auth-state]
   (let [dir (io/file (str (System/getProperty "user.home") "/.vis"))]
     (when-not (.exists dir) (.mkdirs dir))
-    (spit AUTH_FILE (json/write-json-str auth-state))))
+    (spit AUTH_FILE (wire/json-str auth-state))))
 
 (defn- update-plan!
   "Merge `slice` into the existing auth file under `plan-tag`. When

@@ -193,17 +193,25 @@
 
 (defn- auth-dir [] (io/file (str (System/getProperty "user.home") "/.vis")))
 
+(defn- auth-json-key
+  "JSON key -> engine keyword. What we write is snake_case (`refresh_token`);
+   the kebab spelling older builds persisted reads back onto the same key."
+  [k]
+  (keyword (str/replace (name k) "_" "-")))
+
 (defn- load-auth-file
   []
   (let [f (io/file auth-file)]
-    (when (.exists f) (try (json/read-json (slurp f) :key-fn keyword) (catch Exception _ nil)))))
+    (when (.exists f)
+      (try (json/read-json (slurp f) :key-fn auth-json-key) (catch Exception _ nil)))))
 
 (defn- save-auth-file!
+  "Persist credentials through the ONE JSON boundary (`vis/wire-json-str`):
+   snake_case string keys, total encoding."
   [credentials]
   (let [^java.io.File dir (auth-dir)]
     (when-not (.exists dir) (.mkdirs dir))
-    (spit auth-file
-          (json/write-json-str (assoc credentials :saved-at-ms (System/currentTimeMillis))))
+    (spit auth-file (vis/wire-json-str (assoc credentials :saved-at-ms (System/currentTimeMillis))))
     credentials))
 
 (defn- delete-auth-file!

@@ -21,6 +21,7 @@
             [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.oauth :as oauth]
             [taoensso.telemere :as tel]))
 
@@ -140,19 +141,27 @@
 ;; Token persistence
 ;; =============================================================================
 
+(defn- auth-json-key
+  "JSON key -> engine keyword. What we write is snake_case (`oauth_token`);
+   the kebab spelling older builds persisted reads back onto the same key."
+  [k]
+  (keyword (str/replace (name k) "_" "-")))
+
 (defn- load-auth-file
   "Load persisted auth state from ~/.vis/github-copilot-auth.json.
    Returns map or nil."
   []
   (let [f (io/file AUTH_FILE)]
-    (when (.exists f) (try (json/read-json (slurp f) :key-fn keyword) (catch Exception _ nil)))))
+    (when (.exists f)
+      (try (json/read-json (slurp f) :key-fn auth-json-key) (catch Exception _ nil)))))
 
 (defn- save-auth-file!
-  "Persist auth state to ~/.vis/github-copilot-auth.json."
+  "Persist auth state to ~/.vis/github-copilot-auth.json through the ONE JSON
+   boundary (`wire/json-str`): snake_case string keys, total encoding."
   [auth-state]
   (let [dir (io/file (str (System/getProperty "user.home") "/.vis"))]
     (when-not (.exists dir) (.mkdirs dir))
-    (spit AUTH_FILE (json/write-json-str auth-state))))
+    (spit AUTH_FILE (wire/json-str auth-state))))
 
 (defn- normalize-account-type
   [value]
