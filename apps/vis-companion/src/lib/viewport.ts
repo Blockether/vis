@@ -6,8 +6,13 @@ import type { PluginListenerHandle } from '@capacitor/core';
 import { Keyboard } from '@capacitor/keyboard';
 import type { KeyboardInfo } from '@capacitor/keyboard';
 
-/** Shrink (px) that counts as the keyboard — not a toolbar rounding wobble. */
-const COVERED_EPSILON = 12;
+import {
+  clampShellHeight,
+  isKeyboardCovering,
+  isViewportOversized,
+  layoutHeight,
+  readViewportMetrics,
+} from './viewport-metrics';
 
 /**
  * iOS animates its keyboard over 0.25s on UIKit's own curve, and
@@ -308,7 +313,8 @@ let pinnedShellHeight: number | null = null;
 
 /** The shell's current height in CSS pixels, keyboard pin included. */
 export function shellViewportHeight(): number {
-  return pinnedShellHeight ?? window.visualViewport?.height ?? window.innerHeight;
+  const metrics = readViewportMetrics();
+  return clampShellHeight(pinnedShellHeight ?? metrics.visualHeight, metrics);
 }
 
 export function useVisualViewportShell(): CSSProperties | undefined {
@@ -381,7 +387,14 @@ export function useVisualViewportShell(): CSSProperties | undefined {
         // A suspended/hidden webview reports whatever it froze at; recording it
         // would outlive the state it described.
         if (document.visibilityState === 'hidden') return;
-        const covered = window.innerHeight - vv.height > COVERED_EPSILON;
+        const metrics = readViewportMetrics();
+        const covered = isKeyboardCovering(metrics);
+        // A resume can hand back a layout viewport TALLER than the device (see
+        // `deviceHeightLimit`), and iOS announces nothing afterwards. The plain
+        // `h-dvh` box would then hang off the bottom of the screen with the tab
+        // bar and the composer below the fold, so pin the shell to the height
+        // the device actually has.
+        const oversized = isViewportOversized(metrics);
         // Keyboard down means the layout viewport belongs at its origin again.
         if (!covered) resetLayoutScroll();
         // A `position: fixed` shell resolves against the LAYOUT viewport, and
@@ -393,7 +406,9 @@ export function useVisualViewportShell(): CSSProperties | undefined {
         // viewport that moved), so the pin has to add the scroll back.
         const top = Math.round(vv.offsetTop + layoutScroll());
         const next: Box | null =
-          vv.height > 0 && (covered || top > 1) ? { height: Math.round(vv.height), top } : null;
+          vv.height > 0 && (covered || oversized || top > 1)
+            ? { height: clampShellHeight(vv.height, metrics), top }
+            : null;
         pinnedShellHeight = next ? next.height : null;
         setBox((prev) =>
           prev && next && prev.height === next.height && prev.top === next.top ? prev : next,
@@ -408,6 +423,18 @@ export function useVisualViewportShell(): CSSProperties | undefined {
     // Wake: measure now, then again as the OS settles the viewport.
     const resync = () => {
       clearTimers();
+      // A wake is not a keyboard movement. iOS can suspend the webview between
+      // `keyboardWillHide` and `keyboardDidHide`, and the missing `did` event
+      // never arrives: `keyboardPinned` would stay set, `sync()` would keep
+      // yielding to a keyboard driver that will never move again, and the shell
+      // would stay frozen at a box the device no longer has. Release it here
+      // unless the keyboard is genuinely still up.
+      if (keyboardPinned && !keyboardUp) {
+        keyboardPinned = false;
+        setAnimating(false);
+        pinnedShellHeight = null;
+        setBox(null);
+      }
       sync();
       for (const delay of WAKE_RESYNC_MS) timers.push(window.setTimeout(sync, delay));
     };
@@ -497,7 +524,9 @@ export function useVisualViewportShell(): CSSProperties | undefined {
         clearTimers();
         cancelAnimationFrame(frame);
         setAnimating(true);
-        const next = { height: Math.max(0, Math.round(height)), top: 0 };
+        // `innerHeight` is the caller's ruler and a resumed webview can report
+        // one taller than the screen, so the keyboard pin is clamped too.
+        const next = { height: clampShellHeight(height, readViewportMetrics()), top: 0 };
         pinnedShellHeight = next.height;
         setBox((prev) =>
           prev && prev.height === next.height && prev.top === next.top ? prev : next,
@@ -513,7 +542,7 @@ export function useVisualViewportShell(): CSSProperties | undefined {
         if (isViewportRotating()) return;
         keyboardPinned = true;
         document.documentElement.style.setProperty('--safe-bottom', '0px');
-        pin(window.innerHeight - keyboardHeight);
+        pin(layoutHeight(readViewportMetrics()) - keyboardHeight);
       };
       const onWillHide = () => {
         keyboardUp = false;
@@ -521,7 +550,7 @@ export function useVisualViewportShell(): CSSProperties | undefined {
           '--safe-bottom',
           'env(safe-area-inset-bottom)',
         );
-        pin(window.innerHeight);
+        pin(layoutHeight(readViewportMetrics()));
       };
       // Rebuild the keyboard pin from post-rotation numbers. Snaps rather than
       // transitions: the rotation already moved everything at once.
@@ -529,7 +558,7 @@ export function useVisualViewportShell(): CSSProperties | undefined {
         if (!keyboardUp) return false;
         keyboardPinned = true;
         document.documentElement.style.setProperty('--safe-bottom', '0px');
-        pin(window.innerHeight - keyboardHeight);
+        pin(layoutHeight(readViewportMetrics()) - keyboardHeight);
         setAnimating(false);
         return true;
       };
