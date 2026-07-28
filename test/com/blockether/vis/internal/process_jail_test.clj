@@ -373,7 +373,7 @@
            (is (re-find #"-Djava\.net\.preferIPv4Stack=true" (get env "JAVA_TOOL_OPTIONS")))
            (is (re-find #"-Djavax\.net\.ssl\.trustStore=/tmp/repl-ca\.p12"
                         (get env "JAVA_TOOL_OPTIONS")))
-           (cond (and (sandbox-applicable?) (linux?))
+           (cond (and (linux?) (pj/supported?))
                  ;; Linux: proxy-port present => pasta lane wraps bwrap; the managed
                  ;; nREPL's loopback port is forwarded INBOUND (`-t <port>`) so vis attaches.
                  (do (is (= "pasta" (first argv)) "linux repl jail must wrap with pasta")
