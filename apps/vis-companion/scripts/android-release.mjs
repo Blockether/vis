@@ -37,6 +37,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { publishBundle, tracks as readTracks } from './play.mjs';
 import { buildNotes } from './release-notes.mjs';
+import { syncPackageVersion } from './version.mjs';
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const androidDir = join(appDir, 'android');
@@ -91,8 +92,8 @@ if (has('tracks')) {
 
 // ── versions ──────────────────────────────────────────────────────────────────────────
 
-const pkg = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8'));
-const versionName = flag('version') ?? pkg.version;
+// The repo-root VERSION file is the one source of truth; package.json mirrors it.
+const versionName = flag('version') ?? syncPackageVersion();
 const versionCode = flag('build') ?? capture('git', ['rev-list', '--count', 'HEAD']);
 if (!/^\d+$/.test(versionCode)) die(`version code must be a positive integer, got "${versionCode}"`);
 

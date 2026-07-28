@@ -16,6 +16,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appIdFor, asc, ascToken, waitForBuild } from './asc.mjs';
+import { syncPackageVersion } from './version.mjs';
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(appDir, '..', '..');
@@ -203,8 +204,8 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   };
   const secret = (envName, account) => process.env[envName]?.trim() || keychain(account);
 
-  const pkg = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8'));
-  const version = flag('version') ?? pkg.version;
+  // The repo-root VERSION file is the one source of truth; package.json mirrors it.
+  const version = flag('version') ?? syncPackageVersion();
   const build = flag('build') ?? capture('git', ['rev-list', '--count', 'HEAD']);
   const scope = flag('scope') ? [flag('scope')] : [];
 

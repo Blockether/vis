@@ -29,6 +29,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { syncPackageVersion } from './version.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(root, '..', '..');
@@ -182,8 +183,8 @@ const capture = (cmd, cmdArgs) => {
   return res.status === 0 ? res.stdout.trim() : undefined;
 };
 
-const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-const versionName = flag('version') ?? pkg.version;
+// The repo-root VERSION file is the one source of truth; package.json mirrors it.
+const versionName = flag('version') ?? syncPackageVersion();
 const versionCode = flag('build') ?? capture('git', ['rev-list', '--count', 'HEAD']) ?? '1';
 
 const gradlePath = join(androidApp, 'build.gradle');

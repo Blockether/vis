@@ -1,12 +1,15 @@
 {
   "name": "vis-companion",
-  "version": "1.0.1",
+  "version": "0.1.13",
   "private": true,
   "description": "Universal (web / Android / iOS) companion for the vis gateway — React + Tailwind + Capacitor.",
   "type": "module",
   "scripts": {
+    "sync:version": "node scripts/version.mjs",
     "dev": "vite",
+    "predev": "node scripts/version.mjs",
     "build": "tsc -b && vite build",
+    "prebuild": "node scripts/version.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "lint": "node scripts/react-compiler-lint.mjs",

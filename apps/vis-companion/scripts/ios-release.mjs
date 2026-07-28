@@ -40,6 +40,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { buildNotes, publishNotes } from './release-notes.mjs';
 import { distribute } from './testflight.mjs';
+import { syncPackageVersion } from './version.mjs';
 
 // Release credentials live in the macOS login keychain (scripts/secrets.mjs),
 // never in a dotfile or this repo. An env var still wins, so CI can inject one.
@@ -84,8 +85,8 @@ const capture = (cmd, cmdArgs, opts = {}) => {
   return res.status === 0 ? res.stdout.trim() : '';
 };
 
-const pkg = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8'));
-const marketingVersion = flag('version') ?? pkg.version;
+// The repo-root VERSION file is the one source of truth; package.json mirrors it.
+const marketingVersion = flag('version') ?? syncPackageVersion();
 const buildNumber = flag('build') ?? capture('git', ['rev-list', '--count', 'HEAD']);
 if (!/^\d+(\.\d+)*$/.test(marketingVersion)) die(`bad --version "${marketingVersion}"`);
 if (!/^\d+$/.test(buildNumber)) die(`bad --build "${buildNumber}" (git rev-list unavailable?)`);

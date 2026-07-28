@@ -27,10 +27,12 @@ Keep only non-obvious project contracts here; inspect nearby source and tests fo
 
 ## Releasing the app ("release" = ship the companion to testers)
 
+**One version everywhere.** The repo-root `VERSION` file is the single source of truth for CLI, native image AND companion app (CI bumps it on tag). `apps/vis-companion/package.json` "version" is only a MIRROR: `apps/vis-companion/scripts/version.mjs` stamps it from `VERSION`, and every entry point that can ship a number (`prebuild`, `predev`, `android-prepare`, `android-release`, `ios-release`, `release-notes`) calls `syncPackageVersion()` first. Never hand-edit the app's version, and never let an app release carry a number the gateway does not have — the app's version-mismatch screen compares exactly these two.
+
 All commands run in `apps/vis-companion`, in this order:
 
 1. **Commit (and push) first.** `scripts/release-notes.mjs` derives the build's TestFlight "What to Test" from git history *before* the archive exists, so an uncommitted fix ships in the binary but not in the notes. The build number is `git rev-list --count HEAD`, so committing after the archive also desynchronises the number.
-2. `npm run release:ios` — vite build → `cap sync ios` → stamp `App.xcodeproj` → `xcodebuild archive` → `-exportArchive` → upload to App Store Connect, then push the notes. `versionName` comes from `package.json` "version".
+2. `npm run release:ios` — vite build → `cap sync ios` → stamp `App.xcodeproj` → `xcodebuild archive` → `-exportArchive` → upload to App Store Connect, then push the notes. `versionName` is the repo-root `VERSION` (mirrored into `package.json`).
 3. `npm run release:testflight` — the upload only makes the build *exist*. This links it to the public external group and submits it to Beta App Review; without it the build is visible to the team only. Add `--no-review` when the group is already approved.
 
 - Android mirror: `npm run release:android -- --track beta` (Play open testing; `internal` is the default). It needs the stock JDK 21 exception described above.
