@@ -115,18 +115,19 @@
    `:summary` already produced; no first-line-of-body heuristic."
   [{:keys [tool-color-role result-summary result-render] tool-name :vis/tool-name}]
   (when (some? tool-name)
-    (let [summary
-          (some-> result-summary
-                  str
-                  str/trim
-                  not-empty
-                  (compact-tool-summary tool-name))
+    (let
+      [summary
+       (some-> result-summary
+               str
+               str/trim
+               not-empty
+               (compact-tool-summary tool-name))
 
-          body
-          (some-> result-render
-                  str
-                  str/trimr
-                  not-empty)]
+       body
+       (some-> result-render
+               str
+               str/trimr
+               not-empty)]
 
       {:tool? true
        :label (tool-label tool-name)
@@ -166,12 +167,13 @@
    evidence and remains visible on both success and failure. This is the shared
    TUI/channel policy; web mirrors it at the wire boundary."
   [{:keys [error success?] :as form}]
-  (let [errored?
-        (or (some? error) (and (some? success?) (not success?)))
+  (let
+    [errored?
+     (or (some? error) (and (some? success?) (not success?)))
 
-        tool-name
-        (some-> (:vis/tool-name form)
-                name)]
+     tool-name
+     (some-> (:vis/tool-name form)
+             name)]
 
     (boolean (and (native-tool-form? form) (not errored?) (not= tool-name "python_execution")))))
 
@@ -228,39 +230,40 @@
    LINE SPANS plus the SUMMED line count when every merged read carried one.
    `merge-run` removes legacy mutation verbs before exposing the merged card."
   [summaries]
-  (let [parts
-        (map split-summary-parts summaries)
+  (let
+    [parts
+     (map split-summary-parts summaries)
 
-        chip
-        (ffirst parts)
+     chip
+     (ffirst parts)
 
-        tails
-        (mapcat rest parts)
+     tails
+     (mapcat rest parts)
 
-        count-re
-        #"^(\d+) lines?$"
+     count-re
+     #"^(\d+) lines?$"
 
-        counts
-        (keep #(some-> (re-matches count-re %)
-                       second
-                       parse-long)
-              tails)
+     counts
+     (keep #(some-> (re-matches count-re %)
+                    second
+                    parse-long)
+           tails)
 
-        spans
-        (remove #(re-matches count-re %) tails)
+     spans
+     (remove #(re-matches count-re %) tails)
 
-        total
-        (reduce + 0 counts)
+     total
+     (reduce + 0 counts)
 
-        span-str
-        (str/join " · " (distinct spans))
+     span-str
+     (str/join " · " (distinct spans))
 
-        count-str
-        (when (and (seq counts) (= (count counts) (count summaries)))
-          (str total " line" (when (not= 1 total) "s")))
+     count-str
+     (when (and (seq counts) (= (count counts) (count summaries)))
+       (str total " line" (when (not= 1 total) "s")))
 
-        tail
-        (str/join " · " (remove str/blank? [span-str count-str]))]
+     tail
+     (str/join " · " (remove str/blank? [span-str count-str]))]
 
     (if (str/blank? tail) chip (str chip " · " tail))))
 
@@ -270,25 +273,27 @@
    may instead carry a single `` `path` (status) `` headline. Never use an
    aggregate headline as a fake file path."
   [form]
-  (let [files
-        (result-field form :files)
+  (let
+    [files
+     (result-field form :files)
 
-        from-files
-        (when (sequential? files)
-          (keep (fn [file]
-                  (when (map? file)
-                    (let [path
-                          (or (get file :path) (get file "path"))
+     from-files
+     (when (sequential? files)
+       (keep (fn [file]
+               (when (map? file)
+                 (let
+                   [path
+                    (or (get file :path) (get file "path"))
 
-                          changed?
-                          (if (contains? file :changed) (get file :changed) (get file "changed"))]
+                    changed?
+                    (if (contains? file :changed) (get file :changed) (get file "changed"))]
 
-                      (when (seq (str path))
-                        {:path (str path) :status (if changed? "(changed)" "(no change)")}))))
-                files))
+                   (when (seq (str path))
+                     {:path (str path) :status (if changed? "(changed)" "(no change)")}))))
+             files))
 
-        summary
-        (str (:result-summary form))]
+     summary
+     (str (:result-summary form))]
 
     (or (seq from-files)
         (when-let [[_ path status] (re-matches #"`([^`]+)`\s+(.*)" summary)]
@@ -302,19 +307,20 @@
    `format_code {\"paths\": [...]}` call: one headline plus a collapsible per-file
    body."
   [forms]
-  (let [entries
-        (mapcat format-summary-entries forms)
+  (let
+    [entries
+     (mapcat format-summary-entries forms)
 
-        n
-        (count entries)
+     n
+     (count entries)
 
-        changed
-        (count (filter #(str/includes? (str (:status %)) "(changed") entries))
+     changed
+     (count (filter #(str/includes? (str (:status %)) "(changed") entries))
 
-        body
-        (str/join "\n"
-                  (for [{:keys [path status]} entries]
-                    (str path (when (seq status) (str " " status)))))]
+     body
+     (str/join "\n"
+               (for [{:keys [path status]} entries]
+                 (str path (when (seq status) (str " " status)))))]
 
     {:summary (str n " file" (when (not= 1 n) "s") " — " changed " changed")
      :body (when (seq body) (str "```\n" body "\n```"))}))
@@ -325,27 +331,29 @@
    body slice; for per-file format acks, one format roll-up body. Channels render
    the synthesized form as ONE card/bubble."
   [forms]
-  (let [f0
-        (first forms)
+  (let
+    [f0
+     (first forms)
 
-        tool
-        (tool-name-s f0)
+     tool
+     (tool-name-s f0)
 
-        merged
-        (if (= "format_code" tool)
-          (merge-format-forms forms)
-          {:summary (merge-same-path-summaries (map :result-summary forms))
-           :body (str/join "\n" (keep (comp not-empty str :result-render) forms))})
+     merged
+     (if (= "format_code" tool)
+       (merge-format-forms forms)
+       {:summary (merge-same-path-summaries (map :result-summary forms))
+        :body (str/join "\n" (keep (comp not-empty str :result-render) forms))})
 
-        anchors
-        (reduce merge {} (map #(result-field % :anchors) forms))
+     anchors
+     (reduce merge {} (map #(result-field % :anchors) forms))
 
-        r0
-        (:result f0)]
+     r0
+     (:result f0)]
 
-    (cond-> (assoc f0
-              :result-summary (compact-tool-summary (:summary merged) tool)
-              :result-render (:body merged))
+    (cond->
+      (assoc f0
+        :result-summary (compact-tool-summary (:summary merged) tool)
+        :result-render (:body merged))
       ;; Only merge anchors onto a genuine MAP result. After a DB round-trip
       ;; `:result` comes back as the rendered string (anchors flattened) and the
       ;; path/spans already live in the merged summary, so a non-map result
@@ -369,8 +377,9 @@
    rendering an iteration's forms, so repeated tool acks never render as a stack
    of look-alike sibling bubbles. Always returns a vector."
   [forms]
-  (let [key-fn (fn [f]
-                 (or (coalesce-key f) [::solo (gensym)]))]
+  (let
+    [key-fn (fn [f]
+              (or (coalesce-key f) [::solo (gensym)]))]
     (into []
           (map (fn [grp]
                  (if (next grp) (merge-run grp) (first grp))))

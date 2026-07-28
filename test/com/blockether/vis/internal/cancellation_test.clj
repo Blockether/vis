@@ -8,14 +8,15 @@
 
 (defdescribe on-cancel-callback-test
              (it "fires every registered thunk when cancel! is called"
-                 (let [token
-                       (cancellation/cancellation-token)
+                 (let
+                   [token
+                    (cancellation/cancellation-token)
 
-                       rang-1
-                       (atom 0)
+                    rang-1
+                    (atom 0)
 
-                       rang-2
-                       (atom 0)]
+                    rang-2
+                    (atom 0)]
 
                    (cancellation/on-cancel! token #(swap! rang-1 inc))
                    (cancellation/on-cancel! token #(swap! rang-2 inc))
@@ -29,34 +30,37 @@
                    ;; stays true.
                    (expect (cancellation/cancelled? token))))
              (it "fires immediately when the token was already cancelled"
-                 (let [token
-                       (cancellation/cancellation-token)
+                 (let
+                   [token
+                    (cancellation/cancellation-token)
 
-                       rang
-                       (atom 0)]
+                    rang
+                    (atom 0)]
 
                    (cancellation/cancel! token)
                    (cancellation/on-cancel! token #(swap! rang inc))
                    (expect (= 1 @rang))))
              (it "dispose! removes the hook so a later cancel! does not fire it"
-                 (let [token
-                       (cancellation/cancellation-token)
+                 (let
+                   [token
+                    (cancellation/cancellation-token)
 
-                       rang
-                       (atom 0)
+                    rang
+                    (atom 0)
 
-                       dispose
-                       (cancellation/on-cancel! token #(swap! rang inc))]
+                    dispose
+                    (cancellation/on-cancel! token #(swap! rang inc))]
 
                    (dispose)
                    (cancellation/cancel! token)
                    (expect (= 0 @rang))))
              (it "isolates a throwing callback from the others"
-                 (let [token
-                       (cancellation/cancellation-token)
+                 (let
+                   [token
+                    (cancellation/cancellation-token)
 
-                       rang
-                       (atom 0)]
+                    rang
+                    (atom 0)]
 
                    (cancellation/on-cancel! token
                                             (fn []
@@ -65,17 +69,18 @@
                    (cancellation/cancel! token)
                    (expect (= 1 @rang))))
              (it "cancellation-set-future! routes through on-cancel! and cancels the future"
-                 (let [token
-                       (cancellation/cancellation-token)
+                 (let
+                   [token
+                    (cancellation/cancellation-token)
 
-                       task
-                       (java.util.concurrent.FutureTask. ^java.util.concurrent.Callable
-                                                         (reify
-                                                           java.util.concurrent.Callable
-                                                             (call [_] (Thread/sleep 5000) :done)))
+                    task
+                    (java.util.concurrent.FutureTask. ^java.util.concurrent.Callable
+                                                      (reify
+                                                        java.util.concurrent.Callable
+                                                          (call [_] (Thread/sleep 5000) :done)))
 
-                       thread
-                       (Thread. ^Runnable task "vis-cancellation-test")]
+                    thread
+                    (Thread. ^Runnable task "vis-cancellation-test")]
 
                    (.setDaemon thread true)
                    (.start thread)

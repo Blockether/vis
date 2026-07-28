@@ -16,7 +16,7 @@
 
    The `:python-context` slot holds the GraalPy `Context`; the Python top scope is
    `context.getBindings(\"python\")`. GraalPy ships in the default deps (runs on
-   Oracle GraalVM 25 → Truffle gets the Graal JIT)."
+   GraalVM CE 25.1.3 → Truffle gets the Graal JIT; see .graalvm-version)."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.set :as set]
@@ -2957,7 +2957,7 @@ del __vis_init_lazy__
 (defn- baos->str
   "UTF-8 view of a captured-stdout BAOS with CRLF normalized to LF, so a form's
    printed output is byte-identical on every OS — GraalPy honors the host
-   `os.linesep` when writing text, emitting CRLF on Windows."
+   `os.linesep` when writing text."
   ^String [^java.io.ByteArrayOutputStream baos]
   (.replace (.toString baos "UTF-8") "\r\n" "\n"))
 

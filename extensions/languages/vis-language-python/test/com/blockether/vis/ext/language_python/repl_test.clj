@@ -52,7 +52,7 @@
                  (let [root (tmp-dir)]
                    (try (let [cmd (interp/resolve-command (.getPath root))]
                           (expect (= 1 (count cmd)))
-                          (expect (#{"python3" "python" "python.exe"} (first cmd))))
+                          (expect (#{"python3" "python"} (first cmd))))
                         (finally (cleanup root))))))
 
 ;; ── live REPL subprocess ─────────────────────────────────────────────────────

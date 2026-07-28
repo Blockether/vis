@@ -22,14 +22,15 @@
     (testing "is marked a CA (basicConstraints != -1)" (is (not= -1 (.getBasicConstraints cert))))))
 
 (deftest minted-leaf-has-host-san-and-is-ca-signed
-  (let [{:keys [key-pair name]}
-        (tls/gen-ca)
+  (let
+    [{:keys [key-pair name]}
+     (tls/gen-ca)
 
-        leaf-kp
-        (#'tls/gen-keypair)
+     leaf-kp
+     (#'tls/gen-keypair)
 
-        leaf
-        (#'tls/mint-leaf name (.getPrivate key-pair) leaf-kp "api.example.com")]
+     leaf
+     (#'tls/mint-leaf name (.getPrivate key-pair) leaf-kp "api.example.com")]
 
     (testing "the leaf verifies under the CA public key (real chain of trust)"
       (is (nil? (.verify leaf (.getPublic key-pair)))))
@@ -39,14 +40,15 @@
     (testing "the leaf is NOT itself a CA" (is (= -1 (.getBasicConstraints leaf))))))
 
 (deftest minted-leaf-for-ip-uses-ip-san
-  (let [{:keys [key-pair name]}
-        (tls/gen-ca)
+  (let
+    [{:keys [key-pair name]}
+     (tls/gen-ca)
 
-        leaf-kp
-        (#'tls/gen-keypair)
+     leaf-kp
+     (#'tls/gen-keypair)
 
-        leaf
-        (#'tls/mint-leaf name (.getPrivate key-pair) leaf-kp "127.0.0.1")]
+     leaf
+     (#'tls/mint-leaf name (.getPrivate key-pair) leaf-kp "127.0.0.1")]
 
     (testing "a numeric host is encoded as an iPAddress SAN, not dNSName"
       (let [names (map second (.getSubjectAlternativeNames leaf))]
@@ -63,10 +65,11 @@
            (is (instance? SSLSocketFactory (:upstream-factory cap)))
            (is (fn? (:close! cap))))
          (testing "the combined PEM bundle and JVM PKCS12 truststore exist"
-           (let [pem (File. ^String (:ca-file cap))
-                 store-file (File. ^String (:java-trust-store cap))
-                 chars (.toCharArray ^String (:java-trust-store-password cap))
-                 store (KeyStore/getInstance "PKCS12")]
+           (let
+             [pem (File. ^String (:ca-file cap))
+              store-file (File. ^String (:java-trust-store cap))
+              chars (.toCharArray ^String (:java-trust-store-password cap))
+              store (KeyStore/getInstance "PKCS12")]
 
              (is (.exists pem))
              (is (.exists store-file))
@@ -76,9 +79,10 @@
              (is (.containsAlias store "vis-egress-ca"))
              (is (< 1 (.size store)))))
          (testing "ctx-for returns a server SSLContext, cached per host (same instance)"
-           (let [a ((:ctx-for cap) "example.com")
-                 b ((:ctx-for cap) "example.com")
-                 c ((:ctx-for cap) "other.com")]
+           (let
+             [a ((:ctx-for cap) "example.com")
+              b ((:ctx-for cap) "example.com")
+              c ((:ctx-for cap) "other.com")]
 
              (is (instance? SSLContext a))
              (is (identical? a b))

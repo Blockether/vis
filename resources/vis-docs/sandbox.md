@@ -39,7 +39,7 @@ active for managed child processes on:
   nREPL) shares the host namespace. **WSL2** runs a real Linux kernel and works like
   any Linux host; **WSL1** has no real namespaces and is reported unenforceable.
 
-If the host cannot enforce a jail (e.g. Linux without `bwrap`, or Windows), a
+If the host cannot enforce a jail (e.g. Linux without `bwrap`), a
 requested `jail.enabled: true` **fails loud** — a one-time stderr WARNING that
 children run unconfined — instead of silently pretending safety. A missing policy,
 failed policy function, unknown session, or disposed session does **not** silently
@@ -506,7 +506,7 @@ kernel owns the JVM, and `wrap-argv` deliberately skips re-wrapping
   process creation. They have no arbitrary Java/native/polyglot interop. Review
   project `.vis/extensions/` with the same care as executable build files.
 - The OS enforcer is implemented on macOS (Seatbelt) and Linux/WSL2 (bubblewrap +
-  pasta); Windows and WSL1 have none. There the gateway policy remains useful but
+  pasta); WSL1 has none. There the gateway policy remains useful but
   is not a kernel boundary, and a requested `jail.enabled: true` fails loud rather
   than pretending to confine. On Linux, filtered egress is kernel-enforced via pasta
   when `passt` is installed (only the gateway proxy port reachable); without it,

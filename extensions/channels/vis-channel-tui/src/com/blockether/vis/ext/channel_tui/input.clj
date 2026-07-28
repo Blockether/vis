@@ -581,8 +581,7 @@
   (try (.write out (.getBytes "\u001B]111\u0007" "UTF-8")) (.flush out) (catch Throwable _ nil)))
 
 (defn- stty!
-  "Best-effort `stty <flag> < /dev/tty` — Unix only (Windows has no /dev/tty or
-   stty; the Windows console TUI never needs this). Bounded + never throws."
+  "Best-effort `stty <flag> < /dev/tty` — Unix only. Bounded + never throws."
   [flag]
   (when (.exists (io/file "/dev/tty"))
     (try (let [p (process/process {:cmd ["sh" "-c" (str "stty " flag " < /dev/tty")] :err :string})]

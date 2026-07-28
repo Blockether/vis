@@ -227,6 +227,23 @@ export interface GatewayAttachment {
 }
 
 /**
+ * ONE artifact a tool call PRODUCED (a matplotlib figure, a `vis_attach`ed
+ * image/file), as the gateway's byte-free descriptor. It ships identically on
+ * the live `iteration.completed` frame and on the persisted transcript, so a
+ * produced image renders the same live and in history. The bytes are lazy:
+ * `GatewayClient.attachmentUrl(sid, iteration_id, index)`.
+ */
+export interface IterationAttachment {
+  index: number;
+  iteration_id?: string;
+  tool_call_id?: string;
+  kind?: string;
+  media_type?: string;
+  filename?: string;
+  size?: number;
+}
+
+/**
  * The gateway's version contract, mirrored from
  * `com.blockether.vis.internal.gateway.protocol`. `protocol` is the wire
  * number it speaks; `min_client` / `min_gateway` are the oldest counterparts it
@@ -427,6 +444,8 @@ export interface TranscriptIteration {
   answer?: string;
   code?: string;
   forms?: TranscriptForm[];
+  /** Artifacts this iteration's tool calls produced (bytes fetched lazily). */
+  attachments?: IterationAttachment[];
   duration_ms?: number;
   cost_usd?: number;
   error?: JsonValue;

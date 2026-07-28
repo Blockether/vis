@@ -84,14 +84,15 @@
 (defdescribe struct-patch-vs-zipper-test
              (doseq [[ext src code] converge-bank]
                (it (str ext " name-based struct_patch and path-based sexpr_edit converge")
-                   (let [path (str "f." ext)
-                         lang (z/detect-language path)
-                         ;; Rust StructuralApi, by NAME
-                         via-struct
-                         (structural/edit-source path src {:op :replace :target "add" :code code})
-                         ;; FFM jtreesitter zipper, by PATH to the same node
-                         i (node-idx-of lang src "add")
-                         via-zipper (:new-source (z/edit lang src [i] :replace code))]
+                   (let
+                     [path (str "f." ext)
+                      lang (z/detect-language path)
+                      ;; Rust StructuralApi, by NAME
+                      via-struct
+                      (structural/edit-source path src {:op :replace :target "add" :code code})
+                      ;; FFM jtreesitter zipper, by PATH to the same node
+                      i (node-idx-of lang src "add")
+                      via-zipper (:new-source (z/edit lang src [i] :replace code))]
 
                      (expect (some? i))
                      (expect (string? via-struct))
@@ -115,11 +116,12 @@
 (defdescribe treesitter-vs-clojure-reader-test
              (doseq [src clj-srcs]
                (it "every top-level form node read-backs to the reader's form (boundaries match)"
-                   (let [reader-forms (read-forms src)
-                         node-forms (->> (:children (z/inspect "clojure" src []))
-                                         (map #(z/inspect "clojure" src [(:idx %)]))
-                                         (map :text)
-                                         (map read-string))]
+                   (let
+                     [reader-forms (read-forms src)
+                      node-forms (->> (:children (z/inspect "clojure" src []))
+                                      (map #(z/inspect "clojure" src [(:idx %)]))
+                                      (map :text)
+                                      (map read-string))]
 
                      ;; same count of top-level forms ...
                      (expect (= (count reader-forms) (count node-forms)))

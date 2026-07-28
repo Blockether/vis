@@ -41,8 +41,8 @@
 (defn model-files
   ([] (model-files (model-dir)))
   ([dir]
-   ;; `/`-separated on every OS — Windows native loaders accept `/`, and the
-   ;; model address stays identical across platforms.
+   ;; `/`-separated on every OS, so the model address stays identical across
+   ;; platforms.
    (let
      [p (fn [name]
           (paths/unixify (io/file dir name)))]

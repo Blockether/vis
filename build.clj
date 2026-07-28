@@ -305,7 +305,7 @@
 ;;
 ;; Embedded GraalPy + dynamic extension loading make this non-trivial; see the
 ;; `:native` alias (graal-build-time) and `native-image-args`. Cross-platform:
-;; the same `uber`/`native` tasks run on Linux/macOS/Windows; CI matrixes them.
+;; the same `uber`/`native` tasks run on Linux/macOS; CI matrixes them.
 ;; =============================================================================
 
 (def ^:private native-class-dir "target/native-classes")
@@ -325,34 +325,21 @@
    ;; runs with its cwd inside a source tree; must never ship
    ".*\\.omc/.*"])
 
-(def ^:private native-bin
-  (str "target/vis"
-       (when (str/includes? (str/lower-case (System/getProperty "os.name")) "windows") ".exe")))
+(def ^:private native-bin "target/vis")
 
 (defn- native-image-command
   "The native-image launcher to invoke via `b/process` (Java ProcessBuilder).
-   On Windows the GraalVM launcher is a `native-image.cmd` batch script, and
-   ProcessBuilder does NOT apply PATHEXT resolution to a bare `native-image` —
-   it dies with `CreateProcess error=2, The system cannot find the file
-   specified` (exactly why every Windows native build failed while Linux/macOS
-   — which have a real `native-image` binary — succeeded). Resolve the concrete
-   launcher from GRAALVM_HOME / JAVA_HOME (…/bin/native-image[.cmd]); fall back
-   to the platform-correct bare name."
+   Resolve the concrete launcher from GRAALVM_HOME / JAVA_HOME
+   (…/bin/native-image); fall back to the bare name on PATH."
   []
   (let
-    [windows?
-     (str/includes? (str/lower-case (System/getProperty "os.name")) "windows")
-
-     exe
-     (if windows? "native-image.cmd" "native-image")
-
-     home
+    [home
      (or (System/getenv "GRAALVM_HOME") (System/getenv "JAVA_HOME"))
 
      launcher
-     (when home (io/file home "bin" exe))]
+     (when home (io/file home "bin" "native-image"))]
 
-    (if (and launcher (.isFile launcher)) (.getAbsolutePath launcher) exe)))
+    (if (and launcher (.isFile launcher)) (.getAbsolutePath launcher) "native-image")))
 
 (def ^:private graal-pin
   "The `.graalvm-version` pin, parsed. That file is the SINGLE source of truth for
@@ -518,9 +505,8 @@
      files
      (->> (file-seq (io/file "extensions"))
           (filter (fn [^java.io.File f]
-                    ;; normalize separators: on Windows File/toString uses
-                    ;; `\`, so a forward-slash substring check would match
-                    ;; nothing and silently merge zero manifests.
+                    ;; normalize separators so a forward-slash substring check
+                    ;; can never silently merge zero manifests.
                     (let [p (str/replace (str f) "\\" "/")]
                       (and (= "vis.edn" (.getName f))
                            (str/includes? p "META-INF/vis-extension")
@@ -766,8 +752,7 @@
 
 (defn- native-lib-token
   "Host-platform suffix for the blockether FFM native artifacts
-   (`<lib>-native-<token>`): darwin-arm64 / darwin-x64 / linux-x64 / linux-arm64
-   / windows-x64."
+   (`<lib>-native-<token>`): darwin-arm64 / darwin-x64 / linux-x64 / linux-arm64."
   []
   (let
     [os
@@ -783,7 +768,6 @@
 
      o
      (cond (str/includes? os "mac") "darwin"
-           (str/includes? os "win") "windows"
            :else "linux")]
 
     (str o "-" a)))
@@ -791,8 +775,8 @@
 (defn- pack-native-token
   "tree-sitter-language-pack native artifact suffix for the build host. The
    pack publishes its OWN rid scheme (macos-arm64 / macos-x86_64 /
-   linux-aarch64 / linux-x86_64 / windows-x86_64) — NOT the fff/rift/ruff
-   darwin-arm64 style; both verified against the Clojars artifact list."
+   linux-aarch64 / linux-x86_64) — NOT the fff/rift/ruff darwin-arm64 style;
+   both verified against the Clojars artifact list."
   []
   (let
     [os
@@ -805,7 +789,6 @@
      (boolean (#{"aarch64" "arm64"} arch))]
 
     (cond (str/includes? os "mac") (str "macos-" (if arm? "arm64" "x86_64"))
-          (str/includes? os "win") "windows-x86_64"
           :else (str "linux-" (if arm? "aarch64" "x86_64")))))
 
 (defn- native-lib-jars
@@ -904,7 +887,7 @@
 
 (defn- native-platform-token
   "sherpa-onnx / onnxruntime native-lib dir token for the BUILD host
-   (e.g. `osx-aarch64`, `linux-x64`, `win-x64`). Both jars use this layout."
+   (e.g. `osx-aarch64`, `linux-x64`). Both jars use this layout."
   []
   (let
     [os
@@ -919,13 +902,12 @@
            :else arch)]
 
     (cond (str/includes? os "mac") (str "osx-" a)
-          (str/includes? os "win") (str "win-" a)
           :else (str "linux-" a))))
 
 (defn- truffle-platform-tokens
   "[os arch] the GraalPy/Truffle internal-resource dirs use under
    META-INF/resources/ (verified against python-resources jar layout):
-   darwin|linux|windows / aarch64|amd64."
+   darwin|linux / aarch64|amd64."
   []
   (let
     [os
@@ -935,7 +917,6 @@
      (str/lower-case (System/getProperty "os.arch"))]
 
     [(cond (str/includes? os "mac") "darwin"
-           (str/includes? os "win") "windows"
            :else "linux") (if (#{"aarch64" "arm64"} arch) "aarch64" "amd64")]))
 
 ;; Voice (ASR) assets. The model is downloaded on first use by default; the
@@ -1041,7 +1022,7 @@
              (str/split #"\s+"))]
 
     (cond->
-      ["-cp" (native-classpath basis) "-o" (str/replace native-bin #"\.exe$" "")
+      ["-cp" (native-classpath basis) "-o" native-bin
        "-H:IncludeResources=META-INF/vis-extension/.*" "-H:IncludeResources=.*\\.edn$"
        ;; the build-written `vis/VERSION` (git sha) read by `vis --version`
        "-H:IncludeResources=vis/VERSION"
@@ -1066,7 +1047,7 @@
        ;; GraalPy/Truffle per-platform internal-resource manifests.
        ;; These used to ride in via the macOS agent trace with
        ;; darwin/aarch64 HARDCODED — which embedded the Mac entries
-       ;; into Linux/Windows images (python-resources ships every
+       ;; into Linux images (python-resources ships every
        ;; platform's dirs in one jar) and left the build host's own
        ;; manifests out everywhere else. Host-parameterized instead.
        (str "-H:IncludeResources=META-INF/resources/" t-os "/" t-arch "/native.sha256")
@@ -1174,7 +1155,7 @@
 (defn native
   "Build BOTH vis distributions in one shot:
      1. `target/vis.jar`  — portable JVM uberjar (LOCAL `vis --jvm` fallback, not shipped)
-     2. `target/vis`      — standalone native binary (`target/vis.exe` on Windows)
+     2. `target/vis`      — standalone native binary
    They share one AOT pass. Requires `native-image` on PATH (Oracle GraalVM /
    GraalVM CE 25+) and ≥16 GB RAM (GraalPy's libpythonvm needs -Xms14g).
    `bin/vis` then proxies to the native binary by default.

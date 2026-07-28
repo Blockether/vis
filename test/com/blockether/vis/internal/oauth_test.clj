@@ -11,13 +11,14 @@
       (expect (not (oauth/fresh-within? nil)))
       (expect (not (oauth/fresh-within? "nope"))))
   (it "single-flight! reuses when reuse returns non-nil, else refreshes"
-      (let [ran
-            (atom 0)
+      (let
+        [ran
+         (atom 0)
 
-            refresh!
-            (fn []
-              (swap! ran inc)
-              {:token "fresh"})]
+         refresh!
+         (fn []
+           (swap! ran inc)
+           {:token "fresh"})]
 
         (expect (= {:token "cached"}
                    (oauth/single-flight! (oauth/new-lock)
@@ -32,61 +33,63 @@
                                          refresh!)))
         (expect (= 1 @ran))))
   (it "make-file-refresher collapses a concurrent burst into ONE exchange"
-      (let [exchanges
-            (atom 0)
+      (let
+        [exchanges
+         (atom 0)
 
-            saved
-            (atom nil)
+         saved
+         (atom nil)
 
-            r
-            (oauth/make-file-refresher
-              {:load (fn []
-                       (or @saved {:refresh-token "R"}))
-               :saved-at :saved-at-ms
-               :refresh-token :refresh-token
-               :exchange! (fn [_]
-                            (swap! exchanges inc)
-                            (Thread/sleep 40)
-                            {:access-token "T"})
-               :persist! (fn [c]
-                           (reset! saved (assoc c :saved-at-ms (System/currentTimeMillis))))
-               :->token (fn [c]
-                          {:token (:access-token c)})
-               :no-token! #(throw (ex-info "no token" {}))})
+         r
+         (oauth/make-file-refresher
+           {:load (fn []
+                    (or @saved {:refresh-token "R"}))
+            :saved-at :saved-at-ms
+            :refresh-token :refresh-token
+            :exchange! (fn [_]
+                         (swap! exchanges inc)
+                         (Thread/sleep 40)
+                         {:access-token "T"})
+            :persist! (fn [c]
+                        (reset! saved (assoc c :saved-at-ms (System/currentTimeMillis))))
+            :->token (fn [c]
+                       {:token (:access-token c)})
+            :no-token! #(throw (ex-info "no token" {}))})
 
-            results
-            (mapv deref
-                  (mapv (fn [_]
-                          (future (r)))
-                        (range 40)))]
+         results
+         (mapv deref
+               (mapv (fn [_]
+                       (future (r)))
+                     (range 40)))]
 
         (expect (= 1 @exchanges))
         (expect (every? #(= {:token "T"} %) results))))
   (it
     "make-file-refresher never REUSES the just-rejected token, but still reuses a different one"
-    (let [exchanges
-          (atom 0)
+    (let
+      [exchanges
+       (atom 0)
 
-          ;; on-file token is locally FRESH (saved just now) but DEAD
-          ;; server-side — exactly the timing bug: plain freshness reuse
-          ;; would hand it straight back.
-          saved
-          (atom {:access-token "DEAD" :refresh-token "R" :saved-at-ms (System/currentTimeMillis)})
+       ;; on-file token is locally FRESH (saved just now) but DEAD
+       ;; server-side — exactly the timing bug: plain freshness reuse
+       ;; would hand it straight back.
+       saved
+       (atom {:access-token "DEAD" :refresh-token "R" :saved-at-ms (System/currentTimeMillis)})
 
-          r
-          (oauth/make-file-refresher
-            {:load (fn []
-                     @saved)
-             :saved-at :saved-at-ms
-             :refresh-token :refresh-token
-             :exchange! (fn [_]
-                          (swap! exchanges inc)
-                          {:access-token "FRESH" :refresh-token "R2"})
-             :persist! (fn [c]
-                         (reset! saved (assoc c :saved-at-ms (System/currentTimeMillis))))
-             :->token (fn [c]
-                        {:token (:access-token c)})
-             :no-token! #(throw (ex-info "no token" {}))})]
+       r
+       (oauth/make-file-refresher
+         {:load (fn []
+                  @saved)
+          :saved-at :saved-at-ms
+          :refresh-token :refresh-token
+          :exchange! (fn [_]
+                       (swap! exchanges inc)
+                       {:access-token "FRESH" :refresh-token "R2"})
+          :persist! (fn [c]
+                      (reset! saved (assoc c :saved-at-ms (System/currentTimeMillis))))
+          :->token (fn [c]
+                     {:token (:access-token c)})
+          :no-token! #(throw (ex-info "no token" {}))})]
 
       ;; 0-arity: no rejected token -> plain freshness reuse hands back DEAD.
       (expect (= {:token "DEAD"} (r)))
@@ -101,28 +104,29 @@
       (expect (= 1 @exchanges))))
   (it
     "make-file-refresher PROPAGATES an exchange failure on 401 recovery — never swallows it nor hands back the dead token"
-    (let [saved
-          (atom {:access-token "DEAD" :refresh-token "R" :saved-at-ms (System/currentTimeMillis)})
+    (let
+      [saved
+       (atom {:access-token "DEAD" :refresh-token "R" :saved-at-ms (System/currentTimeMillis)})
 
-          exchanges
-          (atom 0)
+       exchanges
+       (atom 0)
 
-          r
-          (oauth/make-file-refresher
-            {:load (fn []
-                     @saved)
-             :saved-at :saved-at-ms
-             :refresh-token :refresh-token
-             ;; dead/rotated refresh_token -> the server rejects the exchange
-             ;; (HTTP 400 invalid_grant). The refresh genuinely cannot recover.
-             :exchange! (fn [_]
-                          (swap! exchanges inc)
-                          (throw (ex-info "invalid_grant" {:status 400})))
-             :persist! (fn [c]
-                         (reset! saved (assoc c :saved-at-ms (System/currentTimeMillis))))
-             :->token (fn [c]
-                        {:token (:access-token c)})
-             :no-token! #(throw (ex-info "no token" {}))})]
+       r
+       (oauth/make-file-refresher
+         {:load (fn []
+                  @saved)
+          :saved-at :saved-at-ms
+          :refresh-token :refresh-token
+          ;; dead/rotated refresh_token -> the server rejects the exchange
+          ;; (HTTP 400 invalid_grant). The refresh genuinely cannot recover.
+          :exchange! (fn [_]
+                       (swap! exchanges inc)
+                       (throw (ex-info "invalid_grant" {:status 400})))
+          :persist! (fn [c]
+                      (reset! saved (assoc c :saved-at-ms (System/currentTimeMillis))))
+          :->token (fn [c]
+                     {:token (:access-token c)})
+          :no-token! #(throw (ex-info "no token" {}))})]
 
       ;; On 401 recovery we reject DEAD, so reuse can't short-circuit: the real
       ;; exchange runs, fails, and the failure MUST surface (so the turn loop's
@@ -132,89 +136,89 @@
       (expect (= 1 @exchanges))))
   (it
     "two refreshers (different providers) refresh IN PARALLEL — no shared lock"
-    (let [mk
-          (fn [c]
-            (oauth/make-file-refresher {:load (fn []
-                                                {:refresh-token "R" :saved-at-ms 0})
-                                        :saved-at :saved-at-ms
-                                        :refresh-token :refresh-token
-                                        :exchange! (fn [_]
-                                                     (swap! c inc)
-                                                     (Thread/sleep 250)
-                                                     {:access-token "T" :saved-at-ms 0})
-                                        :persist! identity
-                                        :->token (fn [a]
-                                                   {:token (:access-token a)})
-                                        :no-token! #(throw (ex-info "no" {}))}))
+    (let
+      [mk
+       (fn [c]
+         (oauth/make-file-refresher {:load (fn []
+                                             {:refresh-token "R" :saved-at-ms 0})
+                                     :saved-at :saved-at-ms
+                                     :refresh-token :refresh-token
+                                     :exchange! (fn [_]
+                                                  (swap! c inc)
+                                                  (Thread/sleep 250)
+                                                  {:access-token "T" :saved-at-ms 0})
+                                     :persist! identity
+                                     :->token (fn [a]
+                                                {:token (:access-token a)})
+                                     :no-token! #(throw (ex-info "no" {}))}))
 
-          a
-          (mk (atom 0))
+       a
+       (mk (atom 0))
 
-          b
-          (mk (atom 0))
+       b
+       (mk (atom 0))
 
-          t0
-          (System/currentTimeMillis)
+       t0
+       (System/currentTimeMillis)
 
-          fa
-          (future (a))
+       fa
+       (future (a))
 
-          fb
-          (future (b))]
+       fb
+       (future (b))]
 
       @fa
       @fb
       ;; serialized by a shared lock would be ~500ms; independent locks ~250ms
       (expect (< (- (System/currentTimeMillis) t0) 480))))
   (it "make-file-refresher throws via :no-token! when no refresh token"
-      (let [r (oauth/make-file-refresher {:load (fn []
-                                                  {})
-                                          :saved-at :saved-at-ms
-                                          :refresh-token :refresh-token
-                                          :exchange! (fn [_]
-                                                       {:access-token "T"})
-                                          :persist! identity
-                                          :->token (fn [c]
-                                                     {:token (:access-token c)})
-                                          :no-token! #(throw (ex-info "no refresh token"
-                                                                      {:type :test/no-token}))})]
+      (let
+        [r (oauth/make-file-refresher {:load (fn []
+                                               {})
+                                       :saved-at :saved-at-ms
+                                       :refresh-token :refresh-token
+                                       :exchange! (fn [_]
+                                                    {:access-token "T"})
+                                       :persist! identity
+                                       :->token (fn [c]
+                                                  {:token (:access-token c)})
+                                       :no-token! #(throw (ex-info "no refresh token"
+                                                                   {:type :test/no-token}))})]
         (expect (throws? clojure.lang.ExceptionInfo r))))
   (it
     "make-file-refresher with :lock-path collapses a burst into ONE exchange and creates the lock file"
-    (let [lock-path
-          (str (System/getProperty "java.io.tmpdir")
-               "/vis-oauth-lock-test-"
-               (System/nanoTime)
-               ".lock")
+    (let
+      [lock-path
+       (str (System/getProperty "java.io.tmpdir") "/vis-oauth-lock-test-" (System/nanoTime) ".lock")
 
-          exchanges
-          (atom 0)
+       exchanges
+       (atom 0)
 
-          saved
-          (atom nil)
+       saved
+       (atom nil)
 
-          r
-          (oauth/make-file-refresher
-            {:load (fn []
-                     (or @saved {:refresh-token "R"}))
-             :lock-path lock-path
-             :saved-at :saved-at-ms
-             :refresh-token :refresh-token
-             :exchange! (fn [_]
-                          (swap! exchanges inc)
-                          (Thread/sleep 40)
-                          {:access-token "T"})
-             :persist! (fn [c]
-                         (reset! saved (assoc c :saved-at-ms (System/currentTimeMillis))))
-             :->token (fn [c]
-                        {:token (:access-token c)})
-             :no-token! #(throw (ex-info "no token" {}))})
+       r
+       (oauth/make-file-refresher
+         {:load (fn []
+                  (or @saved {:refresh-token "R"}))
+          :lock-path lock-path
+          :saved-at :saved-at-ms
+          :refresh-token :refresh-token
+          :exchange! (fn [_]
+                       (swap! exchanges inc)
+                       (Thread/sleep 40)
+                       {:access-token "T"})
+          :persist! (fn [c]
+                      (reset! saved (assoc c :saved-at-ms (System/currentTimeMillis))))
+          :->token (fn [c]
+                     {:token (:access-token c)})
+          :no-token! #(throw (ex-info "no token" {}))})
 
-          results
-          (mapv deref
-                (mapv (fn [_]
-                        (future (r)))
-                      (range 20)))]
+       results
+       (mapv deref
+             (mapv (fn [_]
+                     (future (r)))
+                   (range 20)))]
 
       (expect (= 1 @exchanges))
       (expect (every? #(= {:token "T"} %) results))
@@ -248,14 +252,16 @@
   (it "gives up on a peer that holds the lock and runs f unlocked"
       ;; `try-lock!` returning nil is exactly what a FOREIGN process holding the
       ;; POSIX lock looks like; the real `.lock` parked here forever.
-      (with-redefs [oauth/try-lock! (fn [_ch]
-                                      nil)]
-        (let [t0 (System/currentTimeMillis)
-              res (oauth/call-with-file-lock (temp-lock-path)
-                                             300
-                                             (fn []
-                                               :ran))
-              ms (- (System/currentTimeMillis) t0)]
+      (with-redefs
+        [oauth/try-lock! (fn [_ch]
+                           nil)]
+        (let
+          [t0 (System/currentTimeMillis)
+           res (oauth/call-with-file-lock (temp-lock-path)
+                                          300
+                                          (fn []
+                                            :ran))
+           ms (- (System/currentTimeMillis) t0)]
 
           (expect (= :ran res))
           (expect (>= ms 300))
@@ -269,41 +275,42 @@
                  (oauth/call-with-file-lock nil
                                             (fn []
                                               :ran)))))
-  (it
-    "an interrupt while waiting aborts without running f and leaks no handle"
-    ;; Cancellation is the ONE input that must not degrade to "run unlocked": a
-    ;; rotating exchange fired on a thread that is being torn down spends the
-    ;; refresh token for nobody. It must also not leak the lock-file handle —
-    ;; an fd left to the GC keeps the OS advisory lock alive for an unbounded
-    ;; time, stalling the peer process this lock exists to coordinate with.
-    (with-redefs [oauth/try-lock! (fn [_ch]
-                                    nil)]
-      (let [path (temp-lock-path)
-            os (java.lang.management.ManagementFactory/getOperatingSystemMXBean)
-            fds (fn []
-                  (when (instance? com.sun.management.UnixOperatingSystemMXBean os)
-                    (.getOpenFileDescriptorCount ^com.sun.management.UnixOperatingSystemMXBean os)))
-            before (fds)
-            ran (atom 0)
-            seen (atom [])
-            threads (doall (for [_ (range 25)]
-                             (doto (Thread. #(try (oauth/call-with-file-lock path
-                                                                             60000
-                                                                             (fn []
-                                                                               (swap! ran inc)))
-                                                  (catch Throwable t
-                                                    (swap! seen conj
-                                                      [(class t)
-                                                       (.isInterrupted (Thread/currentThread))]))))
-                               (.start))))]
+  (it "an interrupt while waiting aborts without running f and leaks no handle"
+      ;; Cancellation is the ONE input that must not degrade to "run unlocked": a
+      ;; rotating exchange fired on a thread that is being torn down spends the
+      ;; refresh token for nobody. It must also not leak the lock-file handle —
+      ;; an fd left to the GC keeps the OS advisory lock alive for an unbounded
+      ;; time, stalling the peer process this lock exists to coordinate with.
+      (with-redefs
+        [oauth/try-lock! (fn [_ch]
+                           nil)]
+        (let
+          [path (temp-lock-path)
+           os (java.lang.management.ManagementFactory/getOperatingSystemMXBean)
+           fds (fn []
+                 (when (instance? com.sun.management.UnixOperatingSystemMXBean os)
+                   (.getOpenFileDescriptorCount ^com.sun.management.UnixOperatingSystemMXBean os)))
+           before (fds)
+           ran (atom 0)
+           seen (atom [])
+           threads (doall (for [_ (range 25)]
+                            (doto (Thread. #(try (oauth/call-with-file-lock path
+                                                                            60000
+                                                                            (fn []
+                                                                              (swap! ran inc)))
+                                                 (catch Throwable t
+                                                   (swap! seen conj
+                                                     [(class t)
+                                                      (.isInterrupted (Thread/currentThread))]))))
+                              (.start))))]
 
-        (Thread/sleep 200)
-        (doseq [^Thread t threads]
-          (.interrupt t))
-        (doseq [^Thread t threads]
-          (.join t 5000))
-        (expect (= 0 @ran))
-        (expect (= {[InterruptedException true] 25} (frequencies @seen)))
-        (when before
-          ;; Pre-fix this grew by one fd per interrupted acquisition.
-          (expect (< (- (fds) before) 10)))))))
+          (Thread/sleep 200)
+          (doseq [^Thread t threads]
+            (.interrupt t))
+          (doseq [^Thread t threads]
+            (.join t 5000))
+          (expect (= 0 @ran))
+          (expect (= {[InterruptedException true] 25} (frequencies @seen)))
+          (when before
+            ;; Pre-fix this grew by one fd per interrupted acquisition.
+            (expect (< (- (fds) before) 10)))))))

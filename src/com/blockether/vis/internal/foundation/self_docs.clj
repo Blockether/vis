@@ -57,22 +57,23 @@ Both arities return the same `{\"pages\": [...]}` shape. Slug matching tolerates
 Vis's OWN documentation (features, configuration, extending vis). Use ONLY for questions about vis itself, never for the host project."
   ([] (extension/success {:result {"pages" (listing (pages))}}))
   ([slug]
-   (let [ps
-         (pages)
+   (let
+     [ps
+      (pages)
 
-         want
-         (normalize-slug slug)]
+      want
+      (normalize-slug slug)]
 
      (cond
        ;; blank/absent slug (nil, "", {}, whitespace-only) == the no-arg
        ;; "list pages" ask the help advertises — return the index, don't error.
        (str/blank? want) (extension/success {:result {"pages" (listing ps)}})
        :else (if-let [page (some #(when (= want (normalize-slug (:slug %))) %) ps)]
-               (extension/success {:result {"pages" [(cond-> {"slug" (:slug page)
-                                                              "title" (:title page)
-                                                              "content" (:md page)}
-                                                       (:section page)
-                                                       (assoc "section" (:section page)))]}})
+               (extension/success
+                 {:result {"pages"
+                           [(cond-> {"slug" (:slug page) "title" (:title page) "content" (:md page)}
+                              (:section page)
+                              (assoc "section" (:section page)))]}})
                (extension/failure {:result nil
                                    :error {:message (str "Unknown vis docs slug " (pr-str want) ".")
                                            :hint (str
@@ -84,10 +85,11 @@ Vis's OWN documentation (features, configuration, extending vis). Use ONLY for q
   "One-line, pipe-escaped, length-capped text for a GFM table cell (the TUI
    table painter draws cells as plain text, so no inline markdown here)."
   [s max-len]
-  (let [s (-> (str s)
-              (str/replace #"\s+" " ")
-              str/trim
-              (str/replace "|" "\\|"))]
+  (let
+    [s (-> (str s)
+           (str/replace #"\s+" " ")
+           str/trim
+           (str/replace "|" "\\|"))]
     (if (> (count s) (long max-len)) (str (subs s 0 (max 0 (dec (long max-len)))) "…") s)))
 
 (defn- render-vis-docs
@@ -99,26 +101,28 @@ Vis's OWN documentation (features, configuration, extending vis). Use ONLY for q
   [r]
   (when-let [ps (get r "pages")]
     (if (and (= 1 (count ps)) (get (first ps) "content"))
-      (let [p (first ps)
-            title (not-empty (str (get p "title")))
-            section (not-empty (str (get p "section")))
-            slug (str (get p "slug"))]
+      (let
+        [p (first ps)
+         title (not-empty (str (get p "title")))
+         section (not-empty (str (get p "section")))
+         slug (str (get p "slug"))]
 
         {:summary (str (or title slug) (when section (str " · " section)))
          :body (str (get p "content"))})
-      (let [n (count ps)
-            header ["| Slug | Section | Title | Blurb |" "|------|---------|-------|-------|"]
-            rows (map (fn [p]
-                        (str "| "
-                             (docs-cell (get p "slug") 28)
-                             " | "
-                             (docs-cell (or (not-empty (str (get p "section"))) "—") 16)
-                             " | "
-                             (docs-cell (get p "title") 40)
-                             " | "
-                             (docs-cell (or (get p "blurb") "—") 90)
-                             " |"))
-                      ps)]
+      (let
+        [n (count ps)
+         header ["| Slug | Section | Title | Blurb |" "|------|---------|-------|-------|"]
+         rows (map (fn [p]
+                     (str "| "
+                          (docs-cell (get p "slug") 28)
+                          " | "
+                          (docs-cell (or (not-empty (str (get p "section"))) "—") 16)
+                          " | "
+                          (docs-cell (get p "title") 40)
+                          " | "
+                          (docs-cell (or (get p "blurb") "—") 90)
+                          " |"))
+                   ps)]
 
         {:summary (str n " vis docs page" (when (not= 1 n) "s"))
          :body (str/join "\n" (concat header rows))}))))

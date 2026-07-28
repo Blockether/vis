@@ -326,10 +326,6 @@
           require-token?
           (conj "--require-token")))))
 
-(defn- unix?
-  []
-  (not (str/starts-with? (str/lower-case (System/getProperty "os.name" "")) "windows")))
-
 (defn- sh-quote
   "Single-quote `s` for a POSIX shell."
   ^String [s]
@@ -392,18 +388,13 @@
      (io/file (registry-dir) (str (registry-key db) ".log"))
 
      pb
-     (if (unix?)
-       (ProcessBuilder. ^java.util.List (vec (unix-launch-cmd argv (.getPath log))))
-       (ProcessBuilder. ^java.util.List (vec argv)))]
+     (ProcessBuilder. ^java.util.List (vec (unix-launch-cmd argv (.getPath log))))]
 
-    (if (unix?)
-      ;; The daemon's own stdio is redirected to `log` by the shell command;
-      ;; discard only the throwaway wrapper shell's stdio.
-      (doto pb
-        (.redirectOutput ProcessBuilder$Redirect/DISCARD)
-        (.redirectError ProcessBuilder$Redirect/DISCARD))
-      ;; No shell wrapper here: send the daemon's own stdout+stderr to `log`.
-      (doto pb (.redirectErrorStream true) (.redirectOutput (ProcessBuilder$Redirect/to log))))
+    ;; The daemon's own stdio is redirected to `log` by the shell command;
+    ;; discard only the throwaway wrapper shell's stdio.
+    (doto pb
+      (.redirectOutput ProcessBuilder$Redirect/DISCARD)
+      (.redirectError ProcessBuilder$Redirect/DISCARD))
     ;; Marks this `vis gateway start` as client-managed rather than a user-owned
     ;; foreground daemon. The daemon should self-reap when the last client dies;
     ;; a manually-run `vis gateway start` must not.

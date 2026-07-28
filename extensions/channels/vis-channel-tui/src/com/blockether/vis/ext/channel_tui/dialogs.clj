@@ -4436,11 +4436,10 @@
           (str/replace #"\s+" " ")
           str/trim
           not-empty
-          (as-> s
-                (let [s (or (not-empty (str (re-find #"^.*?[.!?\u2026](?=\s|$)" s))) s)]
-                  (if (> (count s) (long navigator-opening-max))
-                    (str (subs s 0 (long navigator-opening-max)) "\u2026")
-                    s)))))
+          (as-> s (let [s (or (not-empty (str (re-find #"^.*?[.!?\u2026](?=\s|$)" s))) s)]
+                    (if (> (count s) (long navigator-opening-max))
+                      (str (subs s 0 (long navigator-opening-max)) "\u2026")
+                      s)))))
 
 (def ^:private session-dialog-content-w 96)
 

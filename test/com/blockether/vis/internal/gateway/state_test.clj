@@ -2048,3 +2048,69 @@
           (let [res (deref (future (state/submit-turn-sync! "sid-settled" {})) 2000 ::pending)]
             (expect (not= ::pending res))
             (expect (nil? (get res "error"))))))))
+
+(defdescribe
+  live-block-close-per-iteration-test
+  "A live reasoning/prose block must be CLOSED at the iteration boundary that
+   ended it, not held open until the turn's terminal flush. A 72-iteration turn
+   used to stream 146 half-open blocks for ten minutes and close them all in a
+   single burst right before `turn.completed`, so every consumer that paints an
+   open reasoning block as live kept the LAST thinking on screen as if the work
+   had never finished."
+  (it
+    "closes each iteration's block at its own iteration.completed"
+    (let
+      [sid
+       (str (random-uuid))
+
+       tid
+       (str (random-uuid))]
+
+      (swap! @#'state/registry assoc
+        sid
+        {:next-seq 0
+         :events []
+         :subscribers {}
+         :turns {tid {:turn_id tid :status "running"}}
+         :turn-order [tid]
+         :current-turn tid})
+      (with-redefs
+        [lp/send!
+         (fn [_ _ opts]
+           (let [on-chunk (get-in opts [:hooks :on-chunk])]
+             (on-chunk {:phase :reasoning :iteration 1 :thinking "alpha."})
+             (on-chunk {:phase :iteration-final :iteration 1 :thinking "alpha." :done? false})
+             (on-chunk {:phase :reasoning :iteration 2 :thinking "beta."})
+             (on-chunk {:phase :iteration-final :iteration 2 :thinking "beta." :done? true}))
+           {:status :ok :answer nil})]
+        (#'state/run-turn! sid tid "hi" {}))
+      (let
+        [types
+         (mapv #(get % "type") (:events (get @@#'state/registry sid)))
+
+         completed-idx
+         (fn [iteration]
+           (first (keep-indexed (fn [idx event]
+                                  (when (and (= "content.block.completed" (get event "type"))
+                                             (str/ends-with? (str (get event "block_id"))
+                                                             (str ":" iteration)))
+                                    idx))
+                                (:events (get @@#'state/registry sid)))))
+
+         idx-of
+         (fn [type]
+           (first (keep-indexed #(when (= type %2) %1) types)))
+
+         started-idxs
+         (keep-indexed #(when (= "content.block.started" %2) %1) types)
+
+         terminal-idx
+         (idx-of "turn.completed")]
+
+        ;; Every started block is closed exactly once.
+        (expect (= (count (filter #{"content.block.started"} types))
+                   (count (filter #{"content.block.completed"} types))))
+        ;; …and iteration 1's block closes BEFORE iteration 2 even starts,
+        ;; instead of waiting for the terminal flush.
+        (expect (< (long (completed-idx 1)) (long (second started-idxs))))
+        (expect (< (long (completed-idx 2)) (long terminal-idx)))))))

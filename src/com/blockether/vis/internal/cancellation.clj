@@ -46,17 +46,18 @@
    losing timeout/cancellation behavior."
   ([f] (worker-future "vis-worker" f))
   ([name f]
-   (let [task
-         (java.util.concurrent.FutureTask. ^java.util.concurrent.Callable
-                                           (reify
-                                             java.util.concurrent.Callable
-                                               (call [_] (f))))
+   (let
+     [task
+      (java.util.concurrent.FutureTask. ^java.util.concurrent.Callable
+                                        (reify
+                                          java.util.concurrent.Callable
+                                            (call [_] (f))))
 
-         _runner
-         (if (virtual-threads-available?)
-           (let [m (.getMethod Thread "startVirtualThread" (into-array Class [Runnable]))]
-             (.invoke m nil (object-array [task])))
-           (doto (Thread. ^Runnable task (str name)) (.setDaemon true) (.start)))]
+      _runner
+      (if (virtual-threads-available?)
+        (let [m (.getMethod Thread "startVirtualThread" (into-array Class [Runnable]))]
+          (.invoke m nil (object-array [task])))
+        (doto (Thread. ^Runnable task (str name)) (.setDaemon true) (.start)))]
 
      (reify
        java.util.concurrent.Future
@@ -124,12 +125,13 @@
   (when (and token (fn? thunk))
     (if (cancelled? token)
       (do (try (thunk) (catch Throwable _ nil)) (constantly nil))
-      (let [cb-id
-            (Object.)
+      (let
+        [cb-id
+         (Object.)
 
-            ; identity key; survives equal-by-value collisions
-            callbacks
-            (::callbacks token)]
+         ; identity key; survives equal-by-value collisions
+         callbacks
+         (::callbacks token)]
 
         (swap! callbacks conj [cb-id thunk])
         (fn dispose! []

@@ -28,11 +28,13 @@ import { formatCost, formatTokens, turnUsage } from '../lib/usage';
 import type {
   ContentBlock,
   GatewayAttachment,
+  IterationAttachment,
   JsonValue,
   TranscriptForm,
   TranscriptIteration,
   TranscriptTurn,
 } from '../lib/types';
+import type { GatewayClient } from '../lib/gateway';
 
 const disclosureClass =
   'inline-block shrink-0 text-ui transition-transform duration-150 group-open:rotate-90';
@@ -841,12 +843,98 @@ export const ThinkingBand = memo(function ThinkingBand({ children }: { children:
   );
 });
 
+function attachmentIsImage(attachment: IterationAttachment): boolean {
+  const media = attachment.media_type ?? '';
+  return media ? media.startsWith('image/') : attachment.kind === 'image';
+}
+
+// ONE artifact a tool call produced (a matplotlib figure, a `vis_attach`ed
+// image). The gateway ships descriptors only, never bytes, so the picture is
+// pulled from the attachment endpoint on first paint — with the auth headers an
+// `<img src>` cannot carry, hence the object URL. This is the app's twin of the
+// TUI's inline image: the SAME produced artifact, painted where it was made.
+const AttachmentTile = memo(function AttachmentTile({
+  client,
+  sid,
+  attachment,
+}: {
+  client: GatewayClient;
+  sid: string;
+  attachment: IterationAttachment;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  // Bumped when the browser refuses the URL we handed it — the client's object
+  // URL cache is bounded, so a picture parked off-screen long enough can have
+  // been revoked under it. Re-asking repopulates the cache; it is not a retry
+  // loop, because a genuinely broken artifact gives up after the second try.
+  const [attempt, setAttempt] = useState(0);
+  const [failed, setFailed] = useState(false);
+  const iterationId = attachment.iteration_id ?? '';
+  const index = attachment.index ?? 0;
+  const isImage = attachmentIsImage(attachment);
+  const name = attachment.filename || 'attachment';
+
+  useEffect(() => {
+    if (!isImage || !iterationId || !sid) return;
+    let alive = true;
+    client
+      .attachmentUrl(sid, iterationId, index)
+      .then((next) => {
+        if (alive) setUrl(next);
+      })
+      .catch(() => {
+        if (alive) setFailed(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [client, sid, iterationId, index, isImage, attempt]);
+
+  // A non-image artifact (csv/json/pdf/wav) has nothing to paint: name it.
+  if (!isImage || failed || !iterationId) {
+    return (
+      <div className="mt-2 min-w-0 truncate font-mono text-chip text-footer-muted">
+        {failed ? `✗ ${name}` : `↗ ${name}`}
+      </div>
+    );
+  }
+
+  return (
+    <figure className="mt-2.5 min-w-0">
+      {url ? (
+        <img
+          src={url}
+          alt={name}
+          loading="lazy"
+          decoding="async"
+          onError={() => {
+            if (attempt >= 2) {
+              setFailed(true);
+              return;
+            }
+            setUrl(null);
+            setAttempt((current) => current + 1);
+          }}
+          className="block max-h-[60svh] w-auto max-w-full object-contain"
+        />
+      ) : (
+        <div className="h-24 w-full animate-pulse bg-thinking-surface" aria-hidden="true" />
+      )}
+      <figcaption className="mt-1 truncate font-mono text-chip text-footer-muted">{name}</figcaption>
+    </figure>
+  );
+});
+
 export const IterationTrace = memo(function IterationTrace({
   iterations,
   live = false,
+  client,
+  sid,
 }: {
   iterations: TranscriptIteration[];
   live?: boolean;
+  client?: GatewayClient;
+  sid?: string;
 }) {
   const visible = iterations
     .map((iteration, index) => ({
@@ -855,16 +943,20 @@ export const IterationTrace = memo(function IterationTrace({
       thinking: iteration.thinking?.trim() ?? '',
       prose: iteration.assistant_prose?.trim() ?? '',
       forms: iteration.forms ?? [],
+      attachments: iteration.attachments ?? [],
     }))
-    .filter(({ thinking, prose, forms }) =>
-      thinking || prose || forms.some((form) => showFormCode(form, formCode(form)) || toolCards(form).length),
+    .filter(({ thinking, prose, forms, attachments }) =>
+      thinking
+      || prose
+      || attachments.length
+      || forms.some((form) => showFormCode(form, formCode(form)) || toolCards(form).length),
     );
 
   if (!visible.length) return null;
 
   return (
     <div className="mb-2.5 grid gap-2.5">
-      {visible.map(({ iteration, index, thinking, prose, forms }) => (
+      {visible.map(({ iteration, index, thinking, prose, forms, attachments }) => (
         <section
           key={iteration.id ?? iteration.position ?? index}
           className={live ? `min-w-0 ${transcriptEnterClass}` : 'min-w-0'}
@@ -882,6 +974,15 @@ export const IterationTrace = memo(function IterationTrace({
               live={live}
             />
           ))}
+          {client && sid
+            && attachments.map((attachment) => (
+              <AttachmentTile
+                key={`${attachment.iteration_id ?? iteration.id ?? index}-${attachment.index}`}
+                client={client}
+                sid={sid}
+                attachment={attachment}
+              />
+            ))}
         </section>
       ))}
     </div>
@@ -984,11 +1085,24 @@ export const AssistantMessage = memo(function AssistantMessage({
   streaming = false,
   activity,
   startedAt,
+  settled = false,
+  client,
+  sid,
 }: {
   turn: TranscriptTurn;
   streaming?: boolean;
   activity?: string;
   startedAt?: number;
+  /**
+   * The caller KNOWS this row's turn is over (the gateway is not running this
+   * session, or its terminal frame already landed) even though the persisted
+   * row still reads `running` — persistence lags the terminal event. Without
+   * it the placeholder row paints the live ticker, and "Vis is thinking..."
+   * kept spinning at the bottom for a turn that had long finished.
+   */
+  settled?: boolean;
+  client?: GatewayClient;
+  sid?: string;
 }) {
   const blocks = turn.content ?? [];
   const fallback = blocks.length ? '' : fallbackAnswer(turn);
@@ -1002,7 +1116,7 @@ export const AssistantMessage = memo(function AssistantMessage({
     <article className="mt-4 w-full [contain:layout_style]" aria-busy={streaming}>
       <div className={`mb-1 font-mono text-meta font-bold ${cancelled ? 'text-dialog-hint' : 'text-vis-role'}`}>Vis</div>
       <div className="min-w-0">
-        <IterationTrace iterations={turn.iterations ?? []} live={streaming} />
+        <IterationTrace iterations={turn.iterations ?? []} live={streaming} client={client} sid={sid} />
         <div className={`bg-answer text-body ${cancelled ? 'italic text-cancelled-foreground' : 'text-answer-foreground'}`}>
           {blocks.map((block) => <ContentBlockView key={block.id} block={block} />)}
           {fallback && <Markdown>{fallback}</Markdown>}
@@ -1012,7 +1126,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         </div>
         {streaming ? (
           <LiveProgress phase={activity ?? 'Vis is working'} startedAt={startedAt} />
-        ) : turn.status === 'running' ? (
+        ) : turn.status === 'running' && !settled ? (
           <LiveProgress phase={runningTurnPhase(turn)} startedAt={turn.created_at} />
         ) : null}
         {meta && (

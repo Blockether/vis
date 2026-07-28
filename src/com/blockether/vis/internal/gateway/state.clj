@@ -853,16 +853,17 @@
         (some? storage-uri) (attachment-storage/resolve-bytes storage-uri)
         :else nil))
 
-(defn- live-attachment-descriptors
-  "Lean wire descriptors — metadata ONLY, NEVER base64 — for the artifacts
-   iteration `iteration-id` persisted, so a native client (iOS/RN) learns 'image
-   N produced' on the LIVE `iteration.completed` frame and lazy-fetches the bytes
-   from `GET /v1/sessions/:sid/iterations/:iid/attachments/:idx` rather than
-   bloating every SSE frame with 100s of KB. `:index` is the position in
-   [[iteration-attachments]] — the EXACT list (and order) that byte endpoint
-   serves — so a persist-skipped artifact is absent from both and index N always
-   agrees. `[]` on any read failure."
-  [iteration-id]
+(defn- attachment-descriptors
+  "Lean wire descriptors — metadata ONLY, NEVER base64 — for ONE iteration's
+   ordered attachment `rows` (the [[iteration-attachments]] shape). `:index` is
+   the position in that list — the EXACT list (and order) that
+   `GET /v1/sessions/:sid/iterations/:iid/attachments/:idx` serves — so a
+   persist-skipped artifact is absent from both and index N always names the SAME
+   artifact live, in history, and at the byte endpoint. THE one descriptor shape:
+   the live `iteration.completed` frame and the persisted transcript ship it
+   verbatim, so a remote client (iOS/Android/web) renders a produced image with
+   one code path instead of two."
+  [iteration-id rows]
   (into []
         (map-indexed (fn [idx {:keys [tool-call-id kind media-type filename size]}]
                        {:index idx
@@ -872,7 +873,16 @@
                         :media_type (str (or media-type "application/octet-stream"))
                         :filename filename
                         :size (long (or size 0))}))
-        (iteration-attachments iteration-id)))
+        rows))
+
+(defn- live-attachment-descriptors
+  "[[attachment-descriptors]] for the artifacts iteration `iteration-id`
+   persisted, so a native client (iOS/RN) learns 'image N produced' on the LIVE
+   `iteration.completed` frame and lazy-fetches the bytes from
+   `GET /v1/sessions/:sid/iterations/:iid/attachments/:idx` rather than bloating
+   every SSE frame with 100s of KB. `[]` on any read failure."
+  [iteration-id]
+  (attachment-descriptors iteration-id (iteration-attachments iteration-id)))
 
 (def ^:private activity-phases
   "Coarse 'Vis is doing X' phases surfaced to the LIVE ticker but never pinned
@@ -1393,12 +1403,34 @@
    the underlying usage/routing fields."
   [db att-by-soul turn]
   (let
-    [iterations
+    [iteration-rows
      (try (->> (persistance/db-list-session-turn-iterations db (:id turn))
                (mapv with-display-iteration))
           (catch Throwable t
             (tel/log! :warn ["gateway: turn-iteration hydration failed" (:id turn) (ex-message t)])
             []))
+
+     ;; Produced artifacts (matplotlib figures, `vis_attach`ed images) as the
+     ;; SAME lean descriptors the live `iteration.completed` frame carries —
+     ;; byte-free, so history costs nothing on the wire, and a remote client
+     ;; lazy-fetches the bytes from the attachment endpoint. Without this a
+     ;; produced image existed only for the seconds the live frame was on
+     ;; screen and vanished on the next transcript read.
+     atts-by-iter
+     (if (seq iteration-rows)
+       (try (into {}
+                  (map (fn [[iter-id rows]]
+                         [(str iter-id) rows]))
+                  (persistance/db-list-iterations-attachments db (keep :id iteration-rows)))
+            (catch Throwable _ {}))
+       {})
+
+     iterations
+     (mapv (fn [it]
+             (if-let [rows (seq (get atts-by-iter (str (:id it))))]
+               (assoc it :attachments (attachment-descriptors (:id it) rows))
+               it))
+           iteration-rows)
 
      last-it
      (last iterations)
@@ -1680,15 +1712,20 @@
    exactly the case it exists for: the spinner kept running and the answer
    painted late, when the stranded worker finally returned."
   [sid tid status]
-  (let [turn (get-in @registry [sid :turns tid])
+  (let
+    [turn
+     (get-in @registry [sid :turns tid])
 
-        key (:idempotency_key turn)
+     key
+     (:idempotency_key turn)
 
-        ;; A FAILED turn ships its SETTLED content too. A channel that reconciles
-        ;; the terminal independently of the blocking worker has nothing else to
-        ;; paint, so it fabricated a bare "Turn failed." row — the ugly duplicate
-        ;; next to (or instead of) the styled provider card the worker delivers.
-        content (when (= "failed" status) (not-empty (vec (:content turn))))]
+     ;; A FAILED turn ships its SETTLED content too. A channel that reconciles
+     ;; the terminal independently of the blocking worker has nothing else to
+     ;; paint, so it fabricated a bare "Turn failed." row — the ugly duplicate
+     ;; next to (or instead of) the styled provider card the worker delivers.
+     content
+     (when (= "failed" status) (not-empty (vec (:content turn))))]
+
     (cond-> {:turn_id tid :status status}
       key
       (assoc :idempotency_key key)
@@ -1891,6 +1928,26 @@
      started-blocks
      (volatile! #{})
 
+     ;; Blocks opened and NOT yet closed. An iteration's reasoning/prose block
+     ;; used to stay open until the TERMINAL flush, so a 72-iteration turn
+     ;; streamed 146 half-open blocks for ten minutes and closed them all in one
+     ;; 3ms burst at the end: every consumer that renders an open reasoning
+     ;; block as live kept the LAST thinking on screen, as if the work never
+     ;; finished. Close them at the iteration boundary that actually ended them.
+     open-blocks
+     (volatile! #{})
+
+     close-blocks!
+     (fn [block-ids]
+       (doseq [block-id block-ids]
+         (vswap! open-blocks disj block-id)
+         (append-event! sid "content.block.completed" {:turn_id tid :block_id block-id})))
+
+     close-iteration-blocks!
+     (fn [iteration]
+       (let [suffix (str ":" (long (or iteration 0)))]
+         (close-blocks! (filter #(str/ends-with? (str %) suffix) @open-blocks))))
+
      on-chunk
      (fn [chunk]
        ;; Empty cumulative stream callbacks are transport heartbeats, not model
@@ -1939,6 +1996,7 @@
                (when streaming?
                  (when (and (not= phase :tool-preview) (not (contains? @started-blocks block-id)))
                    (vswap! started-blocks conj block-id)
+                   (vswap! open-blocks conj block-id)
                    (append-event! sid
                                   "content.block.started"
                                   {:turn_id tid
@@ -1947,7 +2005,9 @@
                                             (content/prose block-id ""))}))
                  (vswap! last-delta-ms assoc stream-key {:ms now :len (count cumulative)}))
                (when-let [[type store? payload] (chunk->event chunk)]
-                 (append-event! sid type (assoc payload :turn_id tid) {:store? store?})))))
+                 (append-event! sid type (assoc payload :turn_id tid) {:store? store?}))
+               ;; The iteration is over — its live blocks are settled text now.
+               (when (= phase :iteration-final) (close-iteration-blocks! (:iteration chunk))))))
          (catch Throwable t
            (tel/log! :warn ["gateway: chunk translation failed" (ex-message t)]))))]
 
@@ -2001,16 +2061,32 @@
                needs-input? "suspended"
                :else "completed")
 
+         ;; A "failed" turn must NEVER ship empty. Channels reconcile the
+         ;; terminal event independently of the blocking worker; with no content
+         ;; and no :error all they can paint is a fabricated bare "Turn failed."
+         ;; row - the unstyled line reported next to a lost answer.
+         failure-code
+         (cond stalled? "provider_stream_stalled"
+               (and (= "failed" status) (empty? content-blocks)) "turn_failed")
+
+         failure-text
+         (cond stalled? (str "Provider stream stalled: no output for " TURN_STALL_TIMEOUT_MS "ms")
+               failure-code (or (some-> (:error result)
+                                        str
+                                        str/trim
+                                        not-empty)
+                                (some-> (:message result)
+                                        str
+                                        str/trim
+                                        not-empty)
+                                "The turn failed before producing any output."))
+
          patch
          {:status status
           :role "assistant"
           :content (cond-> content-blocks
-                     stalled?
-                     (conj (content/error "provider_stream_stalled"
-                                          (str "Provider stream stalled: no output for "
-                                               TURN_STALL_TIMEOUT_MS
-                                               "ms")
-                                          true)))
+                     failure-code
+                     (conj (content/error failure-code failure-text true)))
           :is_needs_input needs-input?
           ;; the ENGINE's persisted row id - list-turns dedups the
           ;; DB hydration against it (the gateway tid differs).
@@ -2029,14 +2105,12 @@
           :iteration_count (:iteration-count result)
           :duration_ms (:duration-ms result)
           :utilization (:utilization result)
-          :error (when stalled?
-                   (str "provider stream stalled: no output for " TURN_STALL_TIMEOUT_MS "ms"))
+          :error (when failure-code failure-text)
           :completed_at (System/currentTimeMillis)}]
 
         (finish-turn! sid tid patch)
         (record-metrics! sid result)
-        (doseq [block-id @started-blocks]
-          (append-event! sid "content.block.completed" {:turn_id tid :block_id block-id}))
+        (close-blocks! @open-blocks)
         (append-event! sid
                        (case status
                          "failed"
@@ -2114,32 +2188,27 @@
                         (cond->
                           {:status status
                            :role "assistant"
-                           :content (cond
-                                      user-cancel?
-                                      []
-
-                                      ;; A provider failure that unwound the worker (rate
-                                      ;; limit, auth rejection, dead connection) is the SAME
-                                      ;; failure the in-loop path renders as a styled card.
-                                      ;; Emitting the bare `ex-message` here is why an error
-                                      ;; Vis formats perfectly elsewhere sometimes landed in
-                                      ;; the TUI (and the app) as raw unformatted text.
-                                      (and (not stalled?) (provider-error/provider-failure? t))
-                                      (provider-error/provider-error-content t)
-
-                                      :else
-                                      [(content/error "turn_failed" (or err "Turn failed") false)])
+                           :content
+                           (cond user-cancel? []
+                                 ;; A provider failure that unwound the worker (rate
+                                 ;; limit, auth rejection, dead connection) is the SAME
+                                 ;; failure the in-loop path renders as a styled card.
+                                 ;; Emitting the bare `ex-message` here is why an error
+                                 ;; Vis formats perfectly elsewhere sometimes landed in
+                                 ;; the TUI (and the app) as raw unformatted text.
+                                 (and (not stalled?) (provider-error/provider-failure? t))
+                                 (provider-error/provider-error-content t)
+                                 :else [(content/error "turn_failed" (or err "Turn failed") false)])
                            :completed_at (System/currentTimeMillis)}
                           err
                           (assoc :error err)
 
                           eval
                           (assoc :eval eval)))
-          ;; Close every block this turn opened. Without it a cancelled/failed turn
+          ;; Close every block still OPEN. Without it a cancelled/failed turn
           ;; leaves half-open live panels in every channel — the blank screen the
           ;; TUI showed after Esc.
-          (doseq [block-id @started-blocks]
-            (append-event! sid "content.block.completed" {:turn_id tid :block_id block-id}))
+          (close-blocks! @open-blocks)
           (append-event! sid
                          (if user-cancel? "turn.cancelled" "turn.failed")
                          (turn-terminal-payload sid tid status))

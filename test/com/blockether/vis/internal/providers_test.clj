@@ -14,15 +14,17 @@
   (ns-resolve 'com.blockether.vis.internal.providers sym))
 
 (deftest configured-providers-cached-warm-reads-never-re-enumerate
-  (let [calls
-        (atom 0)
+  (let
+    [calls
+     (atom 0)
 
-        fleet
-        [{:id :fake :models [{:name "m1"}]}]]
+     fleet
+     [{:id :fake :models [{:name "m1"}]}]]
 
-    (with-redefs [config/load-config (fn []
-                                       (swap! calls inc)
-                                       {:providers fleet})]
+    (with-redefs
+      [config/load-config (fn []
+                            (swap! calls inc)
+                            {:providers fleet})]
       (providers/invalidate-configured-providers!)
       (is (= fleet (providers/configured-providers-cached))
           "cold read enumerates synchronously ONCE and returns the real fleet")
@@ -37,27 +39,30 @@
   ;; frame. The enumeration (~200ms on machines with slow file IO) must NEVER
   ;; run synchronously on a warm caller — a stale snapshot is served as-is
   ;; while ONE background refresh replaces it.
-  (let [slow-ms
-        200
+  (let
+    [slow-ms
+     200
 
-        calls
-        (atom 0)
+     calls
+     (atom 0)
 
-        fleet
-        [{:id :fake :models [{:name "m1"}]}]
+     fleet
+     [{:id :fake :models [{:name "m1"}]}]
 
-        cache
-        (rv 'fleet-cache)]
+     cache
+     (rv 'fleet-cache)]
 
-    (with-redefs [config/load-config (fn []
-                                       (swap! calls inc)
-                                       (Thread/sleep slow-ms)
-                                       {:providers fleet})]
+    (with-redefs
+      [config/load-config (fn []
+                            (swap! calls inc)
+                            (Thread/sleep slow-ms)
+                            {:providers fleet})]
       ;; plant a STALE snapshot
       (reset! @cache {:at 0 :val [{:id :old}]})
-      (let [t0 (System/nanoTime)
-            stale (providers/configured-providers-cached)
-            stale-ms (/ (- (System/nanoTime) t0) 1e6)]
+      (let
+        [t0 (System/nanoTime)
+         stale (providers/configured-providers-cached)
+         stale-ms (/ (- (System/nanoTime) t0) 1e6)]
 
         (is (= [{:id :old}] stale) "stale read serves the last-known snapshot immediately")
         (is (< stale-ms 50.0) "stale read must NOT block on the enumeration")
@@ -73,17 +78,19 @@
   ;; The issue #29 follow-up: invalidate on change (long TTL stays safe), so a
   ;; provider add/remove/reorder shows in the footer cycle count immediately.
   (let [cache (rv 'fleet-cache)]
-    (with-redefs [config/load-global-config-raw (constantly {:providers []})
-                  config/save-config! (fn [& _]
-                                        nil)
-                  config/reload-config! (constantly nil)]
+    (with-redefs
+      [config/load-global-config-raw (constantly {:providers []})
+       config/save-config! (fn [& _]
+                             nil)
+       config/reload-config! (constantly nil)]
 
       (reset! @cache {:at (System/currentTimeMillis) :val [{:id :warm}]})
       (providers/save-providers! [] nil)
       (is (nil? @@cache) "save-providers! drops the snapshot"))
-    (with-redefs [config/remove-config-provider! (fn [& _]
-                                                   true)
-                  config/reload-config! (constantly nil)]
+    (with-redefs
+      [config/remove-config-provider! (fn [& _]
+                                        true)
+       config/reload-config! (constantly nil)]
 
       (reset! @cache {:at (System/currentTimeMillis) :val [{:id :warm}]})
       (providers/remove-provider! :warm nil)
@@ -94,19 +101,19 @@
   ;; (token files / keychain) even before they're saved into `:providers` — the
   ;; whole point of `picker-fleet` vs `configured-providers`.
   (let [detected (atom true)]
-    (with-redefs [config/load-config (constantly {:providers [{:id :openai
-                                                               :models [{:name "gpt-x"}]}]})
-                  registry/registered-providers
-                  (constantly [{:provider/id :anthropic-coding-plan
-                                :provider/detect-fn (fn []
-                                                      (when @detected {:access-token "tok"}))}
-                               {:provider/id :openai
-                                :provider/detect-fn (fn []
-                                                      {:access-token "tok"})}])
-                  config/provider-template
-                  (fn [pid]
-                    (when (= pid :anthropic-coding-plan)
-                      {:id pid :api-style :anthropic :default-models ["claude-opus-4-8"]}))]
+    (with-redefs
+      [config/load-config (constantly {:providers [{:id :openai :models [{:name "gpt-x"}]}]})
+       registry/registered-providers (constantly [{:provider/id :anthropic-coding-plan
+                                                   :provider/detect-fn (fn []
+                                                                         (when @detected
+                                                                           {:access-token "tok"}))}
+                                                  {:provider/id :openai
+                                                   :provider/detect-fn (fn []
+                                                                         {:access-token "tok"})}])
+       config/provider-template
+       (fn [pid]
+         (when (= pid :anthropic-coding-plan)
+           {:id pid :api-style :anthropic :default-models ["claude-opus-4-8"]}))]
 
       (providers/invalidate-configured-providers!)
       (let [extra (providers/authenticated-preset-providers)]
@@ -129,12 +136,13 @@
   ;; PRESET_ORDER, so it sorted to Long/MAX_VALUE at the end — split from
   ;; business/individual by zai/mistral (top, middle, then stranded at the
   ;; bottom). Guard the whole family stays a single contiguous run.
-  (let [order
-        @(ns-resolve 'com.blockether.vis.internal.config 'PRESET_ORDER)
+  (let
+    [order
+     @(ns-resolve 'com.blockether.vis.internal.config 'PRESET_ORDER)
 
-        idxs
-        (mapv #(.indexOf ^java.util.List order %)
-              [:github-copilot-business :github-copilot-individual :github-copilot-enterprise])]
+     idxs
+     (mapv #(.indexOf ^java.util.List order %)
+           [:github-copilot-business :github-copilot-individual :github-copilot-enterprise])]
 
     (is (every? nat-int? idxs) "all three Copilot tiers are listed in PRESET_ORDER")
     (let [sorted (sort idxs)]
@@ -142,45 +150,49 @@
           "the three Copilot tiers form one contiguous run — no other preset splits them"))))
 
 (deftest configured-provider-catalog-cannot-be-narrowed
-  (with-redefs [config/load-config-raw
-                (constantly {"providers" [{"id" "openai"
-                                           "models" [{"name" "gpt-custom" "output_limit" 123}]}]})
+  (with-redefs
+    [config/load-config-raw
+     (constantly {"providers" [{"id" "openai"
+                                "models" [{"name" "gpt-custom" "output_limit" 123}]}]})
 
-                config/provider-template
-                (constantly {:id :openai :default-models ["gpt-default" "gpt-custom" "gpt-extra"]})]
+     config/provider-template
+     (constantly {:id :openai :default-models ["gpt-default" "gpt-custom" "gpt-extra"]})]
 
     (is (= [{:name "gpt-custom" :output-limit 123} {:name "gpt-default"} {:name "gpt-extra"}]
            (:models (first (:providers (config/load-config)))))
         "persisted metadata wins, while every preset model remains available")))
 
 (deftest explicit-default-selection-is-order-independent-and-persists-without-reordering
-  (let [fleet
-        [{:id :openai :models [{:name "gpt-5"}]}
-         {:id :anthropic-coding-plan :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]
+  (let
+    [fleet
+     [{:id :openai :models [{:name "gpt-5"}]}
+      {:id :anthropic-coding-plan :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]
 
-        saved
-        (atom nil)]
+     saved
+     (atom nil)]
 
-    (with-redefs [config/load-config (constantly {:default-provider "anthropic-coding-plan"
-                                                  :default-model "claude-fable-5"
-                                                  :providers fleet})]
+    (with-redefs
+      [config/load-config (constantly {:default-provider "anthropic-coding-plan"
+                                       :default-model "claude-fable-5"
+                                       :providers fleet})]
       (is (= {:provider-id :anthropic-coding-plan :model "claude-fable-5"}
              (providers/default-selection fleet))))
-    (with-redefs [providers/picker-fleet
-                  (constantly fleet)
+    (with-redefs
+      [providers/picker-fleet
+       (constantly fleet)
 
-                  config/load-global-config-raw
-                  (constantly {"theme" "dark"
-                               "providers" [{"id" "openai" "models" [{"name" "gpt-5"}]}
-                                            {"id" "anthropic-coding-plan"
-                                             "models" [{"name" "claude-opus-4-8"}]}]})
+       config/load-global-config-raw
+       (constantly {"theme" "dark"
+                    "providers" [{"id" "openai" "models" [{"name" "gpt-5"}]}
+                                 {"id" "anthropic-coding-plan"
+                                  "models" [{"name" "claude-opus-4-8"}]}]})
 
-                  config/save-config!
-                  (fn [wire _]
-                    (reset! saved wire))
+       config/save-config!
+       (fn [wire _]
+         (reset! saved wire))
 
-                  config/reload-config!
-                  (constantly nil)]
+       config/reload-config!
+       (constantly nil)]
 
       (is (= {:provider-id :anthropic-coding-plan :model "claude-fable-5"}
              (providers/save-default-selection! :anthropic-coding-plan "claude-fable-5" :test)))

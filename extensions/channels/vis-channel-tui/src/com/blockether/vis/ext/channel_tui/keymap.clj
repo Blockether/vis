@@ -1,8 +1,8 @@
 (ns com.blockether.vis.ext.channel-tui.keymap
   "Single source of truth for the TUI's keyboard shortcuts.
 
-   Shortcuts are CTRL chords, identical on every platform (macOS / Windows /
-   Linux). The old Alt/Option chords were removed: stock macOS terminals send
+   Shortcuts are CTRL chords, identical on every platform (macOS / Linux).
+   The old Alt/Option chords were removed: stock macOS terminals send
    Option+letter as a special character, never an Alt modifier, so those chords
    silently did nothing. Ctrl always reaches the app.
 

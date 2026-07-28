@@ -13,11 +13,12 @@
    final newline) is dropped, matching the convention used by the
    anchor patch planner."
   [^String s]
-  (let [arr
-        (.split s "\n" -1)
+  (let
+    [arr
+     (.split s "\n" -1)
 
-        v
-        (vec arr)]
+     v
+     (vec arr)]
 
     (if (and (pos? (count v)) (= "" (peek v))) (pop v) v)))
 
@@ -27,11 +28,12 @@
    Public so the anchor patch planner can map line indices back to char
    positions for substring splicing."
   ^long [^String content ^long line-idx]
-  (loop [pos
-         0
+  (loop
+    [pos
+     0
 
-         i
-         0]
+     i
+     0]
 
     (if (= i line-idx)
       pos
@@ -85,14 +87,15 @@
    `String/hashCode` is a JIT intrinsic so we lean on it instead of a
    hand loop."
   ^String [line]
-  (let [h
-        (int (bit-and (.hashCode (str/trim (str line))) (long hash-mask)))
+  (let
+    [h
+     (int (bit-and (.hashCode (str/trim (str line))) (long hash-mask)))
 
-        hex
-        (Integer/toHexString h)
+     hex
+     (Integer/toHexString h)
 
-        c
-        (.length hex)]
+     c
+     (.length hex)]
 
     (if (< c (long hash-width)) (str (subs hash-zero-pad c) hex) hex)))
 
@@ -131,11 +134,12 @@
 (defn anchor->line
   "Parse the line number out of a `<lineno>:<hash>` anchor."
   ^long [anchor]
-  (let [s
-        (str anchor)
+  (let
+    [s
+     (str anchor)
 
-        i
-        (str/index-of s hashline-anchor-sep)]
+     i
+     (str/index-of s hashline-anchor-sep)]
 
     (Long/parseLong (subs s 0 (long i)))))
 
@@ -190,14 +194,15 @@
    gutter is the editable `:from_anchor` anchor), this is the channel/TUI
    display surface: humans navigate by line number, not by content hash."
   [tuples]
-  (let [tuples
-        (vec tuples)
+  (let
+    [tuples
+     (vec tuples)
 
-        width
-        (reduce (fn [^long w [ln _]]
-                  (max w (long (count (str ln)))))
-                1
-                tuples)]
+     width
+     (reduce (fn [^long w [ln _]]
+               (max w (long (count (str ln)))))
+             1
+             tuples)]
 
     (->> tuples
          (map (fn [[ln s]]
@@ -221,11 +226,12 @@
   [tuples]
   (->> tuples
        (reduce (fn [groups [ln :as t]]
-                 (let [ln
-                       (long ln)
+                 (let
+                   [ln
+                    (long ln)
 
-                       g
-                       (peek groups)]
+                    g
+                    (peek groups)]
 
                    (if g
                      (let [last-ln (long (first (peek g)))]
@@ -240,18 +246,19 @@
    substring span in `content`, keeping a trailing `\n` OUTSIDE the
    replaced region."
   [^String content ^long line-start ^long line-end]
-  (let [char-start
-        (char-offset-at-line content line-start)
+  (let
+    [char-start
+     (char-offset-at-line content line-start)
 
-        char-end-raw
-        (char-offset-at-line content line-end)
+     char-end-raw
+     (char-offset-at-line content line-end)
 
-        char-end
-        (if (and (< char-end-raw (count content))
-                 (pos? char-end-raw)
-                 (= \newline (.charAt content (dec char-end-raw))))
-          (dec char-end-raw)
-          char-end-raw)]
+     char-end
+     (if (and (< char-end-raw (count content))
+              (pos? char-end-raw)
+              (= \newline (.charAt content (dec char-end-raw))))
+       (dec char-end-raw)
+       char-end-raw)]
 
     [char-start char-end]))
 
@@ -301,14 +308,15 @@
    `:from_anchor` must carry BOTH coordinates so the line LOCATES and the hash
    VERIFIES."
   [anchor]
-  (let [s
-        (unwrap-anchor (str anchor))
+  (let
+    [s
+     (unwrap-anchor (str anchor))
 
-        i
-        (.indexOf s (int \:))
+     i
+     (.indexOf s (int \:))
 
-        line
-        (when-not (neg? i) (parse-long (subs s 0 i)))]
+     line
+     (when-not (neg? i) (parse-long (subs s 0 i)))]
 
     (if (and (not (neg? i)) line) {:line line :hash (subs s (inc i))} {:malformed true :raw s})))
 
@@ -332,11 +340,12 @@
   [lines which {:keys [line hash malformed raw]}]
   (if malformed
     {:error {:reason :hashline-malformed :which which :anchor raw}}
-    (let [idx0
-          (dec (long line))
+    (let
+      [idx0
+       (dec (long line))
 
-          n
-          (long (count lines))]
+       n
+       (long (count lines))]
 
       (cond (or (neg? idx0) (>= idx0 n))
             {:error {:reason :hashline-line-out-of-range :which which :line line :lines n}}
@@ -353,20 +362,32 @@
                                :stated-line line
                                :current-anchor (line-anchor line (nth lines idx0))
                                :current-text (nth lines idx0)}}
-                      (let [tol (long hash-line-drift-tolerance)
-                            in-win (filterv (fn [i]
-                                              (<= (Math/abs (- (inc (long i)) (long line))) tol))
-                                     matches)]
+                      (let
+                        [tol (long hash-line-drift-tolerance)
+                         in-win (filterv (fn [i]
+                                           (<= (Math/abs (- (inc (long i)) (long line))) tol))
+                                  matches)]
 
                         (cond
                           ;; 2. drifted — one nearby match, follow the content
                           (= 1 (long (count in-win))) {:index (first in-win)}
                           ;; 4. hash matches only FAR from the stated line — WRONG-LINE guard
-                          (empty? in-win) {:error {:reason :hashline-misplaced
-                                                   :which which
-                                                   :hash hash
-                                                   :stated-line line
-                                                   :found-lines (mapv #(inc (long %)) matches)}}
+                          (empty? in-win)
+                          ;; Content moved FARTHER than the drift window. Refuse (the hash is
+                          ;; only hash-width hex, so "unique in file" is weak evidence), but when
+                          ;; it now sits at EXACTLY ONE line the correct anchor is literally that
+                          ;; line + this same hash — hand it back so the caller recovers in ONE
+                          ;; step instead of a second `cat` (mirrors `:hashline-not-found`).
+                          {:error (cond->
+                                    {:reason :hashline-misplaced
+                                     :which which
+                                     :hash hash
+                                     :stated-line line
+                                     :found-lines (mapv #(inc (long %)) matches)}
+                                    (= 1 (count matches))
+                                    (assoc :current-anchor
+                                      (line-anchor (inc (long (first matches)))
+                                                   (nth lines (long (first matches))))))}
                           ;; 3. several nearby matches — hash can't disambiguate; the
                           ;;    explicit line wins (the user's `lineno:dup-hash` case)
                           :else {:index idx0}))))))))
@@ -383,27 +404,29 @@
    Shared by `resolve-anchor-edit-span` (WRITE — patch :from_anchor) and the cat
    `:anchor` READ path so both address lines identically."
   [^String current from_anchor to_anchor]
-  (let [lines
-        (split-content-lines current)
+  (let
+    [lines
+     (split-content-lines current)
 
-        from-a
-        (parse-anchor from_anchor)
+     from-a
+     (parse-anchor from_anchor)
 
-        to-a
-        (if (or (nil? to_anchor) (= (str to_anchor) (str from_anchor)))
-          from-a
-          (parse-anchor to_anchor))
+     to-a
+     (if (or (nil? to_anchor) (= (str to_anchor) (str from_anchor)))
+       from-a
+       (parse-anchor to_anchor))
 
-        fr
-        (resolve-one-anchor lines :from from-a)]
+     fr
+     (resolve-one-anchor lines :from from-a)]
 
     (if (:error fr)
       fr
       (let [tr (if (identical? from-a to-a) fr (resolve-one-anchor lines :to to-a))]
         (if (:error tr)
           tr
-          (let [fi (long (:index fr))
-                ti (long (:index tr))]
+          (let
+            [fi (long (:index fr))
+             ti (long (:index tr))]
 
             (if (< ti fi)
               {:error {:reason :hashline-range-inverted :from-line (inc fi) :to-line (inc ti)}}
@@ -421,42 +444,46 @@
    `{:error …}` ONLY for a genuinely unlocatable anchor (`:hashline-malformed` — no
    line number — or `:hashline-line-out-of-range` — a line outside the file)."
   [^String current from_anchor to_anchor]
-  (let [lines
-        (split-content-lines current)
+  (let
+    [lines
+     (split-content-lines current)
 
-        n
-        (long (count lines))
+     n
+     (long (count lines))
 
-        resolve-read
-        (fn [which anchor]
-          (let [a
-                (parse-anchor anchor)
+     resolve-read
+     (fn [which anchor]
+       (let
+         [a
+          (parse-anchor anchor)
 
-                r
-                (resolve-one-anchor lines which a)]
+          r
+          (resolve-one-anchor lines which a)]
 
-            (cond (:index r) (assoc r :stale? false)
-                  ;; Hash gone (content changed) or matches only far lines, but the
-                  ;; anchor still names an in-range line — fall back to it for the READ.
-                  (and (:line a)
-                       (contains? #{:hashline-not-found :hashline-misplaced}
-                                  (get-in r [:error :reason]))
-                       (<= 1 (long (:line a)) n))
-                  {:index (dec (long (:line a))) :stale? true}
-                  :else r)))
+         (cond (:index r) (assoc r :stale? false)
+               ;; Hash gone (content changed) or matches only far lines, but the
+               ;; anchor still names an in-range line — fall back to it for the READ.
+               (and (:line a)
+                    (contains? #{:hashline-not-found :hashline-misplaced}
+                               (get-in r [:error :reason]))
+                    (<= 1 (long (:line a)) n))
+               {:index (dec (long (:line a))) :stale? true}
+               :else r)))
 
-        fr
-        (resolve-read :from from_anchor)]
+     fr
+     (resolve-read :from from_anchor)]
 
     (if (:error fr)
       fr
-      (let [tr (if (or (nil? to_anchor) (= (str to_anchor) (str from_anchor)))
-                 fr
-                 (resolve-read :to to_anchor))]
+      (let
+        [tr (if (or (nil? to_anchor) (= (str to_anchor) (str from_anchor)))
+              fr
+              (resolve-read :to to_anchor))]
         (if (:error tr)
           tr
-          (let [fi (long (:index fr))
-                ti (long (:index tr))]
+          (let
+            [fi (long (:index fr))
+             ti (long (:index tr))]
 
             {:from-line (inc (min fi ti))
              :to-line (inc (max fi ti))
@@ -475,8 +502,9 @@
   (let [res (resolve-anchor-range current from_anchor to_anchor)]
     (if (:error res)
       res
-      (let [line-start (dec (long (:from-line res)))
-            line-end (long (:to-line res))]
+      (let
+        [line-start (dec (long (:from-line res)))
+         line-end (long (:to-line res))]
 
         (if (= "" (str replace))
           ;; DELETION (empty replace): take the WHOLE physical line(s) including
@@ -487,20 +515,22 @@
           ;; blank-line delete a ZERO-WIDTH no-op and a multi-line delete leave
           ;; one line behind. Consuming the trailing newline here makes
           ;; `replace ""` mean "delete these lines" with no leftover blank.
-          (let [char-start (char-offset-at-line current line-start)
-                char-end (char-offset-at-line current line-end)]
+          (let
+            [char-start (char-offset-at-line current line-start)
+             char-end (char-offset-at-line current line-end)]
 
             {:start char-start :end char-end :replacement "" :applied-line (inc line-start)})
-          (let [[char-start char-end] (line-span->char-span current line-start line-end)
-                ;; Only a NON-EMPTY span can end in a newline. An empty-line span is
-                ;; zero-width (char-start == char-end); without this guard the check
-                ;; reads the PREVIOUS line's `\n` (just before char-end) and wrongly
-                ;; pads the replacement with a `\n`, inserting instead of replacing.
-                matched-ends-nl? (and (< (long char-start) (long char-end))
-                                      (= \newline (.charAt current (dec (long char-end)))))
-                replace-ends-nl? (str/ends-with? replace "\n")
-                rewritten
-                (if (and matched-ends-nl? (not replace-ends-nl?)) (str replace "\n") replace)]
+          (let
+            [[char-start char-end] (line-span->char-span current line-start line-end)
+             ;; Only a NON-EMPTY span can end in a newline. An empty-line span is
+             ;; zero-width (char-start == char-end); without this guard the check
+             ;; reads the PREVIOUS line's `\n` (just before char-end) and wrongly
+             ;; pads the replacement with a `\n`, inserting instead of replacing.
+             matched-ends-nl? (and (< (long char-start) (long char-end))
+                                   (= \newline (.charAt current (dec (long char-end)))))
+             replace-ends-nl? (str/ends-with? replace "\n")
+             rewritten
+             (if (and matched-ends-nl? (not replace-ends-nl?)) (str replace "\n") replace)]
 
             {:start char-start
              :end char-end

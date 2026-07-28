@@ -103,8 +103,9 @@
              ;; A redirected push home means a test fixture: never let the
              ;; developer's real keychain leak into it.
              (nil? (System/getProperty "vis.push.home")))
-    (try (let [{:keys [exit out]}
-               (sh/sh "security" "find-generic-password" "-s" "vis-apns" "-a" account "-w")]
+    (try (let
+           [{:keys [exit out]}
+            (sh/sh "security" "find-generic-password" "-s" "vis-apns" "-a" account "-w")]
            (when (and (= 0 (long exit)) (not (str/blank? out))) (unhex (str/trim out))))
          (catch Throwable _ nil))))
 
@@ -112,14 +113,16 @@
   "First `AuthKey_<kid>.p8` under `~/.vis/apns/`, as `{:key-path :key-id}`.
    Apple names the download that way, so the key id needs no extra config."
   []
-  (let [f (->> (.listFiles (apns-dir))
-               seq
-               (filter #(and (.isFile ^File %) (str/ends-with? (.getName ^File %) ".p8")))
-               (sort-by #(.getName ^File %))
-               first)]
+  (let
+    [f (->> (.listFiles (apns-dir))
+            seq
+            (filter #(and (.isFile ^File %) (str/ends-with? (.getName ^File %) ".p8")))
+            (sort-by #(.getName ^File %))
+            first)]
     (when f
-      (let [n (.getName ^File f)
-            kid (second (re-matches #"(?i)AuthKey_(.+)\.p8" n))]
+      (let
+        [n (.getName ^File f)
+         kid (second (re-matches #"(?i)AuthKey_(.+)\.p8" n))]
 
         {:key-path (.getAbsolutePath ^File f) :key-id kid}))))
 
@@ -134,45 +137,45 @@
   "Resolved APNs credentials, or a map with `:is-configured false` and the
    list of what is still missing. Never throws and never returns key MATERIAL."
   []
-  (let [side
-        (or (side-config) {})
+  (let
+    [side
+     (or (side-config) {})
 
-        disc
-        (or (discovered-key) {})
+     disc
+     (or (discovered-key) {})
 
-        ;; The key itself: keychain material beats any file on disk.
-        kc-key
-        (some? (keychain "key"))
+     ;; The key itself: keychain material beats any file on disk.
+     kc-key
+     (some? (keychain "key"))
 
-        key-path
-        (or (env-val "VIS_APNS_KEY_PATH") (:key-path side) (:key-path disc))
+     key-path
+     (or (env-val "VIS_APNS_KEY_PATH") (:key-path side) (:key-path disc))
 
-        key-id
-        (or (env-val "VIS_APNS_KEY_ID") (keychain "key_id") (:key-id side) (:key-id disc))
+     key-id
+     (or (env-val "VIS_APNS_KEY_ID") (keychain "key_id") (:key-id side) (:key-id disc))
 
-        team-id
-        (or (env-val "VIS_APNS_TEAM_ID") (keychain "team_id") (:team-id side))
+     team-id
+     (or (env-val "VIS_APNS_TEAM_ID") (keychain "team_id") (:team-id side))
 
-        topic
-        (or (env-val "VIS_APNS_TOPIC") (keychain "topic") (:topic side))
+     topic
+     (or (env-val "VIS_APNS_TOPIC") (keychain "topic") (:topic side))
 
-        default-env
-        (or (env-val "VIS_APNS_ENV") (keychain "environment") (:environment side) "production")
+     default-env
+     (or (env-val "VIS_APNS_ENV") (keychain "environment") (:environment side) "production")
 
-        missing
-        (cond-> []
-          (and (not kc-key)
-               (or (str/blank? (str key-path)) (not (.isFile (io/file (str key-path))))))
-          (conj "key")
+     missing
+     (cond-> []
+       (and (not kc-key) (or (str/blank? (str key-path)) (not (.isFile (io/file (str key-path))))))
+       (conj "key")
 
-          (str/blank? (str key-id))
-          (conj "key_id")
+       (str/blank? (str key-id))
+       (conj "key_id")
 
-          (str/blank? (str team-id))
-          (conj "team_id")
+       (str/blank? (str team-id))
+       (conj "team_id")
 
-          (str/blank? (str topic))
-          (conj "topic"))]
+       (str/blank? (str topic))
+       (conj "topic"))]
 
     {:key-path (when-not kc-key key-path)
      :key-source (if kc-key "keychain" "file")
@@ -202,27 +205,29 @@
 (defn- private-key
   "Parse a PKCS#8 PEM (`.p8`, what Apple hands out) into an EC private key."
   [^String pem]
-  (let [body
-        (-> pem
-            (str/replace #"-----(BEGIN|END)[^-]+-----" "")
-            (str/replace #"\s" ""))
+  (let
+    [body
+     (-> pem
+         (str/replace #"-----(BEGIN|END)[^-]+-----" "")
+         (str/replace #"\s" ""))
 
-        der
-        (.decode (Base64/getDecoder) body)]
+     der
+     (.decode (Base64/getDecoder) body)]
 
     (.generatePrivate (KeyFactory/getInstance "EC") (PKCS8EncodedKeySpec. der))))
 
 (defn- unsigned-int
   "Left-pad/trim one DER INTEGER to exactly 32 bytes of the P-256 field."
   ^bytes [^bytes der ^long off ^long len]
-  (let [out
-        (byte-array 32)
+  (let
+    [out
+     (byte-array 32)
 
-        src-off
-        (if (> len 32) (+ off (- len 32)) off)
+     src-off
+     (if (> len 32) (+ off (- len 32)) off)
 
-        n
-        (min len 32)]
+     n
+     (min len 32)]
 
     (System/arraycopy der src-off out (- 32 n) n)
     out))
@@ -231,23 +236,24 @@
   "ECDSA DER `SEQUENCE{INTEGER r, INTEGER s}` -> the raw 64-byte `r||s` JOSE
    signature. `Signature` emits DER; JWS ES256 demands the concatenation."
   ^bytes [^bytes der]
-  (let [r-len
-        (long (aget der 3))
+  (let
+    [r-len
+     (long (aget der 3))
 
-        r
-        (unsigned-int der 4 r-len)
+     r
+     (unsigned-int der 4 r-len)
 
-        s-off
-        (+ 4 r-len 2)
+     s-off
+     (+ 4 r-len 2)
 
-        s-len
-        (long (aget der (+ 4 r-len 1)))
+     s-len
+     (long (aget der (+ 4 r-len 1)))
 
-        s
-        (unsigned-int der s-off s-len)
+     s
+     (unsigned-int der s-off s-len)
 
-        out
-        (byte-array 64)]
+     out
+     (byte-array 64)]
 
     (System/arraycopy r 0 out 0 32)
     (System/arraycopy s 0 out 32 32)
@@ -255,19 +261,20 @@
 
 (defn- sign-jwt
   [{:keys [key-path key-source key-id team-id]}]
-  (let [header
-        (b64url (utf8 (wire/json-str {:alg "ES256" :kid key-id})))
+  (let
+    [header
+     (b64url (utf8 (wire/json-str {:alg "ES256" :kid key-id})))
 
-        claims
-        (b64url (utf8 (wire/json-str {:iss team-id :iat (quot (System/currentTimeMillis) 1000)})))
+     claims
+     (b64url (utf8 (wire/json-str {:iss team-id :iat (quot (System/currentTimeMillis) 1000)})))
 
-        signing-input
-        (str header "." claims)
+     signing-input
+     (str header "." claims)
 
-        sig
-        (doto (Signature/getInstance "SHA256withECDSA")
-          (.initSign (private-key (if (= "keychain" key-source) (keychain "key") (slurp key-path))))
-          (.update (utf8 signing-input)))]
+     sig
+     (doto (Signature/getInstance "SHA256withECDSA")
+       (.initSign (private-key (if (= "keychain" key-source) (keychain "key") (slurp key-path))))
+       (.update (utf8 signing-input)))]
 
     (str signing-input "." (b64url (der->jose (.sign sig))))))
 
@@ -278,13 +285,12 @@
 
 (defn- provider-token
   [cfg]
-  (let [{:keys [token at key-id]}
-        @jwt-cache
+  (let
+    [{:keys [token at key-id]}
+     @jwt-cache
 
-        fresh?
-        (and token
-             (= key-id (:key-id cfg))
-             (< (- (System/currentTimeMillis) (long at)) JWT_TTL_MS))]
+     fresh?
+     (and token (= key-id (:key-id cfg)) (< (- (System/currentTimeMillis) (long at)) JWT_TTL_MS))]
 
     (if fresh?
       token
@@ -348,22 +354,24 @@
   "Idempotently register (or refresh) one device token. Returns the stored
    device, or nil when the token is unusable."
   [{:keys [token platform environment client client-version label bundle-id]}]
-  (let [token (some-> token
-                      str
-                      str/trim)]
+  (let
+    [token (some-> token
+                   str
+                   str/trim)]
     (when-not (str/blank? token)
-      (let [now (System/currentTimeMillis)
-            existing (get (ensure-loaded!) token)
-            device (merge {:registered-at now}
-                          existing
-                          {:token token
-                           :platform (or platform "ios")
-                           :environment (if (= "sandbox" environment) "sandbox" "production")
-                           :client (or client "vis-companion")
-                           :client-version client-version
-                           :label label
-                           :bundle-id bundle-id
-                           :last-seen now})]
+      (let
+        [now (System/currentTimeMillis)
+         existing (get (ensure-loaded!) token)
+         device (merge {:registered-at now}
+                       existing
+                       {:token token
+                        :platform (or platform "ios")
+                        :environment (if (= "sandbox" environment) "sandbox" "production")
+                        :client (or client "vis-companion")
+                        :client-version client-version
+                        :label label
+                        :bundle-id bundle-id
+                        :last-seen now})]
 
         (swap! devices #(prune (assoc (or % {}) token device)))
         (write-devices! @devices)
@@ -400,44 +408,43 @@
    failure is reported as status 0 so a caller never sees an exception."
   [cfg environment token ^String payload {:keys [collapse-id]}]
   (try
-    (let [req
-          (cond-> (HttpRequest/newBuilder (URI/create
-                                            (str (host-for environment) "/3/device/" token)))
-            :always
-            (.header "authorization" (str "bearer " (provider-token cfg)))
+    (let
+      [req
+       (cond-> (HttpRequest/newBuilder (URI/create (str (host-for environment) "/3/device/" token)))
+         :always
+         (.header "authorization" (str "bearer " (provider-token cfg)))
 
-            :always
-            (.header "apns-topic" (:topic cfg))
+         :always
+         (.header "apns-topic" (:topic cfg))
 
-            :always
-            (.header "apns-push-type" "alert")
+         :always
+         (.header "apns-push-type" "alert")
 
-            :always
-            (.header "apns-priority" "10")
+         :always
+         (.header "apns-priority" "10")
 
-            :always
-            (.header "content-type" "application/json")
+         :always
+         (.header "content-type" "application/json")
 
-            collapse-id
-            (.header "apns-collapse-id"
-                     (subs (str collapse-id) 0 (min 64 (count (str collapse-id)))))
+         collapse-id
+         (.header "apns-collapse-id" (subs (str collapse-id) 0 (min 64 (count (str collapse-id)))))
 
-            :always
-            (.timeout (Duration/ofSeconds 15))
+         :always
+         (.timeout (Duration/ofSeconds 15))
 
-            :always
-            (.POST (HttpRequest$BodyPublishers/ofString payload)))
+         :always
+         (.POST (HttpRequest$BodyPublishers/ofString payload)))
 
-          ^HttpResponse resp
-          (.send ^HttpClient @http-client (.build req) (HttpResponse$BodyHandlers/ofString))
+       ^HttpResponse resp
+       (.send ^HttpClient @http-client (.build req) (HttpResponse$BodyHandlers/ofString))
 
-          status
-          (.statusCode resp)
+       status
+       (.statusCode resp)
 
-          reason
-          (or (some-> (wire/parse-json (.body resp))
-                      (get "reason"))
-              "")]
+       reason
+       (or (some-> (wire/parse-json (.body resp))
+                   (get "reason"))
+           "")]
 
       {:status status :reason reason})
     (catch Throwable t {:status 0 :reason (or (ex-message t) "transport-error")})))
@@ -448,12 +455,12 @@
   ;; wire encoder mechanically snake_cases keywords, which would ship
   ;; `thread_id` and cost us notification grouping without any error.
   ^String [{:keys [title body data thread-id]}]
-  (wire/json-str (merge {:aps (cond-> {:alert {:title title :body body}
-                                       :sound "default"
-                                       "interruption-level" "active"}
-                                thread-id
-                                (assoc "thread-id" thread-id))}
-                        data)))
+  (wire/json-str
+    (merge {:aps (cond->
+                   {:alert {:title title :body body} :sound "default" "interruption-level" "active"}
+                   thread-id
+                   (assoc "thread-id" thread-id))}
+           data)))
 
 (defn send-to-device!
   "Deliver one alert to one registered device. Retries once against the other
@@ -462,45 +469,45 @@
    when Apple says the token is dead. Returns `{:is-delivered bool :status
    :reason}`."
   [device notification]
-  (let [platform
-        (or (:platform device) "ios")
+  (let
+    [platform
+     (or (:platform device) "ios")
 
-        token
-        (:token device)
+     token
+     (:token device)
 
-        result
-        (cond (= "android" platform) (let [r (fcm/send! token notification)]
-                                       (when (fcm/dead-token? r) (unregister-device! token))
-                                       r)
-              ;; Anything else (a browser, some future platform) is stored so the app
-              ;; can see itself registered, but never handed to a provider.
-              (not (contains? #{"ios" "ipados"} platform)) {:status 0
-                                                            :reason "unsupported-platform"}
-              :else (let [cfg (config)]
-                      (if-not (:is-configured cfg)
-                        {:status 0 :reason "not-configured"}
-                        (let [payload (alert-payload notification)
-                              env (or (:environment device) (:default-environment cfg))
-                              attempt (post-apns cfg env token payload notification)
-                              other (when (contains? #{"BadDeviceToken" "BadEnvironmentKeyInToken"}
-                                                     (:reason attempt))
-                                      (post-apns cfg
-                                                 (if (= "sandbox" env) "production" "sandbox")
-                                                 token
-                                                 payload
-                                                 notification))
-                              result (or (when (= 200 (:status other)) other) other attempt)]
+     result
+     (cond (= "android" platform) (let [r (fcm/send! token notification)]
+                                    (when (fcm/dead-token? r) (unregister-device! token))
+                                    r)
+           ;; Anything else (a browser, some future platform) is stored so the app
+           ;; can see itself registered, but never handed to a provider.
+           (not (contains? #{"ios" "ipados"} platform)) {:status 0 :reason "unsupported-platform"}
+           :else (let [cfg (config)]
+                   (if-not (:is-configured cfg)
+                     {:status 0 :reason "not-configured"}
+                     (let
+                       [payload (alert-payload notification)
+                        env (or (:environment device) (:default-environment cfg))
+                        attempt (post-apns cfg env token payload notification)
+                        other (when (contains? #{"BadDeviceToken" "BadEnvironmentKeyInToken"}
+                                               (:reason attempt))
+                                (post-apns cfg
+                                           (if (= "sandbox" env) "production" "sandbox")
+                                           token
+                                           payload
+                                           notification))
+                        result (or (when (= 200 (:status other)) other) other attempt)]
 
-                          (when (and other (= 200 (:status other)))
-                            (swap! devices assoc-in
-                              [token :environment]
-                              (if (= "sandbox" env) "production" "sandbox"))
-                            (write-devices! @devices))
-                          (when (contains? #{"BadDeviceToken" "Unregistered"
-                                             "DeviceTokenNotForTopic"}
-                                           (:reason result))
-                            (unregister-device! token))
-                          result))))]
+                       (when (and other (= 200 (:status other)))
+                         (swap! devices assoc-in
+                           [token :environment]
+                           (if (= "sandbox" env) "production" "sandbox"))
+                         (write-devices! @devices))
+                       (when (contains? #{"BadDeviceToken" "Unregistered" "DeviceTokenNotForTopic"}
+                                        (:reason result))
+                         (unregister-device! token))
+                       result))))]
 
     (when (not= 200 (:status result))
       (tel/log! {:level :warn
@@ -548,11 +555,12 @@
   [^String s ^long limit]
   (if (<= (count s) limit)
     s
-    (let [cut
-          (subs s 0 limit)
+    (let
+      [cut
+       (subs s 0 limit)
 
-          sp
-          (.lastIndexOf cut " ")]
+       sp
+       (.lastIndexOf cut " ")]
 
       (str (str/trimr (if (> sp (quot limit 2)) (subs cut 0 sp) cut)) "…"))))
 
@@ -583,14 +591,15 @@
 
 (defn- turn-notification
   [sid event]
-  (let [status
-        (or (get event "status") (when (= "turn.failed" (get event "type")) "failed") "completed")
+  (let
+    [status
+     (or (get event "status") (when (= "turn.failed" (get event "type")) "failed") "completed")
 
-        described
-        (@describe-session sid (get event "turn_id"))
+     described
+     (@describe-session sid (get event "turn_id"))
 
-        title
-        (or (not-empty (str (:title described))) "Vis")]
+     title
+     (or (not-empty (str (:title described))) "Vis")]
 
     {:title title
      :body (or (answer-body (:answer described))
@@ -616,11 +625,12 @@
 (defn status
   "Push capability for `/v1/capabilities` and `/v1/admin/status`."
   []
-  (let [cfg
-        (config)
+  (let
+    [cfg
+     (config)
 
-        f
-        (fcm/config)]
+     f
+     (fcm/config)]
 
     {:is-available (or (:is-configured cfg) (:is-configured f))
      :provider (cond (and (:is-configured cfg) (:is-configured f)) "apns+fcm"

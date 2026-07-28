@@ -5,8 +5,8 @@
 
 (defn unixify
   "Normalize a path string to `/` separators on every OS. Java's `File`/`Path`
-   APIs yield `\\` on Windows, and there is no stdlib/`fs` call that hands back
-   a `/`-string there — so this is the single canonical normalizer.
+   APIs can hand back platform-native separators — so this is the single
+   canonical normalizer.
 
    Use it ONLY where a path is DATA: compared, glob-matched, shown to the model,
    or embedded in a URL / wire / DB. NEVER for real filesystem I/O — `io/file`,
@@ -21,14 +21,15 @@
    no-op when home is unavailable."
   (^String [path] (expand-home path (System/getProperty "user.home")))
   (^String [path home]
-   (let [^String path
-         (some-> path
-                 str)
+   (let
+     [^String path
+      (some-> path
+              str)
 
-         ^String home
-         (some-> home
-                 str
-                 not-empty)]
+      ^String home
+      (some-> home
+              str
+              not-empty)]
 
      (cond (nil? path) nil
            (nil? home) path
@@ -44,25 +45,27 @@
    descendants always use `/` separators; nil-safe."
   (^String [path] (abbreviate-home path (System/getProperty "user.home")))
   (^String [path home]
-   (let [path
-         (some-> path
-                 str)
+   (let
+     [path
+      (some-> path
+              str)
 
-         home
-         (some-> home
-                 str
-                 not-empty)]
+      home
+      (some-> home
+              str
+              not-empty)]
 
      (if-not (and path home)
        path
-       (try (let [^Path raw-path
-                  (Paths/get path (make-array String 0))
+       (try (let
+              [^Path raw-path
+               (Paths/get path (make-array String 0))
 
-                  ^Path normalized-path
-                  (.normalize (.toAbsolutePath raw-path))
+               ^Path normalized-path
+               (.normalize (.toAbsolutePath raw-path))
 
-                  ^Path normalized-home
-                  (.normalize (.toAbsolutePath (Paths/get home (make-array String 0))))]
+               ^Path normalized-home
+               (.normalize (.toAbsolutePath (Paths/get home (make-array String 0))))]
 
               (cond (not (.isAbsolute raw-path)) path
                     (= normalized-path normalized-home) "~/"

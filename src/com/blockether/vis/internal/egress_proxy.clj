@@ -56,8 +56,9 @@
 (defn- access->methods
   "Expand an `:access` preset to a method set (upper-cased)."
   [a]
-  (case (some-> (nm a)
-                str/lower-case)
+  (case
+    (some-> (nm a)
+            str/lower-case)
     ("read-only" "readonly" "ro")
     #{"GET" "HEAD" "OPTIONS"}
 
@@ -79,8 +80,9 @@
 (defn- allow-of
   [al]
   (vec (keep (fn [a]
-               (when-let [m (some-> (nm (:method a))
-                                    str/upper-case)]
+               (when-let
+                 [m (some-> (nm (:method a))
+                            str/upper-case)]
                  {"method" m "path" (or (nm (:path a)) "*")}))
              al)))
 
@@ -99,26 +101,27 @@
    `{\"host\" h \"methods\" #{UPPER…} \"allow\" [{\"method\" M \"path\" P}…] \"ports\" #{int…}}`.
    Multiple rules for one host merge (union) their methods, allow-exceptions, and ports."
   [{:keys [rules]}]
-  (let [add
-        (fn [m h ms al ps]
-          (cond-> m
-            (and h (or (seq ms) (seq al) (seq ps)))
-            (update h
-                    (fn [e]
-                      (-> (or e {:methods #{} :allow [] :ports #{}})
-                          (update :methods into ms)
-                          (update :allow into al)
-                          (update :ports into ps))))))
+  (let
+    [add
+     (fn [m h ms al ps]
+       (cond-> m
+         (and h (or (seq ms) (seq al) (seq ps)))
+         (update h
+                 (fn [e]
+                   (-> (or e {:methods #{} :allow [] :ports #{}})
+                       (update :methods into ms)
+                       (update :allow into al)
+                       (update :ports into ps))))))
 
-        acc
-        (reduce (fn [m r]
-                  (add m
-                       (host-key (:host r))
-                       (into (access->methods (:access r)) (methods-of (:methods r)))
-                       (allow-of (:allow r))
-                       (ports-of (:ports r))))
-                {}
-                rules)]
+     acc
+     (reduce (fn [m r]
+               (add m
+                    (host-key (:host r))
+                    (into (access->methods (:access r)) (methods-of (:methods r)))
+                    (allow-of (:allow r))
+                    (ports-of (:ports r))))
+             {}
+             rules)]
 
     (mapv (fn [[h {:keys [methods allow ports]}]]
             {"host" h "methods" methods "allow" allow "ports" ports})
@@ -131,23 +134,24 @@
    nil when there is nothing to enforce (no domain restriction and no rules) — the caller
    then need not route through the proxy at all."
   [{:keys [allowed-domains denied-domains exclude-domains] :as net}]
-  (let [allowed
-        (vec (keep host-key allowed-domains))
+  (let
+    [allowed
+     (vec (keep host-key allowed-domains))
 
-        denied
-        (vec (keep host-key denied-domains))
+     denied
+     (vec (keep host-key denied-domains))
 
-        excluded
-        (vec (keep host-key exclude-domains))
+     excluded
+     (vec (keep host-key exclude-domains))
 
-        rules
-        (normalize-rules net)
+     rules
+     (normalize-rules net)
 
-        allow-private
-        (boolean (:allow-private net))
+     allow-private
+     (boolean (:allow-private net))
 
-        restrict-domains?
-        (or (seq denied) (and (seq allowed) (not (some #{"*"} allowed))))]
+     restrict-domains?
+     (or (seq denied) (and (seq allowed) (not (some #{"*"} allowed))))]
 
     ;; `:exclude-domains` alone never forces enforcement — it only tells an already-
     ;; enforced policy to tunnel those hosts opaquely instead of terminating their TLS.
@@ -163,11 +167,12 @@
   "Does domain pattern `p` match host `h`? `*` = any; `*.x` = x + subdomains; a bare
    `x` = x + its subdomains (suffix match)."
   [p h]
-  (let [p
-        (host-key p)
+  (let
+    [p
+     (host-key p)
 
-        h
-        (host-key h)]
+     h
+     (host-key h)]
 
     (cond (nil? p) false
           (= p "*") true
@@ -183,15 +188,16 @@
    denylist blocks the rest; else an empty/`*` allowlist allows and a non-empty
    allowlist with no match blocks."
   [{:keys [allowed-domains denied-domains]} host]
-  (let [specific
-        (fn [ds]
-          (remove #(= "*" %) ds))
+  (let
+    [specific
+     (fn [ds]
+       (remove #(= "*" %) ds))
 
-        deny-star
-        (boolean (some #{"*"} denied-domains))
+     deny-star
+     (boolean (some #{"*"} denied-domains))
 
-        allow-star
-        (or (empty? allowed-domains) (some #{"*"} allowed-domains))]
+     allow-star
+     (or (empty? allowed-domains) (some #{"*"} allowed-domains))]
 
     (cond (some #(host-matches? % host) (specific denied-domains)) false
           (some #(host-matches? % host) (specific allowed-domains)) true
@@ -225,11 +231,12 @@
 
 (defn- method-path-ok?
   [rule method path]
-  (let [methods
-        (get rule "methods")
+  (let
+    [methods
+     (get rule "methods")
 
-        allow
-        (get rule "allow")]
+     allow
+     (get rule "allow")]
 
     ;; A rule that declares NO verb constraint (only `:ports`) never restricts verbs.
     (or (and (empty? methods) (empty? allow))
@@ -346,18 +353,19 @@
    any-local / multicast stay blocked ALWAYS; loopback is ALLOWED by default EXCEPT the
    reserved gateway/proxy ports; the internal LAN needs `:allow-private?`. nil host is blocked."
   [host port policy]
-  (let [allow-private?
-        (:allow-private? policy)
+  (let
+    [allow-private?
+     (:allow-private? policy)
 
-        addrs
-        (when host (try (vec (InetAddress/getAllByName (str host))) (catch Throwable _ nil)))
+     addrs
+     (when host (try (vec (InetAddress/getAllByName (str host))) (catch Throwable _ nil)))
 
-        denied-ips
-        (denied-address-set (:denied-domains policy))
+     denied-ips
+     (denied-address-set (:denied-domains policy))
 
-        loopback?
-        (fn [^InetAddress a]
-          (.isLoopbackAddress a))]
+     loopback?
+     (fn [^InetAddress a]
+       (.isLoopbackAddress a))]
 
     (cond (empty? addrs) {:blocked (str "cannot resolve host: " host)}
           (and (seq denied-ips)
@@ -439,11 +447,12 @@
    caller leaves the body to stream unbuffered."
   ^bytes [^java.io.InputStream in n]
   (when (and (integer? n) (pos? ^long n) (<= ^long n max-buffered-body))
-    (let [n
-          (long n)
+    (let
+      [n
+       (long n)
 
-          buf
-          (byte-array n)]
+       buf
+       (byte-array n)]
 
       (loop [off 0]
         (if (< off n)
@@ -457,14 +466,15 @@
    ⇒ deny; any other value ⇒ allow."
   [res]
   (cond (nil? res) {:allow? true}
-        (map? res) (let [marker
-                         (or (get res "marker") (get res :marker))
+        (map? res) (let
+                     [marker
+                      (or (get res "marker") (get res :marker))
 
-                         allow
-                         (if (contains? res :allow?) (:allow? res) (get res "allow"))
+                      allow
+                      (if (contains? res :allow?) (:allow? res) (get res "allow"))
 
-                         reason
-                         (or (get res :reason) (get res "reason"))]
+                      reason
+                      (or (get res :reason) (get res "reason"))]
 
                      (if (or (= "block" (str marker)) (false? allow))
                        {:allow? false :reason (str (or reason "blocked by filter"))}
@@ -477,9 +487,10 @@
    FAIL-CLOSED: a filter that throws denies. Returns `{:allow? bool :reason str}`."
   [filters req]
   (reduce (fn [_ f]
-            (let [d (try (filter-decision (f req))
-                         (catch Throwable t
-                           {:allow? false :reason (str "filter error: " (.getMessage t))}))]
+            (let
+              [d (try (filter-decision (f req))
+                      (catch Throwable t
+                        {:allow? false :reason (str "filter error: " (.getMessage t))}))]
               (if (:allow? d) {:allow? true} (reduced d))))
           {:allow? true}
           filters))
@@ -515,34 +526,38 @@
       :filters [{:owner o :allow? b :reason s :error {:message :trace}}] ; per filter
       :final   {:allow? b :reason s}}                 ; the verdict egress would use"
   [policy {:keys [method host path port] :as ctx}]
-  (let [tier1
-        (decide policy method host path port)
+  (let
+    [tier1
+     (decide policy method host path port)
 
-        per
-        (when (:allow? tier1)
-          (vec (for [[owner fs]
-                     @network-filters
+     per
+     (when (:allow? tier1)
+       (vec (for
+              [[owner fs]
+               @network-filters
 
-                     f
-                     fs]
+               f
+               fs]
 
-                 (let [r (try (let [raw (f ctx)
-                                    d (filter-decision raw)]
+              (let
+                [r (try (let
+                          [raw (f ctx)
+                           d (filter-decision raw)]
 
-                                (assoc d :error (filter-error raw)))
-                              (catch Throwable t
-                                {:allow? false
-                                 :reason (str "filter threw: " (.getMessage t))
-                                 :error {:message (.getMessage t)}}))]
-                   {:owner owner :allow? (:allow? r) :reason (:reason r) :error (:error r)}))))
+                          (assoc d :error (filter-error raw)))
+                        (catch Throwable t
+                          {:allow? false
+                           :reason (str "filter threw: " (.getMessage t))
+                           :error {:message (.getMessage t)}}))]
+                {:owner owner :allow? (:allow? r) :reason (:reason r) :error (:error r)}))))
 
-        denied
-        (first (filter #(false? (:allow? %)) per))
+     denied
+     (first (filter #(false? (:allow? %)) per))
 
-        final
-        (cond (not (:allow? tier1)) tier1
-              denied (select-keys denied [:allow? :reason])
-              :else {:allow? true})]
+     final
+     (cond (not (:allow? tier1)) tier1
+           denied (select-keys denied [:allow? :reason])
+           :else {:allow? true})]
 
     {:tier1 tier1 :filters (or per []) :final final}))
 
@@ -580,9 +595,10 @@
           (when (= "proxy-authorization" (header-name h))
             (let [v (str/trim (subs h (inc (.indexOf h ":"))))]
               (when (str/starts-with? (str/lower-case v) "basic ")
-                (try (let [decoded (String. (.decode (java.util.Base64/getDecoder)
-                                                     ^String (str/trim (subs v 6))))
-                           user (first (str/split decoded #":" 2))]
+                (try (let
+                       [decoded (String. (.decode (java.util.Base64/getDecoder)
+                                                  ^String (str/trim (subs v 6))))
+                        user (first (str/split decoded #":" 2))]
 
                        (when-not (str/blank? user) user))
                      (catch Throwable _ nil))))))
@@ -633,52 +649,55 @@
    away. Only an ABORT (an exception on either leg, i.e. a socket that really
    died) stops the sibling direction early."
   [^ExecutorService pool ^Socket a ^Socket b]
-  (let [abort
-        (atom false)
+  (let
+    [abort
+     (atom false)
 
-        last-io
-        (atom (System/currentTimeMillis))
+     last-io
+     (atom (System/currentTimeMillis))
 
-        give-up?
-        (fn [^Socket from ^Socket to]
-          (or @abort
-              (.isClosed from)
-              (.isClosed to)
-              (.isShutdown pool)
-              (> (- (System/currentTimeMillis) (long @last-io)) (long TUNNEL_MAX_IDLE_MS))))
+     give-up?
+     (fn [^Socket from ^Socket to]
+       (or @abort
+           (.isClosed from)
+           (.isClosed to)
+           (.isShutdown pool)
+           (> (- (System/currentTimeMillis) (long @last-io)) (long TUNNEL_MAX_IDLE_MS))))
 
-        copy
-        (fn [^Socket from ^Socket to]
-          (try (.setSoTimeout from TUNNEL_READ_TIMEOUT_MS)
-               (let [in
-                     (.getInputStream from)
+     copy
+     (fn [^Socket from ^Socket to]
+       (try (.setSoTimeout from TUNNEL_READ_TIMEOUT_MS)
+            (let
+              [in
+               (.getInputStream from)
 
-                     out
-                     (.getOutputStream to)
+               out
+               (.getOutputStream to)
 
-                     buf
-                     (byte-array 16384)]
+               buf
+               (byte-array 16384)]
 
-                 (loop []
+              (loop []
 
-                   ;; -1 ends the relay, 0 is "quiet, still live — keep waiting"
-                   (let [n (long (try (.read in buf)
-                                      (catch java.net.SocketTimeoutException _
-                                        (if (give-up? from to) -1 0))))]
-                     (when-not (neg? n)
-                       (when (pos? n)
-                         (reset! last-io (System/currentTimeMillis))
-                         (.write out buf 0 n)
-                         (.flush out))
-                       (recur)))))
-               (catch Throwable _ (reset! abort true))
-               (finally (try (.shutdownOutput to) (catch Throwable _ nil)))))
+                ;; -1 ends the relay, 0 is "quiet, still live — keep waiting"
+                (let
+                  [n (long (try (.read in buf)
+                                (catch java.net.SocketTimeoutException _
+                                  (if (give-up? from to) -1 0))))]
+                  (when-not (neg? n)
+                    (when (pos? n)
+                      (reset! last-io (System/currentTimeMillis))
+                      (.write out buf 0 n)
+                      (.flush out))
+                    (recur)))))
+            (catch Throwable _ (reset! abort true))
+            (finally (try (.shutdownOutput to) (catch Throwable _ nil)))))
 
-        f
-        (.submit pool
-                 ^Runnable
-                 (fn []
-                   (copy a b)))]
+     f
+     (.submit pool
+              ^Runnable
+              (fn []
+                (copy a b)))]
 
     (copy b a)
     (try (.get f) (catch Throwable _ nil))))
@@ -737,42 +756,44 @@
    phase). Used only when response filters are registered; callers otherwise use
    the cheaper full-duplex `splice`."
   [^ExecutorService pool ^Socket client ^Socket upstream req on-log]
-  (let [cin
-        (.getInputStream client)
+  (let
+    [cin
+     (.getInputStream client)
 
-        cout
-        (.getOutputStream client)
+     cout
+     (.getOutputStream client)
 
-        uin
-        (.getInputStream upstream)
+     uin
+     (.getInputStream upstream)
 
-        uout
-        (.getOutputStream upstream)
+     uout
+     (.getOutputStream upstream)
 
-        ;; Push any remaining request body child→upstream concurrently, so reading
-        ;; the response on this thread can't deadlock against a body still in flight.
-        _body
-        (.submit pool
-                 ^Runnable
-                 (fn []
-                   (copy-until-eof cin uout)
-                   (try (.shutdownOutput ^Socket upstream) (catch Throwable _ nil))))
+     ;; Push any remaining request body child→upstream concurrently, so reading
+     ;; the response on this thread can't deadlock against a body still in flight.
+     _body
+     (.submit pool
+              ^Runnable
+              (fn []
+                (copy-until-eof cin uout)
+                (try (.shutdownOutput ^Socket upstream) (catch Throwable _ nil))))
 
-        status-line
-        (read-line-bytes uin)]
+     status-line
+     (read-line-bytes uin)]
 
     (when status-line
-      (let [resp-headers
-            (read-headers uin)
+      (let
+        [resp-headers
+         (read-headers uin)
 
-            resp
-            (assoc req
-              :phase (keyword (str (name (:phase req)) "-response"))
-              :status (status-code status-line)
-              :headers (headers->map resp-headers))
+         resp
+         (assoc req
+           :phase (keyword (str (name (:phase req)) "-response"))
+           :status (status-code status-line)
+           :headers (headers->map resp-headers))
 
-            {:keys [allow? reason]}
-            (apply-network-filters resp)]
+         {:keys [allow? reason]}
+         (apply-network-filters resp)]
 
         (if-not allow?
           (do (on-log (assoc resp
@@ -819,96 +840,99 @@
   [^ExecutorService pool ^Socket client ^OutputStream cout ^InetAddress addr ^String host port
    policy cap on-log]
   (write-str cout "HTTP/1.1 200 Connection Established\r\n\r\n")
-  (let [^SSLContext ctx
-        ((:ctx-for cap) host)
+  (let
+    [^SSLContext ctx
+     ((:ctx-for cap) host)
 
-        ^SSLSocket ssl-client
-        (.createSocket (.getSocketFactory ctx) ^Socket client host (int port) true)]
+     ^SSLSocket ssl-client
+     (.createSocket (.getSocketFactory ctx) ^Socket client host (int port) true)]
 
     (try
       (.setUseClientMode ssl-client false)
       (.startHandshake ssl-client)
-      (let [cin
-            (.getInputStream ssl-client)
+      (let
+        [cin
+         (.getInputStream ssl-client)
 
-            scout
-            (.getOutputStream ssl-client)
+         scout
+         (.getOutputStream ssl-client)
 
-            rl
-            (parse-request-line (read-line-bytes cin))]
+         rl
+         (parse-request-line (read-line-bytes cin))]
 
         (when rl
-          (let [[method target version]
-                rl
+          (let
+            [[method target version]
+             rl
 
-                headers
-                (read-headers cin)
+             headers
+             (read-headers cin)
 
-                hmap
-                (headers->map headers)
+             hmap
+             (headers->map headers)
 
-                path
-                (str target)
+             path
+             (str target)
 
-                ;; Buffer a small body ONLY when a filter is registered, so a
-                ;; filter can inspect `:body`; larger/chunked bodies stream with
-                ;; `:body` nil (the honest envelope — no unbounded heap buffering).
-                body-bytes
-                (when (seq (registered-network-filters))
-                  (read-body-bytes cin (content-length hmap)))
+             ;; Buffer a small body ONLY when a filter is registered, so a
+             ;; filter can inspect `:body`; larger/chunked bodies stream with
+             ;; `:body` nil (the honest envelope — no unbounded heap buffering).
+             body-bytes
+             (when (seq (registered-network-filters)) (read-body-bytes cin (content-length hmap)))
 
-                req
-                {:phase :https
-                 :method method
-                 :host host
-                 :path path
-                 :headers hmap
-                 :body (when body-bytes
-                         (String. ^bytes body-bytes java.nio.charset.StandardCharsets/UTF_8))}
+             req
+             {:phase :https
+              :method method
+              :host host
+              :path path
+              :headers hmap
+              :body (when body-bytes
+                      (String. ^bytes body-bytes java.nio.charset.StandardCharsets/UTF_8))}
 
-                {:keys [allow? reason]}
-                (decide+filter policy req)]
+             {:keys [allow? reason]}
+             (decide+filter policy req)]
 
             (if-not allow?
               (do
                 (on-log
                   {:phase :https :method method :host host :path path :allow? false :reason reason})
                 (deny-response scout reason))
-              (let [^SSLSocketFactory usf
-                    (:upstream-factory cap)
+              (let
+                [^SSLSocketFactory usf
+                 (:upstream-factory cap)
 
-                    ;; Dial the SSRF-validated IP literal, then layer TLS using the
-                    ;; real `host` for SNI + cert verification — so a rebind can't
-                    ;; swap in an internal address between resolve and connect.
-                    ^Socket plain
-                    (doto (Socket.)
-                      (.connect (InetSocketAddress. ^InetAddress addr (int port)) 15000))
+                 ;; Dial the SSRF-validated IP literal, then layer TLS using the
+                 ;; real `host` for SNI + cert verification — so a rebind can't
+                 ;; swap in an internal address between resolve and connect.
+                 ^Socket plain
+                 (doto (Socket.) (.connect (InetSocketAddress. ^InetAddress addr (int port)) 15000))
 
-                    ^SSLSocket upstream
-                    (.createSocket usf plain host (int port) true)]
+                 ^SSLSocket upstream
+                 (.createSocket usf plain host (int port) true)]
 
                 (on-log {:phase :https :method method :host host :path path :allow? true})
                 (try (.startHandshake upstream)
-                     (let [uout
-                           (.getOutputStream upstream)
+                     (let
+                       [uout
+                        (.getOutputStream upstream)
 
-                           kept
-                           (remove (fn [h]
-                                     (#{"proxy-connection" "connection" "keep-alive"
-                                        "proxy-authorization"}
-                                      (header-name h)))
-                             headers)
+                        kept
+                        (remove (fn [h]
+                                  (#{"proxy-connection" "connection" "keep-alive"
+                                     "proxy-authorization"}
+                                   (header-name h)))
+                          headers)
 
-                           req
-                           (str method
-                                " "
-                                path
-                                " "
-                                version
-                                "\r\n"
-                                (str/join "\r\n" kept)
-                                (when (seq kept) "\r\n")
-                                "Connection: close\r\n\r\n")]
+                        req
+                        (str method
+                             " "
+                             path
+                             " "
+                             version
+                             "\r\n"
+                             (str/join "\r\n" kept)
+                             (when (seq kept) "\r\n")
+                             "Connection: close\r\n\r\n")]
 
                        (write-str uout req)
                        (when body-bytes (.write uout ^bytes body-bytes) (.flush uout))
@@ -932,14 +956,15 @@
    inspection (when a capability is supplied and the policy asks, `:mitm?`) for
    full verb/path, or a raw byte tunnel (verb opaque)."
   [^ExecutorService pool ^Socket client ^OutputStream cout target policy mitm on-log]
-  (let [[host port-s]
-        (str/split (str target) #":" 2)
+  (let
+    [[host port-s]
+     (str/split (str target) #":" 2)
 
-        port
-        (try (Integer/parseInt (str/trim (or port-s "443"))) (catch Exception _ 443))
+     port
+     (try (Integer/parseInt (str/trim (or port-s "443"))) (catch Exception _ 443))
 
-        {:keys [allow? reason]}
-        (decide policy nil host nil port)]
+     {:keys [allow? reason]}
+     (decide policy nil host nil port)]
 
     (if-not allow?
       (do (on-log {:phase :connect :host host :allow? false :reason reason})
@@ -950,8 +975,9 @@
         (if blocked
           (do (on-log {:phase :connect :host host :allow? false :reason blocked})
               (deny-response cout blocked))
-          (let [cap (when (and mitm (:mitm? policy) (not (mitm-excluded? policy host)))
-                      (try (mitm) (catch Throwable _ nil)))]
+          (let
+            [cap (when (and mitm (:mitm? policy) (not (mitm-excluded? policy host)))
+                   (try (mitm) (catch Throwable _ nil)))]
             (if cap
               (mitm-intercept pool client cout addr host port policy cap on-log)
               (raw-tunnel pool client cout addr host port on-log))))))))
@@ -961,50 +987,51 @@
    request (Connection: close) and relay the response."
   [^ExecutorService pool ^Socket client ^OutputStream cout method target version headers policy
    on-log]
-  (let [uri
-        (try (URI. (str target)) (catch Throwable _ nil))
+  (let
+    [uri
+     (try (URI. (str target)) (catch Throwable _ nil))
 
-        host
-        (some-> ^URI uri
-                .getHost)
+     host
+     (some-> ^URI uri
+             .getHost)
 
-        port
-        (let [p (int (if uri (.getPort ^URI uri) -1))]
-          (if (pos? p) p 80))
+     port
+     (let [p (int (if uri (.getPort ^URI uri) -1))]
+       (if (pos? p) p 80))
 
-        path
-        (let [p
-              (.getRawPath ^URI uri)
+     path
+     (let
+       [p
+        (.getRawPath ^URI uri)
 
-              q
-              (.getRawQuery ^URI uri)]
+        q
+        (.getRawQuery ^URI uri)]
 
-          (str (if (str/blank? p) "/" p) (when q (str "?" q))))
+       (str (if (str/blank? p) "/" p) (when q (str "?" q))))
 
-        hmap
-        (headers->map headers)
+     hmap
+     (headers->map headers)
 
-        ;; Buffer a small body ONLY when a filter is registered (see mitm-intercept).
-        body-bytes
-        (when (seq (registered-network-filters))
-          (read-body-bytes (.getInputStream client) (content-length hmap)))
+     ;; Buffer a small body ONLY when a filter is registered (see mitm-intercept).
+     body-bytes
+     (when (seq (registered-network-filters))
+       (read-body-bytes (.getInputStream client) (content-length hmap)))
 
-        req
-        {:phase :http
-         :method method
-         :host host
-         :path path
-         :port port
-         :headers hmap
-         :body (when body-bytes
-                 (String. ^bytes body-bytes java.nio.charset.StandardCharsets/UTF_8))}
+     req
+     {:phase :http
+      :method method
+      :host host
+      :path path
+      :port port
+      :headers hmap
+      :body (when body-bytes (String. ^bytes body-bytes java.nio.charset.StandardCharsets/UTF_8))}
 
-        {:keys [allow? reason]}
-        (decide+filter policy req)
+     {:keys [allow? reason]}
+     (decide+filter policy req)
 
-        ;; SSRF floor (only worth resolving once the host is policy-allowed).
-        {:keys [addr blocked]}
-        (when (and host allow?) (safe-upstream-address host port policy))]
+     ;; SSRF floor (only worth resolving once the host is policy-allowed).
+     {:keys [addr blocked]}
+     (when (and host allow?) (safe-upstream-address host port policy))]
 
     (cond (nil? host) (deny-response cout "malformed proxy request")
           (not allow?)
@@ -1018,23 +1045,24 @@
           :else (let [upstream (Socket.)]
                   (on-log {:phase :http :method method :host host :path path :allow? true})
                   (try (.connect upstream (InetSocketAddress. ^InetAddress addr (int port)) 15000)
-                       (let [uout (.getOutputStream upstream)
-                             ;; origin-form request line + headers, minus hop-by-hop/proxy headers,
-                             ;; forcing single-request semantics so keep-alive can't smuggle a verb.
-                             kept (remove (fn [h]
-                                            (#{"proxy-connection" "connection" "keep-alive"
-                                               "proxy-authorization"}
-                                             (header-name h)))
-                                    headers)
-                             req (str method
-                                      " "
-                                      path
-                                      " "
-                                      version
-                                      "\r\n"
-                                      (str/join "\r\n" kept)
-                                      (when (seq kept) "\r\n")
-                                      "Connection: close\r\n\r\n")]
+                       (let
+                         [uout (.getOutputStream upstream)
+                          ;; origin-form request line + headers, minus hop-by-hop/proxy headers,
+                          ;; forcing single-request semantics so keep-alive can't smuggle a verb.
+                          kept (remove (fn [h]
+                                         (#{"proxy-connection" "connection" "keep-alive"
+                                            "proxy-authorization"}
+                                          (header-name h)))
+                                 headers)
+                          req (str method
+                                   " "
+                                   path
+                                   " "
+                                   version
+                                   "\r\n"
+                                   (str/join "\r\n" kept)
+                                   (when (seq kept) "\r\n")
+                                   "Connection: close\r\n\r\n")]
 
                          (write-str uout req)
                          (when body-bytes (.write uout ^bytes body-bytes) (.flush uout))
@@ -1084,46 +1112,47 @@
    floor under the token's `policy`, then a raw byte relay on success. `token` came from the
    RFC 1929 username (nil ⇒ no-auth ⇒ fails closed if the policy needs a token)."
   [^ExecutorService pool ^Socket client ^InputStream cin ^OutputStream cout policy-fn on-log token]
-  (let [ver
-        (.read cin)
+  (let
+    [ver
+     (.read cin)
 
-        cmd
-        (.read cin)
+     cmd
+     (.read cin)
 
-        _rsv
-        (.read cin)
+     _rsv
+     (.read cin)
 
-        atyp
-        (.read cin)
+     atyp
+     (.read cin)
 
-        host
-        (case atyp
-          1
-          (when-let [b (read-n cin 4)]
-            (.getHostAddress (InetAddress/getByAddress b)))
+     host
+     (case atyp
+       1
+       (when-let [b (read-n cin 4)]
+         (.getHostAddress (InetAddress/getByAddress b)))
 
-          4
-          (when-let [b (read-n cin 16)]
-            (.getHostAddress (InetAddress/getByAddress b)))
+       4
+       (when-let [b (read-n cin 16)]
+         (.getHostAddress (InetAddress/getByAddress b)))
 
-          3
-          (let [l (.read cin)]
-            (when (and l (pos? l))
-              (when-let [b (read-n cin l)]
-                (String. ^bytes b "UTF-8"))))
+       3
+       (let [l (.read cin)]
+         (when (and l (pos? l))
+           (when-let [b (read-n cin l)]
+             (String. ^bytes b "UTF-8"))))
 
-          nil)
+       nil)
 
-        ^bytes pb
-        (read-n cin 2)
+     ^bytes pb
+     (read-n cin 2)
 
-        port
-        (when pb
-          (bit-or (bit-shift-left (bit-and 0xff (long (aget pb 0))) 8)
-                  (bit-and 0xff (long (aget pb 1)))))
+     port
+     (when pb
+       (bit-or (bit-shift-left (bit-and 0xff (long (aget pb 0))) 8)
+               (bit-and 0xff (long (aget pb 1)))))
 
-        policy
-        (try (policy-fn token) (catch Throwable _ nil))]
+     policy
+     (try (policy-fn token) (catch Throwable _ nil))]
 
     (cond (not= ver 5) nil
           (not= cmd 1) (socks-reply cout 0x07) ; command not supported
@@ -1132,8 +1161,8 @@
           (do (on-log {:phase :socks :host host :allow? false :reason "auth required"})
               (socks-reply cout 0x02))
           :else
-          (let [{:keys [allow? reason]} (decide+filter policy
-                                                       {:phase :socks :host host :port port})]
+          (let
+            [{:keys [allow? reason]} (decide+filter policy {:phase :socks :host host :port port})]
             (if-not allow?
               (do (on-log {:phase :socks :host host :allow? false :reason reason})
                   (socks-reply cout 0x02)) ; connection not allowed by ruleset
@@ -1157,19 +1186,21 @@
   [^ExecutorService pool ^Socket client ^InputStream cin ^OutputStream cout policy-fn on-log]
   (let [ver (.read cin)] ; 0x05, peeked + unread in handle-client
     (when (= ver 5)
-      (let [nm (.read cin)
-            methods (when (and nm (pos? nm)) (read-n cin nm))
-            offered (set (map #(bit-and 0xff (long %)) (or methods [])))]
+      (let
+        [nm (.read cin)
+         methods (when (and nm (pos? nm)) (read-n cin nm))
+         offered (set (map #(bit-and 0xff (long %)) (or methods [])))]
 
         (cond (contains? offered 0x02)
               (do (.write cout (byte-array (map unchecked-byte [0x05 0x02])))
                   (.flush cout)
-                  (let [_av (.read cin) ; auth version 0x01
-                        ulen (.read cin)
-                        uname (when (and ulen (pos? ulen)) (read-n cin ulen))
-                        plen (.read cin)
-                        _pw (when (and plen (pos? plen)) (read-n cin plen))
-                        token (when uname (String. ^bytes uname "UTF-8"))]
+                  (let
+                    [_av (.read cin) ; auth version 0x01
+                     ulen (.read cin)
+                     uname (when (and ulen (pos? ulen)) (read-n cin ulen))
+                     plen (.read cin)
+                     _pw (when (and plen (pos? plen)) (read-n cin plen))
+                     token (when uname (String. ^bytes uname "UTF-8"))]
 
                     (.write cout (byte-array (map unchecked-byte [0x01 0x00]))) ; auth OK
                     (.flush cout)
@@ -1190,14 +1221,15 @@
 (defn- handle-client
   [^ExecutorService pool ^Socket client policy-fn mitm on-log]
   (try (.setSoTimeout client HANDSHAKE_READ_TIMEOUT_MS)
-       (let [cin
-             (java.io.PushbackInputStream. (.getInputStream client) 1)
+       (let
+         [cin
+          (java.io.PushbackInputStream. (.getInputStream client) 1)
 
-             cout
-             (.getOutputStream client)
+          cout
+          (.getOutputStream client)
 
-             b0
-             (.read cin)]
+          b0
+          (.read cin)]
 
          (cond (neg? b0) nil
                ;; SOCKS5 greeting starts 0x05 — the generic-TCP lane (ssh/db/raw TCP).
@@ -1205,28 +1237,30 @@
                                (handle-socks5 pool client cin cout policy-fn on-log))
                :else (do
                        (.unread cin b0)
-                       (let [line
-                             (read-line-bytes cin)
+                       (let
+                         [line
+                          (read-line-bytes cin)
 
-                             rl
-                             (parse-request-line line)]
+                          rl
+                          (parse-request-line line)]
 
                          (if-not rl
                            nil
-                           (let [[method target version]
-                                 rl
+                           (let
+                             [[method target version]
+                              rl
 
-                                 ;; Read headers ONCE, up front, for both CONNECT and plain HTTP:
-                                 ;; the session token lives in `Proxy-Authorization`, so the policy
-                                 ;; can only be resolved AFTER the headers are in hand.
-                                 headers
-                                 (read-headers cin)
+                              ;; Read headers ONCE, up front, for both CONNECT and plain HTTP:
+                              ;; the session token lives in `Proxy-Authorization`, so the policy
+                              ;; can only be resolved AFTER the headers are in hand.
+                              headers
+                              (read-headers cin)
 
-                                 token
-                                 (proxy-auth-token headers)
+                              token
+                              (proxy-auth-token headers)
 
-                                 policy
-                                 (try (policy-fn token) (catch Throwable _ nil))]
+                              policy
+                              (try (policy-fn token) (catch Throwable _ nil))]
 
                              (if (:proxy-auth-required? policy)
                                (proxy-auth-response cout
@@ -1273,42 +1307,43 @@
    When present AND the per-connection policy carries `:mitm?`, HTTPS CONNECT is
    TLS-terminated so method+path are enforced; otherwise CONNECT is a raw tunnel."
   [{:keys [policy-fn on-log mitm]}]
-  (let [on-log
-        (or on-log
-            (fn [_]
-              nil))
+  (let
+    [on-log
+     (or on-log
+         (fn [_]
+           nil))
 
-        server
-        (doto (ServerSocket.)
-          (.setReuseAddress true)
-          (.bind (InetSocketAddress. (InetAddress/getByName "127.0.0.1") 0)))
+     server
+     (doto (ServerSocket.)
+       (.setReuseAddress true)
+       (.bind (InetSocketAddress. (InetAddress/getByName "127.0.0.1") 0)))
 
-        port
-        (.getLocalPort server)
+     port
+     (.getLocalPort server)
 
-        pool
-        (Executors/newCachedThreadPool (daemon-factory))
+     pool
+     (Executors/newCachedThreadPool (daemon-factory))
 
-        running
-        (atom true)
+     running
+     (atom true)
 
-        accept
-        (fn []
-          (while @running
-            (let [client (try (.accept server)
-                              (catch Throwable _
-                                ;; A failing accept must not HOT-SPIN this thread: back off
-                                ;; briefly, and treat a closed server socket as "stopping".
-                                (when (.isClosed server) (reset! running false))
-                                (when @running
-                                  (try (Thread/sleep 50) (catch InterruptedException _ nil)))
-                                nil))]
-              (when client
-                (.submit
-                  pool
-                  ^Runnable
-                  (fn []
-                    (handle-client pool client (or policy-fn (constantly nil)) mitm on-log)))))))]
+     accept
+     (fn []
+       (while @running
+         (let
+           [client (try (.accept server)
+                        (catch Throwable _
+                          ;; A failing accept must not HOT-SPIN this thread: back off
+                          ;; briefly, and treat a closed server socket as "stopping".
+                          (when (.isClosed server) (reset! running false))
+                          (when @running (try (Thread/sleep 50) (catch InterruptedException _ nil)))
+                          nil))]
+           (when client
+             (.submit
+               pool
+               ^Runnable
+               (fn []
+                 (handle-client pool client (or policy-fn (constantly nil)) mitm on-log)))))))]
 
     (doto (Thread. ^Runnable accept "vis-egress-accept") (.setDaemon true) (.start))
     {:port port

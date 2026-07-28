@@ -39,11 +39,12 @@
 
 (defn- call-extension-callback
   [ext f & args]
-  (binding [extension/*current-extension*
-            ext
+  (binding
+    [extension/*current-extension*
+     ext
 
-            extension/*current-symbol*
-            nil]
+     extension/*current-symbol*
+     nil]
 
     (apply f args)))
 
@@ -64,15 +65,16 @@
            (str "# ⋯ folded turn" (when (< 1 (count turns)) "s")
                 " " (str/join ", " turns)
                 "\n" gist)
-           (let [req (some-> user-request
-                             str
-                             str/trim
-                             not-empty)
-                 ans (some-> answer
-                             str
-                             str/trim
-                             not-empty)
-                 turn-no (or turn (inc (long i)))]
+           (let
+             [req (some-> user-request
+                          str
+                          str/trim
+                          not-empty)
+              ans (some-> answer
+                          str
+                          str/trim
+                          not-empty)
+              turn-no (or turn (inc (long i)))]
 
              (when (or req ans (seq results))
                (str
@@ -150,37 +152,38 @@
   [{:keys [stable-prompt-messages initial-user-content previous-turn-context turn-context
            user-images skipped-images vision?]
     :or {vision? true}}]
-  (let [prior-messages
-        (into []
-              (keep (fn [entry]
-                      (when-let [block (previous-turn-context-block [entry])]
-                        {:role "user" :content block})))
-              previous-turn-context)
+  (let
+    [prior-messages
+     (into []
+           (keep (fn [entry]
+                   (when-let [block (previous-turn-context-block [entry])]
+                     {:role "user" :content block})))
+           previous-turn-context)
 
-        turn-block
-        (prompt-block "turn-system-context" turn-context)
+     turn-block
+     (prompt-block "turn-system-context" turn-context)
 
-        user-block
-        (when initial-user-content (prompt-block "current-user-message" initial-user-content))
+     user-block
+     (when initial-user-content (prompt-block "current-user-message" initial-user-content))
 
-        attached-images
-        (if vision? (vec user-images) [])
+     attached-images
+     (if vision? (vec user-images) [])
 
-        manifest-skipped
-        (if vision?
-          skipped-images
-          (into (vec skipped-images)
-                (map (fn [{:keys [path]}]
-                       {:path path
-                        :reason "the active model has no vision — image not attached"
-                        :readable-blind? true})
-                     user-images)))
+     manifest-skipped
+     (if vision?
+       skipped-images
+       (into (vec skipped-images)
+             (map (fn [{:keys [path]}]
+                    {:path path
+                     :reason "the active model has no vision — image not attached"
+                     :readable-blind? true})
+                  user-images)))
 
-        images-block
-        (when user-block (attached-images-block attached-images manifest-skipped))
+     images-block
+     (when user-block (attached-images-block attached-images manifest-skipped))
 
-        text
-        (str/join "\n\n" (keep identity [turn-block user-block images-block]))]
+     text
+     (str/join "\n\n" (keep identity [turn-block user-block images-block]))]
 
     (vec (concat (or stable-prompt-messages [])
                  prior-messages
@@ -267,16 +270,17 @@
   "Read the optional string-keyed `system-prompt` YAML setting.
    Returns an internal `{:text ... :is-replace ...}` map or nil."
   []
-  (try (let [raw
-             (config/load-config-raw)
+  (try (let
+         [raw
+          (config/load-config-raw)
 
-             sp
-             (when (map? raw) (get raw "system_prompt"))
+          sp
+          (when (map? raw) (get raw "system_prompt"))
 
-             [s replace?]
-             (cond (string? sp) [sp false]
-                   (map? sp) [(get sp "text") (boolean (get sp "is_replace"))]
-                   :else [nil false])]
+          [s replace?]
+          (cond (string? sp) [sp false]
+                (map? sp) [(get sp "text") (boolean (get sp "is_replace"))]
+                :else [nil false])]
 
          (when (string? s)
            (let [t (extension/normalize-prompt-text s)]
@@ -306,11 +310,12 @@
 
    Returns `{:replace <text|nil> :appends [text …]}`."
   []
-  (let [global-dir
-        (io/file (System/getProperty "user.home") ".vis")
+  (let
+    [global-dir
+     (io/file (System/getProperty "user.home") ".vis")
 
-        proj-dir
-        (try (io/file (workspace/cwd) ".vis") (catch Throwable _ nil))]
+     proj-dir
+     (try (io/file (workspace/cwd) ".vis") (catch Throwable _ nil))]
 
     {:replace (or (when proj-dir (read-prompt-file (io/file proj-dir "SYSTEM.md")))
                   (read-prompt-file (io/file global-dir "SYSTEM.md")))
@@ -335,31 +340,32 @@
    `CORE_SYSTEM_PROMPT`. When a file/config replaces the base, addenda and
    append files are still appended after it."
   [{:keys [system-prompt]}]
-  (let [addendum
-        (when (string? system-prompt) (extension/normalize-prompt-text system-prompt))
+  (let
+    [addendum
+     (when (string? system-prompt) (extension/normalize-prompt-text system-prompt))
 
-        cfg
-        (config-system-prompt)
+     cfg
+     (config-system-prompt)
 
-        files
-        (system-prompt-file-overrides)
+     files
+     (system-prompt-file-overrides)
 
-        file-replace
-        (:replace files)
+     file-replace
+     (:replace files)
 
-        cfg-replace?
-        (and (nil? file-replace) (boolean (:is-replace cfg)))
+     cfg-replace?
+     (and (nil? file-replace) (boolean (:is-replace cfg)))
 
-        cfg-prompt
-        (when (and cfg (not (:is-replace cfg))) (:text cfg))
+     cfg-prompt
+     (when (and cfg (not (:is-replace cfg))) (:text cfg))
 
-        base
-        (or file-replace (when cfg-replace? (:text cfg)) CORE_SYSTEM_PROMPT)
+     base
+     (or file-replace (when cfg-replace? (:text cfg)) CORE_SYSTEM_PROMPT)
 
-        extras
-        (into []
-              (comp (filter string?) (remove str/blank?))
-              (into [addendum cfg-prompt] (:appends files)))]
+     extras
+     (into []
+           (comp (filter string?) (remove str/blank?))
+           (into [addendum cfg-prompt] (:appends files)))]
 
     (str/join "\n\n" (into [base] extras))))
 
@@ -370,24 +376,25 @@
   [environment]
   (try
     (binding [workspace/*filesystem-roots* (workspace/env-filesystem-roots environment)]
-      (let [{:keys [found? source path content files]} (agents/primary-instructions)
-            files (or (seq files)
-                      (when (and found? (string? content) (not (str/blank? content)))
-                        [{:scope :project
-                          :source (case source
-                                    :repo
-                                    :agents-md
+      (let
+        [{:keys [found? source path content files]} (agents/primary-instructions)
+         files (or (seq files)
+                   (when (and found? (string? content) (not (str/blank? content)))
+                     [{:scope :project
+                       :source (case source
+                                 :repo
+                                 :agents-md
 
-                                    :repo:claude-md-fallback
-                                    :claude-md
+                                 :repo:claude-md-fallback
+                                 :claude-md
 
-                                    source)
-                          :path path
-                          :content content}]))
-            files (filter (fn [f]
-                            (and (string? (:content f)) (not (str/blank? (:content f)))))
-                          files)
-            added (agents/added-root-guidance-index)]
+                                 source)
+                       :path path
+                       :content content}]))
+         files (filter (fn [f]
+                         (and (string? (:content f)) (not (str/blank? (:content f)))))
+                       files)
+         added (agents/added-root-guidance-index)]
 
         (when (or (seq files) (seq added))
           (let
@@ -426,9 +433,10 @@
    truthy for `environment`, in registration order. Single source of truth for
    activation; call ONCE at the top of a turn."
   [environment]
-  (when-let [exts (some-> (:extensions environment)
-                          deref
-                          seq)]
+  (when-let
+    [exts (some-> (:extensions environment)
+                  deref
+                  seq)]
     (vec (filter (fn [ext]
                    (try (boolean (call-extension-callback ext (:ext/activation-fn ext) environment))
                         (catch Throwable t
@@ -470,19 +478,21 @@
   (->> (or active-extensions [])
        (mapv
          (fn [ext]
-           (let [info
-                 (extension/extension-info ext)
+           (let
+             [info
+              (extension/extension-info ext)
 
-                 registry-id
-                 (:registry-id info)]
+              registry-id
+              (:registry-id info)]
 
-             (cond-> {:name (:name info)
-                      :alias (:alias info)
-                      :description (:description info)
-                      :kind (:kind info)
-                      :registry-id registry-id
-                      :symbols (mapv :ext.symbol/symbol
-                                     (remove :ext.symbol/hidden? (extension/ext-symbols ext)))}
+             (cond->
+               {:name (:name info)
+                :alias (:alias info)
+                :description (:description info)
+                :kind (:kind info)
+                :registry-id registry-id
+                :symbols (mapv :ext.symbol/symbol
+                               (remove :ext.symbol/hidden? (extension/ext-symbols ext)))}
                (nil? (:alias info))
                (dissoc :alias)
 
@@ -521,24 +531,25 @@
    registration). Non-blank results are normalized, wrapped as labeled
    extension fragments, then joined into one extension context block."
   [environment active-extensions]
-  (let [;; Built-ins first so the core kernel prompt (foundation) leads the
-        ;; block, header-less, before any third-party `;; -- EXTENSION --`.
-        active-extensions
-        (sort-by (complement extension/ext-builtin?) (or active-extensions []))
+  (let
+    [;; Built-ins first so the core kernel prompt (foundation) leads the
+     ;; block, header-less, before any third-party `;; -- EXTENSION --`.
+     active-extensions
+     (sort-by (complement extension/ext-builtin?) (or active-extensions []))
 
-        fragments
-        (keep (fn [ext]
-                (when-let [f (:ext/prompt-fn ext)]
-                  (try (let [result (call-extension-callback ext f environment)]
-                         (when (and (string? result) (not (str/blank? result)))
-                           (extension-prompt-fragment ext result)))
-                       (catch Throwable t
-                         (tel/log! {:level :warn
-                                    :id ::extension-prompt-error
-                                    :data {:ext (:ext/name ext) :error (ex-message t)}}
-                                   "Extension :ext/prompt-fn fn threw")
-                         nil))))
-              active-extensions)]
+     fragments
+     (keep (fn [ext]
+             (when-let [f (:ext/prompt-fn ext)]
+               (try (let [result (call-extension-callback ext f environment)]
+                      (when (and (string? result) (not (str/blank? result)))
+                        (extension-prompt-fragment ext result)))
+                    (catch Throwable t
+                      (tel/log! {:level :warn
+                                 :id ::extension-prompt-error
+                                 :data {:ext (:ext/name ext) :error (ex-message t)}}
+                                "Extension :ext/prompt-fn fn threw")
+                      nil))))
+           active-extensions)]
 
     (when (seq fragments) (prompt-block "extensions" (str/join "\n\n" fragments)))))
 
@@ -550,26 +561,27 @@
    When shell is active, name only the POSIX compatibility routing. The shell
    symbol's own docs remain the single authority for its invocation grammar."
   [active-extensions]
-  (let [shims
-        (try (extension/sandbox-shims) (catch Throwable _ nil))
+  (let
+    [shims
+     (try (extension/sandbox-shims) (catch Throwable _ nil))
 
-        shim-imports
-        (->> shims
-             (mapcat :shim/imports)
-             distinct
-             sort)
+     shim-imports
+     (->> shims
+          (mapcat :shim/imports)
+          distinct
+          sort)
 
-        shim-globals
-        (->> shims
-             (mapcat :shim/globals)
-             distinct
-             sort)
+     shim-globals
+     (->> shims
+          (mapcat :shim/globals)
+          distinct
+          sort)
 
-        shell?
-        (boolean (some #(= "foundation-shell" (:ext/name %)) (or active-extensions [])))
+     shell?
+     (boolean (some #(= "foundation-shell" (:ext/name %)) (or active-extensions [])))
 
-        auto-imports
-        (str/join "`, `" env-python/AUTO_IMPORTED_PYTHON_NAMES)]
+     auto-imports
+     (str/join "`, `" env-python/AUTO_IMPORTED_PYTHON_NAMES)]
 
     (prompt-block "sandbox-shims"
                   (str "Auto-imported by `python_execution` (no `import`): `"
@@ -600,10 +612,11 @@
    message in the rebuilt stateless provider message vector rather than append
    a second extension/context message."
   [environment active-extensions]
-  (let [blocks (->> [(extensions-prompt-block environment active-extensions)
-                     (sandbox-shims-prompt-block active-extensions)]
-                    (filter #(and (string? %) (not (str/blank? %))))
-                    seq)]
+  (let
+    [blocks (->> [(extensions-prompt-block environment active-extensions)
+                  (sandbox-shims-prompt-block active-extensions)]
+                 (filter #(and (string? %) (not (str/blank? %))))
+                 seq)]
     (when blocks (prompt-block "turn-system-context" (str/join "\n\n" blocks)))))
 
 (defn- stable-prompt-message
@@ -658,28 +671,29 @@
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "assemble-stable-prompt-messages requires :active-extensions"
                     {:type :vis/missing-active-extensions})))
-  (let [core-block
-        (prompt-block "system-prompt" (build-system-prompt {:system-prompt system-prompt}))
+  (let
+    [core-block
+     (prompt-block "system-prompt" (build-system-prompt {:system-prompt system-prompt}))
 
-        ;; Non-interactive `:cli` runs drop the candidate approval STOP — no
-        ;; human can approve a one-shot run. Stable per session (channel never
-        ;; changes), so it doesn't churn the prefix cache.
-        cli-block
-        (when (= :cli (:channel environment)) (prompt-block "cli-autonomous" cli-autonomous-rules))
+     ;; Non-interactive `:cli` runs drop the candidate approval STOP — no
+     ;; human can approve a one-shot run. Stable per session (channel never
+     ;; changes), so it doesn't churn the prefix cache.
+     cli-block
+     (when (= :cli (:channel environment)) (prompt-block "cli-autonomous" cli-autonomous-rules))
 
-        project-block
-        (project-instructions-block environment)
+     project-block
+     (project-instructions-block environment)
 
-        turn-system-block
-        (turn-system-context-block environment active-extensions)
+     turn-system-block
+     (turn-system-context-block environment active-extensions)
 
-        ;; Standing session context (workspace/env/routing/tools), rendered
-        ;; into the cached prefix so it isn't re-billed every iteration. The
-        ;; fenced `session = {…}` block is self-describing, so it rides as its own
-        ;; system message (no `;; -- TAG --` wrapper).
-        session-context-block
-        (not-empty (some-> session-context
-                           str/trim))]
+     ;; Standing session context (workspace/env/routing/tools), rendered
+     ;; into the cached prefix so it isn't re-billed every iteration. The
+     ;; fenced `session = {…}` block is self-describing, so it rides as its own
+     ;; system message (no `;; -- TAG --` wrapper).
+     session-context-block
+     (not-empty (some-> session-context
+                        str/trim))]
 
     (vec (keep stable-prompt-message
                [core-block cli-block project-block turn-system-block session-context-block]))))

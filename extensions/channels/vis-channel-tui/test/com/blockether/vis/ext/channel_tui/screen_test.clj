@@ -669,27 +669,29 @@
           (expect (= ["new" "old"]
                      (mapv #(get % "id") (latest-modified-first [old-summary new-summary]))))))))
 
-(defdescribe submit-input-test
-             (it "dispatches send before reset so paste placeholders can expand"
-                 (let
-                   [events
-                    (atom [])
+(defdescribe
+  submit-input-test
+  (it "dispatches send before reset so paste placeholders can expand"
+      (let
+        [events
+         (atom [])
 
-                    payload
-                    "therapy line 1\ntherapy line 2"
+         payload
+         "therapy line 1\ntherapy line 2"
 
-                    token
-                    (input/format-paste-placeholder {:id 1 :content payload})
+         token
+         (input/format-paste-placeholder {:id 1 :content payload})
 
-                    input-state
-                    (input/paste-text (input/empty-input) (str "context " token))]
+         input-state
+         (input/paste-text (input/empty-input) (str "context " token))]
 
-                   (with-redefs
-                     [state/dispatch (fn [event]
-                                       (swap! events conj event))]
-                     (submit-input! {:session {:id "c1"} :loading? false} input-state)
-                     (expect (= [[:send-message (str "context " token)] [:reset-input]]
-                                @events))))))
+        (with-redefs
+          [state/dispatch (fn [event]
+                            (swap! events conj event))]
+          (submit-input! {:session {:id "c1"} :loading? false :active-tab-id :tab-a} input-state)
+          ;; The submitting tab is pinned into the event so a tab
+          ;; switch between Enter and the reduce cannot reroute it.
+          (expect (= [[:send-message (str "context " token) :tab-a] [:reset-input]] @events))))))
 
 (defdescribe
   selectable-ranges-test
@@ -1584,16 +1586,20 @@
    foreign-provider report, so the usage row sat on \"limits: loading…\"
    forever while the poller kept refreshing the wrong plan."
   (it "prefers the local per-session model pref over the gateway session model"
-      (let [active-provider-id (deref #'screen/active-provider-id)
+      (let
+        [active-provider-id
+         (deref #'screen/active-provider-id)
 
-            old-db @state/app-db]
+         old-db
+         @state/app-db]
 
-        (try (with-redefs [vis/gateway-session-model (fn [_]
-                                                       {:provider "anthropic-coding-plan"
-                                                        :model "claude-opus-5"})]
-               (reset! state/app-db
-                       {:session {:id "s1"}
-                        :session-model-pref {:provider "openai-codex" :model "gpt-5.6-terra"}})
+        (try (with-redefs
+               [vis/gateway-session-model (fn [_]
+                                            {:provider "anthropic-coding-plan"
+                                             :model "claude-opus-5"})]
+               (reset! state/app-db {:session {:id "s1"}
+                                     :session-model-pref {:provider "openai-codex"
+                                                          :model "gpt-5.6-terra"}})
                (expect (= :openai-codex (active-provider-id)))
                (swap! state/app-db dissoc :session-model-pref)
                (expect (= :anthropic-coding-plan (active-provider-id))))

@@ -47,11 +47,12 @@
 
 (defn- latest-turn-state-id
   [env]
-  (let [db-info
-        (db-info! env)
+  (let
+    [db-info
+     (db-info! env)
 
-        turn-id
-        (read-turn-state-field env :session-turn-id)]
+     turn-id
+     (read-turn-state-field env :session-turn-id)]
 
     (when turn-id
       (some->> (persistance/db-list-session-turn-states db-info turn-id)
@@ -128,11 +129,12 @@
          :iteration-id
          (require-scope-id scope :iteration-id (read-turn-state-field env :iteration-id))}
         (= :block scope)
-        (let [iteration-id
-              (require-scope-id scope :iteration-id (read-turn-state-field env :iteration-id))
+        (let
+          [iteration-id
+           (require-scope-id scope :iteration-id (read-turn-state-field env :iteration-id))
 
-              form-index
-              (read-turn-state-field env :form-idx)]
+           form-index
+           (read-turn-state-field env :form-idx)]
 
           {:session-soul-id (:session-id env)
            :session-state-id (current-session-state-id env)
@@ -160,9 +162,10 @@
     (throw (ex-info "Extension aggregate query must be a map"
                     {:type :extension-aggregate/invalid-query :got (type query)})))
   (reject-extension-id! query)
-  (cond-> (merge (dissoc query :key :scope)
-                 {:extension-id (current-extension-id!)}
-                 (resolve-scope env (:scope query)))
+  (cond->
+    (merge (dissoc query :key :scope)
+           {:extension-id (current-extension-id!)}
+           (resolve-scope env (:scope query)))
     (or (:aggregate-key query) (:key query))
     (assoc :aggregate-key (or (:aggregate-key query) (:key query)))))
 
@@ -200,10 +203,11 @@
   "Atomic singleton update. Reads the current content for query, applies f, and
    writes the returned value as :content. Query must include :key and :kind."
   [env query f & args]
-  (let [row (normalize-query env
-                             (cond-> query
-                               (not (contains? query :scope))
-                               (assoc :scope :global)))]
+  (let
+    [row (normalize-query env
+                          (cond-> query
+                            (not (contains? query :scope))
+                            (assoc :scope :global)))]
     (when-not (:aggregate-key row)
       (throw (ex-info "extension-update-aggregate! requires :key"
                       {:type :extension-aggregate/missing-required :key :key})))

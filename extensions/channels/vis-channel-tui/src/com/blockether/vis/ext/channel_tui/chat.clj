@@ -1053,10 +1053,11 @@
        :status (event-get event :status)}
 
       "turn.failed"
-      (cond-> {:phase :turn-terminal
-               :turn-id (event-get event :turn-id)
-               :client-id (event-get event :idempotency-key)
-               :status (or (event-get event :status) "failed")}
+      (cond->
+        {:phase :turn-terminal
+         :turn-id (event-get event :turn-id)
+         :client-id (event-get event :idempotency-key)
+         :status (or (event-get event :status) "failed")}
         ;; The settled failure content (the styled provider card). Without it the
         ;; independent terminal path can only invent a bare "Turn failed." row.
         (seq (event-get event :content))
@@ -1078,8 +1079,7 @@
       ;; stream the event rode in on, never the titled session.
       "session.title_updated"
       {:phase :title-sync
-       :session-id (some-> (or (event-get event :titled-session-id)
-                               (event-get event :session-id))
+       :session-id (some-> (or (event-get event :titled-session-id) (event-get event :session-id))
                            str)
        :title (event-get event :title)}
 

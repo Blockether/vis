@@ -18,8 +18,8 @@
 
 (defmacro with-python-context
   [& body]
-  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context
-                                                                         {}))]
+  `(let
+     [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context {}))]
      (try ~@body (finally (.close ~'python-context)))))
 
 (defdescribe
@@ -194,11 +194,12 @@
    back verbatim, then closes. Returns the listening ServerSocket (caller closes)."
   ^ServerSocket []
   (let [ss (ServerSocket. 0 0 (java.net.InetAddress/getByName "127.0.0.1"))]
-    (future (try (let [s (.accept ss)
-                       in (.getInputStream s)
-                       out (.getOutputStream s)
-                       buf (byte-array 256)
-                       n (.read in buf)]
+    (future (try (let
+                   [s (.accept ss)
+                    in (.getInputStream s)
+                    out (.getOutputStream s)
+                    buf (byte-array 256)
+                    n (.read in buf)]
 
                    (when (pos? n) (.write out buf 0 n) (.flush out))
                    (.close s))
@@ -227,37 +228,40 @@
   paramiko-reverse-tunnel-test
   (it
     "serves a real reverse tcpip-forward round-trip via Transport(sock).start_server (MINA server + JSch client; auth + forward delegated to ServerInterface)"
-    (let [target
-          (start-echo!)
+    (let
+      [target
+       (start-echo!)
 
-          tport
-          (int (.getLocalPort target))
+       tport
+       (int (.getLocalPort target))
 
-          rport
-          (int (free-port))
+       rport
+       (int (free-port))
 
-          {python-context :python-context}
-          (ep/create-python-context {} nil {:enabled? true})]
+       {python-context :python-context}
+       (ep/create-python-context {} nil {:enabled? true})]
 
       (try (.eval ^Context python-context "python" reverse-tunnel-server-src)
-           (let [lport
-                 (int (ep/->clj (.eval ^Context python-context "python" "lst.getsockname()[1]")))
+           (let
+             [lport
+              (int (ep/->clj (.eval ^Context python-context "python" "lst.getsockname()[1]")))
 
-                 js
-                 (JSch.)
+              js
+              (JSch.)
 
-                 ^Session sess
-                 (doto (.getSession js "bob" "127.0.0.1" lport)
-                   (.setPassword "pw")
-                   (.setConfig "StrictHostKeyChecking" "no"))]
+              ^Session sess
+              (doto (.getSession js "bob" "127.0.0.1" lport)
+                (.setPassword "pw")
+                (.setConfig "StrictHostKeyChecking" "no"))]
 
              (.connect sess 10000)
              (.setPortForwardingR sess "127.0.0.1" rport "127.0.0.1" tport)
              (Thread/sleep 400)
              (let [cli (doto (Socket.) (.connect (InetSocketAddress. "127.0.0.1" rport) 3000))]
                (try (doto (.getOutputStream cli) (.write (.getBytes "ping-42")) (.flush))
-                    (let [buf (byte-array 64)
-                          n (.read (.getInputStream cli) buf)]
+                    (let
+                      [buf (byte-array 64)
+                       n (.read (.getInputStream cli) buf)]
 
                       (expect (= "ping-42" (String. buf 0 (max n 0)))))
                     (finally (.close cli))))
@@ -268,21 +272,22 @@
   paramiko-server-reap-test
   (it
     "stops and deregisters the MINA server host-side the moment its SSH session closes, so a started server never outlives its connection (independent of the guest Python `_reap` thread the GraalPy context cancels on close)"
-    (let [info
-          ((deref #'shim/op-server-start)
-            (fn [_u _p]
-              0)
-            (fn [_a _p]
-              true))
+    (let
+      [info
+       ((deref #'shim/op-server-start)
+         (fn [_u _p]
+           0)
+         (fn [_a _p]
+           true))
 
-          handle
-          (long (get info "handle"))
+       handle
+       (long (get info "handle"))
 
-          port
-          (int (get info "port"))
+       port
+       (int (get info "port"))
 
-          registry
-          (deref #'shim/server-registry)]
+       registry
+       (deref #'shim/server-registry)]
 
       (expect (contains? @registry handle))
       ;; A completed SSH session that then disconnects is what fires MINA's
@@ -291,13 +296,14 @@
       ;; which can exceed the client timeout on a heavily loaded box — so ASSERT the
       ;; reap only when the handshake actually completed; a timed-out connect is an
       ;; environment limit, not a reap regression.
-      (let [sess
-            (doto (.getSession (JSch.) "bob" "127.0.0.1" port)
-              (.setPassword "pw")
-              (.setConfig "StrictHostKeyChecking" "no"))
+      (let
+        [sess
+         (doto (.getSession (JSch.) "bob" "127.0.0.1" port)
+           (.setPassword "pw")
+           (.setConfig "StrictHostKeyChecking" "no"))
 
-            connected?
-            (try (.connect sess 15000) true (catch Throwable _ false))]
+         connected?
+         (try (.connect sess 15000) true (catch Throwable _ false))]
 
         (when connected?
           (.disconnect sess)

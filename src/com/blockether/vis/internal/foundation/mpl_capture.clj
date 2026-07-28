@@ -99,6 +99,44 @@
   (not-empty (vec (some-> sink
                           deref))))
 
+(defn display-cache-file
+  "Durable, content-addressed host file backing ONE inline `vis-image` display
+   fence: `~/.vis/cache/display/<prefix><sha256-16>.<ext>`.
+
+   The fence a shim prints carries a HOST PATH, and that path is persisted with
+   the iteration output — a TUI re-rendering history repaints the picture from
+   it. An OS temp file (the old home) is swept by the system days later, so a
+   restored bubble then pointed at a dead path while the same artifact still
+   rendered fine in the companion app (which fetches DB bytes). This cache is
+   the TUI-side equivalent of that durability. DISPLAY ONLY — the bytes stay
+   DB-owned via `record-attachment!`.
+
+   Content-addressed: the same figure written twice reuses one file, the name is
+   stable across restarts, and an existing file is never rewritten."
+  ^java.io.File [^String prefix ^String ext ^bytes bs]
+  (let
+    [dir
+     (doto (java.io.File. (java.io.File. (java.io.File. (System/getProperty "user.home") ".vis")
+                                         "cache")
+                          "display")
+       (.mkdirs))
+
+     digest
+     (->> (.digest (java.security.MessageDigest/getInstance "SHA-256") bs)
+          (take 8)
+          (map #(format "%02x" (bit-and (long %) 0xff)))
+          (apply str))
+
+     f
+     (java.io.File. dir (str prefix digest "." ext))]
+
+    (when-not (.isFile f)
+      (java.nio.file.Files/write (.toPath f)
+                                 bs
+                                 ^"[Ljava.nio.file.OpenOption;"
+                                 (make-array java.nio.file.OpenOption 0)))
+    f))
+
 ;; ---------------------------------------------------------------------------
 ;; Host-side media-type sniffing — mirrors the Python `__vis_guess_media_type`
 ;; in `shim-attach`, used by the filesystem outbox tap which only has path+bytes
@@ -213,36 +251,39 @@
    outbox write must not break a turn."
   [^Path path]
   (try
-    (let [k
-          (str (.toAbsolutePath path))
+    (let
+      [k
+       (str (.toAbsolutePath path))
 
-          seen
-          *outbox-seen*]
+       seen
+       *outbox-seen*]
 
       (when (and *attachment-sink*
                  (or (nil? seen) (not (contains? @seen k)))
                  (not (contains? noisy-capture-exts (ext-of (str (.getFileName path)))))
                  (Files/isRegularFile path (make-array LinkOption 0)))
-        (let [^BasicFileAttributes attrs
-              (Files/readAttributes path
-                                    BasicFileAttributes
-                                    ^"[Ljava.nio.file.LinkOption;" (make-array LinkOption 0))
+        (let
+          [^BasicFileAttributes attrs
+           (Files/readAttributes path
+                                 BasicFileAttributes
+                                 ^"[Ljava.nio.file.LinkOption;" (make-array LinkOption 0))
 
-              size
-              (.size attrs)]
+           size
+           (.size attrs)]
 
           (when (<= 1 size max-capture-bytes)
-            (let [data
-                  (Files/readAllBytes path)
+            (let
+              [data
+               (Files/readAllBytes path)
 
-                  fname
-                  (str (.getFileName path))
+               fname
+               (str (.getFileName path))
 
-                  mt
-                  (sniff-media-type data fname)
+               mt
+               (sniff-media-type data fname)
 
-                  b64
-                  (.encodeToString (Base64/getEncoder) data)]
+               b64
+               (.encodeToString (Base64/getEncoder) data)]
 
               (when seen (swap! seen conj k))
               (record-attachment! {:kind (if (str/starts-with? mt "image/") "image" "file")

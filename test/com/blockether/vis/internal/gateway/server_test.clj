@@ -49,14 +49,15 @@
     (is (some? ((rv 'router) "test-token" [])))))
 
 (deftest list-turns-status-filter-routes-to-queued-overlay
-  (let [sid
-        (random-uuid)
+  (let
+    [sid
+     (random-uuid)
 
-        calls
-        (atom [])
+     calls
+     (atom [])
 
-        request
-        {:path-params {:sid (str sid)}}]
+     request
+     {:path-params {:sid (str sid)}}]
 
     (with-redefs-fn {#'state/soul (fn [actual]
                                     (= sid actual))
@@ -75,14 +76,15 @@
            (is (= [[:all sid]] @calls))))))
 
 (deftest draft-management-client-builds-canonical-routes
-  (let [sent
-        (atom [])
+  (let
+    [sent
+     (atom [])
 
-        sid
-        (str (random-uuid))
+     sid
+     (str (random-uuid))
 
-        wid
-        (str (random-uuid))]
+     wid
+     (str (random-uuid))]
 
     (with-redefs-fn {#'client/send-json! (fn [method path body]
                                            (swap! sent conj [method path body])
@@ -147,33 +149,36 @@
   (testing "status reads the already-reaped lease map without OS liveness work"
     (with-server-state! {:clients {"c1" {:pid 10} "c2" {:pid 11}} :sse-clients #{"s1"}}
                         (fn []
-                          (with-redefs [discovery/pid-alive-cached?
-                                        (fn [_]
-                                          (throw (ex-info "must not probe" {})))]
+                          (with-redefs
+                            [discovery/pid-alive-cached? (fn [_]
+                                                           (throw (ex-info "must not probe" {})))]
                             (is (= 3 ((rv 'client-count)))))))))
 
 (deftest compact-client-leases-removes-dead-and-duplicate-pids
   (testing "one sweep probes each pid once, keeps nil-pid leases, and preserves identity when clean"
-    (let [checks
-          (atom [])
+    (let
+      [checks
+       (atom [])
 
-          clients
-          {"live-old" {:pid 10} "live-duplicate" {:pid 10} "dead" {:pid 20} "browser" {:pid nil}}
+       clients
+       {"live-old" {:pid 10} "live-duplicate" {:pid 10} "dead" {:pid 20} "browser" {:pid nil}}
 
-          compact
-          (rv 'compact-client-leases)]
+       compact
+       (rv 'compact-client-leases)]
 
-      (with-redefs [discovery/pid-alive-cached? (fn [pid]
-                                                  (swap! checks conj pid)
-                                                  (= 10 pid))]
+      (with-redefs
+        [discovery/pid-alive-cached? (fn [pid]
+                                       (swap! checks conj pid)
+                                       (= 10 pid))]
         (let [{after :clients :keys [dead duplicates]} (compact clients)]
           (is (= 1 dead))
           (is (= 1 duplicates))
           (is (= #{"browser"} (set (filter #(nil? (get-in after [% :pid])) (keys after)))))
           (is (= 2 (count after)))
           (is (= #{10 20} (set @checks))))
-        (let [clean {"live" {:pid 10} "browser" {:pid nil}}
-              {after :clients :keys [dead duplicates]} (compact clean)]
+        (let
+          [clean {"live" {:pid 10} "browser" {:pid nil}}
+           {after :clients :keys [dead duplicates]} (compact clean)]
 
           (is (identical? clean after))
           (is (zero? dead))
@@ -181,14 +186,15 @@
 
 (deftest registering-a-pid-upserts-its-single-process-lease
   (testing "re-registration replaces the old opaque id but preserves other processes and browsers"
-    (let [register
-          (rv 'register-client-lease)
+    (let
+      [register
+       (rv 'register-client-lease)
 
-          before
-          {"old" {:pid 10} "other" {:pid 20} "browser" {:pid nil}}
+       before
+       {"old" {:pid 10} "other" {:pid 20} "browser" {:pid nil}}
 
-          {after :clients :keys [replaced]}
-          (register before "new" {:pid 10 :kind "clojure-client"})]
+       {after :clients :keys [replaced]}
+       (register before "new" {:pid 10 :kind "clojure-client"})]
 
       (is (= 1 replaced))
       (is (= #{"new" "other" "browser"} (set (keys after))))
@@ -218,11 +224,12 @@
   (testing "a gateway without the optional voice extension reports it honestly"
     (with-redefs-fn {(rv 'voice-asr-resolve) (constantly nil)}
       (fn []
-        (let [response
-              ((rv 'capabilities-handler) {})
+        (let
+          [response
+           ((rv 'capabilities-handler) {})
 
-              body
-              (wire/parse-json (:body response))]
+           body
+           (wire/parse-json (:body response))]
 
           (is (= 200 (:status response)))
           (is (= 1 (get body "version")))
@@ -242,45 +249,48 @@
 
                                                  nil))}
       (fn []
-        (let [body (-> ((rv 'capabilities-handler) {})
-                       :body
-                       wire/parse-json)]
+        (let
+          [body (-> ((rv 'capabilities-handler) {})
+                    :body
+                    wire/parse-json)]
           (is (true? (get-in body ["features" "voice" "enabled"])))
           (is (= "audio/wav" (get-in body ["features" "voice" "transport"])))
           (is (= "ready" (get-in body ["features" "voice" "model" "status"]))))))))
 
 (deftest theme-handler-shares-the-tui-palette-and-persistence
   (let [saved (atom nil)]
-    (with-redefs [config/load-config-raw (constantly {"providers" [{"id" "demo"}]
-                                                      "tui_settings" {"theme_name"
-                                                                      "solarized-dark"}})
-                  config/save-config! #(reset! saved %)]
+    (with-redefs
+      [config/load-config-raw (constantly {"providers" [{"id" "demo"}]
+                                           "tui_settings" {"theme_name" "solarized-dark"}})
+       config/save-config! #(reset! saved %)]
 
-      (let [get-response ((rv 'get-theme-handler) {})
-            current (wire/parse-json (:body get-response))]
+      (let
+        [get-response ((rv 'get-theme-handler) {})
+         current (wire/parse-json (:body get-response))]
 
         (is (= 200 (:status get-response)))
         (is (= "solarized-dark" (get current "id")))
         (is (= (get (theme/theme->web-css-vars (theme/theme "solarized-dark")) "--bg")
                (get-in current ["css_vars" "--bg"])))
-        (doseq [css-var ["--dialog-title-bg" "--dialog-title-fg" "--dialog-border" "--dialog-shadow"
-                         "--dialog-hint" "--input-field-bg" "--button-bg" "--button-fg"
-                         "--user-bubble-bg" "--user-bubble-fg" "--user-role-fg" "--ai-bubble-bg"
-                         "--ai-bubble-fg" "--ai-role-fg" "--iteration-header-fg"
-                         "--iteration-header-bg" "--answer-bg" "--answer-fg" "--md-h1-fg"
-                         "--md-h2-fg" "--md-h3-fg" "--code-bg" "--code-fg" "--code-ok-bg"
-                         "--code-err-bg" "--code-success" "--code-error" "--code-syntax-keyword"
-                         "--code-syntax-special" "--code-syntax-string" "--code-syntax-number"
-                         "--code-syntax-comment" "--result-bg" "--code-result" "--code-duration"
-                         "--footer-fg" "--footer-muted" "--footer-spinner"]]
+        (doseq
+          [css-var ["--dialog-title-bg" "--dialog-title-fg" "--dialog-border" "--dialog-shadow"
+                    "--dialog-hint" "--input-field-bg" "--button-bg" "--button-fg"
+                    "--user-bubble-bg" "--user-bubble-fg" "--user-role-fg" "--ai-bubble-bg"
+                    "--ai-bubble-fg" "--ai-role-fg" "--iteration-header-fg" "--iteration-header-bg"
+                    "--answer-bg" "--answer-fg" "--md-h1-fg" "--md-h2-fg" "--md-h3-fg" "--code-bg"
+                    "--code-fg" "--code-ok-bg" "--code-err-bg" "--code-success" "--code-error"
+                    "--code-syntax-keyword" "--code-syntax-special" "--code-syntax-string"
+                    "--code-syntax-number" "--code-syntax-comment" "--result-bg" "--code-result"
+                    "--code-duration" "--footer-fg" "--footer-muted" "--footer-spinner"]]
           (is (string? (get-in current ["css_vars" css-var])) css-var))
         (is (some #(= "vis-dark" (get % "id")) (get current "themes")))
         ;; Each theme in the list carries its own browser-ready palette so the
         ;; companion can pin a local theme (e.g. light) without a POST.
         (doseq [t (get current "themes")]
           (is (string? (get-in t ["css_vars" "--bg"])) (get t "id"))))
-      (let [set-response ((rv 'set-theme-handler) {:body (body-stream {:id "vis-dark"})})
-            updated (wire/parse-json (:body set-response))]
+      (let
+        [set-response ((rv 'set-theme-handler) {:body (body-stream {:id "vis-dark"})})
+         updated (wire/parse-json (:body set-response))]
 
         (is (= 200 (:status set-response)))
         (is (= "vis-dark" (get updated "id")))
@@ -289,9 +299,10 @@
 
 (deftest theme-handler-rejects-unknown-themes
   (let [saved? (atom false)]
-    (with-redefs [config/load-config-raw (constantly {})
-                  config/save-config! (fn [_]
-                                        (reset! saved? true))]
+    (with-redefs
+      [config/load-config-raw (constantly {})
+       config/save-config! (fn [_]
+                             (reset! saved? true))]
 
       (let [response ((rv 'set-theme-handler) {:body (body-stream {:id "not-a-theme"})})]
         (is (= 404 (:status response)))
@@ -299,11 +310,13 @@
 
 (deftest slashes-handler-uses-the-web-palette-and-includes-native-commands
   (let [seen (atom nil)]
-    (with-redefs [slash/slash-palette (fn [channel extra]
-                                        (reset! seen [channel extra])
-                                        (conj (vec extra) {:name "/rename" :doc "Rename"}))]
-      (let [response ((rv 'slashes-handler) {})
-            body (wire/parse-json (:body response))]
+    (with-redefs
+      [slash/slash-palette (fn [channel extra]
+                             (reset! seen [channel extra])
+                             (conj (vec extra) {:name "/rename" :doc "Rename"}))]
+      (let
+        [response ((rv 'slashes-handler) {})
+         body (wire/parse-json (:body response))]
 
         (is (= 200 (:status response)))
         (is (= :web (first @seen)))
@@ -315,19 +328,20 @@
     (with-server-state!
       {:require-token? true}
       (fn []
-        (let [wrap-auth
-              (rv 'wrap-auth)
+        (let
+          [wrap-auth
+           (rv 'wrap-auth)
 
-              handler
-              (fn [_req]
-                {:status 200 :body "ok"})
+           handler
+           (fn [_req]
+             {:status 200 :body "ok"})
 
-              app
-              (wrap-auth handler "sekret" [])
+           app
+           (wrap-auth handler "sekret" [])
 
-              req
-              (fn [headers]
-                {:uri "/v1/sessions" :headers headers})]
+           req
+           (fn [headers]
+             {:uri "/v1/sessions" :headers headers})]
 
           (testing "no credential → 401" (is (= 401 (:status (app (req {}))))))
           (testing "Authorization: Bearer with the right token → 200"
@@ -342,14 +356,15 @@
   (testing "with auth off (loopback default) every request passes without a token"
     (with-server-state! {:require-token? false}
                         (fn []
-                          (let [wrap-auth
-                                (rv 'wrap-auth)
+                          (let
+                            [wrap-auth
+                             (rv 'wrap-auth)
 
-                                app
-                                (wrap-auth (fn [_req]
-                                             {:status 200})
-                                           "sekret"
-                                           [])]
+                             app
+                             (wrap-auth (fn [_req]
+                                          {:status 200})
+                                        "sekret"
+                                        [])]
 
                             (is (= 200 (:status (app {:uri "/v1/sessions" :headers {}})))))))))
 
@@ -359,30 +374,31 @@
     (with-server-state!
       {:require-token? true}
       (fn []
-        (let [app
-              ((rv 'app) "sekret" [])
+        (let
+          [app
+           ((rv 'app) "sekret" [])
 
-              origin
-              "http://100.109.18.77:5273"
+           origin
+           "http://100.109.18.77:5273"
 
-              preflight
-              (app {:request-method :options
-                    :uri "/v1/sessions"
-                    :headers {"origin" origin
-                              "access-control-request-headers" "authorization,content-type"}})
+           preflight
+           (app {:request-method :options
+                 :uri "/v1/sessions"
+                 :headers {"origin" origin
+                           "access-control-request-headers" "authorization,content-type"}})
 
-              noauth
-              (app {:request-method :get
-                    :uri "/v1/sessions"
-                    :headers {"origin" origin
-                              protocol/protocol-header (str protocol/protocol-version)}})
+           noauth
+           (app {:request-method :get
+                 :uri "/v1/sessions"
+                 :headers {"origin" origin
+                           protocol/protocol-header (str protocol/protocol-version)}})
 
-              authed
-              (app {:request-method :get
-                    :uri "/v1/sessions"
-                    :headers {"origin" origin
-                              "authorization" "Bearer sekret"
-                              protocol/protocol-header (str protocol/protocol-version)}})]
+           authed
+           (app {:request-method :get
+                 :uri "/v1/sessions"
+                 :headers {"origin" origin
+                           "authorization" "Bearer sekret"
+                           protocol/protocol-header (str protocol/protocol-version)}})]
 
           (testing "preflight OPTIONS short-circuits auth with 204"
             (is (= 204 (:status preflight)))
@@ -399,17 +415,18 @@
 
 (deftest parse-multi-sids-parses-and-filters
   (testing "sid[:cursor] comma list — cursor defaults to 0, unknown/non-UUID sids dropped"
-    (let [sid-a
-          (java.util.UUID/randomUUID)
+    (let
+      [sid-a
+       (java.util.UUID/randomUUID)
 
-          sid-b
-          (java.util.UUID/randomUUID)
+       sid-b
+       (java.util.UUID/randomUUID)
 
-          a
-          (str sid-a)
+       a
+       (str sid-a)
 
-          b
-          (str sid-b)]
+       b
+       (str sid-b)]
 
       (with-redefs-fn {#'state/soul (fn [sid]
                                       (contains? #{sid-a sid-b} sid))}
@@ -440,29 +457,30 @@
                              :headers {"last-event-id" ""}}))))))))))
 
 (deftest transcript-window-params-never-degrade-to-the-full-transcript
-  (let [q
-        (fn [qs]
-          (ring-params/assoc-query-params {:path-params {:sid (str (java.util.UUID/randomUUID))}
-                                           :query-string qs}
-                                          "UTF-8"))
+  (let
+    [q
+     (fn [qs]
+       (ring-params/assoc-query-params {:path-params {:sid (str (java.util.UUID/randomUUID))}
+                                        :query-string qs}
+                                       "UTF-8"))
 
-        query-long
-        (rv 'query-long)
+     query-long
+     (rv 'query-long)
 
-        seen
-        (atom nil)
+     seen
+     (atom nil)
 
-        call
-        (fn [qs]
-          (reset! seen ::unset)
-          (with-redefs-fn {#'state/transcript-page
-                           (fn [_sid opts]
-                             (reset! seen opts)
-                             {:turns [] :total 0 :offset 0 :has-more false})}
-            #(let [r
-                   ((rv 'transcript-handler) (q qs))]
+     call
+     (fn [qs]
+       (reset! seen ::unset)
+       (with-redefs-fn {#'state/transcript-page (fn [_sid opts]
+                                                  (reset! seen opts)
+                                                  {:turns [] :total 0 :offset 0 :has-more false})}
+         #(let
+            [r
+             ((rv 'transcript-handler) (q qs))]
 
-               [(:status r) @seen])))]
+            [(:status r) @seen])))]
 
     (testing "ring hands back a VECTOR for a repeated param, so parsing must not throw"
       (is (= ["1" "2"] (get-in (q "limit=1&limit=2") [:query-params "limit"])))
@@ -492,26 +510,27 @@
         (with-server-state!
           {}
           (fn []
-            (let [multi-sse-body
-                  (rv 'multi-sse-body)
+            (let
+              [multi-sse-body
+               (rv 'multi-sse-body)
 
-                  write-body
-                  (requiring-resolve 'ring.core.protocols/write-body-to-stream)
+               write-body
+               (requiring-resolve 'ring.core.protocols/write-body-to-stream)
 
-                  sid-a
-                  (str (java.util.UUID/randomUUID))
+               sid-a
+               (str (java.util.UUID/randomUUID))
 
-                  sid-b
-                  (str (java.util.UUID/randomUUID))
+               sid-b
+               (str (java.util.UUID/randomUUID))
 
-                  baos
-                  (java.io.ByteArrayOutputStream.)
+               baos
+               (java.io.ByteArrayOutputStream.)
 
-                  body
-                  (multi-sse-body [[sid-a 0] [sid-b 0]] false)
+               body
+               (multi-sse-body [[sid-a 0] [sid-b 0]] false)
 
-                  fut
-                  (future (try (write-body body {} baos) (catch Throwable _ nil)))]
+               fut
+               (future (try (write-body body {} baos) (catch Throwable _ nil)))]
 
               (Thread/sleep 150)
               (state/append-event! sid-a "test.alpha" {:n 1})
@@ -577,14 +596,15 @@
 
 (deftest resource-handlers-read-rid-from-query-param
   (testing "stop/restart/logs handlers forward the rid QUERY param to the resources ns"
-    (let [seen
-          (atom [])
+    (let
+      [seen
+       (atom [])
 
-          sid
-          (str (random-uuid))
+       sid
+       (str (random-uuid))
 
-          req
-          {:path-params {:sid sid} :query-params {"rid" nrepl-rid}}]
+       req
+       {:path-params {:sid sid} :query-params {"rid" nrepl-rid}}]
 
       (with-redefs-fn {#'resources/stop! (fn [_ rid]
                                            (swap! seen conj [:stop rid])
@@ -596,14 +616,15 @@
                                           (swap! seen conj [:logs rid])
                                           ["line-1"])}
         (fn []
-          (let [stop
-                ((rv 'resource-stop-handler) req)
+          (let
+            [stop
+             ((rv 'resource-stop-handler) req)
 
-                restart
-                ((rv 'resource-restart-handler) req)
+             restart
+             ((rv 'resource-restart-handler) req)
 
-                logs
-                ((rv 'resource-logs-handler) req)]
+             logs
+             ((rv 'resource-logs-handler) req)]
 
             (testing "each handler answers 200 and threads the exact slash-embedding rid through"
               (is (= 200 (:status stop)))
@@ -615,11 +636,12 @@
 
 (deftest resource-handlers-404-on-unknown-session
   (testing "a non-uuid sid is rejected before any resources call — 404, resources ns untouched"
-    (let [touched
-          (atom false)
+    (let
+      [touched
+       (atom false)
 
-          req
-          {:path-params {:sid "not-a-uuid"} :query-params {"rid" nrepl-rid}}]
+       req
+       {:path-params {:sid "not-a-uuid"} :query-params {"rid" nrepl-rid}}]
 
       (with-redefs-fn {#'resources/stop! (fn [& _]
                                            (reset! touched true)
@@ -635,32 +657,33 @@
 (deftest resource-rid-survives-router-as-query-param
   (testing
     "the client's encoded url routes to the static handler and decodes rid back verbatim (no 400)"
-    (let [seen
-          (atom nil)
+    (let
+      [seen
+       (atom nil)
 
-          echo
-          (fn [request]
-            (reset! seen {:sid (get-in request [:path-params :sid])
-                          :rid (get-in request [:query-params "rid"])})
-            {:status 200 :body "ok"})
+       echo
+       (fn [request]
+         (reset! seen {:sid (get-in request [:path-params :sid])
+                       :rid (get-in request [:query-params "rid"])})
+         {:status 200 :body "ok"})
 
-          app
-          (-> (rr/ring-handler (rr/router [["/v1/sessions/:sid/resources/stop" {:post echo}]
-                                           ["/v1/sessions/:sid/resources/logs" {:get echo}]]))
-              ring-params/wrap-params)
+       app
+       (-> (rr/ring-handler (rr/router [["/v1/sessions/:sid/resources/stop" {:post echo}]
+                                        ["/v1/sessions/:sid/resources/logs" {:get echo}]]))
+           ring-params/wrap-params)
 
-          sid
-          (str (random-uuid))
+       sid
+       (str (random-uuid))
 
-          ;; exactly the shape the client emits: rid percent-encoded into the query
-          enc
-          (fn [s]
-            (java.net.URLEncoder/encode ^String s "UTF-8"))
+       ;; exactly the shape the client emits: rid percent-encoded into the query
+       enc
+       (fn [s]
+         (java.net.URLEncoder/encode ^String s "UTF-8"))
 
-          resp
-          (app {:request-method :get
-                :uri (str "/v1/sessions/" sid "/resources/logs")
-                :query-string (str "rid=" (enc nrepl-rid))})]
+       resp
+       (app {:request-method :get
+             :uri (str "/v1/sessions/" sid "/resources/logs")
+             :query-string (str "rid=" (enc nrepl-rid))})]
 
       (testing "static logs route matches (a path-segment %2F would 404/400 instead)"
         (is (= 200 (:status resp))))
@@ -689,38 +712,41 @@
                                                  {:models ["claude-opus-4-8" "claude-sonnet-5"]
                                                   :hidden-count (if show-all? 0 4)})}
       (fn []
-        (let [resp
-              ((rv 'provider-models-handler) {:path-params {:provider-id "anthropic-coding-plan"}})
+        (let
+          [resp
+           ((rv 'provider-models-handler) {:path-params {:provider-id "anthropic-coding-plan"}})
 
-              body
-              (wire/parse-json (:body resp))]
+           body
+           (wire/parse-json (:body resp))]
 
           (is (= 200 (:status resp)))
           (is (= ["claude-opus-4-8" "claude-sonnet-5"] (get body "models")))
           (is (= 4 (get body "hidden_count"))))
-        (let [resp
-              ((rv 'provider-models-handler)
-                {:path-params {:provider-id "anthropic-coding-plan"}
-                 :query-params {"show_all" "true"}})
+        (let
+          [resp
+           ((rv 'provider-models-handler)
+             {:path-params {:provider-id "anthropic-coding-plan"}
+              :query-params {"show_all" "true"}})
 
-              body
-              (wire/parse-json (:body resp))]
+           body
+           (wire/parse-json (:body resp))]
 
           (is (= 0 (get body "hidden_count"))))))))
 
 (deftest set-session-model-handler-validates-against-the-gateway-fleet
   (testing
     "PATCH /model pins only providers THIS gateway serves; the model name stays free (live catalog)"
-    (let [sid
-          (str (java.util.UUID/randomUUID))
+    (let
+      [sid
+       (str (java.util.UUID/randomUUID))
 
-          wrote
-          (atom nil)
+       wrote
+       (atom nil)
 
-          body
-          (fn [m]
-            {:path-params {:sid sid}
-             :body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str m) "UTF-8"))})]
+       body
+       (fn [m]
+         {:path-params {:sid sid}
+          :body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str m) "UTF-8"))})]
 
       (with-redefs-fn {#'providers/configured-providers-cached
                        (constantly [{:id :zai-coding-plan} {:id :anthropic-coding-plan}])
@@ -730,8 +756,9 @@
                                                @wrote)}
         (fn []
           (testing "a configured provider is accepted"
-            (let [resp ((rv 'set-session-model-handler)
-                         (body {:provider "zai-coding-plan" :model "glm-5.2"}))]
+            (let
+              [resp ((rv 'set-session-model-handler)
+                      (body {:provider "zai-coding-plan" :model "glm-5.2"}))]
               (is (= 200 (:status resp)))
               (is (= ["zai-coding-plan" "glm-5.2"] @wrote))))
           (testing "a model outside vis.yml is fine — the live catalog offers more"
@@ -741,8 +768,9 @@
             (is (= ["zai-coding-plan" "glm-live-preview"] @wrote)))
           (testing "an unknown provider is a 400 and writes NOTHING"
             (reset! wrote :untouched)
-            (let [resp ((rv 'set-session-model-handler)
-                         (body {:provider "not-on-this-gateway" :model "x"}))]
+            (let
+              [resp ((rv 'set-session-model-handler)
+                      (body {:provider "not-on-this-gateway" :model "x"}))]
               (is (= 400 (:status resp)))
               (is (= "unknown-provider" (get-in (wire/parse-json (:body resp)) ["error" "type"])))
               (is (= :untouched @wrote))))
@@ -767,14 +795,15 @@
        (constantly
          {:provider-id :anthropic-coding-plan :status :ok :static {} :dynamic {:limits []}})}
       (fn []
-        (let [resp
-              ((rv 'router-handler) {})
+        (let
+          [resp
+           ((rv 'router-handler) {})
 
-              provs
-              (get (wire/parse-json (:body resp)) "providers")
+           provs
+           (get (wire/parse-json (:body resp)) "providers")
 
-              p0
-              (first provs)]
+           p0
+           (first provs)]
 
           (is (= 200 (:status resp)))
           (is (= "anthropic-coding-plan" (get p0 "id")))
@@ -790,21 +819,24 @@
           (is (= "ok" (get-in p0 ["limits" "status"]))))))))
 
 (deftest router-default-handler-persists-one-pair
-  (let [saved
-        (atom nil)
+  (let
+    [saved
+     (atom nil)
 
-        request
-        {:body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str {"provider"
-                                                                         "anthropic-coding-plan"
-                                                                         "model" "claude-fable-5"})
-                                                         "UTF-8"))}]
+     request
+     {:body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str {"provider"
+                                                                      "anthropic-coding-plan"
+                                                                      "model" "claude-fable-5"})
+                                                      "UTF-8"))}]
 
-    (with-redefs [providers/save-default-selection! (fn [provider model source]
-                                                      (reset! saved [provider model source])
-                                                      {:provider-id :anthropic-coding-plan
-                                                       :model "claude-fable-5"})]
-      (let [resp ((rv 'router-default-handler) request)
-            body (wire/parse-json (:body resp))]
+    (with-redefs
+      [providers/save-default-selection! (fn [provider model source]
+                                           (reset! saved [provider model source])
+                                           {:provider-id :anthropic-coding-plan
+                                            :model "claude-fable-5"})]
+      (let
+        [resp ((rv 'router-default-handler) request)
+         body (wire/parse-json (:body resp))]
 
         (is (= 200 (:status resp)))
         (is (= ["anthropic-coding-plan" "claude-fable-5" :gateway] @saved))
@@ -812,16 +844,17 @@
         (is (= "claude-fable-5" (get body "default_model")))))))
 
 (deftest gateway-prometheus-runtime-metrics-test
-  (let [text ((rv 'prometheus-text)
-               {:tokens-input 12
-                :tokens-output 7
-                :turns-executing 2
-                :turns-waiting 1
-                :env-cache-size 3
-                :env-heap-pressure true
-                :jvm-heap-used-bytes 1024
-                :jvm-gc-count-total 4
-                :jvm-thread-count 9})]
+  (let
+    [text ((rv 'prometheus-text)
+            {:tokens-input 12
+             :tokens-output 7
+             :turns-executing 2
+             :turns-waiting 1
+             :env-cache-size 3
+             :env-heap-pressure true
+             :jvm-heap-used-bytes 1024
+             :jvm-gc-count-total 4
+             :jvm-thread-count 9})]
     (testing "preserves the existing labelled token counter"
       (is (re-find #"vis_turn_tokens_total\{kind=\"input\"\} 12" text))
       (is (re-find #"vis_turn_tokens_total\{kind=\"output\"\} 7" text)))
@@ -854,13 +887,14 @@
             so the local TUI attaches to THIS gateway instead of seeing a free port
             and spawning a second one"
     (if-let [host (non-loopback-ipv4)]
-      (let [port (with-open [s (java.net.ServerSocket. 0)]
-                   (.getLocalPort s))
-            server (jetty/run-jetty (constantly {:status 200 :headers {} :body "ok"})
-                                    {:port port
-                                     :host host
-                                     :join? false
-                                     :configurator ((rv 'loopback-mirror-configurator) port)})]
+      (let
+        [port (with-open [s (java.net.ServerSocket. 0)]
+                (.getLocalPort s))
+         server (jetty/run-jetty (constantly {:status 200 :headers {} :body "ok"})
+                                 {:port port
+                                  :host host
+                                  :join? false
+                                  :configurator ((rv 'loopback-mirror-configurator) port)})]
 
         (try (is (= #{host "127.0.0.1"}
                     (set (map (fn [^org.eclipse.jetty.server.ServerConnector c]

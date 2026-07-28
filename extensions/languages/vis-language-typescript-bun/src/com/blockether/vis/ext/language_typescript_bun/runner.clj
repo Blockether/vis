@@ -5,33 +5,22 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]))
 
-(defn- windows? [] (str/starts-with? (str (System/getProperty "os.name")) "Windows"))
-
 (defn- on-path?
-  "Is executable `bin` resolvable on PATH? (Tries the name and, on Windows, the
-   .exe variant.)"
+  "Is executable `bin` resolvable on PATH?"
   [bin]
   (let
-    [names
-     (cond-> [bin]
-       (windows?)
-       (conj (str bin ".exe")))
-
-     dirs
-     (str/split (or (System/getenv "PATH") "")
-                (re-pattern (java.util.regex.Pattern/quote (System/getProperty "path.separator"))))]
-
+    [dirs (str/split (or (System/getenv "PATH") "")
+                     (re-pattern (java.util.regex.Pattern/quote (System/getProperty
+                                                                  "path.separator"))))]
     (boolean (some (fn [d]
-                     (some (fn [n]
-                             (let [f (io/file d n)]
-                               (and (.isFile f) (.canExecute f))))
-                           names))
+                     (let [f (io/file d bin)]
+                       (and (.isFile f) (.canExecute f))))
                    dirs))))
 
 (defn- home-bun
   "Canonical path of ~/.bun/bin/bun when present + executable, else nil."
   []
-  (let [f (io/file (System/getProperty "user.home") ".bun" "bin" (if (windows?) "bun.exe" "bun"))]
+  (let [f (io/file (System/getProperty "user.home") ".bun" "bin" "bun")]
     (when (and (.isFile f) (.canExecute f)) (.getCanonicalPath f))))
 
 (defn available?

@@ -95,11 +95,27 @@
 (defn- bump-version [db] (update db :render-version (fnil inc 0)))
 
 (def ^:private tab-state-keys
+  "EVERY db key a tab owns privately.
+
+   This list is the ONE definition of \"per-tab\", read by both directions of a tab
+   switch: `sync-active-tab`/`tab-snapshot` park these into `[:tab-locals id]`, and
+   `restore-tab` merges the target tab's snapshot back over the db root. A key that
+   is written per tab but MISSING here is broken twice over — the snapshot drops it,
+   and because `restore-tab` only MERGES, the value left at the root by the tab you
+   just LEFT silently becomes the incoming tab's value.
+
+   That is why the whole turn identity (`active-turn-state-keys`: the gateway turn
+   id, the correlation id we minted, and the cancel stamp) has to live here. Without
+   it, tab A's live turn id leaked onto tab B, so B's `turn.queued` broadcasts hit
+   `live-turn-mirror?` against A's turn - queued rows appeared in, and drained from,
+   the wrong session - and A's `:cancelling-at-ms` was lost, so `cancel-self-heal-due?`
+   could never time the stuck cancel out and `:cancelling?` wedged input forever."
   [:session :workspace :workspace/root :title :messages :utilization :scroll :layout :input
    :input-history :input-history-index :input-history-draft :slash-command-index
-   :slash-command-hidden? :submitted-input :pending-sends :pastes :paste-counter :loading?
-   :cancel-token :cancelling? :progress :turn-start-ms :detail-expansions :mouse-selection
-   :session-model-pref])
+   :slash-command-hidden? :submitted-input :pending-sends :queue-paused :pastes :paste-counter
+   :loading? :cancel-token :cancelling? :cancelling-at-ms :cancel-awaiting-client-id
+   :gateway-turn-id :live-turn-client-id :progress :turn-start-ms :detail-expansions
+   :mouse-selection :session-model-pref])
 
 (defn- empty-tab-state
   []
@@ -117,12 +133,18 @@
    :slash-command-index 0
    :slash-command-hidden? false
    :submitted-input nil
+   :utilization nil
    :pending-sends []
+   :queue-paused nil
    :pastes {}
    :paste-counter 0
    :loading? false
    :cancel-token nil
    :cancelling? false
+   :cancelling-at-ms nil
+   :cancel-awaiting-client-id nil
+   :gateway-turn-id nil
+   :live-turn-client-id nil
    :progress nil
    :turn-start-ms nil
    :detail-expansions {}
@@ -304,6 +326,18 @@
    terminal event always wins the race; short enough that a dropped one never
    freezes the user."
   8000)
+
+(def ^:private turn-liveness-grace-ms
+  "How long a turn must have been in flight before the liveness watchdog is armed.
+   Long enough that the normal terminal event (mux SSE or the blocking worker)
+   always wins on a healthy run; short enough that a DROPPED one is a blip."
+  10000)
+
+(def ^:private turn-liveness-probe-interval-ms
+  "Minimum gap between liveness probes for one tab. The render loop pokes the
+   watchdog every `spinner-tick-ms`; this throttles it down to one cheap
+   `gateway-list-turns` round-trip per tab per interval, on the queue lane."
+  5000)
 
 (def ^:private live-progress-render-interval-ms
   "Maximum wall-clock interval between live reasoning redraws.
@@ -1048,8 +1082,13 @@
     [entry
      (some #(when (= (:id %) workspace-id) %) (:tabs db))
 
+     ;; Defaults FIRST: `restore-tab` only merges, so any per-tab key absent from
+     ;; the stored snapshot would otherwise keep the value the tab we are LEAVING
+     ;; left at the root (a live turn id, a cancel stamp, a paused queue) and hand
+     ;; it to the incoming tab. Filling from `empty-tab-state` makes the restore
+     ;; total for every key in `tab-state-keys`, even for a partially seeded tab.
      locals
-     (or (get-in db [:tab-locals workspace-id]) (empty-tab-state))
+     (merge (empty-tab-state) (get-in db [:tab-locals workspace-id]))
 
      current-layout
      (:layout db)
@@ -1101,13 +1140,29 @@
       (restore-tab workspace-id)))
 
 (defn- update-tab
+  "Apply `f` to the db as seen by tab `workspace-id`, wherever that tab lives.
+
+   The ACTIVE tab is the db root, so `f` runs on it directly. A BACKGROUND tab
+   is a `[:tab-locals id]` snapshot, and `f` needs a whole db to work on: the
+   globals (`:tabs`, `:settings`, `:config`, …) come from the root, the per-tab
+   half MUST come from that tab alone.
+
+   `empty-tab-state` is therefore the base of the per-tab half, exactly as in
+   `restore-tab`. Without it, a snapshot that is only PARTIALLY seeded — a
+   pre-allocated project tab that has never been focused and only ever got a
+   `:title` written into its locals — leaves every missing per-tab key to be
+   filled by `merge db`, i.e. by the tab you are LOOKING AT. A `turn.queued`
+   broadcast for that tab then parked the ACTIVE tab's `:session`, `:messages`,
+   `:pending-sends` and live `:gateway-turn-id` into it, so the queue row showed
+   up under the wrong session (and could be swallowed outright by
+   `live-turn-mirror?` matching the borrowed live turn id)."
   [db workspace-id f]
   (let [workspace-id (or workspace-id (current-tab-id db))]
     (if (and workspace-id (not= workspace-id (current-tab-id db)))
       (update-in db
                  [:tab-locals workspace-id]
                  (fn [snapshot]
-                   (tab-snapshot (f (merge db (or snapshot (empty-tab-state)))))))
+                   (tab-snapshot (f (merge db (empty-tab-state) snapshot)))))
       (f db))))
 
 (defn- tab-session-id
@@ -1781,7 +1836,7 @@
 
 (def ^:private active-turn-state-keys
   [:loading? :cancelling? :cancelling-at-ms :progress :turn-start-ms :cancel-token :gateway-turn-id
-   :live-turn-client-id])
+   :live-turn-client-id :liveness-probed-at-ms])
 
 (defn- session-running?
   [session]
@@ -1800,7 +1855,34 @@
     :cancel-token nil
     :gateway-turn-id nil
     :live-turn-client-id nil
-    :cancelling-at-ms nil))
+    :cancelling-at-ms nil
+    :liveness-probed-at-ms nil))
+
+(defn- park-live-trace
+  "Stash the iterations the user already WATCHED onto the pending assistant
+   placeholder, so a LOCAL cancel may clear `:progress` without erasing them.
+
+   `:message-received` reads exactly this slot (`[:terminal-pending :trace]`) when a
+   synthetic cancellation carries no trace of its own — the same slot the gateway
+   terminal path fills. Without the park, the force-cancel (second Esc), the stuck-
+   cancel self-heal and the cancel ACK all ran `clear-active-turn-state` FIRST, the
+   worker's `:cancelled` result then looked like `no-work?`, and the whole visible
+   run (every tool call already executed) was dropped from the transcript instead of
+   being kept for the user to read."
+  [db]
+  (let
+    [messages
+     (vec (:messages db))
+
+     idx
+     (pending-assistant-index messages (:live-turn-client-id db))
+
+     trace
+     (not-empty (vec (get-in db [:progress :iterations])))]
+
+    (if (and idx trace (empty? (get-in messages [idx :terminal-pending :trace])))
+      (assoc db :messages (assoc-in messages [idx :terminal-pending :trace] trace))
+      db)))
 
 (defn- reconcile-in-flight-state
   [next-db previous-db session]
@@ -3092,7 +3174,10 @@
   [db workspace-id]
   (if (= workspace-id (current-tab-id db))
     db
-    (merge db (or (get-in db [:tab-locals workspace-id]) (empty-tab-state)))))
+    ;; Defaults FIRST — see `restore-tab`. Merging a partial snapshot straight
+    ;; over the root would show the ACTIVE tab's turn/queue state as if it
+    ;; belonged to `workspace-id`, and queued sends would drain into it.
+    (merge db (empty-tab-state) (get-in db [:tab-locals workspace-id]))))
 
 (defn- enqueue-message-result
   [db workspace-id text]
@@ -3412,23 +3497,40 @@
    auth, transport. Fabricating \"Turn failed.\" instead is exactly how a
    rate-limited turn painted a bare `ERROR: turn failed` row, or showed BOTH
    that row and the real card depending on which copy landed first."
-  [{:keys [status turn-id content]}]
+  [{:keys [status turn-id content trace]}]
   (let [blocks (vec (filter map? content))]
     (if (seq blocks)
       blocks
+      ;; A COMPLETED turn already streamed its answer: every `iteration-final`
+      ;; projected `:assistant-prose` onto the trace entry, so the last non-blank
+      ;; one IS the settled answer. Painting "Turn completed." over it loses the
+      ;; whole reply, and the fix belongs here (zero wire bytes) rather than in a
+      ;; fattened `turn.completed` payload — the terminal event stays LEAN.
       (let
-        [[type code message] (case (terminal-status status)
-                               :cancelled
-                               ["notice" "turn_cancelled" "Cancelled by user."]
+        [prose (when (= :completed (terminal-status status))
+                 (->> trace
+                      (keep #(some-> (:assistant-prose %)
+                                     str
+                                     str/trim
+                                     not-empty))
+                      last))]
+        (if prose
+          [{"id" (str "terminal-" (or turn-id (java.util.UUID/randomUUID)))
+            "type" "prose"
+            "markdown" prose}]
+          (let
+            [[type code message] (case (terminal-status status)
+                                   :cancelled
+                                   ["notice" "turn_cancelled" "Cancelled by user."]
 
-                               :failed
-                               ["error" "turn_failed" "Turn failed."]
+                                   :failed
+                                   ["error" "turn_failed" "Turn failed."]
 
-                               ["notice" "turn_completed" "Turn completed."])]
-        [{"id" (str "terminal-" (or turn-id (java.util.UUID/randomUUID)))
-          "type" type
-          "code" code
-          "message" message}]))))
+                                   ["notice" "turn_completed" "Turn completed."])]
+            [{"id" (str "terminal-" (or turn-id (java.util.UUID/randomUUID)))
+              "type" type
+              "code" code
+              "message" message}]))))))
 
 (reg-event-fx :sync-turn-terminal
               ;; The persistent mux is independent of the blocking submit/attach worker.
@@ -4072,7 +4174,7 @@
 
          db'
          (if already-cancelling?
-           (cond-> (clear-active-turn-state db)
+           (cond-> (clear-active-turn-state (park-live-trace db))
              cancel-client-id
              (assoc :cancel-awaiting-client-id cancel-client-id))
            (cond->
@@ -4112,7 +4214,7 @@
                            (= cancel-key (:cancelling-at-ms db))
                            (or accepted? terminal?))
                     (let [workspace-id (current-tab-id db)]
-                      {:db (clear-active-turn-state db)
+                      {:db (clear-active-turn-state (park-live-trace db))
                        :fx (cond->
                              [[:notify
                                (if terminal?
@@ -4189,13 +4291,73 @@
 
                       ;; Release input immediately. Server cancellation is best effort on
                       ;; the dedicated cancel lane; it must not stall this heartbeat.
-                      {:db (clear-active-turn-state db)
+                      {:db (clear-active-turn-state (park-live-trace db))
                        :fx (cond->
                              [[:cancel-local-turn token] [:gateway-cancel-active sid tid nil]
                               [:notify "Cancel timed out — cleared locally. You can send again."
                                :warn cancel-notification-ttl-ms]]
                              (some :mine? (:pending-sends (db-for-tab db workspace-id)))
                              (conj [:dispatch [:restore-pending-to-input workspace-id]]))})))))
+
+(defn- loading-tab-ids
+  "Ids of every tab with a turn in flight — the ACTIVE tab (db root) plus each
+   loading `:tab-locals` snapshot."
+  [db]
+  (let [active (current-tab-id db)]
+    (cond->
+      (vec (keep (fn [[tab-id snap]]
+                   (when (and (not= tab-id active) (:loading? snap)) tab-id))
+                 (:tab-locals db)))
+      (:loading? db)
+      (conj active))))
+
+(defn- turn-liveness-probe-due?
+  "True when a tab's in-flight turn has outlived `turn-liveness-grace-ms` and has
+   not been probed within `turn-liveness-probe-interval-ms`. A pending cancel is
+   skipped — `:cancel-self-heal-tick` already owns that path."
+  [tab now-ms]
+  (boolean (and (:loading? tab)
+                (:gateway-turn-id tab)
+                (not (:cancelling? tab))
+                (>= (- (long now-ms) (long (or (:turn-start-ms tab) now-ms)))
+                    (long turn-liveness-grace-ms))
+                (>= (- (long now-ms) (long (or (:liveness-probed-at-ms tab) 0)))
+                    (long turn-liveness-probe-interval-ms)))))
+
+(reg-event-fx :turn-liveness-tick
+              ;; Render-loop heartbeat safety net for a turn the GATEWAY already settled
+              ;; while the client still shows it live — the terminal `turn.completed` never
+              ;; landed (mux SSE reconnect gap, a wedged blocking attach worker, a client
+              ;; that started before the fix). Without it the last thinking block keeps
+              ;; breathing and the spinner counts past a turn that finished minutes ago.
+              ;;
+              ;; Transport-INDEPENDENT by design: it asks the gateway's turn registry (the
+              ;; one source of truth) instead of waiting on the event stream, and feeds the
+              ;; answer through the SAME `:sync-turn-terminal` writer the real event uses,
+              ;; so settling stays byte-identical (grace period, trace, prose fallback).
+              ;; Pure over an injected `now-ms` (tests pass it; the render loop omits it).
+              (fn [db [_ now-ms]]
+                (let
+                  [now
+                   (or now-ms (System/currentTimeMillis))
+
+                   due
+                   (filterv (fn [tab-id]
+                              (and (turn-liveness-probe-due? (db-for-tab db tab-id) now)
+                                   (some? (get-in (db-for-tab db tab-id) [:session :id]))))
+                     (loading-tab-ids db))]
+
+                  (if (empty? due)
+                    {:db db}
+                    {:db (reduce (fn [acc tab-id]
+                                   (update-tab acc tab-id #(assoc % :liveness-probed-at-ms now)))
+                                 db
+                                 due)
+                     :fx (mapv (fn [tab-id]
+                                 (let [tab (db-for-tab db tab-id)]
+                                   [:probe-turn-liveness tab-id (get-in tab [:session :id])
+                                    (:gateway-turn-id tab) (:live-turn-client-id tab)]))
+                               due)}))))
 
 (defn background-loading-tokens
   "Cancel tokens of every BACKGROUND tab (in `:tab-locals`, excluding the active
@@ -4978,6 +5140,37 @@
                                   (let [result (gateway-cancel-turn-or-current! sid tid)]
                                     (when cancel-key
                                       (dispatch [:gateway-cancel-result cancel-key result]))))))))
+
+(def ^:private terminal-turn-statuses #{"completed" "failed" "cancelled"})
+
+(reg-fx :probe-turn-liveness
+        ;; Ask the gateway registry whether the turn this tab still paints as live has
+        ;; actually settled (see `:turn-liveness-tick`). One cheap listing on the queue
+        ;; lane — never on the Lanterna input/render thread. A settled row is replayed
+        ;; through `:sync-turn-terminal`, the exact writer the real terminal event uses,
+        ;; so a late/duplicate event is a harmless no-op (that handler bails unless the
+        ;; tab is still loading on a MATCHING turn). Anything else — a still-running
+        ;; turn, an unreachable daemon — leaves the live view untouched.
+        (fn [workspace-id sid tid client-id]
+          (when (and sid tid)
+            (gateway-queue-io!
+              (fn []
+                (when-let [turns (try (vis/gateway-list-turns sid) (catch Throwable _ nil))]
+                  (when-let
+                    [row (some (fn [t]
+                                 (when (or (= (str tid) (str (get t "turn_id")))
+                                           (and client-id
+                                                (= (str client-id)
+                                                   (str (get t "idempotency_key")))))
+                                   t))
+                               turns)]
+                    (let [status (str (get row "status"))]
+                      (when (contains? terminal-turn-statuses status)
+                        (dispatch [:sync-turn-terminal workspace-id
+                                   {:phase :turn-terminal
+                                    :turn-id (or (get row "turn_id") tid)
+                                    :client-id (or (get row "idempotency_key") client-id)
+                                    :status status}]))))))))))
 
 (reg-fx :gateway-cancel-turn
         ;; Fire-and-forget cancel of the exact RUNNING gateway turn whose correlated

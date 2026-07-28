@@ -73,9 +73,8 @@
    form (nil rejected) keeps plain freshness reuse."
   [reuse refresh!]
   (let [lock (new-lock)]
-    (fn ([] (single-flight! lock #(reuse nil) refresh!)) ([rejected] (single-flight! lock
-                                                                       #(reuse rejected)
-                                                                       refresh!)))))
+    (fn ([] (single-flight! lock #(reuse nil) refresh!))
+      ([rejected] (single-flight! lock #(reuse rejected) refresh!)))))
 
 (def default-file-lock-timeout-ms
   "How long to wait for the CROSS-PROCESS advisory lock before giving up and
@@ -143,13 +142,15 @@
   ([lock-path timeout-ms f]
    (if (str/blank? lock-path)
      (f)
-     (let [ch (try (io/make-parents (io/file lock-path))
-                   (.getChannel (java.io.RandomAccessFile. (io/file lock-path) "rw"))
-                   (catch Throwable _ nil))]
+     (let
+       [ch (try (io/make-parents (io/file lock-path))
+                (.getChannel (java.io.RandomAccessFile. (io/file lock-path) "rw"))
+                (catch Throwable _ nil))]
        (if (nil? ch)
          (f)
-         (let [fl (try (acquire-file-lock! ch timeout-ms)
-                       (catch Throwable t (close-quietly! ch) (throw t)))]
+         (let
+           [fl (try (acquire-file-lock! ch timeout-ms)
+                    (catch Throwable t (close-quietly! ch) (throw t)))]
            (try (f)
                 (finally (when fl
                            (try (.release ^java.nio.channels.FileLock fl) (catch Throwable _ nil)))
@@ -184,44 +185,46 @@
    Returns the provider-token map produced by `:->token`."
   [{:keys [load saved-at refresh-token exchange! persist! ->token no-token! reuse-window-ms
            lock-path]}]
-  (let [window
-        (or reuse-window-ms default-reuse-window-ms)
+  (let
+    [window
+     (or reuse-window-ms default-reuse-window-ms)
 
-        lock
-        (new-lock)
+     lock
+     (new-lock)
 
-        reuse
-        (fn [rejected]
-          (let [creds (load)]
-            (when (and creds (fresh-within? (saved-at creds) window))
-              (let [tok (->token creds)]
-                ;; Never hand back the exact token the server just
-                ;; rejected (401): a locally-fresh but server-rotated
-                ;; token would otherwise be REUSED and 401 again. When it
-                ;; differs, reuse still collapses the 401 storm.
-                (when-not (= rejected (:token tok)) tok)))))
+     reuse
+     (fn [rejected]
+       (let [creds (load)]
+         (when (and creds (fresh-within? (saved-at creds) window))
+           (let [tok (->token creds)]
+             ;; Never hand back the exact token the server just
+             ;; rejected (401): a locally-fresh but server-rotated
+             ;; token would otherwise be REUSED and 401 again. When it
+             ;; differs, reuse still collapses the 401 storm.
+             (when-not (= rejected (:token tok)) tok)))))
 
-        refresh!
-        (fn []
-          (let [creds
-                (load)
+     refresh!
+     (fn []
+       (let
+         [creds
+          (load)
 
-                rt
-                (refresh-token creds)]
+          rt
+          (refresh-token creds)]
 
-            (when (str/blank? rt) (no-token!))
-            (-> (exchange! rt)
-                persist!
-                ->token)))
+         (when (str/blank? rt) (no-token!))
+         (-> (exchange! rt)
+             persist!
+             ->token)))
 
-        ;; In-process monitor serializes threads in THIS JVM; the file lock
-        ;; then serializes across JVMs. Order matters: hold the monitor first
-        ;; so only one thread per JVM ever reaches the (non-reentrant) file
-        ;; lock. After the winner persists and releases, the next process's
-        ;; `reuse` reads the freshly-stamped file and reuses instead of
-        ;; running a second rotating exchange.
-        run
-        (fn [rejected]
-          (locking lock (call-with-file-lock lock-path #(or (reuse rejected) (refresh!)))))]
+     ;; In-process monitor serializes threads in THIS JVM; the file lock
+     ;; then serializes across JVMs. Order matters: hold the monitor first
+     ;; so only one thread per JVM ever reaches the (non-reentrant) file
+     ;; lock. After the winner persists and releases, the next process's
+     ;; `reuse` reads the freshly-stamped file and reuses instead of
+     ;; running a second rotating exchange.
+     run
+     (fn [rejected]
+       (locking lock (call-with-file-lock lock-path #(or (reuse rejected) (refresh!)))))]
 
     (fn ([] (run nil)) ([rejected] (run rejected)))))

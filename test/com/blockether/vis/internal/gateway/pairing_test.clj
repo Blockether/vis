@@ -5,8 +5,9 @@
 
 (deftest pairing-url-is-a-scannable-vis-url
   (testing "payload carries gateway URL and bearer token"
-    (with-redefs [pairing/candidate-hosts (fn [_]
-                                            ["127.0.0.1"])]
+    (with-redefs
+      [pairing/candidate-hosts (fn [_]
+                                 ["127.0.0.1"])]
       (let [payload (pairing/pairing-url {:host "127.0.0.1" :port 7890 :token "secret token"})]
         (is (str/starts-with? payload "vis://gateway?"))
         (is (str/includes? payload "url=http%3A%2F%2F127.0.0.1%3A7890"))
@@ -16,20 +17,23 @@
   (testing
     "every other reachable host rides along as `alt=` so a phone that
             cannot route the first one falls back instead of failing"
-    (with-redefs [pairing/candidate-hosts (fn [_]
-                                            ["100.64.0.10" "192.168.0.5" "169.254.1.2"])]
-      (let [url (pairing/pairing-url {:host "0.0.0.0" :port 7890 :token "tok"})
-            alt (some-> (re-find #"[?&]alt=([^&]+)" url)
-                        second
-                        (java.net.URLDecoder/decode "UTF-8"))]
+    (with-redefs
+      [pairing/candidate-hosts (fn [_]
+                                 ["100.64.0.10" "192.168.0.5" "169.254.1.2"])]
+      (let
+        [url (pairing/pairing-url {:host "0.0.0.0" :port 7890 :token "tok"})
+         alt (some-> (re-find #"[?&]alt=([^&]+)" url)
+                     second
+                     (java.net.URLDecoder/decode "UTF-8"))]
 
         (is (str/includes? url "url=http%3A%2F%2F100.64.0.10%3A7890"))
         (is (= ["http://192.168.0.5:7890"]
                (some-> alt
                        (str/split #","))))
         (is (not (str/includes? url "169.254")) "link-local is unroutable for a phone")))
-    (with-redefs [pairing/candidate-hosts (fn [_]
-                                            ["100.64.0.10"])]
+    (with-redefs
+      [pairing/candidate-hosts (fn [_]
+                                 ["100.64.0.10"])]
       (is (not (str/includes? (pairing/pairing-url {:host "0.0.0.0" :port 7890}) "alt="))
           "a lone host adds no alt param"))))
 
@@ -65,11 +69,12 @@
 (defn- qr-dark-at
   "Read the dark/light state of module (x, y) back out of a half-block render."
   [lines x y]
-  (let [c
-        (.charAt ^String (nth lines (quot (long y) 2)) x)
+  (let
+    [c
+     (.charAt ^String (nth lines (quot (long y) 2)) x)
 
-        top?
-        (even? (long y))]
+     top?
+     (even? (long y))]
 
     (case c
       \█
@@ -86,34 +91,36 @@
 
 (deftest terminal-qr-is-scannable
   (testing "the render round-trips through a real QR decoder"
-    (let [payload
-          "vis://gateway?url=http%3A%2F%2F100.64.0.10%3A7890&token=abcdefghijklmnop"
+    (let
+      [payload
+       "vis://gateway?url=http%3A%2F%2F100.64.0.10%3A7890&token=abcdefghijklmnop"
 
-          lines
-          (str/split-lines (pairing/terminal-qr payload))
+       lines
+       (str/split-lines (pairing/terminal-qr payload))
 
-          width
-          (count (first lines))
+       width
+       (count (first lines))
 
-          margin
-          4
+       margin
+       4
 
-          modules
-          (- width (* 2 margin))
+       modules
+       (- width (* 2 margin))
 
-          bits
-          (com.google.zxing.common.BitMatrix. modules modules)]
+       bits
+       (com.google.zxing.common.BitMatrix. modules modules)]
 
       (testing "a full 4-module quiet zone surrounds the symbol"
         (is (every? #(= (apply str (repeat width "█")) %)
                     (concat (take 2 lines) (take-last 2 lines))))
         (is (every? #(str/starts-with? % "████") lines))
         (is (every? #(str/ends-with? % "████") lines)))
-      (doseq [y
-              (range modules)
+      (doseq
+        [y
+         (range modules)
 
-              x
-              (range modules)]
+         x
+         (range modules)]
 
         (when (qr-dark-at lines (+ x margin) (+ y margin)) (.set bits x y)))
       (is (= payload (.getText (.decode (com.google.zxing.qrcode.decoder.Decoder.) bits nil)))
@@ -124,15 +131,17 @@
     "bound to loopback the interface scan still sees Tailscale/LAN addresses,
              but nothing listens there — so pairing prints the restart command
              instead of a QR the phone can never open"
-    (with-redefs [pairing/iface-addresses (fn []
-                                            ["100.109.18.77" "192.168.0.227"])]
-      (let [lines (atom [])
-            out (pairing/print-pairing! {:host "127.0.0.1"
-                                         :port 7890
-                                         :token "tok"
-                                         :require-token? true
-                                         :emit #(swap! lines conj (str %))})
-            text (str/join "\n" @lines)]
+    (with-redefs
+      [pairing/iface-addresses (fn []
+                                 ["100.109.18.77" "192.168.0.227"])]
+      (let
+        [lines (atom [])
+         out (pairing/print-pairing! {:host "127.0.0.1"
+                                      :port 7890
+                                      :token "tok"
+                                      :require-token? true
+                                      :emit #(swap! lines conj (str %))})
+         text (str/join "\n" @lines)]
 
         (is (nil? out) "no payload is produced")
         (is (not (str/includes? text "vis://")) "no unreachable pairing URL")
@@ -141,20 +150,23 @@
         (is (str/includes? text "vis gateway start --host 100.109.18.77")
             "remediation points at the Tailscale IP when the tailnet is up"))))
   (testing "no Tailscale — fall back to 0.0.0.0 guidance"
-    (with-redefs [pairing/iface-addresses (fn []
-                                            ["192.168.0.227"])]
+    (with-redefs
+      [pairing/iface-addresses (fn []
+                                 ["192.168.0.227"])]
       (let [lines (atom [])]
         (pairing/print-pairing! {:host "localhost" :port 7890 :emit #(swap! lines conj (str %))})
         (is (str/includes? (str/join "\n" @lines) "--host 0.0.0.0")))))
   (testing "a reachable bind host still prints URL + QR"
-    (with-redefs [pairing/iface-addresses (fn []
-                                            ["100.109.18.77"])]
-      (let [lines (atom [])
-            out (pairing/print-pairing! {:host "100.109.18.77"
-                                         :port 7890
-                                         :token "tok"
-                                         :require-token? true
-                                         :emit #(swap! lines conj (str %))})]
+    (with-redefs
+      [pairing/iface-addresses (fn []
+                                 ["100.109.18.77"])]
+      (let
+        [lines (atom [])
+         out (pairing/print-pairing! {:host "100.109.18.77"
+                                      :port 7890
+                                      :token "tok"
+                                      :require-token? true
+                                      :emit #(swap! lines conj (str %))})]
 
         (is (str/starts-with? (str out) "vis://gateway?"))
         (is (str/includes? (str/join "\n" @lines) "█"))))))
@@ -165,21 +177,26 @@
            default, and must never bind narrower than the pairing link
            advertises: `alt=` offers the LAN hosts as fallbacks, so the socket
            has to serve every interface"
-    (with-redefs [pairing/iface-addresses (fn []
-                                            ["100.109.18.77" "192.168.0.227"])]
+    (with-redefs
+      [pairing/iface-addresses (fn []
+                                 ["100.109.18.77" "192.168.0.227"])]
       (is (= "0.0.0.0" (pairing/pair-bind-host))))
-    (with-redefs [pairing/iface-addresses (fn []
-                                            ["192.168.0.227"])]
+    (with-redefs
+      [pairing/iface-addresses (fn []
+                                 ["192.168.0.227"])]
       (is (= "0.0.0.0" (pairing/pair-bind-host))))
-    (with-redefs [pairing/iface-addresses (fn []
-                                            [])]
+    (with-redefs
+      [pairing/iface-addresses (fn []
+                                 [])]
       (is (= "0.0.0.0" (pairing/pair-bind-host)))))
   (testing
     "every auto-picked bind is non-loopback, so print-pairing! emits a
            real QR and server/start! forces the bearer token"
-    (with-redefs [pairing/iface-addresses (fn []
-                                            ["100.109.18.77"])]
+    (with-redefs
+      [pairing/iface-addresses (fn []
+                                 ["100.109.18.77"])]
       (is (false? (pairing/loopback-bind? (pairing/pair-bind-host)))))
-    (with-redefs [pairing/iface-addresses (fn []
-                                            [])]
+    (with-redefs
+      [pairing/iface-addresses (fn []
+                                 [])]
       (is (false? (pairing/loopback-bind? (pairing/pair-bind-host)))))))

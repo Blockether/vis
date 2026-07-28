@@ -27,11 +27,12 @@
 
 (defn- provider-bodies
   [tools]
-  (let [messages
-        [{:role "user" :content "provider schema smoke"}]
+  (let
+    [messages
+     [{:role "user" :content "provider schema smoke"}]
 
-        opts
-        {:svar/tools tools :svar/tool-choice {:name "grep"}}]
+     opts
+     {:svar/tools tools :svar/tool-choice {:name "grep"}}]
 
     {:anthropic (build-anthropic messages "claude-smoke" opts)
      :openai-chat (build-openai-chat messages "chat-smoke" opts)
@@ -62,14 +63,15 @@
              (it
                "serializes every real native tool into every provider wire without root unions"
                (extension/discover-extensions!)
-               (let [tools
-                     (@#'lp/native-tools (extension/registered-extensions) nil nil)
+               (let
+                 [tools
+                  (@#'lp/native-tools (extension/registered-extensions) nil nil)
 
-                     canonical
-                     (into {} (map (juxt :name :schema)) tools)
+                  canonical
+                  (into {} (map (juxt :name :schema)) tools)
 
-                     bodies
-                     (provider-bodies tools)]
+                  bodies
+                  (provider-bodies tools)]
 
                  (expect (>= (count tools) 20))
                  (expect (= (count tools) (count canonical)))
@@ -78,9 +80,10 @@
                  (expect (every? #(empty? (select-keys (:schema %) [:oneOf :anyOf :allOf])) tools))
                  (expect (contains-nested-one-of? (get canonical "grep")))
                  (doseq [[style body] bodies]
-                   (let [wire-tools (provider-tools style body)
-                         by-name (into {} (map (juxt :name identity)) wire-tools)
-                         wire-schema-key (get schema-key style)]
+                   (let
+                     [wire-tools (provider-tools style body)
+                      by-name (into {} (map (juxt :name identity)) wire-tools)
+                      wire-schema-key (get schema-key style)]
 
                      (expect (= (set (keys canonical)) (set (keys by-name))))
                      (expect (= (count tools) (count wire-tools)))
@@ -107,41 +110,41 @@
   (it
     "reaches the provider transport with every real native tool and receives a tool call"
     (extension/discover-extensions!)
-    (let [tools
-          (@#'lp/native-tools (extension/registered-extensions) nil nil)
+    (let
+      [tools
+       (@#'lp/native-tools (extension/registered-extensions) nil nil)
 
-          captured
-          (atom nil)
+       captured
+       (atom nil)
 
-          fake-response
-          {:content nil
-           :reasoning nil
-           :provider-state {:provider :openai-responses}
-           :tool-calls [{:id "call_smoke"
-                         :name "grep"
-                         :input {:query "native tool schema smoke" :paths ["src"]}}]
-           :assistant-message {:role "assistant"
-                               :content [{:type "tool_use"
-                                          :id "call_smoke"
-                                          :name "grep"
-                                          :input {:query "native tool schema smoke"
-                                                  :paths ["src"]}}]}
-           :api-usage {:input-tokens 3 :output-tokens 1 :total-tokens 4}
-           :stream-finalization {:finish-reason "tool_calls"}}
+       fake-response
+       {:content nil
+        :reasoning nil
+        :provider-state {:provider :openai-responses}
+        :tool-calls
+        [{:id "call_smoke" :name "grep" :input {:query "native tool schema smoke" :paths ["src"]}}]
+        :assistant-message {:role "assistant"
+                            :content [{:type "tool_use"
+                                       :id "call_smoke"
+                                       :name "grep"
+                                       :input {:query "native tool schema smoke" :paths ["src"]}}]}
+        :api-usage {:input-tokens 3 :output-tokens 1 :total-tokens 4}
+        :stream-finalization {:finish-reason "tool_calls"}}
 
-          result
-          (with-redefs [svar-llm/openai-responses-completion (fn [body _opts]
-                                                               (reset! captured body)
-                                                               fake-response)]
-            (svar-llm/ask-code!* (provider-test-router)
-                                 {:messages [{:role "user" :content "call grep"}]
-                                  :tools tools
-                                  :tool-choice "grep"
-                                  :model "native-tool-schema-smoke"
-                                  :api-key "test"
-                                  :base-url "https://example.invalid/v1"
-                                  :api-style :openai-compatible-responses
-                                  :check-context? false}))]
+       result
+       (with-redefs
+         [svar-llm/openai-responses-completion (fn [body _opts]
+                                                 (reset! captured body)
+                                                 fake-response)]
+         (svar-llm/ask-code!* (provider-test-router)
+                              {:messages [{:role "user" :content "call grep"}]
+                               :tools tools
+                               :tool-choice "grep"
+                               :model "native-tool-schema-smoke"
+                               :api-key "test"
+                               :base-url "https://example.invalid/v1"
+                               :api-style :openai-compatible-responses
+                               :check-context? false}))]
 
       (expect (= :tool-calls (:stop-reason result)))
       (expect (= [{:id "call_smoke"

@@ -34,19 +34,21 @@
       (let [e (iteration/canonicalize (entry [(form {:scope "t1/i1/f1" :code "(cat \"a\")"})]))]
         (expect (= "t1/i1" (:scope e)))))
   (it "merges visible form sources into the block :code in order"
-      (let [e (iteration/canonicalize (entry [(form {:code "(cat \"a\")"})
-                                              (form {:code "(cat \"b\")"})]))]
+      (let
+        [e (iteration/canonicalize (entry [(form {:code "(cat \"a\")"})
+                                           (form {:code "(cat \"b\")"})]))]
         (expect (= "(cat \"a\")\n(cat \"b\")" (:code e)))))
   (it "sums per-form durations into block :duration-ms"
-      (let [e (iteration/canonicalize (entry [(form {:duration-ms 100})
-                                              (form {:duration-ms 250})]))]
+      (let
+        [e (iteration/canonicalize (entry [(form {:duration-ms 100}) (form {:duration-ms 250})]))]
         (expect (= 350 (:duration-ms e)))))
   (it "is idempotent"
-      (let [e1
-            (iteration/canonicalize (entry [(form {:scope "t1/i1/f1" :code "(x)" :duration-ms 5})]))
+      (let
+        [e1
+         (iteration/canonicalize (entry [(form {:scope "t1/i1/f1" :code "(x)" :duration-ms 5})]))
 
-            e2
-            (iteration/canonicalize e1)]
+         e2
+         (iteration/canonicalize e1)]
 
         (expect (= e1 e2)))))
 

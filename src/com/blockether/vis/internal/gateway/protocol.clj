@@ -140,23 +140,24 @@
    unambiguous instruction instead of \"something is out of date\"."
   [{:keys [gateway-protocol gateway-min-client gateway-version client-protocol client-min-gateway
            client-version client-name]}]
-  (let [gp
-        (->int gateway-protocol)
+  (let
+    [gp
+     (->int gateway-protocol)
 
-        cp
-        (->int client-protocol)
+     cp
+     (->int client-protocol)
 
-        gmin
-        (or (->int gateway-min-client) gp)
+     gmin
+     (or (->int gateway-min-client) gp)
 
-        cmin
-        (or (->int client-min-gateway) cp)
+     cmin
+     (or (->int client-min-gateway) cp)
 
-        reason
-        (cond (or (nil? gp) (nil? cp)) "unknown"
-              (< (long cp) (long gmin)) "client-too-old"
-              (< (long gp) (long cmin)) "gateway-too-old"
-              :else "ok")]
+     reason
+     (cond (or (nil? gp) (nil? cp)) "unknown"
+           (< (long cp) (long gmin)) "client-too-old"
+           (< (long gp) (long cmin)) "gateway-too-old"
+           :else "ok")]
 
     {:is-compatible (= "ok" reason)
      :reason reason
@@ -279,14 +280,15 @@
 
 (defn- panel-row
   [s]
-  (let [w
-        (long panel-width)
+  (let
+    [w
+     (long panel-width)
 
-        body
-        (str "  " s)
+     body
+     (str "  " s)
 
-        clipped
-        (if (> (count body) (- w 2)) (subs body 0 (- w 2)) body)]
+     clipped
+     (if (> (count body) (- w 2)) (subs body 0 (- w 2)) body)]
 
     (str "│" clipped (apply str (repeat (- w 2 (count clipped)) \space)) "│")))
 
@@ -306,14 +308,15 @@
   [{:keys [gateway-protocol gateway-min-client gateway-version client-protocol client-min-gateway
            client-version client-name upgrade]
     :as v}]
-  (let [{:keys [title summary remedy]}
-        (explain v)
+  (let
+    [{:keys [title summary remedy]}
+     (explain v)
 
-        w
-        (long panel-width)
+     w
+     (long panel-width)
 
-        rule
-        (apply str (repeat (- w 2) "─"))]
+     rule
+     (apply str (repeat (- w 2) "─"))]
 
     (concat [(str "╭" rule "╮") (panel-row "VIS · VERSION MISMATCH") (str "├" rule "┤")
              (panel-row title) (panel-row "")]

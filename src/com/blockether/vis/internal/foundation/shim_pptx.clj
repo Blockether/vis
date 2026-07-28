@@ -69,14 +69,15 @@
 
 (defn- hex->awt
   ^Color [s]
-  (let [low
-        (str/lower-case (str s))
+  (let
+    [low
+     (str/lower-case (str s))
 
-        h
-        (or (color-names low) (if (str/starts-with? (str s) "#") (subs (str s) 1) (str s)))
+     h
+     (or (color-names low) (if (str/starts-with? (str s) "#") (subs (str s) 1) (str s)))
 
-        h
-        (if (= 3 (count h)) (apply str (mapcat #(list % %) h)) h)]
+     h
+     (if (= 3 (count h)) (apply str (mapcat #(list % %) h)) h)]
 
     (Color. (Integer/parseInt h 16))))
 
@@ -219,11 +220,12 @@
   "Rename a shape's cNvPr (poi-ooxml-lite hides the typed setter, so edit the XML
    via an XmlCursor) to python-pptx's convention."
   [^XSLFSimpleShape shape nm]
-  (let [^XmlObject xo
-        (.getXmlObject shape)
+  (let
+    [^XmlObject xo
+     (.getXmlObject shape)
 
-        ^XmlCursor cur
-        (.newCursor xo)]
+     ^XmlCursor cur
+     (.newCursor xo)]
 
     (.toFirstChild cur) ; nvSpPr / nvPicPr
     (.toFirstChild cur) ; cNvPr
@@ -237,9 +239,10 @@
 
 (defn- defrpr-attr-keys
   [props]
-  (let [ks (cond (map? props) (keys props)
-                 (instance? java.util.Map props) (seq (.keySet ^java.util.Map props))
-                 :else nil)]
+  (let
+    [ks (cond (map? props) (keys props)
+              (instance? java.util.Map props) (seq (.keySet ^java.util.Map props))
+              :else nil)]
     (filter #{"size" "bold" "italic" "underline"} (or ks ["bold" "italic" "underline" "size"]))))
 
 (defn- build-defrpr!
@@ -250,8 +253,9 @@
   (let [^XmlCursor cur (.newCursor pPr)]
     (.toEndToken cur)
     (.beginElement cur "defRPr" drawingml-ns)
-    (doseq [k (defrpr-attr-keys props)
-            :let [v (get props k)]]
+    (doseq
+      [k (defrpr-attr-keys props)
+       :let [v (get props k)]]
 
       (case k
         "size"
@@ -283,11 +287,12 @@
 (defn- new-text-shape!
   [shapes ^XSLFTextShape box]
   (.clearText box)
-  (let [p
-        (.addNewTextParagraph box)
+  (let
+    [p
+     (.addNewTextParagraph box)
 
-        sid
-        (swap! shape-counter inc)]
+     sid
+     (swap! shape-counter inc)]
 
     (swap! shapes assoc sid {:shape box :paras (atom [{:p p :runs (atom [])}])})
     sid))
@@ -302,11 +307,12 @@
 
 (defn- op-new
   [width height]
-  (let [ss
-        (XMLSlideShow.)
+  (let
+    [ss
+     (XMLSlideShow.)
 
-        h
-        (swap! pres-counter inc)]
+     h
+     (swap! pres-counter inc)]
 
     (.setPageSize ss
                   (java.awt.Dimension. (int (emu->pt (or width 9144000)))
@@ -330,44 +336,46 @@
 
 (defn- op-add-slide
   [h layout-idx]
-  (let [{:keys [^XMLSlideShow ss slides shapes]}
-        (entry-of h)
+  (let
+    [{:keys [^XMLSlideShow ss slides shapes]}
+     (entry-of h)
 
-        want
-        (get layout-type (int (or layout-idx 6)) "BLANK")
+     want
+     (get layout-type (int (or layout-idx 6)) "BLANK")
 
-        ^XSLFSlideMaster master
-        (first (.getSlideMasters ss))
+     ^XSLFSlideMaster master
+     (first (.getSlideMasters ss))
 
-        layouts
-        (.getSlideLayouts master)
+     layouts
+     (.getSlideLayouts master)
 
-        ^XSLFSlideLayout layout
-        (or (first (filter #(= want (str (.getType ^XSLFSlideLayout %))) layouts))
-            (first (filter #(= "BLANK" (str (.getType ^XSLFSlideLayout %))) layouts))
-            (first layouts))
+     ^XSLFSlideLayout layout
+     (or (first (filter #(= want (str (.getType ^XSLFSlideLayout %))) layouts))
+         (first (filter #(= "BLANK" (str (.getType ^XSLFSlideLayout %))) layouts))
+         (first layouts))
 
-        ^XSLFSlide sl
-        (.createSlide ss layout)
+     ^XSLFSlide sl
+     (.createSlide ss layout)
 
-        specs
-        (vec (map-indexed (fn [i ^XSLFTextShape ph]
-                            {"idx" i
-                             "ph_type" (str (.getPlaceholder ph))
-                             "name" (.getShapeName ph)
-                             "shape_id" (new-text-shape! shapes ph)})
-                          (.getPlaceholders sl)))]
+     specs
+     (vec (map-indexed (fn [i ^XSLFTextShape ph]
+                         {"idx" i
+                          "ph_type" (str (.getPlaceholder ph))
+                          "name" (.getShapeName ph)
+                          "shape_id" (new-text-shape! shapes ph)})
+                       (.getPlaceholders sl)))]
 
     (swap! slides conj sl)
     {"index" (dec (count @slides)) "placeholders" specs}))
 
 (defn- op-add-textbox
   [h slide l t w hh]
-  (let [{:keys [slides shapes]}
-        (entry-of h)
+  (let
+    [{:keys [slides shapes]}
+     (entry-of h)
 
-        box
-        (.createTextBox ^XSLFSlide (nth @slides (long slide)))]
+     box
+     (.createTextBox ^XSLFSlide (nth @slides (long slide)))]
 
     (.setAnchor box (Rectangle2D$Double. (emu->pt l) (emu->pt t) (emu->pt w) (emu->pt hh)))
     (set-shape-name! box (str "TextBox " (dec (.getShapeId box))))
@@ -375,11 +383,12 @@
 
 (defn- op-add-autoshape
   [h slide type-name l t w hh]
-  (let [{:keys [slides shapes]}
-        (entry-of h)
+  (let
+    [{:keys [slides shapes]}
+     (entry-of h)
 
-        sh
-        (.createAutoShape ^XSLFSlide (nth @slides (long slide)))]
+     sh
+     (.createAutoShape ^XSLFSlide (nth @slides (long slide)))]
 
     (.setShapeType sh (shape-type type-name))
     (.setAnchor sh (Rectangle2D$Double. (emu->pt l) (emu->pt t) (emu->pt w) (emu->pt hh)))
@@ -391,26 +400,27 @@
 
 (defn- op-add-picture
   [h slide l t w hh b64 ext]
-  (let [{:keys [^XMLSlideShow ss slides]}
-        (entry-of h)
+  (let
+    [{:keys [^XMLSlideShow ss slides]}
+     (entry-of h)
 
-        sl
-        ^XSLFSlide (nth @slides (long slide))
+     sl
+     ^XSLFSlide (nth @slides (long slide))
 
-        pd
-        (.addPicture ss ^bytes (b64dec b64) (pic-type ext))
+     pd
+     (.addPicture ss ^bytes (b64dec b64) (pic-type ext))
 
-        pic
-        (.createPicture sl pd)
+     pic
+     (.createPicture sl pd)
 
-        dim
-        (.getImageDimension pd)
+     dim
+     (.getImageDimension pd)
 
-        pw
-        (if w (emu->pt w) (.getWidth dim))
+     pw
+     (if w (emu->pt w) (.getWidth dim))
 
-        ph
-        (if hh (emu->pt hh) (.getHeight dim))]
+     ph
+     (if hh (emu->pt hh) (.getHeight dim))]
 
     (.setAnchor pic (Rectangle2D$Double. (emu->pt l) (emu->pt t) pw ph))
     (set-shape-name! pic (str "Picture " (dec (.getShapeId pic))))
@@ -418,11 +428,12 @@
 
 (defn- op-set-shape-geom
   [h sid l t w hh]
-  (let [sh
-        ^XSLFSimpleShape (:shape (shape-of h sid))
+  (let
+    [sh
+     ^XSLFSimpleShape (:shape (shape-of h sid))
 
-        a
-        (.getAnchor sh)]
+     a
+     (.getAnchor sh)]
 
     (.setAnchor sh
                 (Rectangle2D$Double. (if l (emu->pt l) (.getX a))
@@ -447,22 +458,24 @@
 
 (defn- op-add-para
   [h sid]
-  (let [se
-        (shape-of h sid)
+  (let
+    [se
+     (shape-of h sid)
 
-        p
-        (.addNewTextParagraph ^XSLFTextShape (:shape se))]
+     p
+     (.addNewTextParagraph ^XSLFTextShape (:shape se))]
 
     (swap! (:paras se) conj {:p p :runs (atom [])})
     (dec (count @(:paras se)))))
 
 (defn- op-add-run
   [h sid pidx]
-  (let [pe
-        (para-of h sid pidx)
+  (let
+    [pe
+     (para-of h sid pidx)
 
-        r
-        (.addNewTextRun ^XSLFTextParagraph (:p pe))]
+     r
+     (.addNewTextRun ^XSLFTextParagraph (:p pe))]
 
     (swap! (:runs pe) conj r)
     (dec (count @(:runs pe)))))
@@ -474,11 +487,12 @@
 
 (defn- op-set-para-text
   [h sid pidx text]
-  (let [pe
-        (para-of h sid pidx)
+  (let
+    [pe
+     (para-of h sid pidx)
 
-        runs
-        @(:runs pe)]
+     runs
+     @(:runs pe)]
 
     (if (seq runs)
       (do (.setText ^XSLFTextRun (first runs) (str text))
@@ -503,14 +517,15 @@
 
 (defn- op-set-para-font
   [h sid pidx props]
-  (let [pe
-        (para-of h sid pidx)
+  (let
+    [pe
+     (para-of h sid pidx)
 
-        ^CTTextParagraph ctp
-        (.getXmlObject ^XSLFTextParagraph (:p pe))
+     ^CTTextParagraph ctp
+     (.getXmlObject ^XSLFTextParagraph (:p pe))
 
-        ^CTTextParagraphProperties pPr
-        (if (.isSetPPr ctp) (.getPPr ctp) (.addNewPPr ctp))]
+     ^CTTextParagraphProperties pPr
+     (if (.isSetPPr ctp) (.getPPr ctp) (.addNewPPr ctp))]
 
     ;; python-pptx paragraph.font lives on pPr's <a:defRPr> (default run props),
     ;; NOT on the runs; rebuild it cleanly on every cumulative flush.
@@ -530,11 +545,12 @@
 
 (defn- op-save
   [h]
-  (let [{:keys [^XMLSlideShow ss]}
-        (entry-of h)
+  (let
+    [{:keys [^XMLSlideShow ss]}
+     (entry-of h)
 
-        bos
-        (ByteArrayOutputStream.)]
+     bos
+     (ByteArrayOutputStream.)]
 
     (.write ss bos)
     (b64enc (.toByteArray bos))))

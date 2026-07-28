@@ -402,7 +402,15 @@
    clears that registry. Resetting first sends the cosmetic
    `[Pasted #N: ...]` token to the provider instead of the payload."
   [db input-state]
-  (let [text (input/input->text input-state)]
+  (let [text (input/input->text input-state)
+        ;; Pin the SUBMITTING tab from this snapshot. `:send-message` /
+        ;; `:enqueue-message` otherwise resolve `current-tab-id` at swap! time,
+        ;; and gateway ACKs / a tab switch on another thread can move the active
+        ;; tab between this Enter and that reduce — routing the message (or the
+        ;; queued send) into whatever session is focused THEN. Capturing it here
+        ;; keeps the submission on the tab the user actually typed into.
+        wid (or (:active-tab-id db)
+                (:id (some #(when (:active? %) %) (:tabs db))))]
     ;; T-003: never silently drop a non-empty submission while a turn
     ;; is in flight. Idle -> send-message. Busy -> enqueue with visible
     ;; feedback; drained from `:message-received` once :loading? clears.
@@ -415,8 +423,8 @@
         (:cancelling? db) (vis/notify! "Cancelling current turn — press Enter again once it stops"
                                        :level :warn
                                        :ttl-ms 2500)
-        (:loading? db) (do (state/dispatch [:enqueue-message text]) (state/dispatch [:reset-input]))
-        :else (do (state/dispatch [:send-message text]) (state/dispatch [:reset-input]))))))
+        (:loading? db) (do (state/dispatch [:enqueue-message text wid]) (state/dispatch [:reset-input]))
+        :else (do (state/dispatch [:send-message text wid]) (state/dispatch [:reset-input]))))))
 
 (def ^:private copy-success-ttl-ms 1500)
 
@@ -3372,6 +3380,13 @@
       ;; dropped terminal `turn.completed` event can't wedge input for minutes.
       ;; The handler no-ops until the pending flag outlives its timeout.
       (when (:cancelling? db) (state/dispatch [:cancel-self-heal-tick]))
+
+      ;; STUCK-turn self-heal: same heartbeat, for a turn the GATEWAY already
+      ;; settled while this client still paints it live (dropped terminal event,
+      ;; wedged attach worker). The handler throttles itself and only probes the
+      ;; registry after the turn has outlived its grace window.
+      (when (or (:loading? db) (state/any-background-loading? db))
+        (state/dispatch [:turn-liveness-tick]))
       (when-not (:shutdown? db)
         (let
           [version
@@ -7295,8 +7310,7 @@
       ;; parked it (rarely column 0), so a bare println lands the
       ;; banner mid-row and the leading char looks "eaten". Lead with
       ;; a carriage return to snap back to column 0 first.
-      ;; Explicit `\n` (not println) so the banner is byte-identical on every
-      ;; OS — Windows' println would emit `\r\n` and desync the resume line.
+      ;; Explicit `\n` (not println) so the banner is byte-identical on every OS.
       (.print out "\rResume with:\n")
       (.print out (str "vis channels tui --session-id " id "\n"))
       (.flush out))))

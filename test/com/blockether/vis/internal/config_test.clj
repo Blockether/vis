@@ -22,27 +22,30 @@
       (expect (= {} (config/router-opts {:router nil})))
       (expect (= {} (config/router-opts {:router "string"}))))
   (it "passes through `:rate-limit` verbatim"
-      (let [block {:same-provider-delays-ms [2000 3000 6000]
-                   :fallback-after-ms 30000
-                   :respect-retry-after? true
-                   :fallback-provider? true}]
+      (let
+        [block {:same-provider-delays-ms [2000 3000 6000]
+                :fallback-after-ms 30000
+                :respect-retry-after? true
+                :fallback-provider? true}]
         (expect (= {:rate-limit block} (config/router-opts {:router {:rate-limit block}})))))
   (it "passes through `:network`, `:budget`, `:tokens`, and CB knobs"
-      (let [cfg {:router {:network {:timeout-ms 600000 :idle-timeout-ms 60000}
-                          :budget {:max-tokens 1000000 :max-cost 5.0}
-                          :tokens {:check-context? false}
-                          :failure-threshold 10
-                          :recovery-ms 30000}}]
+      (let
+        [cfg {:router {:network {:timeout-ms 600000 :idle-timeout-ms 60000}
+                       :budget {:max-tokens 1000000 :max-cost 5.0}
+                       :tokens {:check-context? false}
+                       :failure-threshold 10
+                       :recovery-ms 30000}}]
         (expect (= (:router cfg) (config/router-opts cfg)))))
   (it "drops unknown keys so future config additions don't crash make-router"
-      (let [cfg {:router {:rate-limit {:fallback-after-ms 1}
-                          :totally-made-up-key :whatever
-                          :another :nope}}]
+      (let
+        [cfg {:router
+              {:rate-limit {:fallback-after-ms 1} :totally-made-up-key :whatever :another :nope}}]
         (expect (= {:rate-limit {:fallback-after-ms 1}} (config/router-opts cfg)))))
   (it "ignores top-level config keys outside `:router`"
-      (let [cfg {:providers [{:id :p1}]
-                 :db-spec {:backend :sqlite}
-                 :router {:rate-limit {:fallback-after-ms 1}}}]
+      (let
+        [cfg {:providers [{:id :p1}]
+              :db-spec {:backend :sqlite}
+              :router {:rate-limit {:fallback-after-ms 1}}}]
         (expect (= {:rate-limit {:fallback-after-ms 1}} (config/router-opts cfg))))))
 
 (defdescribe
@@ -72,16 +75,16 @@
 (defdescribe
   svar-model-metadata-test
   (it "lets svar retain GLM-5.2's catalog-native effort style and values"
-      (let [provider
-            (config/->svar-provider
-              {:id :zai-coding-plan :api-key "test" :models [{:name "glm-5.2"}]})
+      (let
+        [provider
+         (config/->svar-provider {:id :zai-coding-plan :api-key "test" :models [{:name "glm-5.2"}]})
 
-            model
-            (-> (svar/make-router [provider])
-                :providers
-                first
-                :models
-                first)]
+         model
+         (-> (svar/make-router [provider])
+             :providers
+             first
+             :models
+             first)]
 
         (expect (= :zai-effort (:reasoning-style model)))
         (expect (= [{:type "effort" :values ["high" "max"]}] (:reasoning-options model)))))
@@ -99,12 +102,12 @@
   (it
     "first-run connect persists; adding a second provider keeps both + globals"
     (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-test-" (System/nanoTime))]
-      (try (with-redefs [config/config-dir tmp
-                         config/state-path (str tmp "/state.yml")
-                         ;; isolate from any real project-local overlay / root YAML
-                         config/project-config-yaml-paths (constantly
-                                                            [(str tmp "/none/.vis/config.yml")])
-                         config/project-root-yaml-paths (constantly [])]
+      (try (with-redefs
+             [config/config-dir tmp
+              config/state-path (str tmp "/state.yml")
+              ;; isolate from any real project-local overlay / root YAML
+              config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
+              config/project-root-yaml-paths (constantly [])]
 
              ;; (0) genuine first run — nothing on disk
              (expect (config/first-run?))
@@ -135,27 +138,29 @@
   "YAML parsing keeps canonical keys and scalar values as strings; the finite
    internal adapter runs only after validation."
   (it "adapts only known schema keys while preserving user-owned keys"
-      (let [wire
-            {"environment" {"ANTHROPIC_API_KEY" "tok"}
-             "providers"
-             [{"id" "anthropic" "api_style" "anthropic" "llm_headers" {"X-Custom-Header" "v"}}]}
+      (let
+        [wire
+         {"environment" {"ANTHROPIC_API_KEY" "tok"}
+          "providers"
+          [{"id" "anthropic" "api_style" "anthropic" "llm_headers" {"X-Custom-Header" "v"}}]}
 
-            runtime
-            (config/runtime-config wire)]
+         runtime
+         (config/runtime-config wire)]
 
         (expect (= {:environment {"ANTHROPIC_API_KEY" "tok"}
                     :providers
                     [{:id :anthropic :api-style :anthropic :llm-headers {"X-Custom-Header" "v"}}]}
                    runtime))))
   (it "maps svar's is_* YAML keys to their ?-suffixed keyword contracts both ways"
-      (let [wire
-            {"providers" [{"id" "p" "models" [{"name" "m" "is_tool_call" true}]}]
-             "router" {"rate_limit" {"is_respect_retry_after" true "is_fallback_provider" false}
-                       "tokens" {"is_check_context" true}}
-             "system_prompt" {"text" "x" "is_replace" true}}
+      (let
+        [wire
+         {"providers" [{"id" "p" "models" [{"name" "m" "is_tool_call" true}]}]
+          "router" {"rate_limit" {"is_respect_retry_after" true "is_fallback_provider" false}
+                    "tokens" {"is_check_context" true}}
+          "system_prompt" {"text" "x" "is_replace" true}}
 
-            runtime
-            (config/runtime-config wire)]
+         runtime
+         (config/runtime-config wire)]
 
         (expect (true? (get-in runtime [:providers 0 :models 0 :tool-call?])))
         (expect (true? (get-in runtime [:router :rate-limit :respect-retry-after?])))
@@ -166,14 +171,15 @@
                    (first (keys (#'config/->yaml-safe {:respect-retry-after? true})))))
         (expect (= "is_replace" (first (keys (#'config/->yaml-safe {:is-replace true})))))))
   (it "parses vis.yml directly into the string-keyed clojure.spec shape"
-      (let [read-yaml
-            @#'config/read-yaml-config-map
+      (let
+        [read-yaml
+         @#'config/read-yaml-config-map
 
-            dir
-            (io/file "target/config-yaml-test")
+         dir
+         (io/file "target/config-yaml-test")
 
-            yml
-            (io/file dir "vis.yml")]
+         yml
+         (io/file dir "vis.yml")]
 
         (try (.mkdirs dir)
              (spit yml
@@ -186,20 +192,24 @@
              (expect (nil? (read-yaml (.getPath yml))))
              (finally (rm-rf! dir)))))
   (it "search-overlay adapts the validated string block"
-      (expect (nil? (with-redefs [config/load-config-raw (fn []
-                                                           {})]
+      (expect (nil? (with-redefs
+                      [config/load-config-raw (fn []
+                                                {})]
                       (config/search-overlay))))
-      (let [overlay (with-redefs [config/load-config-raw (fn []
-                                                           {"search" {"include_gitignored_paths"
-                                                                      ["repositories/"]}})]
-                      (config/search-overlay))]
+      (let
+        [overlay (with-redefs
+                   [config/load-config-raw (fn []
+                                             {"search" {"include_gitignored_paths"
+                                                        ["repositories/"]}})]
+                   (config/search-overlay))]
         (expect (= ["repositories/"] (:include-gitignored-paths overlay)))
         (expect (= config/default-search-always-exclude (:always-exclude overlay))))
       (expect (= ["*.log"]
-                 (:always-exclude (with-redefs [config/load-config-raw
-                                                (fn []
-                                                  {"search" {"include_gitignored_paths" ["r/"]
-                                                             "always_exclude" ["*.log"]}})]
+                 (:always-exclude (with-redefs
+                                    [config/load-config-raw (fn []
+                                                              {"search"
+                                                               {"include_gitignored_paths" ["r/"]
+                                                                "always_exclude" ["*.log"]}})]
                                     (config/search-overlay)))))))
 
 (defdescribe
@@ -208,28 +218,30 @@
    `vis.yml` preserves the keys verbatim, and the machine YAML writer emits
    the same strings without keyword or namespace conversion."
   (it "a hand-written vis.yml toggles block preserves plain string ids"
-      (let [dir
-            (io/file "target/toggles-yaml-read-test")
+      (let
+        [dir
+         (io/file "target/toggles-yaml-read-test")
 
-            root-yml
-            (io/file dir "vis.yml")]
+         root-yml
+         (io/file dir "vis.yml")]
 
         (try (.mkdirs dir)
              (spit root-yml (str "toggles:\n" "  reasoning_level: deep\n" "  auto_commit: true\n"))
-             (with-redefs [config/global-config-yaml-paths
-                           (fn []
-                             [])
+             (with-redefs
+               [config/global-config-yaml-paths
+                (fn []
+                  [])
 
-                           config/state-path
-                           "/nonexistent/state.yml"
+                config/state-path
+                "/nonexistent/state.yml"
 
-                           config/project-root-yaml-paths
-                           (fn []
-                             [(.getPath root-yml)])
+                config/project-root-yaml-paths
+                (fn []
+                  [(.getPath root-yml)])
 
-                           config/project-config-yaml-paths
-                           (fn []
-                             [])]
+                config/project-config-yaml-paths
+                (fn []
+                  [])]
 
                (let [cfg (config/load-config-raw)]
                  (expect (= {"reasoning_level" "deep" "auto_commit" true} (get cfg "toggles")))
@@ -239,9 +251,9 @@
                       (some-> dir
                               .delete)))))
   (it "->yaml-safe emits string toggle ids verbatim and keeps ordinary config keys"
-      (let [safe
-            (#'config/->yaml-safe
-             {:toggles {"reasoning_level" :deep "auto_commit" true} :base-url "x" :providers []})]
+      (let
+        [safe (#'config/->yaml-safe
+               {:toggles {"reasoning_level" :deep "auto_commit" true} :base-url "x" :providers []})]
         (expect (= {"reasoning_level" "deep" "auto_commit" true} (get safe "toggles")))
         (expect (contains? safe "base_url")))))
 
@@ -255,23 +267,24 @@
    merge — the file Vis itself writes can never be shadowed by hand YAML)."
   (it
     "nested .vis/config.yml overrides root vis.yml; disjoint keys from every tier survive"
-    (let [dir
-          (io/file "target/config-precedence-test")
+    (let
+      [dir
+       (io/file "target/config-precedence-test")
 
-          gdir
-          (io/file dir "global")
+       gdir
+       (io/file dir "global")
 
-          gyml
-          (io/file gdir "config.yml")
+       gyml
+       (io/file gdir "config.yml")
 
-          gstate
-          (io/file gdir "state.yml")
+       gstate
+       (io/file gdir "state.yml")
 
-          root-yml
-          (io/file dir "vis.yml")
+       root-yml
+       (io/file dir "vis.yml")
 
-          nested-yml
-          (io/file dir ".vis" "config.yml")]
+       nested-yml
+       (io/file dir ".vis" "config.yml")]
 
       (try (.mkdirs (io/file dir ".vis"))
            (.mkdirs gdir)
@@ -283,20 +296,21 @@
                  (str "system_prompt: FROM-ROOT\n"
                       "search:\n  include_gitignored_paths:\n    - repositories/\n"))
            (spit nested-yml "system_prompt: FROM-NESTED\n")
-           (with-redefs [config/state-path
-                         (.getPath gstate)
+           (with-redefs
+             [config/state-path
+              (.getPath gstate)
 
-                         config/global-config-yaml-paths
-                         (fn []
-                           [(.getPath gyml)])
+              config/global-config-yaml-paths
+              (fn []
+                [(.getPath gyml)])
 
-                         config/project-root-yaml-paths
-                         (fn []
-                           [(.getPath root-yml)])
+              config/project-root-yaml-paths
+              (fn []
+                [(.getPath root-yml)])
 
-                         config/project-config-yaml-paths
-                         (fn []
-                           [(.getPath nested-yml)])]
+              config/project-config-yaml-paths
+              (fn []
+                [(.getPath nested-yml)])]
 
              (let [cfg (config/load-config-raw)]
                ;; the nested overlay wins the conflicting key
@@ -314,36 +328,38 @@
            (finally (rm-rf! dir)))))
   (it
     "global ~/.vis: hand-written YAML merges UNDER machine-written state.yml (state wins per key)"
-    (let [dir
-          (io/file "target/config-global-yaml-test")
+    (let
+      [dir
+       (io/file "target/config-global-yaml-test")
 
-          gyml
-          (io/file dir "config.yml")
+       gyml
+       (io/file dir "config.yml")
 
-          gstate
-          (io/file dir "state.yml")
+       gstate
+       (io/file dir "state.yml")
 
-          none
-          (fn []
-            [])]
+       none
+       (fn []
+         [])]
 
       (try (.mkdirs dir)
            (spit gyml
                  (str "system_prompt: FROM-YAML\n"
                       "search:\n  include_gitignored_paths:\n    - repositories/\n"))
            (spit gstate "system_prompt: FROM-STATE\n")
-           (with-redefs [config/state-path
-                         (.getPath gstate)
+           (with-redefs
+             [config/state-path
+              (.getPath gstate)
 
-                         config/global-config-yaml-paths
-                         (fn []
-                           [(.getPath gyml)])
+              config/global-config-yaml-paths
+              (fn []
+                [(.getPath gyml)])
 
-                         config/project-root-yaml-paths
-                         none
+              config/project-root-yaml-paths
+              none
 
-                         config/project-config-yaml-paths
-                         none]
+              config/project-config-yaml-paths
+              none]
 
              (let [cfg (config/load-config-raw)]
                ;; conflicting key: the machine-written state.yml wins
@@ -363,36 +379,39 @@
    INVISIBLE: an edit, a delete, and a fresh file all still show through."
   (it
     "reuses the parsed value until a source changes, then reparses"
-    (let [dir
-          (io/file "target/config-cache-test")
+    (let
+      [dir
+       (io/file "target/config-cache-test")
 
-          gstate
-          (io/file dir "state.yml")
+       gstate
+       (io/file dir "state.yml")
 
-          none
-          (fn []
-            [])]
+       none
+       (fn []
+         [])]
 
       (try (.mkdirs dir)
            (spit gstate "system_prompt: ONE\n")
-           (with-redefs [config/state-path
-                         (.getPath gstate)
+           (with-redefs
+             [config/state-path
+              (.getPath gstate)
 
-                         config/global-config-yaml-paths
-                         none
+              config/global-config-yaml-paths
+              none
 
-                         config/project-root-yaml-paths
-                         none
+              config/project-root-yaml-paths
+              none
 
-                         config/project-config-yaml-paths
-                         none]
+              config/project-config-yaml-paths
+              none]
 
              (config/invalidate-config-cache!)
-             (let [a
-                   (config/load-config-raw)
+             (let
+               [a
+                (config/load-config-raw)
 
-                   b
-                   (config/load-config-raw)]
+                b
+                (config/load-config-raw)]
 
                ;; cache HIT: the very same parsed map, no re-read
                (expect (identical? a b))
@@ -435,12 +454,13 @@
         (expect (= {"a" [{"b" home}]} (config/interpolate-env {"a" [{"b" "${HOME}"}]})))
         (expect (= 7 (config/interpolate-env 7)))))
   (it "writes a whole-value reference back so a re-save cannot bake the secret in"
-      (let [home
-            (System/getenv "HOME")
+      (let
+        [home
+         (System/getenv "HOME")
 
-            resolved
-            (config/interpolate-env {"providers" [{"api_key" "${HOME}"
-                                                   "base_url" "https://x/${HOME}/v1"}]})]
+         resolved
+         (config/interpolate-env {"providers" [{"api_key" "${HOME}"
+                                                "base_url" "https://x/${HOME}/v1"}]})]
 
         (expect (= [{"api_key" home "base_url" (str "https://x/" home "/v1")}]
                    (get resolved "providers")))
@@ -449,14 +469,15 @@
         (expect (= [{"api_key" "${HOME}" "base_url" (str "https://x/" home "/v1")}]
                    (get (config/restore-env-refs resolved) "providers")))))
   (it "reports, sorted, exactly the unset vars each provider still needs"
-      (let [gapped
-            {:id :gapped :api-key "${VIS_TEST_UNSET_B}"}
+      (let
+        [gapped
+         {:id :gapped :api-key "${VIS_TEST_UNSET_B}"}
 
-            two
-            {:id :two :api-key "${VIS_TEST_UNSET_B}" :base-url "https://${VIS_TEST_UNSET_A}/v1"}
+         two
+         {:id :two :api-key "${VIS_TEST_UNSET_B}" :base-url "https://${VIS_TEST_UNSET_A}/v1"}
 
-            fine
-            {:id :fine :api-key "sk-literal"}]
+         fine
+         {:id :fine :api-key "sk-literal"}]
 
         (expect (= ["VIS_TEST_UNSET_B"] (config/provider-env-gap gapped)))
         (expect (= ["VIS_TEST_UNSET_A" "VIS_TEST_UNSET_B"] (config/provider-env-gap two)))
@@ -470,17 +491,17 @@
       (expect (= "can't use rbi-genai: A_KEY, B_KEY are not set"
                  (config/provider-env-message "rbi-genai" ["A_KEY" "B_KEY"]))))
   (it "resolves through `load-config`, marking the gapped provider without failing"
-      (try
-        (config/invalidate-config-cache!)
-        (with-redefs [config/load-config-raw
-                      (constantly
-                        {"providers"
-                         [{"id" "gapped" "api_key" "${VIS_TEST_UNSET_A}" "models" [{"name" "m1"}]}
-                          {"id" "fine" "api_key" "${HOME}" "models" [{"name" "m2"}]}]})]
-          (let [cfg (config/load-config)
+      (try (config/invalidate-config-cache!)
+           (with-redefs
+             [config/load-config-raw
+              (constantly {"providers"
+                           [{"id" "gapped" "api_key" "${VIS_TEST_UNSET_A}" "models" [{"name" "m1"}]}
+                            {"id" "fine" "api_key" "${HOME}" "models" [{"name" "m2"}]}]})]
+             (let
+               [cfg (config/load-config)
                 [gapped fine] (:providers cfg)]
 
-            (expect (= "${VIS_TEST_UNSET_A}" (:api-key gapped)))
-            (expect (= (System/getenv "HOME") (:api-key fine)))
-            (expect (= {:gapped ["VIS_TEST_UNSET_A"]} (config/provider-env-gaps cfg)))))
-        (finally (config/invalidate-config-cache!)))))
+               (expect (= "${VIS_TEST_UNSET_A}" (:api-key gapped)))
+               (expect (= (System/getenv "HOME") (:api-key fine)))
+               (expect (= {:gapped ["VIS_TEST_UNSET_A"]} (config/provider-env-gaps cfg)))))
+           (finally (config/invalidate-config-cache!)))))

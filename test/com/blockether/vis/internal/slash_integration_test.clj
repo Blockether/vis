@@ -25,20 +25,21 @@
   "Build a minimal engine env with one extension carrying `slashes`,
    a workspace, a session, and a fresh ctx-atom + turn-state-atom."
   [store slashes]
-  (let [ext
-        (extension/extension {:ext/name "test.slash-integration"
-                              :ext/description "Slash integration test fixture."
-                              :ext/slash-commands slashes})
+  (let
+    [ext
+     (extension/extension {:ext/name "test.slash-integration"
+                           :ext/description "Slash integration test fixture."
+                           :ext/slash-commands slashes})
 
-        ws
-        (persistance/db-workspace-insert!
-          store
-          {:repo-id "test" :repo-root "/tmp" :root "/tmp" :state :active :fork-ms 0})
+     ws
+     (persistance/db-workspace-insert!
+       store
+       {:repo-id "test" :repo-root "/tmp" :root "/tmp" :state :active :fork-ms 0})
 
-        soul-id
-        (persistance/db-store-session!
-          store
-          {:channel :tui :workspace-id (:id ws) :title "slash-test" :system-prompt ""})]
+     soul-id
+     (persistance/db-store-session!
+       store
+       {:channel :tui :workspace-id (:id ws) :title "slash-test" :system-prompt ""})]
 
     {:extensions (atom [ext])
      :db-info store
@@ -64,18 +65,20 @@
   (it "handled slash skips iteration-loop and persists a :user-slash iter"
       (with-store
         (fn [store]
-          (let [env
-                (slash-env store [(slash-spec-ok "ping" "pong")])
+          (let
+            [env
+             (slash-env store [(slash-spec-ok "ping" "pong")])
 
-                call-count
-                (atom 0)
+             call-count
+             (atom 0)
 
-                ;; iteration-loop must NOT run for handled slashes.
-                result
-                (with-redefs [lp/iteration-loop (fn [& _]
-                                                  (swap! call-count inc)
-                                                  {:status :success})]
-                  (lp/run-turn! env "/ping" {}))]
+             ;; iteration-loop must NOT run for handled slashes.
+             result
+             (with-redefs
+               [lp/iteration-loop (fn [& _]
+                                    (swap! call-count inc)
+                                    {:status :success})]
+               (lp/run-turn! env "/ping" {}))]
 
             (expect (= 0 @call-count))
             (expect (= :success (:status result)))
@@ -92,23 +95,25 @@
                              first
                              :user-request))))))))
   (it "non-slash text falls through to iteration-loop"
-      (with-store (fn [store]
-                    (let [env
-                          (slash-env store [(slash-spec-ok "ping" "pong")])
+      (with-store
+        (fn [store]
+          (let
+            [env
+             (slash-env store [(slash-spec-ok "ping" "pong")])
 
-                          fell-through?
-                          (atom false)]
+             fell-through?
+             (atom false)]
 
-                      (with-redefs [lp/iteration-loop
-                                    (fn [& _]
-                                      (reset! fell-through? true)
-                                      ;; Mimic real iteration-loop happy path:
-                                      ;; no :status (the row column gets
-                                      ;; :success via `or` then normalized
-                                      ;; to "done"; prior_outcome stays NULL).
-                                      {:answer nil :iteration-count 0 :duration-ms 0})]
-                        (lp/run-turn! env "hello world" {}))
-                      (expect (true? @fell-through?)))))))
+            (with-redefs
+              [lp/iteration-loop (fn [& _]
+                                   (reset! fell-through? true)
+                                   ;; Mimic real iteration-loop happy path:
+                                   ;; no :status (the row column gets
+                                   ;; :success via `or` then normalized
+                                   ;; to "done"; prior_outcome stays NULL).
+                                   {:answer nil :iteration-count 0 :duration-ms 0})]
+              (lp/run-turn! env "hello world" {}))
+            (expect (true? @fell-through?)))))))
 
 ;; =============================================================================
 ;; IR-shaped :slash/body persists as Markdown
@@ -118,21 +123,23 @@
              (it "IR :slash/body renders to Markdown for answer_markdown column"
                  (with-store
                    (fn [store]
-                     (let [ast
-                           [(content/prose "Hello **world**")]
+                     (let
+                       [ast
+                        [(content/prose "Hello **world**")]
 
-                           env
-                           (slash-env store
-                                      [{:slash/name "ir-body"
-                                        :slash/run-fn (fn [_]
-                                                        {:slash/status :ok
-                                                         :slash/title "IR body"
-                                                         :slash/body ast})}])
+                        env
+                        (slash-env store
+                                   [{:slash/name "ir-body"
+                                     :slash/run-fn (fn [_]
+                                                     {:slash/status :ok
+                                                      :slash/title "IR body"
+                                                      :slash/body ast})}])
 
-                           result
-                           (with-redefs [lp/iteration-loop (fn [& _]
-                                                             {:status :success})]
-                             (lp/run-turn! env "/ir-body" {}))]
+                        result
+                        (with-redefs
+                          [lp/iteration-loop (fn [& _]
+                                               {:status :success})]
+                          (lp/run-turn! env "/ir-body" {}))]
 
                        (expect (= :success (:status result)))
                        (expect (str/includes? (:answer result) "Hello"))
@@ -145,14 +152,16 @@
 (defdescribe slash-error-envelope-test
              (it "unknown slash persists as :user-slash with error in result"
                  (with-store (fn [store]
-                               (let [env
-                                     (slash-env store [(slash-spec-ok "ping" "pong")])
+                               (let
+                                 [env
+                                  (slash-env store [(slash-spec-ok "ping" "pong")])
 
-                                     result
-                                     (with-redefs [lp/iteration-loop
-                                                   (fn [& _]
-                                                     (throw (ex-info "should not be called" {})))]
-                                       (lp/run-turn! env "/nonexistent" {}))]
+                                  result
+                                  (with-redefs
+                                    [lp/iteration-loop (fn [& _]
+                                                         (throw (ex-info "should not be called"
+                                                                         {})))]
+                                    (lp/run-turn! env "/nonexistent" {}))]
 
                                  (expect (= :success (:status result)))
                                  (expect (= :unknown (get-in result [:slash :reason])))

@@ -29,7 +29,7 @@ Prereqs: `git`, `java` 25+, and the [Clojure CLI](https://clojure.org/guides/ins
 `vis` is the stable command. It proxies to the best available distribution, in this order:
 
 1. managed native binary from `vis update` (`$VIS_HOME/install`, default `~/.vis/install`)
-2. repo native binary (`target/vis` or `target/vis.exe`)
+2. repo native binary (`target/vis`)
 3. repo JVM uberjar (`target/vis.jar`)
 4. live source (`clojure -M:vis`)
 
@@ -38,7 +38,7 @@ Use `vis --jvm ...` to skip native and force the JVM path. The JVM path needs a 
 ## Build / develop
 
 ```bash
-vis native                       # builds target/vis(.exe) and target/vis.jar
+vis native                       # builds target/vis and target/vis.jar
 clojure -M:format check
 clojure -M:lint src extensions test build.clj
 clojure -M:test

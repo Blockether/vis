@@ -46,6 +46,17 @@ export function App() {
   const [tab, setTab] = useState<Tab>('sessions');
   const [openTarget, setOpenTarget] = useState<{ conn: GatewayConn; sid: string; fresh?: boolean } | null>(null);
   const [settingsTarget, setSettingsTarget] = useState<GatewayConn | null>(null);
+  // The settings dialog's REMOUNT identity is the machine you opened, captured
+  // once — never its current URL. Switching address rewrites `settingsTarget.url`,
+  // and keying the dialog on that tore it down and rebuilt it: the entry
+  // transition replayed, the scroll position snapped back to the top and every
+  // panel refetched from an empty cache. That is the jump. The address is a
+  // property of the machine, not its identity.
+  const [settingsKey, setSettingsKey] = useState('');
+  const openSettings = useCallback((conn: GatewayConn) => {
+    setSettingsKey(conn.id ?? conn.url);
+    setSettingsTarget(conn);
+  }, []);
   const [subscribedIds, setSubscribedIds] = useState<Set<string>>(new Set());
   const [ready, setReady] = useState(false);
   // Set when the sessions screen finds the active gateway unreachable. While it
@@ -72,9 +83,14 @@ export function App() {
   // Stable client for the open settings dialog: a fresh `new GatewayClient(...)`
   // per render made the dialog's `load` re-fire on every unrelated App re-render
   // (session polling, subscriptions), re-applying the theme and flickering it.
+  // Keyed on the transport pair only: renaming a machine (or any other field
+  // `GatewayClient` never reads) must not build a new client and re-fire the
+  // dialog's `load`.
+  const settingsUrl = settingsTarget?.url ?? '';
+  const settingsToken = settingsTarget?.token;
   const settingsClient = useMemo(
-    () => settingsTarget ? new GatewayClient(settingsTarget) : null,
-    [settingsTarget],
+    () => (settingsUrl ? new GatewayClient({ url: settingsUrl, token: settingsToken }) : null),
+    [settingsUrl, settingsToken],
   );
 
   const refresh = useCallback(async () => {
@@ -421,10 +437,12 @@ export function App() {
   // iOS shrinks the visual viewport for the keyboard instead of the layout one;
   // without this the header slides up under the status bar while typing.
   const shellStyle = useVisualViewportShell();
-  // A rotation relayouts everything at once and the in-between frames are not
-  // interpolatable, so they are hidden rather than animated: the body is the
-  // same ink, so what you see is the OS rotation, then the settled layout
-  // fading in. Nothing floats or resizes on screen any more.
+  // A rotation is a layout event, not an animation: for the few hundred ms the
+  // webview describes two devices at once, every transition would interpolate
+  // boxes that never existed and every `@starting-style` entry would replay —
+  // the wobble. Motion is frozen for that window (see `[data-rotating]` in
+  // index.css). The shell is NOT hidden: `opacity-0` exposed the page
+  // background, which in the default light theme is a full white flash.
   const isRotating = useIsViewportRotating();
 
   if (!ready) return <Splash />;
@@ -436,7 +454,8 @@ export function App() {
 
   return (
     <div
-      className={`isolate fixed inset-x-0 top-0 flex h-dvh min-h-0 flex-col overflow-hidden bg-ink text-body transition-opacity ease-out ${isRotating ? 'opacity-0 duration-0' : 'opacity-100 duration-200'}`}
+      className="isolate fixed inset-x-0 top-0 flex h-dvh min-h-0 flex-col overflow-hidden bg-ink text-body"
+      data-rotating={isRotating ? 'true' : undefined}
       style={shellStyle}
     >
       {!openTarget && <Header tab={hasConn ? tab : 'connect'} hasConn={hasConn} onTab={setTab} />}
@@ -447,7 +466,7 @@ export function App() {
             conns={conns}
             active={active}
             onAdd={addConnection}
-            onSettings={setSettingsTarget}
+            onSettings={openSettings}
             offlineError={blocked ? offline : null}
             onRetry={() => setOffline(null)}
           />
@@ -471,7 +490,7 @@ export function App() {
             fresh={openTarget.fresh}
             onBack={() => setOpenTarget(null)}
             onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
-            onManageProviders={() => setSettingsTarget(openTarget.conn)}
+            onManageProviders={() => openSettings(openTarget.conn)}
           />
         ) : (
           <SessionsScreen
@@ -489,7 +508,7 @@ export function App() {
 
       {settingsTarget && settingsClient && (
         <GatewaySettingsDialog
-          key={settingsTarget.url}
+          key={settingsKey}
           client={settingsClient}
           gateway={settingsTarget}
           isActive={settingsTarget.url === active?.url}

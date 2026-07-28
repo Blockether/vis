@@ -3,7 +3,34 @@ export interface WavRecording {
   cancel: () => Promise<void>;
 }
 
-function encodePcmWav(chunks: Float32Array[], sampleRate: number): Blob {
+export interface WavRecordingOptions {
+  /**
+   * Fired ONCE when the OS takes the microphone away mid-recording: the app is
+   * backgrounded (iOS suspends the webview, so `onaudioprocess` simply stops),
+   * a call arrives, or another app claims the audio session. Whatever was said
+   * up to that point is still buffered — the caller decides what to do with it,
+   * but it must be told, because nothing else here ever fires again.
+   */
+  onInterrupted?: (reason: string) => void;
+}
+
+// A dictation nobody ends still buffers audio, and on iOS the OS answers a
+// webview that grows without bound by killing it — the app simply vanishes.
+// Cap the recording and end it like any other interruption instead.
+const MAX_RECORDING_SECONDS = 900;
+
+// Speech transcription runs at 16 kHz, while the capture device hands us 44.1 or
+// 48 kHz. Downsampling AT CAPTURE is what makes a 15-minute dictation affordable
+// on a phone: 48 kHz Int16 pins ~5.5 MB per minute (~83 MB at the cap, doubled
+// for a moment while the WAV is encoded), 16 kHz pins ~1.9 MB. Nothing is lost —
+// the transcription API resamples to 16 kHz regardless.
+
+// The frames are buffered as Int16 — the WAV payload format itself. Holding the
+// raw Float32 frames instead doubled the memory a long dictation pins, for a
+// conversion that has to happen anyway.
+const TARGET_SAMPLE_RATE = 16000;
+
+function encodePcmWav(chunks: Int16Array[], sampleRate: number): Blob {
   const sampleCount = chunks.reduce((total, chunk) => total + chunk.length, 0);
   const buffer = new ArrayBuffer(44 + sampleCount * 2);
   const view = new DataView(buffer);
@@ -29,16 +56,17 @@ function encodePcmWav(chunks: Float32Array[], sampleRate: number): Blob {
 
   let offset = 44;
   for (const chunk of chunks) {
-    for (const value of chunk) {
-      const sample = Math.max(-1, Math.min(1, value));
-      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    for (const sample of chunk) {
+      view.setInt16(offset, sample, true);
       offset += 2;
     }
   }
   return new Blob([buffer], { type: 'audio/wav' });
 }
 
-export async function startWavRecording(): Promise<WavRecording> {
+export async function startWavRecording(
+  options: WavRecordingOptions = {},
+): Promise<WavRecording> {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error('Microphone recording is unavailable on this device');
   }
@@ -55,12 +83,53 @@ export async function startWavRecording(): Promise<WavRecording> {
   const source = context.createMediaStreamSource(stream);
   const processor = context.createScriptProcessor(4096, 1, 1);
   const silentOutput = context.createGain();
-  const chunks: Float32Array[] = [];
+  const chunks: Int16Array[] = [];
+  // Ratio is >= 1; a device already at or below 16 kHz passes through untouched.
+  const ratio = Math.max(1, context.sampleRate / TARGET_SAMPLE_RATE);
+  const outputRate = context.sampleRate / ratio;
+  const limitSamples = MAX_RECORDING_SECONDS * outputRate;
+  // Box-filter resampler state, carried ACROSS frames on purpose: a fractional
+  // ratio (44100/16000 = 2.756…) never lines up with a 4096-sample frame, so
+  // restarting the accumulator per frame would click every 85 ms.
+  let acc = 0;
+  let accCount = 0;
+  let pending = 0;
+  let sampleCount = 0;
+  let peak = 0;
   let closed = false;
+  // Late-bound on purpose: frames start arriving during the `resume()` await
+  // below, before `interrupt` exists, and the callback must never reach into a
+  // binding that is still in its temporal dead zone.
+  let onLimit: ((reason: string) => void) | null = null;
 
   silentOutput.gain.value = 0;
   processor.onaudioprocess = (event) => {
-    if (!closed) chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+    if (closed) return;
+    const input = event.inputBuffer.getChannelData(0);
+    const frame = new Int16Array(Math.ceil(input.length / ratio) + 1);
+    let written = 0;
+    for (let index = 0; index < input.length; index += 1) {
+      const value = Math.max(-1, Math.min(1, input[index]));
+      const level = Math.abs(value);
+      if (level > peak) peak = level;
+      acc += value;
+      accCount += 1;
+      pending += 1;
+      if (pending >= ratio) {
+        const mean = acc / accCount;
+        frame[written] = mean < 0 ? mean * 0x8000 : mean * 0x7fff;
+        written += 1;
+        acc = 0;
+        accCount = 0;
+        pending -= ratio;
+      }
+    }
+    if (!written) return;
+    chunks.push(written === frame.length ? frame : frame.subarray(0, written));
+    sampleCount += written;
+    if (sampleCount >= limitSamples) {
+      onLimit?.(`Dictation stopped at the ${Math.round(MAX_RECORDING_SECONDS / 60)}-minute limit — transcribing what was said.`);
+    }
   };
   source.connect(processor);
   processor.connect(silentOutput);
@@ -75,10 +144,30 @@ export async function startWavRecording(): Promise<WavRecording> {
     throw new Error('Microphone could not start — tap the mic again');
   }
 
+  // Interruption is SILENT: iOS suspends the context on backgrounding and the
+  // track goes muted when another app grabs the mic. No error, no event on the
+  // recorder — capture just stops while the UI still says "Listening…". These
+  // are the only signals that it happened.
+  let interrupted = false;
+  const interrupt = (reason: string) => {
+    if (interrupted || closed) return;
+    interrupted = true;
+    options.onInterrupted?.(reason);
+  };
+  context.onstatechange = () => {
+    if (context.state !== 'running') interrupt('Dictation stopped — the microphone was suspended.');
+  };
+  for (const track of stream.getTracks()) {
+    track.addEventListener('ended', () => interrupt('Dictation stopped — the microphone was released.'));
+    track.addEventListener('mute', () => interrupt('Dictation stopped — another app took the microphone.'));
+  }
+  onLimit = interrupt;
+
   const close = async () => {
     if (closed) return;
     closed = true;
     processor.onaudioprocess = null;
+    context.onstatechange = null;
     source.disconnect();
     processor.disconnect();
     silentOutput.disconnect();
@@ -90,18 +179,11 @@ export async function startWavRecording(): Promise<WavRecording> {
     stop: async () => {
       await close();
       if (!chunks.length) throw new Error('No audio was recorded');
-      let peak = 0;
-      for (const chunk of chunks) {
-        for (const value of chunk) {
-          const level = Math.abs(value);
-          if (level > peak) peak = level;
-        }
-      }
       // Digital silence means the track was live but muted (another app holds the
       // mic, or the OS denied it after the fact). Transcribing it returns an empty
       // string the composer cannot explain, so name the cause here.
       if (peak < 1e-4) throw new Error('Microphone captured only silence — check that nothing else is using it');
-      return encodePcmWav(chunks, context.sampleRate);
+      return encodePcmWav(chunks, outputRate);
     },
     cancel: close,
   };

@@ -99,43 +99,45 @@
    collisions against templates."
   ([channel] (slash-palette channel nil))
   ([channel extra]
-   (let [avail
-         (filter #(spec-visible-for-channel? channel %) (registered-slashes))
+   (let
+     [avail
+      (filter #(spec-visible-for-channel? channel %) (registered-slashes))
 
-         parent-paths
-         (into #{}
-               (keep #(let [p
-                            (vec (:slash/parent %))]
+      parent-paths
+      (into #{}
+            (keep #(let
+                     [p
+                      (vec (:slash/parent %))]
 
-                        (when (seq p) p)))
-               avail)
+                     (when (seq p) p)))
+            avail)
 
-         leaf?
-         (fn [s]
-           (not (contains? parent-paths (conj (vec (:slash/parent s)) (:slash/name s)))))
+      leaf?
+      (fn [s]
+        (not (contains? parent-paths (conj (vec (:slash/parent s)) (:slash/name s)))))
 
-         path-name
-         (fn [s]
-           (str "/" (str/join " " (concat (:slash/parent s) [(:slash/name s)]))))
+      path-name
+      (fn [s]
+        (str "/" (str/join " " (concat (:slash/parent s) [(:slash/name s)]))))
 
-         registered
-         (->> avail
-              (filter leaf?)
-              (map (fn [s]
-                     {:name (path-name s) :doc (str (:slash/doc s))})))
+      registered
+      (->> avail
+           (filter leaf?)
+           (map (fn [s]
+                  {:name (path-name s) :doc (str (:slash/doc s))})))
 
-         specs
-         (concat (vec extra) registered)
+      specs
+      (concat (vec extra) registered)
 
-         taken
-         (into #{} (map :name) specs)
+      taken
+      (into #{} (map :name) specs)
 
-         templates
-         (try (->> (prompt-templates/templates)
-                   (keep (fn [{:keys [name description]}]
-                           (let [nm (str "/" name)]
-                             (when-not (contains? taken nm) {:name nm :doc (str description)})))))
-              (catch Throwable _ nil))]
+      templates
+      (try (->> (prompt-templates/templates)
+                (keep (fn [{:keys [name description]}]
+                        (let [nm (str "/" name)]
+                          (when-not (contains? taken nm) {:name nm :doc (str description)})))))
+           (catch Throwable _ nil))]
 
      (vec (concat specs templates)))))
 
@@ -228,14 +230,16 @@
   (let [by-path (index-by-path (active-slashes env))]
     (loop [n (count tokens)]
       (when (pos? n)
-        (let [prefix (subvec tokens 0 n)
-              specs (get by-path prefix)]
+        (let
+          [prefix (subvec tokens 0 n)
+           specs (get by-path prefix)]
 
           (if (seq specs)
-            (let [chosen (or (some (fn [spec]
-                                     (when (spec-available-for? spec ctx) spec))
-                                   specs)
-                             (first specs))]
+            (let
+              [chosen (or (some (fn [spec]
+                                  (when (spec-available-for? spec ctx) spec))
+                                specs)
+                          (first specs))]
               {:path prefix :args (vec (subvec tokens n)) :slash chosen})
             (recur (dec n))))))))
 
@@ -246,22 +250,23 @@
 (defn- missing-requires
   "Return the set of `:slash/requires` entries unsatisfied by `ctx`."
   [slash ctx]
-  (let [needs
-        (set (:slash/requires slash))
+  (let
+    [needs
+     (set (:slash/requires slash))
 
-        sat?
-        (fn [r]
-          (case r
-            :session
-            (some? (or (:session/id ctx) (:session-id ctx)))
+     sat?
+     (fn [r]
+       (case r
+         :session
+         (some? (or (:session/id ctx) (:session-id ctx)))
 
-            :workspace
-            (some? (or (:workspace/id ctx) (:workspace-id ctx)))
+         :workspace
+         (some? (or (:workspace/id ctx) (:workspace-id ctx)))
 
-            :channel
-            (some? (or (:channel/id ctx) (:channel-id ctx)))
+         :channel
+         (some? (or (:channel/id ctx) (:channel-id ctx)))
 
-            false))]
+         false))]
 
     (into #{} (remove sat?) needs)))
 
@@ -285,11 +290,12 @@
                 (if (empty? tokens)
                   {:handled? true :error "Empty slash command" :reason :unknown}
                   (if-let [{:keys [path args slash]} (resolve-longest-prefix env ctx tokens)]
-                    (let [ctx* (assoc ctx
-                                 :command/path path
-                                 :command/argv args
-                                 :command/raw text)
-                          missing (missing-requires slash ctx*)]
+                    (let
+                      [ctx* (assoc ctx
+                              :command/path path
+                              :command/argv args
+                              :command/raw text)
+                       missing (missing-requires slash ctx*)]
 
                       (cond (seq missing) {:handled? true
                                            :error (str "Slash " (pr-str path) " requires " missing)

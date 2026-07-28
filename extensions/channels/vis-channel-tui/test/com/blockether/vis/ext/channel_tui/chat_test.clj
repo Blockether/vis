@@ -21,18 +21,22 @@
 
 (defdescribe rebuild-history-test)
 
-(defdescribe
-  session-creation-root-test
-  (it "pins a new TUI session to the client invocation root"
-      (let [request (atom nil)
-            sid (java.util.UUID/randomUUID)]
-        (with-redefs [vis/gateway-create-session!
-                      (fn [opts]
-                        (reset! request opts)
-                        {"id" (str sid)})]
-          (expect (= sid (:id (chat/make-session nil))))
-          (expect (= (vis/workspace-normalize-root (System/getProperty "user.dir"))
-                     (:root @request)))))))
+(defdescribe session-creation-root-test
+             (it "pins a new TUI session to the client invocation root"
+                 (let
+                   [request
+                    (atom nil)
+
+                    sid
+                    (java.util.UUID/randomUUID)]
+
+                   (with-redefs
+                     [vis/gateway-create-session! (fn [opts]
+                                                    (reset! request opts)
+                                                    {"id" (str sid)})]
+                     (expect (= sid (:id (chat/make-session nil))))
+                     (expect (= (vis/workspace-normalize-root (System/getProperty "user.dir"))
+                                (:root @request)))))))
 
 (defdescribe
   rebuild-history-renders-answer-test

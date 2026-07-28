@@ -21,39 +21,40 @@
   (testing "native-image signal delivery may open its POSIX semaphore"
     (is (str/includes? (pj/macos-profile {:rw [] :net-enabled? false}) "(allow ipc-posix-sem)")))
   (testing "resolvable RW roots become subpath rules on their REAL path"
-    (let [dir
-          (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-jail-" (System/nanoTime)))
-            (.mkdirs))
+    (let
+      [dir
+       (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-jail-" (System/nanoTime)))
+         (.mkdirs))
 
-          real
-          (.getCanonicalPath dir)
+       real
+       (.getCanonicalPath dir)
 
-          p
-          (pj/macos-profile {:rw [(.getPath dir)] :net-enabled? false})]
+       p
+       (pj/macos-profile {:rw [(.getPath dir)] :net-enabled? false})]
 
       (is (str/includes? p (str "(subpath \"" real "\")"))
           "rule must template the canonical path, not the raw /tmp path")
       (.delete dir)))
   (testing "deny-write / deny-read emit deny rules AFTER the allows (last-match-wins)"
-    (let [dir
-          (doto (io/file (System/getProperty "java.io.tmpdir")
-                         (str "vis-jail-fs-" (System/nanoTime)))
-            (.mkdirs))
+    (let
+      [dir
+       (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-jail-fs-" (System/nanoTime)))
+         (.mkdirs))
 
-          sub
-          (doto (io/file dir "protected") (.mkdirs))
+       sub
+       (doto (io/file dir "protected") (.mkdirs))
 
-          realsub
-          (.getCanonicalPath sub)
+       realsub
+       (.getCanonicalPath sub)
 
-          p
-          (pj/macos-profile {:rw [(.getPath dir)] :deny-write [(.getPath sub)] :net-enabled? false})
+       p
+       (pj/macos-profile {:rw [(.getPath dir)] :deny-write [(.getPath sub)] :net-enabled? false})
 
-          allow-idx
-          (str/index-of p (str "(subpath \"" (.getCanonicalPath dir) "\")"))
+       allow-idx
+       (str/index-of p (str "(subpath \"" (.getCanonicalPath dir) "\")"))
 
-          deny-idx
-          (str/last-index-of p (str "(deny file-write*(subpath \"" realsub "\")"))]
+       deny-idx
+       (str/last-index-of p (str "(deny file-write*(subpath \"" realsub "\")"))]
 
       (is (str/includes? p (str "(deny file-write*(subpath \"" realsub "\")")))
       (is (and allow-idx deny-idx (< allow-idx deny-idx))
@@ -75,29 +76,31 @@
       (is (not (str/includes? p "network-outbound"))
           "an inbound allowlist never grants outbound egress")))
   (testing "the managed nREPL loopback port and inbound ports coexist, de-duplicated"
-    (let [p (pj/macos-profile
-              {:rw [] :net-enabled? false :loopback-port 5273 :inbound-ports [5273 6000]})]
+    (let
+      [p (pj/macos-profile
+           {:rw [] :net-enabled? false :loopback-port 5273 :inbound-ports [5273 6000]})]
       (is (= 2 (count (re-seq #"network-inbound" p)))
           "duplicate loopback/inbound port collapses to one rule")
       (is (str/includes? p "(allow network-inbound (local ip \"*:6000\"))"))))
   (testing "compile-policy sanitizes to distinct legal integers, dropping junk/out-of-range"
-    (let [resolved (pj/compile-policy {:roots-fn (constantly [])
-                                       :inbound-ports [5273 "4200" 0 70000 "nope" 5273 nil]})]
+    (let
+      [resolved (pj/compile-policy {:roots-fn (constantly [])
+                                    :inbound-ports [5273 "4200" 0 70000 "nope" 5273 nil]})]
       (is (= [5273 4200] (:inbound-ports resolved))))))
 
 (deftest compile-policy-resolves-live-roots
   (testing "session roots-fn + tmp become the RW set, allow-read → :ro"
-    (let [dir
-          (doto (io/file (System/getProperty "java.io.tmpdir")
-                         (str "vis-jail-cp-" (System/nanoTime)))
-            (.mkdirs))
+    (let
+      [dir
+       (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-jail-cp-" (System/nanoTime)))
+         (.mkdirs))
 
-          resolved
-          (pj/compile-policy
-            {:roots-fn (constantly [(.getPath dir)]) :net-enabled? true :allow-read []})
+       resolved
+       (pj/compile-policy
+         {:roots-fn (constantly [(.getPath dir)]) :net-enabled? true :allow-read []})
 
-          canon
-          (.getCanonicalPath dir)]
+       canon
+       (.getCanonicalPath dir)]
 
       (is (contains? (set (:rw resolved)) canon) "workspace root is writable")
       (is (some #(str/includes? % "tmp") (:rw resolved)) "tmp dirs are always writable")
@@ -106,16 +109,16 @@
 
 (deftest compile-policy-supports-concise-read-write-grants
   (testing "allow-read-write grants the path through both canonical access sets"
-    (let [dir
-          (doto (io/file (System/getProperty "java.io.tmpdir")
-                         (str "vis-jail-rw-" (System/nanoTime)))
-            (.mkdirs))
+    (let
+      [dir
+       (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-jail-rw-" (System/nanoTime)))
+         (.mkdirs))
 
-          canon
-          (.getCanonicalPath dir)
+       canon
+       (.getCanonicalPath dir)
 
-          resolved
-          (pj/compile-policy {:roots-fn (constantly []) :allow-read-write [(.getPath dir)]})]
+       resolved
+       (pj/compile-policy {:roots-fn (constantly []) :allow-read-write [(.getPath dir)]})]
 
       (try (is (contains? (set (:rw resolved)) canon))
            (is (contains? (set (:ro resolved)) canon))
@@ -127,14 +130,15 @@
 
 (defn- run-jailed
   [argv]
-  (let [pb
-        (doto (ProcessBuilder. ^java.util.List argv) (.redirectErrorStream true))
+  (let
+    [pb
+     (doto (ProcessBuilder. ^java.util.List argv) (.redirectErrorStream true))
 
-        p
-        (.start pb)
+     p
+     (.start pb)
 
-        out
-        (slurp (.getInputStream p))]
+     out
+     (slurp (.getInputStream p))]
 
     {:exit (.waitFor p) :out out}))
 
@@ -160,37 +164,38 @@
   ;; sandbox-exec cannot apply a nested profile from an already Seatbelt-confined
   ;; test JVM, so execute this OS integration check only when a probe can apply one.
   (when (and (pj/supported?) (sandbox-applicable?))
-    (let [ws
-          (doto (io/file (System/getProperty "java.io.tmpdir")
-                         (str "vis-jail-ws-" (System/nanoTime)))
-            (.mkdirs))
+    (let
+      [ws
+       (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-jail-ws-" (System/nanoTime)))
+         (.mkdirs))
 
-          protected
-          (doto (io/file ws "protected") (.mkdirs))
+       protected
+       (doto (io/file ws "protected") (.mkdirs))
 
-          secret
-          (io/file ws "secret.txt")
+       secret
+       (io/file ws "secret.txt")
 
-          wsc
-          (.getCanonicalPath ws)
+       wsc
+       (.getCanonicalPath ws)
 
-          protc
-          (.getCanonicalPath protected)
+       protc
+       (.getCanonicalPath protected)
 
-          policy
-          {:roots-fn (constantly [(.getPath ws)])
-           :net-enabled? false
-           :deny-write [(.getPath protected)]
-           :deny-read [(.getPath secret)]}]
+       policy
+       {:roots-fn (constantly [(.getPath ws)])
+        :net-enabled? false
+        :deny-write [(.getPath protected)]
+        :deny-read [(.getPath secret)]}]
 
       (spit (io/file ws "inside.txt") "workspace-ok")
       (spit secret "TOP-SECRET")
       (try (testing "reads + writes inside the workspace succeed"
-             (let [r (run-jailed
-                       (pj/wrap-argv
-                         ["bash" "--noprofile" "--norc" "-lc"
-                          (str "cat " wsc "/inside.txt && echo x > " wsc "/w.txt && echo WROTE")]
-                         policy))]
+             (let
+               [r (run-jailed
+                    (pj/wrap-argv
+                      ["bash" "--noprofile" "--norc" "-lc"
+                       (str "cat " wsc "/inside.txt && echo x > " wsc "/w.txt && echo WROTE")]
+                      policy))]
                (is (zero? (:exit r)))
                (is (str/includes? (:out r) "workspace-ok"))
                (is (str/includes? (:out r) "WROTE"))))
@@ -200,36 +205,40 @@
                                        policy))
              (is (not (.exists (io/file protected "blocked.txt")))))
            (testing "deny-read protects a file inside an otherwise readable root"
-             (let [r (run-jailed (pj/wrap-argv ["bash" "--noprofile" "--norc" "-lc"
-                                                (str "cat " (.getCanonicalPath secret) " 2>&1")]
-                                               policy))]
+             (let
+               [r (run-jailed (pj/wrap-argv ["bash" "--noprofile" "--norc" "-lc"
+                                             (str "cat " (.getCanonicalPath secret) " 2>&1")]
+                                            policy))]
                (is (not (str/includes? (:out r) "TOP-SECRET")))))
            (testing "network is denied when the policy is net-off"
-             (let [r (run-jailed
-                       (pj/wrap-argv
-                         ["bash" "--noprofile" "--norc" "-lc"
-                          "curl -sS --max-time 4 https://example.com -o /dev/null && echo GOTNET"]
-                         policy))]
+             (let
+               [r (run-jailed
+                    (pj/wrap-argv
+                      ["bash" "--noprofile" "--norc" "-lc"
+                       "curl -sS --max-time 4 https://example.com -o /dev/null && echo GOTNET"]
+                      policy))]
                (is (not (str/includes? (:out r) "GOTNET")))))
            (testing "deny-exec blocks execution of a binary while a sibling still runs"
-             (let [blocked
-                   (io/file ws "blocked-bin")
+             (let
+               [blocked
+                (io/file ws "blocked-bin")
 
-                   allowed
-                   (io/file ws "allowed-bin")]
+                allowed
+                (io/file ws "allowed-bin")]
 
                (io/copy (io/file "/bin/date") blocked)
                (io/copy (io/file "/bin/date") allowed)
                (.setExecutable blocked true)
                (.setExecutable allowed true)
-               (let [pol
-                     (assoc policy :deny-exec [(.getPath blocked)])
+               (let
+                 [pol
+                  (assoc policy :deny-exec [(.getPath blocked)])
 
-                     rb
-                     (run-jailed (pj/wrap-argv [(.getCanonicalPath blocked) "+%Y"] pol))
+                  rb
+                  (run-jailed (pj/wrap-argv [(.getCanonicalPath blocked) "+%Y"] pol))
 
-                     ra
-                     (run-jailed (pj/wrap-argv [(.getCanonicalPath allowed) "+%Y"] pol))]
+                  ra
+                  (run-jailed (pj/wrap-argv [(.getCanonicalPath allowed) "+%Y"] pol))]
 
                  (is (not (zero? (:exit rb))) "deny-exec must block the named binary")
                  (is (zero? (:exit ra)) "a sibling binary still executes"))
@@ -247,14 +256,15 @@
       (is (= expected (pj/proxy-env {})))
       (is (= expected (pj/proxy-env {:net-enabled? true})))))
   (testing ":proxy-port sets both-case proxy vars, and NO CA vars without a :ca-file"
-    (let [e
-          (pj/proxy-env {:proxy-port 4321})
+    (let
+      [e
+       (pj/proxy-env {:proxy-port 4321})
 
-          url
-          "http://127.0.0.1:4321"
+       url
+       "http://127.0.0.1:4321"
 
-          socks
-          "socks5h://127.0.0.1:4321"]
+       socks
+       "socks5h://127.0.0.1:4321"]
 
       ;; http(s) keep the HTTP proxy (MITM verb/path); all_proxy = the SOCKS lane
       ;; for non-HTTP schemes (ssh/git+ssh/db/raw TCP) on the same loopback port.
@@ -266,14 +276,15 @@
       (is (not (contains? e "CURL_CA_BUNDLE")))
       (is (not (contains? e "SSL_CERT_FILE")))))
   (testing ":proxy-token rides the proxy URL userinfo (session attribution)"
-    (let [e
-          (pj/proxy-env {:proxy-port 4321 :proxy-token "tok-123"})
+    (let
+      [e
+       (pj/proxy-env {:proxy-port 4321 :proxy-token "tok-123"})
 
-          url
-          "http://tok-123@127.0.0.1:4321"
+       url
+       "http://tok-123@127.0.0.1:4321"
 
-          socks
-          "socks5h://tok-123@127.0.0.1:4321"]
+       socks
+       "socks5h://tok-123@127.0.0.1:4321"]
 
       (doseq [k ["http_proxy" "https_proxy" "HTTP_PROXY" "HTTPS_PROXY"]]
         (is (= url (get e k)) k))
@@ -283,36 +294,39 @@
     ;; The MITM tier mints per-host leaves off an ephemeral CA; each runtime reads a
     ;; different trust var, so the full set (sandbox-runtime's nine) must be covered
     ;; or that runtime silently fails the handshake instead of trusting the proxy.
-    (let [ca
-          "/tmp/vis-ca.pem"
+    (let
+      [ca
+       "/tmp/vis-ca.pem"
 
-          e
-          (pj/proxy-env {:proxy-port 4321 :ca-file ca})]
+       e
+       (pj/proxy-env {:proxy-port 4321 :ca-file ca})]
 
-      (doseq [v ["CURL_CA_BUNDLE" "SSL_CERT_FILE" "REQUESTS_CA_BUNDLE" "NODE_EXTRA_CA_CERTS"
-                 "GIT_SSL_CAINFO" "PIP_CERT" "AWS_CA_BUNDLE" "CARGO_HTTP_CAINFO" "DENO_CERT"]]
+      (doseq
+        [v ["CURL_CA_BUNDLE" "SSL_CERT_FILE" "REQUESTS_CA_BUNDLE" "NODE_EXTRA_CA_CERTS"
+            "GIT_SSL_CAINFO" "PIP_CERT" "AWS_CA_BUNDLE" "CARGO_HTTP_CAINFO" "DENO_CERT"]]
         (is (= ca (get e v)) (str v " must point at the CA PEM"))))))
 
 (deftest repl-jail-contract
   (testing "language policy preserves the network wall and adds toolchain access"
-    (let [base
-          {:roots-fn (constantly ["/tmp"])
-           :net-enabled? false
-           :proxy-port 999
-           :proxy-token "shell-token"
-           :repl-proxy-port 1000
-           :repl-ca-file "/repl-ca.pem"
-           :java-trust-store "/repl-ca.p12"
-           :java-trust-store-password "secret"
-           :ca-file "/shell-ca.pem"
-           :allow-write ["/w"]
-           :allow-read ["/r"]}
+    (let
+      [base
+       {:roots-fn (constantly ["/tmp"])
+        :net-enabled? false
+        :proxy-port 999
+        :proxy-token "shell-token"
+        :repl-proxy-port 1000
+        :repl-ca-file "/repl-ca.pem"
+        :java-trust-store "/repl-ca.p12"
+        :java-trust-store-password "secret"
+        :ca-file "/shell-ca.pem"
+        :allow-write ["/w"]
+        :allow-read ["/r"]}
 
-          rp
-          (pj/repl-policy base 54321)
+       rp
+       (pj/repl-policy base 54321)
 
-          tool
-          (pj/language-process-policy base nil)]
+       tool
+       (pj/language-process-policy base nil)]
 
       (is (false? (:net-enabled? rp)))
       (is (= 1000 (:proxy-port rp)))
@@ -337,8 +351,9 @@
                                             :repl-ca-file "/tmp/repl-ca.pem"
                                             :java-trust-store "/tmp/repl-ca.p12"
                                             :java-trust-store-password "secret"}))
-    (try (let [{:keys [argv env]}
-               (pj/session-process-launch "t-sid" ["clojure" "-M:x"] {:loopback-port 54321})]
+    (try (let
+           [{:keys [argv env]}
+            (pj/session-process-launch "t-sid" ["clojure" "-M:x"] {:loopback-port 54321})]
            (is (= "http://127.0.0.1:999" (get env "HTTPS_PROXY")))
            (is (= "/tmp/repl-ca.pem" (get env "SSL_CERT_FILE")))
            (is (re-find #"-Dhttps\.proxyPort=999" (get env "JAVA_TOOL_OPTIONS")))
@@ -349,8 +364,9 @@
                  ;; Linux: proxy-port present => pasta lane wraps bwrap; the managed
                  ;; nREPL's loopback port is forwarded INBOUND (`-t <port>`) so vis attaches.
                  (do (is (= "pasta" (first argv)) "linux repl jail must wrap with pasta")
-                     (let [av (vec argv)
-                           ti (.indexOf ^java.util.List av "-t")]
+                     (let
+                       [av (vec argv)
+                        ti (.indexOf ^java.util.List av "-t")]
 
                        (is (and (pos? ti) (= "54321" (nth av (inc ti))))
                            "the nREPL loopback port must be pasta -t forwarded inbound")))
@@ -367,20 +383,21 @@
   (testing
     "a confined child inherits ONLY the allowlist + jail.env opt-ins; every
             operator secret is dropped, proxy/CA additions are present"
-    (let [policy
-          {:roots-fn (fn []
-                       [(System/getProperty "java.io.tmpdir")])
-           :net-enabled? false
-           :env-passthrough ["MY_OPT_IN"]}
+    (let
+      [policy
+       {:roots-fn (fn []
+                    [(System/getProperty "java.io.tmpdir")])
+        :net-enabled? false
+        :env-passthrough ["MY_OPT_IN"]}
 
-          env
-          (pj/jailed-child-env policy)
+       env
+       (pj/jailed-child-env policy)
 
-          real
-          (into {} (System/getenv))
+       real
+       (into {} (System/getenv))
 
-          secretish
-          (filter #(re-find #"(?i)key|token|secret|password" %) (keys real))]
+       secretish
+       (filter #(re-find #"(?i)key|token|secret|password" %) (keys real))]
 
       (is (map? env))
       (is (contains? env "PATH"))
@@ -398,9 +415,10 @@
   (testing
     "file-read-metadata is scoped: no global grant; ancestors are literals,
             granted roots are subpaths, and $HOME is NOT recursively exposed"
-    (let [p (pj/macos-profile (pj/compile-policy {:roots-fn (fn []
-                                                              ["/tmp"])
-                                                  :net-enabled? false}))]
+    (let
+      [p (pj/macos-profile (pj/compile-policy {:roots-fn (fn []
+                                                           ["/tmp"])
+                                               :net-enabled? false}))]
       (is (nil? (re-find #"\(allow file-read-metadata\)" p))
           "the former GLOBAL metadata grant (the leak) must be gone")
       (is (str/includes? p "file-read-metadata(literal \"/\")"))
@@ -411,27 +429,28 @@
     "a granted root's ancestor directories are metadata literals so a
             confined child can canonicalize (lstat every component of) a path it
             creates under, e.g. the darwin per-user temp dir (/private/var/folders/..)"
-    (let [dir
-          (doto (io/file (System/getProperty "java.io.tmpdir")
-                         (str "vis-jail-anc-" (System/nanoTime)))
-            (.mkdirs))
+    (let
+      [dir
+       (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-jail-anc-" (System/nanoTime)))
+         (.mkdirs))
 
-          real
-          (.getCanonicalPath dir)
+       real
+       (.getCanonicalPath dir)
 
-          p
-          (pj/macos-profile (pj/compile-policy {:roots-fn (fn []
-                                                            [(.getPath dir)])
-                                                :net-enabled? false}))
+       p
+       (pj/macos-profile (pj/compile-policy {:roots-fn (fn []
+                                                         [(.getPath dir)])
+                                             :net-enabled? false}))
 
-          ancestors
-          (loop [f
-                 (.getParentFile (io/file real))
+       ancestors
+       (loop
+         [f
+          (.getParentFile (io/file real))
 
-                 acc
-                 []]
+          acc
+          []]
 
-            (if f (recur (.getParentFile f) (conj acc (.getPath f))) acc))]
+         (if f (recur (.getParentFile f) (conj acc (.getPath f))) acc))]
 
       (try
         ;; Every resolved ancestor — /private/var, /private/var/folders, <hash>, … —
@@ -445,35 +464,36 @@
 (deftest linux-bwrap-compiler
   ;; Pure argv compilation — runs on EVERY OS (incl. macOS + Linux CI), no kernel
   ;; needed. Asserts the bubblewrap flag vector the Linux jail hands the executor.
-  (let [root
-        (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-lx-" (System/nanoTime)))
-          (.mkdirs))
+  (let
+    [root
+     (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-lx-" (System/nanoTime)))
+       (.mkdirs))
 
-        prot
-        (doto (io/file root "protected") (.mkdirs))
+     prot
+     (doto (io/file root "protected") (.mkdirs))
 
-        rp
-        (.getCanonicalPath root)
+     rp
+     (.getCanonicalPath root)
 
-        pp
-        (.getCanonicalPath prot)
+     pp
+     (.getCanonicalPath prot)
 
-        base
-        {:rw [(.getPath root)] :ro [] :deny-write [(.getPath prot)] :deny-read [(.getPath prot)]}
+     base
+     {:rw [(.getPath root)] :ro [] :deny-write [(.getPath prot)] :deny-read [(.getPath prot)]}
 
-        off
-        (pj/linux-bwrap-args (assoc base :net-enabled? false))
+     off
+     (pj/linux-bwrap-args (assoc base :net-enabled? false))
 
-        open
-        (pj/linux-bwrap-args (assoc base :net-enabled? true))
+     open
+     (pj/linux-bwrap-args (assoc base :net-enabled? true))
 
-        dex
-        (pj/linux-bwrap-args (assoc base
-                               :net-enabled? false
-                               :deny-exec ["/bin/sh"]))
+     dex
+     (pj/linux-bwrap-args (assoc base
+                            :net-enabled? false
+                            :deny-exec ["/bin/sh"]))
 
-        pairs
-        (partition 2 1 off)]
+     pairs
+     (partition 2 1 off)]
 
     (try (testing "argv shape: starts with bwrap, ends with the -- separator"
            (is (= "bwrap" (first off)))
@@ -484,28 +504,30 @@
            (is (some #(= % ["--ro-bind-try" "/usr"]) pairs)))
          (testing "deny-write is re-bound read-only AFTER the rw bind (deny wins)"
            (is (some #(= % ["--ro-bind-try" pp]) pairs))
-           (let [ai
-                 (.indexOf ^java.util.List off rp)
+           (let
+             [ai
+              (.indexOf ^java.util.List off rp)
 
-                 di
-                 (.lastIndexOf ^java.util.List off pp)]
+              di
+              (.lastIndexOf ^java.util.List off pp)]
 
              (is (and (pos? ai) (pos? di) (< ai di)))))
          (testing "deny-read is masked with an empty tmpfs" (is (some #(= % ["--tmpfs" pp]) pairs)))
          (testing "net OFF gets the --unshare-net kernel wall (safe)"
            (is (some #{"--unshare-net"} off)))
          (testing "filtered egress (proxy-port): pasta lane vs no-pasta fallback"
-           (let [no-pasta
-                 (with-redefs [pj/linux-pasta nil]
-                   (pj/linux-bwrap-args (assoc base
-                                          :net-enabled? true
-                                          :proxy-port 51000)))
+           (let
+             [no-pasta
+              (with-redefs [pj/linux-pasta nil]
+                (pj/linux-bwrap-args (assoc base
+                                       :net-enabled? true
+                                       :proxy-port 51000)))
 
-                 pasta
-                 (with-redefs [pj/linux-pasta "/usr/bin/pasta"]
-                   (pj/linux-bwrap-args (assoc base
-                                          :net-enabled? true
-                                          :proxy-port 51000)))]
+              pasta
+              (with-redefs [pj/linux-pasta "/usr/bin/pasta"]
+                (pj/linux-bwrap-args (assoc base
+                                       :net-enabled? true
+                                       :proxy-port 51000)))]
 
              (is (some #{"--unshare-net"} no-pasta)
                  "no pasta => filtered egress degrades to the no-egress wall (safe)")
@@ -566,36 +588,36 @@
   ;; ubuntu CI job). Proves a wrapped bash reads its workspace but CANNOT read a
   ;; secret outside the bound roots (which simply does not exist inside the jail).
   (when (and (linux?) (pj/supported?))
-    (let [ws
-          (doto (io/file (System/getProperty "java.io.tmpdir")
-                         (str "vis-bwrap-ws-" (System/nanoTime)))
-            (.mkdirs))
+    (let
+      [ws
+       (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-bwrap-ws-" (System/nanoTime)))
+         (.mkdirs))
 
-          wsc
-          (.getCanonicalPath ws)
+       wsc
+       (.getCanonicalPath ws)
 
-          _
-          (spit (io/file ws "ok.txt") "WORKSPACE-OK")
+       _
+       (spit (io/file ws "ok.txt") "WORKSPACE-OK")
 
-          secret
-          (io/file (System/getProperty "user.home") (str ".vis-bwrap-secret-" (System/nanoTime)))
+       secret
+       (io/file (System/getProperty "user.home") (str ".vis-bwrap-secret-" (System/nanoTime)))
 
-          _
-          (spit secret "TOP-SECRET-DATA")
+       _
+       (spit secret "TOP-SECRET-DATA")
 
-          sc
-          (.getCanonicalPath secret)
+       sc
+       (.getCanonicalPath secret)
 
-          policy
-          {:roots-fn (constantly [wsc]) :net-enabled? false :deny-exec ["/bin/ls"]}
+       policy
+       {:roots-fn (constantly [wsc]) :net-enabled? false :deny-exec ["/bin/ls"]}
 
-          argv
-          (pj/wrap-argv ["bash" "-lc"
-                         (str "cat " wsc
-                              "/ok.txt; echo ---; cat " sc
-                              " 2>&1 || true"
-                              "; echo ===; ls / >/dev/null 2>&1 && echo LS-RAN || echo LS-BLOCKED")]
-                        policy)]
+       argv
+       (pj/wrap-argv ["bash" "-lc"
+                      (str "cat " wsc
+                           "/ok.txt; echo ---; cat " sc
+                           " 2>&1 || true"
+                           "; echo ===; ls / >/dev/null 2>&1 && echo LS-RAN || echo LS-BLOCKED")]
+                     policy)]
 
       (try (is (= "bwrap" (first argv)) "linux jail must bwrap-wrap the child")
            (let [{:keys [out]} (run-jailed argv)]
@@ -620,58 +642,58 @@
   ;; would-be control plane) and the public internet are both unreachable. This is
   ;; the Linux equivalent of the macOS "only the proxy port" Seatbelt rule.
   (when (and (linux?) (pj/supported?) (pasta-present?))
-    (let [proxy-srv
-          (java.net.ServerSocket. 0 16 (java.net.InetAddress/getByName "127.0.0.1"))
+    (let
+      [proxy-srv
+       (java.net.ServerSocket. 0 16 (java.net.InetAddress/getByName "127.0.0.1"))
 
-          ctrl-srv
-          (java.net.ServerSocket. 0 16 (java.net.InetAddress/getByName "127.0.0.1"))
+       ctrl-srv
+       (java.net.ServerSocket. 0 16 (java.net.InetAddress/getByName "127.0.0.1"))
 
-          proxy-port
-          (.getLocalPort proxy-srv)
+       proxy-port
+       (.getLocalPort proxy-srv)
 
-          ctrl-port
-          (.getLocalPort ctrl-srv)
+       ctrl-port
+       (.getLocalPort ctrl-srv)
 
-          ;; both servers send a marker byte-string immediately on accept, then close
-          accept!
-          (fn [^java.net.ServerSocket ss ^String marker]
-            (future (try (loop []
+       ;; both servers send a marker byte-string immediately on accept, then close
+       accept!
+       (fn [^java.net.ServerSocket ss ^String marker]
+         (future (try (loop []
 
-                           (let [s (.accept ss)]
-                             (doto (.getOutputStream s) (.write (.getBytes marker)) (.flush))
-                             (.close s))
-                           (recur))
-                         (catch Throwable _ nil))))
+                        (let [s (.accept ss)]
+                          (doto (.getOutputStream s) (.write (.getBytes marker)) (.flush))
+                          (.close s))
+                        (recur))
+                      (catch Throwable _ nil))))
 
-          _
-          (accept! proxy-srv "PROXY-OK")
+       _
+       (accept! proxy-srv "PROXY-OK")
 
-          _
-          (accept! ctrl-srv "CTRL-OK")
+       _
+       (accept! ctrl-srv "CTRL-OK")
 
-          ws
-          (doto (io/file (System/getProperty "java.io.tmpdir")
-                         (str "vis-pasta-ws-" (System/nanoTime)))
-            (.mkdirs))
+       ws
+       (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-pasta-ws-" (System/nanoTime)))
+         (.mkdirs))
 
-          wsc
-          (.getCanonicalPath ws)
+       wsc
+       (.getCanonicalPath ws)
 
-          probe
-          (str "P=$(timeout 4 bash -c 'exec 3<>/dev/tcp/127.0.0.1/"
-               proxy-port
-               " && head -c8 <&3' 2>/dev/null); echo \"proxy=[$P]\"; "
-               "timeout 4 bash -c 'exec 3<>/dev/tcp/127.0.0.1/"
-               ctrl-port
-               " && head -c8 <&3' 2>/dev/null && echo CTRL-REACHED || echo CTRL-BLOCKED; "
-               "timeout 4 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443' 2>/dev/null "
-               "&& echo NET-REACHED || echo NET-BLOCKED")
+       probe
+       (str "P=$(timeout 4 bash -c 'exec 3<>/dev/tcp/127.0.0.1/"
+            proxy-port
+            " && head -c8 <&3' 2>/dev/null); echo \"proxy=[$P]\"; "
+            "timeout 4 bash -c 'exec 3<>/dev/tcp/127.0.0.1/"
+            ctrl-port
+            " && head -c8 <&3' 2>/dev/null && echo CTRL-REACHED || echo CTRL-BLOCKED; "
+            "timeout 4 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443' 2>/dev/null "
+            "&& echo NET-REACHED || echo NET-BLOCKED")
 
-          policy
-          {:roots-fn (constantly [wsc]) :net-enabled? true :proxy-port proxy-port}
+       policy
+       {:roots-fn (constantly [wsc]) :net-enabled? true :proxy-port proxy-port}
 
-          argv
-          (pj/wrap-argv ["bash" "-lc" probe] policy)]
+       argv
+       (pj/wrap-argv ["bash" "-lc" probe] policy)]
 
       (try (is (= "pasta" (first argv)) "filtered egress must wrap the child with pasta")
            (let [{:keys [out]} (run-jailed argv)]

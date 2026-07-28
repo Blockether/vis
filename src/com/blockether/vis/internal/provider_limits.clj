@@ -127,10 +127,11 @@
 
 (defn- merge-report
   [base raw]
-  (cond-> (-> base
-              (merge (dissoc raw :static :dynamic :error))
-              (update :static merge (:static raw))
-              (update :dynamic merge (:dynamic raw)))
+  (cond->
+    (-> base
+        (merge (dissoc raw :static :dynamic :error))
+        (update :static merge (:static raw))
+        (update :dynamic merge (:dynamic raw)))
     (:error raw)
     (assoc :error (:error raw))))
 
@@ -170,17 +171,18 @@
    The cache holds a `delay`, so concurrent callers that miss together share ONE
    in-flight upstream call instead of stampeding it (single flight)."
   [provider-id fetch]
-  (let [now
-        (System/currentTimeMillis)
+  (let
+    [now
+     (System/currentTimeMillis)
 
-        entry
-        (-> (swap! limits-cache
-              (fn [m]
-                (let [e (get m provider-id)]
-                  (if (and e (< (- now (long (:at e))) (long limits-cache-ttl-ms)))
-                    m
-                    (assoc m provider-id {:at now :value (delay (fetch))})))))
-            (get provider-id))]
+     entry
+     (-> (swap! limits-cache
+           (fn [m]
+             (let [e (get m provider-id)]
+               (if (and e (< (- now (long (:at e))) (long limits-cache-ttl-ms)))
+                 m
+                 (assoc m provider-id {:at now :value (delay (fetch))})))))
+         (get provider-id))]
 
     @(:value entry)))
 
@@ -196,21 +198,22 @@
    usable `:ok` report so callers can surface RPM / TPM without needing a
    registered runtime extension."
   [provider-id]
-  (let [provider
-        (registry/provider-by-id provider-id)
+  (let
+    [provider
+     (registry/provider-by-id provider-id)
 
-        static-report
-        (base-report provider-id :ok)
+     static-report
+     (base-report provider-id :ok)
 
-        has-static?
-        (seq (:static static-report))]
+     has-static?
+     (seq (:static static-report))]
 
     (cond (and provider (:provider/limits-fn provider))
           (cached-report
             provider-id
             (fn []
-              (try (let [report (merge-report static-report
-                                              (or ((:provider/limits-fn provider)) {}))]
+              (try (let
+                     [report (merge-report static-report (or ((:provider/limits-fn provider)) {}))]
                      (if (s/valid? ::report report) report (invalid-report provider-id report)))
                    (catch Throwable t
                      (error-report provider-id

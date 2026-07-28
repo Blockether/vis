@@ -72,23 +72,24 @@
   ;; result contract, renderer, and description are required; legacy maps are gone.
   (it
     "every editing native tool has flat schema/result/render/description fields and no legacy map"
-    (let [ext
-          {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
+    (let
+      [ext
+       {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
 
-          ents
-          (filter :ext.symbol/native-tool? (extension/ext-symbols ext))
+       ents
+       (filter :ext.symbol/native-tool? (extension/ext-symbols ext))
 
-          tools
-          (extension/native-tools-for [ext])
+       tools
+       (extension/native-tools-for [ext])
 
-          names
-          (set (map :name tools))
+       names
+       (set (map :name tools))
 
-          find-files-tool
-          (first (filter #(= "grep" (:name %)) tools))
+       find-files-tool
+       (first (filter #(= "grep" (:name %)) tools))
 
-          include-schema
-          (get-in find-files-tool [:schema :properties "include"])]
+       include-schema
+       (get-in find-files-tool [:schema :properties "include"])]
 
       (expect (<= 8 (count ents)))          ;; cat ls grep patch move delete file_exists
       (expect (contains? names "cat"))
@@ -105,11 +106,12 @@
       (expect (not-any? :ext.symbol/native-tool ents))))
   (it
     "native-tool-renderers-by-op keys by the result :op string (cat→\"cat\", file-exists→\"file_exists\")"
-    (let [ext
-          {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
+    (let
+      [ext
+       {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
 
-          by-op
-          (extension/native-tool-renderers-by-op [ext])]
+       by-op
+       (extension/native-tool-renderers-by-op [ext])]
 
       (expect (fn? (:render (get by-op "cat"))))
       (expect (fn? (:render (get by-op "grep"))))
@@ -121,14 +123,15 @@
   ;; NEW simplified rg grammar: `query` canonical, `any`/`all` accepted aliases
   ;; that BOTH mean OR, smart-case literal substring, `paths`/`include`/`context`
   ;; (int only)/`is_files_only`. Unknown keys ignored; missing query throws.
-  (let [coerce
-        (private-fn "coerce-rg-spec")
+  (let
+    [coerce
+     (private-fn "coerce-rg-spec")
 
-        matcher
-        @#'editing/make-line-matcher
+     matcher
+     @#'editing/make-line-matcher
 
-        grep
-        (private-fn "rg-search")]
+     grep
+     (private-fn "rg-search")]
 
     (it ":query is canonical; :any and :all are accepted aliases (all OR)"
         (expect (= ["a" "b"] (:needles (coerce {"query" ["a" "b"]}))))
@@ -150,13 +153,14 @@
         (expect (= ["*.clj"] (:include (coerce {"query" ["x"] "include" "*.clj"}))))
         (expect (= [] (:include (coerce {"query" ["x"] "include" []})))))
     (it "ignores unknown keys (removed aliases are just dropped, never fatal)"
-        (let [spec (coerce {"query" ["x"]
-                            "path" "src"
-                            "glob" "*.clj"
-                            "excludes" ["t/**"]
-                            "is_regex" true
-                            "is_counts" true
-                            "limit" 5})]
+        (let
+          [spec (coerce {"query" ["x"]
+                         "path" "src"
+                         "glob" "*.clj"
+                         "excludes" ["t/**"]
+                         "is_regex" true
+                         "is_counts" true
+                         "limit" 5})]
           ;; removed aliases don't set :paths/:include; canonical defaults win
           (expect (= ["."] (:paths spec)))
           (expect (= [] (:include spec)))))
@@ -187,11 +191,12 @@
           (expect (m "gamma here"))
           (expect (not (m "beta here")))))
     (it "rg-search runs with a positional-equivalent list query and ORs"
-        (let [_
-              (write-temp! "rgsimple/a.txt" "alpha\nbeta\ngamma\n")
+        (let
+          [_
+           (write-temp! "rgsimple/a.txt" "alpha\nbeta\ngamma\n")
 
-              out
-              (grep {"query" ["alpha" "gamma"] "paths" [(temp-dir-path "rgsimple")]})]
+           out
+           (grep {"query" ["alpha" "gamma"] "paths" [(temp-dir-path "rgsimple")]})]
 
           (expect (= ["alpha" "gamma"] (mapv :text (:hits out))))))
     (it "rg-needle-hostile-to-fff? flags quantifier/bracket needles (fff fast-path gate)"
@@ -210,41 +215,43 @@
         ;; Regression guard for the old fallback: a quantifier/bracket needle used
         ;; to force a full fff enumeration that rg then read file-by-file. fff's
         ;; plain-mode grep is literal, so the candidate set stays tiny AND exact.
-        (let [_
-              (write-temp! "rghostile/a.clj" "(get-in m [:a 0])\n(defn foo [x] x)\n")
+        (let
+          [_
+           (write-temp! "rghostile/a.clj" "(get-in m [:a 0])\n(defn foo [x] x)\n")
 
-              _
-              (write-temp! "rghostile/b.clj" "nothing interesting here\n")
+           _
+           (write-temp! "rghostile/b.clj" "nothing interesting here\n")
 
-              out
-              (grep {"query" ["[:a 0]"] "paths" [(temp-dir-path "rghostile")]})]
+           out
+           (grep {"query" ["[:a 0]"] "paths" [(temp-dir-path "rghostile")]})]
 
           (expect (= 1 (count (:hits out))))
           (expect (= "(get-in m [:a 0])" (:text (first (:hits out)))))))
     (it "rg-search finds an ear-muffed *var* (fff pre-filter bypassed, literal match)"
         ;; fff's fuzzy PATH search honors `*workspace-root*` as a regex/glob, so the
         ;; hit must come from the literal native grep + `make-line-matcher`.
-        (let [_
-              (write-temp! "rgstar/a.clj" "(def ^:dynamic *workspace-root* \"/x\")\n")
+        (let
+          [_
+           (write-temp! "rgstar/a.clj" "(def ^:dynamic *workspace-root* \"/x\")\n")
 
-              out
-              (grep {"query" ["*workspace-root*"] "paths" [(temp-dir-path "rgstar")]})]
+           out
+           (grep {"query" ["*workspace-root*"] "paths" [(temp-dir-path "rgstar")]})]
 
           (expect (= 1 (count (:hits out))))
           (expect (= "(def ^:dynamic *workspace-root* \"/x\")" (:text (first (:hits out)))))))
     (it ":is_files_only returns distinct :files, never :hits"
-        (let [_
-              (write-temp! "rgsimplefo/a.py" "alpha\nalpha\n")
+        (let
+          [_
+           (write-temp! "rgsimplefo/a.py" "alpha\nalpha\n")
 
-              _
-              (write-temp! "rgsimplefo/b.py" "alpha\n")
+           _
+           (write-temp! "rgsimplefo/b.py" "alpha\n")
 
-              _
-              (write-temp! "rgsimplefo/c.py" "no match\n")
+           _
+           (write-temp! "rgsimplefo/c.py" "no match\n")
 
-              out
-              (grep
-                {"query" ["alpha"] "paths" [(temp-dir-path "rgsimplefo")] "is_files_only" true})]
+           out
+           (grep {"query" ["alpha"] "paths" [(temp-dir-path "rgsimplefo")] "is_files_only" true})]
 
           (expect (contains? out :files))
           (expect (not (contains? out :hits)))
@@ -288,36 +295,42 @@
               (expect (some? err))
               (expect (= :ext.foundation.editing/path-escape (:type (ex-data err))))))))
     (it "copy refuses src OR dest outside cwd"
-        (let [copy (private-fn "copy-safe")
-              inside (write-temp! "cwd-safety/copy-src.txt" "x")]
+        (let
+          [copy (private-fn "copy-safe")
+           inside (write-temp! "cwd-safety/copy-src.txt" "x")]
 
           (doseq [p escape-paths]
-            (let [err1 (try (copy p inside) nil (catch clojure.lang.ExceptionInfo e e))
-                  err2 (try (copy inside p) nil (catch clojure.lang.ExceptionInfo e e))]
+            (let
+              [err1 (try (copy p inside) nil (catch clojure.lang.ExceptionInfo e e))
+               err2 (try (copy inside p) nil (catch clojure.lang.ExceptionInfo e e))]
 
               (expect (some? err1))
               (expect (some? err2))
               (expect (= :ext.foundation.editing/path-escape (:type (ex-data err1))))
               (expect (= :ext.foundation.editing/path-escape (:type (ex-data err2))))))))
     (it "move refuses src OR dest outside cwd"
-        (let [move (private-fn "move-safe")
-              inside (write-temp! "cwd-safety/move-src.txt" "x")]
+        (let
+          [move (private-fn "move-safe")
+           inside (write-temp! "cwd-safety/move-src.txt" "x")]
 
           (doseq [p escape-paths]
-            (let [err1 (try (move p inside) nil (catch clojure.lang.ExceptionInfo e e))
-                  err2 (try (move inside p) nil (catch clojure.lang.ExceptionInfo e e))]
+            (let
+              [err1 (try (move p inside) nil (catch clojure.lang.ExceptionInfo e e))
+               err2 (try (move inside p) nil (catch clojure.lang.ExceptionInfo e e))]
 
               (expect (some? err1))
               (expect (some? err2))
               (expect (= :ext.foundation.editing/path-escape (:type (ex-data err1))))
               (expect (= :ext.foundation.editing/path-escape (:type (ex-data err2))))))))
     (it "delete and delete-if-exists refuse paths outside cwd"
-        (let [del (private-fn "delete-safe")
-              del-if (private-fn "delete-if-exists-safe")]
+        (let
+          [del (private-fn "delete-safe")
+           del-if (private-fn "delete-if-exists-safe")]
 
           (doseq [p escape-paths]
-            (let [err1 (try (del p) nil (catch clojure.lang.ExceptionInfo e e))
-                  err2 (try (del-if p) nil (catch clojure.lang.ExceptionInfo e e))]
+            (let
+              [err1 (try (del p) nil (catch clojure.lang.ExceptionInfo e e))
+               err2 (try (del-if p) nil (catch clojure.lang.ExceptionInfo e e))]
 
               (expect (some? err1))
               (expect (some? err2))
@@ -327,20 +340,22 @@
         ;; Defense in depth: even reads can't leak through path traversal.
         (let [cat (private-fn "read-file")]
           (doseq [p escape-paths]
-            (let [err (try (cat p)
-                           nil
-                           (catch clojure.lang.ExceptionInfo e e))]
+            (let
+              [err (try (cat p)
+                        nil
+                        (catch clojure.lang.ExceptionInfo e e))]
               (expect (some? err))
               (expect (= :ext.foundation.editing/path-escape (:type (ex-data err))))))))))
 
 (defdescribe
   editing-extension-loads-test
   (it "bash tool fully removed: no symbol, no helpers, no prompt mention"
-      (let [symbols
-            (map :ext.symbol/symbol (editing/available-editing-symbols))
+      (let
+        [symbols
+         (map :ext.symbol/symbol (editing/available-editing-symbols))
 
-            prompt
-            (editing/available-editing-prompt)]
+         prompt
+         (editing/available-editing-prompt)]
 
         (expect (not-any? #{'bash} symbols))
         (expect (not (string/includes? prompt "v/bash")))
@@ -352,14 +367,15 @@
         (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
                                        "run-bash-safe"))))))
   (it "every editing symbol carries a non-blank :doc and an :arglists vector"
-      (doseq [s
-              @editing/editing-symbols
+      (doseq
+        [s
+         @editing/editing-symbols
 
-              :let [doc
-                    (:ext.symbol/doc s)
+         :let [doc
+               (:ext.symbol/doc s)
 
-                    arglists
-                    (:ext.symbol/arglists s)]]
+               arglists
+               (:ext.symbol/arglists s)]]
 
         (expect (string? doc))
         (expect (not (string/blank? doc)))
@@ -371,16 +387,18 @@
       (expect (not (string/includes? @editing/editing-prompt "v/preview")))
       (expect (nil? (some #(when (= 'preview (:ext.symbol/symbol %)) %) @editing/editing-symbols))))
   (it "keeps routing in compact native descriptions and inputs in schemas"
-      (doseq [s
-              @editing/editing-symbols
+      (doseq
+        [s
+         @editing/editing-symbols
 
-              :when (:ext.symbol/native-tool? s)]
+         :when (:ext.symbol/native-tool? s)]
 
-        (let [description
-              (:ext.symbol/description s)
+        (let
+          [description
+           (:ext.symbol/description s)
 
-              schema
-              (:ext.symbol/schema s)]
+           schema
+           (:ext.symbol/schema s)]
 
           (expect (not (string/blank? description)))
           (expect (< (count description) 500))
@@ -394,9 +412,9 @@
     ;; shim is gone and callers go straight to the engine. Tags
     ;; collapsed to observation/mutation values; ops not in the
     ;; registration table fail closed instead of defaulting to observation.
-    (doseq [[op tag] [[:cat :observation] [:z/locators :observation] [:grep :observation]
-                      [:patch :mutation] [:create-dirs :mutation] [:delete :mutation]
-                      [:move :mutation]]]
+    (doseq
+      [[op tag] [[:cat :observation] [:z/locators :observation] [:grep :observation]
+                 [:patch :mutation] [:create-dirs :mutation] [:delete :mutation] [:move :mutation]]]
       (expect (= tag (extension/op-tag op)))
       (expect (= {:tag tag} (extension/op-presentation op))))
     (let [thrown (try (extension/op-tag :v/extensions) nil (catch clojure.lang.ExceptionInfo e e))]
@@ -421,23 +439,24 @@
   protected-path-before-fn-test
   (it
     "cat blocks :none protected paths and returns the extension hint"
-    (let [hint
-          "Use (br/policy) instead of reading this file directly."
+    (let
+      [hint
+       "Use (br/policy) instead of reading this file directly."
 
-          path
-          "target/editing-test/protected/secret.edn"
+       path
+       "target/editing-test/protected/secret.edn"
 
-          before
-          (:ext.symbol/before-fn (private-fn "cat-symbol"))
+       before
+       (:ext.symbol/before-fn (private-fn "cat-symbol"))
 
-          out
-          (before (protected-env
-                    [{:glob "target/editing-test/protected/*.edn" :access :none :hint hint}])
-                  (constantly :ok)
-                  [path])
+       out
+       (before (protected-env
+                 [{:glob "target/editing-test/protected/*.edn" :access :none :hint hint}])
+               (constantly :ok)
+               [path])
 
-          failure
-          (:result out)]
+       failure
+       (:result out)]
 
       (expect (some? failure))
       (expect (false? (:success? failure)))
@@ -467,23 +486,24 @@
                      :intent)))))
   (it
     "patch blocks writes to :read-only protected paths and returns the extension hint"
-    (let [hint
-          "Use (br/update-policy!) instead of patching policy files."
+    (let
+      [hint
+       "Use (br/update-policy!) instead of patching policy files."
 
-          path
-          "target/editing-test/protected/policy.txt"
+       path
+       "target/editing-test/protected/policy.txt"
 
-          before
-          (:ext.symbol/before-fn (private-fn "patch-symbol"))
+       before
+       (:ext.symbol/before-fn (private-fn "patch-symbol"))
 
-          out
-          (before (protected-env
-                    [{:glob "target/editing-test/protected/*.txt" :access :read-only :hint hint}])
-                  (constantly :ok)
-                  [[{"path" path "from_anchor" "1:abc" "replace" "new"}]])
+       out
+       (before (protected-env
+                 [{:glob "target/editing-test/protected/*.txt" :access :read-only :hint hint}])
+               (constantly :ok)
+               [[{"path" path "from_anchor" "1:abc" "replace" "new"}]])
 
-          failure
-          (:result out)]
+       failure
+       (:result out)]
 
       (expect (some? failure))
       (expect (false? (:success? failure)))
@@ -518,65 +538,66 @@
     ;; closed even though it's a recursive read that can skip protected
     ;; subtrees during its own walk. The cwd-ancestor bypass must apply to
     ;; rg the same way it applies to ls.
-    (let [before
-          (:ext.symbol/before-fn (private-fn "grep-symbol"))
+    (let
+      [before
+       (:ext.symbol/before-fn (private-fn "grep-symbol"))
 
-          out
-          (before (protected-env
-                    [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
-                  (constantly :ok)
-                  [{"any" ["scrollbar"] "paths" ["."] "is_counts" true}])]
+       out
+       (before (protected-env [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
+               (constantly :ok)
+               [{"any" ["scrollbar"] "paths" ["."] "is_counts" true}])]
 
       (expect (not (contains? out :result)))
       (expect (= [{"any" ["scrollbar"] "paths" ["."] "is_counts" true}] (:args out)))))
   (it "rg with no :paths (default `.`) is allowed when only descendants are protected"
       ;; rg-arg-paths returns ["."] when :paths is omitted; same bypass
       ;; must apply so model can call `(rg {:any ["x"]})` without paths.
-      (let [before
-            (:ext.symbol/before-fn (private-fn "grep-symbol"))
+      (let
+        [before
+         (:ext.symbol/before-fn (private-fn "grep-symbol"))
 
-            out
-            (before (protected-env
-                      [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
-                    (constantly :ok)
-                    [{"any" ["scrollbar"]}])]
+         out
+         (before (protected-env [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
+                 (constantly :ok)
+                 [{"any" ["scrollbar"]}])]
 
         (expect (not (contains? out :result)))))
   (it "grep allows nested repository roots when only default-hidden descendants are protected"
       ;; A parent-workspace session searches each repository directly. Bridge
       ;; contributes `bridge/.bridge/**` and `vis/.bridge/**`; those hidden
       ;; descendants must not make the repository roots themselves protected.
-      (let [before
-            (:ext.symbol/before-fn (private-fn "grep-symbol"))
+      (let
+        [before
+         (:ext.symbol/before-fn (private-fn "grep-symbol"))
 
-            args
-            [{"query" "protected-rule-matches?"
-              "paths" ["target/editing-test/workspace/bridge" "target/editing-test/workspace/vis"]}]
+         args
+         [{"query" "protected-rule-matches?"
+           "paths" ["target/editing-test/workspace/bridge" "target/editing-test/workspace/vis"]}]
 
-            out
-            (before (protected-env [{:glob "target/editing-test/workspace/bridge/.bridge/**"
-                                     :access :none
-                                     :hint "Use br/* tools."}
-                                    {:glob "target/editing-test/workspace/vis/.bridge/**"
-                                     :access :none
-                                     :hint "Use br/* tools."}])
-                    (constantly :ok)
-                    args)]
+         out
+         (before (protected-env [{:glob "target/editing-test/workspace/bridge/.bridge/**"
+                                  :access :none
+                                  :hint "Use br/* tools."}
+                                 {:glob "target/editing-test/workspace/vis/.bridge/**"
+                                  :access :none
+                                  :hint "Use br/* tools."}])
+                 (constantly :ok)
+                 args)]
 
         (expect (not (contains? out :result)))
         (expect (= args (:args out)))))
   (it "grep still blocks nested ancestors when hidden files are requested"
-      (let [before
-            (:ext.symbol/before-fn (private-fn "grep-symbol"))
+      (let
+        [before
+         (:ext.symbol/before-fn (private-fn "grep-symbol"))
 
-            out
-            (before (protected-env [{:glob "target/editing-test/workspace/bridge/.bridge/**"
-                                     :access :none
-                                     :hint "Use br/* tools."}])
-                    (constantly :ok)
-                    [{"query" "secret"
-                      "paths" ["target/editing-test/workspace/bridge"]
-                      "is_hidden" true}])]
+         out
+         (before
+           (protected-env [{:glob "target/editing-test/workspace/bridge/.bridge/**"
+                            :access :none
+                            :hint "Use br/* tools."}])
+           (constantly :ok)
+           [{"query" "secret" "paths" ["target/editing-test/workspace/bridge"] "is_hidden" true}])]
 
         (expect (false? (-> out
                             :result
@@ -587,15 +608,16 @@
                        :error
                        :type)))))
   (it "grep still blocks nested ancestors of visible protected paths"
-      (let [before
-            (:ext.symbol/before-fn (private-fn "grep-symbol"))
+      (let
+        [before
+         (:ext.symbol/before-fn (private-fn "grep-symbol"))
 
-            out
-            (before (protected-env [{:glob "target/editing-test/workspace/bridge/secrets/**"
-                                     :access :none
-                                     :hint "Use the owner API."}])
-                    (constantly :ok)
-                    [{"query" "secret" "paths" ["target/editing-test/workspace/bridge"]}])]
+         out
+         (before (protected-env [{:glob "target/editing-test/workspace/bridge/secrets/**"
+                                  :access :none
+                                  :hint "Use the owner API."}])
+                 (constantly :ok)
+                 [{"query" "secret" "paths" ["target/editing-test/workspace/bridge"]}])]
 
         (expect (false? (-> out
                             :result
@@ -606,14 +628,14 @@
                        :error
                        :type)))))
   (it "exists? on `.` is allowed when only descendants are protected"
-      (let [before
-            (:ext.symbol/before-fn (private-fn "file-exists-symbol"))
+      (let
+        [before
+         (:ext.symbol/before-fn (private-fn "file-exists-symbol"))
 
-            out
-            (before (protected-env
-                      [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
-                    (constantly :ok)
-                    ["."])]
+         out
+         (before (protected-env [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
+                 (constantly :ok)
+                 ["."])]
 
         (expect (not (contains? out :result)))
         (expect (= ["."] (:args out)))))
@@ -621,16 +643,17 @@
       ;; The bypass is descendant-only. If an extension explicitly says
       ;; `:glob "." :access :none` (\"do not read cwd at all\") that's still
       ;; honored — we don't want the bypass to be a back door.
-      (let [before
-            (:ext.symbol/before-fn (private-fn "grep-symbol"))
+      (let
+        [before
+         (:ext.symbol/before-fn (private-fn "grep-symbol"))
 
-            out
-            (before (protected-env [{:glob "." :access :none :hint "cwd is sealed."}])
-                    (constantly :ok)
-                    [{"any" ["x"] "paths" ["."]}])
+         out
+         (before (protected-env [{:glob "." :access :none :hint "cwd is sealed."}])
+                 (constantly :ok)
+                 [{"any" ["x"] "paths" ["."]}])
 
-            failure
-            (:result out)]
+         failure
+         (:result out)]
 
         (expect (some? failure))
         (expect (false? (:success? failure)))))
@@ -639,17 +662,17 @@
       ;; cannot filter protected descendants safely, so we keep failing
       ;; closed. (patch / write don't target cwd in practice, but
       ;; delete on \".\" must stay blocked.)
-      (let [before
-            (:ext.symbol/before-fn (private-fn "delete-symbol"))
+      (let
+        [before
+         (:ext.symbol/before-fn (private-fn "delete-symbol"))
 
-            out
-            (before (protected-env
-                      [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
-                    (constantly :ok)
-                    ["."])
+         out
+         (before (protected-env [{:glob ".bridge/" :access :none :hint "Use (br/policy) instead."}])
+                 (constantly :ok)
+                 ["."])
 
-            failure
-            (:result out)]
+         failure
+         (:result out)]
 
         (expect (some? failure))
         (expect (false? (:success? failure)))))
@@ -660,19 +683,20 @@
   (describe
     "plan-gate-before-fn-test"
     (it "write SHORT-CIRCUITS with a :plan-required failure when the gate refuses"
-        (let [seen
-              (atom nil)
+        (let
+          [seen
+           (atom nil)
 
-              before
-              (:ext.symbol/before-fn (private-fn "write-symbol"))
+           before
+           (:ext.symbol/before-fn (private-fn "write-symbol"))
 
-              out
-              (before (gate-env seen "Plan required — 2nd file.")
-                      (constantly :ok)
-                      [{"path" "target/editing-test/b.clj" "content" "x"}])
+           out
+           (before (gate-env seen "Plan required — 2nd file.")
+                   (constantly :ok)
+                   [{"path" "target/editing-test/b.clj" "content" "x"}])
 
-              failure
-              (:result out)]
+           failure
+           (:result out)]
 
           (expect (some? failure))
           (expect (false? (:success? failure)))
@@ -689,36 +713,39 @@
           (expect (= ["target/editing-test/b.clj"] (:paths @seen)))
           (expect (false? (:atomic? @seen)))))
     (it "write PASSES THROUGH (no :result) when the gate allows (nil)"
-        (let [seen
-              (atom nil)
+        (let
+          [seen
+           (atom nil)
 
-              before
-              (:ext.symbol/before-fn (private-fn "write-symbol"))
+           before
+           (:ext.symbol/before-fn (private-fn "write-symbol"))
 
-              out
-              (before (gate-env seen nil)
-                      (constantly :ok)
-                      [{"path" "target/editing-test/a.clj" "content" "x"}])]
+           out
+           (before (gate-env seen nil)
+                   (constantly :ok)
+                   [{"path" "target/editing-test/a.clj" "content" "x"}])]
 
           (expect (not (contains? out :result)))
           (expect (= [{"path" "target/editing-test/a.clj" "content" "x"}] (:args out)))))
     (it "detects the atomic=True escape flag on a write"
-        (let [seen
-              (atom nil)
+        (let
+          [seen
+           (atom nil)
 
-              before
-              (:ext.symbol/before-fn (private-fn "write-symbol"))]
+           before
+           (:ext.symbol/before-fn (private-fn "write-symbol"))]
 
           (before (gate-env seen nil)
                   (constantly :ok)
                   [{"path" "target/editing-test/a.clj" "content" "x" "atomic" true}])
           (expect (true? (:atomic? @seen)))))
     (it "detects atomic on a patch edit map + reports all edited paths"
-        (let [seen
-              (atom nil)
+        (let
+          [seen
+           (atom nil)
 
-              before
-              (:ext.symbol/before-fn (private-fn "patch-symbol"))]
+           before
+           (:ext.symbol/before-fn (private-fn "patch-symbol"))]
 
           (before
             (gate-env seen nil)
@@ -729,71 +756,73 @@
           (expect (= #{"target/editing-test/a.clj" "target/editing-test/b.clj"}
                      (set (:paths @seen))))))
     (it "path-protection wins: a protected path NEVER reaches the gate"
-        (let [hint
-              "owner API only"
+        (let
+          [hint
+           "owner API only"
 
-              before
-              (:ext.symbol/before-fn (private-fn "write-symbol"))
+           before
+           (:ext.symbol/before-fn (private-fn "write-symbol"))
 
-              env
-              (assoc (protected-env [{:glob "target/editing-test/protected/*.clj"
-                                      :access :read-only
-                                      :hint hint}])
-                :mutation-gate (fn [_]
-                                 (throw (ex-info "gate must not run" {}))))
+           env
+           (assoc (protected-env
+                    [{:glob "target/editing-test/protected/*.clj" :access :read-only :hint hint}])
+             :mutation-gate (fn [_]
+                              (throw (ex-info "gate must not run" {}))))
 
-              out
-              (before env
-                      (constantly :ok)
-                      [{"path" "target/editing-test/protected/x.clj" "content" "x"}])
+           out
+           (before env
+                   (constantly :ok)
+                   [{"path" "target/editing-test/protected/x.clj" "content" "x"}])
 
-              failure
-              (:result out)]
+           failure
+           (:result out)]
 
           (expect (= :ext.foundation.editing/path-protected
                      (-> failure
                          :error
                          :type)))))
     (it "no :mutation-gate on env → write passes through (gate is optional)"
-        (let [before
-              (:ext.symbol/before-fn (private-fn "write-symbol"))
+        (let
+          [before
+           (:ext.symbol/before-fn (private-fn "write-symbol"))
 
-              out
-              (before {:extensions (atom [])}
-                      (constantly :ok)
-                      [{"path" "target/editing-test/a.clj" "content" "x"}])]
+           out
+           (before {:extensions (atom [])}
+                   (constantly :ok)
+                   [{"path" "target/editing-test/a.clj" "content" "x"}])]
 
           (expect (not (contains? out :result))))))
   (it
     "allows first-match :read-write exceptions for the exact file without unblocking siblings"
-    (let [hint
-          "Use (br/files) instead of listing Bridge-owned files."
+    (let
+      [hint
+       "Use (br/files) instead of listing Bridge-owned files."
 
-          path
-          "target/editing-test/protected/public.edn"
+       path
+       "target/editing-test/protected/public.edn"
 
-          rules
-          [{:glob path :access :read-write :hint "Direct edits are allowed for this file."}
-           {:glob "target/editing-test/protected/*.edn" :access :none :hint hint}]
+       rules
+       [{:glob path :access :read-write :hint "Direct edits are allowed for this file."}
+        {:glob "target/editing-test/protected/*.edn" :access :none :hint hint}]
 
-          patch-before
-          (:ext.symbol/before-fn (private-fn "patch-symbol"))
+       patch-before
+       (:ext.symbol/before-fn (private-fn "patch-symbol"))
 
-          cat-before
-          (:ext.symbol/before-fn (private-fn "cat-symbol"))
+       cat-before
+       (:ext.symbol/before-fn (private-fn "cat-symbol"))
 
-          patch-out
-          (patch-before (protected-env rules)
-                        (constantly :ok)
-                        [[{"path" path "from_anchor" "1:abc" "replace" "new"}]])
+       patch-out
+       (patch-before (protected-env rules)
+                     (constantly :ok)
+                     [[{"path" path "from_anchor" "1:abc" "replace" "new"}]])
 
-          cat-out
-          (cat-before (protected-env rules)
-                      (constantly :ok)
-                      ["target/editing-test/protected/secret.edn"])
+       cat-out
+       (cat-before (protected-env rules)
+                   (constantly :ok)
+                   ["target/editing-test/protected/secret.edn"])
 
-          failure
-          (:result cat-out)]
+       failure
+       (:result cat-out)]
 
       (expect (not (contains? patch-out :result)))
       (expect (= [[{"path" path "from_anchor" "1:abc" "replace" "new"}]] (:args patch-out)))
@@ -819,14 +848,15 @@
 (defdescribe
   vis-cat-structured-shape-test
   (it "returns the paginated shape (small file, single window, eof) plus staleness metadata"
-      (let [path
-            (write-temp! "small.txt" "alpha\nbeta\ngamma\n")
+      (let
+        [path
+         (write-temp! "small.txt" "alpha\nbeta\ngamma\n")
 
-            read-file
-            (private-fn "read-file")
+         read-file
+         (private-fn "read-file")
 
-            out
-            (read-file path)]
+         out
+         (read-file path)]
 
         (expect (= #{:path :lines :anchors :next-offset :eof? :truncated? :mtime :size}
                    (set (keys out))))
@@ -841,37 +871,39 @@
         (expect (pos-int? (:mtime out)))
         (expect (= (.length (fs/file path)) (:size out)))))
   (it ":eof? false (with :next-offset) when window stops short of file end"
-      (let [body
-            (string/join "\n" (map #(str "L" %) (range 1 21)))
+      (let
+        [body
+         (string/join "\n" (map #(str "L" %) (range 1 21)))
 
-            path
-            (write-temp! "eof-false.txt" (str body "\n"))
+         path
+         (write-temp! "eof-false.txt" (str body "\n"))
 
-            read-file
-            (private-fn "read-file")
+         read-file
+         (private-fn "read-file")
 
-            out
-            (read-file path 1 3)]
+         out
+         (read-file path 1 3)]
 
         (expect (false? (:eof? out)))
         (expect (= 4 (:next-offset out)))))
   (it ":mtime from cat round-trips into write's :expected_mtime guard"
       ;; Whole-file write needs a file-wide concurrency guard. Patch does not:
       ;; its fresh line anchors verify the target content instead.
-      (let [path
-            (write-temp! "cat-stale.txt" "alpha\n")
+      (let
+        [path
+         (write-temp! "cat-stale.txt" "alpha\n")
 
-            read-file
-            (private-fn "read-file")
+         read-file
+         (private-fn "read-file")
 
-            write
-            (private-fn "write-safe")
+         write
+         (private-fn "write-safe")
 
-            first-read
-            (read-file path)
+         first-read
+         (read-file path)
 
-            mtime0
-            (:mtime first-read)]
+         mtime0
+         (:mtime first-read)]
 
         ;; Same mtime -> whole-file write goes through cleanly.
         (write {"path" path "content" "BETA\n" "expected_mtime" mtime0})
@@ -888,80 +920,85 @@
                          :reason)))
           (expect (= "BETA\n" (slurp path))))))
   (it ":lines tuples carry raw strings - no embedded line-number prefix in the text"
-      (let [path
-            (write-temp! "raw.txt" "   indented\nplain\n")
+      (let
+        [path
+         (write-temp! "raw.txt" "   indented\nplain\n")
 
-            read-file
-            (private-fn "read-file")
+         read-file
+         (private-fn "read-file")
 
-            out
-            (read-file path)]
+         out
+         (read-file path)]
 
         (expect (= [[1 "   indented"] [2 "plain"]] (:lines out)))))
   (it "(cat path n) reads first n lines and sets :next-offset when more remain"
-      (let [body
-            (string/join "\n" (map #(str "line-" %) (range 1 11)))
+      (let
+        [body
+         (string/join "\n" (map #(str "line-" %) (range 1 11)))
 
-            path
-            (write-temp! "ten.txt" (str body "\n"))
+         path
+         (write-temp! "ten.txt" (str body "\n"))
 
-            read-file
-            (private-fn "read-file")
+         read-file
+         (private-fn "read-file")
 
-            out
-            (read-file path 4)]
+         out
+         (read-file path 4)]
 
         (expect (= 5 (:next-offset out)))
         (expect (false? (:truncated? out)))
         (expect (= (numbered-tuples 1 ["line-1" "line-2" "line-3" "line-4"]) (:lines out)))))
   (it "(cat path offset n) reads a mid-file window and advances :next-offset"
-      (let [body
-            (string/join "\n" (map #(str "L" %) (range 1 21)))
+      (let
+        [body
+         (string/join "\n" (map #(str "L" %) (range 1 21)))
 
-            path
-            (write-temp! "twenty.txt" (str body "\n"))
+         path
+         (write-temp! "twenty.txt" (str body "\n"))
 
-            read-file
-            (private-fn "read-file")
+         read-file
+         (private-fn "read-file")
 
-            out
-            (read-file path 7 3)]
+         out
+         (read-file path 7 3)]
 
         (expect (= 10 (:next-offset out)))
         (expect (= (numbered-tuples 7 ["L7" "L8" "L9"]) (:lines out)))
         (expect (false? (:truncated? out)))))
   (it "paging via :next-offset reaches eof cleanly"
-      (let [body
-            (string/join "\n" (map #(str "line-" %) (range 1 11)))
+      (let
+        [body
+         (string/join "\n" (map #(str "line-" %) (range 1 11)))
 
-            path
-            (write-temp! "page.txt" (str body "\n"))
+         path
+         (write-temp! "page.txt" (str body "\n"))
 
-            read-file
-            (private-fn "read-file")
+         read-file
+         (private-fn "read-file")
 
-            page-1
-            (read-file path 1 4)
+         page-1
+         (read-file path 1 4)
 
-            page-2
-            (read-file path (:next-offset page-1) 4)
+         page-2
+         (read-file path (:next-offset page-1) 4)
 
-            page-3
-            (read-file path (:next-offset page-2) 4)]
+         page-3
+         (read-file path (:next-offset page-2) 4)]
 
         (expect (= (numbered-tuples 1 ["line-1" "line-2" "line-3" "line-4"]) (:lines page-1)))
         (expect (= (numbered-tuples 5 ["line-5" "line-6" "line-7" "line-8"]) (:lines page-2)))
         (expect (= (numbered-tuples 9 ["line-9" "line-10"]) (:lines page-3)))
         (expect (nil? (:next-offset page-3)))))
   (it "offset past EOF returns an empty window and no :next-offset"
-      (let [path
-            (write-temp! "two.txt" "a\nb\n")
+      (let
+        [path
+         (write-temp! "two.txt" "a\nb\n")
 
-            read-file
-            (private-fn "read-file")
+         read-file
+         (private-fn "read-file")
 
-            out
-            (read-file path 99 10)]
+         out
+         (read-file path 99 10)]
 
         (expect (= [] (:lines out)))
         (expect (nil? (:next-offset out)))
@@ -971,20 +1008,21 @@
       ;; byte-cap fires on cumulative volume. First line always included
       ;; for forward progress (even a single pathological 1MB line gets
       ;; emitted whole — the per-line cap was retired; see source note).
-      (let [chunky
-            (apply str (repeat 1500 "x"))
+      (let
+        [chunky
+         (apply str (repeat 1500 "x"))
 
-            body
-            (string/join "\n" (repeat 200 chunky))
+         body
+         (string/join "\n" (repeat 200 chunky))
 
-            path
-            (write-temp! "huge.txt" (str body "\n"))
+         path
+         (write-temp! "huge.txt" (str body "\n"))
 
-            read-file
-            (private-fn "read-file")
+         read-file
+         (private-fn "read-file")
 
-            out
-            (read-file path 1 500)]
+         out
+         (read-file path 1 500)]
 
         (expect (true? (:truncated? out)))
         (expect (pos? (count (:lines out))))
@@ -993,53 +1031,56 @@
   (it "persistence-blob contract: :lines bytes are bounded by max-cat-window-bytes"
       ;; This is the storage claim: a single cat call cannot persist
       ;; more than max-cat-window-bytes of line bytes regardless of file size.
-      (let [line
-            (apply str (repeat 200 "x"))
+      (let
+        [line
+         (apply str (repeat 200 "x"))
 
-            body
-            (string/join "\n" (repeat 5000 line))
+         body
+         (string/join "\n" (repeat 5000 line))
 
-            path
-            (write-temp! "persist.txt" (str body "\n"))
+         path
+         (write-temp! "persist.txt" (str body "\n"))
 
-            read-file
-            (private-fn "read-file")
+         read-file
+         (private-fn "read-file")
 
-            out
-            (read-file path 1 100000)
+         out
+         (read-file path 1 100000)
 
-            line-bytes
-            (reduce +
-                    0
-                    (map (fn [[_ ^String s]]
-                           (inc (count (.getBytes s "UTF-8"))))
-                         (:lines out)))]
+         line-bytes
+         (reduce +
+                 0
+                 (map (fn [[_ ^String s]]
+                        (inc (count (.getBytes s "UTF-8"))))
+                      (:lines out)))]
 
         ;; 256KB window cap (bumped from 64KB).
         (expect (<= line-bytes (* 256 1024)))))
   (it "rejects bad positional args (non-positive ints, non-int types)"
-      (let [path
-            (write-temp! "validate.txt" "x\n")
+      (let
+        [path
+         (write-temp! "validate.txt" "x\n")
 
-            read-file
-            (private-fn "read-file")]
+         read-file
+         (private-fn "read-file")]
 
         (doseq [bad [[0 10] [-1 10] [1 0] [1 -5] ["a" 10] [1 :hi]]]
           (expect (throws? clojure.lang.ExceptionInfo #(apply read-file path bad)))))))
 
 (defdescribe vis-cat-tail-shape-test
              (it "(cat path :tail n) reads the last n lines and reports correct line numbers"
-                 (let [body
-                       (string/join "\n" (map #(str "line-" %) (range 1 21)))
+                 (let
+                   [body
+                    (string/join "\n" (map #(str "line-" %) (range 1 21)))
 
-                       path
-                       (write-temp! "tail.txt" (str body "\n"))
+                    path
+                    (write-temp! "tail.txt" (str body "\n"))
 
-                       tail-file
-                       (private-fn "tail-file")
+                    tail-file
+                    (private-fn "tail-file")
 
-                       out
-                       (tail-file path 5)]
+                    out
+                    (tail-file path 5)]
 
                    (expect (nil? (:next-offset out)))
                    (expect (false? (:truncated? out)))
@@ -1047,14 +1088,15 @@
                                                ["line-16" "line-17" "line-18" "line-19" "line-20"])
                               (:lines out)))))
              (it "tail of a file shorter than n returns the whole file with :eof? true"
-                 (let [path
-                       (write-temp! "short.txt" "alpha\nbeta\n")
+                 (let
+                   [path
+                    (write-temp! "short.txt" "alpha\nbeta\n")
 
-                       tail-file
-                       (private-fn "tail-file")
+                    tail-file
+                    (private-fn "tail-file")
 
-                       out
-                       (tail-file path 50)]
+                    out
+                    (tail-file path 50)]
 
                    (expect (= [[1 "alpha"] [2 "beta"]] (:lines out)))
                    (expect (nil? (:next-offset out)))
@@ -1065,20 +1107,21 @@
                  ;; Same trick as the read-file byte-cap test: use 200 × 1500-char
                  ;; lines so cumulative volume blows the 256KB window cap, not the
                  ;; per-line 2000-char cap. Most-recent line is the LAST one included.
-                 (let [chunky
-                       (apply str (repeat 1500 "x"))
+                 (let
+                   [chunky
+                    (apply str (repeat 1500 "x"))
 
-                       body
-                       (string/join "\n" (repeat 200 chunky))
+                    body
+                    (string/join "\n" (repeat 200 chunky))
 
-                       path
-                       (write-temp! "htail.txt" (str body "\n"))
+                    path
+                    (write-temp! "htail.txt" (str body "\n"))
 
-                       tail-file
-                       (private-fn "tail-file")
+                    tail-file
+                    (private-fn "tail-file")
 
-                       out
-                       (tail-file path 500)]
+                    out
+                    (tail-file path 500)]
 
                    (expect (true? (:truncated? out)))
                    (expect (pos? (count (:lines out))))
@@ -1090,36 +1133,38 @@
              (it "(cat path :tail) defaults to default-cat-limit (2000) lines from the end"
                  ;; Bumped from 400 → 2000 for industry parity with Claude Code / Roo Code.
                  ;; Use a file with >2000 lines so the tail default actually clamps.
-                 (let [body
-                       (string/join "\n" (map #(str "L" %) (range 1 2401)))
+                 (let
+                   [body
+                    (string/join "\n" (map #(str "L" %) (range 1 2401)))
 
-                       path
-                       (write-temp! "big-tail.txt" (str body "\n"))
+                    path
+                    (write-temp! "big-tail.txt" (str body "\n"))
 
-                       cat-tool
-                       (private-fn "cat-tool")
+                    cat-tool
+                    (private-fn "cat-tool")
 
-                       out
-                       (-> (cat-tool path :tail)
-                           :result)]
+                    out
+                    (-> (cat-tool path :tail)
+                        :result)]
 
                    (expect (= 2000 (count (get out "anchors"))))
                    (expect (= 401 (ffirst (patch/anchor-map->tuples (get out "anchors")))))
                    (expect (= 2400 (first (peek (patch/anchor-map->tuples (get out "anchors"))))))
                    (expect (nil? (get out "next_offset")))))
              (it "(cat path :tail n) honours an explicit count"
-                 (let [body
-                       (string/join "\n" (map #(str "L" %) (range 1 21)))
+                 (let
+                   [body
+                    (string/join "\n" (map #(str "L" %) (range 1 21)))
 
-                       path
-                       (write-temp! "explicit-tail.txt" (str body "\n"))
+                    path
+                    (write-temp! "explicit-tail.txt" (str body "\n"))
 
-                       cat-tool
-                       (private-fn "cat-tool")
+                    cat-tool
+                    (private-fn "cat-tool")
 
-                       out
-                       (-> (cat-tool path :tail 3)
-                           :result)]
+                    out
+                    (-> (cat-tool path :tail 3)
+                        :result)]
 
                    (expect (= (numbered-tuples 18 ["L18" "L19" "L20"])
                               (patch/anchor-map->tuples (get out "anchors")))))))
@@ -1129,72 +1174,74 @@
              ;; advertised cat-on-directory read. Default hides dotfiles + gitignored
              ;; paths; opts widen the view; depth nests children.
              (it "(cat dir) returns a shallow directory listing envelope"
-                 (let [_
-                       (write-temp! "lsbasic/a.txt" "x")
+                 (let
+                   [_
+                    (write-temp! "lsbasic/a.txt" "x")
 
-                       _
-                       (write-temp! "lsbasic/sub/b.txt" "y")
+                    _
+                    (write-temp! "lsbasic/sub/b.txt" "y")
 
-                       dir
-                       (temp-dir-path "lsbasic")
+                    dir
+                    (temp-dir-path "lsbasic")
 
-                       cat-tool
-                       (private-fn "cat-tool")
+                    cat-tool
+                    (private-fn "cat-tool")
 
-                       out
-                       (:result (cat-tool dir))]
+                    out
+                    (:result (cat-tool dir))]
 
                    (expect (= "dir" (get out "type")))
                    (expect (= 1 (get out "depth")))
                    ;; directories sort before files, each alphabetical
                    (expect (= ["sub" "a.txt"] (mapv #(get % "name") (get out "entries"))))
                    (expect (every? #(contains? % "size") (get out "entries")))))
-             (it
-               "(cat dir) hides dotfiles + gitignored entries by default; opts widen"
-               (let [_
-                     (write-temp! "lsopts/.gitignore" "ignored.txt\n")
+             (it "(cat dir) hides dotfiles + gitignored entries by default; opts widen"
+                 (let
+                   [_
+                    (write-temp! "lsopts/.gitignore" "ignored.txt\n")
 
-                     _
-                     (write-temp! "lsopts/a.txt" "x")
+                    _
+                    (write-temp! "lsopts/a.txt" "x")
 
-                     _
-                     (write-temp! "lsopts/.hidden" "x")
+                    _
+                    (write-temp! "lsopts/.hidden" "x")
 
-                     _
-                     (write-temp! "lsopts/ignored.txt" "x")
+                    _
+                    (write-temp! "lsopts/ignored.txt" "x")
 
-                     dir
-                     (temp-dir-path "lsopts")
+                    dir
+                    (temp-dir-path "lsopts")
 
-                     cat-tool
-                     (private-fn "cat-tool")
+                    cat-tool
+                    (private-fn "cat-tool")
 
-                     names
-                     (fn [arg]
-                       (set (mapv #(get % "name") (get (:result (cat-tool dir arg)) "entries"))))]
+                    names
+                    (fn [arg]
+                      (set (mapv #(get % "name") (get (:result (cat-tool dir arg)) "entries"))))]
 
-                 (expect (= #{"a.txt"} (names {})))
-                 (expect (= #{"a.txt"} (names {"is_respect_gitignore" true})))
-                 (expect (contains? (names {"is_hidden" true}) ".hidden"))
-                 (expect (contains? (names {"is_hidden" true}) ".gitignore"))
-                 ;; hidden and gitignore are independent axes
-                 (expect (not (contains? (names {"is_hidden" true}) "ignored.txt")))
-                 (expect (contains? (names {"is_respect_gitignore" false}) "ignored.txt"))))
+                   (expect (= #{"a.txt"} (names {})))
+                   (expect (= #{"a.txt"} (names {"is_respect_gitignore" true})))
+                   (expect (contains? (names {"is_hidden" true}) ".hidden"))
+                   (expect (contains? (names {"is_hidden" true}) ".gitignore"))
+                   ;; hidden and gitignore are independent axes
+                   (expect (not (contains? (names {"is_hidden" true}) "ignored.txt")))
+                   (expect (contains? (names {"is_respect_gitignore" false}) "ignored.txt"))))
              (it "(cat dir {\"depth\" 2}) nests a children vector under subdirs"
-                 (let [_
-                       (write-temp! "lsdepth/sub/b.txt" "y")
+                 (let
+                   [_
+                    (write-temp! "lsdepth/sub/b.txt" "y")
 
-                       dir
-                       (temp-dir-path "lsdepth")
+                    dir
+                    (temp-dir-path "lsdepth")
 
-                       cat-tool
-                       (private-fn "cat-tool")
+                    cat-tool
+                    (private-fn "cat-tool")
 
-                       out
-                       (:result (cat-tool dir {"depth" 2}))
+                    out
+                    (:result (cat-tool dir {"depth" 2}))
 
-                       sub
-                       (first (filter #(= "sub" (get % "name")) (get out "entries")))]
+                    sub
+                    (first (filter #(= "sub" (get % "name")) (get out "entries")))]
 
                    (expect (= 2 (get out "depth")))
                    (expect (= ["b.txt"] (mapv #(get % "name") (get sub "children")))))))
@@ -1205,24 +1252,25 @@
   ;; workspace under $HOME reads "~/vis/…" instead of a leaked absolute home
   ;; path in both the not-found and is-a-directory messages.
   (it "file-not-found + path-is-dir messages collapse $HOME to ~"
-      (let [ensure
-            (private-fn "ensure-existing-file!")
+      (let
+        [ensure
+         (private-fn "ensure-existing-file!")
 
-            safe
-            (private-fn "safe-path")
+         safe
+         (private-fn "safe-path")
 
-            home
-            (System/getProperty "user.home")
+         home
+         (System/getProperty "user.home")
 
-            missing
-            (str (fs/cwd) "/target/editing-test/homoge-missing.txt")
+         missing
+         (str (fs/cwd) "/target/editing-test/homoge-missing.txt")
 
-            dirp
-            (temp-dir-path "homoge-dir")
+         dirp
+         (temp-dir-path "homoge-dir")
 
-            msg-of
-            (fn [p]
-              (try (ensure (safe p)) nil (catch clojure.lang.ExceptionInfo e (.getMessage e))))]
+         msg-of
+         (fn [p]
+           (try (ensure (safe p)) nil (catch clojure.lang.ExceptionInfo e (.getMessage e))))]
 
         (let [m (msg-of missing)]
           (expect (string/includes? m "File not found: ~/"))
@@ -1237,18 +1285,19 @@
   ;; when the model already knows both endpoints ("convert end=100 to
   ;; n=51 mentally"). The :range arity takes inclusive start..end.
   (it "(cat path :range start end) reads inclusive 1-based start..end"
-      (let [body
-            (string/join "\n" (map #(str "L" %) (range 1 21)))
+      (let
+        [body
+         (string/join "\n" (map #(str "L" %) (range 1 21)))
 
-            path
-            (write-temp! "range/inclusive.txt" (str body "\n"))
+         path
+         (write-temp! "range/inclusive.txt" (str body "\n"))
 
-            cat-tool
-            (private-fn "cat-tool")
+         cat-tool
+         (private-fn "cat-tool")
 
-            out
-            (-> (cat-tool path :range 5 10)
-                :result)]
+         out
+         (-> (cat-tool path :range 5 10)
+             :result)]
 
         ;; 5..10 inclusive = 6 lines (L5, L6, L7, L8, L9, L10).
         (expect (= 6 (count (get out "anchors"))))
@@ -1260,44 +1309,47 @@
         (expect (= [[5 "L5"] [6 "L6"] [7 "L7"] [8 "L8"] [9 "L9"] [10 "L10"]]
                    (patch/anchor-map->tuples (get out "anchors"))))))
   (it ":range with start == end reads exactly one line"
-      (let [body
-            (string/join "\n" (map #(str "L" %) (range 1 11)))
+      (let
+        [body
+         (string/join "\n" (map #(str "L" %) (range 1 11)))
 
-            path
-            (write-temp! "range/single.txt" (str body "\n"))
+         path
+         (write-temp! "range/single.txt" (str body "\n"))
 
-            cat-tool
-            (private-fn "cat-tool")
+         cat-tool
+         (private-fn "cat-tool")
 
-            out
-            (-> (cat-tool path :range 7 7)
-                :result)]
+         out
+         (-> (cat-tool path :range 7 7)
+             :result)]
 
         (expect (= [[7 "L7"]] (patch/anchor-map->tuples (get out "anchors"))))))
   (it ":range rejects start > end, non-positive ints, and the wrong kw"
-      (let [path
-            (write-temp! "range/invalid.txt" "a\nb\nc\n")
+      (let
+        [path
+         (write-temp! "range/invalid.txt" "a\nb\nc\n")
 
-            cat-tool
-            (private-fn "cat-tool")]
+         cat-tool
+         (private-fn "cat-tool")]
 
         (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :range 10 5)))
         (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :range 0 5)))
         (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :range -1 5)))
         (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :not-range 1 5)))))
   (it "(cat path :ranges [[start end] ...]) reads several ranges in one result"
-      (let [body
-            (string/join "\n" (map #(str "L" %) (range 1 21)))
+      (let
+        [body
+         (string/join "\n" (map #(str "L" %) (range 1 21)))
 
-            path
-            (write-temp! "range/multi.txt" (str body "\n"))
+         path
+         (write-temp! "range/multi.txt" (str body "\n"))
 
-            cat-tool
-            (private-fn "cat-tool")
+         cat-tool
+         (private-fn "cat-tool")
 
-            out
-            (-> (cat-tool path :ranges [[2 4] [10 12]])
-                :result)]
+         out
+         (-> (cat-tool path :ranges [[2 4] [10 12]])
+             :result)]
 
         (expect (= [[2 "L2"] [3 "L3"] [4 "L4"] [10 "L10"] [11 "L11"] [12 "L12"]]
                    (patch/anchor-map->tuples (get out "anchors"))))
@@ -1306,24 +1358,25 @@
                    (patch/anchor-map->tuples (get (first (get out "ranges")) "anchors"))))
         (expect (nil? (get out "next_offset")))))
   (it "(cat {\"path\" p, ...}) accepts the collapsed all-kwargs spec map"
-      (let [body
-            (string/join "\n" (map #(str "L" %) (range 1 21)))
+      (let
+        [body
+         (string/join "\n" (map #(str "L" %) (range 1 21)))
 
-            path
-            (write-temp! "range/spec-map.txt" (str body "\n"))
+         path
+         (write-temp! "range/spec-map.txt" (str body "\n"))
 
-            cat-tool
-            (private-fn "cat-tool")
+         cat-tool
+         (private-fn "cat-tool")
 
-            ;; `cat(path=p, ranges=[[2 4]])` collapses to ONE spec map at
-            ;; the Python boundary; it must equal the positional form.
-            spec
-            (-> (cat-tool {"path" path "ranges" [[2 4]]})
-                :result)
+         ;; `cat(path=p, ranges=[[2 4]])` collapses to ONE spec map at
+         ;; the Python boundary; it must equal the positional form.
+         spec
+         (-> (cat-tool {"path" path "ranges" [[2 4]]})
+             :result)
 
-            positional
-            (-> (cat-tool path {"ranges" [[2 4]]})
-                :result)]
+         positional
+         (-> (cat-tool path {"ranges" [[2 4]]})
+             :result)]
 
         (expect (= [[2 "L2"] [3 "L3"] [4 "L4"]] (patch/anchor-map->tuples (get spec "anchors"))))
         (expect (= spec positional))
@@ -1334,18 +1387,19 @@
                        :result)))))
   (it
     "cat coerces stringy/flat range + ranges shapes models mis-pass"
-    (let [body
-          (string/join "\n" (map #(str "L" %) (range 1 21)))
+    (let
+      [body
+       (string/join "\n" (map #(str "L" %) (range 1 21)))
 
-          path
-          (write-temp! "range/coerce.txt" (str body "\n"))
+       path
+       (write-temp! "range/coerce.txt" (str body "\n"))
 
-          cat-tool
-          (private-fn "cat-tool")
+       cat-tool
+       (private-fn "cat-tool")
 
-          canonical
-          (-> (cat-tool path {"ranges" [[2 4]]})
-              :result)]
+       canonical
+       (-> (cat-tool path {"ranges" [[2 4]]})
+           :result)]
 
       ;; a single flat pair of NUMERIC STRINGS (the reported failure) now reads
       (expect (= canonical
@@ -1394,15 +1448,16 @@
                                 :result)
                             "ranges"))))))
   (it "cat names the non-numeric component when a range/ranges value is not a line number"
-      (let [path
-            (write-temp! "range/explain.txt" "L1\nL2\nL3\n")
+      (let
+        [path
+         (write-temp! "range/explain.txt" "L1\nL2\nL3\n")
 
-            cat-tool
-            (private-fn "cat-tool")
+         cat-tool
+         (private-fn "cat-tool")
 
-            msg
-            (fn [arg]
-              (try (cat-tool path arg) nil (catch clojure.lang.ExceptionInfo e (.getMessage e))))]
+         msg
+         (fn [arg]
+           (try (cat-tool path arg) nil (catch clojure.lang.ExceptionInfo e (.getMessage e))))]
 
         ;; the `"1, x"` shape the user hit — explicit, names `x`, not a generic pair error
         (expect (string/includes? (msg {"ranges" "1, x"}) "non-numeric"))
@@ -1420,35 +1475,36 @@
           (expect (not (string/includes? (msg {"range" bad}) "nth not supported"))))))
   (it
     "path/src/edits tools unwrap the collapsed all-kwargs spec map, never stringify it"
-    (let [txt
-          (write-temp! "kwargs-collapse/a.txt" "hi\n")
+    (let
+      [txt
+       (write-temp! "kwargs-collapse/a.txt" "hi\n")
 
-          clj
-          (write-temp! "kwargs-collapse/n.clj" "(def x 1)\n")
+       clj
+       (write-temp! "kwargs-collapse/n.clj" "(def x 1)\n")
 
-          create-dirs
-          (private-fn "create-dirs-tool")
+       create-dirs
+       (private-fn "create-dirs-tool")
 
-          exists
-          (private-fn "exists-tool")
+       exists
+       (private-fn "exists-tool")
 
-          delete
-          (private-fn "delete-tool")
+       delete
+       (private-fn "delete-tool")
 
-          delete-if
-          (private-fn "delete-if-exists-tool")
+       delete-if
+       (private-fn "delete-if-exists-tool")
 
-          copy
-          (private-fn "copy-tool")
+       copy
+       (private-fn "copy-tool")
 
-          move
-          (private-fn "move-tool")
+       move
+       (private-fn "move-tool")
 
-          sexpr
-          (private-fn "sexpr-tool")
+       sexpr
+       (private-fn "sexpr-tool")
 
-          patch-tool
-          (private-fn "patch-tool")]
+       patch-tool
+       (private-fn "patch-tool")]
 
       ;; Idempotency: copy/move below leave `.bak`/`.bak2` artifacts under the
       ;; shared temp root; a prior run's leftovers make copy/move throw
@@ -1474,11 +1530,12 @@
       ;; not a map cast error.
       (expect (throws? clojure.lang.ExceptionInfo #(patch-tool {"edits" []})))))
   (it ":ranges rejects empty or malformed range specs"
-      (let [path
-            (write-temp! "range/bad-multi.txt" "a\nb\nc\n")
+      (let
+        [path
+         (write-temp! "range/bad-multi.txt" "a\nb\nc\n")
 
-            cat-tool
-            (private-fn "cat-tool")]
+         cat-tool
+         (private-fn "cat-tool")]
 
         (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :ranges [])))
         (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path :ranges [[2 1]])))
@@ -1494,20 +1551,21 @@
   ;; line is included whole, the model sees real data, and the next
   ;; window stops with `:truncated? true :next-offset N`.
   (it "long lines pass through verbatim (no per-line cap, no `…<+N chars truncated>` marker)"
-      (let [long-line
-            (apply str (repeat 5000 "x"))
+      (let
+        [long-line
+         (apply str (repeat 5000 "x"))
 
-            path
-            (write-temp! "long-line.txt" (str long-line "\nshort line\n"))
+         path
+         (write-temp! "long-line.txt" (str long-line "\nshort line\n"))
 
-            read-file
-            (private-fn "read-file")
+         read-file
+         (private-fn "read-file")
 
-            out
-            (read-file path)
+         out
+         (read-file path)
 
-            [_ first-text]
-            (first (:lines out))]
+         [_ first-text]
+         (first (:lines out))]
 
         (expect (= long-line first-text))
         (expect (= 5000 (count first-text)))
@@ -1516,31 +1574,33 @@
         (expect (= [2 "short line"] (nth (:lines out) 1)))
         (expect (not (contains? out :long-line-truncations)))))
   (it ":long-line-truncations key is gone from the result map shape entirely"
-      (let [path
-            (write-temp! "short-lines.txt" "a\nb\nc\n")
+      (let
+        [path
+         (write-temp! "short-lines.txt" "a\nb\nc\n")
 
-            read-file
-            (private-fn "read-file")
+         read-file
+         (private-fn "read-file")
 
-            out
-            (read-file path)]
+         out
+         (read-file path)]
 
         (expect (not (contains? out :long-line-truncations))))))
 
 (defdescribe
   vis-rg-structured-shape-test
   (it "returns the content shape: :hits :truncated-by + breadth counts"
-      (let [_
-            (write-temp! "rg/a.txt" "alpha needle gamma\nbeta\n")
+      (let
+        [_
+         (write-temp! "rg/a.txt" "alpha needle gamma\nbeta\n")
 
-            _
-            (write-temp! "rg/b.txt" "plain line\nanother needle here\n")
+         _
+         (write-temp! "rg/b.txt" "plain line\nanother needle here\n")
 
-            grep
-            (private-fn "rg-search")
+         grep
+         (private-fn "rg-search")
 
-            out
-            (grep {"all" ["needle"] "paths" [(temp-dir-path "rg")]})]
+         out
+         (grep {"all" ["needle"] "paths" [(temp-dir-path "rg")]})]
 
         (expect (= #{:hits :truncated-by :total-file-count :total-file-count-exact? :missing}
                    (set (keys out))))
@@ -1554,94 +1614,97 @@
         (expect (= 2 (count (:hits out))))
         (expect (= :end-of-results (:truncated-by out)))))
   (it "query strings are literal, including pipe characters"
-      (let [_
-            (write-temp! "rgliteral/a.clj" "foo|bar\nfoo only\nbar only\n")
+      (let
+        [_
+         (write-temp! "rgliteral/a.clj" "foo|bar\nfoo only\nbar only\n")
 
-            grep
-            (private-fn "rg-search")
+         grep
+         (private-fn "rg-search")
 
-            out
-            (grep {"all" ["foo|bar"] "paths" [(temp-dir-path "rgliteral")] "include" ["*.clj"]})]
+         out
+         (grep {"all" ["foo|bar"] "paths" [(temp-dir-path "rgliteral")] "include" ["*.clj"]})]
 
         (expect (= ["foo|bar"] (mapv :text (:hits out))))))
   (it "spec {:all [...]} is an OR alias for :query (same-line AND was removed)"
-      (let [_
-            (write-temp! "rgall/a.clj"
-                         "(defn info-event [x] x)\n(defn other [x] x)\ninfo-event call\n")
+      (let
+        [_
+         (write-temp! "rgall/a.clj"
+                      "(defn info-event [x] x)\n(defn other [x] x)\ninfo-event call\n")
 
-            grep
-            (private-fn "rg-search")
+         grep
+         (private-fn "rg-search")
 
-            out
-            (grep
-              {"all" ["defn" "info-event"] "paths" [(temp-dir-path "rgall")] "include" ["*.clj"]})]
+         out
+         (grep {"all" ["defn" "info-event"] "paths" [(temp-dir-path "rgall")] "include" ["*.clj"]})]
 
         ;; OR: every line mentioning EITHER term is a hit.
         (expect (= ["(defn info-event [x] x)" "(defn other [x] x)" "info-event call"]
                    (mapv :text (:hits out))))))
   (it "spec {:any [...]} is explicit OR"
-      (let [_
-            (write-temp! "rgany/a.clj" "alpha\nbeta\ngamma\n")
+      (let
+        [_
+         (write-temp! "rgany/a.clj" "alpha\nbeta\ngamma\n")
 
-            grep
-            (private-fn "rg-search")
+         grep
+         (private-fn "rg-search")
 
-            out
-            (grep {"any" ["alpha" "gamma"] "paths" [(temp-dir-path "rgany")] "include" ["*.clj"]})]
+         out
+         (grep {"any" ["alpha" "gamma"] "paths" [(temp-dir-path "rgany")] "include" ["*.clj"]})]
 
         (expect (= ["alpha" "gamma"] (mapv :text (:hits out))))))
-  (it
-    "accepts path vectors, include globs, and dedups overlapping roots"
-    (let [root
-          (temp-dir-path "rgpaths")
+  (it "accepts path vectors, include globs, and dedups overlapping roots"
+      (let
+        [root
+         (temp-dir-path "rgpaths")
 
-          _
-          (write-temp! "rgpaths/src/a.clj" "needle clj\n")
+         _
+         (write-temp! "rgpaths/src/a.clj" "needle clj\n")
 
-          _
-          (write-temp! "rgpaths/src/a.txt" "needle txt\n")
+         _
+         (write-temp! "rgpaths/src/a.txt" "needle txt\n")
 
-          _
-          (write-temp! "rgpaths/test/b.cljc" "needle cljc\n")
+         _
+         (write-temp! "rgpaths/test/b.cljc" "needle cljc\n")
 
-          grep
-          (private-fn "rg-search")
+         grep
+         (private-fn "rg-search")
 
-          out
-          (grep {"all" ["needle"] "paths" [root (str root "/src")] "include" ["*.clj" "*.cljc"]})]
+         out
+         (grep {"all" ["needle"] "paths" [root (str root "/src")] "include" ["*.clj" "*.cljc"]})]
 
-      (expect (= ["needle clj" "needle cljc"] (mapv :text (:hits out))))))
+        (expect (= ["needle clj" "needle cljc"] (mapv :text (:hits out))))))
   (it
     "private grep and public rg use the same single spec-map grammar"
-    (let [_
-          (write-temp! "rgsame/a.clj" "needle same\n")
+    (let
+      [_
+       (write-temp! "rgsame/a.clj" "needle same\n")
 
-          spec
-          {"query" ["needle"] "paths" [(temp-dir-path "rgsame")] "include" ["*.clj"]}
+       spec
+       {"query" ["needle"] "paths" [(temp-dir-path "rgsame")] "include" ["*.clj"]}
 
-          grep
-          (private-fn "rg-search")
+       grep
+       (private-fn "rg-search")
 
-          find-tool
-          (private-fn "grep-tool")
+       find-tool
+       (private-fn "grep-tool")
 
-          rg
-          ;; grep returns ONE flat result — content hits already sit at the top
-          ;; level next to the ranked name matches, so no unwrapping is needed.
-          (fn [& a]
-            (apply find-tool a))
+       rg
+       ;; grep returns ONE flat result — content hits already sit at the top
+       ;; level next to the ranked name matches, so no unwrapping is needed.
+       (fn [& a]
+         (apply find-tool a))
 
-          ;; rg-tool groups grep's flat :hits into :matches — an ordered
-          ;; {path -> {anchor -> text}} map (LinkedHashMap) on the
-          ;; model-facing :result; there is no flat :hits vec anymore.
-          rg-env
-          (rg spec)
+       ;; rg-tool groups grep's flat :hits into :matches — an ordered
+       ;; {path -> {anchor -> text}} map (LinkedHashMap) on the
+       ;; model-facing :result; there is no flat :hits vec anymore.
+       rg-env
+       (rg spec)
 
-          rg-result
-          (:result rg-env)
+       rg-result
+       (:result rg-env)
 
-          grep-hits
-          (:hits (grep spec))]
+       grep-hits
+       (:hits (grep spec))]
 
       (expect (= :grep (:symbol rg-env)))
       (expect (instance? java.util.Map (get rg-result "matches")))
@@ -1655,26 +1718,28 @@
       (expect (not (contains? rg-result "spec")))))
   (it
     "IGNORES unknown spec keys (forgiving) but still requires a query"
-    (let [grep
-          (private-fn "rg-search")
+    (let
+      [grep
+       (private-fn "rg-search")
 
-          find-tool
-          (private-fn "grep-tool")
+       find-tool
+       (private-fn "grep-tool")
 
-          rg
-          (fn [& a]
-            (apply find-tool a))]
+       rg
+       (fn [& a]
+         (apply find-tool a))]
 
       ;; The private ENGINE (`rg-search`) still takes ONE spec map — a bare
       ;; positional string is not a map, so it throws :invalid-rg-spec.
       (expect (throws? clojure.lang.ExceptionInfo #(grep "needle")))
       ;; The public rg now ACCEPTS a positional query + an options map:
       ;; rg("x", {opts}) folds :query in and runs (no arity error).
-      (let [_
-            (write-temp! "rgposopts/a.clj" "needle here\n")
+      (let
+        [_
+         (write-temp! "rgposopts/a.clj" "needle here\n")
 
-            env
-            (rg "needle" {"paths" [(temp-dir-path "rgposopts")] "include" ["*.clj"]})]
+         env
+         (rg "needle" {"paths" [(temp-dir-path "rgposopts")] "include" ["*.clj"]})]
 
         (expect (= :grep (:symbol env)))
         (expect (= 1 (get (:result env) "hit_count"))))
@@ -1682,82 +1747,87 @@
       ;; annotation (e.g. `all_note: "defs"`, or an invented `type`/`spec`) still
       ;; gets its search instead of wasting the whole turn. Only recognised keys
       ;; are read; the rest are dropped.
-      (let [_
-            (write-temp! "rglenient/a.txt" "needle here\nsecond needle")
+      (let
+        [_
+         (write-temp! "rglenient/a.txt" "needle here\nsecond needle")
 
-            out
-            (grep {"any" ["needle"]
-                   "paths" [(temp-dir-path "rglenient")]
-                   "all_note" "defs"
-                   "type" :clj
-                   "spec" {}})]
+         out
+         (grep {"any" ["needle"]
+                "paths" [(temp-dir-path "rglenient")]
+                "all_note" "defs"
+                "type" :clj
+                "spec" {}})]
 
         (expect (map? out))
         (expect (contains? out :hits))
         (expect (pos? (count (:hits out)))))
       ;; ...but the all/any exactly-one grammar IS still enforced: a TYPO'd needle
       ;; key (so neither :all nor :any is present) is caught, not silently run.
-      (let [err (try (grep {"anyy" ["needle"] "paths" ["."]})
-                     nil
-                     (catch clojure.lang.ExceptionInfo e e))]
+      (let
+        [err
+         (try (grep {"anyy" ["needle"] "paths" ["."]}) nil (catch clojure.lang.ExceptionInfo e e))]
         (expect (some? err))
         (expect (= :ext.foundation.editing/invalid-rg-spec (:type (ex-data err)))))))
   (it ":truncated-by :limit when results exceed the configured limit (default 250)"
       ;; Limit bumped 50 -> 250 in the rg sweep. Use 300 hits to force the cap.
-      (let [_
-            (write-temp! "rgcap/a.txt" (string/join "\n" (map #(str "needle " %) (range 300))))
+      (let
+        [_
+         (write-temp! "rgcap/a.txt" (string/join "\n" (map #(str "needle " %) (range 300))))
 
-            grep
-            (private-fn "rg-search")
+         grep
+         (private-fn "rg-search")
 
-            out
-            (grep {"all" ["needle"] "paths" [(temp-dir-path "rgcap")]})]
+         out
+         (grep {"all" ["needle"] "paths" [(temp-dir-path "rgcap")]})]
 
         (expect (= 250 (count (:hits out))))
         (expect (= :limit (:truncated-by out)))))
   (it "empty result still has :truncated-by :end-of-results, never nil"
-      (let [_
-            (write-temp! "rgmiss/a.txt" "nothing matches in here\n")
+      (let
+        [_
+         (write-temp! "rgmiss/a.txt" "nothing matches in here\n")
 
-            grep
-            (private-fn "rg-search")
+         grep
+         (private-fn "rg-search")
 
-            out
-            (grep {"all" ["definitely-not-present"] "paths" [(temp-dir-path "rgmiss")]})]
+         out
+         (grep {"all" ["definitely-not-present"] "paths" [(temp-dir-path "rgmiss")]})]
 
         (expect (= [] (:hits out)))
         (expect (= :end-of-results (:truncated-by out)))))
   ;; Q1+Q2+Q3+Q4 — new option coverage.
   (it ":context N adds N symmetric context lines around each hit"
-      (let [_path
-            (write-temp! "rgctxa/a.txt" "L1\nL2\nMATCH\nL4\nL5\n")
+      (let
+        [_path
+         (write-temp! "rgctxa/a.txt" "L1\nL2\nMATCH\nL4\nL5\n")
 
-            grep
-            (private-fn "rg-search")
+         grep
+         (private-fn "rg-search")
 
-            out
-            (grep {"all" ["MATCH"] "paths" [(temp-dir-path "rgctxa")] "context" 2})
+         out
+         (grep {"all" ["MATCH"] "paths" [(temp-dir-path "rgctxa")] "context" 2})
 
-            h
-            (first (:hits out))]
+         h
+         (first (:hits out))]
 
         (expect (= [[1 "L1"] [2 "L2"]] (:before h)))
         (expect (= [[4 "L4"] [5 "L5"]] (:after h)))))
   (it ":is_files_only returns distinct paths and never line-level hits"
-      (let [_
-            (write-temp! "rgfo/src/a.py" "alpha\nalpha\nalpha\n")
+      (let
+        [_
+         (write-temp! "rgfo/src/a.py" "alpha\nalpha\nalpha\n")
 
-            _
-            (write-temp! "rgfo/src/b.py" "alpha\n")
+         _
+         (write-temp! "rgfo/src/b.py" "alpha\n")
 
-            _
-            (write-temp! "rgfo/src/c.py" "no match\n")
+         _
+         (write-temp! "rgfo/src/c.py" "no match\n")
 
-            grep
-            (private-fn "rg-search")
+         grep
+         (private-fn "rg-search")
 
-            out
-            (grep {"all" ["alpha"] "paths" [(temp-dir-path "rgfo")] "is_files_only" true})]
+         out
+         (grep {"all" ["alpha"] "paths" [(temp-dir-path "rgfo")] "is_files_only" true})]
 
         (expect (= #{:files :truncated-by :total-file-count :total-file-count-exact? :missing}
                    (set (keys out))))
@@ -1765,44 +1835,46 @@
         (expect (true? (:total-file-count-exact? out)))
         (expect (= 2 (count (:files out))))
         (expect (every? string? (:files out)))))
-  (it ":context is IGNORED (not rejected) in :is_files_only mode"
-      ;; A stray `context` alongside `is_files_only` is harmless — content-mode
-      ;; context has no meaning when returning bare file paths, so honor files-only
-      ;; instead of hard-failing the whole call.
-      (let [grep
-            (private-fn "rg-search")
+  (it
+    ":context is IGNORED (not rejected) in :is_files_only mode"
+    ;; A stray `context` alongside `is_files_only` is harmless — content-mode
+    ;; context has no meaning when returning bare file paths, so honor files-only
+    ;; instead of hard-failing the whole call.
+    (let
+      [grep
+       (private-fn "rg-search")
 
-            out
-            (grep
-              {"any" ["alpha"] "paths" [(temp-dir-path "rgfo")] "is_files_only" true "context" 2})]
+       out
+       (grep {"any" ["alpha"] "paths" [(temp-dir-path "rgfo")] "is_files_only" true "context" 2})]
 
-        (expect (= #{:files :truncated-by :total-file-count :total-file-count-exact? :missing}
-                   (set (keys out))))
-        (expect (every? string? (:files out)))))
+      (expect (= #{:files :truncated-by :total-file-count :total-file-count-exact? :missing}
+                 (set (keys out))))
+      (expect (every? string? (:files out)))))
   (it "keeps a long hit line FULL in the result value (no per-line mutilation)"
       ;; rg never mutilates a hit line. The full :text lives in the result value —
       ;; pickled into `r[\"tN/iN/fN\"]` and rebound into the sandbox — so the model
       ;; recovers the tail with `r[...][\"hits\"][i][\"text\"][N:]` in Python, no `cat`
       ;; roundtrip. Only the WIRE view is bounded (64KB per-observation clip), and
       ;; that clip is non-destructive (it points back to r[...]).
-      (let [huge
-            (apply str (repeat 1000 "x"))
+      (let
+        [huge
+         (apply str (repeat 1000 "x"))
 
-            line
-            (str "NEEDLE " huge)
+         line
+         (str "NEEDLE " huge)
 
-            ; 1007 chars
-            _
-            (write-temp! "rgfull/big.txt" (str line "\n"))
+         ; 1007 chars
+         _
+         (write-temp! "rgfull/big.txt" (str line "\n"))
 
-            grep
-            (private-fn "rg-search")
+         grep
+         (private-fn "rg-search")
 
-            out
-            (grep {"all" ["NEEDLE"] "paths" [(temp-dir-path "rgfull")]})
+         out
+         (grep {"all" ["NEEDLE"] "paths" [(temp-dir-path "rgfull")]})
 
-            text
-            (:text (first (:hits out)))]
+         text
+         (:text (first (:hits out)))]
 
         (expect (= line text)) ; verbatim, full length
         (expect (= (count line) (count text)))
@@ -1815,56 +1887,59 @@
   ;; file-not-found / path-escape / etc.). Throws are reserved for genuinely
   ;; unexpected programming errors (a missing :from_anchor, an unknown key).
   (it "anchors preserve unrelated concurrent changes without an mtime guard"
-      (let [patch
-            (private-fn "patch-safe")
+      (let
+        [patch
+         (private-fn "patch-safe")
 
-            p
-            (write-temp! "bbfs/patch-concurrent.txt" "alpha\nbeta\n")
+         p
+         (write-temp! "bbfs/patch-concurrent.txt" "alpha\nbeta\n")
 
-            anchor
-            (patch/line-anchor 1 "alpha")
+         anchor
+         (patch/line-anchor 1 "alpha")
 
-            _
-            (spit p "alpha\nBETA-ELSEWHERE\n")
+         _
+         (spit p "alpha\nBETA-ELSEWHERE\n")
 
-            r
-            (patch [{"path" p "from_anchor" anchor "replace" "ALPHA"}])]
+         r
+         (patch [{"path" p "from_anchor" anchor "replace" "ALPHA"}])]
 
         (expect (true? (:success? r)))
         (expect (= "ALPHA\nBETA-ELSEWHERE\n" (slurp p)))))
   (it "unknown edit keys are rejected (typo guard)"
-      (let [patch
-            (private-fn "patch-safe")
+      (let
+        [patch
+         (private-fn "patch-safe")
 
-            p
-            (write-temp! "bbfs/patch-unknown.txt" "x\n")
+         p
+         (write-temp! "bbfs/patch-unknown.txt" "x\n")
 
-            err
-            (try (patch
-                   [{"path" p "from_anchor" (patch/line-anchor 1 "x") "replace" "y" "occurence" 1}])
-                 nil
-                 (catch clojure.lang.ExceptionInfo e e))]
+         err
+         (try (patch
+                [{"path" p "from_anchor" (patch/line-anchor 1 "x") "replace" "y" "occurence" 1}])
+              nil
+              (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (some? err))
         (expect (string/includes? (ex-message err) "unknown keys"))))
   (it "loop detector: after N consecutive failures on a path, the message carries a hard hint"
       ;; Hits the per-path failure counter. Threshold is private but the
       ;; behaviour is observable on the structured result map.
-      (let [patch
-            (private-fn "patch-safe")
+      (let
+        [patch
+         (private-fn "patch-safe")
 
-            clear
-            (private-fn "clear-patch-fail-count!")
+         clear
+         (private-fn "clear-patch-fail-count!")
 
-            p
-            (write-temp! "bbfs/patch-loop.txt" "alpha\n")
+         p
+         (write-temp! "bbfs/patch-loop.txt" "alpha\n")
 
-            file
-            (fs/file p)
+         file
+         (fs/file p)
 
-            run!
-            (fn []
-              (patch [{"path" p "from_anchor" (patch/line-anchor 9 "NOT_HERE") "replace" "x"}]))]
+         run!
+         (fn []
+           (patch [{"path" p "from_anchor" (patch/line-anchor 9 "NOT_HERE") "replace" "x"}]))]
 
         (clear file)
         (run!)
@@ -1882,37 +1957,40 @@
                          :consecutive-failures))))
         (clear file)))
   (it "successful patch on a path clears the loop counter"
-      (let [patch
-            (private-fn "patch-safe")
+      (let
+        [patch
+         (private-fn "patch-safe")
 
-            clear
-            (private-fn "clear-patch-fail-count!")
+         clear
+         (private-fn "clear-patch-fail-count!")
 
-            p
-            (write-temp! "bbfs/patch-clear.txt" "alpha\n")
+         p
+         (write-temp! "bbfs/patch-clear.txt" "alpha\n")
 
-            file
-            (fs/file p)]
+         file
+         (fs/file p)]
 
         (clear file)
         (patch [{"path" p "from_anchor" (patch/line-anchor 9 "NOT_HERE") "replace" "x"}])
         (patch [{"path" p "from_anchor" (patch/line-anchor 1 "alpha") "replace" "BETA"}])
-        (let [counts2 @(deref (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
-                                               "patch-fail-counts")))]
+        (let
+          [counts2 @(deref (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
+                                            "patch-fail-counts")))]
           (expect (nil? (get counts2 (.getAbsolutePath file)))))))
   (it "all-or-nothing: a single failing edit aborts every prior edit in the batch"
       ;; This guards the core safety invariant. Earlier edits that
       ;; "would have" succeeded against the in-memory plan must NOT
       ;; touch disk when any later edit fails.
-      (let [patch
-            (private-fn "patch-safe")
+      (let
+        [patch
+         (private-fn "patch-safe")
 
-            p
-            (write-temp! "bbfs/patch-aon.txt" "alpha\nbeta\n")
+         p
+         (write-temp! "bbfs/patch-aon.txt" "alpha\nbeta\n")
 
-            r
-            (patch [{"path" p "from_anchor" (patch/line-anchor 1 "alpha") "replace" "ALPHA"}
-                    {"path" p "from_anchor" (patch/line-anchor 9 "NEVER_MATCHES") "replace" "x"}])]
+         r
+         (patch [{"path" p "from_anchor" (patch/line-anchor 1 "alpha") "replace" "ALPHA"}
+                 {"path" p "from_anchor" (patch/line-anchor 9 "NEVER_MATCHES") "replace" "x"}])]
 
         (expect (false? (:success? r)))
         (expect (= "alpha\nbeta\n" (slurp p)))))
@@ -1922,15 +2000,16 @@
       ;; across a multi-edit batch. A hunk that targets a PRIOR hunk's output
       ;; therefore won't match the original and the whole batch fails atomically.
       ;; Two INDEPENDENT edits against the original both apply, in one plan.
-      (let [patch
-            (private-fn "patch-safe")
+      (let
+        [patch
+         (private-fn "patch-safe")
 
-            p
-            (write-temp! "bbfs/patch-seq2.txt" "alpha\nbeta\n")
+         p
+         (write-temp! "bbfs/patch-seq2.txt" "alpha\nbeta\n")
 
-            r
-            (patch [{"path" p "from_anchor" (patch/line-anchor 1 "alpha") "replace" "ALPHA"}
-                    {"path" p "from_anchor" (patch/line-anchor 2 "beta") "replace" "BETA"}])]
+         r
+         (patch [{"path" p "from_anchor" (patch/line-anchor 1 "alpha") "replace" "ALPHA"}
+                 {"path" p "from_anchor" (patch/line-anchor 2 "beta") "replace" "BETA"}])]
 
         (expect (true? (:success? r)))
         (expect (= "ALPHA\nBETA\n" (slurp p)))
@@ -1946,14 +2025,15 @@
                        first
                        :after)))))
   (it "editing an unknown path surfaces a structured :file-not-found failure"
-      (let [patch
-            (private-fn "patch-safe")
+      (let
+        [patch
+         (private-fn "patch-safe")
 
-            fake-path
-            "target/editing-test/bbfs/does-not-exist.txt"
+         fake-path
+         "target/editing-test/bbfs/does-not-exist.txt"
 
-            r
-            (patch [{"path" fake-path "from_anchor" (patch/line-anchor 1 "x") "replace" "y"}])]
+         r
+         (patch [{"path" fake-path "from_anchor" (patch/line-anchor 1 "x") "replace" "y"}])]
 
         (expect (false? (:success? r)))
         (expect (= :file-not-found
@@ -1962,20 +2042,21 @@
                        first
                        :reason)))))
   (it "a changed anchor target fails closed without an mtime guard"
-      (let [patch
-            (private-fn "patch-safe")
+      (let
+        [patch
+         (private-fn "patch-safe")
 
-            p
-            (write-temp! "bbfs/patch-target-changed.txt" "hello\nworld\n")
+         p
+         (write-temp! "bbfs/patch-target-changed.txt" "hello\nworld\n")
 
-            anchor
-            (patch/line-anchor 1 "hello")
+         anchor
+         (patch/line-anchor 1 "hello")
 
-            _
-            (spit p "HELLO-ELSEWHERE\nworld\n")
+         _
+         (spit p "HELLO-ELSEWHERE\nworld\n")
 
-            r
-            (patch [{"path" p "from_anchor" anchor "replace" "x"}])]
+         r
+         (patch [{"path" p "from_anchor" anchor "replace" "x"}])]
 
         (expect (false? (:success? r)))
         (expect (= "HELLO-ELSEWHERE\nworld\n" (slurp p)))))
@@ -1986,17 +2067,18 @@
       ;; Loop counter must be PER INVOCATION, not per failed edit. Two
       ;; failed edits in one call against the same path bump the counter
       ;; once, not twice.
-      (let [patch
-            (private-fn "patch-safe")
+      (let
+        [patch
+         (private-fn "patch-safe")
 
-            clear
-            (private-fn "clear-patch-fail-count!")
+         clear
+         (private-fn "clear-patch-fail-count!")
 
-            p
-            (write-temp! "bbfs/loop-once.txt" "alpha\n")
+         p
+         (write-temp! "bbfs/loop-once.txt" "alpha\n")
 
-            file
-            (fs/file p)]
+         file
+         (fs/file p)]
 
         (clear file)
         (patch [{"path" p "from_anchor" (patch/line-anchor 7 "NOPE1") "replace" "x"}
@@ -2011,25 +2093,26 @@
           (expect (nil? (:loop-hint r))))
         (clear file)))
   (it "patch diagnostics report per-edit reasons in edit order and write nothing"
-      (let [path
-            (write-temp! "bbfs/patch-diagnostics.txt" "alpha\nbeta\nbeta\n")
+      (let
+        [path
+         (write-temp! "bbfs/patch-diagnostics.txt" "alpha\nbeta\nbeta\n")
 
-            patch
-            (private-fn "patch-safe")
+         patch
+         (private-fn "patch-safe")
 
-            ;; First 2 edits resolve cleanly against anchors; last 2 carry
-            ;; out-of-range line anchors that cannot locate.
-            r
-            (patch [{"path" path "from_anchor" (patch/line-anchor 1 "alpha") "replace" "ALPHA"}
-                    {"path" path "from_anchor" (patch/line-anchor 2 "beta") "replace" "BETA"}
-                    {"path" path "from_anchor" (patch/line-anchor 8 "missing") "replace" "x"}
-                    {"path" path "from_anchor" (patch/line-anchor 9 "other") "replace" "y"}])
+         ;; First 2 edits resolve cleanly against anchors; last 2 carry
+         ;; out-of-range line anchors that cannot locate.
+         r
+         (patch [{"path" path "from_anchor" (patch/line-anchor 1 "alpha") "replace" "ALPHA"}
+                 {"path" path "from_anchor" (patch/line-anchor 2 "beta") "replace" "BETA"}
+                 {"path" path "from_anchor" (patch/line-anchor 8 "missing") "replace" "x"}
+                 {"path" path "from_anchor" (patch/line-anchor 9 "other") "replace" "y"}])
 
-            checks
-            (:checks r)
+         checks
+         (:checks r)
 
-            failures
-            (:failures r)]
+         failures
+         (:failures r)]
 
         (expect (false? (:success? r)))
         ;; Every edit yields a check, in edit order.
@@ -2041,14 +2124,15 @@
         ;; All-or-nothing still holds: zero writes when any edit fails.
         (expect (= "alpha\nbeta\nbeta\n" (slurp path)))))
   (it "exists? and delete-if-exists work on cwd-relative paths"
-      (let [path
-            (write-temp! "bbfs/meta/x.txt" "x")
+      (let
+        [path
+         (write-temp! "bbfs/meta/x.txt" "x")
 
-            exists?
-            (private-fn "exists-safe?")
+         exists?
+         (private-fn "exists-safe?")
 
-            delete-if-exists
-            (private-fn "delete-if-exists-safe")]
+         delete-if-exists
+         (private-fn "delete-if-exists-safe")]
 
         (expect (true? (exists? path)))
         (expect (true? (delete-if-exists path)))
@@ -2063,20 +2147,21 @@
       ;;   than a map containing an :exists? key\".
       ;; Fix: every v/* tool returns a MAP (not a bare boolean) so
       ;; `(:exists? r)` works; the result is self-describing by its fields.
-      (let [present-path
-            (write-temp! "exists-shape/yes.txt" "x")
+      (let
+        [present-path
+         (write-temp! "exists-shape/yes.txt" "x")
 
-            missing-path
-            "exists-shape/no.txt"
+         missing-path
+         "exists-shape/no.txt"
 
-            exists-tool
-            (private-fn "exists-tool")
+         exists-tool
+         (private-fn "exists-tool")
 
-            present
-            (:result (exists-tool present-path))
+         present
+         (:result (exists-tool present-path))
 
-            missing
-            (:result (exists-tool missing-path))]
+         missing
+         (:result (exists-tool missing-path))]
 
         (expect (map? present))
         (expect (true? (get present "exists")))
@@ -2085,11 +2170,12 @@
         (expect (false? (get missing "exists")))
         (expect (= missing-path (get missing "path")))))
   (it "keeps exists shape details out of the compact prompt and PYTHON in symbol docs"
-      (let [exists-symbol
-            (some #(when (= 'file-exists (:ext.symbol/symbol %)) %) @editing/editing-symbols)
+      (let
+        [exists-symbol
+         (some #(when (= 'file-exists (:ext.symbol/symbol %)) %) @editing/editing-symbols)
 
-            d
-            (:ext.symbol/doc exists-symbol)]
+         d
+         (:ext.symbol/doc exists-symbol)]
 
         ;; the result shape lives in the symbol doc, not the compact prompt
         (expect (not (string/includes? @editing/editing-prompt "\"exists\": bool")))
@@ -2119,14 +2205,15 @@
   ;; consumers couldn't read `(:path r)` (same parity bug `exists?`
   ;; already fixed). All `v/*` tools now return a map shape.
   (it "delete returns {:op :delete :path P :deleted? true} (no bare nil)"
-      (let [delete-tool
-            (private-fn "delete-tool")
+      (let
+        [delete-tool
+         (private-fn "delete-tool")
 
-            p
-            (write-temp! "delete-shape/x.txt" "goodbye\n")
+         p
+         (write-temp! "delete-shape/x.txt" "goodbye\n")
 
-            envelope
-            (delete-tool p)]
+         envelope
+         (delete-tool p)]
 
         (expect (true? (:success? envelope)))
         (expect (= :delete (:symbol envelope)))
@@ -2136,17 +2223,18 @@
           (expect (= p (get r "path")))
           (expect (true? (get r "deleted"))))))
   (it "delete-if-exists returns the same map shape with :deleted? reflecting the actual outcome"
-      (let [delete-if
-            (private-fn "delete-if-exists-tool")
+      (let
+        [delete-if
+         (private-fn "delete-if-exists-tool")
 
-            p
-            (write-temp! "delete-shape/here.txt" "x\n")
+         p
+         (write-temp! "delete-shape/here.txt" "x\n")
 
-            present
-            (:result (delete-if p))
+         present
+         (:result (delete-if p))
 
-            absent
-            (:result (delete-if p))]
+         absent
+         (:result (delete-if p))]
 
         ;; First call deletes the file; the result map carries "deleted" true.
         (expect (map? present))
@@ -2157,14 +2245,15 @@
         (expect (= p (get absent "path")))
         (expect (false? (get absent "deleted")))))
   (it "delete recursively removes non-empty directories"
-      (let [delete-tool
-            (private-fn "delete-tool")
+      (let
+        [delete-tool
+         (private-fn "delete-tool")
 
-            dir
-            (temp-dir-path "delete-shape/tree")
+         dir
+         (temp-dir-path "delete-shape/tree")
 
-            nested-file
-            (fs/file dir "nested" "x.txt")]
+         nested-file
+         (fs/file dir "nested" "x.txt")]
 
         (fs/create-dirs (fs/parent nested-file))
         (spit nested-file "x\n")
@@ -2172,14 +2261,15 @@
           (expect (true? (get r "deleted")))
           (expect (false? (fs/exists? dir))))))
   (it "delete-if-exists recursively removes non-empty directories"
-      (let [delete-if
-            (private-fn "delete-if-exists-tool")
+      (let
+        [delete-if
+         (private-fn "delete-if-exists-tool")
 
-            dir
-            (temp-dir-path "delete-shape/tree-if-exists")
+         dir
+         (temp-dir-path "delete-shape/tree-if-exists")
 
-            nested-file
-            (fs/file dir "nested" "x.txt")]
+         nested-file
+         (fs/file dir "nested" "x.txt")]
 
         (fs/create-dirs (fs/parent nested-file))
         (spit nested-file "x\n")
@@ -2187,72 +2277,78 @@
           (expect (true? (get r "deleted")))
           (expect (false? (fs/exists? dir)))))))
 
-(defdescribe patch-summary-shape-test
-             ;; The summary IS what the model reads back as the patch result
-             ;; AND what the channel renderer projects. Every key counts; redundant
-             ;; signal pollutes the iteration trailer.
-             (it "anchor-located edit emits only path, operation, change flag, and diff"
-                 (let [patch
-                       (private-fn "patch-safe")
+(defdescribe
+  patch-summary-shape-test
+  ;; The summary IS what the model reads back as the patch result
+  ;; AND what the channel renderer projects. Every key counts; redundant
+  ;; signal pollutes the iteration trailer.
+  (it "anchor-located edit emits path, operation, change flag, diff, and fresh anchors"
+      (let
+        [patch
+         (private-fn "patch-safe")
 
-                       summary
-                       (private-fn "patch-result-file-summary")
+         summary
+         (private-fn "patch-result-file-summary")
 
-                       p
-                       (write-temp! "summary/exact.txt" "alpha\nbeta\n")
+         p
+         (write-temp! "summary/exact.txt" "alpha\nbeta\n")
 
-                       r
-                       (patch
-                         [{"path" p "from_anchor" (patch/line-anchor 1 "alpha") "replace" "ALPHA"}])
+         r
+         (patch [{"path" p "from_anchor" (patch/line-anchor 1 "alpha") "replace" "ALPHA"}])
 
-                       s
-                       (summary (first (:plans r)))]
+         s
+         (summary (first (:plans r)))]
 
-                   (expect (true? (:success? r)))
-                   (expect (= #{"path" "op" "changed" "diff"} (set (keys s))))
-                   (expect (not (contains? s "lines_before")))
-                   (expect (not (contains? s "lines_after")))
-                   (expect (not (contains? s "delta_lines"))))))
+        (expect (true? (:success? r)))
+        (expect (= #{"path" "op" "changed" "diff" "anchors"} (set (keys s))))
+        ;; The fresh anchors describe the REWRITTEN region and are reusable
+        ;; as the next `:from_anchor` with no re-read.
+        (expect (= {(patch/line-anchor 1 "ALPHA") {"text" "ALPHA"}} (into {} (get s "anchors"))))
+        (expect (not (contains? s "lines_before")))
+        (expect (not (contains? s "lines_after")))
+        (expect (not (contains? s "delta_lines"))))))
 
 (defdescribe patch-diff-text-test
              (it "patch diff stays compact for large files"
-                 (let [diff-fn
-                       (private-fn "unified-diff-text")
+                 (let
+                   [diff-fn
+                    (private-fn "unified-diff-text")
 
-                       before
-                       (string/join "\n" (map #(str "line-" %) (range 1500)))
+                    before
+                    (string/join "\n" (map #(str "line-" %) (range 1500)))
 
-                       after
-                       (string/replace before "line-750" "LINE-750")
+                    after
+                    (string/replace before "line-750" "LINE-750")
 
-                       out
-                       (diff-fn before after)
+                    out
+                    (diff-fn before after)
 
-                       lines
-                       (string/split-lines out)]
+                    lines
+                    (string/split-lines out)]
 
                    (expect (< (count lines) 50))
                    (expect (string/includes? out "@@"))
                    (expect (string/includes? out "-line-750"))
                    (expect (string/includes? out "+LINE-750"))))
              (it "patch diff handles insert, delete, and all-different cases as bounded previews"
-                 (let [diff-fn
-                       (private-fn "unified-diff-text")
+                 (let
+                   [diff-fn
+                    (private-fn "unified-diff-text")
 
-                       inserted
-                       (diff-fn "a\nb\nc" "a\nX\nb\nc")
+                    inserted
+                    (diff-fn "a\nb\nc" "a\nX\nb\nc")
 
-                       deleted
-                       (diff-fn "a\nb\nc" "a\nb")
+                    deleted
+                    (diff-fn "a\nb\nc" "a\nb")
 
-                       before
-                       (string/join "\n" (map #(str "line-" %) (range 300)))
+                    before
+                    (string/join "\n" (map #(str "line-" %) (range 300)))
 
-                       after
-                       (string/join "\n" (map #(str "other-" %) (range 300)))
+                    after
+                    (string/join "\n" (map #(str "other-" %) (range 300)))
 
-                       changed
-                       (diff-fn before after)]
+                    changed
+                    (diff-fn before after)]
 
                    (expect (string/includes? inserted "+X"))
                    (expect (not (string/includes? inserted "-a")))
@@ -2260,52 +2356,54 @@
                    (expect (< (count (string/split-lines changed)) 260))
                    (expect (string/includes? changed "diff truncated")))))
 
-(defdescribe tool-envelope-test
-             (it "tool wrappers return the required contract keys"
-                 (let [path
-                       (write-temp! "contract/read.txt" "alpha\nbeta\n")
+(defdescribe
+  tool-envelope-test
+  (it "tool wrappers return the required contract keys"
+      (let
+        [path
+         (write-temp! "contract/read.txt" "alpha\nbeta\n")
 
-                       cat-tool
-                       (private-fn "cat-tool")
+         cat-tool
+         (private-fn "cat-tool")
 
-                       out
-                       (cat-tool path)
+         out
+         (cat-tool path)
 
-                       required
-                       #{:success? :result :error :symbol :tag :metadata}]
+         required
+         #{:success? :result :error :symbol :tag :metadata}]
 
-                   ;; Envelope keys MUST include the canonical op/* set; extra keys
-                   ;; (e.g. :presentation) may also appear.
-                   (expect (= required (clojure.set/intersection required (set (keys out)))))
-                   (expect (true? (:success? out)))
-                   ;; cat returns a plain map as :result. :lines is an ordered
-                   ;; anchor-map; convert back to tuples to assert; no deref, no
-                   ;; handle, no offset key.
-                   (expect (= :cat (:symbol out)))
-                   (let [r (:result out)]
-                     (expect (= [[1 "alpha"] [2 "beta"]]
-                                (patch/anchor-map->tuples (get r "anchors"))))
-                     (expect (nil? (get r "next_offset")))
-                     (expect (false? (get r "truncated"))))
-                   (expect (not (contains? out :markdown)))
-                   (expect (nil? (:error out)))))
-             (it "tool failure envelope carries structured :error"
-                 (let [cat-symbol
-                       (private-fn "cat-symbol")
+        ;; Envelope keys MUST include the canonical op/* set; extra keys
+        ;; (e.g. :presentation) may also appear.
+        (expect (= required (clojure.set/intersection required (set (keys out)))))
+        (expect (true? (:success? out)))
+        ;; cat returns a plain map as :result. :lines is an ordered
+        ;; anchor-map; convert back to tuples to assert; no deref, no
+        ;; handle, no offset key.
+        (expect (= :cat (:symbol out)))
+        (let [r (:result out)]
+          (expect (= [[1 "alpha"] [2 "beta"]] (patch/anchor-map->tuples (get r "anchors"))))
+          (expect (nil? (get r "next_offset")))
+          (expect (false? (get r "truncated"))))
+        (expect (not (contains? out :markdown)))
+        (expect (nil? (:error out)))))
+  (it "tool failure envelope carries structured :error"
+      (let
+        [cat-symbol
+         (private-fn "cat-symbol")
 
-                       on-error
-                       (:ext.symbol/on-error-fn cat-symbol)
+         on-error
+         (:ext.symbol/on-error-fn cat-symbol)
 
-                       out
-                       (:result (on-error (ex-info "boom" {}) nil nil ["missing.txt"]))]
+         out
+         (:result (on-error (ex-info "boom" {}) nil nil ["missing.txt"]))]
 
-                   (expect (false? (:success? out)))
-                   (expect (nil? (:result out)))
-                   ;; :trace is a preformatted string; first line carries the
-                   ;; underlying class name.
-                   (expect (string? (get-in out [:error :trace])))
-                   (expect (string/includes? (get-in out [:error :trace]) "ExceptionInfo"))
-                   (expect (not (contains? out :markdown))))))
+        (expect (false? (:success? out)))
+        (expect (nil? (:result out)))
+        ;; :trace is a preformatted string; first line carries the
+        ;; underlying class name.
+        (expect (string? (get-in out [:error :trace])))
+        (expect (string/includes? (get-in out [:error :trace]) "ExceptionInfo"))
+        (expect (not (contains? out :markdown))))))
 
 (defdescribe
   vis-patch-hashline-test
@@ -2314,77 +2412,80 @@
   ;; the read's `:anchors` map (same value rendered in the cat gutter),
   ;; and self-locate against live disk content on apply.
   (it "patch :from_anchor replaces a single content-anchored line"
-      (let [path
-            (write-temp! "hashline/single.txt" "alpha first\nbeta second\ngamma third\n")
+      (let
+        [path
+         (write-temp! "hashline/single.txt" "alpha first\nbeta second\ngamma third\n")
 
-            read-file
-            (private-fn "read-file")
+         read-file
+         (private-fn "read-file")
 
-            patch
-            (private-fn "patch-safe")
+         patch
+         (private-fn "patch-safe")
 
-            hashes
-            (:anchors (read-file path))
+         hashes
+         (:anchors (read-file path))
 
-            h2
-            (get hashes 2)
+         h2
+         (get hashes 2)
 
-            r
-            (patch [{"path" path "from_anchor" h2 "replace" "BETA REPLACED"}])]
+         r
+         (patch [{"path" path "from_anchor" h2 "replace" "BETA REPLACED"}])]
 
         (expect (true? (:success? r)))
         (expect (= "alpha first\nBETA REPLACED\ngamma third\n" (slurp path)))))
   (it "patch :from_anchor uses exact line+hash even when the hash is duplicated nearby"
-      (let [path
-            (write-temp! "hashline/duplicate-hash-exact-line.txt"
-                         (str "keep\n" "}\n" "}\n" "}\n" "tail\n"))
+      (let
+        [path
+         (write-temp! "hashline/duplicate-hash-exact-line.txt"
+                      (str "keep\n" "}\n" "}\n" "}\n" "tail\n"))
 
-            patch
-            (private-fn "patch-safe")
+         patch
+         (private-fn "patch-safe")
 
-            r
-            (patch [{"path" path "from_anchor" (patch/line-anchor 3 "}") "replace" "TARGET"}])]
+         r
+         (patch [{"path" path "from_anchor" (patch/line-anchor 3 "}") "replace" "TARGET"}])]
 
         (expect (true? (:success? r)))
         (expect (= "keep\n}\nTARGET\n}\ntail\n" (slurp path)))))
-  (it
-    "patch :from_anchor + :to_anchor replaces an inclusive range"
-    (let [path
-          (write-temp! "hashline/range.txt" "a\nb\nc\nd\n")
+  (it "patch :from_anchor + :to_anchor replaces an inclusive range"
+      (let
+        [path
+         (write-temp! "hashline/range.txt" "a\nb\nc\nd\n")
 
-          read-file
-          (private-fn "read-file")
+         read-file
+         (private-fn "read-file")
 
-          patch
-          (private-fn "patch-safe")
+         patch
+         (private-fn "patch-safe")
 
-          hashes
-          (:anchors (read-file path))
+         hashes
+         (:anchors (read-file path))
 
-          r
-          (patch
-            [{"path" path "from_anchor" (get hashes 1) "to_anchor" (get hashes 3) "replace" "X"}])]
+         r
+         (patch
+           [{"path" path "from_anchor" (get hashes 1) "to_anchor" (get hashes 3) "replace" "X"}])]
 
-      (expect (true? (:success? r)))
-      (expect (= "X\nd\n" (slurp path)))))
+        (expect (true? (:success? r)))
+        (expect (= "X\nd\n" (slurp path)))))
   (it
     "duplicate lines are surfaced as distinct `lineno:hash` anchors; a BARE hash that hits >1 line is refused"
-    (let [path
-          (write-temp! "hashline/dup.txt" "x\ny\nx\n")
+    (let
+      [path
+       (write-temp! "hashline/dup.txt" "x\ny\nx\n")
 
-          read-file
-          (private-fn "read-file")
+       read-file
+       (private-fn "read-file")
 
-          patch
-          (private-fn "patch-safe")
+       patch
+       (private-fn "patch-safe")
 
-          ;; The line coordinate disambiguates duplicate content. A hash without
-          ;; a line coordinate is malformed.
-          hashes
-          (:anchors (read-file path))
+       ;; The line coordinate disambiguates duplicate content. A hash without
+       ;; a line coordinate is malformed.
+       hashes
+       (:anchors (read-file path))
 
-          r
-          (patch [{"path" path "from_anchor" (patch/line-hash "x") "replace" "NEW"}])]
+       r
+       (patch [{"path" path "from_anchor" (patch/line-hash "x") "replace" "NEW"}])]
 
       (expect (= (patch/line-anchor 1 "x") (get hashes 1))) ;; 1st dup → 1:hash
       (expect (= (patch/line-anchor 3 "x") (get hashes 3))) ;; 2nd dup → 3:hash
@@ -2398,11 +2499,12 @@
       ;; file untouched
       (expect (= "x\ny\nx\n" (slurp path)))))
   (it "patch with ZERO locators still throws"
-      (let [path
-            (write-temp! "hashline/none.txt" "a\n")
+      (let
+        [path
+         (write-temp! "hashline/none.txt" "a\n")
 
-            patch
-            (private-fn "patch-safe")]
+         patch
+         (private-fn "patch-safe")]
 
         (expect (throws? clojure.lang.ExceptionInfo #(patch [{"path" path "replace" "Z"}]))))))
 
@@ -2410,18 +2512,18 @@
   vis-cat-anchor-read-test
   ;; cat :anchor — the READ twin of patch :from_anchor. Re-read a kept region
   ;; by its content hash, addressed by content not drifting line numbers.
-  (let [cat-tool
-        (private-fn "cat-tool")
+  (let
+    [cat-tool
+     (private-fn "cat-tool")
 
-        path
-        (write-temp! "hashread/probe.clj"
-                     "(ns probe)\n(def alpha 1)\n(def beta 2)\n(def gamma 3)\n")
+     path
+     (write-temp! "hashread/probe.clj" "(ns probe)\n(def alpha 1)\n(def beta 2)\n(def gamma 3)\n")
 
-        h-beta
-        (patch/line-anchor 3 "(def beta 2)")
+     h-beta
+     (patch/line-anchor 3 "(def beta 2)")
 
-        h-gamma
-        (patch/line-anchor 4 "(def gamma 3)")]
+     h-gamma
+     (patch/line-anchor 4 "(def gamma 3)")]
 
     (it "(cat path :anchor H) reads the single line whose content hash is H"
         (let [out (:result (cat-tool path :anchor h-beta))]
@@ -2433,14 +2535,15 @@
                      (patch/anchor-map->tuples (get out "anchors"))))
           (expect (= [3 4] (get out "range")))))
     (it "addresses by CONTENT — survives line drift (prepend shifts numbers)"
-        (let [p2
-              (write-temp! "hashread/drift.clj" "(ns probe)\n(def beta 2)\n")
+        (let
+          [p2
+           (write-temp! "hashread/drift.clj" "(ns probe)\n(def beta 2)\n")
 
-              _
-              (spit (fs/file p2) (str ";; banner\n;; banner2\n" (slurp (fs/file p2))))
+           _
+           (spit (fs/file p2) (str ";; banner\n;; banner2\n" (slurp (fs/file p2))))
 
-              out
-              (:result (cat-tool p2 :anchor (patch/line-anchor 2 "(def beta 2)")))]
+           out
+           (:result (cat-tool p2 :anchor (patch/line-anchor 2 "(def beta 2)")))]
 
           ;; beta moved from line 2 to line 4; within the drift tolerance the
           ;; `2:hash` anchor still resolves it by content
@@ -2463,18 +2566,19 @@
   ;; Models routinely send bare LINE NUMBERS where a `lineno:hash` anchor belongs
   ;; (session f81cd89b: `{"anchor": "9357, 9412"}` → :hashline-malformed). Coerce
   ;; every line-number shape into a line-RANGE read; real anchors fall through.
-  (let [cat-tool
-        (private-fn "cat-tool")
+  (let
+    [cat-tool
+     (private-fn "cat-tool")
 
-        norm
-        (private-fn "normalize-cat-anchor-option")
+     norm
+     (private-fn "normalize-cat-anchor-option")
 
-        ->range
-        (private-fn "cat-anchor->line-range")
+     ->range
+     (private-fn "cat-anchor->line-range")
 
-        path
-        (write-temp! "linenum/probe.clj"
-                     (string/join "\n" (map #(str "(def x" % " " % ")") (range 1 20))))]
+     path
+     (write-temp! "linenum/probe.clj"
+                  (string/join "\n" (map #(str "(def x" % " " % ")") (range 1 20))))]
 
     (it "normalize splits a comma-joined anchor string into a real [from to] vector"
         (expect (= ["9357" "9412"] (norm "9357, 9412")))
@@ -2508,44 +2612,47 @@
 (defdescribe
   patch-dup-line-batch-test
   (it "dup-line edits in one batch all resolve against the ORIGINAL and apply atomically"
-      (let [patch
-            (private-fn "patch-safe")
+      (let
+        [patch
+         (private-fn "patch-safe")
 
-            p
-            (write-temp! "ord/dup.txt" "x\nDUP\ny\nDUP\nz\nDUP\n")
+         p
+         (write-temp! "ord/dup.txt" "x\nDUP\ny\nDUP\nz\nDUP\n")
 
-            r
-            (patch [{"path" p "from_anchor" (patch/line-anchor 2 "DUP") "replace" "DUP1"}
-                    {"path" p "from_anchor" (patch/line-anchor 6 "DUP") "replace" "DUP3"}])]
+         r
+         (patch [{"path" p "from_anchor" (patch/line-anchor 2 "DUP") "replace" "DUP1"}
+                 {"path" p "from_anchor" (patch/line-anchor 6 "DUP") "replace" "DUP3"}])]
 
         (expect (true? (:success? r)))
         ;; lines 2 and 6 edited, line 4 untouched — line numbers resolve vs the
         ;; original snapshot, no drift.
         (expect (= "x\nDUP1\ny\nDUP\nz\nDUP3\n" (slurp p)))))
   (it "all three duplicate lines editable in one batch"
-      (let [patch
-            (private-fn "patch-safe")
+      (let
+        [patch
+         (private-fn "patch-safe")
 
-            p
-            (write-temp! "ord/dup3.txt" "DUP\nDUP\nDUP\n")
+         p
+         (write-temp! "ord/dup3.txt" "DUP\nDUP\nDUP\n")
 
-            r
-            (patch [{"path" p "from_anchor" (patch/line-anchor 1 "DUP") "replace" "A"}
-                    {"path" p "from_anchor" (patch/line-anchor 2 "DUP") "replace" "B"}
-                    {"path" p "from_anchor" (patch/line-anchor 3 "DUP") "replace" "C"}])]
+         r
+         (patch [{"path" p "from_anchor" (patch/line-anchor 1 "DUP") "replace" "A"}
+                 {"path" p "from_anchor" (patch/line-anchor 2 "DUP") "replace" "B"}
+                 {"path" p "from_anchor" (patch/line-anchor 3 "DUP") "replace" "C"}])]
 
         (expect (true? (:success? r)))
         (expect (= "A\nB\nC\n" (slurp p)))))
   (it "overlapping edits in one batch are rejected — nothing written (atomic)"
-      (let [patch
-            (private-fn "patch-safe")
+      (let
+        [patch
+         (private-fn "patch-safe")
 
-            p
-            (write-temp! "ord/over.txt" "alpha beta\n")
+         p
+         (write-temp! "ord/over.txt" "alpha beta\n")
 
-            r
-            (patch [{"path" p "from_anchor" (patch/line-anchor 1 "alpha beta") "replace" "X"}
-                    {"path" p "from_anchor" (patch/line-anchor 1 "alpha beta") "replace" "Y"}])]
+         r
+         (patch [{"path" p "from_anchor" (patch/line-anchor 1 "alpha beta") "replace" "X"}
+                 {"path" p "from_anchor" (patch/line-anchor 1 "alpha beta") "replace" "Y"}])]
 
         (expect (false? (:success? r)))
         (expect (= :overlapping-edits
@@ -2562,35 +2669,38 @@
 
 (defdescribe
   rg-returns-anchor-test
-  (let [rg-search
-        (private-fn "rg-search")
+  (let
+    [rg-search
+     (private-fn "rg-search")
 
-        patch
-        (private-fn "patch-safe")]
+     patch
+     (private-fn "patch-safe")]
 
     (it "a content hit carries its `lineno:hash` anchor and that anchor patches the line"
-        (let [p
-              (write-temp! "rgh/uniq.clj" "(def a 1)\n(def b 2)\n(def c 3)\n")
+        (let
+          [p
+           (write-temp! "rgh/uniq.clj" "(def a 1)\n(def b 2)\n(def c 3)\n")
 
-              res
-              (rg-search {"any" ["def b"] "paths" [p]})
+           res
+           (rg-search {"any" ["def b"] "paths" [p]})
 
-              hit
-              (first (:hits res))]
+           hit
+           (first (:hits res))]
 
           (expect (= (patch/line-anchor 2 "(def b 2)") (:anchor hit)))
           (let [r (patch [{"path" p "from_anchor" (:anchor hit) "replace" "(def b 200)"}])]
             (expect (true? (:success? r)))
             (expect (string/includes? (slurp p) "(def b 200)")))))
     (it "hits on a DUPLICATED line carry distinct `lineno:hash` anchors (line number disambiguates)"
-        (let [p
-              (write-temp! "rgh/dup.clj" "(def x 1)\n(other)\n(def x 1)\n")
+        (let
+          [p
+           (write-temp! "rgh/dup.clj" "(def x 1)\n(other)\n(def x 1)\n")
 
-              res
-              (rg-search {"any" ["def x"] "paths" [p]})
+           res
+           (rg-search {"any" ["def x"] "paths" [p]})
 
-              hashes
-              (map :anchor (:hits res))]
+           hashes
+           (map :anchor (:hits res))]
 
           (expect (= [(patch/line-anchor 1 "(def x 1)") (patch/line-anchor 3 "(def x 1)")]
                      hashes))))))
@@ -2604,20 +2714,22 @@
 (defdescribe
   multi-root-safe-path-test
   (it "accepts paths under a LIVE filesystem root (trunk==clone), rejects paths outside every root"
-      (let [safe-path
-            (private-fn "safe-path")
+      (let
+        [safe-path
+         (private-fn "safe-path")
 
-            primary
-            (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))
+         primary
+         (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))
 
-            ctx-root
-            (mk-tmp-dir "vis-ctxroot")]
+         ctx-root
+         (mk-tmp-dir "vis-ctxroot")]
 
-        (binding [workspace/*workspace-root*
-                  primary
+        (binding
+          [workspace/*workspace-root*
+           primary
 
-                  workspace/*filesystem-roots*
-                  [{:trunk ctx-root :clone ctx-root}]]
+           workspace/*filesystem-roots*
+           [{:trunk ctx-root :clone ctx-root}]]
 
           (expect (string/starts-with? (.getPath ^java.io.File (safe-path "deps.edn")) primary))
           (expect (string/starts-with? (.getPath ^java.io.File
@@ -2636,17 +2748,19 @@
             (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))))))
   (it
     "expands a leading ~ / ~/ so a home-relative path resolves to the real file (regression: was treated as a literal ~ segment under cwd)"
-    (let [safe-path
-          (private-fn "safe-path")
+    (let
+      [safe-path
+       (private-fn "safe-path")
 
-          home
-          (.getCanonicalPath (java.io.File. (System/getProperty "user.home")))]
+       home
+       (.getCanonicalPath (java.io.File. (System/getProperty "user.home")))]
 
-      (binding [workspace/*workspace-root*
-                home
+      (binding
+        [workspace/*workspace-root*
+         home
 
-                workspace/*filesystem-roots*
-                nil]
+         workspace/*filesystem-roots*
+         nil]
 
         ;; ~/x and <home>/x must resolve to the SAME real path, NOT <home>/~/x
         (expect (= (.getCanonicalPath ^java.io.File (safe-path (str home "/some-file.txt")))
@@ -2654,69 +2768,73 @@
         (expect (not (string/includes? (.getPath ^java.io.File (safe-path "~/some-file.txt")) "~")))
         ;; bare ~ resolves to home itself
         (expect (= home (.getCanonicalPath ^java.io.File (safe-path "~")))))))
-  (it "ISOLATED filesystem root: address by trunk → edits land in clone, display shows trunk"
-      (let [safe-path
-            (private-fn "safe-path")
+  (it
+    "ISOLATED filesystem root: address by trunk → edits land in clone, display shows trunk"
+    (let
+      [safe-path
+       (private-fn "safe-path")
 
-            rel-path
-            (private-fn "rel-path")
+       rel-path
+       (private-fn "rel-path")
 
-            primary
-            (mk-tmp-dir "vis-prim")
+       primary
+       (mk-tmp-dir "vis-prim")
 
-            trunk
-            (mk-tmp-dir "vis-trunk")
+       trunk
+       (mk-tmp-dir "vis-trunk")
 
-            clone
-            (mk-tmp-dir "vis-clone")]
+       clone
+       (mk-tmp-dir "vis-clone")]
 
-        (spit (java.io.File. ^String clone "x.txt") "in-clone")
-        (spit (java.io.File. ^String trunk "x.txt") "in-trunk")
-        (binding [workspace/*workspace-root*
-                  primary
+      (spit (java.io.File. ^String clone "x.txt") "in-clone")
+      (spit (java.io.File. ^String trunk "x.txt") "in-trunk")
+      (binding
+        [workspace/*workspace-root*
+         primary
 
-                  workspace/*filesystem-roots*
-                  [{:trunk trunk :clone clone}]]
+         workspace/*filesystem-roots*
+         [{:trunk trunk :clone clone}]]
 
-          (let [f (safe-path (str trunk "/x.txt"))]
-            (expect (string/starts-with? (.getCanonicalPath ^java.io.File f) clone)) ;; lands in clone
-            (expect (= "in-clone" (slurp f)))                                        ;; reads clone, NOT trunk
-            (expect (= (.replace (str trunk "/x.txt") "\\" "/") (rel-path f)))) ;; display shows real trunk path, `/`-normalized
-          (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))))))
+        (let [f (safe-path (str trunk "/x.txt"))]
+          (expect (string/starts-with? (.getCanonicalPath ^java.io.File f) clone)) ;; lands in clone
+          (expect (= "in-clone" (slurp f)))                                        ;; reads clone, NOT trunk
+          (expect (= (.replace (str trunk "/x.txt") "\\" "/") (rel-path f)))) ;; display shows real trunk path, `/`-normalized
+        (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))))))
 
 (defdescribe
   native-temp-write-capture-test
-  (it
-    "a write to /tmp streams to the DB attachment sink; a workspace write does NOT"
-    (let [write-safe
-          (private-fn "write-safe")
+  (it "a write to /tmp streams to the DB attachment sink; a workspace write does NOT"
+      (let
+        [write-safe
+         (private-fn "write-safe")
 
-          sink
-          (atom [])
+         sink
+         (atom [])
 
-          seen
-          (atom #{})
+         seen
+         (atom #{})
 
-          tmp
-          (str (System/getProperty "java.io.tmpdir") "/vis-native-tmpcap-" (System/nanoTime) ".txt")
+         tmp
+         (str (System/getProperty "java.io.tmpdir") "/vis-native-tmpcap-" (System/nanoTime) ".txt")
 
-          ws
-          "target/editing-test/vis-native-nontmp.txt"]
+         ws
+         "target/editing-test/vis-native-nontmp.txt"]
 
-      (fs/create-dirs "target/editing-test")
-      (binding [mpl-capture/*attachment-sink*
-                sink
+        (fs/create-dirs "target/editing-test")
+        (binding
+          [mpl-capture/*attachment-sink*
+           sink
 
-                mpl-capture/*outbox-seen*
-                seen]
+           mpl-capture/*outbox-seen*
+           seen]
 
-        (expect (:success? (write-safe {"path" tmp "content" "captured tmp bytes"})))
-        (expect (:success? (write-safe {"path" ws "content" "not captured"}))))
-      ;; ONLY the /tmp write reached the sink — the workspace write is untouched.
-      (expect (= 1 (count @sink)))
-      (let [[att] @sink]
-        (expect (string/ends-with? (:filename att) ".txt"))
-        (expect (= "file" (:kind att)))))))
+          (expect (:success? (write-safe {"path" tmp "content" "captured tmp bytes"})))
+          (expect (:success? (write-safe {"path" ws "content" "not captured"}))))
+        ;; ONLY the /tmp write reached the sink — the workspace write is untouched.
+        (expect (= 1 (count @sink)))
+        (let [[att] @sink]
+          (expect (string/ends-with? (:filename att) ".txt"))
+          (expect (= "file" (:kind att)))))))
 
 (defdescribe
   patch-input-contract-test
@@ -2730,17 +2848,19 @@
         (expect (throws? clojure.lang.ExceptionInfo
                          #(coerce {"path" "p.txt" "from_anchor" "12:abc" "replace" "new"}))))
     (it "rejects unknown edit keys"
-        (let [ex (try (coerce [{"path" "p.txt" "from_anchor" "1:abc" "replace" "new" "typo" true}])
-                      nil
-                      (catch clojure.lang.ExceptionInfo e e))]
+        (let
+          [ex (try (coerce [{"path" "p.txt" "from_anchor" "1:abc" "replace" "new" "typo" true}])
+                   nil
+                   (catch clojure.lang.ExceptionInfo e e))]
           (expect (some? ex))
           (expect (string/includes? (ex-message ex) "unknown keys"))
           (expect (= ["typo"] (:unknown (ex-data ex))))))
     (it "rejects file-wide mtime/size guards"
         (doseq [field ["expected_mtime" "expected_size"]]
-          (let [ex (try (coerce [{"path" "p.txt" "from_anchor" "1:abc" "replace" "new" field 1}])
-                        nil
-                        (catch clojure.lang.ExceptionInfo e e))]
+          (let
+            [ex (try (coerce [{"path" "p.txt" "from_anchor" "1:abc" "replace" "new" field 1}])
+                     nil
+                     (catch clojure.lang.ExceptionInfo e e))]
             (expect (some? ex))
             (expect (= [field] (:unknown (ex-data ex)))))))
     (it "rejects an edit with no locator"
@@ -2750,42 +2870,45 @@
   patch-stale-anchor-diagnostic-test
   (let [explain (private-fn "explain-failure")]
     (it "shows the current line before suggesting reuse of its fresh anchor"
-        (let [message (explain {:edit-index 0
-                                :path "src/example.clj"
-                                :reason :hashline-not-found
-                                :hash-error {:which :from
-                                             :stated-line 835
-                                             :current-anchor "835:2b5"
-                                             :current-text "return null;"}})]
+        (let
+          [message (explain {:edit-index 0
+                             :path "src/example.clj"
+                             :reason :hashline-not-found
+                             :hash-error {:which :from
+                                          :stated-line 835
+                                          :current-anchor "835:2b5"
+                                          :current-text "return null;"}})]
           (expect (string/includes? message "line 835 changed — now `835:2b5`: \"return null;\"."))
           (expect (string/includes? message
                                     "Confirm this is your target before reusing the anchor."))))
     (it "bounds long current-line previews"
-        (let [prefix (apply str (repeat 80 "x"))
-              message (explain {:edit-index 0
-                                :path "src/example.clj"
-                                :reason :hashline-not-found
-                                :hash-error {:which :from
-                                             :stated-line 835
-                                             :current-anchor "835:2b5"
-                                             :current-text (str prefix "SHOULD-NOT-APPEAR")}})]
+        (let
+          [prefix (apply str (repeat 80 "x"))
+           message (explain {:edit-index 0
+                             :path "src/example.clj"
+                             :reason :hashline-not-found
+                             :hash-error {:which :from
+                                          :stated-line 835
+                                          :current-anchor "835:2b5"
+                                          :current-text (str prefix "SHOULD-NOT-APPEAR")}})]
 
           (expect (string/includes? message (str "\"" prefix "…\"")))
           (expect (not (string/includes? message "SHOULD-NOT-APPEAR")))))))
 
 (defdescribe
   editing-native-contract-test
-  (let [patch-description
-        (:ext.symbol/description editing/patch-symbol)
+  (let
+    [patch-description
+     (:ext.symbol/description editing/patch-symbol)
 
-        patch-schema
-        (:ext.symbol/schema editing/patch-symbol)
+     patch-schema
+     (:ext.symbol/schema editing/patch-symbol)
 
-        cat-description
-        (:ext.symbol/description editing/cat-symbol)
+     cat-description
+     (:ext.symbol/description editing/cat-symbol)
 
-        cat-result
-        (:ext.symbol/result editing/cat-symbol)]
+     cat-result
+     (:ext.symbol/result editing/cat-symbol)]
 
     (it "scopes anchor invalidation to files actually written"
         (expect (string/includes? patch-description "fresh anchors"))
@@ -2807,20 +2930,21 @@
 
 (defdescribe editing-native-schema-shape-test
              (it "grep advertises content-list OR, filename semantics, and empty-query listing"
-                 (let [description
-                       (:ext.symbol/description editing/grep-symbol)
+                 (let
+                   [description
+                    (:ext.symbol/description editing/grep-symbol)
 
-                       query
-                       (get-in editing/grep-symbol [:ext.symbol/schema :properties "query"])
+                    query
+                    (get-in editing/grep-symbol [:ext.symbol/schema :properties "query"])
 
-                       alternatives
-                       (into {} (map (juxt :type identity) (:oneOf query)))
+                    alternatives
+                    (into {} (map (juxt :type identity) (:oneOf query)))
 
-                       string-schema
-                       (get alternatives "string")
+                    string-schema
+                    (get alternatives "string")
 
-                       array-schema
-                       (get alternatives "array")]
+                    array-schema
+                    (get alternatives "array")]
 
                    (expect (= #{"string" "array"} (set (keys alternatives))))
                    (expect (nil? (:minLength string-schema)))
@@ -2831,14 +2955,15 @@
                    (expect (string/includes? (:description query) "OR for content search"))
                    (expect (string/includes? (:description query) "joined terms"))))
              (it "advertises file-scope fallback and non-negative context lines"
-                 (let [properties
-                       (get-in editing/grep-symbol [:ext.symbol/schema :properties])
+                 (let
+                   [properties
+                    (get-in editing/grep-symbol [:ext.symbol/schema :properties])
 
-                       paths
-                       (get properties "paths")
+                    paths
+                    (get properties "paths")
 
-                       context
-                       (get properties "context")]
+                    context
+                    (get properties "context")]
 
                    (expect (string/includes? (:description paths) "searched exactly"))
                    (expect (string/includes? (:description paths) "never widened"))
@@ -2850,15 +2975,16 @@
                    (expect (= "integer" (:type context)))
                    (expect (= 0 (:minimum context)))))
              (it "requires exact discovered paths for struct_index and cat"
-                 (let [index-path-description
-                       (get-in editing/index-symbol
-                               [:ext.symbol/schema :properties "path" :description])
+                 (let
+                   [index-path-description
+                    (get-in editing/index-symbol
+                            [:ext.symbol/schema :properties "path" :description])
 
-                       cat-schema
-                       (:ext.symbol/schema editing/cat-symbol)
+                    cat-schema
+                    (:ext.symbol/schema editing/cat-symbol)
 
-                       cat-path-description
-                       (get-in cat-schema [:properties "path" :description])]
+                    cat-path-description
+                    (get-in cat-schema [:properties "path" :description])]
 
                    (expect (string/includes? index-path-description "Exact physical"))
                    (expect (string/includes? index-path-description "grep first"))
@@ -2888,16 +3014,18 @@
    found it. The proof is that safe-path confinement now applies to index."
   (let [index-tool (private-fn "index-tool")]
     (it "resolves a NESTED workspace-relative path"
-        (let [dir (temp-dir-path "outline-nested/src")
-              _ (spit (fs/file (str dir "/foo.clj")) "(ns foo)\n(defn bar [x] (+ x 1))\n")
-              r (index-tool (str (temp-root) "/outline-nested/src/foo.clj"))]
+        (let
+          [dir (temp-dir-path "outline-nested/src")
+           _ (spit (fs/file (str dir "/foo.clj")) "(ns foo)\n(defn bar [x] (+ x 1))\n")
+           r (index-tool (str (temp-root) "/outline-nested/src/foo.clj"))]
 
           (expect (:success? r))
           (expect (clojure.string/includes? (str (get-in r [:result "skeleton"])) "bar"))
           ;; the STRUCTURED sibling: machine-addressable definitions (no skeleton parsing),
           ;; each row the same shape as an occurrences def — name/kind/anchor/end_anchor.
-          (let [defs (get-in r [:result "definitions"])
-                bar (first (filter #(= "bar" (get % "name")) defs))]
+          (let
+            [defs (get-in r [:result "definitions"])
+             bar (first (filter #(= "bar" (get % "name")) defs))]
 
             (expect (vector? defs))
             (expect (= "fn" (get bar "kind")))
@@ -2914,85 +3042,89 @@
   anchor-zipper-tool-test
   "A row anchor from outline/occurrences/cat is now a first-class zipper handle:
    sexpr can enter at it, and struct_patch can edit the corresponding node."
-  (let [sexpr-tool
-        (private-fn "sexpr-tool")
+  (let
+    [sexpr-tool
+     (private-fn "sexpr-tool")
 
-        struct-patch
-        (private-fn "struct-patch-tool")]
+     struct-patch
+     (private-fn "struct-patch-tool")]
 
     (it "sexpr enters the zipper at a lineno:hash anchor"
-        (let [path
-              (write-temp!
-                "anchor-zipper/read.clj"
-                "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n\n(defn bar [y]\n  (* y 2))\n")
+        (let
+          [path
+           (write-temp! "anchor-zipper/read.clj"
+                        "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n\n(defn bar [y]\n  (* y 2))\n")
 
-              anchor
-              (patch/line-anchor 6 "(defn bar [y]")
+           anchor
+           (patch/line-anchor 6 "(defn bar [y]")
 
-              r
-              (sexpr-tool path {"anchor" anchor})]
+           r
+           (sexpr-tool path {"anchor" anchor})]
 
           (expect (:success? r))
           (expect (= [2] (get-in r [:result "path"])))
           (expect (clojure.string/includes? (get-in r [:result "text"]) "defn bar"))))
     (it "struct_patch edits the node addressed by a lineno:hash anchor"
-        (let [path
-              (write-temp!
-                "anchor-zipper/write.clj"
-                "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n\n(defn bar [y]\n  (* y 2))\n")
+        (let
+          [path
+           (write-temp! "anchor-zipper/write.clj"
+                        "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n\n(defn bar [y]\n  (* y 2))\n")
 
-              anchor
-              (patch/line-anchor 6 "(defn bar [y]")
+           anchor
+           (patch/line-anchor 6 "(defn bar [y]")
 
-              r
-              (struct-patch
-                {"path" path "op" "replace" "anchor" anchor "code" "(defn bar [y]\n  (- y 2))"})]
+           r
+           (struct-patch
+             {"path" path "op" "replace" "anchor" anchor "code" "(defn bar [y]\n  (- y 2))"})]
 
           (expect (:success? r))
           (expect (clojure.string/includes? (slurp (fs/file path)) "(- y 2)"))))
     (it "replace_node reuses node-addressing semantics when an anchor locates the node"
-        (let [path
-              (write-temp! "anchor-zipper/replace-node.clj"
-                           "(ns my.app)\n\n(defn bar [y]\n  (* y 2))\n")
+        (let
+          [path
+           (write-temp! "anchor-zipper/replace-node.clj"
+                        "(ns my.app)\n\n(defn bar [y]\n  (* y 2))\n")
 
-              anchor
-              (patch/line-anchor 3 "(defn bar [y]")
+           anchor
+           (patch/line-anchor 3 "(defn bar [y]")
 
-              r
-              (struct-patch {"path" path
-                             "op" "replace_node"
-                             "anchor" anchor
-                             "match" "(defn bar [y]\n  (* y 2))"
-                             "code" "(defn bar [y]\n  (+ y 2))"})]
+           r
+           (struct-patch {"path" path
+                          "op" "replace_node"
+                          "anchor" anchor
+                          "match" "(defn bar [y]\n  (* y 2))"
+                          "code" "(defn bar [y]\n  (+ y 2))"})]
 
           (expect (:success? r))
           (expect (clojure.string/includes? (slurp (fs/file path)) "(+ y 2)"))))
-    (it
-      "an anchor wins over a serializer-default empty at path"
-      (let [path
-            (write-temp! "anchor-zipper/empty-at.clj" "(ns my.app)\n\n(defn bar [y]\n  (* y 2))\n")
+    (it "an anchor wins over a serializer-default empty at path"
+        (let
+          [path
+           (write-temp! "anchor-zipper/empty-at.clj" "(ns my.app)\n\n(defn bar [y]\n  (* y 2))\n")
 
-            anchor
-            (patch/line-anchor 3 "(defn bar [y]")
+           anchor
+           (patch/line-anchor 3 "(defn bar [y]")
 
-            r
-            (struct-patch {"path" path
-                           "op" "insert_before"
-                           "anchor" anchor
-                           "at" []
-                           "code" "(defn foo [x]\n  (+ x 1))"})
+           r
+           (struct-patch {"path" path
+                          "op" "insert_before"
+                          "anchor" anchor
+                          "at" []
+                          "code" "(defn foo [x]\n  (+ x 1))"})
 
-            src
-            (slurp (fs/file path))]
+           src
+           (slurp (fs/file path))]
 
-        (expect (:success? r))
-        (expect (= "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n\n(defn bar [y]\n  (* y 2))\n" src))))
+          (expect (:success? r))
+          (expect (= "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n\n(defn bar [y]\n  (* y 2))\n"
+                     src))))
     (it "stale anchors are refused before zipper navigation"
-        (let [path
-              (write-temp! "anchor-zipper/stale.clj" "(ns my.app)\n\n(defn bar [y]\n  (* y 2))\n")
+        (let
+          [path
+           (write-temp! "anchor-zipper/stale.clj" "(ns my.app)\n\n(defn bar [y]\n  (* y 2))\n")
 
-              stale
-              (patch/line-anchor 3 "(defn bar [y]")]
+           stale
+           (patch/line-anchor 3 "(defn bar [y]")]
 
           (spit (fs/file path) "(ns my.app)\n\n(defn bar [z]\n  (* z 2))\n")
           (let [r (sexpr-tool path {"anchor" stale})]
@@ -3006,9 +3138,10 @@
    redef'd to a known file set so the test doesn't depend on gitignore.)"
   (let [rename-tool (private-fn "symbol-rename-tool")]
     (it "renames a Clojure namespace across files"
-        (let [_ (temp-dir-path "nsrename")
-              f1 (str (temp-root) "/nsrename/bar.clj")
-              f2 (str (temp-root) "/nsrename/app.clj")]
+        (let
+          [_ (temp-dir-path "nsrename")
+           f1 (str (temp-root) "/nsrename/bar.clj")
+           f2 (str (temp-root) "/nsrename/app.clj")]
 
           (spit (fs/file f1) "(ns foo.bar)\n(defn h [x] (inc x))\n")
           (spit
@@ -3018,8 +3151,9 @@
             (let [r (rename-tool "foo.bar" "foo.baz")]
               (expect (:success? r))
               (expect (= 2 (get-in r [:result "file_count"])))))
-          (let [a (slurp (fs/file f1))
-                b (slurp (fs/file f2))]
+          (let
+            [a (slurp (fs/file f1))
+             b (slurp (fs/file f2))]
 
             (expect (clojure.string/includes? a "(ns foo.baz)"))
             (expect (clojure.string/includes? b "[foo.baz :as fb]")) ; require target renamed
@@ -3027,9 +3161,10 @@
             (expect (clojure.string/includes? b "fb/h 2"))           ; local alias UNCHANGED
             (expect (not (clojure.string/includes? b "foo.bar")))))) ; nothing left
     (it "skips files that don't mention the name (file_count reflects only changes)"
-        (let [_ (temp-dir-path "nsrename2")
-              f1 (str (temp-root) "/nsrename2/has.clj")
-              f2 (str (temp-root) "/nsrename2/none.clj")]
+        (let
+          [_ (temp-dir-path "nsrename2")
+           f1 (str (temp-root) "/nsrename2/has.clj")
+           f2 (str (temp-root) "/nsrename2/none.clj")]
 
           (spit (fs/file f1) "(ns has)\n(zz/q 1)\n")
           (spit (fs/file f2) "(ns none)\n(defn k [] 1)\n")
@@ -3043,8 +3178,9 @@
   render-patch-result-compact-headline-test
   (let [render @#'editing/render-patch-result]
     (it "uses only path chips because the tool badge already names the operation"
-        (let [card (render [{"path" "src/a.clj" "op" "update" "changed" true "diff" "+a"}
-                            {"path" "src/b.clj" "op" "add" "changed" true "diff" "+b"}])]
+        (let
+          [card (render [{"path" "src/a.clj" "op" "update" "changed" true "diff" "+a"}
+                         {"path" "src/b.clj" "op" "add" "changed" true "diff" "+b"}])]
           (expect (= "`src/a.clj`, `src/b.clj`" (:summary card)))
           (expect (not (clojure.string/includes? (:body card) "update")))
           (expect (not (clojure.string/includes? (:body card) "add `")))))
@@ -3053,11 +3189,12 @@
       ;; Editing a doc that shows ```diff examples produces a diff
       ;; whose context lines carry a bare ``` — a fixed 3-backtick
       ;; wrapper closed early and the rest rendered as prose.
-      (let [diff "@@ -1,3 +1,3 @@\n ```diff\n+ x\n ```"
-            card (render [{"path" "resources/vis-docs/configuration.md"
-                           "op" "update"
-                           "changed" true
-                           "diff" diff}])]
+      (let
+        [diff "@@ -1,3 +1,3 @@\n ```diff\n+ x\n ```"
+         card (render [{"path" "resources/vis-docs/configuration.md"
+                        "op" "update"
+                        "changed" true
+                        "diff" diff}])]
 
         (expect (clojure.string/includes? (:body card) "````diff\n"))
         (expect (clojure.string/ends-with? (clojure.string/trim (:body card)) "````"))))))
@@ -3071,9 +3208,9 @@
   (let [render @#'editing/render-cat-result]
     (it "single contiguous range: `L<a>-<b>`, count implied (renders each value's \"text\")"
         ;; Canonical anchor values mirror rg hits: {"text" line}.
-        (let [card (render {"path" "app.css"
-                            "anchors"
-                            {"1:aa" {"text" "x"} "2:bb" {"text" "y"} "3:cc" {"text" "z"}}})]
+        (let
+          [card (render {"path" "app.css"
+                         "anchors" {"1:aa" {"text" "x"} "2:bb" {"text" "y"} "3:cc" {"text" "z"}}})]
           (expect (= "`app.css` · L1-3" (:summary card)))
           ;; Gutter is sized to the widest line number (1 digit here) — no
           ;; fixed-5 left-pad, so the row is flush `1  x`, not `    1  x`.
@@ -3113,10 +3250,11 @@
           (expect (clojure.string/starts-with? body "\n```\n"))))
     (it
       "widens the fence past any backtick run in the file content so an inner ``` never closes it early"
-      (let [body (:body (render {"path" "README.md"
-                                 "anchors" {"1:aa" {"text" "```clojure"}
-                                            "2:bb" {"text" "(def x 1)"}
-                                            "3:cc" {"text" "```"}}}))]
+      (let
+        [body (:body (render {"path" "README.md"
+                              "anchors" {"1:aa" {"text" "```clojure"}
+                                         "2:bb" {"text" "(def x 1)"}
+                                         "3:cc" {"text" "```"}}}))]
         (expect (clojure.string/starts-with? body "\n````"))
         (expect (clojure.string/ends-with? (clojure.string/trim body) "````"))))))
 
@@ -3127,41 +3265,45 @@
   "The `occurrences` TOOL (not just the structural fn): rg prefilter → per-file
    parse → def-marked result envelope, over real files on disk."
   (let [occ (private-fn "occurrences-tool")]
-    (it "traces a symbol across real files: marks the def (kind/signature), lists uses"
-        (let [_ (temp-dir-path "occ")
-              f1 (str (temp-root) "/occ/lib.clj")
-              f2 (str (temp-root) "/occ/use.clj")]
+    (it
+      "traces a symbol across real files: marks the def (kind/signature), lists uses"
+      (let
+        [_ (temp-dir-path "occ")
+         f1 (str (temp-root) "/occ/lib.clj")
+         f2 (str (temp-root) "/occ/use.clj")]
 
-          (spit (fs/file f1) "(defn widget [x] (inc x))\n")
-          (spit (fs/file f2) "(ns u)\n(println (widget 1))\n(println (widget 2))\n")
-          (with-redefs [editing/rg-search (constantly {:files [f1 f2]})]
-            (let [r (occ "widget")
-                  res (:result r)
-                  all (mapcat #(get % "occurrences") (get res "files"))
-                  defs (filter #(get % "is_definition") all)]
+        (spit (fs/file f1) "(defn widget [x] (inc x))\n")
+        (spit (fs/file f2) "(ns u)\n(println (widget 1))\n(println (widget 2))\n")
+        (with-redefs [editing/rg-search (constantly {:files [f1 f2]})]
+          (let
+            [r (occ "widget")
+             res (:result r)
+             all (mapcat #(get % "occurrences") (get res "files"))
+             defs (filter #(get % "is_definition") all)]
 
-              (expect (:success? r))
-              (expect (= 3 (get res "count"))) ;; 1 def + 2 uses
-              (expect (= 1 (get res "definition_count")))
-              (expect (= 1 (count defs)))
-              (expect (= "widget" (get (first defs) "name")))
-              (expect (= "fn" (get (first defs) "kind")))
-              (expect (= "[x]" (get (first defs) "signature")))
-              ;; every non-def occurrence still carries a patch anchor
-              (expect (every? #(get % "anchor") all))
-              ;; a plain USE is ANCHORS-ONLY — the `lineno:hash` anchor IS the sole
-              ;; position; no redundant line/column/byte (unbounded, they'd bloat the
-              ;; wire until it clips mid-object)
-              (let [use (first (remove #(get % "is_definition") all))]
-                (expect (= #{"anchor"} (set (keys use)))))
-              (expect (not-any? #(or (contains? % "line")
-                                     (contains? % "column")
-                                     (contains? % "start_byte")
-                                     (contains? % "end_byte"))
-                                all))))))
+            (expect (:success? r))
+            (expect (= 3 (get res "count"))) ;; 1 def + 2 uses
+            (expect (= 1 (get res "definition_count")))
+            (expect (= 1 (count defs)))
+            (expect (= "widget" (get (first defs) "name")))
+            (expect (= "fn" (get (first defs) "kind")))
+            (expect (= "[x]" (get (first defs) "signature")))
+            ;; every non-def occurrence still carries a patch anchor
+            (expect (every? #(get % "anchor") all))
+            ;; a plain USE is ANCHORS-ONLY — the `lineno:hash` anchor IS the sole
+            ;; position; no redundant line/column/byte (unbounded, they'd bloat the
+            ;; wire until it clips mid-object)
+            (let [use (first (remove #(get % "is_definition") all))]
+              (expect (= #{"anchor"} (set (keys use)))))
+            (expect (not-any? #(or (contains? % "line")
+                                   (contains? % "column")
+                                   (contains? % "start_byte")
+                                   (contains? % "end_byte"))
+                              all))))))
     (it "a name with no definition on disk yields definition_count 0"
-        (let [_ (temp-dir-path "occ2")
-              f (str (temp-root) "/occ2/u.clj")]
+        (let
+          [_ (temp-dir-path "occ2")
+           f (str (temp-root) "/occ2/u.clj")]
 
           (spit (fs/file f) "(ns u)\n(println (widget 1))\n") ;; used, never defined here
           (with-redefs [editing/rg-search (constantly {:files [f]})]
@@ -3175,12 +3317,14 @@
    tool-call path synthesizes (`index({\"path\": …})`)."
   (let [index (private-fn "index-tool")]
     (it "positional and dict forms both return the same skeleton"
-        (let [_ (temp-dir-path "outl")
-              f (str (temp-root) "/outl/m.clj")]
+        (let
+          [_ (temp-dir-path "outl")
+           f (str (temp-root) "/outl/m.clj")]
 
           (spit (fs/file f) "(defn add [a b] (+ a b))\n(defn sub [a b] (- a b))\n")
-          (let [r1 (index f) ;; index("m.clj")
-                r2 (index {"path" f})]
+          (let
+            [r1 (index f) ;; index("m.clj")
+             r2 (index {"path" f})]
 
             ;; index({"path": "m.clj"}) — native shape
             (expect (:success? r1))
@@ -3193,29 +3337,32 @@
   index-tool-range-test
   "struct_index narrows to a single `range` OR several `ranges` windows; a def is
    kept when its span hits ANY window, and the chosen key is echoed back."
-  (let [index
-        (private-fn "index-tool")
+  (let
+    [index
+     (private-fn "index-tool")
 
-        names
-        (fn [r]
-          (mapv #(get % "name") (get-in r [:result "definitions"])))]
+     names
+     (fn [r]
+       (mapv #(get % "name") (get-in r [:result "definitions"])))]
 
     (it "range keeps defs in the single window; ranges unions disjoint windows"
-        (let [_
-              (temp-dir-path "idxrange")
+        (let
+          [_
+           (temp-dir-path "idxrange")
 
-              f
-              (str (temp-root) "/idxrange/m.clj")]
+           f
+           (str (temp-root) "/idxrange/m.clj")]
 
           (spit (fs/file f) "(defn a [] 1)\n(defn b [] 2)\n(defn c [] 3)\n")
-          (let [whole
-                (index {"path" f})
+          (let
+            [whole
+             (index {"path" f})
 
-                one
-                (index {"path" f "range" [2 2]})
+             one
+             (index {"path" f "range" [2 2]})
 
-                multi
-                (index {"path" f "ranges" [[1 1] [3 3]]})]
+             multi
+             (index {"path" f "ranges" [[1 1] [3 3]]})]
 
             (expect (= ["a" "b" "c"] (names whole)))
             ;; single range: only the def on line 2
@@ -3230,11 +3377,12 @@
             (expect (= 3 (get-in whole [:result "line_count"])))
             (expect (= 3 (get-in multi [:result "line_count"]))))))
     (it "ranges supersedes range and coerces numeric strings"
-        (let [_
-              (temp-dir-path "idxrange2")
+        (let
+          [_
+           (temp-dir-path "idxrange2")
 
-              f
-              (str (temp-root) "/idxrange2/m.clj")]
+           f
+           (str (temp-root) "/idxrange2/m.clj")]
 
           (spit (fs/file f) "(defn a [] 1)\n(defn b [] 2)\n(defn c [] 3)\n")
           (let [r (index {"path" f "range" [1 3] "ranges" [["2" "2"]]})]
@@ -3242,19 +3390,20 @@
             (expect (= [[2 2]] (get-in r [:result "ranges"])))
             (expect (nil? (get-in r [:result "range"]))))))
     (it "the render summary surfaces the narrowing window(s)"
-        (let [render
-              (private-fn "render-index-result")
+        (let
+          [render
+           (private-fn "render-index-result")
 
-              base
-              {"path" "src/x.clj"
-               "language" "clojure"
-               "line_count" 3
-               "definitions" [{"name" "b"
-                               "kind" "function"
-                               "visibility" "public"
-                               "anchor" "2:aa"
-                               "end_anchor" "2:bb"
-                               "depth" 0}]}]
+           base
+           {"path" "src/x.clj"
+            "language" "clojure"
+            "line_count" 3
+            "definitions" [{"name" "b"
+                            "kind" "function"
+                            "visibility" "public"
+                            "anchor" "2:aa"
+                            "end_anchor" "2:bb"
+                            "depth" 0}]}]
 
           ;; whole-file index: no window suffix
           (expect (not (clojure.string/includes? (:summary (render base)) "window")))
@@ -3269,19 +3418,21 @@
 (defdescribe
   rg-tool-e2e-test
   "The `rg` TOOL over real files: the comma-split + smart-case fixes end-to-end."
-  (let [find-tool
-        (private-fn "grep-tool")
+  (let
+    [find-tool
+     (private-fn "grep-tool")
 
-        rg
-        (fn [& a]
-          (apply find-tool a))]
+     rg
+     (fn [& a]
+       (apply find-tool a))]
 
     (it "a comma query matches EITHER term (the session 71a69809 fix, real files)"
-        (let [d
-              (temp-dir-path "rge")
+        (let
+          [d
+           (temp-dir-path "rge")
 
-              f
-              (str (temp-root) "/rge/a.clj")]
+           f
+           (str (temp-root) "/rge/a.clj")]
 
           (spit (fs/file f) "the model line\nthe cycle line\nunrelated\n")
           (let [r (rg "model, cycle" {"paths" [d]})]
@@ -3289,32 +3440,34 @@
             (expect (= 2 (get-in r [:result "hit_count"])))))) ;; both lines, not 0
     (it
       "content value is a UNIFORM `{\"text\" line}` map with AND without context"
-      (let [d
-            (temp-dir-path "rguni")
+      (let
+        [d
+         (temp-dir-path "rguni")
 
-            f
-            (str (temp-root) "/rguni/a.clj")]
+         f
+         (str (temp-root) "/rguni/a.clj")]
 
         (spit (fs/file f) "L1\nMATCH\nL3\n")
-        (let [plain
-              (get-in (rg "MATCH" {"paths" [d]}) [:result "matches"])
+        (let
+          [plain
+           (get-in (rg "MATCH" {"paths" [d]}) [:result "matches"])
 
-              ctx
-              (get-in (rg "MATCH" {"paths" [d] "context" 1}) [:result "matches"])
+           ctx
+           (get-in (rg "MATCH" {"paths" [d] "context" 1}) [:result "matches"])
 
-              plain-v
-              (-> plain
-                  vals
-                  first
-                  vals
-                  first)
+           plain-v
+           (-> plain
+               vals
+               first
+               vals
+               first)
 
-              ctx-v
-              (-> ctx
-                  vals
-                  first
-                  vals
-                  first)]
+           ctx-v
+           (-> ctx
+               vals
+               first
+               vals
+               first)]
 
           ;; ONE shape regardless of context: always a map carrying "text".
           (expect (map? plain-v))
@@ -3327,35 +3480,38 @@
           (expect (contains? ctx-v "before"))
           (expect (contains? ctx-v "after")))))
     (it "smart-case: a lowercase query matches any case, on disk"
-        (let [d
-              (temp-dir-path "rgc")
+        (let
+          [d
+           (temp-dir-path "rgc")
 
-              f
-              (str (temp-root) "/rgc/a.clj")]
+           f
+           (str (temp-root) "/rgc/a.clj")]
 
           (spit (fs/file f) "Keymap here\nkeystroke too\nnope\n")
           (let [r (rg "key" {"paths" [d]})]
             (expect (= 2 (get-in r [:result "hit_count"])))))) ;; Keymap + keystroke
     (it
       "a MISSING path CLIMBS to its nearest existing ancestor dir and is REPORTED in missing_paths (never a hard error)"
-      (let [d
-            (temp-dir-path "rgp")
+      (let
+        [d
+         (temp-dir-path "rgp")
 
-            f
-            (str (temp-root) "/rgp/a.clj")
+         f
+         (str (temp-root) "/rgp/a.clj")
 
-            ghost
-            (str (temp-root) "/rgp/nope.edn")]
+         ghost
+         (str (temp-root) "/rgp/nope.edn")]
 
         (spit (fs/file f) "needle here\n")
         ;; one real dir + one path that does not exist. The ghost climbs to its
         ;; parent (the real dir), so the search still runs — and the ghost is
         ;; REPORTED, not silently absorbed.
-        (let [r
-              (rg "needle" {"paths" [d ghost]})
+        (let
+          [r
+           (rg "needle" {"paths" [d ghost]})
 
-              missing
-              (get-in r [:result "missing_paths"])]
+           missing
+           (get-in r [:result "missing_paths"])]
 
           (expect (:success? r))
           (expect (= 1 (get-in r [:result "hit_count"])))
@@ -3363,11 +3519,12 @@
           (expect (contains? (first missing) "searched")))))
     (it
       "a BLANK/nil paths entry means \"everything\" — widens like \".\", never throws (`[\".github\" \"\"]` case)"
-      (let [rsr
-            @#'editing/resolve-search-roots
+      (let
+        [rsr
+         @#'editing/resolve-search-roots
 
-            sweep
-            (rsr ["."])]
+         sweep
+         (rsr ["."])]
 
         ;; a lone blank / nil / whitespace resolves to the full allowed-roots sweep
         (expect (= sweep (rsr [""])))
@@ -3377,26 +3534,28 @@
         (expect (= sweep (rsr ["src" ""])))))
     (it
       "the DEFAULT sweep PRUNES vis's own ~/.vis home (its drafts/ repo mirrors + cache/ CPython are search noise) yet keeps the primary + sibling roots; the primary is NEVER pruned even when it IS ~/.vis"
-      (let [rsr
-            @#'editing/resolve-search-roots
+      (let
+        [rsr
+         @#'editing/resolve-search-roots
 
-            home
-            (System/getProperty "user.home")
+         home
+         (System/getProperty "user.home")
 
-            vis-home
-            (str home "/.vis")
+         vis-home
+         (str home "/.vis")
 
-            primary
-            (str home "/proj")
+         primary
+         (str home "/proj")
 
-            other
-            (str home "/lib")]
+         other
+         (str home "/lib")]
 
-        (with-redefs [workspace/allowed-roots
-                      (constantly [primary other vis-home])
+        (with-redefs
+          [workspace/allowed-roots
+           (constantly [primary other vis-home])
 
-                      workspace/no-search-roots
-                      (constantly #{vis-home})]
+           workspace/no-search-roots
+           (constantly #{vis-home})]
 
           (let [roots (mapv str (:roots (rsr ["."])))]
             ;; ~/.vis pruned from the default sweep …
@@ -3404,33 +3563,36 @@
             ;; … while the primary and sibling roots survive, in order
             (expect (= [primary other] roots))))
         ;; the primary is exempt even when catalogued `search: false`: cwd == ~/.vis still scans.
-        (with-redefs [workspace/allowed-roots
-                      (constantly [vis-home primary])
+        (with-redefs
+          [workspace/allowed-roots
+           (constantly [vis-home primary])
 
-                      workspace/no-search-roots
-                      (constantly #{vis-home})]
+           workspace/no-search-roots
+           (constantly #{vis-home})]
 
           (expect (= [vis-home primary] (mapv str (:roots (rsr ["."]))))))))
     (it
       "a real DRAFT clone under the drafts store (~/.vis/drafts) is KEPT in the default sweep even though it is under ~/.vis — so an in-draft session (its primary + /fs-add clones) stays searchable, while the raw ~/.vis grant is still pruned"
-      (let [rsr
-            @#'editing/resolve-search-roots
+      (let
+        [rsr
+         @#'editing/resolve-search-roots
 
-            home
-            (System/getProperty "user.home")
+         home
+         (System/getProperty "user.home")
 
-            vis-home
-            (str home "/.vis")
+         vis-home
+         (str home "/.vis")
 
-            draft-primary
-            (str vis-home "/drafts/proj/feature-x")
+         draft-primary
+         (str vis-home "/drafts/proj/feature-x")
 
-            draft-clone
-            (str vis-home "/drafts/proj/feature-x-lib")]
+         draft-clone
+         (str vis-home "/drafts/proj/feature-x-lib")]
 
         (binding [workspace/*drafts-home* (java.io.File. (str vis-home "/drafts"))]
-          (with-redefs [workspace/allowed-roots (constantly [draft-primary draft-clone vis-home])
-                        workspace/no-search-roots (constantly #{vis-home})]
+          (with-redefs
+            [workspace/allowed-roots (constantly [draft-primary draft-clone vis-home])
+             workspace/no-search-roots (constantly #{vis-home})]
 
             (let [roots (mapv str (:roots (rsr ["."])))]
               ;; both draft clones kept because only the raw catalog root opts out …
@@ -3439,23 +3601,24 @@
               (expect (not (some #{vis-home} roots))))))))
     (it
       "an EXISTING file is searched as that ONE file (precise — never widened to its dir); a MISSING path CLIMBS to its nearest existing dir and is REPORTED in missing_paths"
-      (let [dir
-            (str (temp-root) "/rgd-precise")
+      (let
+        [dir
+         (str (temp-root) "/rgd-precise")
 
-            _
-            (when (fs/exists? dir) (fs/delete-tree dir))
+         _
+         (when (fs/exists? dir) (fs/delete-tree dir))
 
-            _
-            (fs/create-dirs dir)
+         _
+         (fs/create-dirs dir)
 
-            a
-            (str dir "/a.clj")
+         a
+         (str dir "/a.clj")
 
-            b
-            (str dir "/b.clj")
+         b
+         (str dir "/b.clj")
 
-            needle
-            "zqUNIQUEneedle42"]
+         needle
+         "zqUNIQUEneedle42"]
 
         (spit (fs/file a) (str needle " here\n"))
         (spit (fs/file b) (str needle " here\n"))
@@ -3474,11 +3637,12 @@
         ;; a path that does NOT exist CLIMBS to its nearest existing ancestor dir
         ;; (here `dir`, holding a.clj + b.clj) so the search still runs — and the
         ;; ghost is REPORTED in missing_paths, never a hard error, never silent
-        (let [ghost
-              (str dir "/gone.clj")
+        (let
+          [ghost
+           (str dir "/gone.clj")
 
-              r
-              (rg needle {"paths" [ghost]})]
+           r
+           (rg needle {"paths" [ghost]})]
 
           (expect (:success? r))
           (expect (= 2 (get-in r [:result "file_count"])))
@@ -3491,8 +3655,9 @@
    meant (instead of failing with 'replaceNode requires both match and code')."
   (let [sp (private-fn "struct-patch-tool")]
     (it "op delete drops the named def; the sibling survives"
-        (let [_ (temp-dir-path "spd")
-              f (str (temp-root) "/spd/m.clj")]
+        (let
+          [_ (temp-dir-path "spd")
+           f (str (temp-root) "/spd/m.clj")]
 
           (spit (fs/file f) "(defn keep-me [x] (inc x))\n(defn drop-me [y] (dec y))\n")
           (let [r (sp {"path" f "op" "delete" "target" "drop-me"})]
@@ -3501,19 +3666,21 @@
               (expect (clojure.string/includes? src "keep-me"))
               (expect (not (clojure.string/includes? src "drop-me")))))))
     (it "append_child by NAME inserts inside that definition, not at end-of-file"
-        (let [_ (temp-dir-path "spac")
-              f (str (temp-root) "/spac/m.clj")
-              before (str "(defdescribe clipboard-copy-actions-test\n"
-                          "  (it \"copies\" (expect true)))\n\n"
-                          "(defdescribe later-test\n" "  (it \"stays later\" (expect true)))\n")]
+        (let
+          [_ (temp-dir-path "spac")
+           f (str (temp-root) "/spac/m.clj")
+           before (str "(defdescribe clipboard-copy-actions-test\n"
+                       "  (it \"copies\" (expect true)))\n\n"
+                       "(defdescribe later-test\n" "  (it \"stays later\" (expect true)))\n")]
 
           (spit (fs/file f) before)
-          (let [r (sp {"path" f
-                       "op" "append_child"
-                       "target" "clipboard-copy-actions-test"
-                       "kind" "fn"
-                       "code" "(it \"reports failure\" (expect true))"})
-                src (slurp (fs/file f))]
+          (let
+            [r (sp {"path" f
+                    "op" "append_child"
+                    "target" "clipboard-copy-actions-test"
+                    "kind" "fn"
+                    "code" "(it \"reports failure\" (expect true))"})
+             src (slurp (fs/file f))]
 
             (expect (:success? r))
             (expect (clojure.string/includes?
@@ -3521,23 +3688,26 @@
                       "(it \"copies\" (expect true))\n  (it \"reports failure\" (expect true)))"))
             (expect (< (.indexOf src "reports failure") (.indexOf src "later-test"))))))
     (it "append_child WITH a path locator (`at`) still edits the located node"
-        (let [_ (temp-dir-path "spac2")
-              f (str (temp-root) "/spac2/m.clj")]
+        (let
+          [_ (temp-dir-path "spac2")
+           f (str (temp-root) "/spac2/m.clj")]
 
           (spit (fs/file f) "(ns t)\n(defn f [] (do 1 2))\n")
-          (let [r (sp {"path" f "op" "append_child" "at" [1] "code" "3"})
-                src (slurp (fs/file f))]
+          (let
+            [r (sp {"path" f "op" "append_child" "at" [1] "code" "3"})
+             src (slurp (fs/file f))]
 
             (expect (:success? r))
             ;; `at [1]` locates the defn, so the new child belongs inside it.
             (expect (clojure.string/includes? src "(defn f [] (do 1 2) 3)")))))
     (it "replace_node with a target but no match = a name-based replace (not an error)"
-        (let [_ (temp-dir-path "spr")
-              f (str (temp-root) "/spr/m.clj")]
+        (let
+          [_ (temp-dir-path "spr")
+           f (str (temp-root) "/spr/m.clj")]
 
           (spit (fs/file f) "(defn foo [x] (inc x))\n")
-          (let [r (sp
-                    {"path" f "op" "replace_node" "target" "foo" "code" "(defn foo [x] (* 2 x))"})]
+          (let
+            [r (sp {"path" f "op" "replace_node" "target" "foo" "code" "(defn foo [x] (* 2 x))"})]
             (expect (:success? r))
             (expect (clojure.string/includes? (slurp (fs/file f)) "(* 2 x)")))))))
 
@@ -3549,10 +3719,11 @@
    `vimdoc`) is never blocked."
   (let [patch (private-fn "patch-safe")]
     (it "an edit that breaks Clojure syntax is refused — nothing written"
-        (let [p (write-temp! "guard/ok.clj" "(defn add [a b] (+ a b))\n")
-              r (patch [{"path" p
-                         "from_anchor" (patch/line-anchor 1 "(defn add [a b] (+ a b))")
-                         "replace" "(defn add [a b] (+ a b"}])]
+        (let
+          [p (write-temp! "guard/ok.clj" "(defn add [a b] (+ a b))\n")
+           r (patch [{"path" p
+                      "from_anchor" (patch/line-anchor 1 "(defn add [a b] (+ a b))")
+                      "replace" "(defn add [a b] (+ a b"}])]
 
           ;; unbalanced → broken
           (expect (false? (:success? r)))
@@ -3575,22 +3746,24 @@
           (expect (string/includes? (:after (first (:candidate-plans r))) "(+ a b"))
           (expect (= "(defn add [a b] (+ a b))\n" (slurp p))))) ;; untouched
     (it "a valid Clojure edit still applies"
-        (let [p (write-temp! "guard/ok2.clj" "(defn add [a b] (+ a b))\n")
-              r (patch [{"path" p
-                         "from_anchor" (patch/line-anchor 1 "(defn add [a b] (+ a b))")
-                         "replace" "(defn add [a b] (* a b))"}])]
+        (let
+          [p (write-temp! "guard/ok2.clj" "(defn add [a b] (+ a b))\n")
+           r (patch [{"path" p
+                      "from_anchor" (patch/line-anchor 1 "(defn add [a b] (+ a b))")
+                      "replace" "(defn add [a b] (* a b))"}])]
 
           (expect (true? (:success? r)))
           (expect (= "(defn add [a b] (* a b))\n" (slurp p)))))
     (it "a multi-edit break blames the LATER offending edit, not a hardcoded 0"
-        (let [src "(defn add [a b] (+ a b))\n(defn sub [a b] (- a b))\n"
-              p (write-temp! "guard/multi.clj" src)
-              r (patch [{"path" p
-                         "from_anchor" (patch/line-anchor 1 "(defn add [a b] (+ a b))")
-                         "replace" "(defn add [a b] (+ a b 0))"} ;; edit 0 — harmless
-                        {"path" p
-                         "from_anchor" (patch/line-anchor 2 "(defn sub [a b] (- a b))")
-                         "replace" "(defn sub [a b] (- a b)"}])]
+        (let
+          [src "(defn add [a b] (+ a b))\n(defn sub [a b] (- a b))\n"
+           p (write-temp! "guard/multi.clj" src)
+           r (patch [{"path" p
+                      "from_anchor" (patch/line-anchor 1 "(defn add [a b] (+ a b))")
+                      "replace" "(defn add [a b] (+ a b 0))"} ;; edit 0 — harmless
+                     {"path" p
+                      "from_anchor" (patch/line-anchor 2 "(defn sub [a b] (- a b))")
+                      "replace" "(defn sub [a b] (- a b)"}])]
 
           ;; edit 1 — drops a paren
           (expect (false? (:success? r)))
@@ -3600,18 +3773,19 @@
           (expect (string/includes? (:message r) "edit 1 would break syntax"))
           (expect (= src (slurp p))))) ;; untouched
     (it "prose (.txt → vimdoc parses WITH error nodes) is NEVER blocked"
-        (let [p (write-temp! "guard/notes.txt" "hello world\nsome notes\n")
-              r (patch [{"path" p
-                         "from_anchor" (patch/line-anchor 1 "hello world")
-                         "replace" "hello there"}])]
+        (let
+          [p (write-temp! "guard/notes.txt" "hello world\nsome notes\n")
+           r (patch [{"path" p
+                      "from_anchor" (patch/line-anchor 1 "hello world")
+                      "replace" "hello there"}])]
 
           (expect (true? (:success? r)))
           (expect (= "hello there\nsome notes\n" (slurp p)))))
     (it "a strict config (JSON) is guarded too — breaking its syntax is refused"
-        (let [p (write-temp! "guard/conf.json" "{\"a\": 1}\n")
-              r (patch [{"path" p
-                         "from_anchor" (patch/line-anchor 1 "{\"a\": 1}")
-                         "replace" "{\"a\": 1"}])]
+        (let
+          [p (write-temp! "guard/conf.json" "{\"a\": 1}\n")
+           r (patch
+               [{"path" p "from_anchor" (patch/line-anchor 1 "{\"a\": 1}") "replace" "{\"a\": 1"}])]
 
           ;; missing close → broken
           (expect (false? (:success? r)))
@@ -3624,10 +3798,11 @@
    so the model sees the LATER edit that's the real problem, not only edit 0."
   (let [patch (private-fn "patch-safe")]
     (it "lists all failing edits (edit 0 AND edit 1), not just the first"
-        (let [p (write-temp! "pmf/a.txt" "alpha\nbeta\ngamma\n")
-              r (patch [{"path" p "from_anchor" (patch/line-anchor 1 "WRONGLINE") "replace" "x"}
-                        {"path" p "from_anchor" (patch/line-anchor 3 "ALSOWRONG") "replace" "y"}])
-              msg (:message r)]
+        (let
+          [p (write-temp! "pmf/a.txt" "alpha\nbeta\ngamma\n")
+           r (patch [{"path" p "from_anchor" (patch/line-anchor 1 "WRONGLINE") "replace" "x"}
+                     {"path" p "from_anchor" (patch/line-anchor 3 "ALSOWRONG") "replace" "y"}])
+           msg (:message r)]
 
           (expect (false? (:success? r)))
           (expect (= 2 (count (:failures r))))
@@ -3635,10 +3810,11 @@
           (expect (string/includes? msg "edit 0"))
           (expect (string/includes? msg "edit 1")))) ;; the later edit is visible now
     (it "GROUPS same-cause failures into ONE root-cause headline, not N paragraphs"
-        (let [p (write-temp! "pmf/b.txt" "alpha\nbeta\ngamma\n")
-              r (patch [{"path" p "from_anchor" (patch/line-anchor 1 "WRONGA") "replace" "x"}
-                        {"path" p "from_anchor" (patch/line-anchor 3 "WRONGB") "replace" "y"}])
-              msg (:message r)]
+        (let
+          [p (write-temp! "pmf/b.txt" "alpha\nbeta\ngamma\n")
+           r (patch [{"path" p "from_anchor" (patch/line-anchor 1 "WRONGA") "replace" "x"}
+                     {"path" p "from_anchor" (patch/line-anchor 3 "WRONGB") "replace" "y"}])
+           msg (:message r)]
 
           ;; Both edits fail for the SAME reason (stale anchors), so the root-cause
           ;; sentence appears ONCE with both edits named in the compact list —
@@ -3660,14 +3836,15 @@
 
 (defdescribe empty-search-paths-default-test
              "grep scopes are directories; empty scope still means the workspace root."
-             (let [coerce-find
-                   (private-fn "coerce-find-spec")
+             (let
+               [coerce-find
+                (private-fn "coerce-find-spec")
 
-                   coerce-rg
-                   (private-fn "coerce-rg-spec")
+                coerce-rg
+                (private-fn "coerce-rg-spec")
 
-                   find-paths
-                   (private-fn "find-arg-paths")]
+                find-paths
+                (private-fn "find-arg-paths")]
 
                (it
                  "grep defaults empty paths to current directory in validation and path protection"
@@ -3675,17 +3852,18 @@
                    (expect (= ["."] (:paths (coerce-find [spec]))))
                    (expect (= ["."] (find-paths [spec])))))
                (it "normalizes an existing filename scope to its parent directory everywhere"
-                   (let [dir
-                         (temp-dir-path "find-dir-scope")
+                   (let
+                     [dir
+                      (temp-dir-path "find-dir-scope")
 
-                         file
-                         (str dir "/one.clj")
+                      file
+                      (str dir "/one.clj")
 
-                         expected
-                         ((private-fn "rel-path") (fs/file dir))
+                      expected
+                      ((private-fn "rel-path") (fs/file dir))
 
-                         spec
-                         {"query" "needle" "paths" [file]}]
+                      spec
+                      {"query" "needle" "paths" [file]}]
 
                      (spit (fs/file file) "needle\n")
                      (expect (= [expected] (:paths (coerce-find [spec]))))
@@ -3704,25 +3882,27 @@
 (defdescribe find-files-directory-scope-test
              (let [find-files (private-fn "grep-tool")]
                (it "does not widen an existing filename scope to its parent on zero content hits"
-                   (let [dir (temp-dir-path "find-file-parent")
-                         scoped-file (str dir "/scope.clj")
-                         sibling-file (str dir "/sibling.clj")
-                         _ (spit (fs/file scoped-file) "before\nnot-it\nafter\n")
-                         _ (spit (fs/file sibling-file) "before\nsibling-only-needle\nafter\n")
-                         result (:result (find-files {"query" "sibling-only-needle"
-                                                      "paths" [scoped-file]}))]
+                   (let
+                     [dir (temp-dir-path "find-file-parent")
+                      scoped-file (str dir "/scope.clj")
+                      sibling-file (str dir "/sibling.clj")
+                      _ (spit (fs/file scoped-file) "before\nnot-it\nafter\n")
+                      _ (spit (fs/file sibling-file) "before\nsibling-only-needle\nafter\n")
+                      result (:result (find-files {"query" "sibling-only-needle"
+                                                   "paths" [scoped-file]}))]
 
                      (expect (= 0 (get result "hit_count")))
                      (expect (= {} (get result "matches")))
                      (expect (nil? (get result "first_hit")))
                      (expect (= [] (get result "missing_paths")))))
                (it "uses an empty query as grep's ls mode without attempting content search"
-                   (let [_ (write-temp! "grep-ls/one.clj" ";; a\n")
-                         _ (write-temp! "grep-ls/two.md" "# b\n")
-                         _ (write-temp! "grep-ls/sub/three.txt" "c\n")
-                         dir (temp-dir-path "grep-ls")
-                         result (:result (find-files {"query" "" "paths" [dir] "limit" 10}))
-                         names (set (map #(last (string/split % #"/")) (get result "paths")))]
+                   (let
+                     [_ (write-temp! "grep-ls/one.clj" ";; a\n")
+                      _ (write-temp! "grep-ls/two.md" "# b\n")
+                      _ (write-temp! "grep-ls/sub/three.txt" "c\n")
+                      dir (temp-dir-path "grep-ls")
+                      result (:result (find-files {"query" "" "paths" [dir] "limit" 10}))
+                      names (set (map #(last (string/split % #"/")) (get result "paths")))]
 
                      (expect (= "" (get result "query")))
                      (expect (= #{"one.clj" "two.md" "three.txt"} names))
@@ -3736,32 +3916,35 @@
   "`searched_paths` reports every physical root actually searched, not the
    caller's shorthand `.` that expanded into those roots."
   (it "expands the default scope into the primary and searchable workspace roots"
-      (let [grep-tool
-            (private-fn "grep-tool")
+      (let
+        [grep-tool
+         (private-fn "grep-tool")
 
-            rel-path
-            (private-fn "rel-path")
+         rel-path
+         (private-fn "rel-path")
 
-            parent
-            (temp-dir-path "grep-reported-roots")
+         parent
+         (temp-dir-path "grep-reported-roots")
 
-            primary
-            (str parent "/primary")
+         primary
+         (str parent "/primary")
 
-            sibling
-            (str parent "/sibling")]
+         sibling
+         (str parent "/sibling")]
 
         (doseq [dir [primary sibling]]
           (fs/create-dirs dir))
         (spit (fs/file primary "one.txt") "primary\n")
         (spit (fs/file sibling "two.txt") "sibling\n")
         (binding [workspace/*workspace-root* (java.io.File. primary)]
-          (with-redefs [workspace/allowed-roots (constantly [primary sibling])
-                        workspace/no-search-roots (constantly #{})
-                        workspace/filesystem-root-mappings (constantly [])]
+          (with-redefs
+            [workspace/allowed-roots (constantly [primary sibling])
+             workspace/no-search-roots (constantly #{})
+             workspace/filesystem-root-mappings (constantly [])]
 
-            (let [result (:result (grep-tool {"query" ""}))
-                  expected (mapv rel-path (map fs/file [primary sibling]))]
+            (let
+              [result (:result (grep-tool {"query" ""}))
+               expected (mapv rel-path (map fs/file [primary sibling]))]
 
               (expect (= expected (get result "searched_paths")))
               (expect (not= ["."] (get result "searched_paths")))))))))
@@ -3773,18 +3956,20 @@
    NAME list's, so it read `end_of_results` while files were dropped), and an
    rg-style REGEX query returned zero content hits with no word about the
    dialect — both invite the caller to re-run cosmetic variants forever."
-  (let [content-result
-        (private-fn "content-result")
+  (let
+    [content-result
+     (private-fn "content-result")
 
-        find-files
-        (private-fn "grep-tool")]
+     find-files
+     (private-fn "grep-tool")]
 
     (it "a content sweep capped by the hit limit reports hits_truncated_by"
-        (let [out (content-result {:hits [{:path "a.clj" :line 1 :text "x"}]
-                                   :truncated-by :limit
-                                   :total-file-count 42
-                                   :total-file-count-exact? true}
-                                  ["x"])]
+        (let
+          [out (content-result {:hits [{:path "a.clj" :line 1 :text "x"}]
+                                :truncated-by :limit
+                                :total-file-count 42
+                                :total-file-count-exact? true}
+                               ["x"])]
           (expect (= "limit" (get out "hits_truncated_by")))
           (expect (= 42 (get out "total_file_count")))))
     (it "a byte-budget cap is reported too"
@@ -3796,49 +3981,53 @@
                                         ["x"])
                         "hits_truncated_by"))))
     (it "a COMPLETE content sweep still SHIPS hits_truncated_by, as null"
-        (let [r (content-result {:hits [{:path "a.clj" :line 1 :text "x"}]
-                                 :truncated-by :end-of-results
-                                 :total-file-count 1
-                                 :total-file-count-exact? true}
-                                ["x"])]
+        (let
+          [r (content-result {:hits [{:path "a.clj" :line 1 :text "x"}]
+                              :truncated-by :end-of-results
+                              :total-file-count 1
+                              :total-file-count-exact? true}
+                             ["x"])]
           ;; TOTAL result: the key is a VALUE test, never a `contains?` test.
           (expect (contains? r "hits_truncated_by"))
           (expect (nil? (get r "hits_truncated_by")))
           (expect (true? (get r "total_file_count_is_exact")))
           (expect (= 1 (get r "total_file_count")))))
     (it "a regex-looking query that matches no CONTENT says the search is literal"
-        (let [_
-              (write-temp! "grep-regex/needle.clj" "(defn needle [] :ok)\n")
+        (let
+          [_
+           (write-temp! "grep-regex/needle.clj" "(defn needle [] :ok)\n")
 
-              dir
-              (temp-dir-path "grep-regex")
+           dir
+           (temp-dir-path "grep-regex")
 
-              result
-              (:result (find-files {"query" "defn-? +needle" "paths" [dir]}))]
+           result
+           (:result (find-files {"query" "defn-? +needle" "paths" [dir]}))]
 
           (expect (= 0 (get result "hit_count")))
           (expect (string/includes? (get result "hint") "LITERAL"))))
     (it "a plain literal query that matches nothing keeps the ordinary hint"
-        (let [_
-              (write-temp! "grep-plain/needle.clj" "(defn needle [] :ok)\n")
+        (let
+          [_
+           (write-temp! "grep-plain/needle.clj" "(defn needle [] :ok)\n")
 
-              dir
-              (temp-dir-path "grep-plain")
+           dir
+           (temp-dir-path "grep-plain")
 
-              result
-              (:result (find-files {"query" "zzz-absent-symbol" "paths" [dir]}))]
+           result
+           (:result (find-files {"query" "zzz-absent-symbol" "paths" [dir]}))]
 
           (expect (= 0 (get result "hit_count")))
           (expect (not (string/includes? (get result "hint") "LITERAL")))))
     (it "a literal query that DOES match content gets no hint"
-        (let [_
-              (write-temp! "grep-ok/needle.clj" "(defn needle [] :ok)\n")
+        (let
+          [_
+           (write-temp! "grep-ok/needle.clj" "(defn needle [] :ok)\n")
 
-              dir
-              (temp-dir-path "grep-ok")
+           dir
+           (temp-dir-path "grep-ok")
 
-              result
-              (:result (find-files {"query" "defn needle" "paths" [dir]}))]
+           result
+           (:result (find-files {"query" "defn needle" "paths" [dir]}))]
 
           (expect (pos? (get result "hit_count")))
           (expect (nil? (get result "hint")))))))
@@ -3879,21 +4068,23 @@
    matches with no score (query \"lmstudio\" alone hit 108/489 unrelated paths).
    find-search must post-filter fff's candidates by per-token relevance so only
    genuine hits survive — while staying typo-tolerant and word-order-insensitive."
-  (let [relevance
-        (private-fn "find-relevance")
+  (let
+    [relevance
+     (private-fn "find-relevance")
 
-        min-score
-        (private-fn "find-min-score")
+     min-score
+     (private-fn "find-min-score")
 
-        find-search
-        (private-fn "find-search")]
+     find-search
+     (private-fn "find-search")]
 
     (it "scores a genuine filename hit far above scattered subsequence noise"
-        (let [genuine
-              (relevance "lmstudio" "a/b/provider_lmstudio.clj")
+        (let
+          [genuine
+           (relevance "lmstudio" "a/b/provider_lmstudio.clj")
 
-              noise
-              (relevance "lmstudio" "extensions/common/foundation_git/src/merge_ops.clj")]
+           noise
+           (relevance "lmstudio" "extensions/common/foundation_git/src/merge_ops.clj")]
 
           (expect (>= genuine min-score))
           (expect (< noise min-score))
@@ -3908,26 +4099,27 @@
         ;; "wrkspace" is a subsequence of "workspace" — tight window, kept.
         (expect (>= (relevance "wrkspace" "src/internal/workspace.clj") min-score)))
     (it "find-search returns only genuine hits and drops the fuzzy padding"
-        (let [_
-              (write-temp! "findrel/provider_lmstudio.clj" ";; genuine\n")
+        (let
+          [_
+           (write-temp! "findrel/provider_lmstudio.clj" ";; genuine\n")
 
-              _
-              (write-temp! "findrel/provider_openai.clj" ";; noise\n")
+           _
+           (write-temp! "findrel/provider_openai.clj" ";; noise\n")
 
-              _
-              (write-temp! "findrel/foundation_voice_asr.clj" ";; noise\n")
+           _
+           (write-temp! "findrel/foundation_voice_asr.clj" ";; noise\n")
 
-              _
-              (write-temp! "findrel/foundation_git_merge_ops.clj" ";; noise\n")
+           _
+           (write-temp! "findrel/foundation_git_merge_ops.clj" ";; noise\n")
 
-              dir
-              (temp-dir-path "findrel")
+           dir
+           (temp-dir-path "findrel")
 
-              out
-              (find-search [{"query" "lmstudio" "paths" [dir]}])
+           out
+           (find-search [{"query" "lmstudio" "paths" [dir]}])
 
-              names
-              (set (map #(last (string/split % #"/")) (get out "paths")))]
+           names
+           (set (map #(last (string/split % #"/")) (get out "paths")))]
 
           ;; the genuine file is found
           (expect (contains? names "provider_lmstudio.clj"))
@@ -3946,12 +4138,13 @@
    files by exact-name bullseye then coverage."
   (let [find-search (private-fn "find-search")]
     (it "a conceptual phrase surfaces the exact-name file the strict MIN pass dropped"
-        (let [_ (write-temp! "findfuzz/render.clj" ";; the visualization renderer\n")
-              _ (write-temp! "findfuzz/native_tool_handlers.md" "# native tool docs\n")
-              _ (write-temp! "findfuzz/unrelated_widget.clj" ";; nope\n")
-              dir (temp-dir-path "findfuzz")
-              out (find-search [{"query" "native tool call visualization render" "paths" [dir]}])
-              names (mapv #(last (string/split % #"/")) (get out "paths"))]
+        (let
+          [_ (write-temp! "findfuzz/render.clj" ";; the visualization renderer\n")
+           _ (write-temp! "findfuzz/native_tool_handlers.md" "# native tool docs\n")
+           _ (write-temp! "findfuzz/unrelated_widget.clj" ";; nope\n")
+           dir (temp-dir-path "findfuzz")
+           out (find-search [{"query" "native tool call visualization render" "paths" [dir]}])
+           names (mapv #(last (string/split % #"/")) (get out "paths"))]
 
           ;; strict MIN would need ALL five words in one path → nothing; fuzzy saves it
           (expect (true? (get out "fuzzy")))
@@ -3964,20 +4157,22 @@
           ;; a file matching NONE of the terms is not dragged in
           (expect (not (some #{"unrelated_widget.clj"} names)))))
     (it "a precise query that the strict MIN pass satisfies stays NON-fuzzy"
-        (let [_ (write-temp! "findprecise/channel_tui_footer.clj" ";; footer\n")
-              dir (temp-dir-path "findprecise")
-              out (find-search [{"query" "channel tui footer" "paths" [dir]}])]
+        (let
+          [_ (write-temp! "findprecise/channel_tui_footer.clj" ";; footer\n")
+           dir (temp-dir-path "findprecise")
+           out (find-search [{"query" "channel tui footer" "paths" [dir]}])]
 
           (expect (false? (get out "fuzzy")))
           (expect (some #{"channel_tui_footer.clj"}
                         (map #(last (string/split % #"/")) (get out "paths"))))))
     (it "a BLANK query lists every file under the paths like ls (no scoring)"
-        (let [_ (write-temp! "findls/one.clj" ";; a\n")
-              _ (write-temp! "findls/two.md" "# b\n")
-              _ (write-temp! "findls/sub/three.txt" "c\n")
-              dir (temp-dir-path "findls")
-              out (find-search [{"paths" [dir]}])
-              names (set (map #(last (string/split % #"/")) (get out "paths")))]
+        (let
+          [_ (write-temp! "findls/one.clj" ";; a\n")
+           _ (write-temp! "findls/two.md" "# b\n")
+           _ (write-temp! "findls/sub/three.txt" "c\n")
+           dir (temp-dir-path "findls")
+           out (find-search [{"paths" [dir]}])
+           names (set (map #(last (string/split % #"/")) (get out "paths")))]
 
           (expect (= "" (get out "query")))
           (expect (false? (get out "fuzzy")))
@@ -3986,14 +4181,15 @@
           (expect (= #{"one.clj" "two.md" "three.txt"} names))
           (expect (every? #(get % "path") (get out "items")))))
     (it "EVERY grep result carries the SAME TOTAL key set — hit, miss, ls, stale scope"
-        (let [gt (private-fn "grep-tool")
-              _ (write-temp! "greptotal/one.clj" ";; needle-total\n")
-              dir (temp-dir-path "greptotal")
-              ks #(set (keys (:result %)))
-              hit (gt {"query" "needle-total" "paths" [dir]})
-              miss (gt {"query" "zzz-nothing-here-xyz" "paths" [dir]})
-              ls (gt {"query" "" "paths" [dir]})
-              stale (gt {"query" "needle-total" "paths" [(str dir "/gone/deeper.clj")]})]
+        (let
+          [gt (private-fn "grep-tool")
+           _ (write-temp! "greptotal/one.clj" ";; needle-total\n")
+           dir (temp-dir-path "greptotal")
+           ks #(set (keys (:result %)))
+           hit (gt {"query" "needle-total" "paths" [dir]})
+           miss (gt {"query" "zzz-nothing-here-xyz" "paths" [dir]})
+           ls (gt {"query" "" "paths" [dir]})
+           stale (gt {"query" "needle-total" "paths" [(str dir "/gone/deeper.clj")]})]
 
           ;; One shape for every outcome: caller code indexes a field instead of
           ;; probing for it, so a nil-valued signal can never read as a tool bug.
@@ -4005,9 +4201,10 @@
           (expect (= [] (get-in hit [:result "missing_paths"])))
           (expect (seq (get-in stale [:result "missing_paths"])))))
     (it "a genuinely-unmatchable query still returns nothing (fuzzy can't invent hits)"
-        (let [_ (write-temp! "findnone/alpha.clj" ";; x\n")
-              dir (temp-dir-path "findnone")
-              out (find-search [{"query" "zzzqqq wwwvvv" "paths" [dir]}])]
+        (let
+          [_ (write-temp! "findnone/alpha.clj" ";; x\n")
+           dir (temp-dir-path "findnone")
+           out (find-search [{"query" "zzzqqq wwwvvv" "paths" [dir]}])]
 
           (expect (zero? (get out "item_count")))))))
 
@@ -4021,14 +4218,15 @@
    `result-card` collapsible in the TUI/Web."
   (let [render (private-fn "render-grep-result")]
     (it "content hits: the headline counts them and the body shows anchored lines"
-        (let [{:keys [summary body]} (render {"query" "needle"
-                                              "needles" ["needle"]
-                                              "paths" []
-                                              "hit_count" 2
-                                              "file_count" 1
-                                              "matches" {"src/a.clj"
-                                                         {"12:abc" {"text" "(def needle 1)"}
-                                                          "7:def" {"text" ";; needle here"}}}})]
+        (let
+          [{:keys [summary body]} (render {"query" "needle"
+                                           "needles" ["needle"]
+                                           "paths" []
+                                           "hit_count" 2
+                                           "file_count" 1
+                                           "matches" {"src/a.clj"
+                                                      {"12:abc" {"text" "(def needle 1)"}
+                                                       "7:def" {"text" ";; needle here"}}}})]
           (expect (string/includes? summary "2 hits in 1 file"))
           (expect (string/includes? summary "`needle`"))
           ;; hits are line-ordered, not map-ordered
@@ -4036,48 +4234,50 @@
           (expect (string/includes? (str body) "src/a.clj"))
           (expect (string/includes? (str body) "(def "))))
     (it "context lines ride the same gutter block"
-        (let [{:keys [body]} (render {"query" "needle"
-                                      "needles" ["needle"]
-                                      "hit_count" 1
-                                      "file_count" 1
-                                      "matches" {"src/a.clj"
-                                                 {"12:abc"
-                                                  {"text" "hit line"
-                                                   "before" [{"line" 11 "text" "ctx before"}]
-                                                   "after" [{"line" 13 "text" "ctx after"}]}}}})]
+        (let
+          [{:keys [body]}
+           (render {"query" "needle"
+                    "needles" ["needle"]
+                    "hit_count" 1
+                    "file_count" 1
+                    "matches" {"src/a.clj" {"12:abc" {"text" "hit line"
+                                                      "before" [{"line" 11 "text" "ctx before"}]
+                                                      "after" [{"line" 13 "text" "ctx after"}]}}}})]
           (expect (string/includes? (str body) "ctx before"))
           (expect (string/includes? (str body) "ctx after"))
           (expect (string/includes? (str body) "hit line"))))
     (it "no content hits: ranked file NAMES are the answer and ride the body"
-        (let [{:keys [summary body]}
-              (render
-                {"query" "resource config"
-                 "hit_count" 0
-                 "file_count" 0
-                 "matches" {}
-                 "paths"
-                 ["resources/META-INF/native-image/com.blockether/spel/resource-config.json"]})]
+        (let
+          [{:keys [summary body]}
+           (render {"query" "resource config"
+                    "hit_count" 0
+                    "file_count" 0
+                    "matches" {}
+                    "paths"
+                    ["resources/META-INF/native-image/com.blockether/spel/resource-config.json"]})]
           (expect (string/includes? summary "1 file name"))
           (expect (string/includes?
                     (str body)
                     "resources/META-INF/native-image/com.blockether/spel/resource-config.json"))))
     (it "zero matches: the filename-vs-content steer still rides the body"
-        (let [{:keys [summary body]}
-              (render
-                {"query" "zzz" "hit_count" 0 "matches" {} "paths" [] "hint" "No FILENAME matched"})]
+        (let
+          [{:keys [summary body]}
+           (render
+             {"query" "zzz" "hit_count" 0 "matches" {} "paths" [] "hint" "No FILENAME matched"})]
           (expect (string/includes? summary "no matches"))
           (expect (string/includes? (str body) "No FILENAME matched"))))
     (it "an explicit `searched_paths` scope is named on the headline; default `.` is not"
-        (let [scoped (render {"query" "render"
-                              "hit_count" 0
-                              "matches" {}
-                              "paths" ["src/render.clj"]
-                              "searched_paths" ["src"]})
-              default (render {"query" "render"
-                               "hit_count" 0
-                               "matches" {}
-                               "paths" ["render.clj"]
-                               "searched_paths" ["."]})]
+        (let
+          [scoped (render {"query" "render"
+                           "hit_count" 0
+                           "matches" {}
+                           "paths" ["src/render.clj"]
+                           "searched_paths" ["src"]})
+           default (render {"query" "render"
+                            "hit_count" 0
+                            "matches" {}
+                            "paths" ["render.clj"]
+                            "searched_paths" ["."]})]
 
           (expect (string/includes? (:summary scoped) "in `src`"))
           (expect (not (string/includes? (:summary default) "in `")))))))
@@ -4086,17 +4286,19 @@
   structural-tool-gating-test
   "The tree-sitter STRUCTURAL editors are advertised ONLY when the project has
    structurally-supported code; a docs/config repo hides them, and it FAILS OPEN."
-  (let [active?
-        (fn [sym langs]
-          (with-redefs [environment/snapshot (fn []
-                                               {:languages {:languages (mapv (fn [l]
-                                                                               {:language l})
-                                                                             langs)}})]
-            (extension/symbol-active? sym nil)))
+  (let
+    [active?
+     (fn [sym langs]
+       (with-redefs
+         [environment/snapshot (fn []
+                                 {:languages {:languages (mapv (fn [l]
+                                                                 {:language l})
+                                                               langs)}})]
+         (extension/symbol-active? sym nil)))
 
-        struct-syms
-        [editing/struct-patch-symbol editing/index-symbol editing/occurrences-symbol
-         editing/symbol-rename-symbol editing/sexpr-symbol]]
+     struct-syms
+     [editing/struct-patch-symbol editing/index-symbol editing/occurrences-symbol
+      editing/symbol-rename-symbol editing/sexpr-symbol]]
 
     (it "a Clojure project advertises every structural editor"
         (doseq [s struct-syms]
@@ -4106,12 +4308,14 @@
           (expect (false? (active? s ["markdown" "text"]))))
         (doseq [s [editing/cat-symbol editing/grep-symbol]]
           (expect (true? (active? s ["markdown" "text"]))))
-        (with-redefs [environment/snapshot (fn []
-                                             {:languages {:languages [{:language "markdown"}
-                                                                      {:language "text"}]}})]
+        (with-redefs
+          [environment/snapshot (fn []
+                                  {:languages {:languages [{:language "markdown"}
+                                                           {:language "text"}]}})]
           (let [prompt (editing/available-editing-prompt)]
-            (doseq [name ["struct_index" "struct_patch" "struct_node" "struct_occurrences"
-                          "struct_rename"]]
+            (doseq
+              [name ["struct_index" "struct_patch" "struct_node" "struct_occurrences"
+                     "struct_rename"]]
               (expect (not (string/includes? prompt name)))))))
     (it "a mixed repo with ANY supported language keeps them (markdown + json)"
         (expect (true? (active? editing/struct-patch-symbol ["markdown" "json"]))))
@@ -4119,8 +4323,9 @@
         (expect (true? (active? editing/struct-patch-symbol ["shell"]))))
     (it "FAILS OPEN on an empty/unknown scan or a scan error"
         (expect (true? (active? editing/struct-patch-symbol [])))
-        (with-redefs [environment/snapshot (fn []
-                                             (throw (ex-info "boom" {})))]
+        (with-redefs
+          [environment/snapshot (fn []
+                                  (throw (ex-info "boom" {})))]
           (expect (true? (extension/symbol-active? editing/struct-patch-symbol nil)))))))
 
 (defdescribe
@@ -4130,30 +4335,32 @@
   ;; big tree and, with no interrupt checkpoint in the sort, kept burning long
   ;; AFTER cancellation (the 400%-CPU orphaned-gateway regression). The sort key
   ;; is now computed ONCE per walked file with a `check-interrupt!` poll.
-  (let [grep
-        (private-fn "rg-search")
+  (let
+    [grep
+     (private-fn "rg-search")
 
-        rel-path-var
-        (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" "rel-path"))
+     rel-path-var
+     (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" "rel-path"))
 
-        corpus!
-        (fn [dir n]
-          (dotimes [i n]
-            (write-temp! (format "%s/f%02d.txt" dir i) (if (zero? i) "alpha\n" "nothing here\n")))
-          (temp-dir-path dir))]
+     corpus!
+     (fn [dir n]
+       (dotimes [i n]
+         (write-temp! (format "%s/f%02d.txt" dir i) (if (zero? i) "alpha\n" "nothing here\n")))
+       (temp-dir-path dir))]
 
     (it "computes the sort key O(n) — once per walked file, not once per comparison"
-        (let [n
-              40
+        (let
+          [n
+           40
 
-              path
-              (corpus! "rgsortcalls" n)
+           path
+           (corpus! "rgsortcalls" n)
 
-              orig
-              @rel-path-var
+           orig
+           @rel-path-var
 
-              calls
-              (atom 0)]
+           calls
+           (atom 0)]
 
           (with-redefs-fn {rel-path-var (fn [f]
                                           (swap! calls inc)
@@ -4164,24 +4371,26 @@
           (expect (<= @calls (* 2 n)))))
     (it
       "the sort-key sweep polls check-interrupt! so a cancelled turn aborts instead of grinding on"
-      (let [path
-            (corpus! "rgsortint" 8)
+      (let
+        [path
+         (corpus! "rgsortint" 8)
 
-            orig
-            @rel-path-var
+         orig
+         @rel-path-var
 
-            first-call
-            (atom true)]
+         first-call
+         (atom true)]
 
-        (try (let [thrown (try (with-redefs-fn {rel-path-var
-                                                (fn [f]
-                                                  ;; simulate cancel! landing mid-sweep
-                                                  (when (compare-and-set! first-call true false)
-                                                    (.interrupt (Thread/currentThread)))
-                                                  (orig f))}
-                                 #(grep {"query" ["alpha"] "paths" [path]}))
-                               nil
-                               (catch InterruptedException e e))]
+        (try (let
+               [thrown (try (with-redefs-fn {rel-path-var
+                                             (fn [f]
+                                               ;; simulate cancel! landing mid-sweep
+                                               (when (compare-and-set! first-call true false)
+                                                 (.interrupt (Thread/currentThread)))
+                                               (orig f))}
+                              #(grep {"query" ["alpha"] "paths" [path]}))
+                            nil
+                            (catch InterruptedException e e))]
                (expect (some? thrown)))
              (finally
                ;; never leak the interrupt flag into the test runner
@@ -4193,46 +4402,49 @@
   ;; check-interrupt! poll, so a cancelled turn kept scanning to the end
   ;; (same class as the sort-key burn, just usually shorter-lived). Both
   ;; output modes now poll per candidate file.
-  (let [grep
-        (private-fn "rg-search")
+  (let
+    [grep
+     (private-fn "rg-search")
 
-        core-var
-        (fn [n]
-          (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" n)))
+     core-var
+     (fn [n]
+       (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" n)))
 
-        corpus!
-        (fn [dir]
-          (dotimes [i 4]
-            (write-temp! (format "%s/f%d.txt" dir i) "alpha\n"))
-          (temp-dir-path dir))
+     corpus!
+     (fn [dir]
+       (dotimes [i 4]
+         (write-temp! (format "%s/f%d.txt" dir i) "alpha\n"))
+       (temp-dir-path dir))
 
-        interrupt-on-first-call
-        ;; wrap a scan fn: first call interrupts the CURRENT thread (simulating
-        ;; cancel! landing mid-scan), every call delegates to a cheap stub
-        (fn [stub]
-          (let [first-call (atom true)]
-            (fn [& args]
-              (when (compare-and-set! first-call true false) (.interrupt (Thread/currentThread)))
-              (apply stub args))))]
+     interrupt-on-first-call
+     ;; wrap a scan fn: first call interrupts the CURRENT thread (simulating
+     ;; cancel! landing mid-scan), every call delegates to a cheap stub
+     (fn [stub]
+       (let [first-call (atom true)]
+         (fn [& args]
+           (when (compare-and-set! first-call true false) (.interrupt (Thread/currentThread)))
+           (apply stub args))))]
 
     (it "files-only scan aborts on interrupt instead of scanning to the end"
         (let [path (corpus! "rgscanintfo")]
-          (try (let [thrown (try (with-redefs-fn {(core-var "file-has-any-hit?")
-                                                  (interrupt-on-first-call (fn [_ _]
-                                                                             false))}
-                                   #(grep {"query" ["alpha"] "paths" [path] "is_files_only" true}))
-                                 nil
-                                 (catch InterruptedException e e))]
+          (try (let
+                 [thrown (try (with-redefs-fn {(core-var "file-has-any-hit?")
+                                               (interrupt-on-first-call (fn [_ _]
+                                                                          false))}
+                                #(grep {"query" ["alpha"] "paths" [path] "is_files_only" true}))
+                              nil
+                              (catch InterruptedException e e))]
                  (expect (some? thrown)))
                (finally (Thread/interrupted)))))
     (it "content scan aborts on interrupt instead of scanning to the end"
         (let [path (corpus! "rgscanintc")]
-          (try (let [thrown (try (with-redefs-fn {(core-var "search-file-content")
-                                                  (interrupt-on-first-call (fn [_ _ _ _]
-                                                                             []))}
-                                   #(grep {"query" ["alpha"] "paths" [path]}))
-                                 nil
-                                 (catch InterruptedException e e))]
+          (try (let
+                 [thrown (try (with-redefs-fn {(core-var "search-file-content")
+                                               (interrupt-on-first-call (fn [_ _ _ _]
+                                                                          []))}
+                                #(grep {"query" ["alpha"] "paths" [path]}))
+                              nil
+                              (catch InterruptedException e e))]
                  (expect (some? thrown)))
                (finally (Thread/interrupted)))))))
 
@@ -4243,21 +4455,22 @@
   ;; passing is_respect_gitignore=false. That flag is handed THROUGH to fff
   ;; (`:respect-ignore-files? false`), so both rg and find_files stay on the
   ;; native index — no raw filesystem walk anywhere on the opt-out path.
-  (let [grep
-        (private-fn "rg-search")
+  (let
+    [grep
+     (private-fn "rg-search")
 
-        core-var
-        (fn [n]
-          (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" n)))
+     core-var
+     (fn [n]
+       (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" n)))
 
-        find-search
-        (private-fn "find-search")
+     find-search
+     (private-fn "find-search")
 
-        fixture!
-        (fn [dir]
-          (write-temp! (str dir "/.gitignore") "vendor/\n")
-          (write-temp! (str dir "/vendor/corp/secret.txt") "NEEDLE_TOKEN here\n")
-          (temp-dir-path dir))]
+     fixture!
+     (fn [dir]
+       (write-temp! (str dir "/.gitignore") "vendor/\n")
+       (write-temp! (str dir "/vendor/corp/secret.txt") "NEEDLE_TOKEN here\n")
+       (temp-dir-path dir))]
 
     (it "rg hides the ignored file by default and reveals it with the override"
         (let [path (fixture! "gitignore-override-rg")]
@@ -4273,11 +4486,12 @@
       ;; with `:respect-ignore-files? false`, so it already contains the
       ;; ignored file. There is no Clojure walk left to fall back to — the
       ;; former `find-walk-files` escape hatch is deleted.
-      (let [path
-            (fixture! "gitignore-override-walkonce")
+      (let
+        [path
+         (fixture! "gitignore-override-walkonce")
 
-            r
-            (find-search [{"query" "secret token" "paths" [path] "is_respect_gitignore" false}])]
+         r
+         (find-search [{"query" "secret token" "paths" [path] "is_respect_gitignore" false}])]
 
         (expect (nil? (core-var "find-walk-files")))
         ;; the fallback still surfaces the file via the "secret" token
@@ -4295,18 +4509,19 @@
         ;; Opting out of .gitignore must not drag VCS internals in: a file buried
         ;; in a dot-prefixed .git dir stays invisible because the is_hidden gate
         ;; (default false) prunes hidden dirs during the walk.
-        (let [dir
-              "gitignore-override-gitdir"
+        (let
+          [dir
+           "gitignore-override-gitdir"
 
-              path
-              (fixture! dir)
+           path
+           (fixture! dir)
 
-              _
-              (write-temp! (str dir "/vendor/corp/.git/config_secret.txt") "x\n")
+           _
+           (write-temp! (str dir "/vendor/corp/.git/config_secret.txt") "x\n")
 
-              paths-of
-              (fn [spec]
-                (get (find-search [spec]) "paths"))]
+           paths-of
+           (fn [spec]
+             (get (find-search [spec]) "paths"))]
 
           ;; the tracked (gitignored) file IS reachable with the override ...
           (expect (some #(string/includes? % "vendor/corp/secret.txt")
@@ -4315,12 +4530,13 @@
           (expect (empty? (paths-of
                             {"query" "config" "paths" [path] "is_respect_gitignore" false})))))
     (it "find_files hides the ignored file by default and reveals it with the override"
-        (let [path
-              (fixture! "gitignore-override-find")
+        (let
+          [path
+           (fixture! "gitignore-override-find")
 
-              paths-of
-              (fn [spec]
-                (get (find-search [spec]) "paths"))]
+           paths-of
+           (fn [spec]
+             (get (find-search [spec]) "paths"))]
 
           (expect (empty? (paths-of {"query" "secret" "paths" [path]})))
           (let [hit (paths-of {"query" "secret" "paths" [path] "is_respect_gitignore" false})]
@@ -4335,73 +4551,77 @@
   ;; higher-precedence rule (incl. a re-ignore) wins. fff's index only knows
   ;; .gitignore, so both tools must bypass it when a tool-only ignore file is
   ;; present or the `!` would never surface.
-  (let [grep
-        (private-fn "rg-search")
+  (let
+    [grep
+     (private-fn "rg-search")
 
-        find-search
-        (private-fn "find-search")
+     find-search
+     (private-fn "find-search")
 
-        rg-files
-        (fn [path]
-          (:files (grep {"query" ["NEEDLE_TOKEN"] "paths" [path] "is_files_only" true})))
+     rg-files
+     (fn [path]
+       (:files (grep {"query" ["NEEDLE_TOKEN"] "paths" [path] "is_files_only" true})))
 
-        find-paths
-        (fn [path]
-          (get (find-search [{"query" "secret" "paths" [path]}]) "paths"))
+     find-paths
+     (fn [path]
+       (get (find-search [{"query" "secret" "paths" [path]}]) "paths"))
 
-        has?
-        (fn [coll frag]
-          (boolean (some #(string/includes? % frag) coll)))]
+     has?
+     (fn [coll frag]
+       (boolean (some #(string/includes? % frag) coll)))]
 
-    (it "a `!` in .ignore re-includes a .gitignore'd dir for rg AND find_files (default flag)"
-        (let [dir
-              "tool-ignore-neg-include"
+    (it
+      "a `!` in .ignore re-includes a .gitignore'd dir for rg AND find_files (default flag)"
+      (let
+        [dir
+         "tool-ignore-neg-include"
 
-              ;; This fixture is reused across test invocations. Remove the
-              ;; prior run's tool-only ignore file before asserting the default
-              ;; `.gitignore` behavior.
-              _
-              (fs/delete-if-exists (fs/file (str (temp-dir-path dir) "/.ignore")))
+         ;; This fixture is reused across test invocations. Remove the
+         ;; prior run's tool-only ignore file before asserting the default
+         ;; `.gitignore` behavior.
+         _
+         (fs/delete-if-exists (fs/file (str (temp-dir-path dir) "/.ignore")))
 
-              _
-              (write-temp! (str dir "/.gitignore") "vendor/\n")
+         _
+         (write-temp! (str dir "/.gitignore") "vendor/\n")
 
-              _
-              (write-temp! (str dir "/vendor/corp/secret.txt") "NEEDLE_TOKEN here\n")
+         _
+         (write-temp! (str dir "/vendor/corp/secret.txt") "NEEDLE_TOKEN here\n")
 
-              _
-              (write-temp! (str dir "/tracked.txt") "NEEDLE_TOKEN here\n")
+         _
+         (write-temp! (str dir "/tracked.txt") "NEEDLE_TOKEN here\n")
 
-              path
-              (temp-dir-path dir)]
+         path
+         (temp-dir-path dir)]
 
-          ;; default: no tool-only ignore file yet, so .gitignore hides corp
-          (expect (not (has? (rg-files path) "vendor/corp/secret.txt")))
-          (expect (not (has? (find-paths path) "vendor/corp/secret.txt")))
-          ;; drop a tool-only `.ignore` with a `!` — re-included WITHOUT any flag
-          (write-temp! (str dir "/.ignore") "!vendor/\n")
-          (expect (has? (rg-files path) "vendor/corp/secret.txt"))
-          (expect (has? (find-paths path) "vendor/corp/secret.txt"))
-          ;; the tracked, never-ignored file is reachable the whole time
-          (expect (has? (rg-files path) "tracked.txt"))))
+        ;; default: no tool-only ignore file yet, so .gitignore hides corp
+        (expect (not (has? (rg-files path) "vendor/corp/secret.txt")))
+        (expect (not (has? (find-paths path) "vendor/corp/secret.txt")))
+        ;; drop a tool-only `.ignore` with a `!` — re-included WITHOUT any flag
+        (write-temp! (str dir "/.ignore") "!vendor/\n")
+        (expect (has? (rg-files path) "vendor/corp/secret.txt"))
+        (expect (has? (find-paths path) "vendor/corp/secret.txt"))
+        ;; the tracked, never-ignored file is reachable the whole time
+        (expect (has? (rg-files path) "tracked.txt"))))
     (it ".rgignore outranks .ignore — a higher-precedence re-ignore wins"
-        (let [dir
-              "tool-ignore-neg-precedence"
+        (let
+          [dir
+           "tool-ignore-neg-precedence"
 
-              _
-              (write-temp! (str dir "/.gitignore") "vendor/\n")
+           _
+           (write-temp! (str dir "/.gitignore") "vendor/\n")
 
-              _
-              (write-temp! (str dir "/vendor/corp/secret.txt") "NEEDLE_TOKEN here\n")
+           _
+           (write-temp! (str dir "/vendor/corp/secret.txt") "NEEDLE_TOKEN here\n")
 
-              _
-              (write-temp! (str dir "/.ignore") "!vendor/\n")
+           _
+           (write-temp! (str dir "/.ignore") "!vendor/\n")
 
-              _
-              (write-temp! (str dir "/.rgignore") "vendor/\n")
+           _
+           (write-temp! (str dir "/.rgignore") "vendor/\n")
 
-              path
-              (temp-dir-path dir)]
+           path
+           (temp-dir-path dir)]
 
           (expect (not (has? (rg-files path) "vendor/corp/secret.txt")))
           (expect (not (has? (find-paths path) "vendor/corp/secret.txt")))))))
@@ -4416,47 +4636,47 @@
   ;; while `:always-exclude` (defaults: `.git/`, `node_modules/`, `target/`, …)
   ;; keeps pruning INSIDE the rescued subtree. An EXPLICIT per-call
   ;; is_respect_gitignore — either value — wins over the overlay.
-  (let [grep
-        (private-fn "rg-search")
+  (let
+    [grep
+     (private-fn "rg-search")
 
-        find-search
-        (private-fn "find-search")
+     find-search
+     (private-fn "find-search")
 
-        rg-files
-        (fn [path & [spec-extra]]
-          (:files (grep (merge {"query" ["NEEDLE_TOKEN"] "paths" [path] "is_files_only" true}
-                               spec-extra))))
+     rg-files
+     (fn [path & [spec-extra]]
+       (:files (grep (merge {"query" ["NEEDLE_TOKEN"] "paths" [path] "is_files_only" true}
+                            spec-extra))))
 
-        find-paths
-        (fn [path]
-          (get (find-search [{"query" "secret" "paths" [path]}]) "paths"))
+     find-paths
+     (fn [path]
+       (get (find-search [{"query" "secret" "paths" [path]}]) "paths"))
 
-        has?
-        (fn [coll frag]
-          (boolean (some #(string/includes? % frag) coll)))
+     has?
+     (fn [coll frag]
+       (boolean (some #(string/includes? % frag) coll)))
 
-        overlay!
-        (fn [search-block f]
-          (with-redefs
-            ;; `config/search-overlay` reads the RAW, string-keyed config block.
-            [config/load-config-raw (fn []
-                                      {"search" (cond-> {}
-                                                  (seq (:include-gitignored-paths search-block))
-                                                  (assoc "include_gitignored_paths"
-                                                    (:include-gitignored-paths search-block))
+     overlay!
+     (fn [search-block f]
+       (with-redefs
+         ;; `config/search-overlay` reads the RAW, string-keyed config block.
+         [config/load-config-raw
+          (fn []
+            {"search" (cond-> {}
+                        (seq (:include-gitignored-paths search-block))
+                        (assoc "include_gitignored_paths" (:include-gitignored-paths search-block))
 
-                                                  (seq (:always-exclude search-block))
-                                                  (assoc "always_exclude"
-                                                    (:always-exclude search-block)))})]
-            (f)))
+                        (seq (:always-exclude search-block))
+                        (assoc "always_exclude" (:always-exclude search-block)))})]
+         (f)))
 
-        fixture!
-        (fn [dir]
-          (write-temp! (str dir "/.gitignore") "repositories/\n")
-          (write-temp! (str dir "/repositories/corp/secret.txt") "NEEDLE_TOKEN here\n")
-          (write-temp! (str dir "/repositories/corp/node_modules/dep/secret_dep.txt")
-                       "NEEDLE_TOKEN here\n")
-          (temp-dir-path dir))]
+     fixture!
+     (fn [dir]
+       (write-temp! (str dir "/.gitignore") "repositories/\n")
+       (write-temp! (str dir "/repositories/corp/secret.txt") "NEEDLE_TOKEN here\n")
+       (write-temp! (str dir "/repositories/corp/node_modules/dep/secret_dep.txt")
+                    "NEEDLE_TOKEN here\n")
+       (temp-dir-path dir))]
 
     (it
       "re-includes the configured subtree for rg AND find_files; default :always-exclude still prunes"
@@ -4499,14 +4719,15 @@
   "The bounded-concurrency permit around FRESH fff index scans (rg /
    find_files / occurrences). Bounds the CPU-heavy scan fan-out without
    serializing it, and never leaks a permit."
-  (let [guard
-        (fff-index-fn "with-scan-permit*")
+  (let
+    [guard
+     (fff-index-fn "with-scan-permit*")
 
-        semaphore
-        (fff-index-fn "scan-semaphore")
+     semaphore
+     (fff-index-fn "scan-semaphore")
 
-        permits
-        (fff-index-fn "scan-max-concurrency")]
+     permits
+     (fff-index-fn "scan-max-concurrency")]
 
     (describe
       "with-scan-permit*"
@@ -4515,31 +4736,32 @@
           ;; the live in-flight count while inside. The peak must NEVER exceed
           ;; the permit count (bounded), and must REACH it (real overlap — the
           ;; guard isn't accidentally serializing everything down to 1).
-          (let [n
-                (+ permits 6)
+          (let
+            [n
+             (+ permits 6)
 
-                in-flight
-                (atom 0)
+             in-flight
+             (atom 0)
 
-                peak
-                (atom 0)
+             peak
+             (atom 0)
 
-                start
-                (java.util.concurrent.CountDownLatch. 1)
+             start
+             (java.util.concurrent.CountDownLatch. 1)
 
-                done
-                (java.util.concurrent.CountDownLatch. n)
+             done
+             (java.util.concurrent.CountDownLatch. n)
 
-                workers
-                (mapv (fn [_]
-                        (future (.await start)
-                                (guard (fn []
-                                         (let [live (swap! in-flight inc)]
-                                           (swap! peak max live)
-                                           (Thread/sleep 60)
-                                           (swap! in-flight dec)
-                                           (.countDown done))))))
-                      (range n))]
+             workers
+             (mapv (fn [_]
+                     (future (.await start)
+                             (guard (fn []
+                                      (let [live (swap! in-flight inc)]
+                                        (swap! peak max live)
+                                        (Thread/sleep 60)
+                                        (swap! in-flight dec)
+                                        (.countDown done))))))
+                   (range n))]
 
             (.countDown start)
             (let [finished? (.await done 15 java.util.concurrent.TimeUnit/SECONDS)]
@@ -4564,25 +4786,27 @@
           ;; stub create + wait-for-scan, capture the live permit count at the
           ;; moment the index build runs. One permit must be held during the
           ;; build, and all permits must be back afterward.
-          (let [seen-during-build
-                (atom nil)
+          (let
+            [seen-during-build
+             (atom nil)
 
-                fake-idx
-                (reify
-                  java.io.Closeable
-                    (close [_] nil))
+             fake-idx
+             (reify
+               java.io.Closeable
+                 (close [_] nil))
 
-                open-index!
-                (fff-index-fn "open!")]
+             open-index!
+             (fff-index-fn "open!")]
 
-            (with-redefs [fff/create
-                          (fn [_opts]
-                            (reset! seen-during-build (.availablePermits semaphore))
-                            fake-idx)
+            (with-redefs
+              [fff/create
+               (fn [_opts]
+                 (reset! seen-during-build (.availablePermits semaphore))
+                 fake-idx)
 
-                          fff/wait-for-scan
-                          (fn [_idx _timeout]
-                            true)]
+               fff/wait-for-scan
+               (fn [_idx _timeout]
+                 true)]
 
               (open-index! (java.io.File. ".")))
             ;; one permit taken while the (stubbed) scan ran
@@ -4593,27 +4817,29 @@
           ;; wait-for-scan false → open! closes the idx and throws; the
           ;; permit must still come back (finally), or a timeout would slowly
           ;; drain the pool to deadlock.
-          (let [before
-                (.availablePermits semaphore)
+          (let
+            [before
+             (.availablePermits semaphore)
 
-                closed?
-                (atom false)
+             closed?
+             (atom false)
 
-                fake-idx
-                (reify
-                  java.io.Closeable
-                    (close [_] (reset! closed? true)))
+             fake-idx
+             (reify
+               java.io.Closeable
+                 (close [_] (reset! closed? true)))
 
-                open-index!
-                (fff-index-fn "open!")]
+             open-index!
+             (fff-index-fn "open!")]
 
-            (with-redefs [fff/create
-                          (fn [_opts]
-                            fake-idx)
+            (with-redefs
+              [fff/create
+               (fn [_opts]
+                 fake-idx)
 
-                          fff/wait-for-scan
-                          (fn [_idx _timeout]
-                            false)]
+               fff/wait-for-scan
+               (fn [_idx _timeout]
+                 false)]
 
               (expect (throws? clojure.lang.ExceptionInfo #(open-index! (java.io.File. ".")))))
             (expect @closed?)
@@ -4629,18 +4855,19 @@
     "every op"
     (it
       "returns the canonical result and a matching summary"
-      (let [fs-tool
-            (private-fn "fs-tool")
+      (let
+        [fs-tool
+         (private-fn "fs-tool")
 
-            render
-            (private-fn "render-fs-result")
+         render
+         (private-fn "render-fs-result")
 
-            base
-            (str (temp-root) "/fs-canon")
+         base
+         (str (temp-root) "/fs-canon")
 
-            res
-            (fn [m]
-              (:result (fs-tool m)))]
+         res
+         (fn [m]
+           (:result (fs-tool m)))]
 
         (fs/delete-tree base)
         (let [r (res {"op" "create_dirs" "path" (str base "/a")})]
@@ -4677,37 +4904,30 @@
     "the batch `paths` form"
     (it
       "turns N targets into one result with a compact summary and scan-friendly body"
-      (let [fs-tool
-            (private-fn "fs-tool")
+      (let
+        [fs-tool
+         (private-fn "fs-tool")
 
-            render
-            (private-fn "render-fs-result")
+         render
+         (private-fn "render-fs-result")
 
-            base
-            (str (temp-root) "/fs-batch")
+         base
+         (str (temp-root) "/fs-batch")
 
-            res
-            (fn [m]
-              (:result (fs-tool m)))]
+         res
+         (fn [m]
+           (:result (fs-tool m)))]
 
         (fs/delete-tree base)
-        (let [r (res {"op" "create_dirs"
-                      "paths" [(str base "/a") (str base "/b") (str base "/c")]})]
+        (let
+          [r (res {"op" "create_dirs" "paths" [(str base "/a") (str base "/b") (str base "/c")]})]
           (expect (= {"action" "create_dirs"
                       "paths" [{"path" (str base "/a") "is_created" true}
                                {"path" (str base "/b") "is_created" true}
                                {"path" (str base "/c") "is_created" true}]}
                      r))
           (expect (= "created 3 dirs" (:summary (render r))))
-          (expect (= (str "\n- `"
-                          base
-                          "/a`"
-                          "\n- `"
-                          base
-                          "/b`"
-                          "\n- `"
-                          base
-                          "/c`")
+          (expect (= (str "\n- `" base "/a`" "\n- `" base "/b`" "\n- `" base "/c`")
                      (:body (render r)))))
         ;; A partial batch says so instead of claiming the whole batch changed.
         (let [r (res {"op" "create_dirs" "paths" [(str base "/a") (str base "/d")]})]
@@ -4722,21 +4942,17 @@
                                {"path" (str base "/a/nope.txt") "is_existing" false}]}
                      r))
           (expect (= "1 of 2 paths exist · 1 missing" (:summary (render r))))
-          (expect
-            (= (str "\n- `" base "/a/x.txt` — exists" "\n- `" base "/a/nope.txt` — missing")
-               (:body (render r)))))
-        (let [r (res {"op" "delete"
-                      "paths" [(str base "/a/x.txt") (str base "/a/nope.txt")]
-                      "is_missing_ok" true})]
+          (expect (= (str "\n- `" base "/a/x.txt` — exists" "\n- `" base "/a/nope.txt` — missing")
+                     (:body (render r)))))
+        (let
+          [r (res {"op" "delete"
+                   "paths" [(str base "/a/x.txt") (str base "/a/nope.txt")]
+                   "is_missing_ok" true})]
           (expect (= [true false] (mapv #(get % "is_deleted") (get r "paths"))))
           (expect (= "deleted 1 of 2 paths · 1 already absent" (:summary (render r))))
-          (expect (= (str "\n- `"
-                          base
-                          "/a/x.txt` — deleted"
-                          "\n- `"
-                          base
-                          "/a/nope.txt` — already absent")
-                     (:body (render r))))
+          (expect
+            (= (str "\n- `" base "/a/x.txt` — deleted" "\n- `" base "/a/nope.txt` — already absent")
+               (:body (render r))))
           (expect (not (fs/exists? (str base "/a/x.txt")))))
         ;; A ONE-element batch still answers the batch shape: the shape follows
         ;; the REQUEST, never the accident of how many paths it carried.
@@ -4745,11 +4961,12 @@
           (expect (= "1 path exists" (:summary (render r))))
           (expect (= (str "\n- `" base "/a`") (:body (render r)))))
         ;; Long batches keep their paths out of the headline without dropping any.
-        (let [card (render {"op" "fs"
-                            "action" "delete"
-                            "paths" (mapv (fn [i]
-                                            {"path" (str "p" i) "is_deleted" true})
-                                          (range 9))})]
+        (let
+          [card (render {"op" "fs"
+                         "action" "delete"
+                         "paths" (mapv (fn [i]
+                                         {"path" (str "p" i) "is_deleted" true})
+                                       (range 9))})]
           (expect (= "deleted 9 paths" (:summary card)))
           (expect (not (string/includes? (:summary card) "`p0`")))
           (expect (string/includes? (:body card) "- `p8`"))
@@ -4783,44 +5000,44 @@
     "pooled fff index"
     (it
       "is REUSED across searches and still sees a file written microseconds ago"
-      (let [_
-            (write-temp! "fffpool/seed.txt" "seed marker zzpoolseed\n")
+      (let
+        [_
+         (write-temp! "fffpool/seed.txt" "seed marker zzpoolseed\n")
 
-            dir
-            (temp-dir-path "fffpool")
+         dir
+         (temp-dir-path "fffpool")
 
-            rg
-            (private-fn "rg-search")
+         rg
+         (private-fn "rg-search")
 
-            pool
-            (fff-index-fn "pool")
+         pool
+         (fff-index-fn "pool")
 
-            files
-            (fn [q]
-              (set (:files (rg {"query" q
-                                "paths" [dir]
-                                "is_files_only" true
-                                "is_respect_gitignore" false}))))
+         files
+         (fn [q]
+           (set (:files
+                  (rg
+                    {"query" q "paths" [dir] "is_files_only" true "is_respect_gitignore" false}))))
 
-            _
-            (files "zzpoolseed")
+         _
+         (files "zzpoolseed")
 
-            pooled
-            (count @pool)
+         pooled
+         (count @pool)
 
-            fresh
-            (str "zzpoolfresh" (System/nanoTime))
+         fresh
+         (str "zzpoolfresh" (System/nanoTime))
 
-            _
-            (write-temp! "fffpool/fresh.txt" (str "hello " fresh "\n"))
+         _
+         (write-temp! "fffpool/fresh.txt" (str "hello " fresh "\n"))
 
-            ;; every Vis write path calls this; it is what makes the NEXT search
-            ;; rescan instead of waiting on the (async, ~100ms) watcher
-            _
-            ((fff-index-fn "note-fs-write!"))
+         ;; every Vis write path calls this; it is what makes the NEXT search
+         ;; rescan instead of waiting on the (async, ~100ms) watcher
+         _
+         ((fff-index-fn "note-fs-write!"))
 
-            hit
-            (files fresh)]
+         hit
+         (files fresh)]
 
         ;; the search left a live index in the pool …
         (expect (pos? pooled))
@@ -4833,50 +5050,51 @@
                       hit))))
     (it
       "does NOT rescan when nothing was written between searches"
-      (let [_
-            (write-temp! "fffnoscan/seed.txt" "zznoscanseed\n")
+      (let
+        [_
+         (write-temp! "fffnoscan/seed.txt" "zznoscanseed\n")
 
-            dir
-            (temp-dir-path "fffnoscan")
+         dir
+         (temp-dir-path "fffnoscan")
 
-            rg
-            (private-fn "rg-search")
+         rg
+         (private-fn "rg-search")
 
-            pool
-            (fff-index-fn "pool")
+         pool
+         (fff-index-fn "pool")
 
-            note!
-            (fff-index-fn "note-fs-write!")
+         note!
+         (fff-index-fn "note-fs-write!")
 
-            run
-            (fn []
-              (rg {"query" "zznoscanseed" "paths" [dir]}))
+         run
+         (fn []
+           (rg {"query" "zznoscanseed" "paths" [dir]}))
 
-            _
-            (run)
+         _
+         (run)
 
-            entry
-            (some (fn [[[p _] e]]
-                    (when (re-find #"fffnoscan" p) e))
-                  @pool)
+         entry
+         (some (fn [[[p _] e]]
+                 (when (re-find #"fffnoscan" p) e))
+               @pool)
 
-            ^java.util.concurrent.atomic.AtomicLong synced
-            (:synced-epoch entry)
+         ^java.util.concurrent.atomic.AtomicLong synced
+         (:synced-epoch entry)
 
-            before
-            (.get synced)
+         before
+         (.get synced)
 
-            _
-            (do (run) (run))
+         _
+         (do (run) (run))
 
-            idle
-            (.get synced)
+         idle
+         (.get synced)
 
-            _
-            (do (note!) (run))
+         _
+         (do (note!) (run))
 
-            after
-            (.get synced)]
+         after
+         (.get synced)]
 
         ;; steady state is FREE: no write => no rescan => epoch never moves
         (expect (some? entry))

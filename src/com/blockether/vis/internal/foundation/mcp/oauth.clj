@@ -71,66 +71,70 @@
   [^String q]
   (when (seq q)
     (into {}
-          (for [p
-                (str/split q #"&")
+          (for
+            [p
+             (str/split q #"&")
 
-                :let [[k v]
-                      (str/split p #"=" 2)
+             :let [[k v]
+                   (str/split p #"=" 2)
 
-                      ^String kk
-                      (str k)
+                   ^String kk
+                   (str k)
 
-                      ^String vv
-                      (str (or v ""))]
-                :when (seq k)]
+                   ^String vv
+                   (str (or v ""))]
+             :when (seq k)]
 
             [(URLDecoder/decode kk "UTF-8") (URLDecoder/decode vv "UTF-8")]))))
 
 (defn- http-get-json
   [^String url]
-  (let [req
-        (-> (HttpRequest/newBuilder (URI/create url))
-            (.header "Accept" "application/json")
-            (.header protocol-version-header protocol-version)
-            (.timeout (Duration/ofSeconds 15))
-            (.GET)
-            .build)
+  (let
+    [req
+     (-> (HttpRequest/newBuilder (URI/create url))
+         (.header "Accept" "application/json")
+         (.header protocol-version-header protocol-version)
+         (.timeout (Duration/ofSeconds 15))
+         (.GET)
+         .build)
 
-        resp
-        (.send ^HttpClient @mcp-http/client req (HttpResponse$BodyHandlers/ofString))]
+     resp
+     (.send ^HttpClient @mcp-http/client req (HttpResponse$BodyHandlers/ofString))]
 
     (when (< (.statusCode resp) 400) (try (json/read-json (.body resp)) (catch Throwable _ nil)))))
 
 (defn- http-post-form
   [^String url form]
-  (let [req
-        (-> (HttpRequest/newBuilder (URI/create url))
-            (.header "Content-Type" "application/x-www-form-urlencoded")
-            (.header "Accept" "application/json")
-            (.header protocol-version-header protocol-version)
-            (.timeout (Duration/ofSeconds 30))
-            (.POST (HttpRequest$BodyPublishers/ofString (form-encode form)))
-            .build)
+  (let
+    [req
+     (-> (HttpRequest/newBuilder (URI/create url))
+         (.header "Content-Type" "application/x-www-form-urlencoded")
+         (.header "Accept" "application/json")
+         (.header protocol-version-header protocol-version)
+         (.timeout (Duration/ofSeconds 30))
+         (.POST (HttpRequest$BodyPublishers/ofString (form-encode form)))
+         .build)
 
-        resp
-        (.send ^HttpClient @mcp-http/client req (HttpResponse$BodyHandlers/ofString))]
+     resp
+     (.send ^HttpClient @mcp-http/client req (HttpResponse$BodyHandlers/ofString))]
 
     {:status (.statusCode resp)
      :body (try (json/read-json (.body resp)) (catch Throwable _ (.body resp)))}))
 
 (defn- http-post-json
   [^String url body]
-  (let [req
-        (-> (HttpRequest/newBuilder (URI/create url))
-            (.header "Content-Type" "application/json")
-            (.header "Accept" "application/json")
-            (.header protocol-version-header protocol-version)
-            (.timeout (Duration/ofSeconds 30))
-            (.POST (HttpRequest$BodyPublishers/ofString (json/write-json-str body)))
-            .build)
+  (let
+    [req
+     (-> (HttpRequest/newBuilder (URI/create url))
+         (.header "Content-Type" "application/json")
+         (.header "Accept" "application/json")
+         (.header protocol-version-header protocol-version)
+         (.timeout (Duration/ofSeconds 30))
+         (.POST (HttpRequest$BodyPublishers/ofString (json/write-json-str body)))
+         .build)
 
-        resp
-        (.send ^HttpClient @mcp-http/client req (HttpResponse$BodyHandlers/ofString))]
+     resp
+     (.send ^HttpClient @mcp-http/client req (HttpResponse$BodyHandlers/ofString))]
 
     {:status (.statusCode resp)
      :body (try (json/read-json (.body resp)) (catch Throwable _ (.body resp)))}))
@@ -153,10 +157,11 @@
 
 (defn- discover-protected-resource
   [server-url www-auth]
-  (let [candidates (->> [(parse-www-authenticate www-auth)
-                         (str (origin-of server-url) "/.well-known/oauth-protected-resource")]
-                        (remove str/blank?)
-                        distinct)]
+  (let
+    [candidates (->> [(parse-www-authenticate www-auth)
+                      (str (origin-of server-url) "/.well-known/oauth-protected-resource")]
+                     (remove str/blank?)
+                     distinct)]
     (some (fn [u]
             (when-let [meta (http-get-json u)]
               (assoc meta ::url u)))
@@ -164,8 +169,9 @@
 
 (defn- discover-authorization-server
   [as-url]
-  (let [candidates [(str as-url "/.well-known/oauth-authorization-server")
-                    (str as-url "/.well-known/openid-configuration")]]
+  (let
+    [candidates [(str as-url "/.well-known/oauth-authorization-server")
+                 (str as-url "/.well-known/openid-configuration")]]
     (some (fn [u]
             (some-> (http-get-json u)
                     (assoc ::url u)))
@@ -178,14 +184,14 @@
 (defn- register-client!
   [{registration-url "registration_endpoint"} redirect-uri]
   (when registration-url
-    (let [{:keys [status body]} (http-post-json registration-url
-                                                {"client_name" "vis MCP client"
-                                                 "redirect_uris" [redirect-uri]
-                                                 "grant_types" ["authorization_code"
-                                                                "refresh_token"]
-                                                 "response_types" ["code"]
-                                                 "token_endpoint_auth_method" "none"
-                                                 "scope" "openid profile offline_access"})]
+    (let
+      [{:keys [status body]} (http-post-json registration-url
+                                             {"client_name" "vis MCP client"
+                                              "redirect_uris" [redirect-uri]
+                                              "grant_types" ["authorization_code" "refresh_token"]
+                                              "response_types" ["code"]
+                                              "token_endpoint_auth_method" "none"
+                                              "scope" "openid profile offline_access"})]
       (when (and (< (long status) 400) (map? body) (get body "client_id")) body))))
 
 ;; ---------------------------------------------------------------------------
@@ -203,20 +209,21 @@
    open it, and block up to `timeout-ms` for the OAuth `code`. Returns
    `{:code :state}` or throws `:mcp/oauth-timeout`."
   [server-name authorize-url-fn timeout-ms]
-  (let [addr
-        (InetSocketAddress. "127.0.0.1" 0)
+  (let
+    [addr
+     (InetSocketAddress. "127.0.0.1" 0)
 
-        srv
-        (HttpServer/create addr 0)
+     srv
+     (HttpServer/create addr 0)
 
-        port
-        (.getPort (.getAddress srv))
+     port
+     (.getPort (.getAddress srv))
 
-        redirect-uri
-        (str "http://127.0.0.1:" port "/mcp-callback")
+     redirect-uri
+     (str "http://127.0.0.1:" port "/mcp-callback")
 
-        result
-        (promise)]
+     result
+     (promise)]
 
     (.createContext
       srv
@@ -224,21 +231,22 @@
       (reify
         HttpHandler
           (handle [_ ex]
-            (let [q
-                  (query-parse (.getRawQuery (.getRequestURI ex)))
+            (let
+              [q
+               (query-parse (.getRawQuery (.getRequestURI ex)))
 
-                  html
-                  (str "<!doctype html><meta charset=utf-8>"
-                       "<title>MCP auth</title><body style=\""
-                       "font-family:sans-serif;padding:2em\">"
-                       (if (get q "code")
-                         (str "<h2>Authorized " server-name
-                              "</h2>" "<p>You can close this tab and return to vis.</p>")
-                         (str "<h2>Auth failed</h2><pre>" (pr-str q) "</pre>"))
-                       "</body>")
+               html
+               (str "<!doctype html><meta charset=utf-8>"
+                    "<title>MCP auth</title><body style=\""
+                    "font-family:sans-serif;padding:2em\">"
+                    (if (get q "code")
+                      (str "<h2>Authorized " server-name
+                           "</h2>" "<p>You can close this tab and return to vis.</p>")
+                      (str "<h2>Auth failed</h2><pre>" (pr-str q) "</pre>"))
+                    "</body>")
 
-                  bs
-                  (.getBytes html "UTF-8")]
+               bs
+               (.getBytes html "UTF-8")]
 
               (.set (.getResponseHeaders ex) "Content-Type" "text/html; charset=utf-8")
               (.sendResponseHeaders ex 200 (alength bs))
@@ -301,12 +309,13 @@
   "Normalize a token endpoint response into `{:token :refresh-token :expires-at-ms
    :saved-at-ms :client-id}`."
   [body extra]
-  (let [now
-        (System/currentTimeMillis)
+  (let
+    [now
+     (System/currentTimeMillis)
 
-        expires-in
-        (some-> (get body "expires_in")
-                long)]
+     expires-in
+     (some-> (get body "expires_in")
+             long)]
 
     (merge extra
            {:token (get body "access_token")
@@ -327,61 +336,64 @@
    config: `{:client-id :scope :authorization-timeout-ms}`. Persists tokens and
    returns the token map."
   [server-name server-url www-auth auth-hint]
-  (let [rmeta
-        (or (discover-protected-resource server-url www-auth)
-            (throw (ex-info
-                     (str "MCP " server-name ": no OAuth protected-resource metadata discoverable")
-                     {:type :mcp/oauth-discovery :server server-name})))
+  (let
+    [rmeta
+     (or (discover-protected-resource server-url www-auth)
+         (throw (ex-info
+                  (str "MCP " server-name ": no OAuth protected-resource metadata discoverable")
+                  {:type :mcp/oauth-discovery :server server-name})))
 
-        as-url
-        (or (first (get rmeta "authorization_servers"))
-            (throw (ex-info (str "MCP "
-                                 server-name
-                                 ": protected-resource metadata has no authorization_servers")
-                            {:type :mcp/oauth-discovery :server server-name})))
+     as-url
+     (or (first (get rmeta "authorization_servers"))
+         (throw (ex-info (str "MCP "
+                              server-name
+                              ": protected-resource metadata has no authorization_servers")
+                         {:type :mcp/oauth-discovery :server server-name})))
 
-        asmeta
-        (or (discover-authorization-server as-url)
-            (throw (ex-info (str "MCP " server-name ": AS metadata not discoverable at " as-url)
-                            {:type :mcp/oauth-discovery :server server-name})))
+     asmeta
+     (or (discover-authorization-server as-url)
+         (throw (ex-info (str "MCP " server-name ": AS metadata not discoverable at " as-url)
+                         {:type :mcp/oauth-discovery :server server-name})))
 
-        verifier
-        (b64url (rand-bytes 32))
+     verifier
+     (b64url (rand-bytes 32))
 
-        challenge
-        (b64url (sha256 verifier))
+     challenge
+     (b64url (sha256 verifier))
 
-        state
-        (b64url (rand-bytes 16))
+     state
+     (b64url (rand-bytes 16))
 
-        resource
-        (get rmeta "resource")
+     resource
+     (get rmeta "resource")
 
-        scope
-        (or (:scope auth-hint)
-            (some->> (get rmeta "scopes_supported")
-                     seq
-                     (str/join " "))
-            "openid profile offline_access")]
+     scope
+     (or (:scope auth-hint)
+         (some->> (get rmeta "scopes_supported")
+                  seq
+                  (str/join " "))
+         "openid profile offline_access")]
 
     (letfn
       [(authorize-url [redirect-uri]
-         (let [reg
-               (when-not (:client-id auth-hint) (register-client! asmeta redirect-uri))
+         (let
+           [reg
+            (when-not (:client-id auth-hint) (register-client! asmeta redirect-uri))
 
-               client-id
-               (or (:client-id auth-hint) (get reg "client_id"))
+            client-id
+            (or (:client-id auth-hint) (get reg "client_id"))
 
-               params
-               (cond-> {"response_type" "code"
-                        "client_id" client-id
-                        "redirect_uri" redirect-uri
-                        "state" state
-                        "code_challenge" challenge
-                        "code_challenge_method" "S256"
-                        "scope" scope}
-                 resource
-                 (assoc "resource" resource))]
+            params
+            (cond->
+              {"response_type" "code"
+               "client_id" client-id
+               "redirect_uri" redirect-uri
+               "state" state
+               "code_challenge" challenge
+               "code_challenge_method" "S256"
+               "scope" scope}
+              resource
+              (assoc "resource" resource))]
 
            (assert
              client-id
@@ -389,34 +401,36 @@
            (str (get asmeta "authorization_endpoint")
                 (if (str/includes? (get asmeta "authorization_endpoint") "?") "&" "?")
                 (form-encode params))))]
-      (let [{:keys [code state redirect-uri]}
-            (await-loopback-code! server-name
-                                  authorize-url
-                                  (or (:authorization-timeout-ms auth-hint) 300000))
+      (let
+        [{:keys [code state redirect-uri]}
+         (await-loopback-code! server-name
+                               authorize-url
+                               (or (:authorization-timeout-ms auth-hint) 300000))
 
-            _
-            (when-not (seq code)
-              (throw (ex-info "MCP OAuth: no code in callback"
-                              {:type :mcp/oauth-error :server server-name :state state})))
+         _
+         (when-not (seq code)
+           (throw (ex-info "MCP OAuth: no code in callback"
+                           {:type :mcp/oauth-error :server server-name :state state})))
 
-            reg
-            (when-not (:client-id auth-hint) (register-client! asmeta redirect-uri))
+         reg
+         (when-not (:client-id auth-hint) (register-client! asmeta redirect-uri))
 
-            client-id
-            (or (:client-id auth-hint) (get reg "client_id"))
+         client-id
+         (or (:client-id auth-hint) (get reg "client_id"))
 
-            token-url
-            (get asmeta "token_endpoint")
+         token-url
+         (get asmeta "token_endpoint")
 
-            {:keys [status body]}
-            (http-post-form token-url
-                            (cond-> {"grant_type" "authorization_code"
-                                     "code" code
-                                     "redirect_uri" redirect-uri
-                                     "client_id" client-id
-                                     "code_verifier" verifier}
-                              resource
-                              (assoc "resource" resource)))]
+         {:keys [status body]}
+         (http-post-form token-url
+                         (cond->
+                           {"grant_type" "authorization_code"
+                            "code" code
+                            "redirect_uri" redirect-uri
+                            "client_id" client-id
+                            "code_verifier" verifier}
+                           resource
+                           (assoc "resource" resource)))]
 
         (when (>= (long status) 400)
           (throw (ex-info (str "MCP " server-name " token exchange failed: " status)
@@ -431,12 +445,14 @@
 (defn- refresh-token-exchange!
   "Refresh an access token via the token endpoint. May rotate the refresh token."
   [server-name creds]
-  (let [{:keys [status body]} (http-post-form (:token-endpoint creds)
-                                              (cond-> {"grant_type" "refresh_token"
-                                                       "refresh_token" (:refresh-token creds)
-                                                       "client_id" (:client-id creds)}
-                                                (:resource creds)
-                                                (assoc "resource" (:resource creds))))]
+  (let
+    [{:keys [status body]} (http-post-form (:token-endpoint creds)
+                                           (cond->
+                                             {"grant_type" "refresh_token"
+                                              "refresh_token" (:refresh-token creds)
+                                              "client_id" (:client-id creds)}
+                                             (:resource creds)
+                                             (assoc "resource" (:resource creds))))]
     (when (>= (long status) 400)
       (throw (ex-info (str "MCP " server-name " token refresh failed: " status)
                       {:type :mcp/oauth-refresh :server server-name :status status :body body})))
@@ -461,15 +477,16 @@
         (when (and creds (:token creds) (not (expired? creds)) (not= rejected (:token creds)))
           (:token creds))))
     (fn []
-      (let [creds
-            (read-tokens server-name)
+      (let
+        [creds
+         (read-tokens server-name)
 
-            fresh
-            (cond (and creds (:refresh-token creds))
-                  (try (refresh-token-exchange! server-name creds)
-                       (catch Throwable _
-                         (authorize-code! server-name server-url @www-auth-atom auth-hint)))
-                  :else (authorize-code! server-name server-url @www-auth-atom auth-hint))]
+         fresh
+         (cond (and creds (:refresh-token creds))
+               (try (refresh-token-exchange! server-name creds)
+                    (catch Throwable _
+                      (authorize-code! server-name server-url @www-auth-atom auth-hint)))
+               :else (authorize-code! server-name server-url @www-auth-atom auth-hint))]
 
         (:token fresh)))))
 

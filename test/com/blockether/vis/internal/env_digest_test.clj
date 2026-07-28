@@ -27,13 +27,14 @@
 (defdescribe
   base-digest-test
   (it "produces host + project + extensions when an environment is supplied"
-      (with-redefs [agents/instructions
-                    (constantly {:found? false})
+      (with-redefs
+        [agents/instructions
+         (constantly {:found? false})
 
-                    prompt/active-extensions
-                    (constantly [{:ext/name "foundation-core" :ext/engine {:ext.engine/alias 'v}}
-                                 {:ext/name "foundation-git" :ext/engine {:ext.engine/alias 'git}}
-                                 {:ext/name "no-alias-ext"}])]
+         prompt/active-extensions
+         (constantly [{:ext/name "foundation-core" :ext/engine {:ext.engine/alias 'v}}
+                      {:ext/name "foundation-git" :ext/engine {:ext.engine/alias 'git}}
+                      {:ext/name "no-alias-ext"}])]
 
         (with-tmp-root* (fn [^java.io.File root]
                           (binding [workspace/*workspace-root* (.getCanonicalPath root)]
@@ -50,11 +51,12 @@
                               (expect (= 3 (get-in d ["extensions" "active_count"])))
                               (expect (= #{"v" "git"} (get-in d ["extensions" "aliases"])))))))))
   (it "detects polylith when bases/ + components/ are both present"
-      (with-redefs [agents/instructions
-                    (constantly {:found? false})
+      (with-redefs
+        [agents/instructions
+         (constantly {:found? false})
 
-                    prompt/active-extensions
-                    (constantly [])]
+         prompt/active-extensions
+         (constantly [])]
 
         (with-tmp-root* (fn [^java.io.File root]
                           (.mkdir (java.io.File. root "bases"))
@@ -63,11 +65,12 @@
                             (let [d (env-digest/base-digest nil)]
                               (expect (= "polylith" (get-in d ["project" "kind"])))))))))
   (it "detects monorepo when one of packages/apps/modules/crates exists"
-      (with-redefs [agents/instructions
-                    (constantly {:found? false})
+      (with-redefs
+        [agents/instructions
+         (constantly {:found? false})
 
-                    prompt/active-extensions
-                    (constantly [])]
+         prompt/active-extensions
+         (constantly [])]
 
         (with-tmp-root*
           (fn [^java.io.File root]
@@ -75,11 +78,12 @@
             (binding [workspace/*workspace-root* (.getCanonicalPath root)]
               (expect (= "monorepo" (get-in (env-digest/base-digest nil) ["project" "kind"]))))))))
   (it "guesses primary_language from canonical build files"
-      (with-redefs [agents/instructions
-                    (constantly {:found? false})
+      (with-redefs
+        [agents/instructions
+         (constantly {:found? false})
 
-                    prompt/active-extensions
-                    (constantly [])]
+         prompt/active-extensions
+         (constantly [])]
 
         (with-tmp-root* (fn [^java.io.File root]
                           (spit (java.io.File. root "deps.edn") "{}")
@@ -88,22 +92,24 @@
                                        (get-in (env-digest/base-digest nil)
                                                ["project" "primary_language"]))))))))
   (it "never surfaces agents_md — AGENTS.md content lives in PROJECT-INSTRUCTIONS system block"
-      (with-redefs [agents/instructions
-                    (constantly {:found? true :source :repo :path "/tmp/AGENTS.md" :content "rule"})
+      (with-redefs
+        [agents/instructions
+         (constantly {:found? true :source :repo :path "/tmp/AGENTS.md" :content "rule"})
 
-                    prompt/active-extensions
-                    (constantly [])]
+         prompt/active-extensions
+         (constantly [])]
 
         (with-tmp-root* (fn [^java.io.File root]
                           (binding [workspace/*workspace-root* (.getCanonicalPath root)]
                             (let [d (env-digest/base-digest nil)]
                               (expect (not (contains? (get d "project") "agents_md")))))))))
   (it "skips extensions slice when no environment is provided"
-      (with-redefs [agents/instructions
-                    (constantly {:found? false})
+      (with-redefs
+        [agents/instructions
+         (constantly {:found? false})
 
-                    prompt/active-extensions
-                    (constantly [])]
+         prompt/active-extensions
+         (constantly [])]
 
         (with-tmp-root* (fn [^java.io.File root]
                           (binding [workspace/*workspace-root* (.getCanonicalPath root)]
@@ -113,14 +119,15 @@
 (defdescribe
   session-env-merges-extension-contributions-test
   (it "deep-merges `\"session_env\"` slices coming from extension `:ext/ctx-fn`"
-      (with-redefs [agents/instructions
-                    (constantly {:found? false})
+      (with-redefs
+        [agents/instructions
+         (constantly {:found? false})
 
-                    prompt/active-extensions
-                    (constantly [{:ext/name "voice-ext" :ext/engine {:ext.engine/alias 'voice}}])
+         prompt/active-extensions
+         (constantly [{:ext/name "voice-ext" :ext/engine {:ext.engine/alias 'voice}}])
 
-                    extension/ctx-contributions
-                    (constantly {"session_env" {"voice" {"tts_loaded" true}}})]
+         extension/ctx-contributions
+         (constantly {"session_env" {"voice" {"tts_loaded" true}}})]
 
         (with-tmp-root* (fn [^java.io.File root]
                           (binding [workspace/*workspace-root* (.getCanonicalPath root)]
@@ -129,15 +136,16 @@
                               (expect (contains? env-block "voice"))
                               (expect (true? (get-in env-block ["voice" "tts_loaded"])))))))))
   (it "treats non-`\"session_env\"` extension contributions as opaque (ignored here)"
-      (with-redefs [agents/instructions
-                    (constantly {:found? false})
+      (with-redefs
+        [agents/instructions
+         (constantly {:found? false})
 
-                    prompt/active-extensions
-                    (constantly [])
+         prompt/active-extensions
+         (constantly [])
 
-                    extension/ctx-contributions
-                    (constantly {"session_workspace" {"should_be_ignored" true}
-                                 "session_env" {"custom" {"x" 1}}})]
+         extension/ctx-contributions
+         (constantly {"session_workspace" {"should_be_ignored" true}
+                      "session_env" {"custom" {"x" 1}}})]
 
         (with-tmp-root* (fn [^java.io.File root]
                           (binding [workspace/*workspace-root* (.getCanonicalPath root)]

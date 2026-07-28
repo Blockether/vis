@@ -980,10 +980,12 @@ function AddressPanel({
   // Key on the contents, not on the array identity: `gateway.alts` is a fresh
   // array on every reload, and depending on it re-ran the probe forever.
   const altsKey = (gateway.alts ?? []).join(' ');
-  const addresses = useMemo(
-    () => mergeAddresses([gateway.url], altsKey ? altsKey.split(' ') : []),
-    [gateway.url, altsKey],
-  );
+  // Content-keyed, never url-keyed: choosing another address rewrites
+  // `gateway.url` but yields the SAME address set. Re-deriving the array on the
+  // url handed the probe effect below a fresh identity, so every dot fell back
+  // to a pulsing "checking" and the rows re-flowed for no reason.
+  const addressKey = mergeAddresses([gateway.url], altsKey ? altsKey.split(' ') : []).join(' ');
+  const addresses = useMemo(() => (addressKey ? addressKey.split(' ') : []), [addressKey]);
   const [reach, setReach] = useState<Record<string, 'checking' | 'online' | 'offline'>>({});
   const [probeNonce, setProbeNonce] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);

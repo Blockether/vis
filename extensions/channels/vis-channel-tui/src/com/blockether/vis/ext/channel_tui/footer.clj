@@ -368,8 +368,7 @@
 
     (if (and report (= provider report-provider))
       report
-      (when provider
-        (get-in db [:provider-limits-cache provider :report])))))
+      (when provider (get-in db [:provider-limits-cache provider :report])))))
 
 (defn- limits-status-text
   "Render an explicit placeholder when the report is missing or the
@@ -383,7 +382,6 @@
   [db provider]
   (let
     [report
-
      (report-for-current-provider db provider)
 
      status

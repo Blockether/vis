@@ -251,6 +251,11 @@ export function queuedTurnFromWire(row: Record<string, unknown>): QueuedTurn {
 export class GatewayClient {
   readonly base: string;
   private readonly token?: string;
+  // (session, iteration, index) → the produced artifact's object URL. The row is
+  // append-only and content-addressed by that triple, so one download per
+  // picture — but BOUNDED, because every entry pins full decoded bytes.
+  private readonly attachmentUrls = new Map<string, Promise<string>>();
+  private static readonly ATTACHMENT_URL_CACHE = 24;
 
   constructor(conn: GatewayConn) {
     this.base = normalizeBase(conn.url);
@@ -1051,6 +1056,47 @@ export class GatewayClient {
     return text;
   }
 
+  /**
+   * ONE produced artifact's bytes as a `blob:` URL —
+   * `GET /v1/sessions/:sid/iterations/:iid/attachments/:idx`, the endpoint the
+   * `iteration.completed` / transcript descriptors index. `<img src>` cannot
+   * carry the bearer header a token-gated gateway demands, so the bytes are
+   * fetched WITH the auth headers and handed back as an object URL. Immutable
+   * by construction, hence cached; a FAILED fetch is evicted so a row that has
+   * not landed yet is retried by the next render.
+   */
+  attachmentUrl(sid: string, iterationId: string, index: number): Promise<string> {
+    const key = `${sid}\u0000${iterationId}\u0000${index}`;
+    const cached = this.attachmentUrls.get(key);
+    if (cached) return cached;
+    const pending = (async () => {
+      const path = `/v1/sessions/${encodeURIComponent(sid)}/iterations/${encodeURIComponent(iterationId)}/attachments/${index}`;
+      let response: Response;
+      try {
+        response = await fetch(this.base + path, { headers: this.headers() });
+      } catch (error) {
+        throw new GatewayError(0, `network error: ${(error as Error).message}`);
+      }
+      if (!response.ok) throw new GatewayError(response.status, `HTTP ${response.status}`);
+      return URL.createObjectURL(await response.blob());
+    })();
+    pending.catch(() => this.attachmentUrls.delete(key));
+    this.attachmentUrls.set(key, pending);
+    // Every live entry pins its decoded bytes for the lifetime of the document.
+    // A long session that produced many figures is exactly the memory curve iOS
+    // answers by killing the webview, so the cache is bounded and the oldest
+    // object URLs are handed back to the collector. A tile still showing an
+    // evicted URL re-requests on its `error` handler, which repopulates it.
+    while (this.attachmentUrls.size > GatewayClient.ATTACHMENT_URL_CACHE) {
+      const oldest = this.attachmentUrls.keys().next();
+      if (oldest.done) break;
+      const stale = this.attachmentUrls.get(oldest.value);
+      this.attachmentUrls.delete(oldest.value);
+      void stale?.then((url) => URL.revokeObjectURL(url)).catch(() => undefined);
+    }
+    return pending;
+  }
+
   submitTurn(
     sid: string,
     request: string,
@@ -1120,6 +1166,31 @@ export class GatewayClient {
     const rows = reconcileRows(this.cachedQueuedTurns(sid), fetched);
     writeSnapshot(this.snapshotKey('queued', sid), rows);
     return rows;
+  }
+
+  /**
+   * Terminal status of ONE turn as the gateway REGISTRY knows it — `null` while
+   * it is still running (or unknown to this session).
+   *
+   * This is the transport-independent liveness probe: the live bubble normally
+   * settles on the terminal SSE frame, but a reconnect gap (or a backgrounded
+   * tab whose stream was torn down mid-turn) can swallow that one frame, and
+   * then the bubble streams forever for a turn the gateway finished minutes
+   * ago. Asking the registry costs one cheap listing and never lies.
+   */
+  async turnStatus(sid: string, tid: string, signal?: AbortSignal): Promise<string | null> {
+    const response = await this.request<{ turns?: Record<string, unknown>[] }>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/turns`,
+      undefined,
+      signal,
+    );
+    const row = (response.turns ?? []).find(
+      (turn) => String(turn.turn_id ?? '') === tid,
+    );
+    if (!row) return null;
+    const status = String(row.status ?? '');
+    return status === '' || status === 'running' || status === 'queued' ? null : status;
   }
 
 

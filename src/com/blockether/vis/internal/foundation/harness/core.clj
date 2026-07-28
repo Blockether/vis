@@ -71,16 +71,16 @@
    first result has entered the trailer."
   [env nm]
   (if-let [s (d/skill-by-name nm)]
-    (let [skill-name (:name s)
-          digest (extension/sha256-hex (:body s))
-          scope (current-iter-scope env)
-          ctx (some-> (:ctx-atom env)
-                      deref)
-          live (get-in ctx ["engine_live_skill_activations" skill-name])
-          pending (get-in ctx ["session_active_skills" skill-name])
-          already-live? (or (same-activation? live digest)
-                            (and (same-activation? pending digest)
-                                 (= scope (get pending "scope"))))]
+    (let
+      [skill-name (:name s)
+       digest (extension/sha256-hex (:body s))
+       scope (current-iter-scope env)
+       ctx (some-> (:ctx-atom env)
+                   deref)
+       live (get-in ctx ["engine_live_skill_activations" skill-name])
+       pending (get-in ctx ["session_active_skills" skill-name])
+       already-live? (or (same-activation? live digest)
+                         (and (same-activation? pending digest) (= scope (get pending "scope"))))]
 
       (if already-live?
         {"name" skill-name
@@ -145,14 +145,15 @@
   "Expanded user-message text for a `/<name> [task]` invocation:
    the full SKILL.md plus the optional task."
   [_env s args]
-  (let [r
-        ;; A slash invocation is an explicit USER-authored injection, not a model
-        ;; tool activation. Keep it literal and do not mutate the tool activation
-        ;; index; its body lives in the current user message.
-        (skill-payload s)
+  (let
+    [r
+     ;; A slash invocation is an explicit USER-authored injection, not a model
+     ;; tool activation. Keep it literal and do not mutate the tool activation
+     ;; index; its body lives in the current user message.
+     (skill-payload s)
 
-        task
-        (when-not (str/blank? (str args)) (str "\n\nTask: " args))]
+     task
+     (when-not (str/blank? (str args)) (str "\n\nTask: " args))]
 
     (str "Use the skill \""
          (:name s)
@@ -211,24 +212,26 @@
    task. Unknown name → an error dict carrying the available names."
   [env nm prompt]
   (if-let [a (d/agent-by-name nm)]
-    (let [res (lp/sub-loop! env
-                            {:prompt (str prompt)
-                             :subctx {:focus (:name a)}
-                             :models (when (:model a) [(:model a)])
-                             :system-prompt (:body a)})
-          ;; sub_loop derives status from the focus TASK; an agent dispatch seeds
-          ;; none, so a completed child turn carries no status string. Read it
-          ;; from the turn OUTCOME instead: errored → failed, otherwise the turn
-          ;; ran to completion → done.
-          status (or (not-empty (str (:status res))) (if (:error res) "failed" "done"))]
+    (let
+      [res (lp/sub-loop! env
+                         {:prompt (str prompt)
+                          :subctx {:focus (:name a)}
+                          :models (when (:model a) [(:model a)])
+                          :system-prompt (:body a)})
+       ;; sub_loop derives status from the focus TASK; an agent dispatch seeds
+       ;; none, so a completed child turn carries no status string. Read it
+       ;; from the turn OUTCOME instead: errored → failed, otherwise the turn
+       ;; ran to completion → done.
+       status (or (not-empty (str (:status res))) (if (:error res) "failed" "done"))]
 
       ;; Model-facing result crosses the strings-only boundary — build it with
       ;; string keys straight from the (internal, keyword-keyed) sub_loop result.
-      (cond-> {"agent" (:name a)
-               "task_id" (:task_id res)
-               "status" status
-               "answer" (:answer res)
-               "changed_files" (vec (:changed_files res))}
+      (cond->
+        {"agent" (:name a)
+         "task_id" (:task_id res)
+         "status" status
+         "answer" (:answer res)
+         "changed_files" (vec (:changed_files res))}
         (:error res)
         (assoc "error" (:error res))))
     {"error" (str "No agent named " (pr-str (str nm)) ".") "available" (mapv :name (d/agents))}))

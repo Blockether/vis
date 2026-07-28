@@ -47,11 +47,12 @@
   Tailscale addresses come first because they keep working off-LAN; then LAN;
   then the server's bind host when concrete."
   [bind-host]
-  (let [ips
-        (iface-addresses)
+  (let
+    [ips
+     (iface-addresses)
 
-        concrete
-        (when-not (#{"0.0.0.0" "::" "127.0.0.1" "localhost"} (str bind-host)) (str bind-host))]
+     concrete
+     (when-not (#{"0.0.0.0" "::" "127.0.0.1" "localhost"} (str bind-host)) (str bind-host))]
 
     (->> (concat (filter tailscale-ip? ips)
                  (filter site-local-ip? ips)
@@ -91,16 +92,17 @@
   link-local (169.254/16) is dropped from the alternates: no phone can route it,
   and every extra host makes the QR denser."
   [{:keys [host port token]}]
-  (let [hosts
-        (let [c (candidate-hosts host)]
-          (if (seq c) c [host]))
+  (let
+    [hosts
+     (let [c (candidate-hosts host)]
+       (if (seq c) c [host]))
 
-        ->url
-        (fn [h]
-          (str "http://" h ":" port))
+     ->url
+     (fn [h]
+       (str "http://" h ":" port))
 
-        alts
-        (into [] (comp (remove #(str/starts-with? (str %) "169.254.")) (map ->url)) (rest hosts))]
+     alts
+     (into [] (comp (remove #(str/starts-with? (str %) "169.254.")) (map ->url)) (rest hosts))]
 
     (str "vis://gateway?url="
          (url-encode (->url (first hosts)))
@@ -109,18 +111,18 @@
 
 (defn pairing-json
   [{:keys [host port token require-token?] :as opts}]
-  (let [host
-        (or (first (candidate-hosts host)) host)
+  (let
+    [host
+     (or (first (candidate-hosts host)) host)
 
-        url
-        (str "http://" host ":" port)]
+     url
+     (str "http://" host ":" port)]
 
-    (wire/json-str (cond-> {:type "vis-gateway-pairing"
-                            :version 1
-                            :url url
-                            :hosts (candidate-hosts (:host opts))}
-                     require-token?
-                     (assoc :token token)))))
+    (wire/json-str
+      (cond->
+        {:type "vis-gateway-pairing" :version 1 :url url :hosts (candidate-hosts (:host opts))}
+        require-token?
+        (assoc :token token)))))
 
 (defn terminal-qr
   "Render `text` as a terminal QR code using Unicode half-blocks. Returns a string
@@ -135,33 +137,35 @@
     code reads correctly on the dark terminal themes everyone runs. Painting
     dark modules instead produces a photo-negative that most scanners reject."
   [text]
-  (let [hints
-        (doto (EnumMap. EncodeHintType) (.put EncodeHintType/MARGIN 4))
+  (let
+    [hints
+     (doto (EnumMap. EncodeHintType) (.put EncodeHintType/MARGIN 4))
 
-        matrix
-        (.encode (QRCodeWriter.) text BarcodeFormat/QR_CODE 0 0 hints)
+     matrix
+     (.encode (QRCodeWriter.) text BarcodeFormat/QR_CODE 0 0 hints)
 
-        w
-        (.getWidth matrix)
+     w
+     (.getWidth matrix)
 
-        h
-        (.getHeight matrix)
+     h
+     (.getHeight matrix)
 
-        ;; Pad to an even number of rows so the last half-block pair is a full
-        ;; quiet-zone row rather than a clipped one.
-        h*
-        (if (even? h) h (inc h))
+     ;; Pad to an even number of rows so the last half-block pair is a full
+     ;; quiet-zone row rather than a clipped one.
+     h*
+     (if (even? h) h (inc h))
 
-        light?
-        (fn [x y]
-          (or (>= (long y) h) (not (.get matrix x y))))]
+     light?
+     (fn [x y]
+       (or (>= (long y) h) (not (.get matrix x y))))]
 
     (str/join "\n"
               (for [y (range 0 h* 2)]
                 (apply str
                   (for [x (range w)]
-                    (let [top? (light? x y)
-                          bot? (light? x (inc (long y)))]
+                    (let
+                      [top? (light? x y)
+                       bot? (light? x (inc (long y)))]
 
                       (cond (and top? bot?) "█"
                             top? "▀"
@@ -201,13 +205,14 @@
               "  vis gateway start --host 0.0.0.0 --require-token --pair"))
       (flush)
       nil)
-    (let [payload
-          (pairing-url (cond-> opts
-                         (not require-token?)
-                         (dissoc :token)))
+    (let
+      [payload
+       (pairing-url (cond-> opts
+                      (not require-token?)
+                      (dissoc :token)))
 
-          hosts
-          (candidate-hosts host)]
+       hosts
+       (candidate-hosts host)]
 
       (emit "")
       (emit "VIS companion pairing")

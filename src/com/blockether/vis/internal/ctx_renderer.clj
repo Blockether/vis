@@ -54,9 +54,10 @@
    string-keyed map used by both rendered context and the live Python dict."
   ([view] (project-ctx view nil))
   ([view _opts]
-   (cond-> (array-map "id" (get view "session_id")
-                      "turn" (get view "session_turn")
-                      "scope" (get view "session_scope"))
+   (cond->
+     (array-map "id" (get view "session_id")
+                "turn" (get view "session_turn")
+                "scope" (get view "session_scope"))
      (get view "session_utilization")
      (assoc "utilization" (get view "session_utilization"))
 
@@ -91,14 +92,15 @@
    The host clock (`[:env :host :clock]`) is stripped: it ticks every render,
    so leaving it in would make the per-iteration change-diff fire every time."
   [view]
-  (let [full
-        (project-ctx view)
+  (let
+    [full
+     (project-ctx view)
 
-        m
-        (reduce (fn [m k]
-                  (if (contains? full k) (assoc m k (get full k)) m))
-                (array-map)
-                static-context-keys)]
+     m
+     (reduce (fn [m k]
+               (if (contains? full k) (assoc m k (get full k)) m))
+             (array-map)
+             static-context-keys)]
 
     (cond-> m
       (get-in m ["env" "host" "clock"])
@@ -144,11 +146,12 @@
    stability); live token usage instead rides as a cheap appended
    `session[\"utilization\"] = …` delta against the frozen baseline."
   [{:keys [ctx warnings]}]
-  (let [view
-        (eng/session-view ctx warnings)
+  (let
+    [view
+     (eng/session-view ctx warnings)
 
-        m
-        (project-ctx-static view)]
+     m
+     (project-ctx-static view)]
 
     (cond-> m
       (get view "session_utilization")
@@ -159,14 +162,15 @@
    It always states the current turn and includes utilization when available, so
    iteration 1 never relies on a stale frozen system snapshot."
   [{:keys [ctx warnings]}]
-  (let [view
-        (eng/session-view ctx warnings)
+  (let
+    [view
+     (eng/session-view ctx warnings)
 
-        turn
-        (get view "session_turn")
+     turn
+     (get view "session_turn")
 
-        utilization
-        (get view "session_utilization")]
+     utilization
+     (get view "session_utilization")]
 
     (str "session[\"turn\"] = "
          (env/ctx->python-str turn)
@@ -189,11 +193,12 @@
   [path prev cur]
   (if (and (map? prev) (map? cur))
     (mapcat (fn [k]
-              (let [pv
-                    (get prev k ::absent)
+              (let
+                [pv
+                 (get prev k ::absent)
 
-                    cv
-                    (get cur k ::absent)]
+                 cv
+                 (get cur k ::absent)]
 
                 (cond (= cv ::absent) [(str "del session" (ctx-path-str (conj path k)))]
                       (= pv cv) nil
@@ -230,10 +235,11 @@
    loop)."
   [index]
   (or (get @op-index-fold-cache index)
-      (let [folded (into {}
-                         (map (fn [[op v]]
-                                [(env/sym->py-name (symbol op)) v]))
-                         index)]
+      (let
+        [folded (into {}
+                      (map (fn [[op v]]
+                             [(env/sym->py-name (symbol op)) v]))
+                      index)]
         (swap! op-index-fold-cache (fn [m]
                                      (assoc (if (> (count m) 8) {} m) index folded)))
         folded)))

@@ -38,11 +38,12 @@
    the guard refuses, else `:reached-socket-layer` (connection refused/timeout —
    i.e. the guard did NOT stop it). Proves enforcement at `connect`, not just DNS."
   [ctx host]
-  (let [code (str "def _p():\n" "    import socket\n"
-                  "    s = socket.socket(); s.settimeout(0.2)\n" "    try:\n"
-                  "        s.connect((" (pr-str host)
-                  ", 9)); return 'connected'\n" "    except PermissionError: return 'blocked'\n"
-                  "    except Exception: return 'reached'\n" "_p()")]
+  (let
+    [code (str "def _p():\n" "    import socket\n"
+               "    s = socket.socket(); s.settimeout(0.2)\n" "    try:\n"
+               "        s.connect((" (pr-str host)
+               ", 9)); return 'connected'\n" "    except PermissionError: return 'blocked'\n"
+               "    except Exception: return 'reached'\n" "_p()")]
     (case (.asString (.eval (pctx ctx) "python" code))
       "blocked"
       :blocked
@@ -60,39 +61,43 @@
       (let [off (env/create-python-context {} nil nil)]
         (try (expect (= :no-socket (outcome off "localhost"))) (finally (.close (pctx off) true)))))
   (it "`*` allowlist ⇒ unrestricted EXCEPT the always-on metadata denylist"
-      (let [star (env/create-python-context
-                   {}
-                   nil
-                   {:enabled? true :jail-enabled? true :allowed-domains ["*"]})]
+      (let
+        [star (env/create-python-context
+                {}
+                nil
+                {:enabled? true :jail-enabled? true :allowed-domains ["*"]})]
         (try (expect (= :ok (outcome star "localhost")))
              ;; cloud-metadata SSRF endpoint is denied by default even under `*`
              (expect (= :blocked (outcome star "169.254.169.254")))
              (finally (.close (pctx star) true)))))
   (it "allowlist ⇒ confines to listed hosts (subdomain ok, others blocked)"
-      (let [conf (env/create-python-context
-                   {}
-                   nil
-                   {:enabled? true :jail-enabled? true :allowed-domains ["example.com"]})]
+      (let
+        [conf (env/create-python-context
+                {}
+                nil
+                {:enabled? true :jail-enabled? true :allowed-domains ["example.com"]})]
         (try (expect (= :ok (outcome conf "www.example.com")))
              (expect (= :blocked (outcome conf "evil.com")))
              (finally (.close (pctx conf) true)))))
   (it "denied `*` + allow some ⇒ deny everything EXCEPT the allowlist"
-      (let [d (env/create-python-context {}
-                                         nil
-                                         {:enabled? true
-                                          :jail-enabled? true
-                                          :denied-domains ["*"]
-                                          :allowed-domains ["example.com"]})]
+      (let
+        [d (env/create-python-context {}
+                                      nil
+                                      {:enabled? true
+                                       :jail-enabled? true
+                                       :denied-domains ["*"]
+                                       :allowed-domains ["example.com"]})]
         (try (expect (= :ok (outcome d "www.example.com"))) ; specific allow beats deny `*`
              (expect (= :blocked (outcome d "evil.com"))) ; deny `*` blocks the rest
              (finally (.close (pctx d) true)))))
   (it "allow `*` + deny some ⇒ allow everything EXCEPT the denylist"
-      (let [a (env/create-python-context {}
-                                         nil
-                                         {:enabled? true
-                                          :jail-enabled? true
-                                          :allowed-domains ["*"]
-                                          :denied-domains ["example.com"]})]
+      (let
+        [a (env/create-python-context {}
+                                      nil
+                                      {:enabled? true
+                                       :jail-enabled? true
+                                       :allowed-domains ["*"]
+                                       :denied-domains ["example.com"]})]
         (try (expect (= :blocked (outcome a "example.com"))) ; specific deny beats allow `*`
              (expect (= :ok (outcome a "localhost")))
              (finally (.close (pctx a) true)))))
@@ -100,12 +105,13 @@
       ;; The default denylist's headline target (the metadata IP 169.254.169.254) is
       ;; an IP literal; a raw `socket.connect((ip, port))` never hits DNS, so guarding
       ;; only getaddrinfo would leave it reachable. connect-level enforcement closes it.
-      (let [c (env/create-python-context {}
-                                         nil
-                                         {:enabled? true
-                                          :jail-enabled? true
-                                          :allowed-domains ["*"]
-                                          :denied-domains ["127.0.0.1"]})]
+      (let
+        [c (env/create-python-context {}
+                                      nil
+                                      {:enabled? true
+                                       :jail-enabled? true
+                                       :allowed-domains ["*"]
+                                       :denied-domains ["127.0.0.1"]})]
         (try (expect (= :blocked (raw-connect-outcome c "127.0.0.1")))
              (expect (= :blocked (raw-connect-outcome c "169.254.169.254"))) ; default SSRF denylist
              (finally (.close (pctx c) true)))))
@@ -113,13 +119,14 @@
       ;; With :proxy-port + :ca-file the interpreter's HTTP stack is pointed at the
       ;; gateway proxy (verb/path enforced there, not by an in-interpreter method
       ;; guard). Loopback must stay reachable so urllib can reach the proxy.
-      (let [p (env/create-python-context {}
-                                         nil
-                                         {:enabled? true
-                                          :jail-enabled? true
-                                          :allowed-domains ["example.com"]
-                                          :proxy-port 65500
-                                          :ca-file "/tmp/vis-fake-ca.pem"})]
+      (let
+        [p (env/create-python-context {}
+                                      nil
+                                      {:enabled? true
+                                       :jail-enabled? true
+                                       :allowed-domains ["example.com"]
+                                       :proxy-port 65500
+                                       :ca-file "/tmp/vis-fake-ca.pem"})]
         (try (expect (= "http://127.0.0.1:65500" (env-value p "http_proxy")))
              (expect (= "http://127.0.0.1:65500" (env-value p "https_proxy")))
              (expect (= "/tmp/vis-fake-ca.pem" (env-value p "REQUESTS_CA_BUNDLE")))

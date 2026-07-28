@@ -31,41 +31,42 @@
    can `:keys`-destructure without hitting the JVM's restriction on
    dots in local-binding identifiers."
   []
-  (let [cwd
-        (system-property "user.dir")
+  (let
+    [cwd
+     (system-property "user.dir")
 
-        user
-        (system-property "user.name")
+     user
+     (system-property "user.name")
 
-        home
-        (system-property "user.home")
+     home
+     (system-property "user.home")
 
-        os-name
-        (system-property "os.name")
+     os-name
+     (system-property "os.name")
 
-        os-version
-        (system-property "os.version")
+     os-version
+     (system-property "os.version")
 
-        os-arch
-        (system-property "os.arch")
+     os-arch
+     (system-property "os.arch")
 
-        shell
-        (or (system-getenv "SHELL") "unknown")
+     shell
+     (or (system-getenv "SHELL") "unknown")
 
-        jvm-name
-        (system-property "java.vm.name")
+     jvm-name
+     (system-property "java.vm.name")
 
-        jvm-ver
-        (system-property "java.version")
+     jvm-ver
+     (system-property "java.version")
 
-        locale
-        (.toLanguageTag (java.util.Locale/getDefault))
+     locale
+     (.toLanguageTag (java.util.Locale/getDefault))
 
-        zone
-        (ZoneId/systemDefault)
+     zone
+     (ZoneId/systemDefault)
 
-        now
-        (ZonedDateTime/now zone)]
+     now
+     (ZonedDateTime/now zone)]
 
     {:cwd cwd
      :user user

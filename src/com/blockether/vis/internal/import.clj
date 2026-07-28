@@ -14,11 +14,12 @@
    fully-qualified, in-scope symbol). Copies the value and merges the source
    var's :doc/:arglists onto the alias var. Returns the new var."
   [alias src]
-  `(let [sv#
-         (var ~src)
+  `(let
+     [sv#
+      (var ~src)
 
-         v#
-         (def ~alias ~src)]
+      v#
+      (def ~alias ~src)]
 
      (alter-meta! v# merge (select-keys (meta sv#) [:doc :arglists]))
      v#))

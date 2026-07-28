@@ -96,8 +96,8 @@ install_graalvm() {
     arm64|aarch64) arch=aarch64 ;;
     *) say "require-graalvm: unsupported arch $(uname -m)"; return 1 ;;
   esac
-  # graalvm-ce-builds publishes linux-x64, linux-aarch64, macos-aarch64 and
-  # windows-x64 only — Intel macOS has NO community build and never will.
+  # We consume linux-x64, linux-aarch64 and macos-aarch64 only — Intel macOS
+  # has NO community build and never will, and Windows is not a target.
   eval "sha=\${GRAAL_SHA256_${os}_${arch}:-}"
   if [ -z "$sha" ]; then
     say "require-graalvm: no ${GRAAL_EDITION} ${GRAAL_VERSION} build for ${os}-${arch}"

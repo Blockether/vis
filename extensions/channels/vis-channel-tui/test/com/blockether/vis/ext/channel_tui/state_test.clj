@@ -398,6 +398,76 @@
       (state/dispatch [:select-tab-index 1])
       (expect (nil? (:layout @state/app-db)))
       (expect (= {:mode :at :offset 5} (:scroll @state/app-db))))
+  (it "never leaks the leaving tab's live turn identity onto the incoming tab"
+      ;; The regression: `tab-state-keys` omitted the turn identity, so the
+      ;; snapshot dropped it AND `restore-tab` (a MERGE over the db root) left
+      ;; the departing tab's ids in place — the incoming tab inherited them,
+      ;; queued rows landed in the wrong session, and a lost `:cancelling-at-ms`
+      ;; wedged `:cancelling?` forever because the self-heal could not time out.
+      (reset! state/app-db {:session {:id "main-c"}
+                            :gateway-turn-id "turn-main"
+                            :live-turn-client-id "client-main"
+                            :cancelling? true
+                            :cancelling-at-ms 1000
+                            :cancel-awaiting-client-id "client-main"
+                            :queue-paused true
+                            :tabs [{:id :main :label "Main" :active? true}
+                                   {:id :tab-1 :label "Tab 1"}]
+                            :active-tab-id :main
+                            :tab-locals {:tab-1 {:session {:id "tab-c"}}}
+                            :render-version 0})
+      (state/dispatch [:select-tab-index 1])
+      (let [db @state/app-db]
+        (expect (= {:id "tab-c"} (:session db)))
+        (expect (nil? (:gateway-turn-id db)))
+        (expect (nil? (:live-turn-client-id db)))
+        (expect (nil? (:cancelling-at-ms db)))
+        (expect (nil? (:cancel-awaiting-client-id db)))
+        (expect (nil? (:queue-paused db)))
+        (expect (false? (:cancelling? db))))
+      ;; ...and the parked tab gets its own turn back, intact.
+      (state/dispatch [:select-tab-index 0])
+      (let [db @state/app-db]
+        (expect (= "turn-main" (:gateway-turn-id db)))
+        (expect (= "client-main" (:live-turn-client-id db)))
+        (expect (= 1000 (:cancelling-at-ms db)))
+        (expect (= "client-main" (:cancel-awaiting-client-id db)))
+        (expect (true? (:queue-paused db)))
+        (expect (true? (:cancelling? db)))))
+  (it "mirrors a background tab's queued turn into THAT tab, never the visible one"
+      ;; The regression: `update-tab` built the background tab's db as
+      ;; `(merge db snapshot)`, so every per-tab key MISSING from a partially
+      ;; seeded snapshot (a pre-allocated project tab that was never focused and
+      ;; only ever had a `:title` written into its locals) was filled in from the
+      ;; tab you are LOOKING AT. A `turn.queued` for the background tab then
+      ;; parked the visible tab's session, transcript, queue and live turn id
+      ;; into it — the queued row surfaced under the wrong session, and could be
+      ;; swallowed entirely by `live-turn-mirror?` matching the borrowed turn id.
+      (reset! state/app-db {:session {:id "visible"}
+                            :gateway-turn-id "turn-visible"
+                            :live-turn-client-id "client-visible"
+                            :messages [{:role :user :text "visible transcript"}]
+                            :pending-sends [{:turn-id "q-visible" :text "visible queued"}]
+                            :tabs [{:id :main :label "Main" :active? true}
+                                   {:id :tab-1 :label "Tab 1"}]
+                            :active-tab-id :main
+                            :tab-locals {:tab-1 {:title "Tab 1"}}
+                            :render-version 0})
+      (state/dispatch [:sync-queued-turn :tab-1
+                       {:op :add :turn-id "q-bg" :client-id "c-bg" :text "background queued"}])
+      (let [locals (get-in @state/app-db [:tab-locals :tab-1])]
+        (expect (= ["background queued"] (mapv :text (:pending-sends locals))))
+        (expect (nil? (:session locals)))
+        (expect (nil? (:gateway-turn-id locals)))
+        (expect (nil? (:live-turn-client-id locals)))
+        (expect (= [] (vec (:messages locals)))))
+      ;; The visible tab keeps its own queue, and switching over shows only the
+      ;; background tab's row.
+      (expect (= ["visible queued"] (mapv :text (:pending-sends @state/app-db))))
+      (state/dispatch [:select-tab-index 1])
+      (expect (= ["background queued"] (mapv :text (:pending-sends @state/app-db))))
+      (state/dispatch [:select-tab-index 0])
+      (expect (= ["visible queued"] (mapv :text (:pending-sends @state/app-db)))))
   (it "selects workspaces by zero-based index and cycles to the next workspace"
       (reset! state/app-db {:tabs [{:id :main :label "Main"}
                                    {:id :tab-1 :label "Tab 1" :active? true}
@@ -3364,6 +3434,35 @@
         (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})
         (settle-marked-terminal!)
         (expect (= trace (get-in @state/app-db [:messages 1 :traces])))))
+  (it "a stranded completed turn paints the streamed prose, not \"Turn completed.\""
+      ;; `turn.completed` is deliberately LEAN (no :content), so the independent
+      ;; terminal path used to fabricate a "Turn completed." notice and drop the
+      ;; answer the user just watched stream. The live trace already carries it.
+      (let
+        [trace [{:id :iter-1 :assistant-prose "first pass"}
+                {:id :iter-2 :assistant-prose "final answer"}]]
+        (reset! state/app-db (terminal-test-db {:progress {:iterations trace}}))
+        (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})
+        (settle-marked-terminal!)
+        (let [blocks (get-in @state/app-db [:messages 1 :content])]
+          (expect (= 1 (count blocks)))
+          (expect (= "prose" (get (first blocks) "type")))
+          (expect (= "final answer" (get (first blocks) "markdown"))))))
+  (it "a stranded completed turn with no prose keeps the notice"
+      (reset! state/app-db (terminal-test-db {:progress {:iterations [{:id :iter-1}]}}))
+      (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})
+      (settle-marked-terminal!)
+      (expect (= "turn_completed"
+                 (get (first (get-in @state/app-db [:messages 1 :content])) "code"))))
+  (it "a stranded CANCELLED turn keeps its notice even with streamed prose"
+      ;; Prose from a cancelled turn is a fragment, not an answer: the cancellation
+      ;; notice is the settled truth there.
+      (reset! state/app-db (terminal-test-db {:progress {:iterations [{:id :iter-1
+                                                                       :assistant-prose "half"}]}}))
+      (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "cancelled"})
+      (settle-marked-terminal!)
+      (expect (= "turn_cancelled"
+                 (get (first (get-in @state/app-db [:messages 1 :content])) "code"))))
   (it "lets the full worker result win inside the grace window"
       (reset! state/app-db (terminal-test-db))
       (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})
@@ -3436,6 +3535,61 @@
                          {:client-turn-id "c1" :status :completed}])
         (expect (= messages (:messages @state/app-db)))
         (expect (= 2 (count (:messages @state/app-db)))))))
+
+(defn- liveness-tick!
+  "Run the liveness watchdog with the gateway registry stubbed to `turns` and
+   both worker lanes made synchronous, so the probe's verdict lands inline."
+  [turns now-ms]
+  (with-redefs-fn {#'vis/gateway-list-turns (fn [_sid]
+                                              turns)
+                   #'vis/worker-future (fn [_ _]
+                                         (future nil))
+                   #'state/gateway-queue-io! (fn [f]
+                                               (f)
+                                               nil)}
+    #(state/dispatch [:turn-liveness-tick now-ms])))
+
+(defdescribe turn-liveness-tick-test
+             (it "leaves a fresh in-flight turn alone"
+                 (reset! state/app-db (terminal-test-db {:turn-start-ms 10}))
+                 (liveness-tick! [{"turn_id" "t1" "status" "completed"}] 100)
+                 (expect (true? (:loading? @state/app-db)))
+                 (expect (nil? (:liveness-probed-at-ms @state/app-db))))
+             (it "settles a turn the gateway registry already finished"
+                 ;; The terminal event never landed (SSE gap / wedged worker), so the bubble
+                 ;; would stream forever. The registry says otherwise — and the watchdog
+                 ;; replays that verdict through the ordinary terminal writer.
+                 (reset! state/app-db (terminal-test-db))
+                 (liveness-tick! [{"turn_id" "t1" "status" "completed" "idempotency_key" "c1"}]
+                                 100000)
+                 (let [db @state/app-db]
+                   (expect (false? (:loading? db)))
+                   (expect (nil? (:gateway-turn-id db)))
+                   (expect (= :completed (get-in db [:messages 1 :terminal-pending :status])))))
+             (it "keeps a still-running turn live"
+                 (reset! state/app-db (terminal-test-db))
+                 (liveness-tick! [{"turn_id" "t1" "status" "running"}] 100000)
+                 (expect (true? (:loading? @state/app-db)))
+                 (expect (= 100000 (:liveness-probed-at-ms @state/app-db))))
+             (it "throttles repeat probes to one per interval"
+                 (reset! state/app-db (terminal-test-db))
+                 (let [calls (atom 0)]
+                   (with-redefs-fn {#'vis/gateway-list-turns (fn [_sid]
+                                                               (swap! calls inc)
+                                                               [])
+                                    #'vis/worker-future (fn [_ _]
+                                                          (future nil))
+                                    #'state/gateway-queue-io! (fn [f]
+                                                                (f)
+                                                                nil)}
+                     #(do (state/dispatch [:turn-liveness-tick 100000])
+                          (state/dispatch [:turn-liveness-tick 101000])
+                          (state/dispatch [:turn-liveness-tick 106000])))
+                   (expect (= 2 @calls))))
+             (it "defers to the cancel self-heal while a cancel is pending"
+                 (reset! state/app-db (terminal-test-db {:cancelling? true :cancelling-at-ms 10}))
+                 (liveness-tick! [{"turn_id" "t1" "status" "completed"}] 100000)
+                 (expect (true? (:loading? @state/app-db)))))
 
 (defdescribe restore-pending-ownership-test
              ;; A cancel pulls back ONLY the rows this tab submitted (`:mine?`, from the

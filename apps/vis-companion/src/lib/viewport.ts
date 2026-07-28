@@ -81,6 +81,12 @@ function resetLayoutScroll(): void {
   if (doc.scrollLeft !== 0) doc.scrollLeft = 0;
 }
 
+/** How far iOS has scrolled the LAYOUT viewport away from its origin. */
+function layoutScroll(): number {
+  const doc = document.scrollingElement ?? document.documentElement;
+  return Math.max(0, window.scrollY || doc.scrollTop || 0);
+}
+
 function endRotation() {
   if (rotationFrame !== null) window.cancelAnimationFrame(rotationFrame);
   if (rotationGuard !== null) window.clearTimeout(rotationGuard);
@@ -221,9 +227,13 @@ export function onViewportRotation(listener: (phase: RotationPhase) => void): ()
  * The intermediate frames are real layout — two font sizes, two column widths,
  * a scroller that has not been re-anchored yet — so there is nothing to animate
  * between: any transition on them would interpolate boxes that never existed,
- * which is exactly the floating/resizing wobble. The honest move is to not show
- * them: hide the shell for the window (the page background is the same ink, so
- * the OS rotation animation is all you see) and fade the settled layout back.
+ * which is exactly the floating/resizing wobble. So consumers freeze motion for
+ * the window (`[data-rotating]` in index.css) and let the settled layout simply
+ * appear.
+ *
+ * Do NOT hide the shell for this window: the page background is the theme's
+ * `--ink`, and the default theme is LIGHT, so fading the shell out paints a
+ * full white screen for as long as the rotation takes.
  */
 export function useIsViewportRotating(): boolean {
   const [isRotating, setRotating] = useState(false);
@@ -293,13 +303,18 @@ export function useVisualViewportShell(): CSSProperties | undefined {
           return;
         }
         const covered = window.innerHeight - vv.height > COVERED_EPSILON;
+        // Keyboard down means the layout viewport belongs at its origin again.
+        if (!covered) resetLayoutScroll();
+        // A `position: fixed` shell resolves against the LAYOUT viewport, and
+        // iOS scrolls THAT viewport to reveal a focused field — it does it even
+        // with `html { overflow: hidden }`. So the whole shell slides up by that
+        // offset the frame you tap the composer and snaps back when you leave
+        // it, which is the header jumping in and out from under the status bar.
+        // `offsetTop` alone never sees it (it is measured against the very
+        // viewport that moved), so the pin has to add the scroll back.
+        const top = Math.round(vv.offsetTop + layoutScroll());
         const next: Box | null =
-          vv.height > 0 && (covered || vv.offsetTop > 1)
-            ? { height: Math.round(vv.height), top: Math.round(vv.offsetTop) }
-            : null;
-        // Keyboard down means the layout viewport belongs at its origin again;
-        // while it is up, iOS owns that scroll to keep the caret visible.
-        if (!next) resetLayoutScroll();
+          vv.height > 0 && (covered || top > 1) ? { height: Math.round(vv.height), top } : null;
         setBox((prev) =>
           prev && next && prev.height === next.height && prev.top === next.top ? prev : next,
         );
@@ -337,7 +352,14 @@ export function useVisualViewportShell(): CSSProperties | undefined {
       resync();
       timers.push(
         window.setTimeout(() => {
-          if (document.activeElement === el) el.scrollIntoView({ block: 'nearest' });
+          if (document.activeElement !== el) return;
+          el.scrollIntoView({ block: 'nearest' });
+          // `scrollIntoView` walks EVERY scrollable ancestor, and the last one
+          // is the layout viewport: reveal a field this way and the fixed shell
+          // travels with it. Scroll the field inside its own scroller, then put
+          // the shell's frame of reference back.
+          resetLayoutScroll();
+          sync();
         }, 350),
       );
     };
@@ -350,6 +372,9 @@ export function useVisualViewportShell(): CSSProperties | undefined {
     window.addEventListener('focus', onVisible);
     window.addEventListener('resize', sync);
     document.addEventListener('focusin', onFocusIn);
+    // A layout-viewport scroll moves the fixed shell but fires no visual
+    // viewport event, so it has to be watched on its own.
+    window.addEventListener('scroll', sync, true);
 
     // Rotation, not a wake: `start` drops the stale pin in the frame the flip
     // happens, the settles re-check cheaply, and only the end pays for a full
@@ -382,6 +407,7 @@ export function useVisualViewportShell(): CSSProperties | undefined {
       window.removeEventListener('focus', onVisible);
       window.removeEventListener('resize', sync);
       document.removeEventListener('focusin', onFocusIn);
+      window.removeEventListener('scroll', sync, true);
       stopRotation();
       disposeNative();
     };

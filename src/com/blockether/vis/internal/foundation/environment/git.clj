@@ -66,30 +66,32 @@
   ([^File start-file] (snapshot start-file nil))
   ([^File start-file {:keys [status?] :or {status? true}}]
    (when-let [^File worktree-root (vis-git/repo-work-tree start-file)]
-     (try (let [git-dir (git-line worktree-root ["rev-parse" "--absolute-git-dir"])
-                branch-ref (git-line worktree-root ["rev-parse" "--abbrev-ref" "HEAD"])
-                detached? (or (nil? branch-ref) (= "HEAD" branch-ref))
-                short-sha (git-line worktree-root ["rev-parse" "--short=12" "HEAD"])
-                porcelain (when status? (vis-git/porcelain-tokens worktree-root nil))
-                status-map (when porcelain (vis-git/status-counts porcelain))
-                upstream (when-not detached?
-                           (git-line worktree-root
-                                     ["rev-parse" "--abbrev-ref" "--symbolic-full-name"
-                                      "@{upstream}"]))
-                sync-map (when-not detached? (ahead-behind worktree-root))
-                base (cond-> {:root (.getPath worktree-root)
-                              :git-dir (or git-dir (.getPath (io/file worktree-root ".git")))
-                              :branch (when-not detached? branch-ref)
-                              :detached? detached?
-                              :detached-sha (when detached? short-sha)
-                              :worktree? (worktree? worktree-root)
-                              :submodules? (submodules-present? worktree-root)
-                              :stash-count (stash-count worktree-root)}
-                       upstream
-                       (assoc :upstream upstream)
+     (try (let
+            [git-dir (git-line worktree-root ["rev-parse" "--absolute-git-dir"])
+             branch-ref (git-line worktree-root ["rev-parse" "--abbrev-ref" "HEAD"])
+             detached? (or (nil? branch-ref) (= "HEAD" branch-ref))
+             short-sha (git-line worktree-root ["rev-parse" "--short=12" "HEAD"])
+             porcelain (when status? (vis-git/porcelain-tokens worktree-root nil))
+             status-map (when porcelain (vis-git/status-counts porcelain))
+             upstream (when-not detached?
+                        (git-line worktree-root
+                                  ["rev-parse" "--abbrev-ref" "--symbolic-full-name"
+                                   "@{upstream}"]))
+             sync-map (when-not detached? (ahead-behind worktree-root))
+             base (cond->
+                    {:root (.getPath worktree-root)
+                     :git-dir (or git-dir (.getPath (io/file worktree-root ".git")))
+                     :branch (when-not detached? branch-ref)
+                     :detached? detached?
+                     :detached-sha (when detached? short-sha)
+                     :worktree? (worktree? worktree-root)
+                     :submodules? (submodules-present? worktree-root)
+                     :stash-count (stash-count worktree-root)}
+                    upstream
+                    (assoc :upstream upstream)
 
-                       sync-map
-                       (merge sync-map))]
+                    sync-map
+                    (merge sync-map))]
 
             (if status-map (merge base status-map) (assoc base :status-unavailable? true)))
           (catch Throwable _ nil)))))

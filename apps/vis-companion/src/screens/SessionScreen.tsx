@@ -32,6 +32,8 @@ import {
   writeDraftMessage,
 } from '../lib/draft-messages';
 import type {
+  ContentBlock,
+  IterationAttachment,
   GatewayCapabilities,
   FileSuggestion,
   QueuedTurn,
@@ -56,6 +58,7 @@ import {
   type ScrollAnchor,
 } from '../lib/viewport';
 import { answeredTurnCount, markSessionRead } from '../lib/unread';
+import { App } from '@capacitor/app';
 import { shareableSessionLink } from '../lib/router';
 import { Capacitor } from '@capacitor/core';
 
@@ -75,14 +78,28 @@ interface LiveTurn {
   activity?: LiveActivity;
   startedAt: number;
   cancelling?: boolean;
-  status: 'running' | 'failed' | 'cancelled';
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
   // Bytes of the images this device just sent. The gateway's live rail carries
   // none (persisted rows own them), so the bubble would otherwise be text-only.
   attachments?: GatewayAttachment[];
+  // The terminal frame's OWN content (today: the gateway's error card on
+  // `turn.failed`). The transcript refetch normally takes over and renders it,
+  // but that is a network round-trip that can fail — and then the bubble had
+  // nothing to show but the bare word "failed". The TUI's independent terminal
+  // path paints this card without asking anyone; so does this one.
+  content?: ContentBlock[];
 }
 
 const TERMINAL_EVENTS = new Set(['turn.completed', 'turn.failed', 'turn.cancelled']);
 const LIVE_BODY_THROTTLE_MS = 150;
+
+// STUCK-turn self-heal. The live bubble settles on the terminal SSE frame; if
+// that single frame is lost (reconnect gap, a backgrounded tab, a stream torn
+// down mid-turn) nothing else ever ends the turn and the bubble streams
+// forever. After this much silence on a running turn, ask the gateway registry
+// directly. Long enough that a healthy terminal frame always wins the race.
+const TURN_LIVENESS_IDLE_MS = 10000;
+const TURN_LIVENESS_PROBE_INTERVAL_MS = 5000;
 const INITIAL_VISIBLE_TURNS = 24;
 
 function stringField(event: SseEvent, key: string): string {
@@ -292,10 +309,18 @@ function reduceLiveEvent(turn: LiveTurn | null, event: SseEvent): LiveTurn | nul
 
   if (type === 'iteration.completed') {
     const position = eventIteration(event);
+    // Byte-free descriptors for whatever the agent attached during this
+    // iteration (`vis_attach`). The bytes come from the gateway's attachment
+    // endpoint on demand; this is the only frame that announces them live, and
+    // the transcript hydrates the identical shape for history.
+    const attached = Array.isArray(event.attachments)
+      ? (event.attachments as IterationAttachment[])
+      : undefined;
     const next = updateLiveIteration(turn, position, (iteration) => ({
       ...iteration,
       thinking: stringField(event, 'thinking') || iteration.thinking,
       assistant_prose: stringField(event, 'assistant_prose') || iteration.assistant_prose,
+      attachments: attached?.length ? attached : iteration.attachments,
       error: undefined,
     }));
     // If this iteration finalized any prose, the live `:content` ticker that fed
@@ -659,6 +684,12 @@ export function SessionScreen({
   const draftMessageId = draftMessageKey(client.base, sid);
   const [prompt, setPrompt] = useState(() => peekDraftMessage(draftMessageId).text);
   const [draftMessageReady, setDraftMessageReady] = useState(false);
+  // Same fact, readable SYNCHRONOUSLY: the effects below run in declaration
+  // order inside ONE commit, so a session switch reaches the recording effect
+  // while `draftMessageReady` still holds the previous render's `true`. The ref
+  // flips with the switch itself, which is what keeps the old composer text from
+  // being written under the new session's key.
+  const draftMessageReadyRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   // The session's provider/model pick. Read once from the gateway so the header
   // chip is right on open, then written through by the router dialog.
@@ -735,6 +766,13 @@ export function SessionScreen({
   const resizeScrollFrameRef = useRef<number | null>(null);
   const disclosureScrollFrameRef = useRef<number | null>(null);
   const prependScrollHeightRef = useRef<number | null>(null);
+  // Last measured height of the scroller itself, so a box that shrinks under a
+  // parked reader can hand the lost pixels back (see the ResizeObserver below).
+  const viewportHeightRef = useRef<number | null>(null);
+  // Dictation that was already captured but not yet turned into text. A
+  // backgrounded webview loses the network mid-request, and dropping the blob
+  // there would throw away a finished sentence.
+  const pendingVoiceRef = useRef<Blob | null>(null);
   // Open/settle window: while it is in the future the transcript is still being
   // measured and every scroll inside it is ours, not the user's.
   const settleUntilRef = useRef(0);
@@ -777,6 +815,7 @@ export function SessionScreen({
   useEffect(() => {
     void recordingRef.current?.cancel();
     recordingRef.current = null;
+    pendingVoiceRef.current = null;
     setTurns(client.cachedTranscript(sid) ?? []);
     setTurnsFresh(false);
     setEarlierRemaining(client.transcriptWindow(sid).offset);
@@ -791,6 +830,13 @@ export function SessionScreen({
     setAttachments([]);
     setPastes(new Map());
     pasteCounterRef.current = 0;
+    // The composer belongs to ONE session. Everything else here is reset per sid;
+    // leaving the prompt behind meant the text typed for the previous session
+    // stayed in the box, got re-recorded under THIS session's draft-message key,
+    // and then sent to the wrong session.
+    draftMessageReadyRef.current = false;
+    setDraftMessageReady(false);
+    setPrompt(peekDraftMessage(draftMessageId).text);
     setComposerNotice(null);
     setVoicePhase('idle');
     setVoiceRequested(false);
@@ -803,7 +849,7 @@ export function SessionScreen({
     showJumpRef.current = false;
     setRouterOpen(false);
     setModelPref(null);
-  }, [sid, fresh]);
+  }, [sid, fresh, draftMessageId]);
 
   // The header chip shows whatever model this session actually runs on, so read
   // the gateway's answer rather than assuming the global default.
@@ -1157,6 +1203,110 @@ export function SessionScreen({
     return () => window.clearInterval(timer);
   }, [client, sid, voiceModel?.status, voiceSupported]);
 
+  // Turn captured audio into composer text. Kept apart from the mic button
+  // because the button is no longer the only thing that ends a recording.
+  const transcribeVoice = useCallback(async (wav: Blob, refocus: boolean) => {
+    try {
+      const transcript = await client.transcribeVoice(sid, wav);
+      pendingVoiceRef.current = null;
+      const text = transcript.text.trim();
+      // A transcript that comes back empty is a REAL outcome (a muted or
+      // hijacked mic records perfect silence), so it has to say so: dropping it
+      // silently is what makes the button feel dead.
+      if (text) setPrompt((current) => `${current.trimEnd()}${current.trim() ? ' ' : ''}${text}`);
+      else setComposerNotice('No speech recognised — nothing was captured.');
+      if (refocus) requestAnimationFrame(() => composerRef.current?.focus());
+    } catch (cause) {
+      // The request dies with the webview when iOS backgrounds the app. Keep the
+      // audio and retry on the next wake rather than losing what was said.
+      pendingVoiceRef.current = wav;
+      setComposerNotice((cause as Error).message);
+    } finally {
+      setVoicePhase('idle');
+    }
+  }, [client, sid]);
+
+  // End dictation and transcribe what WAS captured. Every path that takes the
+  // microphone away lands here, not just the mic button: iOS suspends the
+  // webview the moment the app leaves the foreground, so `onaudioprocess` stops
+  // firing while the composer still reads "Listening…" and the recorder is never
+  // stopped — the words spoken up to that point are simply lost. Finishing here
+  // puts them in the composer draft, which is persisted, so they survive even a
+  // webview the OS kills outright.
+  const finishVoice = useCallback(async (options?: { refocus?: boolean; notice?: string }) => {
+    const recording = recordingRef.current;
+    if (!recording) return;
+    recordingRef.current = null;
+    setVoicePhase('transcribing');
+    if (options?.notice) setComposerNotice(options.notice);
+    let wav: Blob;
+    try {
+      wav = await recording.stop();
+    } catch (cause) {
+      setComposerNotice((cause as Error).message);
+      setVoicePhase('idle');
+      return;
+    }
+    await transcribeVoice(wav, options?.refocus ?? false);
+  }, [transcribeVoice]);
+
+  const finishVoiceRef = useRef(finishVoice);
+  useEffect(() => {
+    finishVoiceRef.current = finishVoice;
+  });
+
+  // Backgrounding is an END of dictation, not a pause: the suspended webview
+  // captures nothing and may never come back. Close the recording on every
+  // signal that the app is going away — the Capacitor one is the only reliable
+  // signal on iOS, the DOM ones cover the web build.
+  useEffect(() => {
+    if (voicePhase !== 'recording') return;
+    const finish = () => {
+      void finishVoiceRef.current({
+        notice: 'Dictation ended when the app went to the background — transcribing what was said.',
+      });
+    };
+    const onHidden = () => {
+      if (document.visibilityState === 'hidden') finish();
+    };
+    document.addEventListener('visibilitychange', onHidden);
+    window.addEventListener('pagehide', finish);
+    let removed = false;
+    let sub: { remove: () => void } | null = null;
+    try {
+      void App.addListener('appStateChange', ({ isActive }) => {
+        if (!isActive) finish();
+      })
+        .then((handle) => {
+          if (removed) handle.remove();
+          else sub = handle;
+        })
+        .catch(() => undefined);
+    } catch {
+      /* plugin unavailable */
+    }
+    return () => {
+      document.removeEventListener('visibilitychange', onHidden);
+      window.removeEventListener('pagehide', finish);
+      removed = true;
+      sub?.remove();
+    };
+  }, [voicePhase]);
+
+  // Audio whose transcription died with the backgrounded webview: retry it the
+  // moment the app is live again.
+  const voicePhaseRef = useRef(voicePhase);
+  useEffect(() => {
+    voicePhaseRef.current = voicePhase;
+  });
+  useEffect(() => onWake(() => {
+    const wav = pendingVoiceRef.current;
+    if (!wav || voicePhaseRef.current !== 'idle') return;
+    pendingVoiceRef.current = null;
+    setVoicePhase('transcribing');
+    void transcribeVoice(wav, false);
+  }), [transcribeVoice]);
+
   useEffect(() => () => {
     void recordingRef.current?.cancel();
     recordingRef.current = null;
@@ -1166,6 +1316,29 @@ export function SessionScreen({
     async function settle(event: SseEvent) {
       const type = event.type;
       setRunning(false);
+      // Settle the live bubble ITSELF, synchronously. The transcript refetch below
+      // is a network round-trip and may fail outright, and until it lands the
+      // bubble still reads `status: 'running'` — spinner up, "Vis is thinking",
+      // the last thinking band alive — for a turn the gateway already finished.
+      // The terminal frame IS the end of the turn; that claim needs no transcript.
+      // Mirrors the TUI's independent terminal path.
+      setLiveTurn((turn) => {
+        if (!turn || turn.status !== 'running') return turn;
+        const failedBlocks = type === 'turn.failed' && Array.isArray(event.content)
+          ? (event.content as ContentBlock[])
+          : undefined;
+        const next: LiveTurn = {
+          ...turn,
+          status: type === 'turn.failed'
+            ? 'failed'
+            : type === 'turn.cancelled' ? 'cancelled' : 'completed',
+          activity: undefined,
+          cancelling: false,
+          content: failedBlocks?.length ? failedBlocks : turn.content,
+        };
+        liveTurnRef.current = next;
+        return next;
+      });
       // Keep the streamed live turn on screen until the finished turn is
       // actually persisted in the transcript, otherwise it vanishes for a frame
       // (the persisted row lags the terminal event) and the view jumps.
@@ -1287,10 +1460,41 @@ export function SessionScreen({
       if (terminal) void settle(terminal);
     };
 
+    // Liveness watchdog — the transport-independent twin of the TUI's
+    // `:turn-liveness-tick`. It never invents an ending: it replays the
+    // registry's verdict through the SAME `settle` the real frame uses, so a
+    // late duplicate frame is a harmless no-op (settle ignores a bubble that is
+    // no longer `running`).
+    let lastEventAt = Date.now();
+    let probing = false;
+    const livenessTimer = window.setInterval(() => {
+      const live = liveTurnRef.current;
+      if (probing || !live || live.status !== 'running' || !live.id) return;
+      const quietSince = Math.max(lastEventAt, live.startedAt ?? 0);
+      if (Date.now() - quietSince < TURN_LIVENESS_IDLE_MS) return;
+      probing = true;
+      void client
+        .turnStatus(sid, live.id)
+        .then((status) => {
+          if (!status) return;
+          const current = liveTurnRef.current;
+          if (!current || current.status !== 'running' || current.id !== live.id) return;
+          const type = status === 'failed'
+            ? 'turn.failed'
+            : status === 'cancelled' ? 'turn.cancelled' : 'turn.completed';
+          return settle({ type, turn_id: live.id } as unknown as SseEvent);
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          probing = false;
+        });
+    }, TURN_LIVENESS_PROBE_INTERVAL_MS);
+
     const unsubscribeConnection = subscriptions.subscribeConnection(setConnected);
     const unsubscribeEvents = subscriptions.subscribeSession(
       sid,
       (event) => {
+        lastEventAt = Date.now();
         eventQueue.push(event);
         if (timerId !== null) return;
         const delay = TERMINAL_EVENTS.has(event.type) ? 0 : LIVE_BODY_THROTTLE_MS;
@@ -1299,6 +1503,7 @@ export function SessionScreen({
     );
 
     return () => {
+      window.clearInterval(livenessTimer);
       if (timerId !== null) window.clearTimeout(timerId);
       eventQueue.length = 0;
       unsubscribeEvents();
@@ -1357,8 +1562,24 @@ export function SessionScreen({
     const transcript = transcriptRef.current;
     const viewport = scrollRef.current;
     if (!transcript || typeof ResizeObserver === 'undefined') return;
+    viewportHeightRef.current = viewport?.clientHeight ?? null;
 
     const observer = new ResizeObserver(() => {
+      // A reader parked mid-history is anchored by `scrollTop`, measured from the
+      // TOP — so when the scroller gets SHORTER (the composer grows a line as you
+      // type, the keyboard opens) the same `scrollTop` shows different text and
+      // the page appears to slide. That is the "scroll goes weird while I type"
+      // report. Give the lost pixels back so what is on screen stays on screen.
+      const box = scrollRef.current;
+      if (box) {
+        const previous = viewportHeightRef.current;
+        const height = box.clientHeight;
+        viewportHeightRef.current = height;
+        if (!followingRef.current && previous !== null && previous !== height) {
+          const limit = Math.max(0, box.scrollHeight - height);
+          box.scrollTop = Math.max(0, Math.min(limit, box.scrollTop + (previous - height)));
+        }
+      }
       if (!followingRef.current || resizeScrollFrameRef.current !== null) return;
       resizeScrollFrameRef.current = window.requestAnimationFrame(() => {
         resizeScrollFrameRef.current = null;
@@ -1413,6 +1634,7 @@ export function SessionScreen({
   // initial composer first would erase the very message we are about to restore.
   useEffect(() => {
     let cancelled = false;
+    draftMessageReadyRef.current = false;
     setDraftMessageReady(false);
     watchDraftMessageExits();
     void readDraftMessage(draftMessageId).then((message) => {
@@ -1424,6 +1646,7 @@ export function SessionScreen({
         );
         pasteCounterRef.current = Math.max(pasteCounterRef.current, message.counter);
       }
+      draftMessageReadyRef.current = true;
       setDraftMessageReady(true);
     });
     // Leaving the screen is one of the moments the message must be on disk.
@@ -1435,7 +1658,7 @@ export function SessionScreen({
 
   // Record every change. Sending clears the composer, which clears the message.
   useEffect(() => {
-    if (!draftMessageReady) return;
+    if (!draftMessageReady || !draftMessageReadyRef.current) return;
     writeDraftMessage(draftMessageId, {
       text: prompt,
       pastes: pastes.values(),
@@ -1553,24 +1776,7 @@ export function SessionScreen({
     setComposerNotice(null);
 
     if (recordingRef.current) {
-      const recording = recordingRef.current;
-      recordingRef.current = null;
-      setVoicePhase('transcribing');
-      try {
-        const wav = await recording.stop();
-        const transcript = await client.transcribeVoice(sid, wav);
-        const text = transcript.text.trim();
-        // A transcript that comes back empty is a REAL outcome (a muted or
-        // hijacked mic records perfect silence), so it has to say so: dropping it
-        // silently is what makes the button feel dead.
-        if (text) setPrompt((current) => `${current.trimEnd()}${current.trim() ? ' ' : ''}${text}`);
-        else setComposerNotice('No speech recognised — nothing was captured.');
-        requestAnimationFrame(() => composerRef.current?.focus());
-      } catch (cause) {
-        setComposerNotice((cause as Error).message);
-      } finally {
-        setVoicePhase('idle');
-      }
+      await finishVoice({ refocus: true });
       return;
     }
 
@@ -1588,7 +1794,12 @@ export function SessionScreen({
     // was reported.
     let recording: WavRecording | null = null;
     try {
-      recording = await startWavRecording();
+      recording = await startWavRecording({
+        // The mic can die without ending the turn: suspension, a call, another
+        // app. Close the sentence on the spot instead of leaving a recorder
+        // nobody will ever stop.
+        onInterrupted: (reason) => void finishVoiceRef.current({ notice: reason }),
+      });
       let model = voiceModel;
       if (model?.status !== 'ready') {
         model = await client.voiceModel(sid, true);
@@ -1950,6 +2161,13 @@ export function SessionScreen({
   // (prompt/caret state), so React bails out of the whole transcript subtree
   // instead of re-reconciling every turn wrapper on each keypress — that
   // reconciliation was what made `/` and `@` completion typing lag.
+  // A persisted turn row may still read `status: 'running'` — the gateway writes
+  // that row at submit and the transcript we hold can predate the terminal frame.
+  // Rendered naively it keeps a "Vis is thinking…" ticker (and its elapsed clock)
+  // alive under a turn that ended. Once this session is no longer live, nothing
+  // in the transcript is running: settle every row. Same rule as the TUI, which
+  // treats the terminal frame — not the persisted status — as the end of a turn.
+  const turnsSettled = !running && !liveTurn;
   const turnRows = useMemo(
     () =>
       visibleTurns.map((turn, index) => {
@@ -1967,11 +2185,11 @@ export function SessionScreen({
             {(request || (turn.attachments?.length ?? 0) > 0) && (
               <UserMessage attachments={turn.attachments}>{request}</UserMessage>
             )}
-            <AssistantMessage turn={turn} />
+            <AssistantMessage turn={turn} settled={turnsSettled} client={client} sid={sid} />
           </div>
         );
       }),
-    [visibleTurns],
+    [visibleTurns, turnsSettled, client, sid],
   );
   const liveRow = useMemo(
     () => {
@@ -1994,18 +2212,21 @@ export function SessionScreen({
               request: liveTurn.request,
               status: liveTurn.status,
               iterations: liveTurn.iterations,
-              content: liveTurn.answer
-                ? [{ id: 'live-answer', type: 'prose', markdown: liveTurn.answer }]
-                : [],
+              content: liveTurn.content
+                ?? (liveTurn.answer
+                  ? [{ id: 'live-answer', type: 'prose', markdown: liveTurn.answer }]
+                  : []),
             }}
             streaming={liveTurn.status === 'running'}
             activity={liveProgressPhase(liveTurn)}
             startedAt={liveTurn.startedAt}
+            client={client}
+            sid={sid}
           />
         </div>
       );
     },
-    [liveTurn, turns.length],
+    [liveTurn, turns.length, client, sid],
   );
   // Pin the viewport to the content it is already showing, so rows added ABOVE
   // do not shove it. The layout effect reads this height on the next paint.
@@ -2090,13 +2311,20 @@ export function SessionScreen({
       >
         <div
           ref={transcriptRef}
-          className="mx-auto min-h-full w-full max-w-3xl px-[max(0.875rem,env(safe-area-inset-left))] pb-10 pr-[max(0.875rem,env(safe-area-inset-right))] pt-4 sm:px-6 sm:pt-6"
+          className={`mx-auto min-h-full w-full max-w-3xl px-[max(0.875rem,env(safe-area-inset-left))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-4 sm:px-6 sm:pt-6 ${
+            !turns.length && !liveTurn ? 'flex flex-col pb-4 sm:pb-6' : 'pb-10'
+          }`}
         >
           {error && <Banner kind="err">{error}</Banner>}
 
           <>
-              {!turns.length && !liveTurn ? (
-            <div className="flex min-h-[55vh] flex-col items-center justify-center text-center transition-[opacity,transform,translate,scale,rotate] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
+          {/* The empty state FILLS the scroller instead of reserving a fixed
+              `55vh`: the shell is pinned to the VISUAL viewport, so raising the
+              keyboard shrinks this box while `vh` keeps measuring the untouched
+              layout viewport. The mark was then taller than the space it lived
+              in — pushed off the top and visibly off-centre. */}
+          {!turns.length && !liveTurn ? (
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center text-center transition-[opacity,transform,translate,scale,rotate] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
               <div className="grid size-9 place-items-center border border-dialog-edge bg-panel-2" aria-hidden="true">
                 <img src="/vis-logo.png" alt="" className="h-5 w-6 object-contain" />
               </div>
@@ -2455,10 +2683,19 @@ export function SessionScreen({
               rows={1}
               value={prompt}
               disabled={voicePhase === 'recording'}
-              placeholder={voicePhase === 'recording' ? 'Listening…' : running ? 'Message Vis — queues behind the running turn' : 'Message Vis or type /'}
+              placeholder={voicePhase === 'recording' ? 'Listening…' : running ? 'Message Vis — queues behind the running turn' : 'Message Vis or type / or @'}
               aria-label="Message Vis"
-              aria-controls={slashMatches.length ? 'slash-command-list' : undefined}
-              aria-expanded={slashMatches.length > 0}
+              // Both completion menus are anchored to this textarea and are mutually
+              // exclusive (`fileMention` is only computed while the slash menu is shut),
+              // so the announced popup must name whichever one is actually open.
+              aria-controls={
+                fileMatches.length
+                  ? 'file-mention-list'
+                  : slashMatches.length
+                    ? 'slash-command-list'
+                    : undefined
+              }
+              aria-expanded={slashMatches.length > 0 || fileMatches.length > 0}
               className="h-8 min-h-8 max-h-20 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-ui text-dialog-foreground outline-none placeholder:text-dialog-hint disabled:text-cancelled-foreground sm:h-7 sm:min-h-7 sm:py-[0.4375rem] sm:text-meta"
               onPaste={handlePaste}
               onFocus={handleComposerFocus}

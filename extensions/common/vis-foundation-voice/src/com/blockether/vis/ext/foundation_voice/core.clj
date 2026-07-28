@@ -27,15 +27,13 @@
   that build-asserts `ffmpeg -version`. Staying in-process also avoids paying a
   fork per check."
   [cmd]
-  (try
-    (boolean
-      (some (fn [dir]
-              (let [f (java.io.File. ^String dir ^String cmd)]
-                (and (.isFile f) (.canExecute f))))
-            (str/split (or (System/getenv "PATH") "")
-                       (re-pattern (java.util.regex.Pattern/quote
-                                     (System/getProperty "path.separator" ":"))))))
-    (catch Throwable _ false)))
+  (try (boolean (some (fn [dir]
+                        (let [f (java.io.File. ^String dir ^String cmd)]
+                          (and (.isFile f) (.canExecute f))))
+                      (str/split (or (System/getenv "PATH") "")
+                                 (re-pattern (java.util.regex.Pattern/quote
+                                               (System/getProperty "path.separator" ":"))))))
+       (catch Throwable _ false)))
 
 (defn- resolved? [sym] (boolean (requiring-resolve sym)))
 

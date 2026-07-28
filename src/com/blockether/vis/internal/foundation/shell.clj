@@ -252,67 +252,13 @@
   ^String [^String s]
   (when s (.replace s "\r\n" "\n")))
 
-(defn- windows?* [] (str/starts-with? (str/lower-case (System/getProperty "os.name" "")) "win"))
-
-(defn- find-git-bash
-  "Absolute path to a REAL bash on Windows (Git for Windows), or nil. NEVER the
-   WSL launcher at System32\\bash.exe — with no distro installed it merely
-   prints \"Windows Subsystem for Linux has no installed distributions\" and
-   exits, so a bare `bash` lookup on PATH is a trap. Resolves a `VIS_BASH`
-   override first, then the standard Git install roots, then bash alongside a
-   `git.exe` found on PATH (Git\\cmd\\git.exe → Git\\bin\\bash.exe)."
-  []
-  (let
-    [path-sep
-     (System/getProperty "path.separator" ";")
-
-     from-path
-     (for
-       [dir
-        (str/split (or (System/getenv "PATH") "")
-                   (re-pattern (java.util.regex.Pattern/quote path-sep)))
-
-        :when (not (str/blank? dir))
-        :let [git
-              (io/file dir "git.exe")]
-        :when (.isFile git)
-        :let [root
-              (let [^java.io.File p (.getParentFile ^java.io.File git)]
-                (when p (.getParentFile p)))
-
-              bash
-              (when root (io/file root "bin" "bash.exe"))]
-        :when (and bash (.isFile bash))]
-
-       (.getPath bash))
-
-     roots
-     (keep identity
-           [(System/getenv "ProgramFiles") (System/getenv "ProgramW6432")
-            (System/getenv "ProgramFiles(x86)")
-            (some-> (System/getenv "LOCALAPPDATA")
-                    (str "\\Programs"))])
-
-     candidates
-     (concat (when-let [o (System/getenv "VIS_BASH")]
-               [o])
-             (map #(str % "\\Git\\bin\\bash.exe") roots)
-             from-path)]
-
-    (some #(when (and (not (str/blank? %)) (.isFile (io/file %))) %) candidates)))
-
 (defn- bash-command
   "Bash executable to run commands with — bash on EVERY platform, so the model
-   writes one command dialect everywhere.
-
-   - Under WSL the JVM reports `os.name=Linux`, so this takes the POSIX branch
-     and uses WSL's own real `bash` (correct — we're a Linux process there).
-   - On native Windows, resolve Git Bash and NEVER the `System32\\bash.exe` WSL
-     stub: with no distro it just errors, and even with one it would switch us
-     into a WSL filesystem context and break Windows path handling.
-   - Everywhere else, a bare `bash` on PATH is correct."
+   writes one command dialect everywhere. Under WSL the JVM reports
+   `os.name=Linux`, so this is WSL's own real `bash` (correct — we're a Linux
+   process there)."
   []
-  (if (windows?*) (or (find-git-bash) "bash") "bash"))
+  "bash")
 
 (defn- jail-policy
   "Resolve the per-session jail policy carried by `env`.
@@ -349,25 +295,6 @@
     (when merge-err? (.redirectErrorStream pb true))
     (.start pb)))
 
-(defn- process->handle
-  "Adapt a plain `java.lang.Process` (the no-PTY ProcessBuilder path) into the
-   same handle map the FFM PTY backend returns, so the background pump /
-   kill-tree! / the send op all consume ONE shape regardless of backend. Used as
-   the native-Windows fallback (see pty-spawn!)."
-  [^Process p]
-  {:pid (.pid p)
-   :in (.getInputStream p)
-   :send (fn [^bytes b]
-           (let [^java.io.OutputStream os (.getOutputStream p)]
-             (.write os b)
-             (.flush os)))
-   :wait (fn []
-           (.waitFor p))
-   :alive? (fn []
-             (.isAlive p))
-   :destroy (fn [force?]
-              (if force? (.destroyForcibly p) (.destroy p)))})
-
 (defn- pty-spawn!
   "Spawn `cmd` under a REAL pseudo-terminal (internal.foundation.pty — pure Java
    FFM, no JNA and no extracted native helper): isatty() is TRUE, $TERM is set,
@@ -379,25 +306,18 @@
    `policy` is the live per-session jail policy value (or nil) applied to the
    spawned argv, so the OS jail confines the interactive child too."
   [cmd ^File dir policy]
-  (if (windows?*)
-    ;; pty is POSIX-only (openpty/posix_spawnp). On native Windows fall back to
-    ;; a plain merged-output ProcessBuilder wrapped in the same handle shape —
-    ;; no real TTY (isatty() false, no "send" interactivity, no attach
-    ;; bridge), but the "background" op still runs/captures/stops cleanly instead of
-    ;; throwing. (ConPTY could restore a real TTY here later.)
-    (process->handle (spawn! cmd dir true policy))
-    (pty/spawn! {:command (process-jail/wrap-argv [(bash-command) "--noprofile" "--norc" "-lc"
-                                                   (str cmd)]
-                                                  policy)
-                 :dir (.getPath dir)
-                 :env (if-let [full (process-jail/jailed-child-env policy)]
-                        ;; Confined child: allowlisted env only (secrets dropped).
-                        (doto (HashMap. ^java.util.Map full) (.put "TERM" "xterm-256color"))
-                        (doto (HashMap. ^java.util.Map (System/getenv))
-                          (.put "TERM" "xterm-256color")
-                          (.putAll ^java.util.Map (process-jail/proxy-env policy))))
-                 :cols 120
-                 :rows 40})))
+  (pty/spawn! {:command (process-jail/wrap-argv [(bash-command) "--noprofile" "--norc" "-lc"
+                                                 (str cmd)]
+                                                policy)
+               :dir (.getPath dir)
+               :env (if-let [full (process-jail/jailed-child-env policy)]
+                      ;; Confined child: allowlisted env only (secrets dropped).
+                      (doto (HashMap. ^java.util.Map full) (.put "TERM" "xterm-256color"))
+                      (doto (HashMap. ^java.util.Map (System/getenv))
+                        (.put "TERM" "xterm-256color")
+                        (.putAll ^java.util.Map (process-jail/proxy-env policy))))
+               :cols 120
+               :rows 40}))
 
 (defn- kill-tree!
   "Destroy a spawned process + every descendant reachable via `ProcessHandle.of
@@ -558,7 +478,7 @@
            ;; broke", retried with cosmetic variations, and spun.
            {:result (shell-result "run"
                                   {"cmd" cmd
-                                   ;; Relative cwd is `/`-separated on every OS (Windows `\`).
+                                   ;; Relative cwd is `/`-separated on every OS.
                                    "cwd" (paths/unixify (.getPath dir))
                                    "stdout" (lf (:text out))
                                    "stderr" (lf (:text err))
@@ -615,7 +535,7 @@
 (defn- push-line!
   [buffer line]
   ;; A char-pump split on `\n` leaves the `\r` of a CRLF line behind; strip it
-  ;; so a Windows-emitted line reads identically to a POSIX one.
+  ;; so a CRLF-emitted line reads identically to a POSIX one.
   (let
     [line
      (if (and (string? line) (str/ends-with? line "\r")) (subs line 0 (dec (count line))) line)]

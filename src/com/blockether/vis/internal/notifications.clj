@@ -127,21 +127,22 @@
   (when-not (VALID_LEVELS level)
     (throw (ex-info (str "notify! level must be one of " VALID_LEVELS)
                     {:type :vis/notify-bad-level :level level})))
-  (let [id
-        (str (java.util.UUID/randomUUID))
+  (let
+    [id
+     (str (java.util.UUID/randomUUID))
 
-        now
-        (now-ms)
+     now
+     (now-ms)
 
-        until
-        (when ttl-ms (+ now (long ttl-ms)))
+     until
+     (when ttl-ms (+ now (long ttl-ms)))
 
-        entry
-        {:id id :text text :level level :created-at now :until until}
+     entry
+     {:id id :text text :level level :created-at now :until until}
 
-        snapshot
-        (swap! notifications-atom (fn [coll]
-                                    (conj (prune coll) entry)))]
+     snapshot
+     (swap! notifications-atom (fn [coll]
+                                 (conj (prune coll) entry)))]
 
     (fire-watchers! snapshot)
     id))
@@ -151,14 +152,15 @@
    deadline. Returns true when an entry was actually removed.
    Watchers fire when the value changed."
   [id]
-  (let [removed?
-        (volatile! false)
+  (let
+    [removed?
+     (volatile! false)
 
-        next-vec
-        (swap! notifications-atom (fn [coll]
-                                    (let [filtered (filterv #(not= id (:id %)) coll)]
-                                      (vreset! removed? (not= (count coll) (count filtered)))
-                                      filtered)))]
+     next-vec
+     (swap! notifications-atom (fn [coll]
+                                 (let [filtered (filterv #(not= id (:id %)) coll)]
+                                   (vreset! removed? (not= (count coll) (count filtered)))
+                                   filtered)))]
 
     (when @removed? (fire-watchers! next-vec))
     @removed?))
@@ -166,8 +168,9 @@
 (defn dismiss-all!
   "Drop every notification. Returns the new (empty) vec."
   []
-  (let [next-vec (swap! notifications-atom (fn [_]
-                                             []))]
+  (let
+    [next-vec (swap! notifications-atom (fn [_]
+                                          []))]
     (fire-watchers! next-vec)
     next-vec))
 

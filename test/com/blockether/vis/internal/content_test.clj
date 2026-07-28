@@ -6,12 +6,13 @@
 (defdescribe
   content-contract-test
   (it "accepts the canonical role-labelled message"
-      (let [message (content/message {:id "turn_1"
-                                      :role "assistant"
-                                      :status "completed"
-                                      :created-at 100
-                                      :completed-at 110
-                                      :content [(content/prose "b1" "Hello **world**")]})]
+      (let
+        [message (content/message {:id "turn_1"
+                                   :role "assistant"
+                                   :status "completed"
+                                   :created-at 100
+                                   :completed-at 110
+                                   :content [(content/prose "b1" "Hello **world**")]})]
         (expect (s/valid? ::content/message message))
         (expect (= #{"id" "role" "status" "content" "created_at" "completed_at"}
                    (set (keys message))))
@@ -58,9 +59,10 @@
                               "status" "completed"
                               "output" {:provider :openai-codex}}))))
   (it "canonicalizes nested tool values to string keys and string enums"
-      (let [block (content/tool {:tool "run_tests"
-                                 :status :completed
-                                 :output {:provider :openai-codex :actual {:model "gpt-5.6"}}})]
+      (let
+        [block (content/tool {:tool "run_tests"
+                              :status :completed
+                              :output {:provider :openai-codex :actual {:model "gpt-5.6"}}})]
         (expect (= {"provider" "openai-codex" "actual" {"model" "gpt-5.6"}} (get block "output")))
         (expect (s/valid? ::content/block block))))
   (it "keeps typed errors as data"

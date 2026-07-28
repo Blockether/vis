@@ -75,24 +75,25 @@
 
 (defdescribe session-parser-helper-test
              (it "parses in the session context without clobbering the eval scratch global"
-                 (let [ctx
-                       @py-ctx
+                 (let
+                   [ctx
+                    @py-ctx
 
-                       g
-                       (.getBindings ctx "python")]
+                    g
+                    (.getBindings ctx "python")]
 
                    (.putMember g "__vis_src__" "keep-me")
                    (expect (= 3 (ep/count-top-level-forms ctx "x = 1\ny = 2\nz = 3")))
                    (expect (= "keep-me" (.asString (.getMember g "__vis_src__"))))))
              (it "is race-free when many threads parse different sources on one context"
-                 (let [cases
-                       (vec (take 90
-                                  (cycle [["# comment" 0] ["x = 1" 1] ["x = 1\ny = 2\nz = 3" 3]])))
+                 (let
+                   [cases
+                    (vec (take 90 (cycle [["# comment" 0] ["x = 1" 1] ["x = 1\ny = 2\nz = 3" 3]])))
 
-                       jobs
-                       (mapv (fn [[source expected]]
-                               (future (= expected (ep/count-top-level-forms @py-ctx source))))
-                             cases)]
+                    jobs
+                    (mapv (fn [[source expected]]
+                            (future (= expected (ep/count-top-level-forms @py-ctx source))))
+                          cases)]
 
                    (expect (every? true? (mapv deref jobs))))))
 
@@ -133,8 +134,9 @@
         (expect (nil? (:error r)))
         (expect (= {"a" 1 "b" 2} (:result r)))))
   (it "makes pathlib and Path available without an import in run_python code"
-      (let [r (ep/run-python-block @py-ctx
-                                   "pathlib.Path('a/b').name == 'b' and Path('a/b').name == 'b'")]
+      (let
+        [r (ep/run-python-block @py-ctx
+                                "pathlib.Path('a/b').name == 'b' and Path('a/b').name == 'b'")]
         (expect (nil? (:error r)))
         (expect (= true (:result r)))))
   (it "makes textwrap available without an import in run_python code"
@@ -155,8 +157,8 @@
       (expect (nil? (:error r)))
       (expect (= true (:result r))))
     (it "makes builtins available without an import in run_python code"
-        (let [r (ep/run-python-block @py-ctx
-                                     "hasattr(builtins, 'len') and builtins.len([1, 2]) == 2")]
+        (let
+          [r (ep/run-python-block @py-ctx "hasattr(builtins, 'len') and builtins.len([1, 2]) == 2")]
           (expect (nil? (:error r)))
           (expect (= true (:result r)))))
     (it
@@ -178,14 +180,15 @@
   ;; one. This pins the shape so verb authors read `:models`, not "models".
   (it
     "dict args arrive with KEYWORD-snake keys; values pass through (strings, vectors)"
-    (let [captured
-          (atom nil)
+    (let
+      [captured
+       (atom nil)
 
-          {:keys [python-context]}
-          (ep/create-python-context
-            {'capture_args (fn [prompt subctx & more]
-                             (reset! captured {:prompt prompt :subctx subctx :opts (first more)})
-                             "ok")})]
+       {:keys [python-context]}
+       (ep/create-python-context
+         {'capture_args (fn [prompt subctx & more]
+                          (reset! captured {:prompt prompt :subctx subctx :opts (first more)})
+                          "ok")})]
 
       ;; Tools are async-deferred — run through run-python-block so the bare
       ;; top-level call is SETTLED (executed) before we inspect the capture.
@@ -209,13 +212,14 @@
              ;; yet those forms hard-failed. `__vis_exec_call__` now folds **kwargs into a
              ;; TRAILING DICT positional (matching the tool's `tool(query, {opts})` contract),
              ;; so kwargs work for EVERY tool at once.
-             (let [captured
-                   (atom nil)
+             (let
+               [captured
+                (atom nil)
 
-                   {:keys [python-context]}
-                   (ep/create-python-context {'capture_args (fn [& args]
-                                                              (reset! captured (vec args))
-                                                              "ok")})]
+                {:keys [python-context]}
+                (ep/create-python-context {'capture_args (fn [& args]
+                                                           (reset! captured (vec args))
+                                                           "ok")})]
 
                (it "a positional arg + a kwarg folds to (arg, {kw…}) with VERBATIM STRING keys"
                    (reset! captured nil)
@@ -241,13 +245,15 @@
 
 (defdescribe
   protected-tool-name-test
-  (let [mk (fn []
-             (:python-context (ep/create-python-context {'patch (fn [& _]
-                                                                  "patched")})))]
+  (let
+    [mk (fn []
+          (:python-context (ep/create-python-context {'patch (fn [& _]
+                                                               "patched")})))]
     (it "refuses to overwrite a bound tool name and keeps the callable usable"
-        (let [ctx (mk)
-              r1 (ep/run-python-block ctx "patch = 'not callable'" "t1/i1")
-              r2 (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
+        (let
+          [ctx (mk)
+           r1 (ep/run-python-block ctx "patch = 'not callable'" "t1/i1")
+           r2 (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
 
           (expect (= :python/protected-name (get-in r1 [:error :data :phase])))
           (expect (str/includes? (get-in r1 [:error :message]) "patch"))
@@ -264,8 +270,9 @@ await patch({'path': css})" "t1/i1")]
                                   'later_patch
                                   (fn [& _]
                                     "late"))
-          (let [r1 (ep/run-python-block ctx "later_patch = 'oops'" "t1/i1")
-                r2 (ep/run-python-block ctx "later_patch()" "t1/i2")]
+          (let
+            [r1 (ep/run-python-block ctx "later_patch = 'oops'" "t1/i1")
+             r2 (ep/run-python-block ctx "later_patch()" "t1/i2")]
 
             (expect (= :python/protected-name (get-in r1 [:error :data :phase])))
             (expect (nil? (:error r2)))
@@ -276,10 +283,11 @@ await patch({'path': css})" "t1/i1")]
     ;; `format`→`format_code`). So `run_tests` is still hard-protected, while
     ;; `test` — no longer a tool — is a free variable the model may bind.
     (it "still hard-protects the renamed facade verb run_tests"
-        (let [ctx (:python-context (ep/create-python-context {'run_tests (fn [& _]
-                                                                           "ran")}))
-              r1 (ep/run-python-block ctx "run_tests = 'oops'" "t1/i1")
-              r2 (ep/run-python-block ctx "run_tests('go')" "t1/i2")]
+        (let
+          [ctx (:python-context (ep/create-python-context {'run_tests (fn [& _]
+                                                                        "ran")}))
+           r1 (ep/run-python-block ctx "run_tests = 'oops'" "t1/i1")
+           r2 (ep/run-python-block ctx "run_tests('go')" "t1/i2")]
 
           (expect (= :python/protected-name (get-in r1 [:error :data :phase])))
           (expect (nil? (:error r2)))
@@ -288,20 +296,22 @@ await patch({'path': css})" "t1/i1")]
     ;; to the wrapped block, so it neither persists nor clobbers the callable.
     ;; It must NOT trip the durable-rebind guard.
     (it "allows a `for` loop target that shadows a tool name and keeps the callable usable"
-        (let [ctx (mk)
-              r1 (ep/run-python-block ctx "for patch in ['a', 'b']:\n    pass" "t1/i1")
-              r2 (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
+        (let
+          [ctx (mk)
+           r1 (ep/run-python-block ctx "for patch in ['a', 'b']:\n    pass" "t1/i1")
+           r2 (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
 
           (expect (nil? (:error r1)))
           (expect (nil? (:error r2)))
           (expect (= "patched" (:result r2)))))
     (it "lets the model bind `test` and `format` as ordinary variables (not tools)"
-        (let [ctx (:python-context (ep/create-python-context {'patch (fn [& _]
-                                                                       "patched")}))
-              r (ep/run-python-block
-                  ctx
-                  "test = 'promise_pool.test.ts'\nformat = 'csv'\nawait patch({'path': test})"
-                  "t1/i1")]
+        (let
+          [ctx (:python-context (ep/create-python-context {'patch (fn [& _]
+                                                                    "patched")}))
+           r (ep/run-python-block
+               ctx
+               "test = 'promise_pool.test.ts'\nformat = 'csv'\nawait patch({'path': test})"
+               "t1/i1")]
 
           (expect (nil? (:error r)))
           (expect (= "patched" (:result r)))))))
@@ -312,11 +322,12 @@ await patch({'path': css})" "t1/i1")]
              ;; names AND Python builtins, so naming a facade verb that would make the
              ;; strong rebind-guard fire on natural variables is forbidden.
              (it "no facade verb uses a collision-prone bare name"
-                 (let [facade
-                       (set (map (comp str :ext.symbol/symbol) language-surface/symbols))
+                 (let
+                   [facade
+                    (set (map (comp str :ext.symbol/symbol) language-surface/symbols))
 
-                       banned
-                       #{"test" "format" "list" "type" "dict" "set" "str" "input" "id"}]
+                    banned
+                    #{"test" "format" "list" "type" "dict" "set" "str" "input" "id"}]
 
                    (expect (empty? (set/intersection facade banned)))))
              (it "pins the facade verb name set"
@@ -344,9 +355,10 @@ await patch({'path': css})" "t1/i1")]
    unawaited call that leaks into output repr's a loud hint instead of silently
    misbehaving. The await path AST-wraps the program in an `async def` (GraalPy
    rejects top-level await) and drives it, persisting assigned vars by name."
-  (let [mk (fn []
-             (:python-context (ep/create-python-context {'echo (fn [x]
-                                                                 (str "<" x ">"))})))]
+  (let
+    [mk (fn []
+          (:python-context (ep/create-python-context {'echo (fn [x]
+                                                              (str "<" x ">"))})))]
     (it "await runs a NESTED deferred tool call"
         (let [r (ep/run-python-block (mk) "print(await echo(\"hi\"))" "t1/i1")]
           (expect (nil? (:error r)))
@@ -360,8 +372,9 @@ await patch({'path': css})" "t1/i1")]
           (expect (nil? (:error r)))
           (expect (= "<oops>" (clojure.string/trim (str (:stdout r)))))))
     (it "an awaited assignment persists in the live interpreter across calls"
-        (let [ctx (mk)
-              r (ep/run-python-block ctx "kept = await echo(\"x\")\nprint(kept)" "t1/i1")]
+        (let
+          [ctx (mk)
+           r (ep/run-python-block ctx "kept = await echo(\"x\")\nprint(kept)" "t1/i1")]
 
           (expect (nil? (:error r)))
           (expect (= "<x>" (clojure.string/trim (str (:stdout r)))))
@@ -370,17 +383,18 @@ await patch({'path': css})" "t1/i1")]
     (it "auto-settles a bare deferred assignment in an await-bearing program"
         ;; `c = await echo("a")` forces the async path; the bare `res = echo("b")`
         ;; has NO await, yet must RUN (settle) so `res` is the value, not a thunk.
-        (let [r (ep/run-python-block (mk)
-                                     "c = await echo(\"a\")\nres = echo(\"b\")\nprint(res)"
-                                     "t1/i1")]
+        (let
+          [r (ep/run-python-block (mk)
+                                  "c = await echo(\"a\")\nres = echo(\"b\")\nprint(res)"
+                                  "t1/i1")]
           (expect (nil? (:error r)))
           (expect (= "<b>" (clojure.string/trim (str (:stdout r)))))))
     (it "auto-settles a bare deferred assignment EXACTLY once (no double-run)"
-        (let [calls (atom 0)
-              ctx (:python-context (ep/create-python-context {'tick (fn []
-                                                                      (str "n"
-                                                                           (swap! calls inc)))}))
-              r (ep/run-python-block ctx "c = await tick()\nres = tick()\nprint(res)" "t1/i1")]
+        (let
+          [calls (atom 0)
+           ctx (:python-context (ep/create-python-context {'tick (fn []
+                                                                   (str "n" (swap! calls inc)))}))
+           r (ep/run-python-block ctx "c = await tick()\nres = tick()\nprint(res)" "t1/i1")]
 
           (expect (nil? (:error r)))
           ;; the bare `res = tick()` settles inline exactly once — not twice from
@@ -398,11 +412,11 @@ await patch({'path': css})" "t1/i1")]
           (expect (nil? (:error r)))
           (expect (= "<a>" (clojure.string/trim (str (:stdout r)))))))
     (it "await on an already-settled binding does NOT re-run the tool"
-        (let [calls (atom 0)
-              ctx (:python-context (ep/create-python-context {'tick (fn []
-                                                                      (str "n"
-                                                                           (swap! calls inc)))}))
-              r (ep/run-python-block ctx "x = tick()\nprint(await x)" "t1/i1")]
+        (let
+          [calls (atom 0)
+           ctx (:python-context (ep/create-python-context {'tick (fn []
+                                                                   (str "n" (swap! calls inc)))}))
+           r (ep/run-python-block ctx "x = tick()\nprint(await x)" "t1/i1")]
 
           (expect (nil? (:error r)))
           ;; settled ONCE at assignment; the spurious await must not run it again.
@@ -421,38 +435,43 @@ await patch({'path': css})" "t1/i1")]
    coroutine's OWN await point (wrapping a foreign one so ordinary `except
    Exception` also catches it, with a clean message), while an UNCAUGHT failure
    still maps to the same host tool-failure op-error."
-  (let [mk (fn []
-             (:python-context (ep/create-python-context
-                                {'boom (fn [& _]
-                                         (throw (ex-info "boom message"
-                                                         {:type :vis/tool-failure :symbol :boom})))
-                                 'echo (fn [x]
-                                         (str "<" x ">"))})))]
+  (let
+    [mk (fn []
+          (:python-context (ep/create-python-context
+                             {'boom (fn [& _]
+                                      (throw (ex-info "boom message"
+                                                      {:type :vis/tool-failure :symbol :boom})))
+                              'echo (fn [x]
+                                      (str "<" x ">"))})))]
     (it "`except Exception` catches a tool failure and sees the clean message"
-        (let [r (ep/run-python-block
-                  (mk)
-                  "try:\n    await boom()\nexcept Exception as e:\n    print('caught: ' + str(e))"
-                  "t1/i1")]
+        (let
+          [r (ep/run-python-block
+               (mk)
+               "try:\n    await boom()\nexcept Exception as e:\n    print('caught: ' + str(e))"
+               "t1/i1")]
           (expect (nil? (:error r)))
           (expect (= "caught: boom message" (clojure.string/trim (str (:stdout r)))))))
     (it "`except BaseException` catches it too"
-        (let [r (ep/run-python-block
-                  (mk)
-                  "try:\n    await boom()\nexcept BaseException as e:\n    print('base: ' + str(e))"
-                  "t1/i1")]
+        (let
+          [r (ep/run-python-block
+               (mk)
+               "try:\n    await boom()\nexcept BaseException as e:\n    print('base: ' + str(e))"
+               "t1/i1")]
           (expect (nil? (:error r)))
           (expect (= "base: boom message" (clojure.string/trim (str (:stdout r)))))))
     (it "catching lets the block CONTINUE and run more tools"
-        (let [r (ep/run-python-block
-                  (mk)
-                  "try:\n    await boom()\nexcept Exception:\n    pass\nprint(await echo(\"ok\"))"
-                  "t1/i1")]
+        (let
+          [r (ep/run-python-block
+               (mk)
+               "try:\n    await boom()\nexcept Exception:\n    pass\nprint(await echo(\"ok\"))"
+               "t1/i1")]
           (expect (nil? (:error r)))
           (expect (= "<ok>" (clojure.string/trim (str (:stdout r)))))))
     (it "a NON-matching except still surfaces the host tool-failure op-error"
-        (let [r (ep/run-python-block (mk)
-                                     "try:\n    await boom()\nexcept ValueError:\n    print('nope')"
-                                     "t1/i1")]
+        (let
+          [r (ep/run-python-block (mk)
+                                  "try:\n    await boom()\nexcept ValueError:\n    print('nope')"
+                                  "t1/i1")]
           (expect (nil? (:stdout r)))
           (expect (= "boom message" (:message (:error r))))
           (expect (= :python/host (:phase (:data (:error r)))))
@@ -475,36 +494,36 @@ await patch({'path': css})" "t1/i1")]
   ;; `__vis_par__` (the bounded host platform pool backing `gather`) is supplied by
   ;; loop.clj in production; the test wires a minimal sequential stand-in so the
   ;; gather path resolves — echo is sync, so order/result are deterministic.
-  (let [call
-        (fn [t]
-          (if (instance? org.graalvm.polyglot.Value t)
-            (.execute ^org.graalvm.polyglot.Value t (object-array 0))
-            (t)))
+  (let
+    [call
+     (fn [t]
+       (if (instance? org.graalvm.polyglot.Value t)
+         (.execute ^org.graalvm.polyglot.Value t (object-array 0))
+         (t)))
 
-        normalize-thunks
-        (fn [thunks]
-          (if (and (= 1 (count thunks)) (sequential? (first thunks)))
-            (vec (first thunks))
-            (vec thunks)))
+     normalize-thunks
+     (fn [thunks]
+       (if (and (= 1 (count thunks)) (sequential? (first thunks)))
+         (vec (first thunks))
+         (vec thunks)))
 
-        par
-        (fn [& thunks]
-          (mapv call (normalize-thunks thunks)))
+     par
+     (fn [& thunks]
+       (mapv call (normalize-thunks thunks)))
 
-        par-isolated
-        (fn [& thunks]
-          (mapv (fn [t]
-                  (try {"__vis_ok__" true "__vis_val__" (call t)}
-                       (catch Throwable e {"__vis_ok__" false "__vis_exc__" e})))
-                (normalize-thunks thunks)))
+     par-isolated
+     (fn [& thunks]
+       (mapv (fn [t]
+               (try {"__vis_ok__" true "__vis_val__" (call t)}
+                    (catch Throwable e {"__vis_ok__" false "__vis_exc__" e})))
+             (normalize-thunks thunks)))
 
-        mk
-        (fn []
-          (:python-context (ep/create-python-context {'echo (fn [x]
-                                                              (str "<" x ">"))
-                                                      (symbol "__vis_par__") par
-                                                      (symbol "__vis_par_isolated__")
-                                                      par-isolated})))]
+     mk
+     (fn []
+       (:python-context (ep/create-python-context {'echo (fn [x]
+                                                           (str "<" x ">"))
+                                                   (symbol "__vis_par__") par
+                                                   (symbol "__vis_par_isolated__") par-isolated})))]
 
     (it
       "asyncio.run(main()) drives a coroutine that awaits tools"
@@ -520,34 +539,35 @@ await patch({'path': css})" "t1/i1")]
         (expect (nil? (:error r)))
         (expect (= "<x><y>" (clojure.string/trim (str (:stdout r)))))))
     (it "asyncio.sleep really sleeps and returns its result"
-        (let [started
-              (System/nanoTime)
+        (let
+          [started
+           (System/nanoTime)
 
-              r
-              (ep/run-python-block (mk)
-                                   (str "import asyncio, time\n" "t0 = time.monotonic()\n"
-                                        "v = await asyncio.sleep(0.1, result='done')\n"
-                                        "print(v, time.monotonic() - t0)")
-                                   "t1/i1")
+           r
+           (ep/run-python-block (mk)
+                                (str "import asyncio, time\n" "t0 = time.monotonic()\n"
+                                     "v = await asyncio.sleep(0.1, result='done')\n"
+                                     "print(v, time.monotonic() - t0)")
+                                "t1/i1")
 
-              elapsed-ms
-              (/ (- (System/nanoTime) started) 1000000.0)
+           elapsed-ms
+           (/ (- (System/nanoTime) started) 1000000.0)
 
-              [_ measured]
-              (clojure.string/split (clojure.string/trim (str (:stdout r))) #"\s+")]
+           [_ measured]
+           (clojure.string/split (clojure.string/trim (str (:stdout r))) #"\s+")]
 
           (expect (nil? (:error r)))
           (expect (<= 80.0 elapsed-ms))
           (expect (<= 0.08 (Double/parseDouble measured)))
           (expect (clojure.string/starts-with? (str (:stdout r)) "done "))))
     (it "asyncio.gather runs awaitables concurrently via our gather"
-        (let [r (ep/run-python-block
-                  (mk)
-                  (str
-                    "import asyncio\n"
+        (let
+          [r (ep/run-python-block
+               (mk)
+               (str "import asyncio\n"
                     "async def main():\n    return await asyncio.gather(echo(\"a\"), echo(\"b\"))\n"
                     "print(asyncio.run(main()))")
-                  "t1/i1")]
+               "t1/i1")]
           (expect (nil? (:error r)))
           (let [out (str (:stdout r))]
             (expect (clojure.string/includes? out "<a>"))
@@ -625,34 +645,37 @@ await patch({'path': css})" "t1/i1")]
           (expect (nil? (:error r)))
           (expect (= "clean\n0" (clojure.string/trim (str (:stdout r)))))))
     (it "NO native event-loop/socket crash leaks from asyncio use"
-        (let [r
-              (ep/run-python-block
-                (mk)
-                (str "import asyncio\nasync def main():\n    return await echo(\"z\")\n"
-                     "print(asyncio.run(main()))")
-                "t1/i1")
+        (let
+          [r
+           (ep/run-python-block
+             (mk)
+             (str "import asyncio\nasync def main():\n    return await echo(\"z\")\n"
+                  "print(asyncio.run(main()))")
+             "t1/i1")
 
-              blob
-              (str (:error r) (:stdout r))]
+           blob
+           (str (:error r) (:stdout r))]
 
           (expect (nil? (:error r)))
           (expect (not (clojure.string/includes? blob "socket was excluded")))
           (expect (not (clojure.string/includes? blob "PosixSupport")))))
     (it "from asyncio import run rebinds to the shim; gather stays the builtin"
-        (let [r (ep/run-python-block
-                  (mk)
-                  (str "from asyncio import run, gather\n"
-                       "async def m():\n    return await gather(echo(\"p\"), echo(\"q\"))\n"
-                       "print(run(m()))")
-                  "t1/i1")]
+        (let
+          [r (ep/run-python-block
+               (mk)
+               (str "from asyncio import run, gather\n"
+                    "async def m():\n    return await gather(echo(\"p\"), echo(\"q\"))\n"
+                    "print(run(m()))")
+               "t1/i1")]
           (expect (nil? (:error r)))
           (expect (clojure.string/includes? (str (:stdout r)) "<p>"))))
     (it "import socket is a no-op; touching socket is a clean NameError, not a native crash"
-        (let [r
-              (ep/run-python-block (mk) "import socket\nsocket.socket()" "t1/i1")
+        (let
+          [r
+           (ep/run-python-block (mk) "import socket\nsocket.socket()" "t1/i1")
 
-              blob
-              (str (get-in r [:error :message]) (:stdout r))]
+           blob
+           (str (get-in r [:error :message]) (:stdout r))]
 
           (expect (some? (:error r)))
           (expect (not (clojure.string/includes? blob "PosixSupport")))
@@ -665,8 +688,9 @@ await patch({'path': css})" "t1/i1")]
    opaque `SecurityException: Operation is not allowed for:` mid-run. Threads
    share the GIL-like context and still can't reach IO / native / host, so the
    dangerous capabilities stay denied."
-  (let [mk (fn []
-             (:python-context (ep/create-python-context {})))]
+  (let
+    [mk (fn []
+          (:python-context (ep/create-python-context {})))]
     (it
       "threading.Thread runs to completion"
       (let
@@ -693,21 +717,22 @@ await patch({'path': css})" "t1/i1")]
   file-exists-binding-test
   "`file-exists` binds as the snake_case `file_exists` tool in the sandbox — no `is_exists`/`exists` alias."
   (it "exposes file_exists and NOT the old is_exists name"
-      (let [ctx
-            (:python-context (ep/create-python-context
-                               ;; strings-only boundary: tool results are built with STRING
-                               ;; keys at the source (a keyword-keyed result now throws).
-                               {'file-exists (fn [path]
-                                               {"path" path "exists" (= path "present.txt")})}))
+      (let
+        [ctx
+         (:python-context (ep/create-python-context
+                            ;; strings-only boundary: tool results are built with STRING
+                            ;; keys at the source (a keyword-keyed result now throws).
+                            {'file-exists (fn [path]
+                                            {"path" path "exists" (= path "present.txt")})}))
 
-            via-file
-            (ep/run-python-block ctx "await file_exists('present.txt')" "t1/i1")
+         via-file
+         (ep/run-python-block ctx "await file_exists('present.txt')" "t1/i1")
 
-            via-missing
-            (ep/run-python-block ctx "await file_exists('missing.txt')" "t1/i2")
+         via-missing
+         (ep/run-python-block ctx "await file_exists('missing.txt')" "t1/i2")
 
-            via-old
-            (ep/run-python-block ctx "is_exists('present.txt')" "t1/i3")]
+         via-old
+         (ep/run-python-block ctx "is_exists('present.txt')" "t1/i3")]
 
         (expect (nil? (:error via-file)))
         (expect (nil? (:error via-missing)))
@@ -752,11 +777,12 @@ await patch({'path': css})" "t1/i1")]
                    (expect (nil? (:result r)))
                    (expect (= :python/runtime (get-in (:error r) [:data :phase])))))
              (it "E7b — a NameError for an undefined TOOL gets an enrichment hint"
-                 (let [r
-                       (ep/run-python-block @py-ctx "definitely_not_a_tool_zzz(\"x\")")
+                 (let
+                   [r
+                    (ep/run-python-block @py-ctx "definitely_not_a_tool_zzz(\"x\")")
 
-                       err
-                       (:error r)]
+                    err
+                    (:error r)]
 
                    (expect (true? (get-in err [:data :name-undefined?])))
                    (expect (= "definitely_not_a_tool_zzz" (get-in err [:data :undefined-name])))
@@ -769,22 +795,24 @@ await patch({'path': css})" "t1/i1")]
    `:trace` are dropped; an inner `:error` that adds nothing over the
    top-level message disappears entirely; actionable fields survive."
   (it "collapses a :vis/tool-failure to type+symbol when the inner error is just the message"
-      (let [msg
-            "rg spec has unknown keys: spec."
+      (let
+        [msg
+         "rg spec has unknown keys: spec."
 
-            out
-            (#'ep/sanitize-cause-data
-             {:type :vis/tool-failure
-              :symbol :rg
-              :error {:message msg :trace "clojure.lang.ExceptionInfo: ...\nframe - f.clj:1"}
-              :tool-result {:result nil :success? false :error {:message msg :trace "..."}}}
-             msg)]
+         out
+         (#'ep/sanitize-cause-data
+          {:type :vis/tool-failure
+           :symbol :rg
+           :error {:message msg :trace "clojure.lang.ExceptionInfo: ...\nframe - f.clj:1"}
+           :tool-result {:result nil :success? false :error {:message msg :trace "..."}}}
+          msg)]
 
         (expect (= {:type :vis/tool-failure :symbol :rg} out))))
   (it "keeps actionable inner-error fields, sans trace"
-      (let [out (#'ep/sanitize-cause-data
-                 {:type :tool/banned :error {:message "blocked" :reason :policy :trace "..."}}
-                 "other message")]
+      (let
+        [out (#'ep/sanitize-cause-data
+              {:type :tool/banned :error {:message "blocked" :reason :policy :trace "..."}}
+              "other message")]
         (expect (= {:type :tool/banned :error {:message "blocked" :reason :policy}} out))))
   (it "passes non-map :error through untouched"
       (expect (= {:type :x :error "boom"}
@@ -803,10 +831,11 @@ await patch({'path': css})" "t1/i1")]
         (expect (= :python/syntax (get-in r [:error :data :phase])))
         (expect (nil? (:auto-repaired r)))))
   (it "a PARROTED transcript tail (```ctx + r[...]= echoes) ERRORS as a SyntaxError, not salvaged"
-      (let [r (ep/run-python-block @py-ctx
-                                   (str "x_e2e = 1\nx_e2e + 41\n"
-                                        "```ctx\n[\"env\"][\"nrepl\"] = 7888\n# tool results\n"
-                                        "r[\"t4/i1/f1\"] = {\"files\": [\"a.clj\"]}"))]
+      (let
+        [r (ep/run-python-block @py-ctx
+                                (str "x_e2e = 1\nx_e2e + 41\n"
+                                     "```ctx\n[\"env\"][\"nrepl\"] = 7888\n# tool results\n"
+                                     "r[\"t4/i1/f1\"] = {\"files\": [\"a.clj\"]}"))]
         (expect (nil? (:result r)))
         (expect (some? (:error r)))
         (expect (= :python/syntax (get-in r [:error :data :phase])))
@@ -823,45 +852,50 @@ await patch({'path': css})" "t1/i1")]
    ACTIONABLE hint steering to cat / repl_eval — not the opaque PermissionError /
    `SecurityException: Operation is not allowed for:` the model kept hitting when
    it reached for importlib.exec_module / open() on a project file."
-  (let [mk (fn []
-             (:python-context (ep/create-python-context {})))]
+  (let
+    [mk (fn []
+          (:python-context (ep/create-python-context {})))]
     (it "open() denial → hint points at cat(path) + repl_eval"
-        (let [m (get-in (ep/run-python-block (mk) "open('/etc/hosts').read()" "t1/i1")
-                        [:error :message])]
+        (let
+          [m (get-in (ep/run-python-block (mk) "open('/etc/hosts').read()" "t1/i1")
+                     [:error :message])]
           (expect (some? m))
           (expect (clojure.string/includes? (str m) "cat(path)"))
           (expect (clojure.string/includes? (str m) "repl_eval"))))
     (it "importlib exec_module on a project file → the same steer"
-        (let [m (get-in
-                  (ep/run-python-block
-                    (mk)
-                    (str "import importlib.util\n"
+        (let
+          [m (get-in (ep/run-python-block
+                       (mk)
+                       (str
+                         "import importlib.util\n"
                          "spec = importlib.util.spec_from_file_location('x', '/tmp/zz_nope.py')\n"
                          "mod = importlib.util.module_from_spec(spec)\n"
                          "spec.loader.exec_module(mod)")
-                    "t1/i1")
-                  [:error :message])]
+                       "t1/i1")
+                     [:error :message])]
           (expect (clojure.string/includes? (str m) "repl_eval"))))))
 
-(defdescribe precise-hint-test
-             "More precise hints by what actually failed — beyond the generic parser error."
-             (let [mk (fn []
-                        (:python-context (ep/create-python-context {(quote lst) (fn []
-                                                                                  [1 2 3])})))]
-               (it "IndentationError → an indentation-specific hint"
-                   (let [m (get-in (ep/run-python-block (mk) "if True:\nx = 1" "t1/i1")
-                                   [:error :message])]
-                     (expect (clojure.string/includes? (str m) "INDENTATION"))))
-               (it ".get on a LIST-shaped tool result answers the uniform dict probe"
-                   ;; A native result whose top level is a list is re-typed __VisResultList__, so
-                   ;; the documented `res.get('op')` sweep works on EVERY stored result instead of
-                   ;; blowing up with `'list' object has no attribute 'get'`.
-                   (let [r (ep/run-python-block (mk)
-                                                (str "r = await lst()\n"
-                                                     "[list(r), r.get('op'), r.get('x', 'dflt')]")
-                                                "t1/i1")]
-                     (expect (nil? (:error r)))
-                     (expect (= [[1 2 3] nil "dflt"] (:result r)))))))
+(defdescribe
+  precise-hint-test
+  "More precise hints by what actually failed — beyond the generic parser error."
+  (let
+    [mk (fn []
+          (:python-context (ep/create-python-context {(quote lst) (fn []
+                                                                    [1 2 3])})))]
+    (it "IndentationError → an indentation-specific hint"
+        (let [m (get-in (ep/run-python-block (mk) "if True:\nx = 1" "t1/i1") [:error :message])]
+          (expect (clojure.string/includes? (str m) "INDENTATION"))))
+    (it ".get on a LIST-shaped tool result answers the uniform dict probe"
+        ;; A native result whose top level is a list is re-typed __VisResultList__, so
+        ;; the documented `res.get('op')` sweep works on EVERY stored result instead of
+        ;; blowing up with `'list' object has no attribute 'get'`.
+        (let
+          [r (ep/run-python-block (mk)
+                                  (str "r = await lst()\n"
+                                       "[list(r), r.get('op'), r.get('x', 'dflt')]")
+                                  "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= [[1 2 3] nil "dflt"] (:result r)))))))
 
 (defdescribe
   source-context-test
@@ -870,16 +904,17 @@ await patch({'path': css})" "t1/i1")]
    render-source-context). The async trampoline strips guest frames from the Java
    stack, so a RUNTIME position is recovered from the Python __traceback__."
   (it "a nested runtime failure points at the failing line INSIDE the function"
-      (let [r
-            (ep/run-python-block
-              @py-ctx
-              "def compute(x):\n    y = x + 1\n    return y / 0\n\nprint(compute(41))")
+      (let
+        [r
+         (ep/run-python-block
+           @py-ctx
+           "def compute(x):\n    y = x + 1\n    return y / 0\n\nprint(compute(41))")
 
-            err
-            (:error r)
+         err
+         (:error r)
 
-            msg
-            (:message err)]
+         msg
+         (:message err)]
 
         (expect (= 3 (get-in err [:data :line]))) ;; the `/ 0` line, NOT the call site (5)
         (expect (= 12 (get-in err [:data :column])))
@@ -887,42 +922,46 @@ await patch({'path': css})" "t1/i1")]
         (expect (str/includes? msg "return y / 0"))
         (expect (str/includes? msg "^"))))
   (it "an undefined name pins line+caret to the name, overriding the shallow loc"
-      (let [r
-            (ep/run-python-block @py-ctx "print(undefined_zzz)")
+      (let
+        [r
+         (ep/run-python-block @py-ctx "print(undefined_zzz)")
 
-            err
-            (:error r)
+         err
+         (:error r)
 
-            msg
-            (:message err)]
+         msg
+         (:message err)]
 
         (expect (= 1 (get-in err [:data :line])))
         (expect (= 7 (get-in err [:data :column]))) ;; under `undefined_zzz`, not `print`
         (expect (str/includes? msg "1: print(undefined_zzz)"))
         (expect (str/includes? msg "^^^"))))        ;; a multi-char caret span
   (it "the DEEPEST user-code frame wins for an error raised inside a called fn"
-      (let [r (ep/run-python-block
-                @py-ctx
-                "def pick(xs):\n    return xs[10]\n\nrows = [1, 2, 3]\nprint(pick(rows))")]
+      (let
+        [r (ep/run-python-block
+             @py-ctx
+             "def pick(xs):\n    return xs[10]\n\nrows = [1, 2, 3]\nprint(pick(rows))")]
         (expect (= 2 (get-in r [:error :data :line])))
         (expect (str/includes? (:message (:error r)) "return xs[10]"))))
   (it "a compile/syntax error keeps its precise loc-based excerpt"
-      (let [r
-            (ep/run-python-block @py-ctx "def h():\n    if True 1")
+      (let
+        [r
+         (ep/run-python-block @py-ctx "def h():\n    if True 1")
 
-            err
-            (:error r)]
+         err
+         (:error r)]
 
         (expect (= :python/syntax (get-in err [:data :phase])))
         (expect (= 2 (get-in err [:data :line])))
         (expect (str/includes? (:message err) "if True 1"))
         (expect (str/includes? (:message err) "^"))))
   (it "a tab-indented body renders an aligned caret with NO raw tab in the excerpt"
-      (let [r
-            (ep/run-python-block @py-ctx "def tb(x):\n\treturn x / 0\n\nprint(tb(1))")
+      (let
+        [r
+         (ep/run-python-block @py-ctx "def tb(x):\n\treturn x / 0\n\nprint(tb(1))")
 
-            msg
-            (:message (:error r))]
+         msg
+         (:message (:error r))]
 
         (expect (= 2 (get-in r [:error :data :line])))
         (expect (not (str/includes? msg "\treturn"))) ;; detabbed so 1 char == 1 column
@@ -961,23 +1000,24 @@ await patch({'path': css})" "t1/i1")]
       ;; must still land on the `r` of `raise`, never in the leading-space gutter.
       (expect (= \r (nth src col)))))
   (it "a CJK glyph before the token aligns the caret by CODEPOINT columns"
-      (let [r
-            (ep/run-python-block @py-ctx "名前 = missing_var + 1")
+      (let
+        [r
+         (ep/run-python-block @py-ctx "名前 = missing_var + 1")
 
-            msg
-            (:message (:error r))
+         msg
+         (:message (:error r))
 
-            lines
-            (str/split-lines msg)
+         lines
+         (str/split-lines msg)
 
-            caret
-            (first (filter #(re-find #"^\s*\^+\s*$" %) lines))
+         caret
+         (first (filter #(re-find #"^\s*\^+\s*$" %) lines))
 
-            pad
-            (count (take-while #(= \space %) caret))
+         pad
+         (count (take-while #(= \space %) caret))
 
-            span
-            (count (filter #(= \^ %) caret))]
+         span
+         (count (filter #(= \^ %) caret))]
 
         (expect (= 1 (get-in r [:error :data :line])))
         ;; The caret is padded by CHARACTER count, not terminal display width:
@@ -1004,11 +1044,12 @@ await patch({'path': css})" "t1/i1")]
    op-error map `map-polyglot-error` produces — the exact shape the model sees for
    a host (Java) fault leaking out of a tool/engine binding."
   [nm ^Throwable t]
-  (let [^org.graalvm.polyglot.Context c
-        @py-ctx
+  (let
+    [^org.graalvm.polyglot.Context c
+     @py-ctx
 
-        code
-        (str nm "()")]
+     code
+     (str nm "()")]
 
     (.putMember (.getBindings c "python")
                 nm
@@ -1024,11 +1065,11 @@ await patch({'path': css})" "t1/i1")]
              ;; Python. Without a hint it reads as the model's own bug and gets retried verbatim.
              ;; map-polyglot-error tags it :host-null? and prepends a steer to a DIFFERENT approach.
              (it "tags a host NPE :host-null? and steers away from a doomed retry"
-                 (let [err
-                       (host-throw!
-                         "__npe_boom__"
-                         (NullPointerException.
-                           "Cannot invoke \"java.util.Map.get(Object)\" because \"row\" is null"))]
+                 (let
+                   [err (host-throw!
+                          "__npe_boom__"
+                          (NullPointerException.
+                            "Cannot invoke \"java.util.Map.get(Object)\" because \"row\" is null"))]
                    (expect (= :python/host (get-in err [:data :phase])))
                    (expect (true? (get-in err [:data :host-null?])))
                    (expect (str/includes? (:message err) "INTERNAL engine/tool fault"))
@@ -1040,35 +1081,35 @@ await patch({'path': css})" "t1/i1")]
                    (expect (nil? (get-in err [:data :host-null?])))
                    (expect (= "disk quota exceeded" (:message err))))))
 
-(defdescribe wrap-ifn-host-null-guard-test
-             ;; The SOURCE guard: `wrap-ifn` runs every native tool from Python. A
-             ;; NullPointerException inside a tool body (the null `row`) is caught AT
-             ;; THE BOUNDARY and rethrown as a labelled, catchable ex-info instead of a
-             ;; raw Java "... is null" naming a private local. A genuine Python fault
-             ;; never reaches wrap-ifn, so this only fires for host NPEs.
-             (it "relabels a tool-body NPE as :vis/host-null-tool-fault, keeping the null message"
-                 (let [^org.graalvm.polyglot.Context c
-                       @py-ctx
+(defdescribe
+  wrap-ifn-host-null-guard-test
+  ;; The SOURCE guard: `wrap-ifn` runs every native tool from Python. A
+  ;; NullPointerException inside a tool body (the null `row`) is caught AT
+  ;; THE BOUNDARY and rethrown as a labelled, catchable ex-info instead of a
+  ;; raw Java "... is null" naming a private local. A genuine Python fault
+  ;; never reaches wrap-ifn, so this only fires for host NPEs.
+  (it "relabels a tool-body NPE as :vis/host-null-tool-fault, keeping the null message"
+      (let
+        [^org.graalvm.polyglot.Context c
+         @py-ctx
 
-                       _
-                       (.putMember (.getBindings c "python")
-                                   "__wrapifn_boom__"
-                                   (#'ep/wrap-ifn
-                                    (fn [& _]
-                                      (let [^java.util.Map row nil]
-                                        (.get row "k")))))
+         _
+         (.putMember (.getBindings c "python")
+                     "__wrapifn_boom__"
+                     (#'ep/wrap-ifn
+                      (fn [& _]
+                        (let [^java.util.Map row nil]
+                          (.get row "k")))))
 
-                       err
-                       (let [pe (try (.eval c "python" "__wrapifn_boom__()")
-                                     nil
-                                     (catch PolyglotException e e))]
-                         (ep/map-polyglot-error c pe "__wrapifn_boom__()"))]
+         err
+         (let [pe (try (.eval c "python" "__wrapifn_boom__()") nil (catch PolyglotException e e))]
+           (ep/map-polyglot-error c pe "__wrapifn_boom__()"))]
 
-                   (expect (= :python/host (get-in err [:data :phase])))
-                   (expect (true? (get-in err [:data :host-null?])))
-                   (expect (= :vis/host-null-tool-fault (get-in err [:data :type])))
-                   (expect (str/includes? (str (get-in err [:data :npe-message])) "is null"))
-                   (expect (str/includes? (:message err) "internal tool fault")))))
+        (expect (= :python/host (get-in err [:data :phase])))
+        (expect (true? (get-in err [:data :host-null?])))
+        (expect (= :vis/host-null-tool-fault (get-in err [:data :type])))
+        (expect (str/includes? (str (get-in err [:data :npe-message])) "is null"))
+        (expect (str/includes? (:message err) "internal tool fault")))))
 
 (defdescribe
   await-host-null-pyify-test
@@ -1079,31 +1120,33 @@ await patch({'path': css})" "t1/i1")]
   ;; touch died with Truffle's "Null receiver values are not supported by
   ;; libraries" instead of a normal python error.
   (it "binds an awaited nil result as real python None and a map result as a real dict"
-      (let [pc
-            (ep/create-python-context {'nil_tool (fn nil-tool [& _]
-                                                   nil)
-                                       'map_tool (fn map-tool [& _]
-                                                   {"op" "probe" "stdout" "hi" "stderr" nil})})
+      (let
+        [pc
+         (ep/create-python-context {'nil_tool (fn nil-tool [& _]
+                                                nil)
+                                    'map_tool (fn map-tool [& _]
+                                                {"op" "probe" "stdout" "hi" "stderr" nil})})
 
-            res
-            (ep/run-python-block
-              (:python-context pc)
-              (str "async def f():\n"
-                   "    a = await map_tool()\n" "    n = await nil_tool()\n"
-                   "    return [isinstance(a, dict), a['stdout'], a['stderr'] is None,"
-                   " n is None, type(n).__name__]\n"
-                   "r = await f()\n" "r"))]
+         res
+         (ep/run-python-block (:python-context pc)
+                              (str
+                                "async def f():\n"
+                                "    a = await map_tool()\n" "    n = await nil_tool()\n"
+                                "    return [isinstance(a, dict), a['stdout'], a['stderr'] is None,"
+                                " n is None, type(n).__name__]\n"
+                                "r = await f()\n" "r"))]
 
         (expect (nil? (:error res)))
         (expect (= [true "hi" true true "NoneType"] (:result res)))))
   (it "a null field of an awaited result raises a NORMAL python TypeError, not a host NPE"
-      (let [pc
-            (ep/create-python-context {'map_tool (fn map-tool [& _]
-                                                   {"op" "probe" "stderr" nil})})
+      (let
+        [pc
+         (ep/create-python-context {'map_tool (fn map-tool [& _]
+                                                {"op" "probe" "stderr" nil})})
 
-            err
-            (:error (ep/run-python-block (:python-context pc)
-                                         "a = await map_tool()\na['stderr'][:5]"))]
+         err
+         (:error (ep/run-python-block (:python-context pc)
+                                      "a = await map_tool()\na['stderr'][:5]"))]
 
         (expect (str/includes? (:message err) "NoneType"))
         (expect (not (str/includes? (:message err) "NullPointerException")))
@@ -1116,24 +1159,25 @@ await patch({'path': css})" "t1/i1")]
              ;; with Truffle's null-receiver NPE instead of a normal KeyError. The rebuild
              ;; now degrades key-by-key, so python ALWAYS gets a real dict.
              (it "degrades a hostile foreign map to a real dict with a normal KeyError"
-                 (let [weird
-                       (ProxyHashMap/from (doto (java.util.LinkedHashMap.)
-                                            (.put "op" "probe")
-                                            ;; A foreign LIST key is unhashable in python, so the dict
-                                            ;; comprehension raises and the fallback path runs.
-                                            (.put (ProxyArray/fromList (java.util.ArrayList. [1 2]))
-                                                  "x")))
+                 (let
+                   [weird
+                    (ProxyHashMap/from (doto (java.util.LinkedHashMap.)
+                                         (.put "op" "probe")
+                                         ;; A foreign LIST key is unhashable in python, so the dict
+                                         ;; comprehension raises and the fallback path runs.
+                                         (.put (ProxyArray/fromList (java.util.ArrayList. [1 2]))
+                                               "x")))
 
-                       pc
-                       (ep/create-python-context {'weird weird})
+                    pc
+                    (ep/create-python-context {'weird weird})
 
-                       res
-                       (ep/run-python-block (:python-context pc)
-                                            (str "d = __vis_pyify__(weird)\n"
-                                                 "[isinstance(d, dict), list(d.keys()), d['op']]"))
+                    res
+                    (ep/run-python-block (:python-context pc)
+                                         (str "d = __vis_pyify__(weird)\n"
+                                              "[isinstance(d, dict), list(d.keys()), d['op']]"))
 
-                       err
-                       (:error (ep/run-python-block (:python-context pc) "d['content']"))]
+                    err
+                    (:error (ep/run-python-block (:python-context pc) "d['content']"))]
 
                    (expect (nil? (:error res)))
                    (expect (= [true ["op"] "probe"] (:result res)))
@@ -1147,18 +1191,19 @@ await patch({'path': css})" "t1/i1")]
              ;; message alone must be enough to tag it. (A guest raise carrying that text
              ;; stands in for the internal error, which cannot be provoked on demand.)
              (it "tags a null-receiver NPE :host-null? even when it is not a host exception"
-                 (let [^org.graalvm.polyglot.Context c
-                       @py-ctx
+                 (let
+                   [^org.graalvm.polyglot.Context c
+                    @py-ctx
 
-                       code
-                       (str "raise RuntimeError('java.lang.NullPointerException: "
-                            "Null receiver values are not supported by libraries.')")
+                    code
+                    (str "raise RuntimeError('java.lang.NullPointerException: "
+                         "Null receiver values are not supported by libraries.')")
 
-                       pe
-                       (try (.eval c "python" code) nil (catch PolyglotException e e))
+                    pe
+                    (try (.eval c "python" code) nil (catch PolyglotException e e))
 
-                       err
-                       (ep/map-polyglot-error c pe code)]
+                    err
+                    (ep/map-polyglot-error c pe code)]
 
                    (expect (true? (get-in err [:data :host-null?])))
                    (expect (str/includes? (:message err) "INTERNAL engine/tool fault")))))

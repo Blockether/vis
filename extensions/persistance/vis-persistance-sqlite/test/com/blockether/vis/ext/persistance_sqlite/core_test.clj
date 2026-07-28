@@ -531,11 +531,7 @@
 
 (defonce ^:private child-output-futures (atom {}))
 
-(defn- java-command
-  []
-  ;; Windows' launcher is `java.exe`; ProcessBuilder won't append the suffix
-  ;; for an absolute path, so name it explicitly per-OS.
-  (str (fs/file (System/getProperty "java.home") "bin" (if (fs/windows?) "java.exe" "java"))))
+(defn- java-command [] (str (fs/file (System/getProperty "java.home") "bin" "java")))
 
 (defn- start-multiprocess-writer!
   (^Process [dir marker] (start-multiprocess-writer! dir marker "child"))
@@ -547,7 +543,7 @@
 
       ;; Run the child program from a temp .clj FILE, not `-e <code>`:
       ;; passing the program inline puts its double-quotes on the command
-      ;; line, and Windows' arg quoting strips them, so `clojure.main` reads
+      ;; line, where a host's arg quoting can strip them, so `clojure.main` reads
       ;; `(System/getProperty vis.test.db-dir)` as a bare symbol →
       ;; ClassNotFoundException before the child ever opens the store.
       script
@@ -564,9 +560,8 @@
       pb
       (ProcessBuilder. cmd)]
 
-     ;; Classpath via the CLASSPATH env, NOT `-cp` on the command line: the full
-     ;; classpath blows past Windows' ~32k command-line limit, so CreateProcess
-     ;; would fail before the child ever ran.
+     ;; Classpath via the CLASSPATH env, NOT `-cp` on the command line: keeps
+     ;; the child argv small and immune to command-line length limits.
      (.put (.environment pb) "CLASSPATH" (System/getProperty "java.class.path"))
      (.redirectErrorStream pb true)
      (let [child (.start pb)]
@@ -603,7 +598,7 @@
 
     (swap! child-output-futures dissoc child)
     ;; Surface the child's merged stdout+stderr (it `.printStackTrace`s on a
-    ;; failed open) so a Windows-only child crash is diagnosable from CI logs.
+    ;; failed open) so a child crash is diagnosable from CI logs.
     (when-not (and (= 0 (.exitValue child)) (str/includes? (str output) "CHILD-DONE"))
       (println "=== multiprocess child output (exit" (.exitValue child) ") ===")
       (println output)

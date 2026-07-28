@@ -338,10 +338,8 @@
 
 (defn- open-sqlite-at-dir
   [^String dir]
-  ;; Forward slashes on EVERY OS: the canonical path is `\`-separated on
-  ;; Windows, and a `jdbc:sqlite:C:\…\vis.db` URL fails to open (the driver
-  ;; mangles the backslashes). `C:/…` works for the JDBC URL, the `File`
-  ;; ops, and the migration lock alike.
+  ;; Forward slashes for the JDBC URL, the `File` ops and the migration lock
+  ;; alike, whatever separators the canonical path came back with.
   (let [path (paths/unixify (.getCanonicalPath (File. dir)))]
     (.mkdirs (File. path))
     (let
@@ -1377,22 +1375,24 @@
   ([db-info]
    (if (ds db-info)
      (let
-       [firsts
-        (into {}
-              (map (fn [row] [(str (:sid row)) (some-> (:req row) str not-empty)]))
-              (query! db-info
-                      {:select [[:ss.session_soul_id :sid] [:ts.user_request :req]
-                                [[:min :ts.created_at] :first_at]]
-                       :from [[:session_turn_soul :ts]]
-                       :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
-                       :group-by [:ss.session_soul_id]}))]
-
+       [firsts (into {}
+                     (map (fn [row]
+                            [(str (:sid row))
+                             (some-> (:req row)
+                                     str
+                                     not-empty)]))
+                     (query! db-info
+                             {:select [[:ss.session_soul_id :sid] [:ts.user_request :req]
+                                       [[:min :ts.created_at] :first_at]]
+                              :from [[:session_turn_soul :ts]]
+                              :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
+                              :group-by [:ss.session_soul_id]}))]
        (into {}
              (map (fn [row]
                     (let [sid (str (:sid row))]
                       [sid
-                       (cond-> {:turn-count (long (or (:n row) 0))
-                                :latest-turn-at (->date (:latest row))}
+                       (cond->
+                         {:turn-count (long (or (:n row) 0)) :latest-turn-at (->date (:latest row))}
                          (get firsts sid)
                          (assoc :first-request (get firsts sid)))])))
              (query! db-info
@@ -1421,7 +1421,6 @@
                     :req
                     str
                     not-empty)]
-
            (cond-> {:turn-count (long (or (:n row) 0)) :latest-turn-at (->date (:latest row))}
              first-request
              (assoc :first-request first-request))))))))

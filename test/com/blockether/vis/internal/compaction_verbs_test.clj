@@ -34,6 +34,8 @@
 
 (def ^:private session-fold-tool (var-get #'lp/session-fold-tool))
 
+(def ^:private session-fold-card (var-get #'lp/session-fold-card))
+
 (def ^:private tool-call->python-source (var-get #'lp/tool-call->python-source))
 
 (def ^:private irm (var-get #'lp/iteration-results-message))
@@ -1110,3 +1112,40 @@
                  'session-fold)]
         (expect (= "folded t1/i1 · recover ntr[\"toolu_A\"], ntr[\"toolu_B\"] → g"
                    (sf ["t1/i1"] "g"))))))
+
+(defdescribe
+  session-fold-card-render-test
+  "The op-card a channel paints for a fold: a SHORT headline plus a MARKDOWN
+   body — never the old verbatim ``` fence, whose language-less block the TUI
+   char-folds mid-word and the companion gives `overflow-x-auto`. Prose and
+   bullets soft-wrap to whatever width each surface has, so one engine-side
+   shape reads correctly in the TUI and on the web."
+  (it "splits a full receipt into headline + gist paragraph + metric bullets"
+      (let
+        [card (session-fold-card (str "folded t1/i1 · saved ~60k tokens · ~67% of budget"
+                                      " · context 94% (90k/96k tokens) · recover ntr[\"toolu_A\"]"
+                                      " → bigger task"))]
+        ;; Collapsed view: WHAT was folded + HOW MUCH it reclaimed.
+        (expect (= "folded t1/i1 · saved ~60k tokens" (:summary card)))
+        ;; `~67% of budget` qualifies the `saved …` it follows, so the pair
+        ;; stays on ONE bullet instead of stranding a bare percentage.
+        (expect (= (str "\nbigger task\n\n" "- saved ~60k tokens · ~67% of budget\n"
+                        "- context 94% (90k/96k tokens)\n" "- recover ntr[\"toolu_A\"]")
+                   (:body card)))
+        (expect (not (str/includes? (:body card) "```")))))
+  (it "a gist-less fold still renders its metrics as wrapping bullets"
+      (let
+        [card (session-fold-card "folded t1/i1 · saved ~0 tokens · context 44% (42k/96k tokens)")]
+        (expect (= "folded t1/i1 · saved ~0 tokens" (:summary card)))
+        (expect (= "\n- saved ~0 tokens\n- context 44% (42k/96k tokens)" (:body card)))))
+  (it "a bare confirmation (no metrics, no gist) stays a headline with NO body"
+      ;; With no stamped utilization the verb returns just `folded <label>`;
+      ;; an empty disclosure would be a rendering bug, not a card.
+      (let [card (session-fold-card "folded t1/i1")]
+        (expect (= "folded t1/i1" (:summary card)))
+        (expect (nil? (:body card)))))
+  (it "the gist is the FIRST thing the body says"
+      ;; The breadcrumb the model wrote is why the human expands the card; the
+      ;; accounting reads underneath it.
+      (let [card (session-fold-card "folded t2 · saved ~12k tokens → traced the wedge")]
+        (expect (str/starts-with? (:body card) "\ntraced the wedge\n\n- saved ~12k tokens")))))

@@ -89,8 +89,9 @@
                    (try (init-repo! root)
                         (spit-rel root "a.txt" "a\nb\n") ; modify tracked
                         (spit-rel root "new.txt" "new")  ; create untracked
-                        (let [{:keys [workspace? modified created deleted branch]}
-                              (git/working-tree-status root)]
+                        (let
+                          [{:keys [workspace? modified created deleted branch]}
+                           (git/working-tree-status root)]
                           (expect (true? workspace?))
                           (expect (= 1 modified))
                           (expect (= 1 created))

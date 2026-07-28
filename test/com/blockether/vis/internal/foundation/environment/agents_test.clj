@@ -61,11 +61,12 @@
                  ;; must never silently drop bytes.
                  (with-tmp*
                    (fn [^java.io.File root]
-                     (let [f
-                           (java.io.File. root "AGENTS.md")
+                     (let
+                       [f
+                        (java.io.File. root "AGENTS.md")
 
-                           n
-                           (* 64 1024)]
+                        n
+                        (* 64 1024)]
 
                        ;; 64 KB ≫ old 16 KB cap
                        (write-bytes! f n \a)
@@ -99,8 +100,9 @@
                               (let [file (java.io.File. root "AGENTS.md")]
                                 (spit file "# first\n")
                                 (binding [workspace/*workspace-root* (.getCanonicalPath root)]
-                                  (let [first-result (:result (agents/reload!))
-                                        second-result (:result (agents/reload!))]
+                                  (let
+                                    [first-result (:result (agents/reload!))
+                                     second-result (:result (agents/reload!))]
 
                                     (expect (= "# first\n" (:content first-result)))
                                     (expect (identical? first-result second-result)))

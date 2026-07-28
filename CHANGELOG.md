@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- feat(workspace): move `/draft-blank` under the draft tree as `/draft blank <label>`
+
 ## [v0.1.11] - 2026-07-27
 
 ### Changed

@@ -125,7 +125,7 @@ draft.
 A label is required. Vis may add a numeric suffix when the corresponding draft
 directory name already exists; use the displayed label when resuming it.
 
-### `/draft-blank <label>`
+### `/draft blank <label>`
 
 Creates and enters an empty draft. No files from the real root are copied in.
 This is useful for a spike, a fresh module, or generated output that should not
@@ -266,7 +266,7 @@ abandon; apply remains an explicit slash command.
 ## Provider and privacy boundary
 
 **Recognized draft control commands are local control-plane operations.** Vis
-executes `/draft …` and `/draft-blank …` without an LLM call, charges no model
+executes `/draft …` without an LLM call, charges no model
 tokens for the command, and does not send the command text or result to a
 provider—either immediately or as later provider context. They remain visible in
 the local transcript for audit. The TUI suppresses the model/provider footer on
@@ -313,7 +313,7 @@ capability matrix. Fix or install an appropriate backend, then retry.
 | --- | --- | --- |
 | `/draft` | trunk or draft | Show the current workspace state. |
 | `/draft new <label>` | trunk | Fork the current tree, enter the new draft. |
-| `/draft-blank <label>` | trunk | Create an empty draft and enter it. |
+| `/draft blank <label>` | trunk | Create an empty draft and enter it. |
 | `/draft apply` | draft | Land changes into real directories, consume draft, return to trunk. |
 | `/draft stash` | draft | Keep the draft active, return to trunk. |
 | `/draft list` | trunk or draft | List active drafts for the current repo. |

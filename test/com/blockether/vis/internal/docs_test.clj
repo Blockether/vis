@@ -17,11 +17,12 @@
                  (expect (= "<a href=\"skills.html\">x</a>"
                             (rewrite-md-links "<a href=\"skills.md\">x</a>" :static))))
              (it "absolute URLs and absolute paths pass through untouched"
-                 (let [ext
-                       "<a href=\"https://example.com/readme.md\">x</a>"
+                 (let
+                   [ext
+                    "<a href=\"https://example.com/readme.md\">x</a>"
 
-                       abs
-                       "<a href=\"/raw/readme.md\">x</a>"]
+                    abs
+                    "<a href=\"/raw/readme.md\">x</a>"]
 
                    (expect (= ext (rewrite-md-links ext :live)))
                    (expect (= abs (rewrite-md-links abs :live))))))

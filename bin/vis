@@ -142,7 +142,7 @@ run_measured_or_exec() {
 # never auto-selected):
 #   --source   force LIVE SOURCE (clojure -M:vis) — your working-tree edits
 #   --jar      force the AOT uberjar (target/vis.jar)
-#   --native   force the native binary (target/vis[.exe])
+#   --native   force the native binary (target/vis)
 #   --jvm      back-compat alias for --source
 #   --jfr      profile with JFR: exports VIS_JFR=1 so the client (TUI/web) AND
 #              the detached gateway daemon it spawns EACH record their own
@@ -201,11 +201,10 @@ vis_repo_slug="Blockether/vis"
 
 vis_platform_asset() {
   # Release asset basename for THIS host (no -with-assets suffix).
-  local os arch ext=""
+  local os arch
   case "$(uname -s)" in
-    Darwin)                       os=macos ;;
-    Linux)                        os=linux ;;
-    MINGW*|MSYS*|CYGWIN*|Windows*) os=windows; ext=".exe" ;;
+    Darwin) os=macos ;;
+    Linux)  os=linux ;;
     *) echo "vis update: unsupported OS $(uname -s)" >&2; return 1 ;;
   esac
   case "$(uname -m)" in
@@ -213,7 +212,7 @@ vis_platform_asset() {
     x86_64|amd64)  arch=x64 ;;
     *) echo "vis update: unsupported arch $(uname -m)" >&2; return 1 ;;
   esac
-  printf 'vis-%s-%s%s' "$os" "$arch" "$ext"
+  printf 'vis-%s-%s' "$os" "$arch"
 }
 
 vis_do_update() {
@@ -341,7 +340,6 @@ esac
 # Repo build artifacts (self-contained → exec from the user's ORIGINAL cwd so
 # `vis` behaves the same whether or not you're inside the repo).
 native_bin="$repo_root/target/vis"
-[[ -x "$native_bin" ]] || native_bin="$repo_root/target/vis.exe"
 uber_jar="$repo_root/target/vis.jar"
 
 # ── Explicit build override (--source / --jar / --native) wins over auto. ─────

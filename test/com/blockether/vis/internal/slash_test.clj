@@ -105,82 +105,89 @@
                                    {:channel/id :tui}
                                    "/var/folders/T/mozDraggedFiles/dog.jpg what do you see")))))
   (it "longest-prefix match resolves nested slash; trailing tokens become argv"
-      (let [env
-            (env-of [(ext "alpha" [workspace-spec workspace-apply])])
+      (let
+        [env
+         (env-of [(ext "alpha" [workspace-spec workspace-apply])])
 
-            out
-            (slash/dispatch env
-                            {:channel/id :tui :session/id "s1" :workspace/id "w1"}
-                            "/workspace apply --hard")]
+         out
+         (slash/dispatch env
+                         {:channel/id :tui :session/id "s1" :workspace/id "w1"}
+                         "/workspace apply --hard")]
 
         (expect (true? (:handled? out)))
         (expect (= ["workspace" "apply"] (:path out)))
         (expect (= :ok (get-in out [:result :slash/status])))
         (expect (= ["--hard"] (get-in out [:result :slash/argv])))))
   (it "unknown slash returns :reason :unknown"
-      (let [env
-            (env-of [(ext "alpha" [workspace-spec])])
+      (let
+        [env
+         (env-of [(ext "alpha" [workspace-spec])])
 
-            out
-            (slash/dispatch env {:channel/id :tui} "/missing thing")]
+         out
+         (slash/dispatch env {:channel/id :tui} "/missing thing")]
 
         (expect (true? (:handled? out)))
         (expect (= :unknown (:reason out)))))
   (it "missing :slash/requires entries surface :reason :requires-failed"
-      (let [env
-            (env-of [(ext "alpha" [workspace-apply])])
+      (let
+        [env
+         (env-of [(ext "alpha" [workspace-apply])])
 
-            out
-            (slash/dispatch env
-                            ;; no :session/id, no :workspace/id
-                            {:channel/id :tui}
-                            "/workspace apply")]
+         out
+         (slash/dispatch env
+                         ;; no :session/id, no :workspace/id
+                         {:channel/id :tui}
+                         "/workspace apply")]
 
         (expect (true? (:handled? out)))
         (expect (= :requires-failed (:reason out)))
         (expect (= #{:session :workspace} (:missing out)))))
   (it "availability-fn=false yields :reason :unavailable"
-      (let [env
-            (env-of [(ext "alpha" [voice-spec])])
+      (let
+        [env
+         (env-of [(ext "alpha" [voice-spec])])
 
-            out
-            (slash/dispatch env {:channel/id :api} "/voice")]
+         out
+         (slash/dispatch env {:channel/id :api} "/voice")]
 
         (expect (true? (:handled? out)))
         (expect (= :unavailable (:reason out)))))
   (it "availability-fn=true allows dispatch"
-      (let [env
-            (env-of [(ext "alpha" [voice-spec])])
+      (let
+        [env
+         (env-of [(ext "alpha" [voice-spec])])
 
-            out
-            (slash/dispatch env {:channel/id :tui} "/voice")]
+         out
+         (slash/dispatch env {:channel/id :tui} "/voice")]
 
         (expect (true? (:handled? out)))
         (expect (= :ok (get-in out [:result :slash/status])))))
   (it "run-fn throw surfaces :reason :run-failed"
-      (let [throwing
-            {:slash/name "boom"
-             :slash/run-fn (fn [_]
-                             (throw (ex-info "kaboom" {})))}
+      (let
+        [throwing
+         {:slash/name "boom"
+          :slash/run-fn (fn [_]
+                          (throw (ex-info "kaboom" {})))}
 
-            env
-            (env-of [(ext "alpha" [throwing])])
+         env
+         (env-of [(ext "alpha" [throwing])])
 
-            out
-            (slash/dispatch env {:channel/id :tui} "/boom")]
+         out
+         (slash/dispatch env {:channel/id :tui} "/boom")]
 
         (expect (true? (:handled? out)))
         (expect (= :run-failed (:reason out)))
         (expect (= "kaboom" (:error out)))))
   (it "slash with no :slash/run-fn surfaces :reason :no-run-fn"
-      (let [info-only
-            {:slash/name "info" :slash/doc "info"}
+      (let
+        [info-only
+         {:slash/name "info" :slash/doc "info"}
 
-            env
-            (env-of [(ext "alpha" [info-only])])
+         env
+         (env-of [(ext "alpha" [info-only])])
 
-            out
-            (slash/dispatch env {:channel/id :tui} "/info")]
+         out
+         (slash/dispatch env {:channel/id :tui} "/info")]
 
         (expect (true? (:handled? out)))
         (expect (= :no-run-fn (:reason out))))))

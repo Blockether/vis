@@ -94,12 +94,13 @@
   (or (some-> code
               str
               not-empty)
-      (let [srcs (keep (fn [f]
-                         (some-> (:code f)
-                                 str
-                                 str/trim
-                                 not-empty))
-                       forms)]
+      (let
+        [srcs (keep (fn [f]
+                      (some-> (:code f)
+                              str
+                              str/trim
+                              not-empty))
+                    forms)]
         (when (seq srcs) (str/join "\n" srcs)))))
 
 (defn entry-duration-ms
@@ -142,14 +143,15 @@
    and resume paths given the same forms, which is exactly what the parity
    invariant test asserts."
   [entry]
-  (let [forms
-        (vec (or (:forms entry) []))
+  (let
+    [forms
+     (vec (or (:forms entry) []))
 
-        entry
-        (assoc entry :forms forms)
+     entry
+     (assoc entry :forms forms)
 
-        scope
-        (or (block-scope (:scope entry)) (entry-scope entry))]
+     scope
+     (or (block-scope (:scope entry)) (entry-scope entry))]
 
     (assoc entry
       :scope scope
