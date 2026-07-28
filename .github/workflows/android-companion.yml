@@ -60,6 +60,11 @@ jobs:
           npx cap add android
           npx cap sync android
 
+      # `android/` is regenerated above; stamp the plugin-required minSdk floor and
+      # other generated-project settings before Gradle sees its manifest.
+      - name: Prepare generated Android project
+        run: node scripts/android-prepare.mjs
+
       - name: Assemble debug APK
         working-directory: apps/vis-companion/android
         run: ./gradlew --no-daemon assembleDebug
