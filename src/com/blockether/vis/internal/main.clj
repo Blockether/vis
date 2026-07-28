@@ -3191,7 +3191,7 @@
 ;;; ── `vis python` — standalone GraalPy interpreter ────────────────────────
 ;;
 ;; Expose JUST the embedded GraalPy sandbox -- every foundation shim
-;; (requests/pandas/numpy/yaml/sqlite3/...), the POSIX-compat preamble, and
+;; (requests/pandas/numpy/yaml/sqlite3/...), the POSIX-compat shim, and
 ;; the auto-imports -- with NO agent tool bindings. Handy for reproducing
 ;; sandbox behaviour and exercising shims straight from the shell. Behaves
 ;; identically under the JVM and the native image: both drive the same

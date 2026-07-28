@@ -33,16 +33,14 @@
 
 (def ^:private field-sep "\u001f")
 
-(defn- pytest-preamble
-  "The `pytest`-compat shim's Python preamble, pulled from the live extension
+(defn- pytest-shim-src
+  "The `pytest`-compat shim's Python source, pulled from the live extension
    registry (`extension/sandbox-shims`, keyed by `:shim/name` \"pytest\") so we
    avoid a compile-time dependency on `shim-pytest` — which would cycle back
    through `vis.core`. nil when the shim extension isn't registered."
   []
   (some (fn [shim]
-          (when (= "pytest" (:shim/name shim))
-            (let [p (:shim/preamble shim)]
-              (if (fn? p) (p) p))))
+          (when (= "pytest" (:shim/name shim)) (extension/shim-src shim)))
         (extension/sandbox-shims)))
 
 (defn- walk-py
@@ -146,7 +144,7 @@
    `{:file :rc :ok? :output :tests}` where `:tests` is the per-test record list.
    Never throws — a broken test file is one `:errored` result, never a host
    crash."
-  [^String preamble ^File scan-dir ^File test-file]
+  [^String shim-src ^File scan-dir ^File test-file]
   (let
     [path
      (.getCanonicalPath test-file)
@@ -163,7 +161,7 @@
     (try (pyx/bind-host! ctx (.getName test-file))
          (locking ctx
            (.eval ctx "python" ^String pyx/bootstrap-python)
-           (.eval ctx "python" preamble)
+           (.eval ctx "python" shim-src)
            (let [g (.getBindings ctx "python")]
              (.putMember g "__vis_test_paths__" paths)
              (.putMember g "__vis_src__" ^String source)
@@ -201,18 +199,18 @@
      [dirs
       (or dirs (pyx/default-extension-dirs))
 
-      preamble
-      (pytest-preamble)
+      shim-src
+      (pytest-shim-src)
 
       pairs
       (discover-tests dirs)]
 
-     (if (nil? preamble)
+     (if (nil? shim-src)
        {:files 0 :ok? false :error "pytest shim not registered" :results [] :tests []}
        (let
          [results
           (mapv (fn [[d f]]
-                  (run-test-file! preamble d f))
+                  (run-test-file! shim-src d f))
                 pairs)
 
           tests

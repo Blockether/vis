@@ -2262,260 +2262,22 @@ def __vis_native_result_scan__(__vis_tree__):
 
 
 (def ^:private posix-compat-shim-src
-  "Pure-Python preamble that replaces `subprocess` / `os.system` / `os.popen`
+  "Pure-Python source that replaces `subprocess` / `os.system` / `os.popen`
    with thin wrappers that DELEGATE to the ONE vis shell tool (`shell`, whose
-   `op` covers run / background / logs / send / stop). INLINED here (eval'd into every
-   sandbox context) so the shim ships in-jar with NO separate `.py` resource.
+   `op` covers run / background / logs / send / stop). The body lives in the
+   `vis-shims/posix.py` CLASSPATH RESOURCE (`resources/vis-shims/posix.py`) -
+   real Python in a real `.py` file, never a Clojure string - and is embedded in
+   the native image by build.clj's `-H:IncludeResources=vis-shims/.*`.
    Tool callables are looked up in `globals()` at CALL time, so it self-adapts:
    when the shell tool is absent or its toggle is off it raises a clear 'enable
-   the shell tool' message. Soft string-level coupling to the tool NAME only."
-  "# vis sandbox POSIX-compat shim.
-#
-# The agent sandbox is deny-by-default (no native access), so CPython's real
-# `subprocess` / `os.system` cannot spawn — they fail with an opaque error.
-# This shim replaces them with a thin layer that DELEGATES to the vis shell
-# TOOL (`shell`, one name whose `op` covers run / background / logs / send / stop), so the
-# model's ordinary Python (`subprocess.run([...])`, `os.system(...)`) just works
-# and still rides the workspace-cwd containment, timeout,
-# process-tree kill, output bounding, render badge, and trace recording.
-#
-# It is tool-AGNOSTIC by construction: the tool callables are looked up in
-# globals() at CALL time, not bound at import. So if the shell tool is absent
-# (extension not installed), the shim raises a clear message instead of a
-# confusing spawn failure; when present, subprocess/os.system route to it.
-#
-# Installed once per sandbox context (main + every sub_loop fork) by
-# env_python/build-agent-context, right after the apropos/doc introspection.
-
-def __vis_install_posix_compat__():
-    import sys
-    import types
-    import shlex
-    import time
-
-    _SHELL_DISABLED = (
-        \"The `shell` tool is not enabled in this vis sandbox, so subprocess / \"
-        \"os.system / os.popen cannot run. Turn on 'Shell commands' in the \"
-        \"settings dialog.\"
-    )
-
-    def _shell():
-        # ONE tool for every stage (run / background / logs / send / stop); op is an argument.
-        fn = globals().get(\"shell\")
-        if fn is None:
-            raise RuntimeError(_SHELL_DISABLED)
-        # Tools are async-DEFERRED (return a thunk); this internal bridge calls
-        # them synchronously, so SETTLE the thunk into its real value here.
-        settle = globals().get(\"__vis_settle__\")
-        return (lambda *a, **k: settle(fn(*a, **k))) if settle else fn
-
-    def _to_cmd(args, shell):
-        # A string is taken verbatim (the `bash -lc` line). A list/tuple is
-        # quoted+joined so argv-style calls run safely under the shell tool.
-        if isinstance(args, (list, tuple)):
-            return \" \".join(shlex.quote(str(a)) for a in args)
-        return str(args)
-
-    class CalledProcessError(Exception):
-        def __init__(self, returncode, cmd, output=None, stderr=None):
-            self.returncode = returncode
-            self.cmd = cmd
-            self.output = output
-            self.stdout = output
-            self.stderr = stderr
-            super().__init__(
-                \"Command \" + repr(cmd) + \" returned non-zero exit status \"
-                + repr(returncode) + \".\"
-            )
-
-    class TimeoutExpired(Exception):
-        def __init__(self, cmd, timeout, output=None, stderr=None):
-            self.cmd = cmd
-            self.timeout = timeout
-            self.output = output
-            self.stdout = output
-            self.stderr = stderr
-            super().__init__(
-                \"Command \" + repr(cmd) + \" timed out after \"
-                + str(timeout) + \" seconds\"
-            )
-
-    class CompletedProcess(object):
-        def __init__(self, args, returncode, stdout, stderr):
-            self.args = args
-            self.returncode = returncode
-            self.stdout = stdout
-            self.stderr = stderr
-
-        def __repr__(self):
-            parts = [\"args=\" + repr(self.args), \"returncode=\" + repr(self.returncode)]
-            if self.stdout is not None:
-                parts.append(\"stdout=\" + repr(self.stdout))
-            if self.stderr:
-                parts.append(\"stderr=\" + repr(self.stderr))
-            return \"CompletedProcess(\" + \", \".join(parts) + \")\"
-
-        def check_returncode(self):
-            if self.returncode:
-                raise CalledProcessError(
-                    self.returncode, self.args, self.stdout, self.stderr
-                )
-
-    def run(args, capture_output=False, text=True, shell=False, cwd=None,
-            timeout=None, check=False, input=None, encoding=None, errors=None,
-            env=None, stdout=None, stderr=None, stdin=None, bufsize=-1,
-            universal_newlines=None, **kwargs):
-        # `text`/`universal_newlines` decide bytes-vs-str on the returned
-        # streams; capture_output/stdout/stderr are accepted but the shell tool
-        # always captures, so they only affect whether we surface the text.
-        sr = _shell()
-        cmd = _to_cmd(args, shell)
-        opts = {}
-        if timeout is not None:
-            opts[\"timeout_secs\"] = int(timeout)
-        if cwd is not None:
-            opts[\"cwd\"] = str(cwd)
-        r = sr(cmd, opts) if opts else sr(cmd)
-        if r.get(\"timed_out\"):
-            raise TimeoutExpired(cmd, r.get(\"timeout_secs\", timeout),
-                                 r.get(\"stdout\", \"\"), r.get(\"stderr\", \"\"))
-        rc = r.get(\"exit\")
-        out = r.get(\"stdout\", \"\")
-        err = r.get(\"stderr\", \"\")
-        as_text = text if universal_newlines is None else universal_newlines
-        if as_text is False:
-            out = out.encode(\"utf-8\", \"replace\")
-            err = err.encode(\"utf-8\", \"replace\")
-        cp = CompletedProcess(args, rc, out, err)
-        if check:
-            cp.check_returncode()
-        return cp
-
-    def call(args, **kwargs):
-        kwargs.pop(\"check\", None)
-        return run(args, **kwargs).returncode
-
-    def check_call(args, **kwargs):
-        kwargs.pop(\"check\", None)
-        cp = run(args, **kwargs)
-        cp.check_returncode()
-        return 0
-
-    def check_output(args, text=True, **kwargs):
-        kwargs.pop(\"capture_output\", None)
-        kwargs.pop(\"check\", None)
-        cp = run(args, capture_output=True, text=text, check=True, **kwargs)
-        return cp.stdout
-
-    def getstatusoutput(cmd):
-        cp = run(cmd, shell=True, capture_output=True, text=True)
-        out = cp.stdout or \"\"
-        if out.endswith(\"\\n\"):
-            out = out[:-1]
-        return (cp.returncode or 0, out)
-
-    def getoutput(cmd):
-        return getstatusoutput(cmd)[1]
-
-    class Popen(object):
-        # Background process backed by the `shell` tool's background op (a
-        # session resource). Auto picks an id; terminate/kill use its stop op,
-        # poll/wait use logs status, and communicate drains the log buffer.
-        _counter = [0]
-
-        def __init__(self, args, shell=False, cwd=None, **kwargs):
-            sb = _shell()
-            Popen._counter[0] += 1
-            self._id = \"popen_\" + str(Popen._counter[0])
-            self.args = args
-            opts = {\"op\": \"background\", \"id\": self._id}
-            if cwd is not None:
-                opts[\"cwd\"] = str(cwd)
-            reg = sb(_to_cmd(args, shell), opts)
-            self.pid = reg.get(\"pid\")
-            self.returncode = None
-
-        def _logs(self):
-            sl = _shell()
-            return sl({\"op\": \"logs\", \"id\": self._id})
-
-        def poll(self):
-            r = self._logs()
-            if r.get(\"status\") == \"exited\":
-                self.returncode = r.get(\"exit\")
-            return self.returncode
-
-        def wait(self, timeout=None):
-            deadline = None if timeout is None else time.time() + timeout
-            while self.poll() is None:
-                if deadline is not None and time.time() > deadline:
-                    raise TimeoutExpired(self.args, timeout)
-                time.sleep(0.1)
-            return self.returncode
-
-        def communicate(self, input=None, timeout=None):
-            self.wait(timeout)
-            r = self._logs()
-            out = \"\\n\".join(t for _, t in r.get(\"lines\", []))
-            return (out, \"\")
-
-        def terminate(self):
-            ss = _shell()
-            ss({\"op\": \"stop\", \"id\": self._id})
-            self.returncode = self.returncode if self.returncode is not None else -15
-
-        kill = terminate
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            if self.poll() is None:
-                self.terminate()
-            return False
-
-    # Assemble a module object and publish it so `import subprocess` finds it.
-    mod = types.ModuleType(\"subprocess\")
-    mod.run = run
-    mod.call = call
-    mod.check_call = check_call
-    mod.check_output = check_output
-    mod.getoutput = getoutput
-    mod.getstatusoutput = getstatusoutput
-    mod.Popen = Popen
-    mod.CompletedProcess = CompletedProcess
-    mod.CalledProcessError = CalledProcessError
-    mod.TimeoutExpired = TimeoutExpired
-    mod.SubprocessError = Exception
-    mod.PIPE = -1
-    mod.STDOUT = -2
-    mod.DEVNULL = -3
-    sys.modules[\"subprocess\"] = mod
-
-    # Redirect os.system / os.popen to the same path (they reach the live os
-    # module via sys.modules, so a later `import os` sees the patched callables).
-    try:
-        import os as _os
-
-        def _os_system(command):
-            try:
-                return run(command, shell=True).returncode or 0
-            except Exception:
-                return 1
-
-        def _os_popen(command, mode=\"r\", buffering=-1):
-            import io
-            return io.StringIO(getoutput(command))
-
-        _os.system = _os_system
-        _os.popen = _os_popen
-    except Exception:
-        pass
-
-
-__vis_install_posix_compat__()
-del __vis_install_posix_compat__
-")
+   the shell tool' message. Soft string-level coupling to the tool NAME only.
+   Throws when the resource is missing - same loud contract as
+   `extension/shim-src`: a body that did not make it onto the classpath must
+   fail, not silently drop the POSIX bridge out of every sandbox."
+  (if-let [u (io/resource "vis-shims/posix.py")]
+    (slurp u)
+    (throw (ex-info "POSIX-compat shim source not found on classpath: vis-shims/posix.py"
+                    {:resource "vis-shims/posix.py"}))))
 
 (def ^:private posix-lazy-init-python
   "Eager, tiny LAZY installer for the POSIX-compat bridge. Registers a
@@ -2671,17 +2433,17 @@ del __vis_auto_imports__
 
 (def ^:private lazy-shim-runtime-python
   "Central LAZY-SHIM runtime installed once per Context, BEFORE the shims.
-   Instead of eagerly eval'ing every shim preamble (which materializes each
+   Instead of eagerly eval'ing every shim's source (which materializes each
    module's whole live object graph - numpy/pandas/PIL/... - into THIS context,
    the fat per-session baseline), we register only a tiny trigger table and
-   defer each preamble eval until the FIRST touch:
+   defer each shim's eval until the FIRST touch:
      * `import <name>` - served by a PREPENDED `sys.meta_path` finder (prepended
        so a shim can still shadow a stdlib name, e.g. `zoneinfo`), or
      * a no-import bare `<name>.attr` / `<name>(...)` - served by a `builtins`
        proxy staged under each autoload name.
    The heavy module is then built exactly once per context, on demand; a session
    that never touches numpy never pays numpy's heap. `__vis_load_shim__` is the
-   host callback that eval's the matching preamble source into this ctx."
+   host callback that eval's the matching shim source into this ctx."
   "def __vis_init_lazy__():
     import sys as _sys
     import builtins as _b
@@ -2748,16 +2510,18 @@ __vis_register_lazy_shim__ = __vis_init_lazy__()
 del __vis_init_lazy__
 ")
 
-(defn- shim-preamble-src
-  "Resolve a shim's `:shim/preamble` (a string, or a 0-arg fn returning one)."
+(defn- shim-source
+  "Python source of a shim, slurped from its `:shim/source` CLASSPATH RESOURCE
+   (built-ins: `resources/vis-shims/<name>.py`). Resolved through
+   `extension/shim-src` LAZILY - env-python must not require the extension
+   kernel at compile time, because the kernel requires env-python."
   [shim]
-  (let [p (:shim/preamble shim)]
-    (if (fn? p) (p) p)))
+  ((requiring-resolve 'com.blockether.vis.internal.extension/shim-src) shim))
 
 (defn- wire-shim-bindings!
   "Wire a shim's host `:shim/bindings` (`{py-name -> fn}`, or a 0-arg fn -> one)
    onto the sandbox globals `g` as Python callables. Cheap (proxies only) and
-   done EAGERLY even for lazy shims, so a deferred preamble finds them at load."
+   done EAGERLY even for lazy shims, so a deferred source finds them at load."
   [^Value g shim]
   (let
     [b
@@ -2770,7 +2534,7 @@ del __vis_init_lazy__
       (.putMember g ^String nm (wrap-ifn f)))))
 
 (defn- sha256-hex
-  "Lowercase-hex SHA-256 of `s` (UTF-8) - the cache key over all preamble sources."
+  "Lowercase-hex SHA-256 of `s` (UTF-8) - the cache key over all shim sources."
   ^String [^String s]
   (let [md (java.security.MessageDigest/getInstance "SHA-256")]
     (->> (.digest md (.getBytes s "UTF-8"))
@@ -2781,7 +2545,7 @@ del __vis_init_lazy__
   ;; Persistent trigger-map cache: `~/.vis/cache/shim-triggers.json`. Holds a
   ;; hash-keyed SET of trigger maps (newest first, capped) so a multi-project
   ;; user alternating folders with DIFFERENT shim sets keeps each set warm
-  ;; instead of thrashing one slot. Each set self-invalidates on preamble change.
+  ;; instead of thrashing one slot. Each set self-invalidates on source change.
   (delay (io/file (System/getProperty "user.home") ".vis" "cache" "shim-triggers.json")))
 
 (def ^:private shim-triggers-cache-max
@@ -2798,8 +2562,8 @@ del __vis_init_lazy__
   (atom []))
 
 (defn- shim-entries-hash
-  "Content hash over every string-preamble shim (sorted by name), so the trigger
-   map is recomputed only when a preamble's SOURCE (or the shim set) changes."
+  "Content hash over every shim's source (sorted by name), so the trigger
+   map is recomputed only when a shim's SOURCE (or the shim set) changes."
   ^String [entries]
   (sha256-hex (->> entries
                    (filter #(string? (:src %)))
@@ -2863,7 +2627,7 @@ del __vis_init_lazy__
 
 (defn- capture-shim-triggers
   "Learn each shim's lazy TRIGGER names by RUNNING it, not parsing it. Build ONE
-   throwaway probe Context on the shared engine, eval every string preamble once,
+   throwaway probe Context on the shared engine, eval every shim source once,
    and DIFF `sys.modules` + `builtins` before/after:
      :autoload - the names the shim STAPLES onto builtins (its deliberate public
                  surface: bare `<name>.attr` / `<name>(...)` with no import), and
@@ -2873,7 +2637,7 @@ del __vis_init_lazy__
                  shim's TRANSITIVE stdlib imports (requests pulling in `ssl`,
                  `email`, `datetime`, ...) so they never become bogus triggers.
    A shim with neither (e.g. `attach`) is not lazy-eligible => stays eager. The
-   probe Context is disposed before returning. Best-effort per shim: a preamble
+   probe Context is disposed before returning. Best-effort per shim: a source
    that throws yields empty triggers (=> that shim installs eager) rather than
    breaking the whole capture."
   [entries]
@@ -2932,8 +2696,8 @@ del __vis_init_lazy__
 (defn- shim-trigger-map
   "The `{sid {:provides [...] :autoload [...]}}` lazy-trigger map for `entries`
    (each `{:sid :src :shim}`), derived by CAPTURE (`capture-shim-triggers`), then
-   MEMOIZED process-wide and CACHED to disk keyed by a hash of the preambles. The
-   ~0.5s capture cost is therefore paid at most ONCE per machine per preamble
+   MEMOIZED process-wide and CACHED to disk keyed by a hash of the sources. The
+   ~0.5s capture cost is therefore paid at most ONCE per machine per shim-source
    change - never per Context build or `sub_loop` fork, and never on a warm
    restart (the disk cache is read instead). On any failure it degrades to `{}`
    (=> every shim installs eager: correct, only not lazy)."
@@ -2970,10 +2734,10 @@ del __vis_init_lazy__
   "Install EVERY extension-contributed sandbox shim into `ctx` (main context AND
    every `sub_loop` fork), in registration order, BEFORE the baseline snapshot.
 
-   LAZY-BY-DEFAULT: rather than eval every shim preamble here (which materializes
+   LAZY-BY-DEFAULT: rather than eval every shim's source here (which materializes
    each module's full live object graph into THIS context - the fat per-session
    baseline), install the central lazy runtime once, wire each shim's cheap host
-   bindings eagerly, and register its trigger names. Each preamble is then eval'd
+   bindings eagerly, and register its trigger names. Each source is then eval'd
    ON DEMAND, once, on the first `import`/attribute touch (see
    `lazy-shim-runtime-python`). A shim with no derivable trigger (no importable
    module, no builtins staple - e.g. `attach`) stays EAGER, preserving its side
@@ -2985,7 +2749,7 @@ del __vis_init_lazy__
 
      base
      (mapv (fn [shim]
-             {:shim shim :src (shim-preamble-src shim) :sid (:shim/name shim)})
+             {:shim shim :src (shim-source shim) :sid (:shim/name shim)})
            shims)
 
      ;; Capture-derived (not regex-parsed) lazy triggers: MEMOIZED process-wide +
@@ -3493,7 +3257,7 @@ def network_probe(method='GET', url=None, headers=None, body=None):
     ;; (filtered out of the model-visible live-vars view).
     (install-posix-compat-shim! ctx g)
     ;; SANDBOX SHIMS: install every extension-contributed Python shim (host
-    ;; bridge callables wired onto `g`, then the shim's preamble eval'd). This
+    ;; bridge callables wired onto `g`, then the shim's source eval'd). This
     ;; is the GENERIC mechanism — `yaml` (YAMLStar) and `matplotlib` (Java2D)
     ;; ship as built-in shim extensions, third-party extensions can add more.
     ;; Eval'd BEFORE the snapshot so each shim's `__vis_*`/published-module

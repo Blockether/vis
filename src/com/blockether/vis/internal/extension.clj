@@ -899,15 +899,22 @@
 ;;   :shim/description one-liner (optional): what library it shims AND what is
 ;;                     NOT supported, e.g. "... Not supported: X, Y." — a shim
 ;;                     with no caveat is 100% compatible.
-;;   :shim/bindings    host callables the preamble delegates to — either a map
+;;   :shim/bindings    host callables the shim's Python delegates to — either a map
 ;;                     {py-name -> host-fn} or a 0-arg fn returning that map.
 ;;                     Each fn is wired onto the sandbox globals as a Python
 ;;                     ProxyExecutable (args marshalled Python->Clojure, result
-;;                     Clojure->Python) BEFORE the preamble evals, so the
-;;                     preamble can call across the boundary. Optional.
-;;   :shim/preamble    Python source string (or 0-arg fn -> string) eval'd into
-;;                     the context to publish the module into `sys.modules` and
-;;                     (for autoload) staple it onto builtins.
+;;                     Clojure->Python) BEFORE the source evals, so the Python
+;;                     can call across the boundary. Optional.
+;;   :shim/source      CLASSPATH RESOURCE PATH of the shim's Python source, e.g.
+;;                     "vis-shims/yaml.py". The file is the ONLY form: no inline
+;;                     Python strings in Clojure, so the shim is lintable,
+;;                     diffable, and free of escaping hazards. Read through
+;;                     `extension/shim-src` and eval'd into the context to publish
+;;                     the module into `sys.modules` and (for autoload) staple it
+;;                     onto builtins. Built-in shims live in `resources/vis-shims/`
+;;                     and are embedded in the native image by build.clj's
+;;                     `-H:IncludeResources=vis-shims/.*`; an extension shipping
+;;                     its own must embed its own resource pattern the same way.
 (s/def :shim/name non-blank-string?)
 
 (s/def :shim/imports (s/coll-of non-blank-string? :kind vector? :distinct true))
@@ -920,12 +927,10 @@
   (s/or :map (s/map-of string? ifn?)
         :fn ifn?))
 
-(s/def :shim/preamble
-  (s/or :str string?
-        :fn ifn?))
+(s/def :shim/source non-blank-string?)
 
 (s/def ::sandbox-shim
-  (s/keys :req [:shim/name :shim/preamble]
+  (s/keys :req [:shim/name :shim/source]
           :opt [:shim/imports :shim/globals :shim/description :shim/bindings]))
 
 (s/def :ext/sandbox-shims (s/coll-of ::sandbox-shim :kind vector?))
@@ -3700,12 +3705,26 @@
    registration order (built-ins first). `env-python/build-agent-context`
    installs each into the model sandbox Context at creation time — wiring the
    shim's host `:shim/bindings` onto the globals, then eval'ing its
-   `:shim/preamble` — turning a host / JVM capability into an importable Python
+   `:shim/source` Python file — turning a host / JVM capability into an importable
    module. Loads built-ins first (idempotent) so the registry is populated
    before we read it."
   []
   (load-builtin-extensions!)
   (into [] (mapcat ext-sandbox-shims) (registered-extensions)))
+
+(defn shim-src
+  "Python source of `shim`, slurped from its `:shim/source` CLASSPATH RESOURCE
+   (e.g. \"vis-shims/yaml.py\"). This is the single reader for shim source: the
+   Python source never lives in a Clojure string. Works identically in the native
+   image because build.clj embeds `vis-shims/.*` via `-H:IncludeResources`.
+   Throws when the resource is missing - a shim whose file did not make it onto
+   the classpath must fail loudly, not install a silently empty module."
+  ^String [shim]
+  (let [res (:shim/source shim)]
+    (if-let [u (io/resource res)]
+      (slurp u)
+      (throw (ex-info (str "sandbox shim source not found on classpath: " res)
+                      {:shim/name (:shim/name shim) :shim/source res})))))
 ;; =============================================================================
 ;; CLI bridge -- the `vis extension` parent lives in `internal.main` next to the
 ;; other top-level built-in parents (`providers`, `sessions`, `doctor`,

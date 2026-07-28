@@ -152,18 +152,20 @@ List one or more shim specs under `:ext/sandbox-shims`:
 ```clojure
 {:shim/name        "yaml"
  :shim/description "PyYAML-compatible module backed by YAMLStar."
- ;; Host callables the preamble delegates to — a `{py-name -> fn}` map (or a
+ ;; Host callables the shim's Python delegates to — a `{py-name -> fn}` map (or a
  ;; 0-arg fn returning one). Each is wired onto the sandbox globals as a Python
- ;; callable (args marshalled Python->Clojure, result back) BEFORE the preamble
+ ;; callable (args marshalled Python->Clojure, result back) BEFORE the `.py` source
  ;; evals. Return a 2-vec envelope `[true payload]` / `[false message]` so a
  ;; failure crosses the boundary as a catchable Python exception.
  :shim/bindings    (fn [] {"__vis_yaml_load__" (fn [s] (try [true (yamlstar/load s)]
                                                         (catch Throwable t [false (str t)])))})
- ;; Python source eval'd into the sandbox: publish your module into
+ ;; CLASSPATH RESOURCE path of the shim's Python source — a real `.py` file, never
+ ;; a Clojure string. It is eval'd into the sandbox: publish your module into
  ;; `sys.modules` (so `import yaml` finds it) and optionally staple it onto
- ;; `builtins` (autoload — `yaml.safe_load(...)` with no import). Use
- ;; single-quoted Python string literals so the Clojure string needs no escaping.
- :shim/preamble    "import sys, types\n..."}
+ ;; `builtins` (autoload — `yaml.safe_load(...)` with no import). Built-in shims
+ ;; live in `resources/vis-shims/`; ship yours on your own classpath and, for a
+ ;; native image, embed it with `-H:IncludeResources=<your-prefix>/.*`.
+ :shim/source      "vis-shims/yaml.py"}
 ```
 
 Installed BEFORE the sandbox's baseline snapshot, so your `__vis_*` bridge names
@@ -171,6 +173,15 @@ and published module are hidden from the model's live-vars view. Install is
 best-effort: a shim that throws is logged and skipped — it never breaks the
 sandbox. Shims are a Clojure-extension capability (they need host callables);
 drop-in Python extensions contribute tools/prompts/slash/hooks instead.
+
+`:shim/source` is the ONLY way to supply the Python: there is no inline-string
+form. The file is read once through `extension/shim-src`, which THROWS when the
+resource is missing — a shim whose `.py` never reached the classpath fails
+loudly instead of publishing an empty module. Each shim's source is eval'd
+LAZILY, on the first `import <name>` (or first touch of an autoloaded global),
+so a session that never imports it pays nothing. Because the source is a real
+file, it is lintable, diffable, testable with the built-in `pytest` shim, and
+free of Clojure escaping hazards.
 
 
 ## The prompt fragment

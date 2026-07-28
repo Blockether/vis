@@ -204,16 +204,11 @@
         (expect (true? (ev pctx "'callable' in doc('vis_reinspect_attachment')")))))
   (it "discovers declared capabilities instead of the internal shim identity"
       (with-redefs
-        [extension/sandbox-shims
-         (constantly [{:shim/name "internal-id"
-                       :shim/imports ["actual_module"]
-                       :shim/globals ["actual_global"]
-                       :shim/description "Synthetic discovery contract."
-                       :shim/preamble (str "import sys, types\n"
-                                           "actual_module = types.ModuleType('actual_module')\n"
-                                           "actual_module.answer = 42\n"
-                                           "sys.modules['actual_module'] = actual_module\n"
-                                           "def actual_global(): return 42\n")}])]
+        [extension/sandbox-shims (constantly [{:shim/name "internal-id"
+                                               :shim/imports ["actual_module"]
+                                               :shim/globals ["actual_global"]
+                                               :shim/description "Synthetic discovery contract."
+                                               :shim/source "vis-shims-test/discovery.py"}])]
         (let [pctx (ctx-with-root (temp-root))]
           (expect (= ["actual_global" "actual_module"] (vec (ev pctx "sorted(apropos('actual'))"))))
           (expect (= 42 (ev pctx "import actual_module; actual_module.answer")))

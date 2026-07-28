@@ -299,30 +299,41 @@ test` exits non-zero when anything fails (it signals failure to the CLI, it
 does not kill the process), so it drops straight into CI.
 
 The runner supports the pytest surface the shim implements: plain `assert` with
-real introspection, `pytest.raises`, `@pytest.fixture`, `@pytest.mark`
-parametrize, `monkeypatch` / `capsys` / `tmp_path`. It is a stdlib
-reimplementation of a subset — not upstream pytest (no `conftest.py`, plugins,
-or CLI).
+real introspection, `pytest.raises` / `warns` / `approx`, `@pytest.fixture`
+(including `params=`, `ids=`, `request`, `getfixturevalue` and indirect
+parametrize), `@pytest.mark` parametrize / skip / xfail / usefixtures, the
+built-in `monkeypatch` / `capsys` / `tmp_path` / `tmp_path_factory` / `caplog` /
+`recwarn` / `pytester` fixtures, `conftest.py` in disk mode, and the `-k` / `-x`
+/ `--maxfail` selection flags. It is a stdlib reimplementation of a subset — not
+upstream pytest (no plugins, no assertion-rewriting import hook).
 
 ## Batteries in the model's sandbox
 
-The model's sandbox ships a few pure-Python, stdlib-only module shims so common
-imports work without pip:
+The model's sandbox ships pure-Python, stdlib-only module shims so common
+imports work without pip. Each one is a real `.py` file under
+`resources/vis-shims/`, published into every sandbox context (main session and
+every `sub_loop` fork) and loaded lazily on first import:
 
-- `requests` — an HTTP client over `urllib` (`requests.get/post/...`,
-  `Session`, `Response.json()`, …).
-- `pytest` — the assertion/fixture/mark surface above (the same shim the test
-  runner installs).
-- `yaml`, `matplotlib` — YAML round-trip and plotting. `matplotlib` renders
-  through a Java2D PNG backend: `plt.show()` is the one display call — it
-  paints the figure inline in a graphics-capable terminal (Kitty/iTerm2, e.g.
-  Ghostty) and automatically falls back to an ASCII plot on text-only
-  terminals — and `savefig` writes a PNG (or `*.txt`/`*.asc`/`format='txt'`
-  ASCII, honoring `width`/`height`/`color` kwargs).
-- `socket` is imported and ready.
+- Data / formats — `numpy`, `pandas`, `yaml`, `toml`, `tabulate`, `sqlite3`,
+  `brotli`.
+- HTTP / web — `requests`, `httpx`, `urllib3`, `bs4`.
+- Documents / media — `PIL`, `matplotlib`, `pptx`, `xlsxwriter`, `fontTools`.
+- Time — `zoneinfo` (604+ zones from `java.time`), `dateutil`.
+- Ops / testing — `paramiko`, `pytest` (the same shim the test runner installs).
+- Globals, no import needed — `vis_attach` / `vis_attachments` /
+  `vis_read_attachment` and `nippy_encode` / `nippy_decode`.
+
+`matplotlib` renders through a Java2D PNG backend: `plt.show()` paints the
+figure inline in a graphics-capable terminal (Kitty/iTerm2, e.g. Ghostty) and
+falls back to an ASCII plot on text-only terminals; `savefig` writes a PNG (or
+`*.txt`/`*.asc`/`format='txt'` ASCII, honoring `width`/`height`/`color`).
+`subprocess`, `os.system` and `os.popen` are bridged onto the `shell` tool.
 
 These are compatibility subsets, not the full PyPI packages — enough for
-scripting and tests, not a substitute for the real library's every corner.
+scripting and tests, not a substitute for the real library's every corner. Each
+shim's `:shim/description` names what it does NOT support, and the authoring
+contract (`:shim/name`, `:shim/source`, `:shim/bindings`) lives in
+**Extending vis › Sandbox shims and autoloads** — the single source of truth.
 
 ## LLM providers
 

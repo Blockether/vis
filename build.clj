@@ -1035,6 +1035,10 @@
        ;; vis_docs), so without this pattern vis_docs returns zero pages
        ;; in the native binary.
        "-H:IncludeResources=vis-docs/.*"
+       ;; Python SHIM sources (resources/vis-shims/*.py), slurped at sandbox
+       ;; context creation via io/resource. Without this pattern EVERY shim
+       ;; (numpy, pandas, yaml, ...) is missing in the native binary.
+       "-H:IncludeResources=vis-shims/.*"
        ;; vendored Prism highlighter, inlined into standalone HTML
        ;; transcript exports at RUNTIME via io/resource.
        "-H:IncludeResources=vis-transcript/.*"

@@ -50,7 +50,7 @@ IDs are snake_case strings. Hydrate from merged config so `/reload` applies proj
 
 ## Sandbox Python shims
 
-One lazy shim per `shim_*.clj`, one registered extension, and inclusion in `builtin-extension-nses`. Verify imports are absent at context creation and present after import.
+One lazy shim per `shim_*.clj`, one registered extension, and inclusion in `builtin-extension-nses`. The Python body is NEVER a Clojure string: it lives in `resources/vis-shims/<name>.py` and the spec carries `:shim/source "vis-shims/<name>.py"` (read by `extension/shim-src`, embedded natively by build.clj's `-H:IncludeResources=vis-shims/.*`). Verify imports are absent at context creation and present after import.
 
 ## TUI rendering
 
