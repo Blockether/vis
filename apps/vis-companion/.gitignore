@@ -2,11 +2,15 @@ node_modules
 .npm-cache
 dist
 dist-ssr
+# Release artefacts (xcarchives, ipas) written by scripts/ios-release.mjs.
+/build
 *.local
 
 # Capacitor native projects are generated with `cap add`; keep them out of VCS
-# until the platform is intentionally committed.
-android
-ios
+# until the platform is intentionally committed. Anchored to this directory:
+# unanchored `ios` also swallowed the TRACKED native/ios/ sources that
+# scripts/ios-prepare.mjs stamps back into the generated project.
+/android
+/ios
 
 .DS_Store

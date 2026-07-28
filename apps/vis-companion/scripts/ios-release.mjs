@@ -148,6 +148,14 @@ if (!has('skip-web')) {
   run('npx', ['cap', 'sync', 'ios']);
 }
 
+// `ios/` is gitignored, so the tracked native viewport bridge
+// (native/ios/VisBridgeViewController.swift) exists in the project only because
+// this puts it there. Idempotent, and it must run even with `--skip-web`: a
+// project regenerated since the last archive would otherwise ship without it,
+// and nothing would fail — the app would just be back to a stale WKWebView
+// viewport after every rotation and resume.
+run('node', ['scripts/ios-prepare.mjs']);
+
 // A hand-made Xcode archive reads the PROJECT, not our build settings, so stamp the
 // pbxproj too — otherwise Product > Archive ships MARKETING_VERSION 1.0 / build 1.
 const pbxproj = join(projectDir, 'App.xcodeproj', 'project.pbxproj');

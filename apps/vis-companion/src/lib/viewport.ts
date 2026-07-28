@@ -6,10 +6,13 @@ import type { PluginListenerHandle } from '@capacitor/core';
 import { Keyboard } from '@capacitor/keyboard';
 import type { KeyboardInfo } from '@capacitor/keyboard';
 
+import { installNativeViewport, onNativeViewport } from './native-viewport';
 import {
   clampShellHeight,
+  deviceHeightLimit,
   isKeyboardCovering,
   isViewportOversized,
+  isViewportSettled,
   layoutHeight,
   readViewportMetrics,
 } from './viewport-metrics';
@@ -139,8 +142,17 @@ function watchSettle(startedAt: number, previous: string, held: number) {
     // it, and replaying that every frame is what made the content jitter.
     if (stable === 0) emitRotation('settle');
     const elapsed = now - startedAt;
+    // "Held still" is not the same as "reflowed": iOS can leave the layout
+    // viewport at its pre-rotation size for the first frames of a flip, and
+    // those frames read as perfectly stable. So the window also waits until the
+    // viewport fits the orientation the OS is actually in — otherwise it closes
+    // before the reflow, and the reflow then lands with motion un-frozen and
+    // the scroll anchor already spent, which is the jump. `ROTATION_MAX_MS`
+    // still ends it unconditionally.
     const done =
-      (stable >= ROTATION_STABLE_FRAMES && elapsed >= ROTATION_MIN_MS) ||
+      (stable >= ROTATION_STABLE_FRAMES &&
+        elapsed >= ROTATION_MIN_MS &&
+        isViewportSettled(readViewportMetrics())) ||
       elapsed >= ROTATION_MAX_MS;
     if (done) {
       endRotation();
@@ -180,6 +192,20 @@ function beginRotation() {
 function watchRotation() {
   if (rotationWatched || typeof window === 'undefined') return;
   rotationWatched = true;
+  // The web signals say a flip HAPPENED; UIKit says what it will end at. The
+  // host (see `native-viewport.ts`) hands over the exact post-rotation size in
+  // `viewWillTransition`, before a frame is drawn, and reports the coordinator's
+  // completion — so the window opens on the first frame and closes on the real
+  // reflow instead of on "the numbers held still", which a stale viewport also
+  // satisfies. Absent on web/Android, where the media query keeps carrying it.
+  installNativeViewport();
+  onNativeViewport((box) => {
+    if (box.phase === 'rotate') {
+      beginRotation();
+      return;
+    }
+    if (rotating && isViewportSettled(readViewportMetrics())) endRotation();
+  });
   window.matchMedia?.('(orientation: portrait)').addEventListener('change', beginRotation);
   window.addEventListener('orientationchange', beginRotation);
 }
@@ -371,13 +397,31 @@ export function useVisualViewportShell(): CSSProperties | undefined {
         if (isViewportRotating()) {
           keyboardPinned = false;
           setAnimating(false);
-          pinnedShellHeight = null;
-          setBox(null);
           resetLayoutScroll();
           document.documentElement.style.setProperty(
             '--safe-bottom',
             'env(safe-area-inset-bottom)',
           );
+          // `h-dvh` carries the flip — except while the layout viewport is
+          // TALLER than the device the OS says we are on, which is most of a
+          // portrait→landscape rotation: WebKit swaps the screen immediately
+          // and re-lays the viewport out several frames later, so an unpinned
+          // shell spends the whole animation hanging off the bottom of the
+          // screen (composer and tab bar below the fold) and then snaps back.
+          // The screen edge is not a transitional number — unlike the visual
+          // viewport this used to measure — so it cannot pin a box that never
+          // existed.
+          const rotatingMetrics = readViewportMetrics();
+          const limit = isViewportOversized(rotatingMetrics)
+            ? deviceHeightLimit(rotatingMetrics)
+            : null;
+          pinnedShellHeight = limit;
+          setBox((prev) => {
+            if (limit === null) return null;
+            return prev && prev.height === limit && prev.top === 0
+              ? prev
+              : { height: limit, top: 0 };
+          });
           return;
         }
         // The native keyboard driver owns the box while the keyboard is up: with
@@ -504,6 +548,16 @@ export function useVisualViewportShell(): CSSProperties | undefined {
       resync();
     });
 
+    // Native measurements arrive exactly where the web layer gets no event at
+    // all: a resume that left the layout viewport stale for good, an iPad split
+    // view or Stage Manager resize. A resume pays for the full wake schedule
+    // (it may also have to release a keyboard pin that never got its `did`
+    // event); anything else is one cheap re-measure against the new box.
+    const stopNative = onNativeViewport((box) => {
+      if (box.phase === 'resume') resync();
+      else sync();
+    });
+
     // Native iOS keyboard: one movement, on the OS's own timings.
     //
     // `visualViewport` is the only keyboard signal the web layer has, and on iOS
@@ -613,6 +667,7 @@ export function useVisualViewportShell(): CSSProperties | undefined {
       document.removeEventListener('focusin', onFocusIn);
       window.removeEventListener('scroll', sync, true);
       stopRotation();
+      stopNative();
       disposeNative();
       disposeKeyboard();
     };
