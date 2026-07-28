@@ -1,6 +1,6 @@
 # vis — Security & Dependency Audit
 
-> Generated 2026-07-28.
+> Generated 2026-07-29.
 
 `vis` is a coding agent that writes Python into a sandboxed GraalPy runtime,
 keeps durable state outside the model context window, and inspects and changes
@@ -41,8 +41,8 @@ vulnerable, and what does it do with data.*
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 70 unique, across 13 `deps.edn` modules (root + extensions).
-- **Declared jar footprint (direct coords):** ~196 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
+- **Direct dependency coordinates:** 71 unique, across 14 `deps.edn` modules (root + extensions).
+- **Declared jar footprint (direct coords):** ~197 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
 
@@ -185,6 +185,7 @@ _Shipped binary runtime — the `vis` CLI, agent loop, HTTP gateway, sandbox._
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
 | `com.github.liquidz/antq` | `RELEASE` | (floating) | — | 3rd-party |
 | `com.github.mwiede/jsch` | `2.28.5` | BSD | 696 KB | 3rd-party |
+| `com.github.weisj/jsvg` | `2.1.0` | MIT | 766 KB | 3rd-party |
 | `com.google.zxing/core` | `3.5.4` | Apache-2.0 | 596 KB | 3rd-party |
 | `com.taoensso/nippy` | `3.8.0` | EPL-1.0 | 52 KB | 3rd-party |
 | `com.taoensso/telemere` | `1.2.1` | EPL-1.0 | 59 KB | 3rd-party |
@@ -297,7 +298,7 @@ _Rift workspace/FFM integration._
 |---|---|
 | EPL-1.0 | 20 |
 | Apache-2.0 | 16 |
-| MIT | 13 |
+| MIT | 14 |
 | EPL-2.0 | 5 |
 | BSD-2-Clause | 3 |
 | BSD | 3 |
