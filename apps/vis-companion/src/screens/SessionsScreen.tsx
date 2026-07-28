@@ -356,7 +356,12 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
 
   return (
     <section aria-label="Sessions" className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col pb-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:pb-6 sm:pt-6">
-      <div className="flex h-full min-h-0 flex-col overflow-hidden border-y border-dialog-edge bg-panel sm:border">
+      {/* On phones this panel sits FLUSH under the app header, whose own `border-b`
+          already draws the rule below the Vis mark. A `border-y` here stacked a
+          second hairline on top of it, so the Sessions tab wore a 2px seam while
+          Machines (which floats its cards below a gap) wore 1px. Bottom edge only;
+          the full box comes back once the panel detaches at `sm`. */}
+      <div className="flex h-full min-h-0 flex-col overflow-hidden border-b border-dialog-edge bg-panel sm:border">
         <div className="bg-panel-2 px-3 py-2.5 sm:px-4 sm:py-3">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">

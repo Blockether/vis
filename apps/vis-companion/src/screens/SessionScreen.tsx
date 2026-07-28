@@ -1826,8 +1826,24 @@ export function SessionScreen({
     } else if (shrunk && textarea.style.height) {
       // Text got shorter while grown: remeasure from natural height so the box
       // shrinks back. Only this rare path pays the full reset + reflow.
+      //
+      // `height: auto` collapses the composer to ONE row for the duration of that
+      // measurement, and the transcript scroller grows by the whole difference in
+      // the same synchronous layout. A reader pinned to the end is past the new
+      // (smaller) maximum, so the browser CLAMPS `scrollTop` down — and the clamp
+      // is not undone when the height is written back a statement later. Deleting
+      // a single character therefore walked the transcript down by up to a full
+      // composer's worth of pixels, with no resize left for the ResizeObserver to
+      // react to. Undo the transient clamp here: same scroller geometry before and
+      // after means the only thing that moved was the browser's clamp.
+      const box = scrollRef.current;
+      const parkedTop = box ? box.scrollTop : 0;
+      const parkedHeight = box ? box.clientHeight : 0;
       textarea.style.height = 'auto';
       textarea.style.height = `${Math.min(textarea.scrollHeight, 112)}px`;
+      if (box && box.clientHeight === parkedHeight && box.scrollTop !== parkedTop) {
+        box.scrollTop = parkedTop;
+      }
     }
   }, [prompt]);
 
@@ -2483,6 +2499,15 @@ export function SessionScreen({
   // reconcile. Pairing it with the bubble's own status means a settled turn can
   // never leave a spinner and a growing elapsed counter in the footer.
   const activeWork = running && (!liveTurn || liveTurn.status === 'running');
+  // Only ONE turn can be in flight per session, and when a live bubble exists it
+  // owns it. With a queue draining, the gateway starts the next turn while the
+  // persisted row of the PREVIOUS one still reads `running` — rendered naively
+  // that finished row kept its live ticker ("Vis is thinking (iter N)") alive
+  // right above its own model/usage footer, so the ticker looked like it had
+  // flown into the finished turn's meta line. A row is therefore live-eligible
+  // only when it is the LAST visible row and no live bubble is painting.
+  // Kept as a boolean (not `liveTurn`) so streaming frames don't re-run the memo.
+  const hasLiveBubble = liveTurn != null;
   const turnRows = useMemo(
     () =>
       visibleTurns.map((turn, index) => {
@@ -2500,11 +2525,16 @@ export function SessionScreen({
             {(request || (turn.attachments?.length ?? 0) > 0) && (
               <UserMessage attachments={turn.attachments}>{request}</UserMessage>
             )}
-            <AssistantMessage turn={turn} settled={turnsSettled} client={client} sid={sid} />
+            <AssistantMessage
+              turn={turn}
+              settled={turnsSettled || hasLiveBubble || index < visibleTurns.length - 1}
+              client={client}
+              sid={sid}
+            />
           </div>
         );
       }),
-    [visibleTurns, turnsSettled, client, sid],
+    [visibleTurns, turnsSettled, hasLiveBubble, client, sid],
   );
   const liveRow = useMemo(
     () => {

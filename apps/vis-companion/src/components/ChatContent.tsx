@@ -40,12 +40,18 @@ const disclosureClass =
   'inline-block shrink-0 text-ui transition-transform duration-150 group-open:rotate-90';
 
 // Transcript nodes the stream appends rise + fade in instead of popping into
-// place. `@starting-style` plays the transition exactly once — on the element's
-// first paint after insertion — so a re-render can never replay it. Only live
-// subtrees pass `live`, so replaying history (or a finished turn re-keyed out of
-// the live slot into the turn list) stays perfectly still.
-export const transcriptEnterClass =
-  'transition-[opacity,translate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none';
+// place. A keyframe animation (see `--animate-transcript-*` in index.css) plays
+// exactly once — on the element's first paint after insertion — so a re-render
+// can never replay it. Only live subtrees pass `live`, so replaying history (or
+// a finished turn re-keyed out of the live slot into the turn list) stays
+// perfectly still.
+export const transcriptEnterClass = 'animate-transcript-enter motion-reduce:animate-none';
+
+// For nodes that land INSIDE a bubble that is already on screen (a new tool
+// form, a result card joining the grid). They only rise: a second opacity ramp
+// nested in the first is what read as a wash-out, and content that is still
+// streaming must never fade.
+export const transcriptRiseClass = 'animate-transcript-rise motion-reduce:animate-none';
 
 const toolRoleClasses: Record<string, { border: string; text: string }> = {
   'tool-color/read': { border: 'border-tool-read', text: 'text-tool-read' },
@@ -346,6 +352,12 @@ export const Markdown = memo(function Markdown({
       diff blocks drop their own border so the card shows ONE frame, not two. */
   nested?: boolean;
 }) {
+  // Running text (thinking, prose, answers) is justified so the transcript reads as a
+  // typeset column instead of a ragged one — but only with automatic hyphenation, which
+  // is what keeps the extra word-spacing unobtrusive on a phone-width line. Inside an
+  // already-framed tool card (`nested`) the column is too narrow for that trade, so the
+  // card keeps ragged-right.
+  const runningText = nested ? '' : 'hyphens-auto text-justify';
   return (
     <div className="min-w-0 break-words [&>:first-child]:mt-0 [&>:last-child]:mb-0">
       <ReactMarkdown
@@ -402,12 +414,14 @@ export const Markdown = memo(function Markdown({
             </h6>
           ),
           hr: () => <hr className={`${compact ? 'my-3' : 'my-5'} border-answer-edge`} />,
-          li: ({ children: item }) => <li className={compact ? 'my-0.5 pl-0.5' : 'my-0.5 pl-1'}>{item}</li>,
+          li: ({ children: item }) => (
+            <li className={`${compact ? 'my-0.5 pl-0.5' : 'my-0.5 pl-1'} ${runningText}`}>{item}</li>
+          ),
           ol: ({ children: list }) => (
             <ol className={`${compact ? 'my-2 pl-5' : 'my-3 pl-6'} list-decimal space-y-0.5`}>{list}</ol>
           ),
           p: ({ children: paragraph }) => (
-            <p className={compact ? 'my-2 ' : 'my-2.5 '}>{paragraph}</p>
+            <p className={`${compact ? 'my-2' : 'my-2.5'} ${runningText}`}>{paragraph}</p>
           ),
           pre: ({ children: codeNode }) => {
             const raw = extractText(codeNode).replace(/\n$/, '');
@@ -829,6 +843,30 @@ const CollapsiblePythonCode = memo(function CollapsiblePythonCode({ value }: { v
   );
 });
 
+const CardGrid = memo(function CardGrid(
+  { cards, live = false }: { cards: TranscriptForm[]; live?: boolean },
+) {
+  if (!cards.length) return null;
+
+  // ONE framed stack per RUN of op-cards, whatever produced them: a python block
+  // that printed several results, several native calls in one iteration, or a run
+  // of consecutive tool-only iterations (see `IterationTrace`). A frame per call is
+  // what read as "some cards are joined, some are not" - one run of work, one frame.
+  return (
+    <div
+      className={`grid grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]${live ? ` ${transcriptRiseClass}` : ''}`}
+      aria-label={`${cards.length} ${cards.length === 1 ? 'result' : 'results'}`}
+    >
+      {cards.map((card, cardIndex) => (
+        <ToolCard
+          key={`${card.scope ?? card.tool_name ?? 'tool'}-${cardIndex}`}
+          form={card}
+        />
+      ))}
+    </div>
+  );
+});
+
 const FormTrace = memo(function FormTrace(
   { form, live = false }: { form: TranscriptForm; live?: boolean },
 ) {
@@ -839,26 +877,14 @@ const FormTrace = memo(function FormTrace(
   if (!showCode && !cards.length) return null;
 
   return (
-    <div className={live ? `min-w-0 ${transcriptEnterClass}` : 'min-w-0'}>
+    <div className={live ? `min-w-0 ${transcriptRiseClass}` : 'min-w-0'}>
       {showCode && form.comment?.trim() && (
         <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-ui not-italic text-vis-message">
           <Markdown compact>{form.comment.trim()}</Markdown>
         </div>
       )}
       {showCode && <CollapsiblePythonCode value={code} />}
-      {cards.length > 0 && (
-        <div
-          className={`grid grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]${live ? ` ${transcriptEnterClass}` : ''}`}
-          aria-label={`${cards.length} ${cards.length === 1 ? 'result' : 'results'}`}
-        >
-          {cards.map((card, cardIndex) => (
-            <ToolCard
-              key={`${card.scope ?? card.tool_name ?? 'tool'}-${cardIndex}`}
-              form={card}
-            />
-          ))}
-        </div>
-      )}
+      <CardGrid cards={cards} />
     </div>
   );
 });
@@ -1043,37 +1069,79 @@ export const IterationTrace = memo(function IterationTrace({
 
   if (!visible.length) return null;
 
+  type Entry = (typeof visible)[number];
+  type Chunk =
+    | { kind: 'code'; key: string; form: TranscriptForm }
+    | { kind: 'cards'; key: string; cards: TranscriptForm[] };
+
+  // Consecutive TOOL-ONLY iterations are one run of work, not N bubbles: the model
+  // kept calling tools without saying anything in between. Mirrors the TUI
+  // (`render/merge-iteration-entries`): a narrated iteration may OPEN a run (its
+  // thinking / prose renders above the cards), an interior narrated call closes it,
+  // and so does an iteration that produced attachments (those render last).
+  const segments: { key: string; head: Entry; items: Entry[]; closed: boolean }[] = [];
+  visible.forEach((entry) => {
+    const open = segments.at(-1);
+    if (open && !open.closed && !entry.thinking && !entry.prose) open.items.push(entry);
+    else {
+      segments.push({
+        key: String(entry.iteration.id ?? entry.iteration.position ?? entry.index),
+        head: entry,
+        items: [entry],
+        closed: false,
+      });
+    }
+    if (entry.attachments.length) segments[segments.length - 1].closed = true;
+  });
+
   return (
     <div className="mb-2.5 grid gap-2.5">
-      {visible.map(({ iteration, index, thinking, prose, forms, attachments }) => (
-        <section
-          key={iteration.id ?? iteration.position ?? index}
-          className={live ? `min-w-0 ${transcriptEnterClass}` : 'min-w-0'}
-        >
-          {thinking && <ThinkingBand>{thinking}</ThinkingBand>}
-          {prose && (
-            <div className="my-2.5 text-body text-vis-message">
-              <Markdown>{prose}</Markdown>
-            </div>
-          )}
-          {forms.map((form, formIndex) => (
-            <FormTrace
-              key={`${form.scope ?? form.tool_name ?? 'form'}-${formIndex}`}
-              form={form}
-              live={live}
-            />
-          ))}
-          {client && sid
-            && attachments.map((attachment) => (
-              <AttachmentTile
-                key={`${attachment.iteration_id ?? iteration.id ?? index}-${attachment.index}`}
-                client={client}
-                sid={sid}
-                attachment={attachment}
-              />
-            ))}
-        </section>
-      ))}
+      {segments.map((segment) => {
+        // Inside a segment, adjacent code-less forms pool into ONE grid; a python
+        // block keeps its own frame under its source and starts a new pool after it.
+        const chunks: Chunk[] = [];
+        segment.items.forEach((entry) => {
+          entry.forms.forEach((form, formIndex) => {
+            if (form.silent || form.result === 'vis_silent' || form.result === 'vis_answer') return;
+            const key = `${entry.index}-${formIndex}-${form.scope ?? form.tool_name ?? 'form'}`;
+            if (showFormCode(form, formCode(form))) {
+              chunks.push({ kind: 'code', key, form });
+              return;
+            }
+            const cards = toolCards(form);
+            if (!cards.length) return;
+            const pool = chunks.at(-1);
+            if (pool?.kind === 'cards') pool.cards.push(...cards);
+            else chunks.push({ kind: 'cards', key, cards: [...cards] });
+          });
+        });
+
+        return (
+          <section
+            key={segment.key}
+            className={live ? `min-w-0 ${transcriptEnterClass}` : 'min-w-0'}
+          >
+            {segment.head.thinking && <ThinkingBand>{segment.head.thinking}</ThinkingBand>}
+            {segment.head.prose && (
+              <div className="my-2.5 text-body text-vis-message">
+                <Markdown>{segment.head.prose}</Markdown>
+              </div>
+            )}
+            {chunks.map((chunk) => (chunk.kind === 'code'
+              ? <FormTrace key={chunk.key} form={chunk.form} live={live} />
+              : <CardGrid key={chunk.key} cards={chunk.cards} live={live} />))}
+            {client && sid
+              && segment.items.flatMap((entry) => entry.attachments.map((attachment) => (
+                <AttachmentTile
+                  key={`${attachment.iteration_id ?? entry.iteration.id ?? entry.index}-${attachment.index}`}
+                  client={client}
+                  sid={sid}
+                  attachment={attachment}
+                />
+              )))}
+          </section>
+        );
+      })}
     </div>
   );
 });
@@ -1246,7 +1314,7 @@ export const UserMessage = memo(function UserMessage(
   return (
     <article className="mt-4 w-full [contain:layout_style]">
       <div className="mb-1 font-mono text-meta font-bold text-you-role">You</div>
-      <div className="inline-block max-w-full whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-body text-you-message-foreground">
+      <div className="inline-block max-w-full whitespace-pre-wrap break-words hyphens-auto border-l-2 border-you-role bg-code px-3 py-2 text-body text-justify text-you-message-foreground">
         {parts.map((part) => part.type === 'text' ? (
           <span key={part.key}>{part.text}</span>
         ) : part.type === 'image' ? (
