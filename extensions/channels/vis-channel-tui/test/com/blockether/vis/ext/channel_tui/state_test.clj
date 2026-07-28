@@ -3970,3 +3970,92 @@
                                   [{:session-id "sid-1" :label "S1" :root "/tmp/proj"}
                                    {:session-id "sid-2" :label "S2" :root "/tmp/proj"}]])
                  (expect (= 2 (count (:tabs @state/app-db))))))
+
+(defdescribe
+  cancelled-queue-restores-to-input-test
+  "A user CANCEL drops the whole pre-cancel backlog server-side and mirrors every
+   drop back as `turn.queued.deleted` with reason `cancelled`. Stop means stop -
+   but the words the user already wrote are theirs, so each dropped row comes
+   back into the owning session's EDITOR as a draft instead of vanishing. A plain
+   delete (the user cleared the row) and a drain (the gateway started it) carry no
+   reason and restore nothing."
+  (it "a cancelled delete moves the queued text back into the input"
+      (reset! state/app-db {:session {:id "s1"}
+                            :active-tab-id "s1"
+                            :render-version 0
+                            :input (input/empty-input)
+                            :pending-sends []})
+      (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :text "queued words"}])
+      (state/dispatch [:sync-queued-turn nil
+                       {:op :delete :turn-id "q1" :text "queued words" :reason "cancelled"}])
+      (expect (= [] (:pending-sends @state/app-db)))
+      (expect (= "queued words" (input/input->text (:input @state/app-db)))))
+  (it "restores a SIBLING channel's queued text too - authorship is not consulted"
+      ;; The companion queued it, the TUI pressed stop (or the other way round).
+      ;; Whoever wrote it, the text has nowhere else to live once the gateway
+      ;; dropped the row, so the attached editor keeps it.
+      (reset! state/app-db {:session {:id "s1"}
+                            :active-tab-id "s1"
+                            :render-version 0
+                            :input (input/empty-input)
+                            :pending-sends []})
+      (state/dispatch [:sync-queued-turn "s1"
+                       {:op :add :turn-id "q1" :client-id "other-channel:abc" :text "theirs"}])
+      (expect (= [nil] (mapv :mine? (:pending-sends @state/app-db))))
+      (state/dispatch [:sync-queued-turn "s1"
+                       {:op :delete :turn-id "q1" :text "theirs" :reason "cancelled"}])
+      (expect (= "theirs" (input/input->text (:input @state/app-db)))))
+  (it "appends after whatever is already typed and never sends"
+      (reset! state/app-db {:session {:id "s1"}
+                            :active-tab-id "s1"
+                            :render-version 0
+                            :input (#'state/text->input-state "draft")
+                            :pending-sends []})
+      (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :text "one"}])
+      (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q2" :text "two"}])
+      (state/dispatch [:sync-queued-turn nil
+                       {:op :delete :turn-id "q1" :text "one" :reason "cancelled"}])
+      (state/dispatch [:sync-queued-turn nil
+                       {:op :delete :turn-id "q2" :text "two" :reason "cancelled"}])
+      (expect (= "draft\n\none\n\ntwo" (input/input->text (:input @state/app-db))))
+      (expect (= [] (:pending-sends @state/app-db)))
+      (expect (not (:loading? @state/app-db))))
+  (it "a plain delete or a drain leaves the input untouched"
+      (reset! state/app-db {:session {:id "s1"}
+                            :active-tab-id "s1"
+                            :render-version 0
+                            :input (input/empty-input)
+                            :pending-sends []})
+      (state/dispatch [:sync-queued-turn nil {:op :add :turn-id "q1" :text "cleared"}])
+      (state/dispatch [:sync-queued-turn nil {:op :delete :turn-id "q1" :text "cleared"}])
+      (expect (= [] (:pending-sends @state/app-db)))
+      (expect (= "" (input/input->text (:input @state/app-db)))))
+  (it "an unmirrored id restores nothing - the text cannot land twice"
+      ;; The local cancel path already pulled the row back and deleted the mirror;
+      ;; the gateway broadcast that follows must be a no-op.
+      (reset! state/app-db {:session {:id "s1"}
+                            :active-tab-id "s1"
+                            :render-version 0
+                            :input (input/empty-input)
+                            :pending-sends []})
+      (state/dispatch [:sync-queued-turn nil
+                       {:op :delete :turn-id "ghost" :text "ghost" :reason "cancelled"}])
+      (expect (= "" (input/input->text (:input @state/app-db)))))
+  (it "lands in the SESSION's tab, not the tab you happen to be looking at"
+      ;; Cancelling while another session is focused must not spill one session's
+      ;; words into another's editor.
+      (reset! state/app-db {:session {:id "visible"}
+                            :input (input/empty-input)
+                            :tabs [{:id :main :label "Main" :active? true}
+                                   {:id :tab-1 :label "Tab 1"}]
+                            :active-tab-id :main
+                            :tab-locals {:tab-1 {:title "Tab 1"}}
+                            :render-version 0})
+      (state/dispatch [:sync-queued-turn :tab-1
+                       {:op :add :turn-id "q-bg" :text "background words"}])
+      (state/dispatch [:sync-queued-turn :tab-1
+                       {:op :delete :turn-id "q-bg" :text "background words" :reason "cancelled"}])
+      (expect (= "" (input/input->text (:input @state/app-db))))
+      (let [locals (get-in @state/app-db [:tab-locals :tab-1])]
+        (expect (= [] (vec (:pending-sends locals))))
+        (expect (= "background words" (input/input->text (:input locals)))))))

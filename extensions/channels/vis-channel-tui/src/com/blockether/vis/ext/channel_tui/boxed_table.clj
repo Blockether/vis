@@ -183,9 +183,6 @@
      {:keys [border-top header separator body-top]}
      row-ix
 
-     rendered-w
-     (long rendered-w)
-
      table-x
      (long table-x)
 

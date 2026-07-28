@@ -213,7 +213,7 @@
       (vec (take max-repos (:repositories root-inventory)))
 
       truncated?
-      (or (:truncated? root-inventory) (> (:count root-inventory) max-repos))
+      (or (:truncated? root-inventory) (> (long (:count root-inventory 0)) max-repos))
 
       status-timeout-ms
       (long (or (:status-timeout-ms opts) default-status-timeout-ms))

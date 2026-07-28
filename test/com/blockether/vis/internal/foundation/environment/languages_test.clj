@@ -37,8 +37,8 @@
                           (expect (some? (:primary scan)))
                           (expect (string? (:primary scan)))
                           (expect (false? (:truncated? scan)))
-                          (expect (pos? (long (:total-bytes scan))))
-                          (expect (= 5 (long (:total-files scan)))))
+                          (expect (pos? (:total-bytes scan)))
+                          (expect (= 5 (:total-files scan))))
                         (finally (when (.exists root)
                                    (doseq [^java.io.File f (reverse (file-seq root))]
                                      (.delete f)))))))
@@ -49,7 +49,7 @@
                         (spit-rel root "target/skip.clj" "skip")
                         (spit-rel root ".git/config" "skip")
                         (let [scan (languages/scan root)]
-                          (expect (= 1 (long (:total-files scan))))
+                          (expect (= 1 (:total-files scan)))
                           (expect (= "clojure" (:primary scan))))
                         (finally (when (.exists root)
                                    (doseq [^java.io.File f (reverse (file-seq root))]
@@ -78,7 +78,7 @@
              (it "handles an empty directory"
                  (let [root (make-tmp-dir)]
                    (try (let [scan (languages/scan root)]
-                          (expect (= 0 (long (:total-files scan))))
+                          (expect (= 0 (:total-files scan)))
                           (expect (nil? (:primary scan)))
                           (expect (= [] (:languages scan))))
                         (finally (.delete root))))))

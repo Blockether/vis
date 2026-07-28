@@ -1162,7 +1162,7 @@
           ;; its historical 1k-token raw weight to a later broad fold.
           (expect (= ["t1/i1" "t1/i2"] (get @ca "engine_iter_universe")))
           (expect (= {"t1/i1" 0 "t1/i2" 100} (get @ca "engine_iter_weights")))
-          (expect (= {"t1/i1" ["call-big"]} (get @ca "engine_iter_ntr")))))
+          (expect (= {"t1/i1" [{"id" "call-big"}]} (get @ca "engine_iter_ntr")))))
     ;; Frozen-prompt regression (session 0cfd25a7…): a fold recorded under an
     ;; EARLIER/foreign turn numbering kept re-resolving its range cursor against
     ;; every later live turn, collapsing the whole trailer. The model then never

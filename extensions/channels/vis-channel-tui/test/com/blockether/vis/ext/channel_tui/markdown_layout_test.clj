@@ -570,7 +570,7 @@
         ;; every wrapped line is edge-to-edge, the paragraph-terminal
         ;; line stays ragged-right (never stretched)
         (expect (every? #(= w (p/display-width %)) (butlast flush-both)))
-        (expect (< (long (p/display-width (last flush-both))) w))
+        (expect (< (p/display-width (last flush-both)) w))
         (expect (= (count ragged) (count flush-both)))
         (expect (= (last ragged) (last flush-both)))
         ;; same words, only inter-word gaps widened

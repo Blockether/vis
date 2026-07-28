@@ -3670,6 +3670,31 @@
   (boolean (or (and turn-id (= turn-id (:gateway-turn-id w)))
                (and client-id (= client-id (:live-turn-client-id w))))))
 
+(defn- restore-entries-to-input
+  "Append queued submissions `entries` (oldest first) to tab `w`'s editor, after
+   whatever is already typed, and merge their pastes in.
+
+   A DRAFT, never a send: the queue is gone, but the words the user wrote are
+   still theirs to re-send, edit or delete. Callers decide WHICH entries come
+   back; this is the one place that knows how they land in the editor."
+  [w entries]
+  (let [entries (vec (remove nil? entries))]
+    (if (empty? entries)
+      w
+      (let
+        [cur-text (input/input->text (:input w))
+         texts (into (if (str/blank? cur-text) [] [cur-text]) (map :text entries))
+         combined (str/join "\n\n" (remove str/blank? texts))
+         merged-pastes (reduce merge (or (:pastes w) {}) (map :pastes entries))
+         merged-counter (apply max 0 (:paste-counter w 0) (map #(:paste-counter % 0) entries))]
+
+        (assoc w
+          :input (text->input-state combined)
+          :pastes merged-pastes
+          :paste-counter merged-counter
+          :input-history-index nil
+          :input-history-draft nil)))))
+
 (reg-event-db
   :sync-queued-turn
   ;; THE ONE WRITER of gateway-owned queue rows. Every add carries gateway truth -
@@ -3684,59 +3709,86 @@
   ;; A turn that is (or just became) this tab's LIVE turn collapses EVERY op to
   ;; "ensure it is not mirrored": a late, replayed or out-of-order queue event must
   ;; not resurrect a running turn as a "Queued" row.
-  (fn [db [_ workspace-id {:keys [op turn-id client-id text preview-text] mine-hint? :mine?}]]
+  (fn
+    [db [_ workspace-id {:keys [op turn-id client-id text preview-text reason] mine-hint? :mine?}]]
     (let [workspace-id (or workspace-id (current-tab-id db))]
       (if-not (and workspace-id turn-id)
         db
-        (update-tab db
-                    workspace-id
-                    (fn [w]
-                      (let
-                        [;; OURS when the correlation id the gateway echoed back was
-                         ;; minted by THIS tab, or when a caller that already knows the
-                         ;; provenance says so (the delete reconcile re-writing a row it
-                         ;; just removed).
-                         mine? (boolean (or mine-hint? (our-submission? workspace-id client-id)))
-                         row (cond->
-                               {:text text
-                                :preview-text (or preview-text text)
-                                :turn-id turn-id
-                                :queued-at-ms (System/currentTimeMillis)}
-                               client-id
-                               (assoc :client-id client-id)
+        (update-tab
+          db
+          workspace-id
+          (fn [w]
+            (let
+              [;; OURS when the correlation id the gateway echoed back was
+               ;; minted by THIS tab, or when a caller that already knows the
+               ;; provenance says so (the delete reconcile re-writing a row it
+               ;; just removed).
+               mine? (boolean (or mine-hint? (our-submission? workspace-id client-id)))
+               row (cond->
+                     {:text text
+                      :preview-text (or preview-text text)
+                      :turn-id turn-id
+                      :queued-at-ms (System/currentTimeMillis)}
+                     client-id
+                     (assoc :client-id client-id)
 
-                               mine?
-                               (assoc :mine? true))]
+                     mine?
+                     (assoc :mine? true))
+               live? (live-turn-mirror? w turn-id client-id)
+               mirrored (first (filter #(= turn-id (:turn-id %)) (:pending-sends w)))
+               ;; A USER CANCEL drops the ENTIRE pre-cancel backlog server-side
+               ;; and broadcasts one `turn.queued.deleted` per row carrying
+               ;; `reason "cancelled"` and the row's text (gateway
+               ;; `drop-cancelled-backlog!`). Stop means stop - but the words the
+               ;; user already wrote are theirs, so every dropped row comes back
+               ;; into THIS tab's editor as a draft.
+               ;;
+               ;; Authorship is deliberately NOT consulted: whoever queued the
+               ;; message and whichever channel pressed stop, a mirror that just
+               ;; vanishes is exactly the silent loss this exists to prevent. It
+               ;; lands in the tab that owns the SESSION, not the focused one, so
+               ;; a cancel while looking at another session still restores.
+               ;;
+               ;; A plain `:delete` (user cleared the row) and a `.drained`
+               ;; (gateway started it) carry no reason and restore nothing, and a
+               ;; row already pulled back locally is no longer mirrored - which is
+               ;; what keeps the text from landing twice.
+               restore? (and (= op :delete) (= reason "cancelled") (some? mirrored) (not live?))
+               w' (update w
+                          :pending-sends
+                          (fn [q]
+                            (let
+                              [q (vec (or q []))
+                               mirrored? (boolean (some #(= turn-id (:turn-id %)) q))]
 
-                        (-> w
-                            (update :pending-sends
-                                    (fn [q]
-                                      (let
-                                        [q (vec (or q []))
-                                         mirrored? (boolean (some #(= turn-id (:turn-id %)) q))]
+                              (if live?
+                                (vec (remove #(= turn-id (:turn-id %)) q))
+                                (case op
+                                  :add
+                                  (if mirrored? q (conj q row))
 
-                                        (if (live-turn-mirror? w turn-id client-id)
-                                          (vec (remove #(= turn-id (:turn-id %)) q))
-                                          (case op
-                                            :add
-                                            (if mirrored? q (conj q row))
+                                  :update
+                                  (if mirrored?
+                                    (mapv (fn [e]
+                                            (if (= turn-id (:turn-id e))
+                                              (assoc e
+                                                :text text
+                                                :preview-text (or preview-text text)
+                                                :agent-text text)
+                                              e))
+                                          q)
+                                    (conj q row))
 
-                                            :update
-                                            (if mirrored?
-                                              (mapv (fn [e]
-                                                      (if (= turn-id (:turn-id e))
-                                                        (assoc e
-                                                          :text text
-                                                          :preview-text (or preview-text text)
-                                                          :agent-text text)
-                                                        e))
-                                                    q)
-                                              (conj q row))
+                                  :delete
+                                  (vec (remove #(= turn-id (:turn-id %)) q))
 
-                                            :delete
-                                            (vec (remove #(= turn-id (:turn-id %)) q))
+                                  q)))))]
 
-                                            q)))))))))))))
+              (cond-> w'
+                restore?
+                (restore-entries-to-input [(cond-> mirrored
+                                             (str/blank? (:text mirrored))
+                                             (assoc :text text))])))))))))
 
 (reg-event-fx :clear-pending-sends
               ;; Explicit user action - escape hatch when the queued items are no
@@ -4084,37 +4136,16 @@
 
                   (if (empty? mine)
                     {:db db}
-                    (let
-                      [cur-text
-                       (input/input->text (:input source-db))
-
-                       texts
-                       (into (if (str/blank? cur-text) [] [cur-text]) (map :text mine))
-
-                       combined
-                       (str/join "\n\n" (remove str/blank? texts))
-
-                       merged-pastes
-                       (reduce merge (or (:pastes source-db) {}) (map :pastes mine))
-
-                       merged-counter
-                       (apply max 0 (:paste-counter source-db 0) (map #(:paste-counter % 0) mine))]
-
-                      {:db (update-tab db
-                                       workspace-id
-                                       (fn [w]
-                                         (assoc w
-                                           :input (text->input-state combined)
-                                           :pastes merged-pastes
-                                           :paste-counter merged-counter
-                                           :pending-sends mirrors
-                                           :input-history-index nil
-                                           :input-history-draft nil)))
-                       :fx (into [[:notify "Queue restored to input — not sent" :info 2000]]
-                                 (keep (fn [e]
-                                         (when-let [tid (:turn-id e)]
-                                           [:gateway-delete-queued sid tid workspace-id e])))
-                                 mine)})))))
+                    {:db (update-tab db
+                                     workspace-id
+                                     (fn [w]
+                                       (-> (restore-entries-to-input w mine)
+                                           (assoc :pending-sends mirrors))))
+                     :fx (into [[:notify "Queue restored to input — not sent" :info 2000]]
+                               (keep (fn [e]
+                                       (when-let [tid (:turn-id e)]
+                                         [:gateway-delete-queued sid tid workspace-id e])))
+                               mine)}))))
 
 (defn- gateway-cancel-turn-or-current!
   "Cancel the gateway turn, retrying transient transport failures.

@@ -929,7 +929,7 @@
 
 (defn- chunk->event
   "Translate one phased iteration chunk (progress.clj contract) into a
-   `[type store? payload]` wire event triple, or nil. Model text phases
+   `[type store? payload]` wire event triple. Model text phases
    (reasoning/content/prose) stream LIVE \u2014 the caller coalesces them to sentence
    granularity \u2014 as TRANSIENT (`store? false`) `reasoning.delta` / `content.delta`
    frames; the iteration boundary still ships the complete text on
@@ -2008,7 +2008,7 @@
                                             (content/reasoning block-id "" "private")
                                             (content/prose block-id ""))}))
                  (vswap! last-delta-ms assoc stream-key {:ms now :len (count cumulative)}))
-               (when-let [[type store? payload] (chunk->event chunk)]
+               (let [[type store? payload] (chunk->event chunk)]
                  (append-event! sid type (assoc payload :turn_id tid) {:store? store?}))
                ;; The iteration is over — its live blocks are settled text now.
                (when (= phase :iteration-final) (close-iteration-blocks! (:iteration chunk))))))

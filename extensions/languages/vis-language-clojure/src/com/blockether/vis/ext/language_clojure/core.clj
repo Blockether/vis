@@ -954,7 +954,7 @@
          changed (and (string? out) (not= out code))]
 
         (when changed (spit f out))
-        {:changed? changed :structural? (boolean structural)}))))
+        {:changed? changed :structural? structural}))))
 
 (defn clj-edit-repair-hook
   "An :after op-hook (registered on struct_patch / patch / write): after a

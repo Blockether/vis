@@ -716,6 +716,15 @@
     (it "turn.queued.deleted projects to :delete"
         (expect (= {:phase :queue-sync :op :delete :turn-id "q1"}
                    (g->c {"type" "turn.queued.deleted" "turn_id" "q1"}))))
+    (it "a cancelled delete carries the reason and the dropped text back"
+        ;; The words are how the editor restores them; the reason is how the
+        ;; editor tells a user cancel from a plain row delete.
+        (expect
+          (= {:phase :queue-sync :op :delete :turn-id "q1" :reason "cancelled" :text "queued words"}
+             (g->c {"type" "turn.queued.deleted"
+                    "turn_id" "q1"
+                    "reason" "cancelled"
+                    "request" "queued words"}))))
     (it "turn.queued.drained (gateway auto-start) projects to :delete"
         (expect (= {:phase :queue-sync :op :delete :turn-id "q1"}
                    (g->c {"type" "turn.queued.drained" "turn_id" "q1"}))))

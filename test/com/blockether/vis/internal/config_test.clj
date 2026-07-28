@@ -6,6 +6,7 @@
   (:require [clojure.java.io :as io]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.registry :as registry]
             [lazytest.core :refer [defdescribe it expect]]))
 
 (defdescribe
@@ -69,8 +70,13 @@
                  (:api-key (config/->svar-provider
                              {:id :lmstudio :api-key "user-key" :models [{:name "probe"}]})))))
   (it "leaves cloud presets keyless when none is configured (no catalog dummy)"
-      (expect (nil? (:api-key (config/->svar-provider {:id :openrouter
-                                                       :models [{:name "probe"}]}))))))
+      ;; Hermetic: a DEVELOPER machine may hold a real OpenRouter credential
+      ;; (env/keychain), and the registry token fn would resolve it — the claim
+      ;; under test is only that no CATALOG dummy key is invented for a cloud
+      ;; preset, so the registry lookup is stubbed out.
+      (with-redefs [registry/provider-by-id (constantly nil)]
+        (expect (nil? (:api-key (config/->svar-provider {:id :openrouter
+                                                         :models [{:name "probe"}]})))))))
 
 (defdescribe
   svar-model-metadata-test

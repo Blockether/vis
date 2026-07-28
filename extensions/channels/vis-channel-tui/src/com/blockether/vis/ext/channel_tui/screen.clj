@@ -969,7 +969,7 @@
   (boolean (and prev
                 (= (long (:row cur)) (inc (long (:row prev))))
                 (= (:col prev) (:col cur))
-                (> (+ (long (p/display-width (:text prev))) 1 (long (line-first-token-width (:text cur))))
+                (> (+ (p/display-width (:text prev)) 1 (line-first-token-width (:text cur)))
                    (long (:wrap-w prev))))))
 
 (defn- assign-selectable-line-ids
@@ -4936,32 +4936,27 @@
                   [seed (some-> seed-text
                                 str/trim
                                 not-empty)
-                   result (chat/make-session-async config)]
+                   result (chat/make-session-async config)
+                   build-id (str (java.util.UUID/randomUUID))
+                   fut (:building result)]
 
-                  (if-let [session (:session result)]
-                    (do (open-session-tab! session true)
-                        (when seed (state/dispatch [:send-message seed])))
-                    (let
-                      [build-id (str (java.util.UUID/randomUUID))
-                       fut (:building result)]
-
-                      (state/dispatch [:open-building-tab build-id])
-                      (when seed (state/dispatch [:send-message seed]))
-                      (vis/worker-future
-                        "tui-new-session-bind"
-                        (fn []
-                          (try (let [{:keys [id history]} @fut]
-                                 (ensure-session-live! id)
-                                 (state/dispatch [:bind-built-session build-id {:id id} history
-                                                  (session-workspace id)])
-                                 (persist-tabs!)
-                                 (vis/notify! "Opened session"
-                                              :level :success
-                                              :ttl-ms copy-success-ttl-ms))
-                               (catch Throwable e
-                                 (vis/notify! (str "Failed to open new session: " (ex-message e))
-                                              :level :error
-                                              :ttl-ms copy-success-ttl-ms)))))))))
+                  (state/dispatch [:open-building-tab build-id])
+                  (when seed (state/dispatch [:send-message seed]))
+                  (vis/worker-future
+                    "tui-new-session-bind"
+                    (fn []
+                      (try (let [{:keys [id history]} @fut]
+                             (ensure-session-live! id)
+                             (state/dispatch [:bind-built-session build-id {:id id} history
+                                              (session-workspace id)])
+                             (persist-tabs!)
+                             (vis/notify! "Opened session"
+                                          :level :success
+                                          :ttl-ms copy-success-ttl-ms))
+                           (catch Throwable e
+                             (vis/notify! (str "Failed to open new session: " (ex-message e))
+                                          :level :error
+                                          :ttl-ms copy-success-ttl-ms)))))))
               refresh-active-tab-impl!
               (fn [notify?]
                 (let [db @state/app-db]

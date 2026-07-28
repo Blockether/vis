@@ -1623,7 +1623,7 @@
                 chunk (subs line i end)]
 
                (paint-chunk! col chunk fg)
-               (recur (long end) (+ (long col) (long (p/display-width chunk))) fg))
+               (recur (long end) (+ (long col) (p/display-width chunk)) fg))
              (let [m-idx (str/index-of line "m" (+ (long esc-idx) 2))]
                (if (nil? m-idx)
                  (let [chunk (subs line esc-idx)]
@@ -5401,8 +5401,8 @@
    run (its narration renders above the flush-stacked forms); narration on an
    INTERIOR call breaks the run so mid-burst commentary never floats out of place."
   [entry show-thinking?]
-  (boolean (or (and show-thinking? (not (str/blank? (str (:thinking entry)))))
-               (not (str/blank? (str (:assistant-prose entry)))))))
+  (or (and show-thinking? (not (str/blank? (str (:thinking entry)))))
+      (not (str/blank? (str (:assistant-prose entry))))))
 
 (defn- render-iteration-entries
   "Turn the visible `[idx entry]` iteration pairs into painter entries. A MAXIMAL
@@ -6248,7 +6248,7 @@
           (when (and width height) (str width "×" height))
 
           desc
-          (str (or (not-empty (last (str/split (str path) #"/"))) "image")
+          (str (or (not-empty (last (str/split path #"/"))) "image")
                (when dims (str "  " dims))
                (when size-label (str "  " size-label)))
 

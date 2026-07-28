@@ -47,8 +47,8 @@
    are safe to reuse rather than running another (rotating) exchange."
   ([saved-at-ms] (fresh-within? saved-at-ms default-reuse-window-ms))
   ([saved-at-ms window-ms]
-   (boolean (and (number? saved-at-ms)
-                 (< (- (System/currentTimeMillis) (long saved-at-ms)) (long window-ms))))))
+   (and (number? saved-at-ms)
+        (< (- (System/currentTimeMillis) (long saved-at-ms)) (long window-ms)))))
 
 (defn single-flight!
   "Serialize `refresh!` on `lock`. Once the lock is held, call `reuse`

@@ -3478,12 +3478,10 @@
         (if fail
           (let [n (bump-patch-fail-count! file)]
             {:success? false
-             :failures [(cond->
-                          (assoc fail
-                            :edit-index 0
-                            :path rel)
-                          n
-                          (assoc :consecutive-failures n))]
+             :failures [(assoc fail
+                          :edit-index 0
+                          :path rel
+                          :consecutive-failures n)]
              :checks [(assoc fail
                         :edit-index 0
                         :path rel)]
@@ -4550,8 +4548,7 @@
      (count entries)]
 
     {:summary (str "`" (disp-path (get r "path")) "/` · " n " " (if (= 1 n) "entry" "entries"))
-     :body (when (seq entries)
-             (str "\n" (strutil/fenced body)))}))
+     :body (when (seq entries) (str "\n" (strutil/fenced body)))}))
 
 (defn- render-cat-result
   "cat → `{:summary :body}`: the summary is the path + the LINE SPANS read +
@@ -4957,14 +4954,12 @@
          [ordered (sort-by (comp rg-anchor-lineno-long key) hits)
           width (hit-gutter-width hits)
           kept (take grep-card-max-hits-per-file ordered)
-           extra (max 0 (- (count ordered) (count kept)))
+          extra (max 0 (- (count ordered) (count kept)))
+          hits (str (str/join "\n" (file-hit-rows needles width kept))
+                    (when (pos? extra)
+                      (str "\n  … +" extra " more hit" (when (not= 1 extra) "s"))))]
 
-           hits (str (str/join "\n" (file-hit-rows needles width kept))
-                     (when (pos? extra) (str "\n  … +" extra " more hit" (when (not= 1 extra) "s"))))]
-
-          (str (md-inline-code (disp-path (kw->str path)))
-               "\n\n"
-               (strutil/fenced hits))))
+         (str (md-inline-code (disp-path (kw->str path))) "\n\n" (strutil/fenced hits))))
 
      body
      (str (when (seq blocks) (str "\n" (str/join "\n\n" blocks)))
@@ -5124,7 +5119,8 @@
                    " file"
                    (when (not= 1 fc) "s")
                    (when nm (str " of `" nm "`"))
-                   (when scope (str " · " scope)))
+                   " · "
+                   scope)
      :body (when (seq files)
              (str "\n"
                   (str/join "\n\n"

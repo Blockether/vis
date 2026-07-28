@@ -1001,7 +1001,16 @@
         (assoc :preview-text (event-get event :request-preview)))
 
       "turn.queued.deleted"
-      {:phase :queue-sync :op :delete :turn-id (event-get event :turn-id)}
+      ;; A plain delete carries nothing extra. A delete that is the fallout of a
+      ;; USER CANCEL carries `reason "cancelled"` plus the dropped row's text
+      ;; (gateway `drop-cancelled-backlog!`), which is what lets every attached
+      ;; channel pull the words back into its editor instead of losing them.
+      (cond-> {:phase :queue-sync :op :delete :turn-id (event-get event :turn-id)}
+        (event-get event :reason)
+        (assoc :reason (event-get event :reason))
+
+        (event-get event :request)
+        (assoc :text (event-get event :request)))
 
       ;; The queue head left the queue because the gateway auto-STARTED it.
       ;; Drop the mirrored entry — the drain/attach machinery renders the

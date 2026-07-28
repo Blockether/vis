@@ -650,9 +650,9 @@
    as a header (the TUI paints it on the `result-path` accent, the web as an
    inline `<code>`). Promoting them to `:code` blocks silently dropped that."
   [^String lit]
-  (boolean (and (not (re-find #"\s" lit))
-                (str/includes? lit "/")
-                (not (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:" lit)))))
+  (and (not (re-find #"\s" lit))
+       (str/includes? lit "/")
+       (not (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:" lit))))
 
 (defn- lone-code-span-literal
   "When paragraph `n`'s only inline content is a single CommonMark `Code` span

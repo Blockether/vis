@@ -89,10 +89,15 @@ Press **Esc** (or **Ctrl+G**) to cancel the running turn. Cancel means **stop**,
 not "skip ahead":
 
 - The in-flight turn is stopped.
-- Any messages **you had queued before the cancel** are **restored to the
-  composer** (the newest one lands in the editor, ready to edit or resend) rather
-  than silently auto-running. Stop means stop — Vis will not start a turn you
-  queued *before* you decided to abort.
+- **Every message queued before the cancel comes back into the input box** — in
+  the TUI composer and in the web/mobile composer, appended after whatever you had
+  already typed, as a draft that is never auto-sent. It does not matter who queued
+  it, which channel pressed stop, or which session you are looking at when it
+  happens: the words land in the editor of the session they belonged to. Nothing
+  queued is ever thrown away by a cancel.
+- Stop means stop — Vis will not start a turn you queued *before* you decided to
+  abort. Deleting a queued row yourself still just deletes it; only a cancel
+  restores.
 
 If you actually want the backlog to run, resend it — or resume the session later,
 where the auto-drain above takes over.

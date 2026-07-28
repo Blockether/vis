@@ -977,6 +977,50 @@ export function SessionScreen({
       map.delete(oldest.value);
     }
   };
+  // Turn ids whose text has already been pulled back into the composer by a cancel.
+  // A user cancel drops the pre-cancel backlog server-side and broadcasts one
+  // `turn.queued.deleted` (reason `cancelled`) per row, while `cancel()` on THIS
+  // device also restores its own tray straight away — this set is what stops the
+  // same words landing in the box twice.
+  const restoredQueueRef = useRef<Set<string>>(new Set());
+  // Stop means stop, but the words the user already wrote are theirs. Every row a
+  // cancel dropped comes back into the composer draft — whoever queued it, and
+  // whichever channel pressed stop — appended after whatever is already typed and
+  // never auto-sent. The draft is persisted per session, so leaving the screen (or
+  // the app) does not lose it. Same contract the TUI honours in `:sync-queued-turn`
+  // / `:restore-pending-to-input`.
+  const restoreCancelledQueued = useCallback((turnId: string | undefined, request: string) => {
+    if (!turnId) return;
+    const done = restoredQueueRef.current;
+    if (done.has(turnId)) return;
+    done.add(turnId);
+    while (done.size > 64) {
+      const oldest = done.values().next();
+      if (oldest.done) break;
+      done.delete(oldest.value);
+    }
+    // What THIS device authored wins over the wire text: only the local copy still
+    // has the pastes and the image bytes that never travel on the queue mirror.
+    const authored = authoredQueueRef.current.get(turnId);
+    authoredQueueRef.current.delete(turnId);
+    const text = (authored?.request || request || '').trim();
+    if (text) {
+      setPrompt((current) => [current.trimEnd(), text].filter(Boolean).join('\n\n'));
+    }
+    if (authored?.pastes.size) {
+      setPastes((current) => {
+        const next = new Map(current);
+        for (const [id, paste] of authored.pastes) if (!next.has(id)) next.set(id, paste);
+        return next;
+      });
+    }
+    if (authored?.attachments.length) {
+      setAttachments((current) => {
+        const seen = new Set(current.map((item) => item.id));
+        return [...current, ...authored.attachments.filter((item) => !seen.has(item.id))];
+      });
+    }
+  }, []);
   const rememberSent = (turnId: string | undefined, sent: GatewayAttachment[]) => {
     if (!turnId || !sent.length) return;
     const map = sentAttachmentsRef.current;
@@ -1768,6 +1812,16 @@ export function SessionScreen({
                   : item));
             break;
           case 'turn.queued.deleted':
+            noteQueueDelta(tid, null);
+            setQueued((current) => current.filter((item) => item.turnId !== tid));
+            // Reason `cancelled` = the gateway dropped this row WITH a user stop
+            // (`drop-cancelled-backlog!`), so the text has nowhere else to live.
+            // A plain delete (the user removed the row) carries no reason and
+            // restores nothing.
+            if (stringField(event, 'reason') === 'cancelled') {
+              restoreCancelledQueued(tid, stringField(event, 'request'));
+            }
+            break;
           case 'turn.queued.drained':
             noteQueueDelta(tid, null);
             setQueued((current) => current.filter((item) => item.turnId !== tid));
@@ -1857,7 +1911,7 @@ export function SessionScreen({
       unsubscribeConnection();
       setConnected(false);
     };
-  }, [client, loadTranscript, sid, subscriptions, noteQueueDelta]);
+  }, [client, loadTranscript, sid, subscriptions, noteQueueDelta, restoreCancelledQueued]);
 
   useLayoutEffect(() => {
     const viewport = scrollRef.current;
@@ -2430,39 +2484,10 @@ export function SessionScreen({
   }
 
   // Cancel is "stop", not "stop and then run the rest": the gateway terminally drops
-  // every turn queued BEFORE a user cancel, so anything this device authored has to
-  // come back to the composer or it is lost outright. Same contract the TUI honours
-  // with `:restore-pending-to-input` — appended after whatever is already typed,
-  // never auto-sent.
-  function restoreQueuedToComposer(rows: QueuedTurn[]) {
-    const mine = rows.flatMap((row) => {
-      const authored = authoredQueueRef.current.get(row.turnId);
-      return authored ? [{ row, authored }] : [];
-    });
-    if (!mine.length) return;
-    for (const { row } of mine) authoredQueueRef.current.delete(row.turnId);
-
-    const texts = mine.map(({ row, authored }) => authored.request || row.request).filter(Boolean);
-    if (texts.length) {
-      setPrompt((current) => [current.trimEnd(), ...texts].filter(Boolean).join('\n\n'));
-    }
-    const restoredPastes = mine.flatMap(({ authored }) => [...authored.pastes]);
-    if (restoredPastes.length) {
-      setPastes((current) => {
-        const next = new Map(current);
-        for (const [id, paste] of restoredPastes) if (!next.has(id)) next.set(id, paste);
-        return next;
-      });
-    }
-    const restoredAttachments = mine.flatMap(({ authored }) => authored.attachments);
-    if (restoredAttachments.length) {
-      setAttachments((current) => {
-        const seen = new Set(current.map((item) => item.id));
-        return [...current, ...restoredAttachments.filter((item) => !seen.has(item.id))];
-      });
-    }
-    requestAnimationFrame(() => composerRef.current?.focus());
-  }
+  // every turn queued BEFORE a user cancel and mirrors each drop back as a
+  // `turn.queued.deleted` with reason `cancelled`. `restoreCancelledQueued` is the
+  // ONE place that puts those words back in the composer; the local pass below only
+  // gets there first (and carries this device's pastes and image bytes).
 
   async function cancel() {
     // One stop is one stop. A second press (button re-tap, Escape) while the
@@ -2480,7 +2505,8 @@ export function SessionScreen({
     });
     try {
       await client.cancelCurrentTurn(sid);
-      restoreQueuedToComposer(backlog);
+      for (const row of backlog) restoreCancelledQueued(row.turnId, row.request);
+      requestAnimationFrame(() => composerRef.current?.focus());
     } catch (cause) {
       // The stop never landed, so the affordance has to come back.
       setLiveTurn((turn) => {

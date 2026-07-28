@@ -105,8 +105,7 @@
 (defn- rate-limit-error?
   [status message wrapper-message]
   (let [text (str/lower-case (str (or message "") "\n" (or wrapper-message "")))]
-    (boolean
-      (or (= 429 status) (str/includes? text "rate limit") (str/includes? text "rate-limit")))))
+    (or (= 429 status) (str/includes? text "rate limit") (str/includes? text "rate-limit"))))
 
 (defn- transport-error?
   "True for a TRANSPORT/connection failure — the HTTP request never got a
