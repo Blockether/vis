@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 1.0.1 (2721) — 2026-07-28
+<!-- commit: f11835f3f8432df8ee7e51312bedb289ea28e9b1 -->
+
+- Companion: request/transcription deadlines, durable voice outbox, rotation + typography fixes
+- Allow host-root descendants outside jail
+
 ## 1.0.1 (2719) — 2026-07-28
 <!-- commit: d8bd17eb26201de9bb72849b8e04e13621f0f2bc -->
 
