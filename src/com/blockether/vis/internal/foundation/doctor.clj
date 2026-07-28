@@ -15,7 +15,11 @@
                           environment variables that are not set. Config loads
                           leniently by design, so `vis doctor` is the moment a
                           user actually LOOKS — the right place to fail fast
-                          without failing the gateway.
+                           without failing the gateway.
+
+     ::image-render      one real SVG rasterized through the attachment path, so
+                           a build whose AWT stack is missing SAYS SO instead of
+                           silently dropping every attached diagram.
 
    These section fns are pure data -> message-seq; they don't mutate
    anything and don't depend on the runtime environment beyond
@@ -26,7 +30,9 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.foundation.environment.agents :as agents]
-            [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]))
+            [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
+            [com.blockether.vis.internal.image-convert :as image-convert])
+  (:import (java.nio.charset StandardCharsets)))
 
 ;; ---------------------------------------------------------------------------
 ;; ::agents-md - project guidance presence
@@ -128,6 +134,58 @@
 ;; diagnostics. Each section stamps its own `:check-id` for formatter labels.
 ;; ---------------------------------------------------------------------------
 
+;; ---------------------------------------------------------------------------
+;; ::image-render - AWT/ImageIO actually works in THIS binary
+;; ---------------------------------------------------------------------------
+
+(def ^:private probe-svg
+  "Smallest document that still exercises the whole rasterizer: a shape (java2d
+   loops), a fill (raster + color model) and a glyph (the font manager, the part
+   a native-image binary has to be taught about). Text is deliberate -- a
+   shape-only probe passes on a binary where every real chart still dies."
+  (str
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"16\">"
+    "<rect width=\"32\" height=\"16\" fill=\"#3366cc\"/>"
+    "<text x=\"2\" y=\"12\" font-size=\"10\" font-family=\"sans-serif\" fill=\"white\">vis</text>"
+    "</svg>"))
+
+(defn- image-render-diagnostics
+  "Attachments degrade SILENTLY: `image-convert` swallows every failure and
+   returns nil, so an SVG the build cannot rasterize is simply DROPPED and the
+   model never sees the figure at all. A binary
+   missing the AWT stack therefore looks healthy while quietly dropping every
+   diagram a user attaches -- exactly what `vis doctor` exists to surface."
+  [_environment]
+  (let
+    [started
+     (System/nanoTime)
+
+     out
+     (try (binding [image-convert/*enabled?* true]
+            (image-convert/rasterize-svg (.getBytes ^String probe-svg StandardCharsets/UTF_8) nil))
+          (catch Throwable _ nil))
+
+     ms
+     (quot (- (System/nanoTime) started) 1000000)]
+
+    (if out
+      [{:level :info
+        :message (str "Image rendering available (SVG probe rasterized to "
+                      (:width out)
+                      "x"
+                      (:height out)
+                      " "
+                      (:media-type out)
+                      " in "
+                      ms
+                      " ms).")
+        :data {:width (:width out) :height (:height out) :media-type (:media-type out) :ms ms}}]
+      [{:level :warn
+        :message
+        "Image rendering unavailable: the AWT/ImageIO stack in this build cannot rasterize an SVG, so attached .svg files are dropped."
+        :remediation
+        "Report this build (`vis --version`) — a native binary needs the java.desktop reachability metadata and the headless/fontconfig bootstrap in `image-convert`."}])))
+
 (defn- stamp [check-id msgs] (mapv #(assoc % :check-id check-id) msgs))
 
 (defn doctor-fn
@@ -136,4 +194,5 @@
   [environment]
   (vec (concat (stamp ::agents-md (agents-md-diagnostics environment))
                (stamp ::provider-env (provider-env-diagnostics environment))
-               (stamp ::housekeeping (housekeeping-diagnostics environment)))))
+               (stamp ::housekeeping (housekeeping-diagnostics environment))
+               (stamp ::image-render (image-render-diagnostics environment)))))

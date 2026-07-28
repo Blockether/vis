@@ -35,11 +35,12 @@
                     ids
                     (distinct (mapv :check-id msgs))]
 
-                   (expect (every? #{::doctor/agents-md ::doctor/housekeeping} ids))
+                   (expect (every? #{::doctor/agents-md ::doctor/housekeeping ::doctor/image-render}
+                                   ids))
                    ;; Sections appear in documented order.
                    (let
                      [section-order
-                      [::doctor/agents-md ::doctor/housekeeping]
+                      [::doctor/agents-md ::doctor/housekeeping ::doctor/image-render]
 
                       present
                       (filter (set ids) section-order)]

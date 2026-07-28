@@ -122,6 +122,67 @@ const HYDRATE_TURNS_PER_FRAME = 10;
 // lands, and an unreachable gateway shows its error instead of a spinner.
 const LOADING_VEIL_MAX_MS = 12_000;
 
+// A transcript row is a PLACEHOLDER while its turn runs. The engine persists it
+// at SUBMIT with `running` (`/transcript` ships the engine row verbatim) and the
+// gateway overlay calls the same state `streaming` (`persisted-status->wire` in
+// gateway/state.clj). Neither carries the answer, so neither may ever stand in
+// for the live bubble the user is watching.
+const IN_FLIGHT_ROW_STATUSES = new Set(['running', 'streaming', 'queued', 'pending']);
+
+function isRunningRow(turn: TranscriptTurn): boolean {
+  const status = String(turn.status ?? '');
+  return status === 'running' || status === 'streaming';
+}
+
+function isSettledRow(turn: TranscriptTurn): boolean {
+  return !IN_FLIGHT_ROW_STATUSES.has(String(turn.status ?? ''));
+}
+
+function rowId(turn: TranscriptTurn): string {
+  return String(turn.id ?? turn.turn_id ?? '');
+}
+
+/**
+ * Has the streamed live turn actually been REPLACED by a settled transcript row?
+ *
+ * Identity alone cannot answer this. The terminal SSE frame carries the GATEWAY
+ * turn id (`turn-terminal-payload` is the lean `{turn_id, status}`), while the
+ * transcript rows are the ENGINE's own rows under ids the engine mints inside
+ * `send!` — "the gateway's `tid` is NOT the engine's persisted row id". So an
+ * id test either never matches (the bubble lingers, then duplicates) or matches
+ * the still-`running` placeholder — and dropping the bubble against THAT is how
+ * a whole finished turn, with every iteration the user watched, vanished from
+ * the screen: the placeholder carries no content and `visibleTurns` filters it.
+ *
+ * The reliable claim is "a SETTLED row exists that was not here before this turn
+ * started". `before` is the id snapshot taken while no live bubble existed;
+ * `created_at` (when present) keeps a "load earlier" page of ancient history
+ * from passing as this turn's answer. Same invariant the TUI holds in
+ * `:message-received`: never drop the live trace unless something at least as
+ * complete replaces it.
+ */
+function liveTurnSettledInto(
+  turns: TranscriptTurn[] | null,
+  before: Set<string>,
+  finishedId: string,
+  startedAt?: number,
+): boolean {
+  if (!turns?.length) return false;
+  return turns.some((turn) => {
+    if (!isSettledRow(turn)) return false;
+    const id = rowId(turn);
+    if (finishedId && id === finishedId) return true;
+    if (before.has(id)) return false;
+    const created = turn.created_at;
+    if (startedAt && typeof created === 'number' && Number.isFinite(created)) {
+      // One minute of slack: clock skew between the engine's row stamp and the
+      // client's `Date.now()` must never disqualify this turn's own answer.
+      return created >= startedAt - 60_000;
+    }
+    return true;
+  });
+}
+
 function stringField(event: SseEvent, key: string): string {
   const value = event[key];
   return typeof value === 'string' ? value : '';
@@ -703,6 +764,11 @@ export function SessionScreen({
   onManageProviders?: () => void;
   fresh?: boolean;
 }) {
+  // The device rotates freely here. A flip is survived rather than forbidden:
+  // `lib/viewport.ts` holds a rotation window open for the whole animation, and
+  // every measurement in this screen (the `ResizeObserver` below, the thinking
+  // bands in `ChatContent`) simply stops running inside it — the intermediate
+  // widths are transitional and every answer taken from them is thrown away.
   // Every screen-level snapshot is seeded from the client's cache: reopening a
   // session paints its last known transcript on the FIRST frame and revalidates
   // underneath, instead of holding the loading sheet over an empty view.
@@ -924,6 +990,10 @@ export function SessionScreen({
   };
   const runningRef = useRef(false);
   const turnsRef = useRef<TranscriptTurn[]>([]);
+  // Ids of every transcript row that existed BEFORE the current live turn — the
+  // baseline `liveTurnSettledInto` measures "a new settled row landed" against.
+  // Frozen for as long as a live bubble is on screen (see the mirror effect).
+  const preLiveTurnIdsRef = useRef<Set<string>>(new Set());
   const cancelRef = useRef<() => void>(() => undefined);
   // Keep the loading overlay up until a freshly opened session has been
   // scrolled to its bottom, so persisted history never flashes at the top first.
@@ -933,6 +1003,10 @@ export function SessionScreen({
   useEffect(() => {
     runningRef.current = running;
     turnsRef.current = turns;
+    // No live bubble ⇒ whatever is on screen IS the baseline. Once one appears
+    // this stops updating, so the snapshot describes the transcript as it was
+    // when the turn started.
+    if (!liveTurnRef.current) preLiveTurnIdsRef.current = new Set(turns.map(rowId));
     cancelRef.current = () => void cancel();
   });
 
@@ -1205,6 +1279,19 @@ export function SessionScreen({
     let inflightSince: number | null = null;
     const reconcileOnce = async () => {
       if (document.visibilityState === 'hidden') return;
+      // Liveness is sampled HERE but only acted on after two more round-trips
+      // (transcript + queue) below. On wake we resync the stream and reconcile at
+      // exactly the moment the gateway drains a queued row, so `turn.started` can
+      // land INSIDE that window: the verdict in hand then says "idle" about a
+      // session that has since started a turn. Snapshot the work that exists NOW —
+      // anything newer than this read is not what `gatewayLive` described, and
+      // clearing it killed the live turn the drained queue row had just started.
+      // `reduceLiveEvent` drops every delta while the live turn is null, so the
+      // answer never streamed: the queue emptied and the bubble stayed blank until
+      // the whole turn persisted.
+      const liveBefore = liveTurnRef.current;
+      const liveIdBefore = liveBefore?.id ?? '';
+      const runningBefore = runningRef.current;
       let next: Session;
       try {
         next = await client.session(sid);
@@ -1222,6 +1309,7 @@ export function SessionScreen({
       // dropped. If the persisted turn now exists, drop the live bubble; if
       // the gateway is idle but we still show work, do the same.
       const liveId = liveTurnRef.current?.id ?? '';
+      const liveStartedAt = liveTurnRef.current?.startedAt;
       let nextTurns: TranscriptTurn[] | null = null;
       try {
         // Gated on the row this tick just read: an idle session costs one tiny
@@ -1231,9 +1319,25 @@ export function SessionScreen({
         nextTurns = null;
       }
       if (cancelled) return;
+      // Decided and applied BEFORE the queue round-trip below: with the clear
+      // sitting after another await, the settled transcript row and the live
+      // bubble both painted for that window (the same turn twice).
+      const covered = liveTurnSettledInto(
+        nextTurns,
+        preLiveTurnIdsRef.current,
+        liveId,
+        liveStartedAt,
+      );
       if (nextTurns) {
         setTurns(nextTurns);
         setTurnsFresh(true);
+        // Only the very bubble this coverage verdict is about — a turn started
+        // since the read must keep streaming.
+        if (covered && (liveTurnRef.current?.id ?? '') === liveId) {
+          setRunning(false);
+          setLiveTurn(null);
+          liveTurnRef.current = null;
+        }
         // Turns that arrived while the app was away are exactly why the reader
         // came back. Pin AFTER they render, or the wake's pin lands on the old
         // height and the new tail sits below the fold.
@@ -1251,14 +1355,25 @@ export function SessionScreen({
       } catch {
         /* Keep the last known backlog; the next tick retries. */
       }
-      const persisted =
-        !!liveId &&
-        !!nextTurns?.some((turn) => (turn.id ?? turn.turn_id) === liveId);
-      const showsWork = liveTurnRef.current !== null || runningRef.current;
-      if (persisted || (!gatewayLive && showsWork)) {
+      const live = liveTurnRef.current;
+      const showsWork =
+        (live !== null && liveBefore !== null && (live.id ?? '') === liveIdBefore) ||
+        (runningRef.current && runningBefore);
+      if (!covered && !gatewayLive && showsWork) {
         setRunning(false);
-        setLiveTurn(null);
-        liveTurnRef.current = null;
+        // The gateway is idle but its answer is NOT in the transcript yet (the
+        // engine row lags, or the read failed). Stop the ticker — never delete
+        // what the user watched. Deleting here is what made a whole turn, and
+        // every event streamed into it, disappear the moment it ended; the TUI
+        // keeps its snapshotted trace for exactly this case
+        // (`:message-received`, channel_tui/state.clj). The next covered read
+        // swaps in the persisted row.
+        setLiveTurn((turn) => {
+          if (!turn || turn.status !== 'running') return turn;
+          const settledTurn: LiveTurn = { ...turn, status: 'completed', activity: undefined, cancelling: false };
+          liveTurnRef.current = settledTurn;
+          return settledTurn;
+        });
       }
       // Consumed either way: with no new turns the wake's own pin was enough.
       resumePinRef.current = false;
@@ -1578,9 +1693,14 @@ export function SessionScreen({
       } catch {
         next = null;
       }
-      const has = (turns: TranscriptTurn[] | null) =>
-        !finishedId || !!turns?.some((turn) => (turn.id ?? turn.turn_id) === finishedId);
-      if (next && !has(next)) {
+      const covers = (turns: TranscriptTurn[] | null) =>
+        liveTurnSettledInto(
+          turns,
+          preLiveTurnIdsRef.current,
+          finishedId,
+          liveTurnRef.current?.startedAt,
+        );
+      if (next && !covers(next)) {
         await new Promise((resolve) => window.setTimeout(resolve, 300));
         try {
           next = await client.transcript(sid);
@@ -1590,9 +1710,17 @@ export function SessionScreen({
       }
       if (next) {
         setTurns(next);
+        // This read WAS confirmed against the gateway this visit, so a running
+        // row in it is real and may paint. Without the flag `visibleTurns`
+        // filtered the placeholder row out while the live bubble was being
+        // dropped below — the turn left the screen entirely.
+        setTurnsFresh(true);
         setError(null);
         setLoading(false);
-        if (has(next)) {
+        // Drop the live bubble ONLY against a settled row that carries the
+        // answer. Against the still-`running` placeholder (or an id that never
+        // matches) this deleted the finished turn outright.
+        if (covers(next)) {
           setLiveTurn(null);
           liveTurnRef.current = null;
         }
@@ -2550,7 +2678,7 @@ export function SessionScreen({
         // working spinner and its elapsed clock for a turn that has since been
         // cancelled or finished, until the refetch lands seconds later. Only a
         // transcript confirmed against the gateway this visit may show one.
-        if (turn.status === 'running' && !turnsFresh) return false;
+        if (isRunningRow(turn) && !turnsFresh) return false;
         if (!liveTurn) return true;
         const id = turn.id ?? turn.turn_id;
         // Same turn by id — the live bubble owns it.
@@ -2558,7 +2686,7 @@ export function SessionScreen({
         // The persisted 'running' row is the very turn being streamed live, even
         // when its id can't be matched (e.g. turn.started replayed without a
         // turn_id). Only one turn runs per session, so drop it to avoid a dup.
-        if (turn.status === 'running') return false;
+        if (isRunningRow(turn)) return false;
         return true;
       }),
     [turns, renderStart, liveTurn, liveTurnId, turnsFresh],

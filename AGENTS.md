@@ -23,7 +23,7 @@ Keep only non-obvious project contracts here; inspect nearby source and tests fo
 - Use Tailwind CSS v4 utilities only; no component CSS, CSS modules, CSS-in-JS, or inline style objects.
 - Use canonical type steps only: `text-chip`, `text-meta`, `text-ui`, `text-body`, `text-title`, `text-subhead`, `text-head`, `text-display`; no ad-hoc sizes or `leading-*`.
 - Verify with `npm run lint` and `npm run build` in `apps/vis-companion`.
-- `ios/` and `android/` are **gitignored**: Capacitor regenerates them, so native edits made there vanish on a fresh clone without anything failing. Native code lives tracked under `apps/vis-companion/native/` and is stamped into the generated project by `scripts/ios-prepare.mjs` / `scripts/android-prepare.mjs` (idempotent, run from `postsync`/`preios` and from the release scripts). Never hand-edit `ios/`; edit `native/ios/*` and re-run the prepare script.
+- `ios/` and `android/` are **gitignored**: Capacitor regenerates them, so native edits made there vanish on a fresh clone without anything failing. There is no custom iOS host any more — the app runs stock `CAPBridgeViewController`, and `scripts/ios-prepare.mjs` exists only to UN-stamp the old `VisBridgeViewController` from an `ios/` that predates its removal. Android capabilities are stamped by `scripts/android-prepare.mjs` (idempotent, run from `postsync`/`preandroid` and the release scripts). Never hand-edit `ios/` or `android/`; put it in the prepare script.
 
 ## Releasing the app ("release" = ship the companion to testers)
 

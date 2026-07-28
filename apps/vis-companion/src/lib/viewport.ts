@@ -6,7 +6,6 @@ import type { PluginListenerHandle } from '@capacitor/core';
 import { Keyboard } from '@capacitor/keyboard';
 import type { KeyboardInfo } from '@capacitor/keyboard';
 
-import { installNativeViewport, onNativeViewport } from './native-viewport';
 import {
   clampShellHeight,
   deviceHeightLimit,
@@ -192,20 +191,9 @@ function beginRotation() {
 function watchRotation() {
   if (rotationWatched || typeof window === 'undefined') return;
   rotationWatched = true;
-  // The web signals say a flip HAPPENED; UIKit says what it will end at. The
-  // host (see `native-viewport.ts`) hands over the exact post-rotation size in
-  // `viewWillTransition`, before a frame is drawn, and reports the coordinator's
-  // completion — so the window opens on the first frame and closes on the real
-  // reflow instead of on "the numbers held still", which a stale viewport also
-  // satisfies. Absent on web/Android, where the media query keeps carrying it.
-  installNativeViewport();
-  onNativeViewport((box) => {
-    if (box.phase === 'rotate') {
-      beginRotation();
-      return;
-    }
-    if (rotating && isViewportSettled(readViewportMetrics())) endRotation();
-  });
+  // Two web signals, no native help: the media query flips exactly when layout
+  // does, and older iOS fires `orientationchange` a frame earlier. The duplicate
+  // is absorbed in `beginRotation`.
   window.matchMedia?.('(orientation: portrait)').addEventListener('change', beginRotation);
   window.addEventListener('orientationchange', beginRotation);
 }
@@ -548,16 +536,6 @@ export function useVisualViewportShell(): CSSProperties | undefined {
       resync();
     });
 
-    // Native measurements arrive exactly where the web layer gets no event at
-    // all: a resume that left the layout viewport stale for good, an iPad split
-    // view or Stage Manager resize. A resume pays for the full wake schedule
-    // (it may also have to release a keyboard pin that never got its `did`
-    // event); anything else is one cheap re-measure against the new box.
-    const stopNative = onNativeViewport((box) => {
-      if (box.phase === 'resume') resync();
-      else sync();
-    });
-
     // Native iOS keyboard: one movement, on the OS's own timings.
     //
     // `visualViewport` is the only keyboard signal the web layer has, and on iOS
@@ -667,7 +645,6 @@ export function useVisualViewportShell(): CSSProperties | undefined {
       document.removeEventListener('focusin', onFocusIn);
       window.removeEventListener('scroll', sync, true);
       stopRotation();
-      stopNative();
       disposeNative();
       disposeKeyboard();
     };

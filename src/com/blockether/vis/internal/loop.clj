@@ -3430,7 +3430,8 @@
                                          (str " " label))))
                             shown))
              (when (pos? extra)
-               (str " · IMPORTANT " extra " more folded results stay recoverable"
+               (str " · IMPORTANT " extra
+                    " more folded results stay recoverable"
                     " — browse them with ntr.describe()")))))))
 
 (defn- scope-token-end
@@ -3584,8 +3585,7 @@
      line
      (fn [e]
        (if-let [end (str/index-of e "] ")]
-         (str (code-ntr (subs e 0 (inc (long end))))
-              " `" (str/trim (subs e (+ (long end) 2))) "`")
+         (str (code-ntr (subs e 0 (inc (long end)))) " `" (str/trim (subs e (+ (long end) 2))) "`")
          (code-ntr e)))]
 
     (if (seq entries)
@@ -3645,9 +3645,7 @@
 
      markup-bullet
      (fn [seg]
-       (if (str/starts-with? seg "recover ")
-         (recover-bullet seg)
-         (code-ntr (bold-lead-word seg))))
+       (if (str/starts-with? seg "recover ") (recover-bullet seg) (code-ntr (bold-lead-word seg))))
 
      ;; Collapsed view = WHAT was folded + HOW MUCH it reclaimed; the rest
      ;; (context level, recovery accessors, kept skills) reads fine one
@@ -4075,7 +4073,7 @@
       ;; native tool value, no custom renderer → monospaced Python-literal body, so
       ;; a dict/list reads as structured data rather than reflowed prose.
       (some? (:result result*)) (when-let [s (clip (env/ctx->python-str (:result result*)))]
-                                   {:body (strutil/fenced s "python")})
+                                  {:body (strutil/fenced s "python")})
       ;; A `vis-image` fence (matplotlib `plt.show()` → inline PNG, ASCII plot
       ;; carried as its fallback body) rides stdout as MARKDOWN so the channel
       ;; paints it inline; wrapping it in a ``` block would escape the 4-backtick
@@ -4085,8 +4083,7 @@
       ;; python_execution printed output → fenced so newlines are preserved verbatim
       ;; (plain stdout is NOT markdown; bare \n collapses to a space through the
       ;; CommonMark SoftLineBreak → :space path if left unwrapped).
-      (not (str/blank? (str (:stdout result*)))) {:body
-                                                   (strutil/fenced (clip (:stdout result*)))}
+      (not (str/blank? (str (:stdout result*)))) {:body (strutil/fenced (clip (:stdout result*)))}
       :else nil)))
 
 (defn- iteration-results-message
@@ -4467,14 +4464,16 @@
              :vision))
 
 (defn- image-attachment?
-  "True when a stored iteration attachment is an IMAGE — the only kind a vision
-   model can consume as an `image_url` block. A generic `vis_attach` artifact
-   (csv/json/pdf/wav/…) is DB- and display-only: it must never be handed to the
-   provider as an image (a broken `data:text/csv;…` image block), so replay
-   filters on the `image/` media-type (falling back to the coarse `:kind`)."
-  [{:keys [media-type kind]}]
-  (or (str/starts-with? (str media-type) "image/")
-      (and (str/blank? (str media-type)) (= "image" (str kind)))))
+  "True when a stored iteration attachment is an image a vision provider will
+   actually ACCEPT. A generic `vis_attach` artifact (csv/json/pdf/wav/…) is DB-
+   and display-only, and so is an `image/svg+xml` figure or a BMP: handing one
+   over as an `image_url` block is a hard 400 (`the image data you provided does
+   not represent a valid image`) which repeats on EVERY later turn, because
+   attachments replay — one such row otherwise kills the whole session. Hence
+   the exact provider-accepted set, never the coarse `image/` prefix and never a
+   blank media-type (unverifiable bytes the block would label `image/png`)."
+  [{:keys [media-type]}]
+  (attachments/provider-image-media-type? media-type))
 
 (defn- iteration-image-message
   "A `{:role \"user\"}` message carrying every IMAGE a prior iteration's tool
@@ -6285,8 +6284,7 @@
      (when requested-model
        (when-let [idx (str/index-of requested-model "/")]
          (let [idx (long idx)]
-           [(keyword (subs requested-model 0 idx))
-            (not-empty (subs requested-model (inc idx)))])))
+           [(keyword (subs requested-model 0 idx)) (not-empty (subs requested-model (inc idx)))])))
 
      default-provider-value
      (or (first slash) (:default-provider config) (:id (first configured)))
@@ -6318,11 +6316,10 @@
 
                   (if (and selected hit)
                     (let
-                      [selected* (assoc selected
-                                   :models (into [hit]
-                                                 (remove #(= (:name hit) (:name %))
-                                                   (:models selected)))
-                                   :root (:name hit))]
+                      [selected*
+                       (assoc selected
+                         :models (into [hit] (remove #(= (:name hit) (:name %)) (:models selected)))
+                         :root (:name hit))]
                       (into [selected*] (remove #(= default-provider (:id %)) provider-entries)))
                     provider-entries))))
       router)))
@@ -9006,7 +9003,7 @@
                                " → 'Shell commands'. Then `"
                                cmd
                                "` will run.")
-            (some? err) (str "**shell error**\n\n" (strutil/fenced (or (:message err) (pr-str err))))
+           (some? err) (str "**shell error**\n\n" (strutil/fenced (or (:message err) (pr-str err))))
            display (bang-card->markdown display)
            :else (str "_ran `" cmd "`_"))
 

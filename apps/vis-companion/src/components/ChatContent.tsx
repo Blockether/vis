@@ -353,24 +353,20 @@ export const Markdown = memo(function Markdown({
       diff blocks drop their own border so the card shows ONE frame, not two. */
   nested?: boolean;
 }) {
-  // Justification is a WIDTH trade, and it is BEST EFFORT. Word-spacing is the only slack a
-  // justified line has, so every atom it cannot break — an inline `code` path, a URL — is
-  // paid for by stretching the handful of words that DID fit; that is where the rivers come
-  // from. Breaking the atom does NOT rescue it: `overflow-wrap: anywhere` is a LAST-RESORT
-  // break (CSS Text 3 §5.5), so the browser splits inside it only when the line has no other
-  // break opportunity — a long path sitting after three words is kept whole and those three
-  // words absorb the entire deficit. Measured in Chromium at a 360px column: 32.9px between
-  // words against a 4.2px space, an 8x stretch, exactly the hole you see. So justify only
-  // where it can be clean and fall back to ragged the moment the line box carries an
-  // unbreakable atom (`:has(code)`, `:has(a)`) — the same column then measures 4.2px, i.e.
-  // no river at all. Hyphenation stays on for the justified case (`hyphenate-limit-chars`
-  // keeps the breaks from being silly two-letter ones) and `text-pretty` still handles the
-  // last line. This holds INSIDE a framed tool card (`nested`) too: a folded receipt's gist
-  // is a real paragraph and reads as one, while its dense metric bullets all carry `code`
-  // or `ntr[…]` accessors, so `:has(code)` already keeps exactly those rows ragged — a
-  // card-wide opt-out would only un-justify the one block that benefits.
+  // Justification is a WIDTH trade. Word-spacing is the only slack a justified line has, so an
+  // atom the line breaker refuses to split — an inline `code` path, a URL — is paid for by
+  // stretching the handful of words that DID fit, and that is where the rivers come from.
+  // `overflow-wrap: anywhere` does NOT rescue it: it is a LAST-RESORT break (CSS Text 3 §5.5),
+  // so a long path sitting after three words is kept whole and those three words absorb the
+  // whole deficit (measured in Chromium at a 360px column: 32.9px between words against a
+  // 4.2px space, an 8x stretch). The fix is to remove the unbreakable atom instead of removing
+  // the justification: `break-all` on inline `code` and on links gives the breaker a stop at
+  // every character, so the atom fills the line to the right margin and the gaps stay at their
+  // natural width. Justification is therefore UNCONDITIONAL — a folded receipt's gist and its
+  // `ntr[…]`-carrying metric bullets are all one flush-both-margins column, matching the TUI
+  // (`markdown-layout/justify-line-runs` → lanterna `justifyLine`).
   const runningText =
-    'hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty text-justify [&:has(code)]:text-left [&:has(a)]:text-left';
+    'hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty text-justify';
   return (
     <div className="min-w-0 break-words [&>:first-child]:mt-0 [&>:last-child]:mb-0">
       <ReactMarkdown
@@ -379,7 +375,7 @@ export const Markdown = memo(function Markdown({
           a: ({ children: label, ...props }) => (
             <a
               {...props}
-              className="font-medium text-link underline underline-offset-3 [overflow-wrap:anywhere] hover:text-link-hover"
+              className="font-medium text-link underline underline-offset-3 break-all hover:text-link-hover"
               target="_blank"
               rel="noreferrer"
             >
@@ -392,7 +388,7 @@ export const Markdown = memo(function Markdown({
             </blockquote>
           ),
           code: ({ children: inline }) => (
-            <code className="mx-px inline rounded-none bg-result-path px-0.5 py-px font-mono font-medium text-result-path-foreground [overflow-wrap:anywhere]">
+            <code className="mx-px inline rounded-none bg-result-path px-0.5 py-px font-mono font-medium text-result-path-foreground break-all">
               {inline}
             </code>
           ),
@@ -1414,10 +1410,12 @@ export const UserMessage = memo(function UserMessage(
   const imageAttachments = (attachments ?? []).filter(
     (a) => (a.source ?? 'user') === 'user' && !!a.base64 && !!a.media_type?.startsWith('image/'),
   );
-  // Same best-effort justification rule as `Markdown`, decided in JS because this bubble is
-  // raw text: `:has()` has nothing to match on. A pasted path or URL is the unbreakable atom,
-  // and a non-text part (an image chip, a collapsed paste) is an atom too, so either one
-  // sends the whole bubble ragged instead of letting one line stretch to a river.
+  // The user bubble keeps its OWN best-effort rule, decided in JS. `Markdown` can justify
+  // unconditionally because it owns elements to scope `break-all` to (inline `code`, links);
+  // this bubble is ONE raw-text run, so `break-all` here would chop ordinary words too. A
+  // pasted path or URL is therefore still an unbreakable atom, and a non-text part (an image
+  // chip, a collapsed paste) is an atom too, so either one sends the whole bubble ragged
+  // instead of letting one line stretch to a river.
   const isJustifiable = parts.every(
     (part) => part.type === 'text' && !/\S{24,}/u.test(part.text),
   );

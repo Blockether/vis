@@ -31,7 +31,12 @@
    filtered out of the model-visible live-vars view. The Python body uses ONLY
    single-quoted string literals and `chr(...)` for any special char, so this
    Clojure string needs zero backslash escaping."
-  "# vis sandbox numpy-compat shim.
+  (str
+    ;; ONE literal would be ~78 KB, and a JVM string constant is capped at 64 KB
+    ;; (`clojure.asm.ByteVector/putUTF8`): AOT compilation -- and therefore the
+    ;; whole native image -- dies on it. Split at a line boundary, concatenated
+    ;; once at load; the shim source itself is unchanged.
+    "# vis sandbox numpy-compat shim.
 #
 # The agent sandbox ships no numpy wheel. This shim publishes a numpy-compatible
 # module implemented in PURE Python (no host/JVM bridge): an ndarray backed by a
@@ -1146,7 +1151,8 @@ def __vis_install_numpy__():
     def fmax(a, b):
         return maximum(a, b)
     def fmin(a, b):
-        return minimum(a, b)
+"
+    "        return minimum(a, b)
     def logical_and(a, b):
         return _elementwise(a, b, lambda x, y: bool(x) and bool(y), bool_out=True)
     def logical_or(a, b):
@@ -2169,7 +2175,7 @@ def __vis_install_numpy__():
 
 __vis_install_numpy__()
 del __vis_install_numpy__
-")
+"))
 
 (def vis-extension
   (vis/extension

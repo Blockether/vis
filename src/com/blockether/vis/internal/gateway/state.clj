@@ -17,7 +17,6 @@
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.image-optimize :as image-optimize]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.format :as fmt]
@@ -531,7 +530,9 @@
   [sid provider model]
   ;; `fresh-entry`, never a bare zero: an entry seeded at 0 restarts the seq
   ;; counter below a live client's cursor and silently kills its stream.
-  (swap! registry update sid #(assoc (or % (fresh-entry sid)) :last-active (System/currentTimeMillis)))
+  (swap! registry update
+    sid
+    #(assoc (or % (fresh-entry sid)) :last-active (System/currentTimeMillis)))
   (let
     [label
      #(cond (nil? %) nil
@@ -2752,20 +2753,10 @@
       [tid
        (str (java.util.UUID/randomUUID))
 
-       ;; ONE optimizer, at the ONE boundary every writer crosses. The TUI, the
-       ;; phone and any HTTP client all POST here, so shrinking on ingest is what
-       ;; makes the stored bytes, every replay and the provider upload identical
-       ;; for all of them — instead of each channel shipping its own policy.
-       ;; Never fails a turn: an undecodable or already-optimal payload passes
-       ;; through untouched (see `image-optimize/optimize-wire-attachments`).
-       attachments
-       (image-optimize/optimize-wire-attachments attachments)
-
        ;; Byte-free image chips, resolved ONCE at submit time so every channel's
        ;; queue row (TUI strip, companion tray) paints the same attachments —
        ;; whether they arrived as inline uploads or as paths inside the text.
-       ;; Sized from the OPTIMIZED bytes above, so a chip never advertises a
-       ;; weight the gateway already shed.
+       ;; Sized from the attached bytes themselves, which vis stores verbatim.
        previews
        (attachment-previews request attachments workspace)
 

@@ -1863,6 +1863,39 @@
                          first
                          :image_url
                          :url)))))
+    (it "skips an SVG figure — a format no vision provider decodes"
+        ;; The session killer: an `image/svg+xml` (or BMP) attachment satisfies a
+        ;; coarse `image/` prefix test, so it rode as an image block and the
+        ;; provider answered 400 (\"does not represent a valid image\") on EVERY
+        ;; later turn, because attachments replay — the session never recovers.
+        (let
+          [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+           svg {:tool-call-id "tc-3"
+                :media-type "image/svg+xml"
+                :base64 "PHN2Zz48L3N2Zz4="
+                :filename "fig.svg"
+                :size 11
+                :kind "image"}
+           bmp (assoc svg
+                 :media-type "image/bmp"
+                 :filename "fig.bmp")
+           blank (assoc svg
+                   :media-type ""
+                   :filename "fig")
+           only-bad (conversation-suffix [(stub-tool-iter {:id 1 :attachments [svg bmp blank]})]
+                                         target)
+           mixed (conversation-suffix [(stub-tool-iter {:id 1 :attachments [svg att]})] target)]
+
+          ;; nothing replayable left → no vision message at all
+          (expect (= 2 (count only-bad)))
+          (expect (not-any? (fn [m]
+                              (and (vector? (:content m))
+                                   (some #(= "image_url" (:type %)) (:content m))))
+                            only-bad))
+          ;; the PNG beside it still rides, alone
+          (expect (= 3 (count mixed)))
+          (expect (= ["data:image/png;base64,QUJD"]
+                     (mapv #(get-in % [:image_url :url]) (:content (last mixed)))))))
     (it "drops the image when session_fold collapsed the iteration"
         ;; The invariant: a figure's vision visibility TRACKS its iteration's
         ;; textual visibility. Once session_fold/session_drop collapses the
@@ -2588,7 +2621,8 @@
             (expect (= router (f router config)))))
       (it "a resolvable provider still wins when the model name does not match its catalog"
           (let
-            [router {:providers [{:id :zai-coding-plan :models [{:name "glm-5.2"} {:name "glm-4.7"}]}
+            [router {:providers [{:id :zai-coding-plan
+                                  :models [{:name "glm-5.2"} {:name "glm-4.7"}]}
                                  {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}
              config {:default-provider "anthropic-coding-plan"
                      :default-model "typo-model"
@@ -2600,7 +2634,8 @@
             (expect (= "claude-fable-5" (:root (first (:providers routed)))))))
       (it "default_model accepts the provider/model form and its provider wins"
           (let
-            [router {:providers [{:id :zai-coding-plan :models [{:name "glm-5.2"} {:name "glm-4.7"}]}
+            [router {:providers [{:id :zai-coding-plan
+                                  :models [{:name "glm-5.2"} {:name "glm-4.7"}]}
                                  {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}
              config {:default-provider "anthropic-coding-plan"
                      :default-model "zai-coding-plan/glm-4.7"

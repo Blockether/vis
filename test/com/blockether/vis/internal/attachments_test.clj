@@ -4,6 +4,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.attachments :as attachments]
+            [com.blockether.vis.internal.image-convert :as image-convert]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import [java.io File]
            [java.nio.file Files]
@@ -275,3 +276,84 @@
                        (it "passes blank/nil through unchanged"
                            (expect (= "" (attachments/text->inline-chips nil)))
                            (expect (= "   " (attachments/text->inline-chips "   "))))))
+
+(defn- bmp-bytes
+  "A real, decodable 8x8 BMP — a valid image every vision provider still refuses."
+  ^bytes []
+  (let
+    [img
+     (java.awt.image.BufferedImage. 8 8 java.awt.image.BufferedImage/TYPE_INT_RGB)
+
+     out
+     (java.io.ByteArrayOutputStream.)]
+
+    (javax.imageio.ImageIO/write img "bmp" out)
+    (.toByteArray out)))
+
+(defdescribe
+  provider-safe-media-type-test
+  "An attachment the provider cannot decode is a 400 that REPLAYS on every later
+   turn, so it must never reach the wire: `image/svg+xml` (Anthropic: \"the image
+   data you provided does not represent a valid image\") and BMP are dropped or
+   re-encoded at intake."
+  (describe "provider-image-media-type?"
+            (it "accepts exactly the four formats every vision wire takes"
+                (expect (= #{"image/jpeg" "image/png" "image/gif" "image/webp"}
+                           attachments/provider-image-media-types))
+                (expect (every? attachments/provider-image-media-type?
+                                attachments/provider-image-media-types))
+                (expect (attachments/provider-image-media-type? "IMAGE/PNG "))
+                (expect (not (attachments/provider-image-media-type? "image/svg+xml")))
+                (expect (not (attachments/provider-image-media-type? "image/bmp")))
+                (expect (not (attachments/provider-image-media-type? nil)))))
+  (describe
+    "prepare-inline-attachments"
+    (it
+      "rasterizes an SVG upload into a PNG the provider can decode"
+      (let
+        [svg
+         (.getBytes
+           "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"120\" height=\"60\"><rect width=\"120\" height=\"60\" fill=\"#333\"/></svg>"
+           "UTF-8")
+
+         b64
+         (.encodeToString (Base64/getEncoder) svg)
+
+         out
+         (attachments/prepare-inline-attachments [{:base64 (str "data:image/svg+xml;base64," b64)
+                                                   :filename "logo.svg"
+                                                   :media-type "image/svg+xml"}])]
+
+        (expect (empty? (:skipped out)))
+        (expect (= ["image/png"] (mapv :media-type (:attached out))))))
+    (it "skips the SVG when it cannot be rendered rather than sending it"
+        (binding [image-convert/*enabled?* false]
+          (let
+            [b64 (.encodeToString
+                   (Base64/getEncoder)
+                   (.getBytes "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"/>"
+                              "UTF-8"))
+             out (attachments/prepare-inline-attachments [{:base64 b64 :filename "logo.svg"}])]
+
+            (expect (empty? (:attached out)))
+            (expect (str/includes? (:reason (first (:skipped out))) "image/svg+xml")))))
+    (it "re-encodes a BMP into a format the provider accepts"
+        (let
+          [out (attachments/prepare-inline-attachments
+                 [{:base64 (.encodeToString (Base64/getEncoder) (bmp-bytes))
+                   :filename "shot.bmp"}])]
+          (expect (empty? (:skipped out)))
+          (expect (every? #(attachments/provider-image-media-type? (:media-type %))
+                          (:attached out)))))
+    (it "skips the BMP when it cannot be re-encoded rather than sending it"
+        (binding [image-convert/*enabled?* false]
+          (let
+            [out (attachments/prepare-inline-attachments
+                   [{:base64 (.encodeToString (Base64/getEncoder) (bmp-bytes))
+                     :filename "shot.bmp"}])]
+            (expect (empty? (:attached out)))
+            (expect (str/includes? (:reason (first (:skipped out))) "image/bmp")))))
+    (it "still attaches a PNG"
+        (let
+          [out (attachments/prepare-inline-attachments [{:base64 tiny-png-b64 :filename "a.png"}])]
+          (expect (= ["image/png"] (mapv :media-type (:attached out))))))))

@@ -1,6 +1,5 @@
 import { FilePicker, type PickedFile } from '@capawesome/capacitor-file-picker';
 import { Capacitor } from '@capacitor/core';
-import { MAX_DECODE_BYTES, optimizeImage, retargetFilename } from './image-optimize';
 import type { GatewayAttachment } from './types';
 
 export interface PendingAttachment extends GatewayAttachment {
@@ -62,14 +61,11 @@ interface PreparedImage {
 /**
  * Blob -> the exact envelope the gateway is given.
  *
- * OPTIMIZATION LIVES ON THE GATEWAY, not here: it optimizes every attachment on
- * ingest, so the TUI, this app and any HTTP client all get the same bytes stored,
- * replayed and uploaded without each re-implementing a policy. What stays here is
- * purely a TRANSPORT guard — a payload the gateway would refuse to accept in one
- * request is shrunk just enough to fit, because a 6 MB phone photo is a perfectly
- * ordinary thing to send and rejecting it up front only ever punished the good
- * case. Anything already under the cap is uploaded verbatim, and the gateway does
- * the real work on the original pixels.
+ * NO OPTIMIZATION, here or anywhere: vis sends, stores and replays exactly the
+ * bytes the user picked. A payload the gateway would refuse in one request is
+ * REJECTED with a reason the user can act on, rather than silently resampled
+ * behind their back — image optimization is a real problem with real tradeoffs
+ * and vis does not pretend to solve it by shrinking things in the dark.
  */
 async function prepareImage(
   blob: Blob,
@@ -77,20 +73,14 @@ async function prepareImage(
   mimeType: string,
   maxFileBytes: number,
 ): Promise<PreparedImage> {
-  if (blob.size > MAX_DECODE_BYTES) {
-    throw new Error(`too large to process (${Math.round(blob.size / 1024 / 1024)} MB)`);
-  }
-  const optimized = blob.size > maxFileBytes ? await optimizeImage(blob, mimeType) : null;
-  const payload = optimized?.blob ?? blob;
-  const mediaType = optimized?.mediaType ?? mimeType;
-  if (payload.size > maxFileBytes) {
-    throw new Error(`larger than ${Math.round(maxFileBytes / 1024 / 1024)} MB even after shrinking`);
+  if (blob.size > maxFileBytes) {
+    throw new Error(`larger than ${Math.round(maxFileBytes / 1024 / 1024)} MB`);
   }
   return {
-    filename: optimized ? retargetFilename(name, mediaType) : name,
-    mediaType,
-    dataUrl: await blobAsDataUrl(payload),
-    size: payload.size,
+    filename: name,
+    mediaType: mimeType,
+    dataUrl: await blobAsDataUrl(blob),
+    size: blob.size,
   };
 }
 

@@ -1535,16 +1535,24 @@
    of `primitives/justify-line`, run on the IR before the runs are flattened to
    inline sentinels (so PUA style markers can never be counted as text).
 
+   The gap arithmetic is NOT re-implemented here. The line's content text is
+   handed to lanterna's `TerminalTextUtils/justifyLine` (through
+   `p/justify-line`) and the widened gaps it hands back are copied onto the runs
+   in order, so the TUI justifies on the SAME grapheme/EAW-aware column engine
+   that measured and wrapped the line — not on a second, subtly different one.
+
    Only CONTENT gaps stretch: leading structural runs — a list `:marker`
    (`- `, `• `, `1. `) or the pure-whitespace hanging indent of a continuation
    row — keep their exact width, else justification blows a hole right after
-   the bullet (`-      foo`).
+   the bullet (`-      foo`). So lanterna is only ever shown the content slice,
+   justified to `width` MINUS that prefix.
 
    The runs come back untouched when there is nothing to stretch (no gap, or no
-   slack because an over-wide atom was force-fit past `width`) and when the line
-   is not ALREADY near-full: at `slack >= gap-count` every single gap would grow
-   by at least a column, which is the river, not justification. Inside that cap
-   `slack` gaps gain one space each and the rest stay single."
+   slack because an over-wide atom was force-fit past `width`), when the line is
+   not ALREADY near-full (at `slack >= gap-count` every single gap would grow by
+   at least a column, which is the river, not justification — lanterna itself
+   has no such cap, that policy is ours), and whenever the justified text is not
+   word-for-word the text we sent."
   [runs ^long width]
   (let
     [prefix-n
@@ -1552,49 +1560,50 @@
                           (or (contains? (:style r) :marker) (str/blank? (str (:text r)))))
                         runs))
 
-     gap-count
-     (long (reduce +
-                   0
-                   (map (fn [r]
-                          (count (re-seq #"\s+" (str (:text r)))))
-                        (drop prefix-n runs))))
+     content
+     (drop prefix-n runs)
+
+     text
+     (apply str
+       (map (fn [r]
+              (str (:text r)))
+            content))
+
+     gaps
+     (vec (re-seq #"\s+" text))
+
+     prefix-w
+     (long (reduce + 0 (map run-width (take prefix-n runs))))
 
      slack
-     (- width (long (reduce + 0 (map run-width runs))))]
+     (- width prefix-w (long (reduce + 0 (map run-width content))))
 
-    (if (or (< gap-count 1) (<= slack 0) (>= slack gap-count))
+     stretched
+     (when (and (pos? (count gaps)) (pos? slack) (< slack (count gaps)))
+       (p/justify-line text (- width prefix-w)))
+
+     widened
+     (when stretched (vec (re-seq #"\s+" stretched)))]
+
+    (if (or (nil? stretched)
+            (not= (count widened) (count gaps))
+            (not= (str/split text #"\s+") (str/split stretched #"\s+")))
       runs
-      (let
-        [base
-         (quot slack gap-count)
-
-         extra
-         (rem slack gap-count)
-
-         idx
-         (volatile! -1)]
-
-        (vec
-          (map-indexed (fn [^long i r]
-                         (if (< i prefix-n)
-                           r
-                           (update r
-                                   :text
-                                   (fn [t]
-                                     (str/replace (str t)
-                                                  #"\s+"
-                                                  (fn [m]
-                                                    (let
-                                                      [k
-                                                       (long (vswap! idx
-                                                                     (fn [^long v]
-                                                                       (inc v))))
-
-                                                       add
-                                                       (+ base (if (< k extra) 1 0))]
-
-                                                      (str m (apply str (repeat add \space))))))))))
-                       runs))))))
+      (let [idx (volatile! -1)]
+        (vec (map-indexed (fn [^long i r]
+                            (if (< i prefix-n)
+                              r
+                              (update r
+                                      :text
+                                      (fn [t]
+                                        (str/replace (str t)
+                                                     #"\s+"
+                                                     (fn [_]
+                                                       (nth widened
+                                                            (long (vswap! idx
+                                                                          (fn [^long v]
+                                                                            (inc v)))))))))))
+                          runs))))))
 
 (defn ast->entries
   "Drop-in replacement for the legacy `render/markdown->entries`.

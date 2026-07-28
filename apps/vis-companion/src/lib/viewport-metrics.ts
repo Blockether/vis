@@ -6,8 +6,6 @@
  * metrics recorded off a device, with no DOM and no plugins.
  */
 
-import { readNativeViewportBox } from './native-viewport';
-
 /** Shrink (px) that counts as the keyboard — not a toolbar rounding wobble. */
 export const COVERED_EPSILON = 12;
 
@@ -26,10 +24,6 @@ export type ViewportMetrics = {
   screenWidth: number;
   screenHeight: number;
   visualHeight: number;
-  /** Width UIKit reports for the app's own view; 0 where native stays silent. */
-  nativeWidth: number;
-  /** Height UIKit reports for the app's own view; 0 where native stays silent. */
-  nativeHeight: number;
   /** What the OS says the device is doing; null when it will not say. */
   isLandscape: boolean | null;
 };
@@ -70,13 +64,10 @@ export function readViewportMetrics(): ViewportMetrics {
       screenWidth: 0,
       screenHeight: 0,
       visualHeight: 0,
-      nativeWidth: 0,
-      nativeHeight: 0,
       isLandscape: null,
     };
   }
   const screen = window.screen;
-  const native = readNativeViewportBox();
   return {
     innerWidth: window.innerWidth,
     innerHeight: window.innerHeight,
@@ -84,8 +75,6 @@ export function readViewportMetrics(): ViewportMetrics {
     screenHeight: screen?.height ?? 0,
     visualHeight: window.visualViewport?.height ?? window.innerHeight,
     isLandscape: readScreenOrientation(),
-    nativeWidth: native?.width ?? 0,
-    nativeHeight: native?.height ?? 0,
   };
 }
 
@@ -107,11 +96,6 @@ export function readViewportMetrics(): ViewportMetrics {
  * shape only when the OS will not say (see `readScreenOrientation`).
  */
 export function deviceHeightLimit(m: ViewportMetrics): number {
-  // UIKit's own bounds beat every web ruler when the host reports them: they
-  // are the box the app really occupies, so they also cover what `screen`
-  // cannot express — an iPad split view, a Stage Manager window, and the exact
-  // post-rotation size while the flip is still animating.
-  if (m.nativeHeight > 0) return m.nativeHeight;
   const short = Math.min(m.screenWidth, m.screenHeight);
   const long = Math.max(m.screenWidth, m.screenHeight);
   if (!(short > 0)) return Number.POSITIVE_INFINITY;
@@ -126,7 +110,6 @@ export function isViewportOversized(m: ViewportMetrics): boolean {
 
 /** The widest box the device can show in its current orientation. */
 export function deviceWidthLimit(m: ViewportMetrics): number {
-  if (m.nativeWidth > 0) return m.nativeWidth;
   const short = Math.min(m.screenWidth, m.screenHeight);
   const long = Math.max(m.screenWidth, m.screenHeight);
   if (!(short > 0)) return Number.POSITIVE_INFINITY;
@@ -149,13 +132,10 @@ export function deviceWidthLimit(m: ViewportMetrics): number {
  * app less than the whole screen.
  */
 export function isViewportSettled(m: ViewportMetrics): boolean {
-  // With a native box there is an exact target to compare against, orientation
-  // or not. Without one, an OS orientation and a hardware ruler are the only
-  // way to tell a pre-rotation viewport from a settled one; a browser that has
-  // neither is never mid-flip in a way we could detect, so it is always settled.
-  const native = m.nativeWidth > 0 && m.nativeHeight > 0;
-  if (!native && (m.isLandscape === null || !(Math.min(m.screenWidth, m.screenHeight) > 0)))
-    return true;
+  // An OS orientation and a hardware ruler are the only way to tell a
+  // pre-rotation viewport from a settled one; a browser that has neither is
+  // never mid-flip in a way we could detect, so it is always settled.
+  if (m.isLandscape === null || !(Math.min(m.screenWidth, m.screenHeight) > 0)) return true;
   return (
     m.innerWidth - deviceWidthLimit(m) <= OVERSIZE_EPSILON &&
     m.innerHeight - deviceHeightLimit(m) <= OVERSIZE_EPSILON

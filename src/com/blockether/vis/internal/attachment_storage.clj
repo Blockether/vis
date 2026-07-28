@@ -22,8 +22,7 @@
      1. active backend's `:storage/offload?`  (the backend knows its own cost)
      2. else `default-offload?`               (engine default policy)
      3. no active backend                     -> always inline (zero regression)"
-  (:require [clojure.string :as str]
-            [com.blockether.vis.internal.image-optimize :as image-optimize])
+  (:require [clojure.string :as str])
   (:import (java.nio.file Files LinkOption OpenOption Path)
            (java.nio.file.attribute FileAttribute)
            (java.util Base64 UUID)))
@@ -163,16 +162,15 @@
       att)))
 
 (defn offload-attachments
-  "Optimize, then map `offload-attachment` over a store-bound attachment seq.
+  "Map `offload-attachment` over a store-bound attachment seq.
    The value handed to `db-store-iteration!` / `db-store-session-turn!`
    `:attachments`; the in-memory replay copy stays inline (offload only the
    persisted path).
 
-   Images pass through `image-optimize/optimize-attachments` FIRST: they never
-   offload (hot), so shrinking the payload is the only lever on what an image
-   costs on disk and on every replay to the model."
+   Attachment bytes are stored VERBATIM: vis neither resamples nor re-encodes
+   what the user attached, so what is replayed is byte-identical to it."
   [atts]
-  (mapv offload-attachment (image-optimize/optimize-attachments atts)))
+  (mapv offload-attachment atts))
 
 ;; =============================================================================
 ;; Read side: resolve + hydrate

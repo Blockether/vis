@@ -33,7 +33,12 @@
    filtered out of the model-visible live-vars view. The Python body uses ONLY
    single-quoted string literals and `chr(...)` for any special char, so this
    Clojure string needs zero backslash escaping."
-  "# vis sandbox pandas-compat shim.
+  (str
+    ;; ONE literal would be ~78 KB, and a JVM string constant is capped at 64 KB
+    ;; (`clojure.asm.ByteVector/putUTF8`): AOT compilation -- and therefore the
+    ;; whole native image -- dies on it. Split at a line boundary, concatenated
+    ;; once at load; the shim source itself is unchanged.
+    "# vis sandbox pandas-compat shim.
 #
 # The agent sandbox ships no pandas wheel. This shim publishes a pandas-compatible
 # module implemented in PURE Python (stdlib only, interoperates with the numpy
@@ -1148,7 +1153,8 @@ def __vis_install_pandas__():
                     else:
                         data[c] = list(self._d[c])
                 return DataFrame(data, columns=list(self._c), index=self._i)
-            data = {c: list(self._col(c).astype(t)._v) for c in self._c}
+"
+    "            data = {c: list(self._col(c).astype(t)._v) for c in self._c}
             return DataFrame(data, columns=list(self._c), index=self._i)
 
         def replace(self, to_replace, value=None):
@@ -2014,7 +2020,7 @@ def __vis_install_pandas__():
 
 __vis_install_pandas__()
 del __vis_install_pandas__
-")
+"))
 
 (def vis-extension
   (vis/extension

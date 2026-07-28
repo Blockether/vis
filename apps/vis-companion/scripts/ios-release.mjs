@@ -148,12 +148,11 @@ if (!has('skip-web')) {
   run('npx', ['cap', 'sync', 'ios']);
 }
 
-// `ios/` is gitignored, so the tracked native viewport bridge
-// (native/ios/VisBridgeViewController.swift) exists in the project only because
-// this puts it there. Idempotent, and it must run even with `--skip-web`: a
-// project regenerated since the last archive would otherwise ship without it,
-// and nothing would fail — the app would just be back to a stale WKWebView
-// viewport after every rotation and resume.
+// `ios/` is gitignored and an existing one is never regenerated, so a machine
+// that ever built the old native viewport bridge still has the class stamped into
+// AppDelegate.swift and a storyboard pointing at it. This removes both. Idempotent,
+// and it must run even with `--skip-web`: otherwise the archive ships a storyboard
+// naming a class that no longer exists, which crashes on launch.
 run('node', ['scripts/ios-prepare.mjs']);
 
 // A hand-made Xcode archive reads the PROJECT, not our build settings, so stamp the

@@ -1071,6 +1071,23 @@
        "-H:+UnlockExperimentalVMOptions" "-H:IncludeResources=org.graalvm.python.vfs/.*"
        "-J-Dpolyglot.image-build-time.PreinitializeContexts=python" "-R:StackSize=16777216"
        "-H:+AddAllCharsets"
+       ;; ── Locales ─────────────────────────────────────────────────────
+       ;; native-image ships ONE locale: whichever one the BUILD HOST
+       ;; happened to default to (`-H:DefaultLocale` defaults to the
+       ;; builder's). So the binary was non-deterministic — built here it
+       ;; carried `en-PL`, on a CI runner `en-US` — and every other locale
+       ;; silently degraded to root-ish formatting at runtime, even though
+       ;; `-H:+UseSystemLocale` (default on) makes the RUNTIME honor the
+       ;; user's `LANG`: honoring a locale that was never embedded is how
+       ;; you get English month names and `1,234.5` on a `de_DE` machine.
+       ;; Pin the default and embed the set vis actually renders for:
+       ;; English (US/GB/IN), Polish, German, Chinese (Simplified/Taiwan)
+       ;; and Hindi. Full tags on purpose — the option resolves each entry
+       ;; with `Locale/forLanguageTag`, so a bare `zh` is NOT `zh-TW`.
+       ;; ~1 MB of CLDR data, not `-H:+IncludeAllLocales` (~20 MB).
+       "-H:DefaultLocale=en-US"
+       (str "-H:IncludeLocales="
+            (str/join "," ["en-US" "en-GB" "en-IN" "pl-PL" "de-DE" "zh-CN" "zh-TW" "hi-IN"]))
        ;; ── Binary-size + build-time reduction ──────────────────────────
        ;; A GraalPy image is huge (~558 MB): ~115 MB machine code +
        ;; ~465 MB SVM image heap (embedded CPython interpreter/stdlib +

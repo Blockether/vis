@@ -117,6 +117,10 @@
   babashka/process {:mvn/version "0.6.25"}
   babashka/fs {:mvn/version "0.5.34"}
   io.github.java-diff-utils/java-diff-utils {:mvn/version "4.17"}
+  ;; Pure-Java2D SVG renderer. Providers accept only JPEG/PNG/GIF/WebP, so an
+  ;; attached vector (matplotlib savefig, a dropped icon) is rasterized here
+  ;; instead of being dropped; native-image friendly, no Batik/XML stack.
+  com.github.weisj/jsvg {:mvn/version "2.1.0"}
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
   com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.25"}

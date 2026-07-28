@@ -11,17 +11,20 @@
 
    Only files the model can genuinely consume are attached: the MIME type
    is sniffed from magic bytes (pi-parity: jpeg / non-animated png / gif /
-   webp / bmp), never trusted from the extension alone. Oversized files are
-   auto-shrunk first (see `image-optimize`: long edge capped at the provider's
-   own resize bound, re-encoded) so a retina screenshot that used to blow past
-   `max-image-bytes` still reaches the model; what cannot be shrunk under the
-   cap is skipped with a reason the prompt assembler surfaces. Where AWT/ImageIO
-   is unavailable (GraalVM native-image on macOS) the optimizer is a no-op and
-   the original bytes flow through unchanged."
+   webp / bmp) or, for SVG, from the markup head — never trusted from the
+   extension alone.
+   A container no provider accepts (BMP, SVG) is CONVERTED into one that is
+   (see `image-convert`) — same picture, different wrapper. Nothing is
+   downscaled and nothing is re-compressed: bytes are attached and replayed
+   exactly as the user supplied them, and a file over `max-image-bytes` is
+   skipped with a reason the prompt assembler surfaces. Where AWT/ImageIO is
+   unavailable (GraalVM native-image on macOS) conversion is unavailable too,
+   and such a file is skipped rather than shipped as a guaranteed 400."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.image-optimize :as image-optimize]
+            [com.blockether.vis.internal.image-convert :as image-convert]
             [com.blockether.vis.internal.paths :as paths])
   (:import [java.io File RandomAccessFile]
+           [java.nio.charset StandardCharsets]
            [java.nio.file Files]
            [java.util Base64]))
 
@@ -130,10 +133,26 @@
                                     :else [nil nil])]
                 (and (= 1 planes) (contains? #{1 4 8 16 24 32} bpp)))))))
 
+(defn- svg-markup?
+  "True when the head reads as an SVG document: an XML/comment/doctype prolog or
+   the root tag itself, followed by an `<svg` element. Text sniffing, not magic
+   bytes -- SVG has none."
+  [^bytes b]
+  (let
+    [head
+     (str/lower-case (String. b 0 (int (min (alength b) 4096)) StandardCharsets/UTF_8))
+
+     start
+     (str/triml (str/replace head "\ufeff" ""))]
+
+    (and (str/starts-with? start "<") (str/includes? head "<svg"))))
+
 (defn detect-image-mime
   "Sniff a supported image MIME type from the leading bytes of a file.
    Returns \"image/png\" | \"image/jpeg\" | \"image/gif\" | \"image/webp\" |
-   \"image/bmp\", or nil when the bytes are not a supported still image.
+   \"image/bmp\" | \"image/svg+xml\", or nil when the bytes are not a supported
+   still image. BMP and SVG are not wire-legal themselves — they are readable,
+   and `image-convert` turns them into PNG before they are sent.
    Animated PNGs and JPEG-LS return nil (provider-rejected shapes)."
   [^bytes b]
   (cond (bytes-at? b 0 [0xff 0xd8 0xff]) (when-not (and (>= (alength b) 4) (= 0xf7 (u8 b 3)))
@@ -142,7 +161,41 @@
         (ascii-at? b 0 "GIF8") "image/gif"
         (and (ascii-at? b 0 "RIFF") (ascii-at? b 8 "WEBP")) "image/webp"
         (and (ascii-at? b 0 "BM") (bmp? b)) "image/bmp"
+        (svg-markup? b) "image/svg+xml"
         :else nil))
+
+(def provider-image-media-types
+  "The ONLY image media types a vision wire accepts VERBATIM. Anthropic names
+   exactly these four in its rejection (`the image data you provided does not
+   represent a valid image … supported image formats: ['image/jpeg',
+   'image/png', 'image/gif', 'image/webp']`); OpenAI and Gemini are supersets.
+   Anything else — an `image/svg+xml` figure from `vis_attach`/matplotlib, a
+   BMP screenshot — is a hard 400, and since attachments
+   REPLAY on every later turn ONE such row kills the whole session."
+  #{"image/jpeg" "image/png" "image/gif" "image/webp"})
+
+(defn provider-image-media-type?
+  "True when `media-type` is one of [[provider-image-media-types]]."
+  [media-type]
+  (contains? provider-image-media-types (str/lower-case (str/trim (str media-type)))))
+
+(defn unsupported-media-reason
+  "Why an otherwise readable image was not attached, in the user's words."
+  [media-type]
+  (str media-type " is not a provider-supported image format (JPEG, PNG, GIF, WebP)"))
+
+(defn- provider-safe-payload
+  "`[bytes media-type]` a provider will accept: the payload UNTOUCHED when its
+   container already is one of [[provider-image-media-types]], otherwise the
+   same picture re-containered (BMP -> PNG, SVG -> rendered PNG). nil when the
+   bytes cannot be turned into pixels (no ImageIO reader, conversion disabled)
+   — the caller must then SKIP them rather than ship an image block the
+   provider refuses."
+  [^bytes data media-type]
+  (if (provider-image-media-type? media-type)
+    [data media-type]
+    (when-let [t (image-convert/to-provider-safe data media-type)]
+      (when (provider-image-media-type? (:media-type t)) [(:bytes t) (:media-type t)]))))
 
 (defn- sniff-file-mime
   "Read the file head and sniff its MIME type. nil on any read failure."
@@ -164,7 +217,7 @@
   "Cheap pre-filter before any filesystem access: only tokens that END in
    an image extension are stat'd. The magic-byte sniff still owns the
    final verdict."
-  #"(?i)\.(png|jpe?g|gif|webp|bmp)$")
+  #"(?i)\.(png|jpe?g|gif|webp|bmp|svg)$")
 
 (def ^:private image-extension-present-pattern
   "Whole-text fast path: a single unanchored scan that answers \"could this
@@ -175,7 +228,7 @@
    (no end anchor): a hit only means \"keep looking\", the anchored per-token
    pattern and the magic-byte sniff still own the real verdict, so the
    loose match can never let a non-image through."
-  #"(?i)\.(?:png|jpe?g|gif|webp|bmp)")
+  #"(?i)\.(?:png|jpe?g|gif|webp|bmp|svg)")
 
 (def ^:private quoted-span-pattern
   "Single- or double-quoted spans — several terminals quote dropped paths
@@ -270,32 +323,38 @@
    (str (size-label (.length f)) " exceeds the " (size-label max-bytes) " attachment limit")})
 
 (defn- attach-file
-  "Read one image file and shrink it when that wins (see `image-optimize`).
-   nil when the payload is still over `max-bytes` after the attempt."
+  "Read one image file and, when its container is not provider-accepted,
+   re-container it (see `image-convert`). Pixels are never resampled and bytes
+   are never re-compressed.
+
+   Returns the attachment map, or `{:reason <why>}` when the file cannot be
+   attached (still over `max-bytes`, or a format no provider takes)."
   [^File f mime ^long max-bytes]
   (let
     [raw
      (Files/readAllBytes (.toPath f))
 
-     optimized
-     (image-optimize/optimize raw mime)
+     safe
+     (provider-safe-payload raw mime)]
 
-     ^bytes data
-     (or (:bytes optimized) raw)
+    (if-not safe
+      {:reason (unsupported-media-reason mime)}
+      (let
+        [[^bytes data media-type]
+         safe
 
-     media-type
-     (or (:media-type optimized) mime)
+         size
+         (alength data)]
 
-     size
-     (alength data)]
-
-    (when (<= size max-bytes)
-      {:path (.getAbsolutePath f)
-       :filename (.getName f)
-       :media-type media-type
-       :base64 (.encodeToString (Base64/getEncoder) data)
-       :size size
-       :size-label (size-label size)})))
+        (if (> size max-bytes)
+          {:reason
+           (str (size-label size) " exceeds the " (size-label max-bytes) " attachment limit")}
+          {:path (.getAbsolutePath f)
+           :filename (.getName f)
+           :media-type media-type
+           :base64 (.encodeToString (Base64/getEncoder) data)
+           :size size
+           :size-label (size-label size)})))))
 
 (defn- resolved-image-files
   "Ordered, de-duped `[canonical-path File]` pairs for every path-shaped
@@ -372,9 +431,13 @@
                                        :reason (str "attachment limit of "
                                                     max-images
                                                     " images per message reached")})
-                              :else (if-let [attached (attach-file f mime (long max-bytes))]
-                                      (update acc :attached conj attached)
-                                      (update acc :skipped conj (oversize-skip f max-bytes))))
+                              :else (let [res (attach-file f mime (long max-bytes))]
+                                      (if (:reason res)
+                                        (update acc
+                                                :skipped
+                                                conj
+                                                {:path (.getAbsolutePath f) :reason (:reason res)})
+                                        (update acc :attached conj res))))
                         acc)
                       (catch Throwable _ acc)))
                {:attached [] :skipped []}
@@ -421,23 +484,22 @@
             sniffed
             (detect-image-mime raw)
 
-            ;; Shrink BEFORE the cap check: an oversized retina upload that
-            ;; used to be rejected outright usually fits once its long edge
-            ;; is capped at the provider's own resize bound.
-            optimized
-            (when sniffed (image-optimize/optimize raw sniffed))
+            safe
+            (when sniffed (provider-safe-payload raw sniffed))
 
             ^bytes data
-            (or (:bytes optimized) raw)
+            (or (first safe) raw)
 
             size
             (alength data)
 
             mime
-            (or (:media-type optimized) sniffed)]
+            (or (second safe) sniffed)]
 
-           (cond (nil? mime)
+           (cond (nil? sniffed)
                  (update acc :skipped conj {:path label :reason "not a supported still image"})
+                 (nil? safe)
+                 (update acc :skipped conj {:path label :reason (unsupported-media-reason mime)})
                  (> size (long max-bytes)) (update acc
                                                    :skipped
                                                    conj
