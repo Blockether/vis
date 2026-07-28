@@ -26,17 +26,18 @@
                @request))))))
 
 (deftest ensure-client-registers-once-from-canonical-string-keyed-response
-  (let [client-id-atom
-        @(rv 'client-id)
+  (let
+    [client-id-atom
+     @(rv 'client-id)
 
-        previous
-        @client-id-atom
+     previous
+     @client-id-atom
 
-        calls
-        (atom 0)
+     calls
+     (atom 0)
 
-        ensure-client
-        (rv 'ensure-client!)]
+     ensure-client
+     (rv 'ensure-client!)]
 
     (try (reset! client-id-atom nil)
          (with-redefs-fn {(rv 'send-json-with-entry!) (fn [_entry method path body]
@@ -53,11 +54,12 @@
          (finally (reset! client-id-atom previous)))))
 
 (deftest recover-loopback-entry-repairs-a-missing-registry
-  (let [token-file
-        (java.io.File/createTempFile "vis-gateway-token-" ".txt")
+  (let
+    [token-file
+     (java.io.File/createTempFile "vis-gateway-token-" ".txt")
 
-        written
-        (atom nil)]
+     written
+     (atom nil)]
 
     (try (spit token-file "stable-secret\n")
          (with-redefs-fn {#'discovery/default-token-file (fn []
@@ -82,23 +84,24 @@
          (finally (.delete token-file)))))
 
 (deftest occupied-orphan-port-never-spawns-a-bind-loser
-  (let [spawns
-        (atom 0)
+  (let
+    [spawns
+     (atom 0)
 
-        ex
-        (with-redefs-fn {(rv 'recover-loopback-entry!) (constantly nil)
-                         (rv 'port-free?) (constantly false)
-                         #'discovery/await-registry! (fn [_db _probe opts]
-                                                       (is (= 3000 (:timeout-ms opts)))
-                                                       (is (= 100 (:poll-ms opts)))
-                                                       nil)
-                         #'discovery/discover-or-start! (fn [& _]
-                                                          (swap! spawns inc)
-                                                          {:mode :spawned :entry fake-entry})}
-          (fn []
-            (try ((rv 'discover-or-recover!) "/tmp/orphan/vis.db" "127.0.0.1" 7890)
-                 nil
-                 (catch clojure.lang.ExceptionInfo e e))))]
+     ex
+     (with-redefs-fn {(rv 'recover-loopback-entry!) (constantly nil)
+                      (rv 'port-free?) (constantly false)
+                      #'discovery/await-registry! (fn [_db _probe opts]
+                                                    (is (= 3000 (:timeout-ms opts)))
+                                                    (is (= 100 (:poll-ms opts)))
+                                                    nil)
+                      #'discovery/discover-or-start! (fn [& _]
+                                                       (swap! spawns inc)
+                                                       {:mode :spawned :entry fake-entry})}
+       (fn []
+         (try ((rv 'discover-or-recover!) "/tmp/orphan/vis.db" "127.0.0.1" 7890)
+              nil
+              (catch clojure.lang.ExceptionInfo e e))))]
 
     (is (= :gateway/orphaned-port (:type (ex-data ex))))
     (is (true? (:vis/user-error (ex-data ex))))
@@ -182,14 +185,15 @@
    consumed left-to-right) and a scripted `status`. Records how many times the
    destructive stop-daemon! / await-daemon-down! fired."
   [{:keys [probes status]}]
-  (let [probe-seq
-        (atom probes)
+  (let
+    [probe-seq
+     (atom probes)
 
-        stops
-        (atom 0)
+     stops
+     (atom 0)
 
-        awaits
-        (atom 0)]
+     awaits
+     (atom 0)]
 
     (with-redefs-fn {(rv 'ensure-gateway!) (fn [& _]
                                              fake-entry)
@@ -208,8 +212,9 @@
                      (rv 'db-target) (fn []
                                        :fake-db)}
       (fn []
-        (let [result (try {:entry (client/ensure-gateway-serving! "/ui")}
-                          (catch clojure.lang.ExceptionInfo e {:ex (ex-data e)}))]
+        (let
+          [result (try {:entry (client/ensure-gateway-serving! "/ui")}
+                       (catch clojure.lang.ExceptionInfo e {:ex (ex-data e)}))]
           (assoc result
             :stops @stops
             :awaits @awaits))))))
@@ -232,8 +237,9 @@
   (testing
     "a real 404 on an IDLE daemon (no other clients, no running turn) respawns:
             stop → await-down → re-ensure → re-probe :served"
-    (let [{:keys [entry stops awaits ex]} (run-serving! {:probes [:absent :served]
-                                                         :status {"clients" 1 "running_turns" 0}})]
+    (let
+      [{:keys [entry stops awaits ex]} (run-serving! {:probes [:absent :served]
+                                                      :status {"clients" 1 "running_turns" 0}})]
       (is (nil? ex))
       (is (= fake-entry entry))
       (is (= 1 stops) "the idle stale daemon is stopped exactly once")
@@ -241,8 +247,9 @@
 
 (deftest busy-daemon-is-not-force-killed
   (testing "a real 404 on a daemon OTHER clients depend on is refused, not nuked"
-    (let [{:keys [ex stops awaits]} (run-serving! {:probes [:absent]
-                                                   :status {"clients" 2 "running_turns" 0}})]
+    (let
+      [{:keys [ex stops awaits]} (run-serving! {:probes [:absent]
+                                                :status {"clients" 2 "running_turns" 0}})]
       (is (= :gateway/route-missing-busy (:type ex)))
       (is (= 2 (:clients ex)))
       (is (zero? stops) "a shared daemon is never stopped")
@@ -250,29 +257,32 @@
 
 (deftest running-turn-blocks-restart
   (testing "a real 404 while a turn is running is refused — a restart would abort it"
-    (let [{:keys [ex stops]} (run-serving! {:probes [:absent]
-                                            :status {"clients" 1 "running_turns" 1}})]
+    (let
+      [{:keys [ex stops]} (run-serving! {:probes [:absent]
+                                         :status {"clients" 1 "running_turns" 1}})]
       (is (= :gateway/route-missing-busy (:type ex)))
       (is (= 1 (:running-turns ex)))
       (is (zero? stops) "an in-flight turn is never force-aborted by the heal"))))
 
 (deftest respawn-that-still-404s-throws-route-missing
   (testing "if the fresh daemon STILL lacks the route, surface a clear error"
-    (let [{:keys [ex stops]} (run-serving! {:probes [:absent :absent]
-                                            :status {"clients" 1 "running_turns" 0}})]
+    (let
+      [{:keys [ex stops]} (run-serving! {:probes [:absent :absent]
+                                         :status {"clients" 1 "running_turns" 0}})]
       (is (= :gateway/route-missing (:type ex)))
       (is (= 1 stops)))))
 
 (deftest port-free?-reflects-a-live-listener
   (testing "port-free? is false while something listens, true once released"
-    (let [port-free?
-          (rv 'port-free?)
+    (let
+      [port-free?
+       (rv 'port-free?)
 
-          sock
-          (java.net.ServerSocket. 0)
+       sock
+       (java.net.ServerSocket. 0)
 
-          port
-          (.getLocalPort sock)]
+       port
+       (.getLocalPort sock)]
 
       (try (is (false? (port-free? "127.0.0.1" port)) "occupied port is not free")
            (finally (.close sock)))
@@ -284,9 +294,22 @@
            (client/sse-event-action {"type" "turn.completed" "turn_id" "t1"} "t1"))))
   (testing "own turn progress forwards"
     (is (= :forward (first (client/sse-event-action {"type" "block.output" "turn_id" "t1"} "t1")))))
+  (testing "a CANCELLED own turn is terminal too — a user stop ends the stream"
+    ;; Regression: `turn.cancelled` was missing from the terminal set, so an
+    ;; Esc (or a stall force-cancel) left this reader parked on the turn
+    ;; forever: the SSE connection never closed, the tab kept spinning, and a
+    ;; queued turn draining behind it streamed in under a stream that had
+    ;; never ended.
+    (let
+      [[action event']
+       (client/sse-event-action {"type" "turn.cancelled" "turn_id" "t1" "status" "cancelled"} "t1")]
+      (is (= :terminal action))
+      (is (= "cancelled" (get event' "status")))))
+  (testing "a FAILED own turn is terminal"
+    (is (= :terminal (first (client/sse-event-action {"type" "turn.failed" "turn_id" "t1"} "t1")))))
   (testing "own queued record deleted synthesizes a cancelled terminal (no hang)"
-    (let [[action event'] (client/sse-event-action {"type" "turn.queued.deleted" "turn_id" "t1"}
-                                                   "t1")]
+    (let
+      [[action event'] (client/sse-event-action {"type" "turn.queued.deleted" "turn_id" "t1"} "t1")]
       (is (= :terminal action))
       (is (= "cancelled" (get event' "status")))
       (is (= "turn.completed" (get event' "type")))))
@@ -303,23 +326,25 @@
   (testing
     "the blocking result IS the canonical snake_case string-keyed wire event
            (plus derived fills) — tokens/cost/utilization are never re-keyed"
-    (let [t->r
-          (rv 'terminal-event->result)
+    (let
+      [t->r
+       (rv 'terminal-event->result)
 
-          ;; What `parse-json` yields after the SSE hop: snake_case STRING keys.
-          event
-          {"type" "turn.completed"
-           "turn_id" "t1"
-           "session_id" "s1"
-           "cost" {"total_cost" 0.0123 "model" "m" "provider" "p"}
-           "tokens" {"input" 10 "cached" 4 "output" 2}
-           "utilization" {"saturation" 42 "headroom_tokens" 1000}}
+       ;; What `parse-json` yields after the SSE hop: snake_case STRING keys.
+       event
+       {"type" "turn.completed"
+        "turn_id" "t1"
+        "session_id" "s1"
+        "cost" {"total_cost" 0.0123 "model" "m" "provider" "p"}
+        "tokens" {"input" 10 "cached" 4 "output" 2}
+        "utilization" {"saturation" 42 "headroom_tokens" 1000}}
 
-          result
-          (with-redefs [client/get-turn (fn [_ _]
-                                          {"content" [{"id" "b1" "type" "prose" "markdown" "done"}]
-                                           "iteration_count" 1})]
-            (t->r event "t1"))]
+       result
+       (with-redefs
+         [client/get-turn (fn [_ _]
+                            {"content" [{"id" "b1" "type" "prose" "markdown" "done"}]
+                             "iteration_count" 1})]
+         (t->r event "t1"))]
 
       (is (= 0.0123 (get-in result ["cost" "total_cost"])) "cost stays canonical")
       (is (= "m" (get-in result ["cost" "model"])))
@@ -341,9 +366,10 @@
                        (rv 'sse-reconnect-backoff-ms) 0
                        (rv 'sse-reconnect-max-attempts) 2}
         (fn []
-          (let [ex (try ((rv 'read-events-until!) "s" 0 "t1" nil)
-                        nil
-                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+          (let
+            [ex (try ((rv 'read-events-until!) "s" 0 "t1" nil)
+                     nil
+                     (catch clojure.lang.ExceptionInfo e (ex-data e)))]
             (is (true? (:gateway-disconnected ex)))
             (is (= 3 @reads) "initial attempt + 2 reconnects")))))))
 
@@ -382,38 +408,41 @@
                                               (throw (ex-info "boom" {:kaboom true})))
                      (rv 'sse-reconnect-backoff-ms) 0}
       (fn []
-        (let [ex (try ((rv 'read-events-until!) "s" 0 "t1" nil)
-                      nil
-                      (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (let
+          [ex (try ((rv 'read-events-until!) "s" 0 "t1" nil)
+                   nil
+                   (catch clojure.lang.ExceptionInfo e (ex-data e)))]
           (is (true? (:kaboom ex))))))))
 
 (deftest mux-subscribe!-shares-one-remote-session-subscription
   (testing "multiple local listeners for one sid do not reconnect/open one SSE per tab"
-    (let [mux-var
-          (rv 'mux)
+    (let
+      [mux-var
+       (rv 'mux)
 
-          restarts
-          (atom 0)
+       restarts
+       (atom 0)
 
-          seen-a
-          (atom [])
+       seen-a
+       (atom [])
 
-          seen-b
-          (atom [])]
+       seen-b
+       (atom [])]
 
       (reset! @mux-var {:subs {} :epoch 0 :future nil :stream nil})
       (with-redefs-fn {(rv 'restart-mux!) (fn []
                                             (swap! restarts inc)
                                             nil)}
         (fn []
-          (let [cleanup-a
-                (client/mux-subscribe! "sid-1" #(swap! seen-a conj %) 10)
+          (let
+            [cleanup-a
+             (client/mux-subscribe! "sid-1" #(swap! seen-a conj %) 10)
 
-                cleanup-b
-                (client/mux-subscribe! "sid-1" #(swap! seen-b conj %) 10)
+             cleanup-b
+             (client/mux-subscribe! "sid-1" #(swap! seen-b conj %) 10)
 
-                entry
-                (get-in @@mux-var [:subs "sid-1"])]
+             entry
+             (get-in @@mux-var [:subs "sid-1"])]
 
             (is (= 1 @restarts) "second listener for same sid should not reopen /v1/events")
             (is (= 2 (count (:sinks entry))))
@@ -431,17 +460,18 @@
             (is (empty? (:subs @@mux-var)))))))))
 
 (deftest mux-finalization-barrier-forbids-new-subscriptions
-  (let [mux-var
-        (rv 'mux)
+  (let
+    [mux-var
+     (rv 'mux)
 
-        finalizing-var
-        (rv 'client-finalizing?)
+     finalizing-var
+     (rv 'client-finalizing?)
 
-        previous-mux
-        @@mux-var
+     previous-mux
+     @@mux-var
 
-        previous-finalizing
-        @@finalizing-var]
+     previous-finalizing
+     @@finalizing-var]
 
     (try (reset! @mux-var {:subs {} :epoch 0 :future nil :stream nil})
          (reset! @finalizing-var true)
@@ -452,29 +482,31 @@
                           (fn []
                             (throw (ex-info "must not restart during finalization" {})))}
            (fn []
-             (let [cleanup (client/mux-subscribe! "sid-final"
-                                                  (fn [_])
-                                                  0)]
+             (let
+               [cleanup (client/mux-subscribe! "sid-final"
+                                               (fn [_])
+                                               0)]
                (is (fn? cleanup))
                (is (empty? (:subs @@mux-var)))
                (cleanup))))
          (finally (reset! @mux-var previous-mux) (reset! @finalizing-var previous-finalizing)))))
 
 (deftest restart-mux-never-starts-a-reader-during-finalization
-  (let [mux-var
-        (rv 'mux)
+  (let
+    [mux-var
+     (rv 'mux)
 
-        finalizing-var
-        (rv 'client-finalizing?)
+     finalizing-var
+     (rv 'client-finalizing?)
 
-        previous-mux
-        @@mux-var
+     previous-mux
+     @@mux-var
 
-        previous-finalizing
-        @@finalizing-var
+     previous-finalizing
+     @@finalizing-var
 
-        starts
-        (atom 0)]
+     starts
+     (atom 0)]
 
     (try (reset! @mux-var {:subs {"sid-final" {:cursor-atom (atom 0)
                                                :sinks {"sub" (fn [_])}}}
@@ -492,31 +524,32 @@
          (finally (reset! @mux-var previous-mux) (reset! @finalizing-var previous-finalizing)))))
 
 (deftest shutdown-subscriptions-closes-all-streams-without-reconnect
-  (let [mux-var
-        (rv 'mux)
+  (let
+    [mux-var
+     (rv 'mux)
 
-        subscriptions-var
-        (rv 'subscriptions)
+     subscriptions-var
+     (rv 'subscriptions)
 
-        finalizing-var
-        (rv 'client-finalizing?)
+     finalizing-var
+     (rv 'client-finalizing?)
 
-        previous-mux
-        @@mux-var
+     previous-mux
+     @@mux-var
 
-        previous-subscriptions
-        @@subscriptions-var
+     previous-subscriptions
+     @@subscriptions-var
 
-        previous-finalizing
-        @@finalizing-var
+     previous-finalizing
+     @@finalizing-var
 
-        closes
-        (atom 0)
+     closes
+     (atom 0)
 
-        closeable
-        (reify
-          java.io.Closeable
-            (close [_] (swap! closes inc)))]
+     closeable
+     (reify
+       java.io.Closeable
+         (close [_] (swap! closes inc)))]
 
     (try (reset! @finalizing-var false)
          (reset! @subscriptions-var {"legacy" {:future nil :stream (atom closeable)}})
@@ -541,17 +574,18 @@
   ;; and kicks a single-flight refresh; once it lands, subsequent reads are
   ;; served from cache. If someone reintroduces a synchronous round-trip this
   ;; test blocks for `slow-ms` and the timing assertion fails.
-  (let [slow-ms
-        300
+  (let
+    [slow-ms
+     300
 
-        cache
-        (rv 'resources-cache)
+     cache
+     (rv 'resources-cache)
 
-        inflight
-        (rv 'resources-refreshing)
+     inflight
+     (rv 'resources-refreshing)
 
-        calls
-        (atom 0)]
+     calls
+     (atom 0)]
 
     (with-redefs-fn {(rv 'list-resources) (fn [_sid]
                                             (swap! calls inc)
@@ -560,14 +594,15 @@
       (fn []
         (reset! @cache {})
         (reset! @inflight #{})
-        (let [t0
-              (System/nanoTime)
+        (let
+          [t0
+           (System/nanoTime)
 
-              cold
-              (client/list-resources-cached "sid-x")
+           cold
+           (client/list-resources-cached "sid-x")
 
-              cold-ms
-              (/ (- (System/nanoTime) t0) 1e6)]
+           cold-ms
+           (/ (- (System/nanoTime) t0) 1e6)]
 
           (is (nil? cold) "cold read serves the last-known value (nil) immediately")
           (is (< cold-ms 50.0) "cold read must NOT block on the daemon round-trip")
@@ -576,14 +611,15 @@
             (client/list-resources-cached "sid-x"))
           (Thread/sleep (+ slow-ms 250))
           (is (= 1 @calls) "only ONE background fetch runs per sid (single-flight)")
-          (let [t1
-                (System/nanoTime)
+          (let
+            [t1
+             (System/nanoTime)
 
-                warm
-                (client/list-resources-cached "sid-x")
+             warm
+             (client/list-resources-cached "sid-x")
 
-                warm-ms
-                (/ (- (System/nanoTime) t1) 1e6)]
+             warm-ms
+             (/ (- (System/nanoTime) t1) 1e6)]
 
             (is (= [{"id" "bg"}] warm) "a fresh entry is served from cache")
             (is (< warm-ms 50.0) "warm read is a pure cache hit")
@@ -594,17 +630,18 @@
   ;; pref every frame. This used to be a LIVE daemon round-trip per frame; it
   ;; must serve from a per-sid cache and refresh in the background — same
   ;; discipline as `list-resources-cached` above.
-  (let [slow-ms
-        300
+  (let
+    [slow-ms
+     300
 
-        cache
-        (rv 'session-model-cache)
+     cache
+     (rv 'session-model-cache)
 
-        inflight
-        (rv 'session-model-refreshing)
+     inflight
+     (rv 'session-model-refreshing)
 
-        calls
-        (atom 0)]
+     calls
+     (atom 0)]
 
     (with-redefs-fn {(rv 'session-model) (fn [_sid]
                                            (swap! calls inc)
@@ -613,14 +650,15 @@
       (fn []
         (reset! @cache {})
         (reset! @inflight #{})
-        (let [t0
-              (System/nanoTime)
+        (let
+          [t0
+           (System/nanoTime)
 
-              cold
-              (client/session-model-cached "sid-m")
+           cold
+           (client/session-model-cached "sid-m")
 
-              cold-ms
-              (/ (- (System/nanoTime) t0) 1e6)]
+           cold-ms
+           (/ (- (System/nanoTime) t0) 1e6)]
 
           (is (nil? cold) "cold read serves the last-known value (nil) immediately")
           (is (< cold-ms 50.0) "cold read must NOT block on the daemon round-trip")
@@ -629,14 +667,15 @@
             (client/session-model-cached "sid-m"))
           (Thread/sleep (+ slow-ms 250))
           (is (= 1 @calls) "only ONE background fetch runs per sid (single-flight)")
-          (let [t1
-                (System/nanoTime)
+          (let
+            [t1
+             (System/nanoTime)
 
-                warm
-                (client/session-model-cached "sid-m")
+             warm
+             (client/session-model-cached "sid-m")
 
-                warm-ms
-                (/ (- (System/nanoTime) t1) 1e6)]
+             warm-ms
+             (/ (- (System/nanoTime) t1) 1e6)]
 
             (is (= {:provider "anthropic" :model "opus"} warm) "a fresh entry is served from cache")
             (is (< warm-ms 50.0) "warm read is a pure cache hit")

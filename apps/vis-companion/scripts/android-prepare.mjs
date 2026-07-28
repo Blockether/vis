@@ -16,6 +16,8 @@
  *      versionName = package.json "version", versionCode = `git rev-list --count HEAD`,
  *      the SAME pair scripts/ios-release.mjs uses, so a build number identifies one commit
  *      on both stores and two uploads can never collide.
+ *   4. cleartext HTTP        → res/xml/network_security_config.xml + AndroidManifest
+ *      (API 28+ blocks http:// by default; the gateway is a bare LAN/tailnet IP)
  *
  * Usage:
  *   node scripts/android-prepare.mjs
@@ -24,7 +26,7 @@
  *   node scripts/android-prepare.mjs --clean        # shred the materialised keystore
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -229,3 +231,39 @@ gradle = gradle.replace(/versionCode\s+\d+/, `versionCode ${versionCode}`).repla
 
 if (gradle !== before) writeFileSync(gradlePath, gradle);
 console.log(`\u2713 app/build.gradle  versionName ${versionName}, versionCode ${versionCode}, signingConfig release`);
+
+/**
+ * 4. Cleartext HTTP to the gateway.
+ *
+ * The gateway is reached over plain HTTP at a bare IP (LAN 192.168.x, Tailscale 100.64/10).
+ * Since API 28 Android's default network security config sets cleartextTrafficPermitted=false,
+ * so every fetch/EventSource to http://<ip>:7890 fails locally with a bare "Load failed" —
+ * the exact Android twin of the iOS ATS block fixed in ios/App/App/Info.plist.
+ * Android's NSC has no CIDR support (only literal <domain> entries), and the gateway IP is
+ * discovered at runtime, so a base-config opt-in is the only workable form.
+ */
+const xmlDir = join(root, 'android', 'app', 'src', 'main', 'res', 'xml');
+const nscPath = join(xmlDir, 'network_security_config.xml');
+const nsc = `<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
+`;
+mkdirSync(xmlDir, { recursive: true });
+if (!existsSync(nscPath) || readFileSync(nscPath, 'utf8') !== nsc) writeFileSync(nscPath, nsc);
+
+const manifestPath = join(root, 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
+let manifest = readFileSync(manifestPath, 'utf8');
+const manifestBefore = manifest;
+if (!manifest.includes('android:usesCleartextTraffic')) {
+  manifest = manifest.replace(/<application\b/, '<application\n        android:usesCleartextTraffic="true"');
+}
+if (!manifest.includes('android:networkSecurityConfig')) {
+  manifest = manifest.replace(/<application\b/, '<application\n        android:networkSecurityConfig="@xml/network_security_config"');
+}
+if (manifest !== manifestBefore) writeFileSync(manifestPath, manifest);
+console.log('\u2713 cleartext HTTP  network_security_config.xml + AndroidManifest (LAN + tailnet gateway)');

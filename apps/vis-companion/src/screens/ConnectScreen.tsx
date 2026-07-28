@@ -24,6 +24,43 @@ interface Props {
  */
 const lastHealth: Record<string, GwHealth> = {};
 
+/**
+ * How long ONE reachability probe gets before the address counts as unreachable.
+ *
+ * Without an explicit deadline the probe inherits the platform's TCP timeout —
+ * over a minute on iOS — and because the sweep below is serialised behind
+ * `probeInFlight`, a single dead address freezes EVERY other gateway's dot at
+ * its last verdict for that whole minute. A tailnet address that needs a
+ * handshake or a DERP fallback is exactly the address that gets stuck red.
+ */
+const PROBE_TIMEOUT_MS = 9000;
+
+/**
+ * A red dot with no reason is undiagnosable: "offline" looks identical whether
+ * the phone denied local-network access, the tunnel never came up, iOS killed
+ * the socket, or the gateway answered with an HTTP error. So the probe reports
+ * WHY, and the row prints it.
+ *
+ * An HTTP answer — any status — proves the address routes here; only a
+ * transport failure means the address is unusable from this device.
+ */
+async function probeOnce(conn: GatewayConn): Promise<{ state: GwState; why?: string }> {
+  const ctrl = new AbortController();
+  const deadline = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+  try {
+    await new GatewayClient(conn).health(ctrl.signal);
+    return { state: 'online' };
+  } catch (e) {
+    if (e instanceof GatewayError) {
+      return e.status === 401 ? { state: 'auth' } : { state: 'online', why: e.message };
+    }
+    if (ctrl.signal.aborted) return { state: 'offline', why: `no answer in ${PROBE_TIMEOUT_MS / 1000}s` };
+    return { state: 'offline', why: (e as Error).message || 'network error' };
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+
 export function ConnectScreen({
   conns,
   active,
@@ -71,19 +108,8 @@ export function ConnectScreen({
             ms: lastHealth[conn.url]?.ms,
           });
           const started = Date.now();
-          try {
-            const reachable = await new GatewayClient(conn).ping();
-            remember(conn.url, {
-              state: reachable ? 'online' : 'offline',
-              ms: Date.now() - started,
-            });
-          } catch (e) {
-            const unauthorized = e instanceof GatewayError && e.status === 401;
-            remember(conn.url, {
-              state: unauthorized ? 'auth' : 'offline',
-              ms: Date.now() - started,
-            });
-          }
+          const { state, why } = await probeOnce(conn);
+          remember(conn.url, { state, ms: Date.now() - started, ...(why ? { why } : {}) });
         }),
       );
     } finally {
@@ -259,6 +285,11 @@ export function ConnectScreen({
                           ? (hv.ms != null ? `${hv.ms}ms` : '')
                           : hv.label}
                       </span>
+                      {health[conn.url]?.why && hv.state !== 'online' && (
+                        <span className="min-w-0 truncate font-mono text-chip text-dialog-hint">
+                          {health[conn.url]?.why}
+                        </span>
+                      )}
                     </span>
                   </span>
                   <span
@@ -369,6 +400,8 @@ type GwState = 'checking' | 'online' | 'offline' | 'auth';
 interface GwHealth {
   state: GwState;
   ms?: number;
+  /** Why the last probe failed — printed on the row so red is diagnosable. */
+  why?: string;
 }
 
 interface GwHealthView {

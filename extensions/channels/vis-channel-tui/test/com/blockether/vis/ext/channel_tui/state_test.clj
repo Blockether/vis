@@ -338,7 +338,7 @@
       (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
       (expect (= "tab draft" (input/input->text (:input @state/app-db))))
       (expect (= ["tab prompt"] (:input-history @state/app-db))))
-  (it "restores a tab's cached layout and exact scroll position when geometry matches"
+  (it "restores a tab's cached layout and SNAPS its scroll intent when geometry matches"
       (let
         [main-layout
          {:cols 120 :rows 40 :total-h 5000 :inner-h 30 :offsets [0 100 900]}
@@ -360,10 +360,33 @@
                               :render-version 0})
         (state/dispatch [:select-tab-index 1])
         (expect (= tab-layout (:layout @state/app-db)))
-        (expect (= {:mode :at :offset 5 :pos 1200} (:scroll @state/app-db)))
+        ;; The eased `:pos` NEVER survives a switch: the tab was off screen, so
+        ;; there is nothing to animate FROM. Its intent (`:at` row 5) is restored
+        ;; snapped, so the first frame paints exactly there.
+        (expect (= {:mode :at :offset 5} (:scroll @state/app-db)))
         (state/dispatch [:select-tab-index 0])
         (expect (= main-layout (:layout @state/app-db)))
-        (expect (= {:mode :at :offset 40 :pos 900} (:scroll @state/app-db)))))
+        (expect (= {:mode :at :offset 40} (:scroll @state/app-db)))))
+  (it "snaps a FOLLOWing tab to the live bottom instead of easing down to it"
+      ;; The regression: a hidden FOLLOW tab keeps `:pos` pinned at the bottom of
+      ;; the `total-h` it had when last painted, and that grows while it is hidden
+      ;; (background turns append; estimate→real height corrections land on the
+      ;; next warm). Restoring that stale row made the switch paint the OLD
+      ;; position and then visibly scroll DOWN to the real bottom.
+      (let [layout {:cols 120 :rows 40 :total-h 5000 :inner-h 30}]
+        (reset! state/app-db {:scroll (assoc scroll/follow :pos 4970)
+                              :layout layout
+                              :tabs [{:id :main :label "Main" :active? true}
+                                     {:id :tab-1 :label "Tab 1"}]
+                              :active-tab-id :main
+                              :tab-locals {:tab-1 {:scroll (assoc scroll/follow :pos 500)
+                                                   :layout layout}}
+                              :render-version 0})
+        (state/dispatch [:select-tab-index 1])
+        (expect (= scroll/follow (:scroll @state/app-db)))
+        ;; nil layout-offset = exact bottom lock, and nothing left to animate.
+        (expect (nil? (scroll/layout-offset (:scroll @state/app-db) 1200)))
+        (expect (false? (scroll/animating? (:scroll @state/app-db) 1200)))))
   (it "invalidates cached layout and eased position after terminal geometry changes"
       (reset! state/app-db {:layout {:cols 140 :rows 50 :total-h 5000 :inner-h 40}
                             :tabs [{:id :main :label "Main" :active? true}
@@ -3352,6 +3375,17 @@
           (expect (= before (:messages @state/app-db)))
           (expect (= (vis/markdown->ast "full answer")
                      (get-in @state/app-db [:messages 1 :content]))))))
+  (it "the worker result winning the grace race KEEPS the live trace"
+      ;; Regression: `:sync-turn-terminal` clears `:progress` the instant the mux
+      ;; sees the terminal event, so the blocking worker's `:message-received`
+      ;; found no iterations and published an assistant bubble with only the
+      ;; answer — everything the user watched LIVE disappeared on turn end.
+      (let [trace [{:id :iter-1 :forms [{:id :form-1}]}]]
+        (reset! state/app-db (terminal-test-db {:progress {:iterations trace}}))
+        (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})
+        (state/dispatch [:message-received nil (vis/markdown->ast "full answer")
+                         {:client-turn-id "c1" :status :completed}])
+        (expect (= trace (get-in @state/app-db [:messages 1 :traces])))))
   (it "a late c1 callback cannot mutate c2 editor or active turn state"
       (reset! state/app-db (-> (terminal-test-db)
                                (assoc :live-turn-client-id "c2"
@@ -3745,3 +3779,40 @@
                           "s1"
                           {:text "gone" :mine? true}))
         (expect (= [] (:pending-sends @state/app-db))))))
+
+;; A project's member list IS the tab set that was open last time (closing a tab
+;; unassigns the session), so restore must be LOSSLESS. It used to stop at
+;; `max-tabs` (8), so relaunching a project with more open tabs silently dropped
+;; the rest — and the follow-up persist rewrote the stored order from the
+;; truncated strip.
+(defdescribe preallocate-project-tabs-test
+             (it "restores every member tab, past the manual max-tabs cap"
+                 (reset! state/app-db {:tabs [{:id :main :label "Main" :active? true}]
+                                       :active-tab-id :main
+                                       :session {:id "sid-0"}
+                                       :tab-locals {}
+                                       :render-version 0})
+                 (state/dispatch [:preallocate-project-tabs
+                                  (mapv (fn [i]
+                                          {:session-id (str "sid-" (inc i))
+                                           :label (str "S" (inc i))
+                                           :root "/tmp/proj"})
+                                        (range 11))])
+                 (expect (= 12 (count (:tabs @state/app-db))))
+                 (expect (= (mapv #(str "sid-" %) (range 1 12))
+                            (->> (:tabs @state/app-db)
+                                 (keep :session-id)
+                                 vec)))
+                 ;; name-only until first focus, and focus never moves
+                 (expect (every? :pending? (remove #(= :main (:id %)) (:tabs @state/app-db))))
+                 (expect (= :main (:active-tab-id @state/app-db))))
+             (it "never duplicates a session already open in a tab"
+                 (reset! state/app-db {:tabs [{:id :main :label "Main" :active? true}]
+                                       :active-tab-id :main
+                                       :session {:id "sid-1"}
+                                       :tab-locals {}
+                                       :render-version 0})
+                 (state/dispatch [:preallocate-project-tabs
+                                  [{:session-id "sid-1" :label "S1" :root "/tmp/proj"}
+                                   {:session-id "sid-2" :label "S2" :root "/tmp/proj"}]])
+                 (expect (= 2 (count (:tabs @state/app-db))))))

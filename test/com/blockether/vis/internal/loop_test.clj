@@ -4448,3 +4448,55 @@
                    (expect (= "image_url" (get-in msg [:content 0 :type])))
                    (expect (= "data:image/png;base64,UE5H"
                               (get-in msg [:content 0 :image_url :url]))))))
+
+(def ^:private env-gap-router-error (deref #'lp/env-gap-router-error))
+
+(defdescribe env-gap-router-error-test
+  (describe "an empty fleet caused by an unset ${NAME}"
+    (it "names the variable instead of svar's generic 'at least one provider'"
+        (let [cfg
+              {:providers [{:id :rbi-genai
+                            :api-key "${VIS_TEST_UNSET_RBI_KEY}"
+                            :models [{:name "gpt-4o"}]}]}
+
+              svar-err
+              (ex-info "make-router requires at least one provider" {:type :svar/no-providers})
+
+              restated
+              (env-gap-router-error cfg svar-err)]
+
+          (expect (str/includes? (ex-message restated) "VIS_TEST_UNSET_RBI_KEY"))
+          (expect (str/includes? (ex-message restated) "rbi-genai"))
+          ;; The TUI routes on the cause chain + `:type` — both must survive.
+          (expect (= :svar/no-providers (:type (ex-data restated))))
+          (expect (:vis/user-error (ex-data restated)))
+          (expect (= {:rbi-genai ["VIS_TEST_UNSET_RBI_KEY"]} (:env-gaps (ex-data restated))))
+          (expect (identical? svar-err (.getCause ^Throwable restated)))))
+    (it "restates through a wrapping exception too"
+        (let [cfg
+              {:providers [{:id :rbi-genai :api-key "${VIS_TEST_UNSET_RBI_KEY}"}]}
+
+              wrapped
+              (ex-info "creating session"
+                       {}
+                       (ex-info "make-router requires at least one provider"
+                                {:type :svar/no-providers}))]
+
+          (expect (str/includes? (ex-message (env-gap-router-error cfg wrapped))
+                                 "VIS_TEST_UNSET_RBI_KEY")))))
+  (describe "anything else"
+    (it "is returned untouched — no env gap, or not a no-providers failure"
+        (let [gapped
+              {:providers [{:id :rbi-genai :api-key "${VIS_TEST_UNSET_RBI_KEY}"}]}
+
+              resolved
+              {:providers [{:id :ok :api-key "sk-literal"}]}
+
+              svar-err
+              (ex-info "make-router requires at least one provider" {:type :svar/no-providers})
+
+              other
+              (ex-info "boom" {})]
+
+          (expect (identical? svar-err (env-gap-router-error resolved svar-err)))
+          (expect (identical? other (env-gap-router-error gapped other)))))))

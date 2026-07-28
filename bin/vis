@@ -253,7 +253,32 @@ vis_do_update() {
     echo "vis: updating source at $repo_root (git fetch + pull --ff-only)"
     git -C "$repo_root" fetch --tags origin || exit 1
     git -C "$repo_root" pull --ff-only || {
-      echo "vis update: 'git pull --ff-only' failed — commit/stash local changes or reconcile diverged history, then retry." >&2
+      # Say WHAT blocked the fast-forward: dirty tree vs. diverged history
+      # (usually an upstream force-push), with the counts and the exact recovery
+      # command. A bare 'not possible to fast-forward' tells the user nothing.
+      local vis_branch vis_upstream vis_counts vis_ahead vis_behind
+      vis_branch="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+      vis_upstream="$(git -C "$repo_root" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)"
+      echo "vis update: 'git pull --ff-only' failed on branch '${vis_branch:-?}'." >&2
+      if [[ -n "$(git -C "$repo_root" status --porcelain 2>/dev/null)" ]]; then
+        echo "  - Working tree has local changes: commit or stash them, then retry." >&2
+      fi
+      if [[ -n "$vis_upstream" ]]; then
+        vis_counts="$(git -C "$repo_root" rev-list --left-right --count "HEAD...$vis_upstream" 2>/dev/null)"
+        vis_ahead="${vis_counts%%[[:space:]]*}"
+        vis_behind="${vis_counts##*[[:space:]]}"
+        if [[ -n "$vis_counts" && ( "$vis_ahead" != 0 || "$vis_behind" != 0 ) ]]; then
+          echo "  - '$vis_branch' and '$vis_upstream' have diverged: $vis_ahead local commit(s), $vis_behind upstream commit(s)." >&2
+        fi
+        if [[ "${vis_ahead:-0}" != 0 ]]; then
+          echo "      keep your work:    git -C '$repo_root' rebase $vis_upstream" >&2
+        fi
+        echo "      discard local commits (DESTRUCTIVE, after an upstream force-push):" >&2
+        echo "                         git -C '$repo_root' reset --hard $vis_upstream" >&2
+      else
+        echo "  - Branch '${vis_branch:-?}' has no upstream; set one with 'git branch -u origin/main'." >&2
+      fi
+      echo "    Then run 'vis update' again." >&2
       exit 1
     }
     if (( rebuild )); then

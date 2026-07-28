@@ -745,11 +745,12 @@
                    (g->c {"type" "session.title_updated" "session_id" "bbb" "title" "T"}))))
     (it "a foreign copy keeps the TITLED session's id from the payload"
         ;; gateway state/broadcast-title-event! stores a copy on every OTHER
-        ;; registered session with the titled session's id in the payload —
-        ;; the chunk must carry THAT id, not the subscribed session's.
+        ;; registered session; `session_id` names the ring that copy rode in on,
+        ;; and `titled_session_id` names its subject — the chunk must carry THAT.
         (expect (= "other-session"
                    (:session-id (g->c {"type" "session.title_updated"
-                                       "session_id" "other-session"
+                                       "session_id" "subscribed-session"
+                                       "titled_session_id" "other-session"
                                        "title" "X"})))))))
 
 (defdescribe terminal-event-chunk-test

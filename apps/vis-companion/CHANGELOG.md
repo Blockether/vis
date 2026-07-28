@@ -2,6 +2,11 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 1.0.1 (2710) — 2026-07-28
+<!-- commit: 5d270615be75c17b8651ffbf567d9b1bba2b63be -->
+
+- Config: name the failing fields and stop dumping a stack trace
+
 ## 1.0.1 (2709) — 2026-07-28
 <!-- commit: d361085f12f1a524b875a1686ddedc8b7c4002b3 -->
 

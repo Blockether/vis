@@ -1053,10 +1053,14 @@
        :status (event-get event :status)}
 
       "turn.failed"
-      {:phase :turn-terminal
-       :turn-id (event-get event :turn-id)
-       :client-id (event-get event :idempotency-key)
-       :status (or (event-get event :status) "failed")}
+      (cond-> {:phase :turn-terminal
+               :turn-id (event-get event :turn-id)
+               :client-id (event-get event :idempotency-key)
+               :status (or (event-get event :status) "failed")}
+        ;; The settled failure content (the styled provider card). Without it the
+        ;; independent terminal path can only invent a bare "Turn failed." row.
+        (seq (event-get event :content))
+        (assoc :content (vec (event-get event :content))))
 
       "turn.cancelled"
       {:phase :turn-terminal
@@ -1068,13 +1072,14 @@
       ;; in a SIBLING process (another TUI, the web, the serve daemon), where
       ;; THIS process's in-process titling listeners never fire. Project it so
       ;; the persistent tab subscription relabels live instead of waiting for a
-      ;; tab reopen to re-read the DB title. `:session_id` is the TITLED
-      ;; session's id (a foreign copy stamps it in the payload — see gateway
-      ;; state/broadcast-title-event!), which may differ from the subscribed
-      ;; session.
+      ;; tab reopen to re-read the DB title. A copy broadcast onto ANOTHER
+      ;; session's stream names its subject in `:titled_session_id` (gateway
+      ;; state/broadcast-title-event!) — `:session_id` always identifies the
+      ;; stream the event rode in on, never the titled session.
       "session.title_updated"
       {:phase :title-sync
-       :session-id (some-> (event-get event :session-id)
+       :session-id (some-> (or (event-get event :titled-session-id)
+                               (event-get event :session-id))
                            str)
        :title (event-get event :title)}
 

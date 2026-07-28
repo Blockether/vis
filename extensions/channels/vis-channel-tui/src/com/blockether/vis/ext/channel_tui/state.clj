@@ -1028,12 +1028,21 @@
 (defn- restore-tab
   "Pull the per-tab locals for `workspace-id` back into the active db.
 
-   Layout and eased scroll position are cached per tab so revisiting a tab can
-   paint against its own established geometry immediately instead of first
-   rendering with no layout and visibly settling on a later frame. The cache is
-   safe only while terminal dimensions match the tab being left; after a resize,
-   discard the target layout and `:pos` so the first frame recomputes against the
-   new geometry."
+   Layout is cached per tab so revisiting a tab can paint against its own
+   established geometry immediately instead of first rendering with no layout and
+   visibly settling on a later frame. The cache is safe only while terminal
+   dimensions match the tab being left; after a resize, discard the target layout
+   so the first frame recomputes against the new geometry.
+
+   The eased `:pos` is ALWAYS dropped. A tab switch is a DISCRETE jump, not
+   motion inside one view: the incoming transcript was never on screen, so there
+   is nothing to ease FROM. A snapshot's `:pos` is a stale absolute row — FOLLOW
+   pins it at the bottom of the `total-h` the tab had when it was last painted,
+   and that grows while the tab is hidden (a background turn appends messages,
+   and estimate→real height corrections land on the next visit's warm). Keeping
+   it made the first frame paint the OLD row and the render loop then visibly
+   scroll DOWN to the real bottom on every switch. Dropping it snaps: FOLLOW
+   locks to the exact bottom, `:at` to its parked row."
   [db workspace-id]
   (let
     [entry
@@ -1056,14 +1065,13 @@
                   [:cols :rows]))
 
      db'
-     (cond-> (merge db locals)
-       (not compatible-layout?)
-       (dissoc :layout)
-
-       (not compatible-layout?)
-       (update :scroll
-               (fn [sc]
-                 (if (map? sc) (dissoc sc :pos) sc))))]
+     (-> (merge db locals)
+         (update :scroll
+                 (fn [sc]
+                   (if (map? sc) (dissoc sc :pos) sc)))
+         (cond->
+           (not compatible-layout?)
+           (dissoc :layout)))]
 
     ;; The tab ENTRY carries the workspace root reliably (set at creation). A
     ;; stale/empty tab-locals snapshot — taken before `:set-workspace` landed —
@@ -2097,8 +2105,14 @@
               ;; entry is `:pending? true` and carries its `:session-id`; the
               ;; transcript loads lazily on FIRST focus (screen.clj's
               ;; hydrate-pending-tab! resumes it and `:open-session-tab` binds it).
-              ;; Sessions already open in a tab and anything past `max-tabs` are
-              ;; skipped. Locals seed with an empty view so an early switch paints a
+              ;; Sessions already open in a tab are skipped. NOT capped by
+              ;; `max-tabs`: a project's member list IS the tab set that was open
+              ;; last time (closing a tab unassigns the session from the project,
+              ;; see `:unassign-session-project`), so capping here silently DROPPED
+              ;; every tab past the 8th on relaunch — and the follow-up
+              ;; `persist-tabs!` then rewrote `project_position` from the truncated
+              ;; strip. `max-tabs` guards MANUAL tab creation only (`:create-tab`).
+              ;; Locals seed with an empty view so an early switch paints a
               ;; blank transcript instead of ghosting the previous tab.
               (fn [db [_ specs]]
                 (let
@@ -2113,7 +2127,7 @@
                          entries (vec (:tabs db))
                          open? (when sid (some #(= sid (tab-session-id db (:id %))) entries))]
 
-                        (if (or (nil? sid) open? (>= (count entries) max-tabs))
+                        (if (or (nil? sid) open?)
                           db
                           (let
                             [id (keyword (str "tab-" (next-tab-number entries)))
@@ -3391,20 +3405,30 @@
                "completed")))
 
 (defn- terminal-content
-  [{:keys [status turn-id]}]
-  (let
-    [[type code message] (case (terminal-status status)
-                           :cancelled
-                           ["notice" "turn_cancelled" "Cancelled by user."]
+  "Content blocks for a turn the INDEPENDENT terminal path had to settle.
 
-                           :failed
-                           ["error" "turn_failed" "Turn failed."]
+   A failed turn carries the gateway's OWN error blocks (`turn.failed` ships the
+   settled content), and those ARE the styled provider card — rate-limited,
+   auth, transport. Fabricating \"Turn failed.\" instead is exactly how a
+   rate-limited turn painted a bare `ERROR: turn failed` row, or showed BOTH
+   that row and the real card depending on which copy landed first."
+  [{:keys [status turn-id content]}]
+  (let [blocks (vec (filter map? content))]
+    (if (seq blocks)
+      blocks
+      (let
+        [[type code message] (case (terminal-status status)
+                               :cancelled
+                               ["notice" "turn_cancelled" "Cancelled by user."]
 
-                           ["notice" "turn_completed" "Turn completed."])]
-    [{"id" (str "terminal-" (or turn-id (java.util.UUID/randomUUID)))
-      "type" type
-      "code" code
-      "message" message}]))
+                               :failed
+                               ["error" "turn_failed" "Turn failed."]
+
+                               ["notice" "turn_completed" "Turn completed."])]
+        [{"id" (str "terminal-" (or turn-id (java.util.UUID/randomUUID)))
+          "type" type
+          "code" code
+          "message" message}]))))
 
 (reg-event-fx :sync-turn-terminal
               ;; The persistent mux is independent of the blocking submit/attach worker.
@@ -4258,7 +4282,19 @@
              :else
              (let
                [trace
-                (or terminal-trace (get-in workspace [:progress :iterations]))
+                (or terminal-trace
+                    (not-empty (vec (get-in workspace [:progress :iterations])))
+                    ;; The persistent mux settles this turn's active state the
+                    ;; moment the terminal event lands — `:sync-turn-terminal`
+                    ;; clears `:progress` up to `terminal-result-grace-ms` BEFORE
+                    ;; the blocking worker delivers the full answer. The live
+                    ;; trace it snapshotted survives on the placeholder; without
+                    ;; this fallback every iteration the user watched LIVE is
+                    ;; dropped and only the final answer stays on screen.
+                    (let [ms (vec (:messages workspace))]
+                      (not-empty (vec (get-in ms
+                                              [(pending-assistant-index ms client-turn-id)
+                                               :terminal-pending :trace])))))
 
                 cancelled?
                 (= :cancelled status)

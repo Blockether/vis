@@ -72,6 +72,36 @@
 ;; lists
 ;; ---------------------------------------------------------------------------
 
+;; ---------------------------------------------------------------------------
+;; heading hierarchy
+;; ---------------------------------------------------------------------------
+
+;; A terminal has ONE font size. Without a rule + gutter ladder every
+;; heading level collapses onto the slate colour ramp alone, and `##`
+;; renders indistinguishably from `###` (and H4-H6 from either).
+(defdescribe
+  heading-hierarchy-test
+  (it "H1 is underlined by a heavy rule spanning the full width"
+      (let [ls (remove str/blank? (texts (layout/ast->lines [:ast [:h {:level 1} "Title"]] 20)))]
+        (expect (= ["Title" (apply str (repeat 20 \━))] (vec ls)))))
+  (it "H2 is underlined by a light rule sized to the heading text"
+      (let [ls (remove str/blank? (texts (layout/ast->lines [:ast [:h {:level 2} "Problem"]] 20)))]
+        (expect (= ["Problem" (apply str (repeat 7 \─))] (vec ls)))))
+  (it "H3-H6 carry distinct gutter marks and no rule"
+      (let
+        [head
+         #(first (remove str/blank? (texts (layout/ast->lines [:ast [:h {:level %} "x"]] 40))))
+
+         marks
+         (mapv head [3 4 5 6])]
+
+        (expect (= ["▍ x" "▸ x" "· x" "  · x"] marks))
+        (expect (= 4 (count (distinct marks))))))
+  (it "wrapped heading lines hang under their gutter mark"
+      (let [ls (texts (layout/ast->lines [:ast [:h {:level 3} "aaaa bbbb cccc"]] 10))]
+        (expect (str/starts-with? (first ls) "▍ "))
+        (expect (str/starts-with? (second ls) "  ")))))
+
 (defdescribe list-test
              (it "ul renders '- ' marker per item"
                  (let

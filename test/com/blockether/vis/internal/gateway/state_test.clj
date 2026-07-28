@@ -311,8 +311,13 @@
           ;; the sibling (poll-only) session ALSO has it stored → /poll sees it
           (expect (= 1 (count b-events)))
           (expect (= "session.title_updated" (get (first b-events) "type")))
-          ;; foreign copy carries the TITLED session's id, not b's
-          (expect (= (str a) (get (first b-events) "session_id"))))
+          ;; `session_id` ALWAYS names the ring the event was appended to — the
+          ;; foreign copy names its subject separately. Re-stamping `session_id`
+          ;; here handed a's high seq to b's per-session cursor on both ends of
+          ;; the multiplexed SSE stream and silently killed b's live stream.
+          (expect (= (str b) (get (first b-events) "session_id")))
+          (expect (= (str a) (get (first b-events) "titled_session_id")))
+          (expect (nil? (get (first a-events) "titled_session_id"))))
         (finally (reset! registry saved))))))
 
 (defdescribe canonical-answer-content-test
@@ -2003,6 +2008,29 @@
             (let [res (deref f 2000 ::pending)]
               (expect (not= ::pending res))
               (expect (nil? (get res "error")))
+              (expect (= "MINE" (get res "session_turn_id"))))))))
+  (it "returns on a CANCELLED terminal instead of parking on the turn forever"
+      ;; Regression: only `turn.completed`/`turn.failed` counted as terminal, so a
+      ;; user stop (`turn.cancelled`, what `run-turn!` appends for an Esc or a
+      ;; stall force-cancel) left this blocking reader — and the SSE connection
+      ;; behind it — alive for the rest of the session, while the queue happily
+      ;; drained the next turn into the same channel.
+      (let [handler (promise)]
+        (with-redefs
+          [state/subscribe! (fn [_ _ h _]
+                              (deliver handler h)
+                              [])
+           state/unsubscribe! (fn [_ _]
+                                nil)
+           state/get-turn (fn [_ _]
+                            nil)
+           state/submit-turn! (fn [_ _]
+                                {:turn {"turn_id" "MINE"}})]
+
+          (let [f (future (state/submit-turn-sync! "sid-cancelled" {}))]
+            (@handler {"type" "turn.cancelled" "turn_id" "MINE" "status" "cancelled"})
+            (let [res (deref f 2000 ::pending)]
+              (expect (not= ::pending res))
               (expect (= "MINE" (get res "session_turn_id"))))))))
   (it "recovers a terminal from the stored record instead of blocking forever"
       (let [handler (promise)]

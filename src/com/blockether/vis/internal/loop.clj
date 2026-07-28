@@ -5743,6 +5743,49 @@
                     provider-entries))))
       router)))
 
+(defn- no-providers-cause?
+  "True when `t`, or anything in its cause chain, is svar's
+   `make-router requires at least one provider`."
+  [^Throwable t]
+  (loop [x t]
+    (cond (nil? x) false
+          (= :svar/no-providers (:type (ex-data x))) true
+          :else (recur (.getCause x)))))
+
+(defn- env-gap-router-error
+  "Restate a bare `:svar/no-providers` when the REASON is an unset `${NAME}`:
+   `runtime-router-providers` drops every provider whose reference never
+   resolved, so an empty fleet is the LAST place that knowledge still exists.
+   Without this a headless/CLI user sees svar's generic \"requires at least one
+   provider\" and has to guess WHICH variable is missing — exactly the debug
+   session the `${NAME}` feature exists to prevent.
+
+   Keeps `:type :svar/no-providers` AND the original as the cause, so the TUI's
+   `screen/svar-no-providers-cause?` still routes to the provider manager.
+   Returns `t` untouched when the failure has nothing to do with env gaps."
+  [config ^Throwable t]
+  (let [gaps (config/provider-env-gaps config)]
+    (if (or (empty? gaps) (not (no-providers-cause? t)))
+      t
+      (ex-info (str "No usable provider — "
+                    (str/join "; "
+                              (map (fn [[provider-id env-vars]]
+                                     (config/provider-env-message provider-id env-vars))
+                                   gaps))
+                    ". Set "
+                    (str/join ", " (distinct (mapcat val gaps)))
+                    " in your shell (export NAME=value) and start vis again.")
+               {:type :svar/no-providers
+                :vis/user-error true
+                :env-gaps gaps}
+               t))))
+
+(defn- build-router
+  "`svar/make-router` for a resolved config, with the env-gap diagnosis attached."
+  [config]
+  (try (svar/make-router (runtime-router-providers config) (config/router-opts config))
+       (catch Throwable t (throw (env-gap-router-error config t)))))
+
 (defn get-router
   "Get or create the shared LLM router.
 
@@ -5755,7 +5798,7 @@
             (config/resolve-config)
 
             r
-            (-> (svar/make-router (runtime-router-providers cfg) (config/router-opts cfg))
+            (-> (build-router cfg)
                 (honor-config-primary! cfg))]
 
         (reset! router-atom r)
@@ -5775,7 +5818,7 @@
    `:same-provider-delays-ms`) take effect on the next `set-provider!`
    without restarting the JVM."
   [config]
-  (let [r (-> (svar/make-router (runtime-router-providers config) (config/router-opts config))
+  (let [r (-> (build-router config)
               (honor-config-primary! config))]
     (reset! router-atom r)
     r))

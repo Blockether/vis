@@ -26,14 +26,15 @@
    unencodable - which kills the transport, not just the field."
   [k]
   (cond (or (keyword? k) (symbol? k))
-        (let [n
-              (name k)
+        (let
+          [n
+           (name k)
 
-              n
-              (if (str/ends-with? n "?")
-                (let [base (subs n 0 (dec (count n)))]
-                  (if (str/starts-with? base "is-") base (str "is-" base)))
-                n)]
+           n
+           (if (str/ends-with? n "?")
+             (let [base (subs n 0 (dec (count n)))]
+               (if (str/starts-with? base "is-") base (str "is-" base)))
+             n)]
 
           (str/replace n "-" "_"))
         (string? k) k
@@ -104,9 +105,10 @@
   [^String s ^long limit]
   (if (<= (count s) limit)
     s
-    (let [cut (if (and (pos? limit) (Character/isHighSurrogate (.charAt s (dec limit))))
-                (dec limit)
-                limit)]
+    (let
+      [cut (if (and (pos? limit) (Character/isHighSurrogate (.charAt s (dec limit))))
+             (dec limit)
+             limit)]
       (str (subs s 0 (max 0 cut)) " …[truncated]"))))
 
 (defn bounded-pr
@@ -137,6 +139,17 @@
    the same paused banner and unpauses together."
   #{"turn.queued" "turn.queued.updated" "turn.queued.deleted" "turn.queued.drained" "queue.paused"
     "queue.resumed"})
+
+(def turn-terminal-event-types
+  "Every event type that ENDS a turn — the ONE set both blocking readers use
+   (`gateway.state`'s in-process submit/attach subscriptions AND the SSE loop in
+   `gateway.client`). `turn.cancelled` belongs here: a user stop (or a stall
+   force-cancel) lands a turn exactly like a completion, and a reader that only
+   watched for `turn.completed`/`turn.failed` parked on that turn FOREVER —
+   its SSE connection stayed open, its channel kept a live spinner, and a
+   queued turn draining behind it streamed into a tab whose previous stream
+   had never closed."
+  #{"turn.completed" "turn.failed" "turn.cancelled"})
 
 (def turn-meta-keys
   "Wire keys of a settled turn's META (usage/routing/timing) — the fields

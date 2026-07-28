@@ -425,6 +425,51 @@
         (do (.write out (.getBytes ": ping\n\n" StandardCharsets/UTF_8)) (.flush out)))
       (recur))))
 
+(defn- sse-proxy-pad!
+  "8KB SSE comment pad, written to a PROXIED connection only. Edge proxies
+   (Cloudflare tunnels, nginx) buffer a streaming body until a byte threshold,
+   so without it the first real frames sit in the edge buffer and live streaming
+   reads as dead. Direct clients shouldn't pay the bytes."
+  [^OutputStream out]
+  (.write out (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n") StandardCharsets/UTF_8))
+  (.flush out))
+
+(defn- resolve-sse-cursor
+  "Effective replay cursor for one subscribed session. A NEGATIVE requested
+   cursor is the live-only sentinel: it lets a client restore a bounded watch
+   list without replaying every ring or issuing N `/seq` requests first. A
+   live-only join to a session whose turn is ALREADY running rewinds to that
+   turn's `turn.started` so the in-flight bubble replays in full — the same live
+   'Vis is running: …' the originating channel shows — not a bare post-connect
+   tail.
+
+   Shared by BOTH event endpoints so `/v1/events?sids=…` and
+   `/v1/sessions/:sid/events` resolve a cursor identically."
+  ^long [sid requested]
+  (if (neg? (long requested))
+    (long (or (state/running-turn-start-cursor sid) (state/current-seq sid)))
+    (long requested)))
+
+(defn- sse-ready!
+  "Write the `subscription.ready` control frame for one subscribed session,
+   echoing the cursor the server actually resumed from so a client that asked
+   for the live-only sentinel learns its concrete resume point and can reconnect
+   losslessly after its first connection.
+
+   EVERY SSE endpoint emits it for EVERY session it serves — single-session and
+   multiplexed alike — so no client has to special-case which endpoint it is
+   attached to. Like every other frame it rides `wire/sse-frame`, i.e. it is an
+   ordinary `id:`/`event:`/`data:` frame, not a bespoke encoding."
+  [^OutputStream out sid ^long cursor]
+  (.write out
+          (.getBytes (wire/sse-frame (wire/canonical {:type "subscription.ready"
+                                                      :session_id (str sid)
+                                                      :cursor cursor
+                                                      :server_time_ms
+                                                      (System/currentTimeMillis)}))
+                     StandardCharsets/UTF_8))
+  (.flush out))
+
 (defn- sse-body
   "Ring streamable body for one SSE subscription. Replay-then-live without
    gaps: `state/subscribe!` registers a non-blocking enqueue sink
@@ -446,7 +491,7 @@
               (str (java.util.UUID/randomUUID))
 
               last-seq
-              (atom (long cursor))
+              (atom (resolve-sse-cursor sid cursor))
 
               queue
               (ArrayBlockingQueue. (int SSE_QUEUE_CAP))
@@ -468,18 +513,11 @@
                                 (-> st
                                     (assoc :saw-client? true)
                                     (update :sse-clients (fnil conj #{}) sub-id))))
-          (try ;; 8KB SSE comment pad (clients ignore comments): proxy edges
-               ;; (Cloudflare tunnel) buffer a streaming body until a byte
-               ;; threshold — without the pad the first real frames sit in
-               ;; the edge buffer and live streaming looks dead. ONLY for
-               ;; proxied requests; direct clients shouldn't pay the bytes.
-            (when proxied?
-              (.write out
-                      (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
-                                 StandardCharsets/UTF_8))
-              (.flush out))
-            (doseq [event (state/subscribe! sid sub-id sink @last-seq)]
-              (write! event))
+          (try (when proxied? (sse-proxy-pad! out))
+            (let [replay (state/subscribe! sid sub-id sink @last-seq)]
+              (sse-ready! out sid @last-seq)
+              (doseq [event replay]
+                (write! event)))
             (pump-sse! out queue dead? write!)
             (catch Throwable _ nil)
             (finally (state/unsubscribe! sid sub-id)
@@ -601,39 +639,13 @@
                                 (-> st
                                     (assoc :saw-client? true)
                                     (update :sse-clients (fnil conj #{}) sub-id))))
-          (try (when proxied?
-                 (.write out
-                         (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
-                                    StandardCharsets/UTF_8))
-                 (.flush out))
+          (try (when proxied? (sse-proxy-pad! out))
                (doseq [[sid requested-cursor] sid+cursors]
-                 ;; A negative cursor means live-only. It lets a client restore a
-                 ;; bounded visited-session watch list without replaying every
-                 ;; ring buffer or issuing N `/seq` requests first.
-                 (let [cursor (if (neg? (long requested-cursor))
-                                ;; A live-only join to a session with a turn already
-                                ;; running (started in the TUI or another client)
-                                ;; rewinds to that turn's `turn.started` so the
-                                ;; in-flight bubble replays in full — same live
-                                ;; 'Vis is running: …' the originating channel shows —
-                                ;; not a bare post-connect tail.
-                                (long (or (state/running-turn-start-cursor sid)
-                                          (state/current-seq sid)))
-                                (long requested-cursor))]
-                   ;; Seed the guard before atomic registration. A ready control
-                   ;; frame returns the effective cursor so a live-only client can
-                   ;; resume losslessly after its first connection.
+                 (let [cursor (resolve-sse-cursor sid requested-cursor)]
+                   ;; Seed the guard before atomic registration.
                    (swap! last-seqs assoc (str sid) cursor)
                    (let [replay (state/subscribe! sid sub-id sink cursor)]
-                     (.write out
-                             (.getBytes (wire/sse-frame (wire/canonical
-                                                          {:type "subscription.ready"
-                                                           :session_id (str sid)
-                                                           :cursor cursor
-                                                           :server_time_ms
-                                                           (System/currentTimeMillis)}))
-                                        StandardCharsets/UTF_8))
-                     (.flush out)
+                     (sse-ready! out sid cursor)
                      (doseq [event replay]
                        (write! event)))))
                (pump-sse! out queue dead? write!)

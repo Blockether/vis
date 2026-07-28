@@ -462,6 +462,18 @@
           (transport-error? status provider-message message) :transport
           :else :generic)))
 
+(defn provider-failure?
+  "True when `err` is a PROVIDER failure — presentable as the styled card
+   `provider-error-content` builds — rather than an internal Vis bug whose bare
+   message is all there is. Either it classifies to a KNOWN kind, or it carries
+   provider evidence: an upstream HTTP status, a routing trace, a provider id."
+  [err]
+  (let [data (or (:data err) (ex-data err))]
+    (boolean (or (not= :generic (provider-error-kind err))
+                 (some? (:status data))
+                 (seq (:routed/trace data))
+                 (some? (provider-id-of data))))))
+
 (defn provider-error-facts
   "Ordered `[label value]` rows of the bare facts (no prose). Same set the
    IR renders as a `<ul>` and the TUI renders as plain rows."
@@ -535,7 +547,11 @@
         (or (ex-message err) (:message err) (str err))
 
         data
-        (:data err)
+        ;; Accept BOTH shapes the callers hold: svar's error MAP (`:data`) and a
+        ;; raw Throwable (`ex-data`). Reading only `:data` silently dropped the
+        ;; status/request-id/body of every Throwable-shaped provider failure —
+        ;; the same lookup every other fn in this ns already does.
+        (or (:data err) (ex-data err))
 
         body-raw
         (some-> (:body data)

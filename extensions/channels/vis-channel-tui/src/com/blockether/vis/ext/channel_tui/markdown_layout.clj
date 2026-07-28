@@ -29,7 +29,8 @@
      (ast->lines ir width)             ; total walker
      (ast->lines ir width opts)
    Opts:
-     :heading-prefix? bool   ; render '#'-style markers (default false; bold suffices)
+     :heading-prefix? bool   ; unused: H1/H2 get an underline rule and
+                             ; H3-H6 a gutter mark (see `heading->lines`)
      :code-fence?     bool   ; render ``` lines around code blocks (default false)
      :max-lines       int    ; hard cap (default unlimited)"
   (:require [clojure.string :as str]
@@ -935,6 +936,58 @@
               (assoc :block-level level))))
         lines))
 
+(def ^:private heading-gutter
+  "Leading gutter mark per heading level. H1/H2 stay flush-left and earn
+   their rank from an underline rule; H3-H6 get a shrinking gutter mark.
+   A terminal has ONE font size, so without this the whole ladder
+   collapsed onto the slate colour ramp alone and `##` was
+   indistinguishable from `###` (and H4-H6 from either)."
+  {3 "\u258d " 4 "\u25b8 " 5 "\u00b7 " 6 "  \u00b7 "})
+
+(def ^:private heading-rule-char
+  "Underline glyph per heading level - heavy for H1, light for H2.
+   H1 rules span the full text width (a document-level break); H2 rules
+   stop at the heading text so nested sections stay subordinate."
+  {1 \u2501 2 \u2500})
+
+(defn- heading->lines
+  "Lay out an `:h` node: gutter-marked, optionally rule-underlined lines
+   plus the level they were rendered at (clamped to 1-6)."
+  [node width opts]
+  (let
+    [level
+     (min 6 (max 1 (long (or (:level (node-attrs node)) 1))))
+
+     gutter
+     (get heading-gutter level)
+
+     prefix-runs
+     (when gutter
+       (let [pad (apply str (repeat (count gutter) \space))]
+         {:initial [{:text gutter :style #{}}] :cont [{:text pad :style #{}}]}))
+
+     ls
+     (inline-block->lines (node-children node) width opts #{:bold :heading} prefix-runs)
+
+     ls
+     (if (seq ls) ls [(empty-line)])
+
+     rule-char
+     (get heading-rule-char level)
+
+     rule-w
+     (when rule-char
+       (if (= 1 level) (long width) (min (long width) (long (reduce max 0 (map line-width ls))))))
+
+     rule
+     (when (and rule-w (pos? (long rule-w)))
+       {:runs [{:text (apply str (repeat rule-w rule-char)) :style #{}}]})]
+
+    [level
+     (cond-> (vec ls)
+       rule
+       (conj rule))]))
+
 (defn- block->lines
   "Render one block node into a vector of lines. Each line carries a
    `:block-tag` used by downstream adapters."
@@ -949,11 +1002,7 @@
         (conj (vec (tag-lines ls :p)) (assoc (empty-line) :block-tag :outer-margin)))
 
       :h
-      (let
-        [level (or (:level (node-attrs node)) 1)
-         ls (inline-block->lines (node-children node) width opts #{:bold :heading} nil)
-         ls (if (seq ls) ls [(empty-line)])]
-
+      (let [[level ls] (heading->lines node width opts)]
         (conj (vec (tag-lines ls :h :level level)) (assoc (empty-line) :block-tag :outer-margin)))
 
       :code

@@ -270,10 +270,25 @@
            [entry (or entry (fresh-entry sid))
             n (inc (long (:next-seq entry 0)))
             event
-            (wire/canonical
-              (merge
-                {:schema 1 :seq n :ts (System/currentTimeMillis) :session_id (str sid) :type type}
-                payload))]
+            ;; The identity stamp is applied LAST and a payload can NEVER override
+            ;; it: `:session_id`, `:seq`, `:ts`, `:type` and `:schema` are facts
+            ;; of the RING this event is being appended to, not free payload
+            ;; fields. Both dedup guards on the wire key off that pair — the
+            ;; multiplexed SSE body's per-session `last-seqs` and every client's
+            ;; per-session cursor — so an event stamped with ANOTHER session's
+            ;; id while carrying THIS ring's seq taught both sides that the other
+            ;; session had already reached this (much higher) seq. Every later
+            ;; event of that session then looked "already seen" and was dropped:
+            ;; a live turn stopped streaming mid-flight and never delivered its
+            ;; terminal, leaving the channel spinning forever. Cross-session
+            ;; payloads carry their subject under their OWN key (see
+            ;; `broadcast-title-event!`'s `:titled_session_id`).
+            (wire/canonical (assoc payload
+                              :schema 1
+                              :seq n
+                              :ts (System/currentTimeMillis)
+                              :session_id (str sid)
+                              :type type))]
 
            (vreset! captured event)
            (cond->
@@ -1665,10 +1680,21 @@
    exactly the case it exists for: the spinner kept running and the answer
    painted late, when the stranded worker finally returned."
   [sid tid status]
-  (let [key (get-in @registry [sid :turns tid :idempotency_key])]
+  (let [turn (get-in @registry [sid :turns tid])
+
+        key (:idempotency_key turn)
+
+        ;; A FAILED turn ships its SETTLED content too. A channel that reconciles
+        ;; the terminal independently of the blocking worker has nothing else to
+        ;; paint, so it fabricated a bare "Turn failed." row — the ugly duplicate
+        ;; next to (or instead of) the styled provider card the worker delivers.
+        content (when (= "failed" status) (not-empty (vec (:content turn))))]
     (cond-> {:turn_id tid :status status}
       key
-      (assoc :idempotency_key key))))
+      (assoc :idempotency_key key)
+
+      content
+      (assoc :content content))))
 
 (defn turn-answer-text
   "Plain-text projection of ONE finished turn's answer content, or nil.
@@ -2088,8 +2114,20 @@
                         (cond->
                           {:status status
                            :role "assistant"
-                           :content (if user-cancel?
+                           :content (cond
+                                      user-cancel?
                                       []
+
+                                      ;; A provider failure that unwound the worker (rate
+                                      ;; limit, auth rejection, dead connection) is the SAME
+                                      ;; failure the in-loop path renders as a styled card.
+                                      ;; Emitting the bare `ex-message` here is why an error
+                                      ;; Vis formats perfectly elsewhere sometimes landed in
+                                      ;; the TUI (and the app) as raw unformatted text.
+                                      (and (not stalled?) (provider-error/provider-failure? t))
+                                      (provider-error/provider-error-content t)
+
+                                      :else
                                       [(content/error "turn_failed" (or err "Turn failed") false)])
                            :completed_at (System/currentTimeMillis)}
                           err
@@ -2922,8 +2960,7 @@
 
          (cond (= turn_id tid)
                (do (when on-event (on-event event))
-                   (when (contains? #{"turn.completed" "turn.failed"} type)
-                     (deliver terminal event))
+                   (when (contains? wire/turn-terminal-event-types type) (deliver terminal event))
                    ;; Our own queued record deleted before it ever ran
                    ;; (pulled back into a sibling's editor): synthesize a
                    ;; cancelled terminal so the blocking submit never hangs.
@@ -3025,14 +3062,14 @@
           (get event "turn_id")]
 
          (cond (= turn_id tid)
-               (do
-                 (when on-event (on-event event))
-                 (when (contains? #{"turn.completed" "turn.failed"} type) (deliver terminal event))
-                 ;; The queued record was deleted before it ever ran
-                 ;; (pulled back into a sibling's editor): synthesize a
-                 ;; cancelled terminal so the attach never hangs.
-                 (when (= "turn.queued.deleted" type)
-                   (deliver terminal {"type" "turn.completed" "turn_id" tid "status" "cancelled"})))
+               (do (when on-event (on-event event))
+                   (when (contains? wire/turn-terminal-event-types type) (deliver terminal event))
+                   ;; The queued record was deleted before it ever ran
+                   ;; (pulled back into a sibling's editor): synthesize a
+                   ;; cancelled terminal so the attach never hangs.
+                   (when (= "turn.queued.deleted" type)
+                     (deliver terminal
+                              {"type" "turn.completed" "turn_id" tid "status" "cancelled"})))
                ;; ANOTHER turn's queue event: forward so the channel can
                ;; mirror the session's queued backlog; never terminal here.
                (contains? queue-mirror-event-types type) (when on-event (on-event event)))))]
@@ -3739,10 +3776,12 @@
    updates the SSE client received. Now SSE and poll deliver the identical
    frame.
 
-   The foreign copy keeps the TITLED session's id in `:session_id` (the
-   payload wins over the default stamp) while riding each session's own
-   monotonic seq, so the per-connection last-seq guard stays sound.
-   Title generation is once-per-session, so the extra ring writes are
+   The foreign copy names the TITLED session under `:titled_session_id` and
+   NEVER re-stamps `:session_id`: that key is the id of the ring the event was
+   appended to (see `append-event!`), and it keys the per-session dedup on both
+   ends of the multiplexed SSE stream. Re-stamping it advanced the OTHER
+   session's cursor to THIS ring's seq and silently killed that session's live
+   stream. Title generation is once-per-session, so the extra ring writes are
    negligible and stay bounded by the ring trim; idle sessions never replay
    it (a page renders at the current seq, so a pre-render foreign event sits
    below the cursor)."
@@ -3754,7 +3793,9 @@
 
      :when (not= other sid)]
 
-    (append-event! other "session.title_updated" {:session_id (str sid) :title (str title)})))
+    (append-event! other
+                   "session.title_updated"
+                   {:titled_session_id (str sid) :title (str title)})))
 
 (defonce bus-wiring
   ;; Wire the cross-process bus ONCE at namespace load: foreign events tailed

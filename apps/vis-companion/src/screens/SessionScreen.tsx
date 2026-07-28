@@ -1208,7 +1208,15 @@ export function SessionScreen({
         }
       }
       if (type === 'turn.failed') {
-        setError(stringField(event, 'message') || stringField(event, 'error') || 'The turn failed.');
+        // The settled turn carries the gateway's OWN error card (rate limit, auth,
+        // transport) and the transcript refresh above already renders it. A second
+        // banner reading "The turn failed." is duplicate noise on top of it.
+        const blocks = event.content;
+        if (!Array.isArray(blocks) || blocks.length === 0) {
+          setError(
+            stringField(event, 'message') || stringField(event, 'error') || 'The turn failed.',
+          );
+        }
       }
     }
 

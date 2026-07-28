@@ -5496,10 +5496,9 @@
                                 (open-session-tab! (chat/make-session config) false)))
                             (doseq [tid close-ids]
                               (state/dispatch [:close-tab tid true]))
-                            ;; Members skipped by the max-tabs cap while old
-                            ;; tabs still filled the strip get a second pass
-                            ;; now that they are closed (idempotent — open
-                            ;; sessions are deduped).
+                            ;; Safety second pass now that the outgoing tabs are
+                            ;; closed — any member the first pass could not seat
+                            ;; lands here (idempotent — open sessions are deduped).
                             (preallocate-project-tabs! specs)
                             ;; Same fixed-point rule as startup: re-seat the
                             ;; member tabs into stored `project_position` order

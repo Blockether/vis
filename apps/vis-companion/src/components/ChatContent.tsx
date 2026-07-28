@@ -364,24 +364,34 @@ export const Markdown = memo(function Markdown({
             </blockquote>
           ),
           h1: ({ children: heading }) => (
-            <h1 className={`${compact ? 'mb-1 mt-3 text-title' : 'mb-1.5 mt-5 text-head'} font-semibold tracking-[-0.015em] text-heading-1`}>
+            <h1 className={`${compact ? 'mb-1.5 mt-4 text-subhead' : 'mb-2 mt-6 text-head'} border-b-2 border-answer-edge pb-1 font-semibold tracking-[-0.015em] text-heading-1`}>
               {heading}
             </h1>
           ),
           h2: ({ children: heading }) => (
-            <h2 className={`${compact ? 'mb-1 mt-3 text-title' : 'mb-1.5 mt-5 text-head'} font-semibold tracking-[-0.01em] text-heading-2`}>
+            <h2 className={`${compact ? 'mb-1 mt-3.5 text-title' : 'mb-1.5 mt-5 text-subhead'} border-b border-answer-edge pb-0.5 font-semibold tracking-[-0.01em] text-heading-2`}>
               {heading}
             </h2>
           ),
           h3: ({ children: heading }) => (
-            <h3 className={`${compact ? 'mb-1 mt-2.5 text-body' : 'mb-1.5 mt-4 text-subhead'} font-semibold text-heading-3`}>
+            <h3 className={`${compact ? 'mb-1 mt-3 text-body' : 'mb-1 mt-4 text-title'} font-semibold text-heading-3`}>
               {heading}
             </h3>
           ),
           h4: ({ children: heading }) => (
-            <h4 className={`${compact ? 'mb-1 mt-2.5 text-body' : 'mb-1.5 mt-4 text-title'} font-semibold text-heading-3`}>
+            <h4 className={`${compact ? 'mb-0.5 mt-2.5 text-body' : 'mb-1 mt-3.5 text-body'} font-semibold text-heading-3`}>
               {heading}
             </h4>
+          ),
+          h5: ({ children: heading }) => (
+            <h5 className={`${compact ? 'mb-0.5 mt-2.5 text-ui' : 'mb-1 mt-3 text-ui'} font-semibold text-heading-3`}>
+              {heading}
+            </h5>
+          ),
+          h6: ({ children: heading }) => (
+            <h6 className={`${compact ? 'mb-0.5 mt-2.5 text-meta' : 'mb-1 mt-3 text-meta'} font-semibold uppercase tracking-[0.08em] text-heading-3`}>
+              {heading}
+            </h6>
           ),
           hr: () => <hr className={`${compact ? 'my-3' : 'my-5'} border-answer-edge`} />,
           li: ({ children: item }) => <li className={compact ? 'my-0.5 pl-0.5' : 'my-0.5 pl-1'}>{item}</li>,
