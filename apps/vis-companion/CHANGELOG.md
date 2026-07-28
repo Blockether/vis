@@ -2,6 +2,14 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.13 (2737) — 2026-07-28
+<!-- commit: 8bcec2f9db96acec8f32a7bdca20c4a17aae4828 -->
+
+- Images work again in a shipped binary: PIL and matplotlib no longer fail on the first draw
+- One version everywhere — the app now carries the same version as the CLI/gateway (0.1.13)
+- Cancelling a turn returns the queued messages to the input instead of dropping them
+- Sandbox Python shims moved into real .py resources (smaller, faster to load)
+
 ## 1.0.1 (2732) — 2026-07-28
 <!-- commit: b8e0e98751afd64601391aa7f49a6b966c31406b -->
 
