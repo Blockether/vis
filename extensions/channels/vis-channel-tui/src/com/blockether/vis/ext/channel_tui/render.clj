@@ -4292,7 +4292,13 @@
        (tag-copy-block-body (vec (paste-aware-ast->entries
                                    ast
                                    (max 1 (- (long fill-w) (long tool-output-indent-cols)))
-                                   (assoc opts :mode :channel)))
+                                   ;; Card bodies are PROSE — a folded receipt's gist paragraph,
+                                   ;; a tool's narrative — so overflow-wrapped lines sit flush to
+                                   ;; both margins (`:justify?`); paragraph-terminal and code lines
+                                   ;; stay ragged inside the walker.
+                                   (assoc opts
+                                     :mode :channel
+                                     :justify? true)))
                             node-id
                             body-text))]
 

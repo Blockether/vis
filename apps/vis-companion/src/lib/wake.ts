@@ -63,14 +63,30 @@ function markAway(): void {
   if (sleptAt === null) sleptAt = Date.now();
 }
 
-function schedule(): void {
-  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+// `force` is for the NATIVE resume signals. A Capacitor iOS webview reports
+// `document.visibilityState === 'hidden'` for a while AFTER the app is already
+// foreground — sometimes until the user touches the screen — so gating the
+// native signal on it threw away the one wake event the platform guarantees,
+// and the app reconnected only when a tap/focus finally flipped the DOM. DOM
+// signals keep the guard: `online`/`pageshow` do fire in the background.
+function schedule(force = false): void {
+  if (!force && typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
   if (timer !== null) return;
   timer = setTimeout(emit, COALESCE_MS);
 }
 
+// Listeners are wired to these, never to `schedule` itself: a DOM handler is
+// called with an Event, which would read as a truthy `force`.
+function scheduleFromDom(): void {
+  schedule();
+}
+
+function scheduleFromNative(): void {
+  schedule(true);
+}
+
 function onVisibility(): void {
-  if (document.visibilityState === 'visible') schedule();
+  if (document.visibilityState === 'visible') scheduleFromDom();
   else markAway();
 }
 
@@ -78,10 +94,10 @@ function install(): void {
   if (installed || typeof window === 'undefined') return;
   installed = true;
   document.addEventListener('visibilitychange', onVisibility);
-  window.addEventListener('pageshow', schedule);
+  window.addEventListener('pageshow', scheduleFromDom);
   window.addEventListener('pagehide', markAway);
   window.addEventListener('focus', onVisibility);
-  window.addEventListener('online', schedule);
+  window.addEventListener('online', scheduleFromDom);
 
   // Native resume: the one signal an iOS/Android webview always delivers.
   // No-op on the web build, where the plugin is a stub.
@@ -92,10 +108,10 @@ function install(): void {
       if (removed) sub.remove();
       else pending.push(sub);
     };
-    void App.addListener('resume', schedule).then(track).catch(() => {});
+    void App.addListener('resume', scheduleFromNative).then(track).catch(() => {});
     void App.addListener('pause', markAway).then(track).catch(() => {});
     void App.addListener('appStateChange', ({ isActive }) => {
-      if (isActive) schedule();
+      if (isActive) scheduleFromNative();
       else markAway();
     }).then(track).catch(() => {});
     uninstallNative = () => {
@@ -111,10 +127,10 @@ function uninstall(): void {
   if (!installed) return;
   installed = false;
   document.removeEventListener('visibilitychange', onVisibility);
-  window.removeEventListener('pageshow', schedule);
+  window.removeEventListener('pageshow', scheduleFromDom);
   window.removeEventListener('pagehide', markAway);
   window.removeEventListener('focus', onVisibility);
-  window.removeEventListener('online', schedule);
+  window.removeEventListener('online', scheduleFromDom);
   uninstallNative?.();
   uninstallNative = null;
   if (timer !== null) {

@@ -97,11 +97,55 @@ providers:
 
 Per-model keys Vis honors: `context` (input window — the override for servers that can't report one), `output_limit` (max output tokens), `is_tool_call`. Both limits are forwarded to the router, which uses them for pre-flight context checks and output capping, so filling them in makes routing decisions accurate instead of conservative.
 
-Per-provider keys: `compatibility`, `base_url`, `api_style`, `llm_headers`, `extra_body`. **`compatibility`** is the wire dialect the endpoint speaks — `anthropic` (Anthropic Messages), `openai` (OpenAI chat completions), or `openai-responses` (OpenAI Responses API) — and is all a custom or self-hosted endpoint normally needs. `api_style` remains the raw escape hatch for anything outside those two dialects (e.g. `gemini`) and wins if both are set. Providers with managed auth (Copilot, coding plans) resolve tokens through their extension at runtime — no `api_key` needed in the file.
+Per-provider keys: `compatibility`, `base_url`, `api_style`, `llm_headers`, `extra_body`. **`compatibility`** is the wire dialect the endpoint speaks — `anthropic` (Anthropic Messages), `openai` (OpenAI chat completions), or `openai-responses` (OpenAI Responses API) — and is all a custom or self-hosted endpoint normally needs. `api_style` remains the raw escape hatch for anything outside those dialects (e.g. `gemini`) and wins if both are set. Note that the dialect is a property of the **endpoint**, so it is per provider; the per-model keys above are the only things Vis reads inside a model entry. Providers with managed auth (Copilot, coding plans) resolve tokens through their extension at runtime — no `api_key` needed in the file.
 
-**Model order is your order.** Models are offered in exactly the order you wrote them under a provider in `vis.yml`; anything discovered from the provider's live catalog is appended after them, sorted. The first provider is the active one, and its first model is the default.
+**Model order is your order.** Models are offered in exactly the order you wrote them under a provider in `vis.yml`; anything discovered from the provider's live catalog is appended after them, sorted. With nothing else set, the first provider is the active one and its first model is the default.
 
 Vis is model-agnostic: anything that speaks an OpenAI- or Anthropic-style chat API works, including fully local models.
+
+**A model may name its provider: `provider/model`.** Anywhere the CLI takes `--model`, a slash-qualified name is accepted and is the one-shot equivalent of passing `--provider` and `--model` together:
+
+```bash
+vis --model zai-coding-plan/glm-5.2 "task"      # same as --provider zai-coding-plan --model glm-5.2
+vis --model glm-5.2 "task"                      # bare name: selects on the ACTIVE provider
+```
+
+The named provider is promoted to the router root for that run only, and it does not have to exist in `vis.yml` yet — an unconfigured one is synthesized from its built-in preset, so a provider that already has managed auth (a coding plan, Copilot) is usable without touching config. Nothing is persisted. A provider Vis cannot resolve is reported as a user error naming it, before the first request.
+
+### The default selection is ONE pair
+
+Picking a model in the TUI provider manager, the gateway, or the companion app writes exactly two top-level keys:
+
+```yaml
+default_provider: zai-coding-plan   # provider id
+default_model: glm-5.2              # model name WITHIN that provider
+```
+
+There is one default in the whole config — one provider and one model — not one default per provider. Consequences worth knowing:
+
+- `default_model` is resolved **inside `default_provider`'s catalog**. A name that provider does not offer is not an error: Vis falls back to that provider's **first** model — the named provider still wins.
+- `default_model` also accepts the `provider/model` form, exactly like `--model`, and then its provider part wins over `default_provider`:
+
+  ```yaml
+  default_model: zai-coding-plan/glm-5.2   # one line, both halves of the pair
+  ```
+- Vis does **not** remember a model per provider. Change `default_provider` alone and you get that provider's first model until you set `default_model` too.
+- Choosing a default never reorders `providers:` — order stays yours (above), the pair is just a pointer into it.
+- Both keys are plain config, so a project `vis.yml` can pin a run's provider/model for a repository, and `--model provider/model` (above) overrides both for one run without persisting anything.
+
+### Model capabilities: chat and vision
+
+Capabilities are per **model**, not per provider, and come from the router's pinned model registry (svar) — the same source as context windows and pricing. Every model has `chat`; `vision` is the one Vis actually gates on.
+
+Vis produces images on its own: matplotlib figures captured from the Python sandbox and anything `vis_attach`ed with an `image/*` media type are stored as durable session attachments (downsized first, so they stay legible without flooding the context). On later iterations and later turns they are replayed to the model as a canonical `image_url` data-URI block, emitted as its own message right after that iteration's `<results>`; the router translates it to Anthropic `image`, OpenAI `image_url`, or Gemini inline data, whichever the active provider speaks.
+
+That replay is gated on the target model advertising `vision`:
+
+- a vision model (`claude-opus-5`, `gpt-5.6-sol`, `gemini-3-pro-preview`, `glm-4.6v`) sees the figures it generated;
+- a text-only model (`glm-4.7`, `glm-5.2`, Copilot models without vision) is silently sent the results text and no image block — a broken payload is never fabricated for it;
+- non-image attachments (csv, json, wav) are never turned into image blocks; the filter is the stored media type, not the file name.
+
+Model names are matched with version/date suffixes tolerated, so `claude-opus-5-20991231` still resolves to a vision model. A name the registry does not know at all resolves to `chat` only — conservative on purpose, but it means a brand-new model reached through a custom `base_url` gets no image replay until its name is known to the router.
 
 ### Environment references
 

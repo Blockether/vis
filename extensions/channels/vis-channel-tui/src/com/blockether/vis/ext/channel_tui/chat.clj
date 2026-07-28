@@ -1193,10 +1193,21 @@
    same correlation id for the RUNNING turn."
   [session-id]
   (when-let [resolved-id (resolve-resume-id session-id)]
-    (when-let [soul (vis/gateway-soul resolved-id)]
+    (when-let [soul0 (vis/gateway-soul resolved-id)]
       (let
-        [tid (get soul "current_turn_id")
-         turns (try (vis/gateway-list-turns resolved-id) (catch Throwable _ nil))
+        ;; READ ORDER MATTERS: queued backlog FIRST, running-turn soul SECOND.
+        ;; A drain that crosses this pair then always lands on the safe side —
+        ;; the turn either already reads `running` in `turns` (so it never
+        ;; enters the backlog), or it still reads `queued` there while the
+        ;; fresher soul already names it `current_turn_id`, and
+        ;; `:attach-running-turn` paints it live AND strips the mirrored row.
+        ;; The old order (soul first) produced the inverse: a turn drained
+        ;; after the soul read stayed a ghost "Queued" row next to its own
+        ;; streaming answer, because `turn.queued.drained` is `{:store? false}`
+        ;; (gateway state.clj) — no replay, no poll, nothing ever repeats it.
+        [turns (try (vis/gateway-list-turns resolved-id) (catch Throwable _ nil))
+         soul (or (vis/gateway-soul resolved-id) soul0)
+         tid (get soul "current_turn_id")
          running-turn (when tid
                         (some (fn [t]
                                 (when (and (= "running" (str (get t "status")))

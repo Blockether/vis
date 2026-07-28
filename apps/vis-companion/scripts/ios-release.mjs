@@ -246,9 +246,12 @@ if (!infoSrc.includes('CFBundleURLTypes')) {
 }
 
 // Dictation must survive the app going to the background, the screen locking or
-// a call arriving: without UIBackgroundModes=audio iOS suspends the WKWebView
-// process, the AudioContext is torn down mid-sentence and the transcript is
-// lost. Same reason as above — `ios/` is gitignored, so stamp it every run.
+// a call arriving. Without UIBackgroundModes=audio WebKit MUTES the WKWebView's
+// getUserMedia capture the moment the app backgrounds (WebKit bug 226620), and
+// the transcript is lost mid-sentence. This key is only HALF the fix — it keeps
+// the microphone track live, while the `play-and-record` audio session claimed
+// in src/lib/voice.ts is what keeps the AudioContext draining it from being
+// interrupted. Same reason as above — `ios/` is gitignored, so stamp it every run.
 {
   const src = readFileSync(infoPlist, 'utf8');
   if (!src.includes('UIBackgroundModes')) {

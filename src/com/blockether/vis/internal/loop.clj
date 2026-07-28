@@ -6263,30 +6263,48 @@
   "Make the explicit default provider/model pair the router's effective root.
    Provider/model vector order is otherwise left alone and has no configuration
    meaning. Configs written before explicit defaults fall back to their former
-   first provider/first model selection."
+   first provider/first model selection.
+
+   `default_model` accepts the same `provider/model` form as `--model`; the
+   provider part wins over `default_provider`. Resolution mirrors
+   `providers/default-selection` so the picker and the router can never disagree:
+   once the provider resolves it is promoted even when the model name does not
+   match its catalog, in which case its first model becomes the root."
   [router config]
   (let
     [configured
      (:providers config)
 
+     requested-model
+     (some-> (:default-model config)
+             str
+             str/trim
+             not-empty)
+
+     slash
+     (when requested-model
+       (when-let [idx (str/index-of requested-model "/")]
+         (let [idx (long idx)]
+           [(keyword (subs requested-model 0 idx))
+            (not-empty (subs requested-model (inc idx)))])))
+
      default-provider-value
-     (or (:default-provider config) (:id (first configured)))
+     (or (first slash) (:default-provider config) (:id (first configured)))
 
      default-provider
      (cond (keyword? default-provider-value) default-provider-value
            (string? default-provider-value) (keyword default-provider-value))
 
-     configured-default
-     (some #(when (= default-provider (:id %)) %) configured)
-
-     default-model
-     (or (:default-model config)
-         (some-> configured-default
+     wanted-model
+     (or (if slash (second slash) requested-model)
+         ;; Legacy configs carry no explicit model: the configured provider's
+         ;; FIRST model is the selection, exactly as before explicit defaults.
+         (some-> (some #(when (= default-provider (:id %)) %) configured)
                  :models
                  first
                  config/model-name))]
 
-    (if (and default-provider default-model)
+    (if default-provider
       (update router
               :providers
               (fn [provider-entries]
@@ -6295,15 +6313,16 @@
                    (some #(when (= default-provider (:id %)) %) provider-entries)
 
                    hit
-                   (some #(when (= default-model (:name %)) %) (:models selected))]
+                   (or (some #(when (= wanted-model (:name %)) %) (:models selected))
+                       (first (:models selected)))]
 
                   (if (and selected hit)
                     (let
                       [selected* (assoc selected
                                    :models (into [hit]
-                                                 (remove #(= default-model (:name %))
+                                                 (remove #(= (:name hit) (:name %))
                                                    (:models selected)))
-                                   :root default-model)]
+                                   :root (:name hit))]
                       (into [selected*] (remove #(= default-provider (:id %)) provider-entries)))
                     provider-entries))))
       router)))

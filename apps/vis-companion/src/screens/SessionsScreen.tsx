@@ -372,7 +372,10 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
               <p className="font-mono text-body font-bold text-white">Projects</p>
               <p className="mt-0.5 flex flex-wrap items-center gap-x-1 font-mono text-meta text-dialog-hint">
                 {sessions === null ? (
-                  'Reading sessions...'
+                  <>
+                    <SessionsPulse />
+                    <span>Reading sessions...</span>
+                  </>
                 ) : (
                   <>
                     <span>{totals.projects} {totals.projects === 1 ? 'project' : 'projects'}</span>
@@ -743,14 +746,51 @@ const SessionRow = memo(function SessionRow({
   );
 });
 
-// The list has nothing to paint yet. The previous skeleton was drawn in panel
-// tints — and `--panel2` EQUALS `--surface` in the shipped themes (light: both
-// #faf3eb), so it rendered as three invisible boxes: the screen read as a blank
-// hole rather than as work in progress. Placeholder bars therefore use
-// `--color-muted`, a mid grey that separates from every gateway surface, and the
-// Braille spinner says it in words — the same one the session transcript and the
-// TUI use, so "busy" looks identical everywhere.
-function NavigatorSkeleton() {
+// The list has nothing to paint yet. Two rules keep this honest:
+//
+// 1. Colour: the previous skeleton was drawn in panel tints — and `--panel2`
+//    EQUALS `--surface` in the shipped themes (light: both #faf3eb), so it
+//    rendered as invisible boxes. Bars use `--color-muted`, a mid grey that
+//    separates from every gateway surface, and the Braille spinner says it in
+//    words — the same one the transcript and the TUI use.
+// 2. GEOMETRY: a placeholder that is not the exact height of the thing it
+//    stands for makes the whole list jump when data lands. So the skeleton
+//    mirrors `ProjectGroup`'s header and `SessionRow` class for class
+//    (`min-h-11` / `min-h-14 sm:min-h-12`, same padding, same `mt-*`), and each
+//    bar is centred inside an INVISIBLE glyph of the real type step. That sizer
+//    is what makes the line box identical — a bare `h-2` bar is 8px where a
+//    `text-ui` line is not, and three such rows per group is a visible lurch.
+//    Measured in a browser at 390/768/1200px: header 46px and rows 48/49/49px
+//    on both sides, group total 193px.
+// 3. NOTHING EXTRA IN THE FLOW. The skeleton used to lead with its own
+//    "Loading sessions…" strip — 37px plus a hairline that the loaded list does
+//    not have, so every group below it slid up the moment data arrived. That
+//    was the only remaining mismatch. The strip is gone; the panel header above
+//    already says "Reading sessions..." in a line that exists in BOTH states, so
+//    the signal costs zero pixels. The skeleton root carries the `border-t` the
+//    loaded list's wrapper carries, so the top hairline matches too.
+function SkeletonBar({
+  type,
+  width,
+  bar,
+  tone,
+}: {
+  type: string;
+  width: string;
+  bar: string;
+  tone: string;
+}) {
+  return (
+    <span className={`grid ${width}`}>
+      <span className={`col-start-1 row-start-1 invisible font-mono ${type}`}>&nbsp;</span>
+      <span className={`col-start-1 row-start-1 self-center ${bar} ${tone}`} />
+    </span>
+  );
+}
+
+// The header's own busy signal. It owns its interval so a 10fps spinner does
+// not re-render the screen (and the list) around it.
+function SessionsPulse() {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 100);
@@ -758,28 +798,62 @@ function NavigatorSkeleton() {
   }, []);
   const frame = SKELETON_SPINNER_FRAMES[Math.floor(now / 100) % SKELETON_SPINNER_FRAMES.length];
   return (
-    <div role="status" aria-live="polite" aria-label="Loading sessions">
-      <div className="flex items-center gap-2 border-t border-dialog-edge px-3 py-2.5 font-mono text-ui text-dialog-hint sm:px-4">
-        <span aria-hidden className="text-accent-ink motion-reduce:hidden">{frame}</span>
-        <span aria-hidden className="hidden text-accent-ink motion-reduce:inline">●</span>
-        <span>Loading sessions…</span>
-      </div>
+    <>
+      <span aria-hidden className="text-accent-ink motion-reduce:hidden">{frame}</span>
+      <span aria-hidden className="hidden text-accent-ink motion-reduce:inline">●</span>
+    </>
+  );
+}
+
+function NavigatorSkeleton() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      aria-label="Loading sessions"
+      className="border-t border-dialog-edge"
+    >
       <div className="animate-pulse motion-reduce:animate-none" aria-hidden="true">
         {SKELETON_GROUPS.map((rows, group) => (
-          <div key={group} className="border-t border-dialog-edge">
-            <div className="flex min-h-9 items-center gap-2 bg-panel-2 px-3 sm:px-4">
-              <span className="h-2 w-28 bg-muted/40" />
-              <span className="ml-auto h-2 w-10 bg-muted/25" />
-            </div>
-            {rows.map((width, row) => (
-              <div key={row} className="border-t border-dialog-edge px-3 py-3 sm:px-4">
-                <div className="flex items-center gap-2">
-                  <span className="size-1.5 shrink-0 bg-muted/40" />
-                  <span className={`h-2.5 bg-muted/30 ${width}`} />
+          <div key={group} className="border-t border-dialog-edge first:border-t-0">
+            {/* mirrors ProjectGroup's <header> */}
+            <div className="flex min-h-11 items-center justify-between gap-3 bg-panel-2 px-3 py-2 sm:px-4">
+              <div className="min-w-0">
+                <SkeletonBar type="text-ui" width="w-28" bar="h-2.5" tone="bg-muted/40" />
+                <div className="mt-0.5">
+                  <SkeletonBar type="text-chip" width="w-40" bar="h-1.5" tone="bg-muted/20" />
                 </div>
-                <span className="mt-2 ml-3.5 block h-1.5 w-1/3 bg-muted/20" />
               </div>
-            ))}
+              <div className="shrink-0">
+                <SkeletonBar type="text-chip" width="w-14" bar="h-1.5" tone="bg-muted/25" />
+              </div>
+            </div>
+            {/* mirrors SessionRow's <button> */}
+            <div className="border-t border-dialog-edge">
+              {rows.map((width, row) => (
+                <div
+                  key={row}
+                  className="flex min-h-14 w-full items-start gap-2 px-3 py-2.5 [&+&]:border-t [&+&]:border-dialog-edge sm:min-h-12 sm:px-4 sm:py-2"
+                >
+                  <span className="mt-0.5 invisible shrink-0 font-mono text-body">›</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-start justify-between gap-3">
+                      <SkeletonBar type="text-ui" width={width} bar="h-2.5" tone="bg-muted/30" />
+                      <span className="shrink-0">
+                        <SkeletonBar type="text-chip" width="w-12" bar="h-1.5" tone="bg-muted/25" />
+                      </span>
+                    </span>
+                    <span className="mt-1 flex items-center gap-x-2 font-mono text-chip">
+                      <SkeletonBar type="text-chip" width="w-10" bar="h-1.5" tone="bg-muted/20" />
+                      <SkeletonBar type="text-chip" width="w-14" bar="h-1.5" tone="bg-muted/20" />
+                      <span className="ml-auto shrink-0 pl-2">
+                        <SkeletonBar type="text-chip" width="w-12" bar="h-1.5" tone="bg-muted/20" />
+                      </span>
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         ))}
       </div>

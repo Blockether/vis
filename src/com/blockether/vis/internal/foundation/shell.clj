@@ -1404,7 +1404,10 @@ Gotcha: logs returns \"lines\" as plain STRINGS and NOTHING else carries that ta
      (or (get r "status") "started")
 
      summary
-     (str "⚙ background `"
+     ;; Text-presentation glyph, never an emoji: U+2699 COG is emoji-presented by
+     ;; iOS/WebKit, so the companion painted a colour pictogram in a monochrome
+     ;; card. `▸` matches the stop card's `✕` and the app's own chevrons.
+     (str "▸ background `"
           id
           "` "
           status

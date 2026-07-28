@@ -36,6 +36,13 @@ import type {
   VoiceTranscript,
 } from './types';
 import { PROTOCOL_HEADERS } from './compat';
+import {
+  flushSnapshots,
+  hydrateSnapshots,
+  installSnapshotFlushOnHide,
+  scheduleSnapshotFlush,
+  type SnapshotStores,
+} from './snapshot-store';
 
 export class GatewayError extends Error {
   status: number;
@@ -103,6 +110,19 @@ export const ROUTER_TTL_MS = 5 * 60 * 1000;
  * `auth/poll` included, which the daemon documents as non-blocking.
  */
 const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Bounds for ONE event-stream attempt.
+ *
+ * A live SSE body is *meant* to stay open, so the body phase gets the long
+ * heartbeat-based bound. The CONNECT phase is the dangerous one and used to
+ * have no bound at all: a webview resumed onto a frozen keep-alive socket
+ * issues the request and never hears back — no headers, no error — so the body
+ * watchdog was never armed, the reconnect sat there forever, and the header
+ * stayed "connecting" until something else in the app forced a fresh attempt.
+ */
+const SSE_CONNECT_TIMEOUT_MS = 10_000;
+const SSE_STALL_TIMEOUT_MS = 45_000;
 
 /**
  * Deadline for ONE transcription round trip, SCALED to the audio it carries.
@@ -189,6 +209,29 @@ function transcriptStamp(row: Session | null | undefined): string {
 /** Bound the cache so hopping through many sessions cannot pin every transcript. */
 const SNAPSHOT_LIMIT = 32;
 
+/**
+ * The snapshot caches as ONE durable unit (see `snapshot-store.ts`).
+ *
+ * Hydrated at module load, before any screen can read a cache: the OS kills a
+ * backgrounded webview routinely, so "reopening the app" is normally a COLD
+ * start, and without this every session re-downloaded its transcript over the
+ * phone's network before it could paint a single row. With it, the last known
+ * rows are on the first frame and the meta row's stamp decides whether anything
+ * has to be fetched at all.
+ */
+const snapshotStores: SnapshotStores = {
+  snapshots,
+  stamps: transcriptStamps,
+  windows: transcriptWindows,
+};
+hydrateSnapshots(snapshotStores);
+installSnapshotFlushOnHide(snapshotStores);
+
+/** Persist the caches NOW — used when the app is being torn down. */
+export function persistGatewayCaches(): void {
+  flushSnapshots(snapshotStores);
+}
+
 function readSnapshot<T>(key: string): T | null {
   if (!snapshots.has(key)) return null;
   const value = snapshots.get(key) as T;
@@ -205,6 +248,7 @@ function writeSnapshot(key: string, value: unknown): void {
     if (snapshots.size <= SNAPSHOT_LIMIT) break;
     snapshots.delete(oldest);
   }
+  scheduleSnapshotFlush(snapshotStores);
 }
 
 /**
@@ -254,6 +298,57 @@ function reconcileRow<T>(previous: T | null, next: T): T {
   return previous !== null && sameJson(previous, next) ? previous : next;
 }
 
+/**
+ * One live queue delta a screen has already applied: the row as it was added, or
+ * `null` for a row that LEFT the queue (`turn.queued.drained` / `.deleted`).
+ */
+export interface QueueDelta {
+  at: number;
+  row: QueuedTurn | null;
+}
+
+/**
+ * Fold a `?status=queued` re-read into the deltas that arrived while it was in
+ * flight.
+ *
+ * The queue has two sources and they cross. Rows LEAVE the queue only on live
+ * frames — the gateway appends `turn.queued.drained` and `.deleted` with
+ * `:store? false`, so no replay, no poll and no snapshot ever repeats them. A
+ * backlog read that left before the head drained therefore answers with a row
+ * that the drain frame has already removed, and, resolving afterwards, puts it
+ * back permanently: the tray shows "Queued" for the turn whose answer is
+ * streaming right above it.
+ *
+ * So a read is authoritative only for rows it could actually have seen. A delta
+ * older than the read start is settled (the gateway knew) and is forgotten; a
+ * delta NEWER than it wins over the read. `forget` names the ids whose removal
+ * the read has just written back into the cache, to be dropped there too.
+ *
+ * `deltas` is the caller's live journal and is pruned in place.
+ */
+export function mergeQueueBacklog(
+  rows: QueuedTurn[],
+  deltas: Map<string, QueueDelta>,
+  readStartedAt: number,
+): { rows: QueuedTurn[]; forget: string[] } {
+  const byId = new Map(rows.map((row) => [row.turnId, row]));
+  const appended: QueuedTurn[] = [];
+  const forget: string[] = [];
+  for (const [tid, delta] of [...deltas]) {
+    if (delta.at < readStartedAt) {
+      deltas.delete(tid);
+      continue;
+    }
+    if (delta.row) {
+      if (!byId.has(tid)) appended.push(delta.row);
+    } else {
+      byId.delete(tid);
+      forget.push(tid);
+    }
+  }
+  return { rows: [...rows.filter((row) => byId.has(row.turnId)), ...appended], forget };
+}
+
 function normalizeBase(url: string): string {
   return url.replace(/\/+$/, '');
 }
@@ -295,6 +390,10 @@ export class GatewayClient {
   // append-only and content-addressed by that triple, so one download per
   // picture — but BOUNDED, because every entry pins full decoded bytes.
   private readonly attachmentUrls = new Map<string, Promise<string>>();
+  // How many MOUNTED tiles are painting each key right now. Eviction REVOKES an
+  // object URL, and a revoked URL is a permanently broken `<img>` — so a picture
+  // that is on screen must never be the one handed back to the collector.
+  private readonly attachmentHolds = new Map<string, number>();
   private static readonly ATTACHMENT_URL_CACHE = 24;
 
   constructor(conn: GatewayConn) {
@@ -415,8 +514,25 @@ export class GatewayClient {
     return this.request<GatewayHealth>('GET', '/healthz', undefined, signal);
   }
 
-  capabilities(signal?: AbortSignal): Promise<GatewayCapabilities> {
-    return this.request<GatewayCapabilities>('GET', '/v1/capabilities', undefined, signal);
+  /**
+   * Last capabilities payload seen for THIS gateway — paint it, then revalidate.
+   * Capabilities are a per-gateway fact (attachment limits, media types, whether
+   * voice exists at all), so the answer from five seconds ago is still the right
+   * first frame for a screen the user just re-entered.
+   */
+  cachedCapabilities(): GatewayCapabilities | null {
+    return readSnapshot<GatewayCapabilities>(this.snapshotKey('capabilities'));
+  }
+
+  async capabilities(signal?: AbortSignal): Promise<GatewayCapabilities> {
+    const response = await this.request<GatewayCapabilities>(
+      'GET',
+      '/v1/capabilities',
+      undefined,
+      signal,
+    );
+    writeSnapshot(this.snapshotKey('capabilities'), response);
+    return response;
   }
 
   // ── Native push devices ─────────────────────────────────────────
@@ -820,6 +936,23 @@ export class GatewayClient {
     return readSnapshot<QueuedTurn[]>(this.snapshotKey('queued', sid));
   }
 
+  /**
+   * Drop ONE row from the cached backlog.
+   *
+   * A row leaves the queue on `turn.queued.drained` / `.deleted`, and the gateway
+   * appends both with `:store? false` — they are LIVE-only frames that no replay
+   * and no snapshot ever repeats. So a removal must also be written into the
+   * cache the next mount seeds from, or re-entering the session paints a
+   * "Queued" row for a turn that is already running.
+   */
+  forgetQueuedTurn(sid: string, tid: string): void {
+    const key = this.snapshotKey('queued', sid);
+    const rows = readSnapshot<QueuedTurn[]>(key);
+    if (!rows) return;
+    const next = rows.filter((row) => row.turnId !== tid);
+    if (next.length !== rows.length) writeSnapshot(key, next);
+  }
+
   /** Drop every snapshot of one session — it is gone or is being replaced. */
   forgetSession(sid: string): void {
     snapshots.delete(this.snapshotKey('session', sid));
@@ -827,6 +960,7 @@ export class GatewayClient {
     snapshots.delete(this.snapshotKey('queued', sid));
     transcriptStamps.delete(this.snapshotKey('transcript', sid));
     transcriptWindows.delete(this.snapshotKey('transcript', sid));
+    scheduleSnapshotFlush(snapshotStores);
   }
 
   async listSessions(signal?: AbortSignal): Promise<Session[]> {
@@ -1149,9 +1283,16 @@ export class GatewayClient {
    * not landed yet is retried by the next render.
    */
   attachmentUrl(sid: string, iterationId: string, index: number): Promise<string> {
-    const key = `${sid}\u0000${iterationId}\u0000${index}`;
+    const key = GatewayClient.attachmentKey(sid, iterationId, index);
     const cached = this.attachmentUrls.get(key);
-    if (cached) return cached;
+    if (cached) {
+      // Map insertion order IS the eviction order, so a picture asked for AGAIN
+      // (a re-entered session re-mounting its tiles) has to re-insert, or the
+      // very artifacts back on screen stay first in line to be revoked.
+      this.attachmentUrls.delete(key);
+      this.attachmentUrls.set(key, cached);
+      return cached;
+    }
     const pending = (async () => {
       const path = `/v1/sessions/${encodeURIComponent(sid)}/iterations/${encodeURIComponent(iterationId)}/attachments/${index}`;
       let response: Response;
@@ -1165,19 +1306,61 @@ export class GatewayClient {
     })();
     pending.catch(() => this.attachmentUrls.delete(key));
     this.attachmentUrls.set(key, pending);
-    // Every live entry pins its decoded bytes for the lifetime of the document.
-    // A long session that produced many figures is exactly the memory curve iOS
-    // answers by killing the webview, so the cache is bounded and the oldest
-    // object URLs are handed back to the collector. A tile still showing an
-    // evicted URL re-requests on its `error` handler, which repopulates it.
-    while (this.attachmentUrls.size > GatewayClient.ATTACHMENT_URL_CACHE) {
-      const oldest = this.attachmentUrls.keys().next();
-      if (oldest.done) break;
-      const stale = this.attachmentUrls.get(oldest.value);
-      this.attachmentUrls.delete(oldest.value);
+    this.evictAttachmentUrls();
+    return pending;
+  }
+
+  private static attachmentKey(sid: string, iterationId: string, index: number): string {
+    return `${sid}\u0000${iterationId}\u0000${index}`;
+  }
+
+  /**
+   * Claim one artifact's object URL for as long as a tile is painting it; the
+   * returned function gives the claim back.
+   *
+   * Leaving a session and coming back re-mounts the WHOLE transcript at once, so
+   * every artifact is requested in the same tick. Without a claim the newest
+   * fetches push the cache over its bound and revoke the URLs of the pictures
+   * still decoding right next to them: those tiles fire `error`, re-request,
+   * evict each other in turn, and after two rounds give up as `✗ name`. That is
+   * the "my images are gone when I re-open the session" report — the bytes were
+   * always on the gateway, the app revoked them from under itself.
+   */
+  retainAttachment(sid: string, iterationId: string, index: number): () => void {
+    const key = GatewayClient.attachmentKey(sid, iterationId, index);
+    this.attachmentHolds.set(key, (this.attachmentHolds.get(key) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (this.attachmentHolds.get(key) ?? 1) - 1;
+      if (left > 0) {
+        this.attachmentHolds.set(key, left);
+        return;
+      }
+      this.attachmentHolds.delete(key);
+      // The screen just let go of this one: now the bound can be honoured.
+      this.evictAttachmentUrls();
+    };
+  }
+
+  /**
+   * Every live entry pins full decoded bytes for the lifetime of the document,
+   * and a long session of figures is exactly the memory curve iOS answers by
+   * killing the webview — so the cache is bounded and the oldest object URLs go
+   * back to the collector. Held keys are SKIPPED, never merely deferred: the
+   * cache may sit over its bound while that many pictures are genuinely on
+   * screen, which is the honest trade (a visible image beats a freed URL).
+   */
+  private evictAttachmentUrls(): void {
+    if (this.attachmentUrls.size <= GatewayClient.ATTACHMENT_URL_CACHE) return;
+    for (const candidate of Array.from(this.attachmentUrls.keys())) {
+      if (this.attachmentUrls.size <= GatewayClient.ATTACHMENT_URL_CACHE) break;
+      if (this.attachmentHolds.has(candidate)) continue;
+      const stale = this.attachmentUrls.get(candidate);
+      this.attachmentUrls.delete(candidate);
       void stale?.then((url) => URL.revokeObjectURL(url)).catch(() => undefined);
     }
-    return pending;
   }
 
   submitTurn(
@@ -1321,7 +1504,15 @@ export class GatewayClient {
         const attempt = new AbortController();
         const attemptSignal = anySignal([signal, attempt.signal]);
         let stallTimer: ReturnType<typeof setTimeout> | null = null;
+        // One watchdog for both phases of the attempt: a short bound on the
+        // connect, the heartbeat bound once frames are flowing. Either way the
+        // abort hits only THIS attempt and the outer loop reconnects.
+        const armStall = (ms: number) => {
+          if (stallTimer) clearTimeout(stallTimer);
+          stallTimer = setTimeout(() => attempt.abort(), ms);
+        };
         try {
+          armStall(SSE_CONNECT_TIMEOUT_MS);
           const spec = Array.from(cursors, ([sid, cursor]) => `${sid}:${cursor}`).join(',');
           const response = await fetch(
             `${this.base}/v1/events?sids=${encodeURIComponent(spec)}`,
@@ -1341,15 +1532,11 @@ export class GatewayClient {
           // see nothing for 45 s the socket was silently frozen (iOS
           // backgrounding, dead NAT, half-open TCP) — abort this attempt so
           // the outer loop reconnects with the up-to-date cursor.
-          const armStall = () => {
-            if (stallTimer) clearTimeout(stallTimer);
-            stallTimer = setTimeout(() => attempt.abort(), 45_000);
-          };
-          armStall();
+          armStall(SSE_STALL_TIMEOUT_MS);
 
           for (;;) {
             const { value, done } = await reader.read();
-            armStall();
+            armStall(SSE_STALL_TIMEOUT_MS);
             if (done) break;
             buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
             let boundary: number;
@@ -1426,7 +1613,12 @@ export class GatewayClient {
         const attempt = new AbortController();
         const attemptSignal = anySignal([signal, attempt.signal]);
         let stallTimer: ReturnType<typeof setTimeout> | null = null;
+        const armStall = (ms: number) => {
+          if (stallTimer) clearTimeout(stallTimer);
+          stallTimer = setTimeout(() => attempt.abort(), ms);
+        };
         try {
+          armStall(SSE_CONNECT_TIMEOUT_MS);
           const query = cursor != null ? `?cursor=${cursor}` : '';
           const response = await fetch(
             `${this.base}/v1/sessions/${encodeURIComponent(sid)}/events${query}`,
@@ -1442,16 +1634,12 @@ export class GatewayClient {
           const decoder = new TextDecoder();
           let buffer = '';
 
-          // Stall watchdog — same 45 s bound as the multiplexed variant.
-          const armStall = () => {
-            if (stallTimer) clearTimeout(stallTimer);
-            stallTimer = setTimeout(() => attempt.abort(), 45_000);
-          };
-          armStall();
+          // Stall watchdog — same heartbeat bound as the multiplexed variant.
+          armStall(SSE_STALL_TIMEOUT_MS);
 
           for (;;) {
             const { value, done } = await reader.read();
-            armStall();
+            armStall(SSE_STALL_TIMEOUT_MS);
             if (done) break;
             buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
             let boundary: number;

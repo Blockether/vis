@@ -353,19 +353,24 @@ export const Markdown = memo(function Markdown({
       diff blocks drop their own border so the card shows ONE frame, not two. */
   nested?: boolean;
 }) {
-  // Justification is a WIDTH trade, not a taste one. Word-spacing is the only slack a
-  // justified line has, so every unbreakable atom it cannot fit — an inline `code` path,
-  // a URL — is paid for by stretching the handful of words that did fit, which is where
-  // the rivers come from. The cure is not to stop justifying: it is to leave no atom
-  // unbreakable. Automatic hyphenation gives ordinary words legal break points
-  // (`hyphenate-limit-chars` keeps them from being silly two-letter ones), and `code`,
-  // links and the wrapper break anywhere, so a long path splits at the line edge instead
-  // of leaving a hole behind it. `text-pretty` still handles the last line. Inside an
-  // already-framed tool card (`nested`) the column is ~30 characters wide, which no
-  // amount of breaking rescues, so the card stays ragged.
-  const runningText = nested
-    ? ''
-    : 'hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty text-justify';
+  // Justification is a WIDTH trade, and it is BEST EFFORT. Word-spacing is the only slack a
+  // justified line has, so every atom it cannot break — an inline `code` path, a URL — is
+  // paid for by stretching the handful of words that DID fit; that is where the rivers come
+  // from. Breaking the atom does NOT rescue it: `overflow-wrap: anywhere` is a LAST-RESORT
+  // break (CSS Text 3 §5.5), so the browser splits inside it only when the line has no other
+  // break opportunity — a long path sitting after three words is kept whole and those three
+  // words absorb the entire deficit. Measured in Chromium at a 360px column: 32.9px between
+  // words against a 4.2px space, an 8x stretch, exactly the hole you see. So justify only
+  // where it can be clean and fall back to ragged the moment the line box carries an
+  // unbreakable atom (`:has(code)`, `:has(a)`) — the same column then measures 4.2px, i.e.
+  // no river at all. Hyphenation stays on for the justified case (`hyphenate-limit-chars`
+  // keeps the breaks from being silly two-letter ones) and `text-pretty` still handles the
+  // last line. This holds INSIDE a framed tool card (`nested`) too: a folded receipt's gist
+  // is a real paragraph and reads as one, while its dense metric bullets all carry `code`
+  // or `ntr[…]` accessors, so `:has(code)` already keeps exactly those rows ragged — a
+  // card-wide opt-out would only un-justify the one block that benefits.
+  const runningText =
+    'hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty text-justify [&:has(code)]:text-left [&:has(a)]:text-left';
   return (
     <div className="min-w-0 break-words [&>:first-child]:mt-0 [&>:last-child]:mb-0">
       <ReactMarkdown
@@ -792,7 +797,9 @@ function showFormCode(form: TranscriptForm, code: string): boolean {
 
 const PYTHON_PREVIEW_LINES = 5;
 
-const CollapsiblePythonCode = memo(function CollapsiblePythonCode({ value }: { value: string }) {
+const CollapsiblePythonCode = memo(function CollapsiblePythonCode(
+  { value, bare = false }: { value: string; bare?: boolean },
+) {
   const [expanded, setExpanded] = useState(false);
   const lines = value.split(/\r?\n/);
   const hiddenLines = Math.max(0, lines.length - PYTHON_PREVIEW_LINES);
@@ -806,7 +813,7 @@ const CollapsiblePythonCode = memo(function CollapsiblePythonCode({ value }: { v
   // the TUI's THINKING accordion: one rule everywhere, so a row always labels the
   // block beneath it and the collapse control never scrolls away with the body.
   return (
-    <div className="mb-1 min-w-0 overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
+    <div className={bare ? 'min-w-0' : 'mb-1 min-w-0 overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]'}>
       <div className="min-w-0 border-l-2 border-tool-shell bg-code">
         {/* The header row OWNS the copy control (right edge), exactly like the
             `ToolCard` result headline — never a chip floating over the source.
@@ -852,7 +859,7 @@ const CollapsiblePythonCode = memo(function CollapsiblePythonCode({ value }: { v
 });
 
 const CardGrid = memo(function CardGrid(
-  { cards, live = false }: { cards: TranscriptForm[]; live?: boolean },
+  { cards, live = false, bare = false }: { cards: TranscriptForm[]; live?: boolean; bare?: boolean },
 ) {
   if (!cards.length) return null;
 
@@ -862,7 +869,7 @@ const CardGrid = memo(function CardGrid(
   // what read as "some cards are joined, some are not" - one run of work, one frame.
   return (
     <div
-      className={`grid grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]${live ? ` ${transcriptRiseClass}` : ''}`}
+      className={`grid grid-cols-[minmax(0,1fr)] gap-px${bare ? '' : ' overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]'}${live ? ` ${transcriptRiseClass}` : ''}`}
       aria-label={`${cards.length} ${cards.length === 1 ? 'result' : 'results'}`}
     >
       {cards.map((card, cardIndex) => (
@@ -891,14 +898,33 @@ const FormTrace = memo(function FormTrace(
           <Markdown compact>{form.comment.trim()}</Markdown>
         </div>
       )}
-      {showCode && <CollapsiblePythonCode value={code} />}
-      <CardGrid cards={cards} />
+      {/* A program and the results IT produced are ONE frame, joined by the same
+          hairline `gap-px` rule that separates sibling cards inside `CardGrid`.
+          Whitespace only ever separates one CALL from the next (see the chunk
+          gap in `IterationTrace`); a gap here made a result read as if it
+          belonged to the program printed BELOW it. */}
+      {showCode && cards.length > 0 ? (
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
+          <CollapsiblePythonCode value={code} bare />
+          <CardGrid cards={cards} bare />
+        </div>
+      ) : (
+        <>
+          {showCode && <CollapsiblePythonCode value={code} />}
+          <CardGrid cards={cards} />
+        </>
+      )}
     </div>
   );
 });
 
 const REASONING_PREVIEW_LINES = 3;
-const REASONING_COLLAPSE_MIN_HIDDEN = 1;
+// Mirrors com.blockether.vis.internal.render/reasoning-collapse-min-hidden (3).
+// A disclosure that buys back one or two clipped rows is pure friction — you
+// uncollapse just to read one more line — so a barely-overflowing trace renders
+// inline, in full, with no toggle at all. Same rule as the TUI band and the
+// Clojure transcript split; keep the three in step.
+const REASONING_COLLAPSE_MIN_HIDDEN = 3;
 const ENCRYPTED_REASONING_PLACEHOLDER =
   '[provider returned encrypted reasoning; plaintext reasoning is unavailable]';
 
@@ -1054,6 +1080,13 @@ const AttachmentTile = memo(function AttachmentTile({
   useEffect(() => {
     if (!isImage || !iterationId || !sid) return;
     let alive = true;
+    // Hold this artifact's object URL for as long as the tile is mounted. The
+    // client's cache is bounded and REVOKES what it evicts, and re-entering a
+    // session re-mounts every tile in one tick — without the hold the newest
+    // fetches revoke the pictures still decoding beside them and the transcript
+    // comes back as `✗ name` placeholders. Released on unmount, so the bound
+    // still applies to everything off screen.
+    const release = client.retainAttachment(sid, iterationId, index);
     client
       .attachmentUrl(sid, iterationId, index)
       .then((next) => {
@@ -1064,6 +1097,7 @@ const AttachmentTile = memo(function AttachmentTile({
       });
     return () => {
       alive = false;
+      release();
     };
   }, [client, sid, iterationId, index, isImage, attempt]);
 
@@ -1189,9 +1223,16 @@ export const IterationTrace = memo(function IterationTrace({
                 <Markdown>{segment.head.prose}</Markdown>
               </div>
             )}
-            {chunks.map((chunk) => (chunk.kind === 'code'
-              ? <FormTrace key={chunk.key} form={chunk.form} live={live} />
-              : <CardGrid key={chunk.key} cards={chunk.cards} live={live} />))}
+            {/* Chunk-to-chunk breathing room: each chunk is one call (its program
+                glued to its own results), so the ONLY whitespace in the stack
+                falls BETWEEN calls. */}
+            {chunks.length > 0 && (
+              <div className="grid min-w-0 gap-2.5">
+                {chunks.map((chunk) => (chunk.kind === 'code'
+                  ? <FormTrace key={chunk.key} form={chunk.form} live={live} />
+                  : <CardGrid key={chunk.key} cards={chunk.cards} live={live} />))}
+              </div>
+            )}
             {client && sid
               && segment.items.flatMap((entry) => entry.attachments.map((attachment) => (
                 <AttachmentTile
@@ -1373,10 +1414,17 @@ export const UserMessage = memo(function UserMessage(
   const imageAttachments = (attachments ?? []).filter(
     (a) => (a.source ?? 'user') === 'user' && !!a.base64 && !!a.media_type?.startsWith('image/'),
   );
+  // Same best-effort justification rule as `Markdown`, decided in JS because this bubble is
+  // raw text: `:has()` has nothing to match on. A pasted path or URL is the unbreakable atom,
+  // and a non-text part (an image chip, a collapsed paste) is an atom too, so either one
+  // sends the whole bubble ragged instead of letting one line stretch to a river.
+  const isJustifiable = parts.every(
+    (part) => part.type === 'text' && !/\S{24,}/u.test(part.text),
+  );
   return (
     <article className="mt-4 w-full [contain:layout_style]">
       <div className="mb-1 font-mono text-meta font-bold text-you-role">You</div>
-      <div className="inline-block max-w-full whitespace-pre-wrap break-words hyphens-auto [hyphenate-limit-chars:6_3_3] border-l-2 border-you-role bg-code px-3 py-2 text-body text-pretty text-justify text-you-message-foreground">
+      <div className={`inline-block max-w-full whitespace-pre-wrap break-words hyphens-auto [hyphenate-limit-chars:6_3_3] border-l-2 border-you-role bg-code px-3 py-2 text-body text-pretty text-you-message-foreground ${isJustifiable ? 'text-justify' : 'text-left'}`}>
         {parts.map((part) => part.type === 'text' ? (
           <span key={part.key}>{part.text}</span>
         ) : part.type === 'image' ? (

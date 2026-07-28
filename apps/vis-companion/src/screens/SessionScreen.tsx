@@ -13,7 +13,7 @@ import { Banner } from '../components/ui';
 import { ProviderRouterDialog } from './RouterScreen';
 import { attachmentsFromFiles, type PendingAttachment } from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';
-import { queuedTurnFromWire } from '../lib/gateway';
+import { mergeQueueBacklog, queuedTurnFromWire, type QueueDelta } from '../lib/gateway';
 import { exactCost, formatCost, formatTokens, sessionUsage } from '../lib/usage';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
@@ -753,6 +753,33 @@ export function SessionScreen({
   // is exactly how a row could disappear while the gateway still ran it.
   const [queueBusy, setQueueBusy] = useState<ReadonlySet<string>>(() => new Set());
   const [editingQueued, setEditingQueued] = useState<{ turnId: string; text: string } | null>(null);
+  // Queue truth arrives on TWO streams that can cross: live `turn.queued*` frames
+  // and the `?status=queued` re-reads done on open and on every wake tick. The
+  // removals exist only on the live stream (the gateway appends
+  // `turn.queued.drained`/`.deleted` with `:store? false`), so a read that left
+  // the gateway BEFORE the head drained answers with a row the drain frame has
+  // already cleared here — and, landing later, puts it back for good. That is the
+  // tray showing "Queued · 1" for the very message whose answer is streaming
+  // above it. Every live delta is stamped, and a backlog read is trusted only for
+  // rows whose last delta is OLDER than the read itself.
+  const queueDeltasRef = useRef(new Map<string, QueueDelta>());
+  const noteQueueDelta = useCallback(
+    (tid: string, row: QueuedTurn | null) => {
+      if (!tid) return;
+      queueDeltasRef.current.set(tid, { at: Date.now(), row });
+      if (!row) client.forgetQueuedTurn(sid, tid);
+    },
+    [client, sid],
+  );
+  const acceptQueueBacklog = useCallback(
+    (rows: QueuedTurn[], readStartedAt: number) => {
+      const merged = mergeQueueBacklog(rows, queueDeltasRef.current, readStartedAt);
+      // The read has just rewritten the snapshot with the stale rows in it.
+      for (const tid of merged.forget) client.forgetQueuedTurn(sid, tid);
+      setQueued(merged.rows);
+    },
+    [client, sid],
+  );
   const [queuePaused, setQueuePaused] = useState<QueuePausedInfo | null>(null);
   // The pause banner is gateway state too: it clears on `queue.resumed`, never
   // because we asked. This only disables the button while the request is out.
@@ -792,7 +819,15 @@ export function SessionScreen({
   const [fileSuggestions, setFileSuggestions] = useState<FileSuggestion[]>([]);
   const [fileIndex, setFileIndex] = useState(0);
   const [fileDismissed, setFileDismissed] = useState(false);
-  const [capabilities, setCapabilities] = useState<GatewayCapabilities | null>(null);
+  // Capabilities are a per-GATEWAY fact (attachment limits, media types, whether
+  // voice exists at all) that the composer is built out of. Starting from `null`
+  // meant every re-entry painted a composer whose `+` and microphone only
+  // appeared once the round-trip landed — the icons visibly popping in on a
+  // screen that otherwise restored instantly. Seed from the last payload this
+  // gateway answered: same paint-then-revalidate rule as session/transcript.
+  const [capabilities, setCapabilities] = useState<GatewayCapabilities | null>(() =>
+    client.cachedCapabilities(),
+  );
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [pastes, setPastes] = useState<Map<number, ComposerPaste>>(
     () =>
@@ -808,8 +843,14 @@ export function SessionScreen({
   // already solves this; the overlay borrows the very same pin.
   const pasteEditorStyle = useVisualViewportShell();
   const [composerNotice, setComposerNotice] = useState<string | null>(null);
-  const [voiceSupported, setVoiceSupported] = useState(false);
-  const [voiceModel, setVoiceModel] = useState<VoiceModelState | null>(null);
+  // Seeded from the same cached capabilities as the composer above, so the mic
+  // button is there on the first frame instead of arriving a round-trip late.
+  const [voiceSupported, setVoiceSupported] = useState(
+    () => client.cachedCapabilities()?.features.voice.enabled ?? false,
+  );
+  const [voiceModel, setVoiceModel] = useState<VoiceModelState | null>(
+    () => client.cachedCapabilities()?.features.voice.model ?? null,
+  );
   const [voicePhase, setVoicePhase] = useState<'idle' | 'recording' | 'transcribing'>('idle');
   const [voiceRequested, setVoiceRequested] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1137,12 +1178,15 @@ export function SessionScreen({
     // deltas that happen while we are subscribed — so read the existing
     // backlog on open. Without this, messages queued from the TUI (or
     // before a browser reload) are invisible here until they drain.
+    const backlogReadAt = Date.now();
     void client
       .queuedTurns(sid, controller.signal)
-      .then(setQueued)
+      .then((rows) => {
+        if (!controller.signal.aborted) acceptQueueBacklog(rows, backlogReadAt);
+      })
       .catch(() => undefined);
     return () => controller.abort();
-  }, [client, sid, loadTranscript]);
+  }, [client, sid, loadTranscript, acceptQueueBacklog]);
 
   // Reconcile against the gateway's authoritative liveness. A streamed live turn
   // is only cleared by a terminal SSE event, but that event can be missed — the
@@ -1200,9 +1244,10 @@ export function SessionScreen({
       // row drained. Gateway truth wins outright — we never merge in a local
       // guess.
       try {
+        const backlogReadAt = Date.now();
         const backlog = await client.queuedTurns(sid);
         if (cancelled) return;
-        setQueued(backlog);
+        acceptQueueBacklog(backlog, backlogReadAt);
       } catch {
         /* Keep the last known backlog; the next tick retries. */
       }
@@ -1254,7 +1299,7 @@ export function SessionScreen({
       window.clearInterval(timer);
       stopWake();
     };
-  }, [client, sid, loadTranscript, subscriptions, pinToEnd]);
+  }, [client, sid, loadTranscript, subscriptions, pinToEnd, acceptQueueBacklog]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1409,11 +1454,14 @@ export function SessionScreen({
     finishVoiceRef.current = finishVoice;
   });
 
-  // Leaving the foreground is NOT the end of a dictation. iOS only suspends the
-  // webview — and with it `onaudioprocess` — when the app has no reason to keep
-  // running; the `audio` entry in `UIBackgroundModes` (ios/App/App/Info.plist) is
-  // that reason, and it is what lets WKWebView's capture survive backgrounding,
-  // the screen locking, and the phone going to sleep. So we let it run.
+  // Leaving the foreground is NOT the end of a dictation. It takes TWO things to
+  // keep capture alive on iOS, and only both together: the `audio` entry in
+  // `UIBackgroundModes` (ios/App/App/Info.plist), which stops WebKit from muting
+  // the microphone track, and the `play-and-record` audio session every
+  // dictation claims (src/lib/voice.ts), which stops WebKit from interrupting
+  // the AudioContext — and with it `onaudioprocess` — the instant the app
+  // backgrounds. With both in place capture survives backgrounding, the screen
+  // locking, and the phone going to sleep. So we let it run.
   //
   // Two nets remain. `pagehide` means the page itself is going away (web build,
   // or a webview the OS tears down) — nothing survives that, so settle what was
@@ -1577,12 +1625,13 @@ export function SessionScreen({
       for (const event of batch) {
         const tid = stringField(event, 'turn_id');
         switch (event.type) {
-          case 'turn.queued':
+          case 'turn.queued': {
+            const row = queuedTurnFromWire(event as unknown as Record<string, unknown>);
+            noteQueueDelta(tid, row);
             setQueued((current) =>
-              current.some((item) => item.turnId === tid)
-                ? current
-                : [...current, queuedTurnFromWire(event as unknown as Record<string, unknown>)]);
+              current.some((item) => item.turnId === tid) ? current : [...current, row]);
             break;
+          }
           case 'turn.queued.updated':
             setQueued((current) =>
               current.map((item) =>
@@ -1592,6 +1641,7 @@ export function SessionScreen({
             break;
           case 'turn.queued.deleted':
           case 'turn.queued.drained':
+            noteQueueDelta(tid, null);
             setQueued((current) => current.filter((item) => item.turnId !== tid));
             break;
           case 'queue.paused':
@@ -1679,7 +1729,7 @@ export function SessionScreen({
       unsubscribeConnection();
       setConnected(false);
     };
-  }, [client, loadTranscript, sid, subscriptions]);
+  }, [client, loadTranscript, sid, subscriptions, noteQueueDelta]);
 
   useLayoutEffect(() => {
     const viewport = scrollRef.current;
@@ -1768,6 +1818,20 @@ export function SessionScreen({
       // slides the answer bubble up and down as the input stretches while you
       // type. A shell-height change is the other story: the keyboard really does
       // eat the bottom of the conversation, so that case keeps its compensation.
+      // A rotation resizes both observed boxes several times before the layout
+      // settles, and the compensation below is written for a keyboard: same
+      // width, same wrapping, only the bottom edge moved. Mid-flip none of that
+      // holds — the column re-wraps, so `scrollHeight` is a different number
+      // about different content — and nudging `scrollTop` per frame fights the
+      // rotation anchor (captured on `start`, replayed on every settle), which
+      // is what makes the transcript slosh. Keep the cache honest, do nothing
+      // else; the anchor owns the scroll position for the whole window.
+      if (isViewportRotating()) {
+        const box = scrollRef.current;
+        if (box) viewportHeightRef.current = box.clientHeight;
+        shellHeightRef.current = shellViewportHeight();
+        return;
+      }
       const box = scrollRef.current;
       let composerOnly = false;
       if (box) {

@@ -1529,6 +1529,73 @@
 
     (str/replace (str/join " " (remove str/blank? line-strs)) #"\s+" " ")))
 
+(defn- justify-line-runs
+  "Full-justify ONE soft-wrapped walker line's `runs` to `width` display columns
+   by widening the inter-word whitespace INSIDE its text runs. The styled twin
+   of `primitives/justify-line`, run on the IR before the runs are flattened to
+   inline sentinels (so PUA style markers can never be counted as text).
+
+   Only CONTENT gaps stretch: leading structural runs — a list `:marker`
+   (`- `, `• `, `1. `) or the pure-whitespace hanging indent of a continuation
+   row — keep their exact width, else justification blows a hole right after
+   the bullet (`-      foo`).
+
+   The runs come back untouched when there is nothing to stretch (no gap, or no
+   slack because an over-wide atom was force-fit past `width`) and when the line
+   is not ALREADY near-full: at `slack >= gap-count` every single gap would grow
+   by at least a column, which is the river, not justification. Inside that cap
+   `slack` gaps gain one space each and the rest stay single."
+  [runs ^long width]
+  (let
+    [prefix-n
+     (count (take-while (fn [r]
+                          (or (contains? (:style r) :marker) (str/blank? (str (:text r)))))
+                        runs))
+
+     gap-count
+     (long (reduce +
+                   0
+                   (map (fn [r]
+                          (count (re-seq #"\s+" (str (:text r)))))
+                        (drop prefix-n runs))))
+
+     slack
+     (- width (long (reduce + 0 (map run-width runs))))]
+
+    (if (or (< gap-count 1) (<= slack 0) (>= slack gap-count))
+      runs
+      (let
+        [base
+         (quot slack gap-count)
+
+         extra
+         (rem slack gap-count)
+
+         idx
+         (volatile! -1)]
+
+        (vec
+          (map-indexed (fn [^long i r]
+                         (if (< i prefix-n)
+                           r
+                           (update r
+                                   :text
+                                   (fn [t]
+                                     (str/replace (str t)
+                                                  #"\s+"
+                                                  (fn [m]
+                                                    (let
+                                                      [k
+                                                       (long (vswap! idx
+                                                                     (fn [^long v]
+                                                                       (inc v))))
+
+                                                       add
+                                                       (+ base (if (< k extra) 1 0))]
+
+                                                      (str m (apply str (repeat add \space))))))))))
+                       runs))))))
+
 (defn ast->entries
   "Drop-in replacement for the legacy `render/markdown->entries`.
    Returns a vector of `{:line :meta}` maps where `:line` is the
@@ -1541,6 +1608,12 @@
      `:thinking` — thinking-zone PUA chars (iter-header-bg + italic)
      `:channel`  — in-place channel/tool IR; plain paragraphs use no
                    background marker, structural rows keep explicit styling
+
+   `:justify?` full-justifies the prose: every line the wrapper broke on
+   overflow (`:wrap?`) is stretched flush to both margins, while paragraph- and
+   block-terminal lines stay ragged-right (stretching a four-word last line is
+   the mega-hole bug) and code lines are never touched — their columns ARE the
+   content.
 
    This is the IR-side analogue of `markdown->entries`. Every
    bubble rendering path that used to parse the rendered markdown
@@ -1555,11 +1628,22 @@
       lines
       (if tail-n (ast->lines-tail ir width (long tail-n) opts) (ast->lines ir width opts))
 
+      justify?
+      (boolean (:justify? opts))
+
       ms
       (marker-set-for (:mode opts))]
 
-     (mapv (fn [{:keys [runs block-tag block-level meta]}]
-             (let [links (line-link-spans runs)]
+     (mapv (fn [{:keys [runs block-tag block-level meta wrap?]}]
+             (let
+               [runs
+                (if (and justify? wrap? (not= block-tag :code))
+                  (justify-line-runs runs (long width))
+                  runs)
+
+                links
+                (line-link-spans runs)]
+
                {:line (str (block-marker-for ms block-tag block-level)
                            (line-body-sentinels block-tag runs))
                 :meta (if links (assoc (or meta {}) :links links) meta)}))

@@ -535,3 +535,60 @@
                            ["one-unbreakable-supertoken" 5] ["" 5] [nil 4] ["🎉🎉" 1]]]
                    (expect (= (p/word-wrap (str s) (max 1 (long w))) (#'layout/wrap-cell-cols s w))
                            (str "diverged from p/word-wrap for " (pr-str [s w]))))))
+
+;; ---------------------------------------------------------------------------
+;; `:justify?` — flush-both-margins prose (op-card bodies, e.g. a fold receipt)
+;; ---------------------------------------------------------------------------
+
+(defn- plain-lines
+  "Entry `:line` strings with every PUA style/block sentinel removed."
+  [entries]
+  (mapv (fn [e]
+          (str/replace (:line e) #"[\uE000-\uF8FF]" ""))
+        entries))
+
+(defdescribe
+  justified-entries-test
+  (it "stretches ONLY the overflow-wrapped lines to the full width"
+      (let
+        [ir
+         [:ast
+          [:p
+           (str "folded a long narrative gist that explains what happened "
+                "during the fold and why it mattered enough to keep one "
+                "durable takeaway around for later readers")]]
+
+         w
+         46
+
+         ragged
+         (plain-lines (layout/ast->entries ir w {:mode :channel}))
+
+         flush-both
+         (plain-lines (layout/ast->entries ir w {:mode :channel :justify? true}))]
+
+        ;; every wrapped line is edge-to-edge, the paragraph-terminal
+        ;; line stays ragged-right (never stretched)
+        (expect (every? #(= w (p/display-width %)) (butlast flush-both)))
+        (expect (< (long (p/display-width (last flush-both))) w))
+        (expect (= (count ragged) (count flush-both)))
+        (expect (= (last ragged) (last flush-both)))
+        ;; same words, only inter-word gaps widened
+        (expect (= (mapv #(str/split % #"\s+") ragged) (mapv #(str/split % #"\s+") flush-both)))))
+  (it "never stretches a list marker or a code block"
+      (let
+        [entries
+         (layout/ast->entries
+           [:ast [:ul [:li (str "recover one stored native result each, " "no re-run at all")]]
+            [:code {:lang "clojure"} "(a  b  c)"]]
+           40
+           {:mode :channel :justify? true})
+
+         lines
+         (plain-lines entries)]
+
+        ;; `- ` keeps its single space; the content after it still justifies
+        (expect (some #(str/starts-with? % "- recover") lines))
+        (expect (not-any? #(re-find #"^-\s\s+" %) lines))
+        ;; code columns ARE the content — untouched
+        (expect (some #(str/includes? % "(a  b  c)") lines)))))

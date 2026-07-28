@@ -4,8 +4,8 @@ export interface WavRecording {
   /**
    * Is the microphone STILL feeding this recording? False once the OS suspended
    * the audio context or released the track. Backgrounding no longer ends a
-   * dictation on its own (see `UIBackgroundModes` below), so the app needs a way
-   * to ask, on return, whether capture actually survived the trip.
+   * dictation on its own (see the audio-session note below), so the app needs a
+   * way to ask, on return, whether capture actually survived the trip.
    */
   isCapturing: () => boolean;
 }
@@ -15,11 +15,12 @@ export interface WavRecordingOptions {
    * Fired ONCE when the OS really takes the microphone away mid-recording: a
    * call arrives, another app claims the audio session, or the recording hits
    * its cap. Merely leaving the foreground is NOT one of these: the iOS target
-   * declares the `audio` background mode (`ios/App/App/Info.plist`), which is
-   * what keeps WKWebView's capture — and the JS that drains it — alive while the
-   * app is backgrounded or the screen is locked. Whatever was said up to the
-   * interruption is still buffered; the caller decides what to do with it, but
-   * it must be told, because nothing else here ever fires again.
+   * declares the `audio` background mode (`ios/App/App/Info.plist`) AND every
+   * dictation claims a `play-and-record` audio session (see below). Those two
+   * TOGETHER are what keeps WKWebView's capture — and the graph that drains it —
+   * alive while the app is backgrounded or the screen is locked. Whatever was
+   * said up to the interruption is still buffered; the caller decides what to do
+   * with it, but it must be told, because nothing else here ever fires again.
    */
   onInterrupted?: (reason: string) => void;
 }
@@ -74,12 +75,59 @@ function encodePcmWav(chunks: Int16Array[], sampleRate: number): Blob {
   return new Blob([buffer], { type: 'audio/wav' });
 }
 
+// WHY A DICTATION USED TO DIE THE MOMENT THE APP LEFT THE FOREGROUND.
+//
+// `UIBackgroundModes = audio` (ios/App/App/Info.plist) is necessary but NOT
+// sufficient. It only stops WebKit from MUTING the capture track (WebKit bug
+// 226620: muting happens "in case UIBackgroundModes does not contain audio").
+// The Web Audio graph that DRAINS that track is governed separately, and WebKit
+// registers WebAudio with `BackgroundProcessPlaybackRestricted`
+// (WebCore/platform/audio/ios/MediaSessionManagerIOS.mm). So backgrounding the
+// app interrupts the AudioContext: `state` leaves `running`, `onaudioprocess`
+// stops firing, and the rest of the sentence is lost while the track is still
+// live and the UI still says "Listening…".
+//
+// The documented escape is in
+// AudioContext::shouldOverrideBackgroundPlaybackRestriction
+// (WebCore/Modules/webaudio/AudioContext.cpp): the restriction is overridden
+// when the DOCUMENT declares an audio session of type `playback` or
+// `play-and-record`. That is the Audio Session API — `navigator.audioSession`,
+// WebKit-only, iOS 16.4+, which is exactly the platform with the problem. No
+// native plugin and no extra Info.plist key can substitute for it: the decision
+// is taken inside the web content process, from the document's own session type.
+//
+// A dictation therefore claims `play-and-record` for its lifetime and hands the
+// session back as `auto` when it ends, so ordinary playback is not left on a
+// recording route. Where the API is absent (every non-WebKit browser) this is a
+// no-op and capture behaves exactly as before.
+type AudioSessionType = 'auto' | 'playback' | 'transient' | 'transient-solo' | 'ambient' | 'play-and-record';
+
+function claimAudioSession(type: AudioSessionType): boolean {
+  const session = (navigator as Navigator & { audioSession?: { type: AudioSessionType } }).audioSession;
+  if (!session) return false;
+  try {
+    session.type = type;
+    return true;
+  } catch {
+    // A user agent that exposes the object but rejects the value is not a reason
+    // to refuse the dictation — it only loses the background guarantee.
+    return false;
+  }
+}
+
 export async function startWavRecording(
   options: WavRecordingOptions = {},
 ): Promise<WavRecording> {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error('Microphone recording is unavailable on this device');
   }
+
+  // Claimed BEFORE capture starts, inside the tap's own gesture window, so the
+  // session type is already in force when the app is backgrounded a second later.
+  const heldAudioSession = claimAudioSession('play-and-record');
+  const releaseAudioSession = () => {
+    if (heldAudioSession) claimAudioSession('auto');
+  };
 
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
@@ -151,14 +199,16 @@ export async function startWavRecording(
   if (context.state !== 'running') {
     for (const track of stream.getTracks()) track.stop();
     await context.close();
+    releaseAudioSession();
     throw new Error('Microphone could not start — tap the mic again');
   }
 
   // Interruption is SILENT: the context is suspended, or the track goes muted
   // when another app grabs the mic. No error, no event on the recorder — capture
   // just stops while the UI still says "Listening…". These are the only signals
-  // that it happened. With the `audio` background mode in place they should no
-  // longer fire merely because the app left the foreground.
+  // that it happened. With the `audio` background mode AND the `play-and-record`
+  // session in place they no longer fire merely because the app left the
+  // foreground.
   let interrupted = false;
   const interrupt = (reason: string) => {
     if (interrupted || closed) return;
@@ -184,6 +234,7 @@ export async function startWavRecording(
     silentOutput.disconnect();
     for (const track of stream.getTracks()) track.stop();
     await context.close();
+    releaseAudioSession();
   };
 
   return {

@@ -716,27 +716,39 @@
      [cfg
       (or (config/load-config) {})
 
-      requested-provider
-      (some-> (:default-provider cfg)
-              keyword)
+     requested
+     (some-> (:default-model cfg)
+             str
+             str/trim
+             not-empty)
 
-      selected-provider
-      (or (some #(when (= requested-provider (:id %)) %) fleet) (first fleet))
+     ;; `default_model` accepts the same `provider/model` form as `--model`, and
+     ;; its provider part wins — the pair must resolve identically here and in
+     ;; `loop/honor-config-primary!`, or the picker and the router disagree.
+     slash
+     (when requested
+       (when-let [idx (str/index-of requested "/")]
+         (let [idx (long idx)]
+           [(keyword (subs requested 0 idx)) (not-empty (subs requested (inc idx)))])))
 
-      model-names
-      (into []
-            (keep #(some-> (config/model-name %)
-                           str
-                           not-empty))
-            (:models selected-provider))
+     requested-provider
+     (or (first slash) (some-> (:default-provider cfg) keyword))
 
-      requested-model
-      (some-> (:default-model cfg)
-              str
-              not-empty)
+     selected-provider
+     (or (some #(when (= requested-provider (:id %)) %) fleet) (first fleet))
 
-      selected-model
-      (if (some #{requested-model} model-names) requested-model (first model-names))]
+     model-names
+     (into []
+           (keep #(some-> (config/model-name %)
+                          str
+                          not-empty))
+           (:models selected-provider))
+
+     requested-model
+     (if slash (second slash) requested)
+
+     selected-model
+     (if (some #{requested-model} model-names) requested-model (first model-names))]
 
      (when (and selected-provider selected-model)
        {:provider-id (:id selected-provider) :model selected-model}))))

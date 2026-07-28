@@ -2585,7 +2585,34 @@
                      :default-model "claude-fable-5"
                      :providers [{:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}]
 
-            (expect (= router (f router config))))))))
+            (expect (= router (f router config)))))
+      (it "a resolvable provider still wins when the model name does not match its catalog"
+          (let
+            [router {:providers [{:id :zai-coding-plan :models [{:name "glm-5.2"} {:name "glm-4.7"}]}
+                                 {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}
+             config {:default-provider "anthropic-coding-plan"
+                     :default-model "typo-model"
+                     :providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}
+                                 {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}
+             routed (f router config)]
+
+            (expect (= :anthropic-coding-plan (:id (first (:providers routed)))))
+            (expect (= "claude-fable-5" (:root (first (:providers routed)))))))
+      (it "default_model accepts the provider/model form and its provider wins"
+          (let
+            [router {:providers [{:id :zai-coding-plan :models [{:name "glm-5.2"} {:name "glm-4.7"}]}
+                                 {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}
+             config {:default-provider "anthropic-coding-plan"
+                     :default-model "zai-coding-plan/glm-4.7"
+                     :providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}
+                                 {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]}
+             routed (f router config)
+             p (first (:providers routed))]
+
+            (expect (= :zai-coding-plan (:id p)))
+            (expect (= "glm-4.7" (:root p)))
+            (expect (= ["glm-4.7" "glm-5.2"] (mapv :name (:models p))))
+            (expect (= "glm-4.7" (:name (lp/resolve-effective-model routed)))))))))
 
 (defdescribe
   router-for-model-test

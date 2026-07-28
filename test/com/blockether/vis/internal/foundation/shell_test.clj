@@ -602,7 +602,7 @@
          (render-shell-logs-result
            {"id" "srv" "status" "running" "lines" ["ready"] "line_count" 1 "uptime_ms" 1500})]
 
-        (expect (str/includes? (:summary bg) "⚙ background `srv` running · pid 123"))
+        (expect (str/includes? (:summary bg) "▸ background `srv` running · pid 123"))
         (expect (str/includes? (:body bg) "**COMMAND**"))
         (expect (str/includes? (:summary logs) "◷ `srv` running · 1 lines · 1.5s"))
         (expect (str/includes? (:body logs) "**LOGS**"))))

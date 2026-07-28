@@ -449,12 +449,24 @@
    'Vis is running: …' the originating channel shows — not a bare post-connect
    tail.
 
+   A cursor ABOVE the session's high-water is treated EXACTLY like the sentinel.
+   A client's cursor is a monotonic max it keeps across reconnects, while the
+   gateway's counter is per-process: a restarted daemon (or any entry seeded at
+   zero) numbers BELOW what the app already saw, and then every frame of the new
+   turn fails both the `seq > cursor` replay filter and the per-connection
+   dedup guard — a connected, heartbeating stream that silently delivers
+   NOTHING for that session until the app is killed. Clamping here heals the
+   resume in one place: the client learns the real cursor from the
+   `subscription.ready` echo, so it recovers on the very next reconnect.
+
    Shared by BOTH event endpoints so `/v1/events?sids=…` and
    `/v1/sessions/:sid/events` resolve a cursor identically."
   ^long [sid requested]
-  (if (neg? (long requested))
-    (long (or (state/running-turn-start-cursor sid) (state/current-seq sid)))
-    (long requested)))
+  (let [requested (long requested)
+        current (long (state/current-seq sid))]
+    (if (or (neg? requested) (> requested current))
+      (long (or (state/running-turn-start-cursor sid) current))
+      requested)))
 
 (defn- sse-ready!
   "Write the `subscription.ready` control frame for one subscribed session,

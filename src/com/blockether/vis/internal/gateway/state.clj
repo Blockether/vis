@@ -529,7 +529,9 @@
    name degrades to the default order). Channel-agnostic: web + TUI + embedded
    callers all set it here, persisted in the DB and shared across channels."
   [sid provider model]
-  (swap! registry update sid #(assoc (or % {:next-seq 0}) :last-active (System/currentTimeMillis)))
+  ;; `fresh-entry`, never a bare zero: an entry seeded at 0 restarts the seq
+  ;; counter below a live client's cursor and silently kills its stream.
+  (swap! registry update sid #(assoc (or % (fresh-entry sid)) :last-active (System/currentTimeMillis)))
   (let
     [label
      #(cond (nil? %) nil
@@ -2786,7 +2788,11 @@
       (swap! registry update
         sid
         (fn [entry]
-          (let [entry (or entry {:next-seq 0})]
+          ;; Seed via `fresh-entry` (journal high-water), never `{:next-seq 0}`:
+          ;; a submit is often the FIRST touch of a session after a daemon
+          ;; restart, and zero would renumber under every attached client's
+          ;; cursor — their streams would go silent for the whole new turn.
+          (let [entry (or entry (fresh-entry sid))]
             (cond (and idempotency-key (get-in entry [:idempotency idempotency-key]))
                   (do (vreset! decision [:idempotent (get-in entry [:idempotency idempotency-key])])
                       entry)

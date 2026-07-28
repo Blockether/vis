@@ -904,3 +904,23 @@
              (is (= "ok" (slurp (str "http://127.0.0.1:" port "/"))))
              (finally (.stop ^org.eclipse.jetty.server.Server server))))
       (is (nil? (non-loopback-ipv4)) "no non-loopback interface here; nothing to mirror"))))
+
+(deftest sse-cursor-clamps-a-client-ahead-of-the-gateway-counter
+  ;; A client keeps its replay cursor as a monotonic max across reconnects, but
+  ;; the gateway's seq counter is per-process: a restarted daemon (or a session
+  ;; entry seeded at zero) numbers BELOW what the app already saw. Serving that
+  ;; stale cursor verbatim seeds the connection's `seq > last-seq` dedup guard
+  ;; above every frame the next turn will ever emit — a connected, heartbeating
+  ;; stream that silently delivers NOTHING until the app is killed.
+  (let [resolve-cursor (rv 'resolve-sse-cursor)
+        registry @(ns-resolve 'com.blockether.vis.internal.gateway.state 'registry)
+        sid (java.util.UUID/randomUUID)]
+    (swap! registry assoc sid {:next-seq 12})
+    (try
+      (testing "a cursor past the high-water resolves to the live tail"
+        (is (= 12 (resolve-cursor sid 5000))))
+      (testing "an in-range cursor is honoured verbatim"
+        (is (= 5 (resolve-cursor sid 5))))
+      (testing "the negative live-only sentinel is unchanged"
+        (is (= 12 (resolve-cursor sid -1))))
+      (finally (swap! registry dissoc sid)))))
