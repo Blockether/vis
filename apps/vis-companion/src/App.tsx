@@ -612,13 +612,20 @@ export function App() {
             await refresh();
           }}
           onSelectAddress={async (url, pinned) => {
+            // The dialog's target and the active pointer must flip on ONE commit.
+            // Moving the target onto the new address first left `isActive` false
+            // for a render, blinking a "Use this machine" button at the machine
+            // the app is already on, mid address switch.
+            const wasActive = settingsTarget.url === active?.url;
             if (url !== settingsTarget.url) {
               const named =
                 Boolean(settingsTarget.label) && settingsTarget.label !== hostOf(settingsTarget.url);
               await switchConnectionUrl(settingsTarget.url, url, named ? {} : { label: hostOf(url) });
             }
             const saved = await upsertConnection({ url, pinned });
-            setSettingsTarget(saved.find((c) => c.url === url) ?? { ...settingsTarget, url, pinned });
+            const next = saved.find((c) => c.url === url) ?? { ...settingsTarget, url, pinned };
+            setSettingsTarget(next);
+            if (wasActive) setActive(next);
             await refresh();
           }}
           onClose={() => setSettingsTarget(null)}

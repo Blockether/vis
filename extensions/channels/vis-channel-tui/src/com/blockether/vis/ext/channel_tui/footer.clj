@@ -498,7 +498,8 @@
      :zai-coding-plan-7d
      2
 
-     3) (if (lfmt/generic-limit-has-signal? row) 0 1) (or (:label row) (name (:id row)))])
+     3) (if (lfmt/generic-limit-has-signal? row) 0 1) (lfmt/limit-row-pressure row)
+   (or (:label row) (name (:id row)))])
 
 (defn- generic-limits-footer-text
   "Footer-left text for the limits row. Returns either:

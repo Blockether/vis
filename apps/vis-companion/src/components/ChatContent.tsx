@@ -296,8 +296,9 @@ const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
   frameless?: boolean;
 }) {
   const gutter = splitGutter(value);
-  const source = gutter ? gutter.code : value;
-  const lines = segmentsToLines(highlightSegments(source, language));
+  const marks = extractMarks(gutter ? gutter.code : value);
+  const source = marks.text;
+  const lines = segmentsToLines(applyMarks(highlightSegments(source, language), marks.ranges));
 
   return (
     <div
@@ -365,6 +366,11 @@ export const Markdown = memo(function Markdown({
               {quote}
             </blockquote>
           ),
+          code: ({ children: inline }) => (
+            <code className="mx-px inline rounded-none bg-result-path px-0.5 py-px font-mono font-medium text-result-path-foreground">
+              {inline}
+            </code>
+          ),
           h1: ({ children: heading }) => (
             <h1 className={`${compact ? 'mb-1.5 mt-4 text-subhead' : 'mb-2 mt-6 text-head'} border-b-2 border-answer-edge pb-1 font-semibold tracking-[-0.015em] text-heading-1`}>
               {heading}
@@ -407,7 +413,7 @@ export const Markdown = memo(function Markdown({
             const raw = extractText(codeNode).replace(/\n$/, '');
             const language = codeLanguage(codeNode);
             if (language === 'diff' || language === 'patch' || language === 'udiff') {
-              return <DiffBlock value={raw} compact={compact} frameless={nested} />;
+              return <DiffBlock value={stripMarks(raw)} compact={compact} frameless={nested} />;
             }
             return <SyntaxCodeBlock value={raw} language={language} compact={compact} frameless={nested} />;
           },
@@ -453,6 +459,78 @@ function jsonText(value: JsonValue | unknown): string {
 
 function stripAnsi(value: string): string {
   return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
+}
+
+// The engine paints grep needles with reverse video (`ESC[7m … ESC[27m`), exactly
+// like the TUI. Markdown cannot carry SGR, so the pair is rewritten into private-use
+// sentinels that survive fence parsing and are turned back into a highlighted span
+// by the code renderer (and dropped everywhere else).
+const MARK_OPEN = '\u0091';
+const MARK_CLOSE = '\u0092';
+const MARK_SENTINELS = /[\u0091\u0092]/g;
+const MARK_CLASS = 'bg-accent text-accent-foreground';
+
+function markAnsiHighlights(value: string): string {
+  const marked = value.replace(MARK_SENTINELS, '').replace(/\u001b\[([0-9;]*)m/g, (match, params: string) => {
+    const codes = params === '' ? ['0'] : params.split(';');
+    if (codes.includes('7')) return MARK_OPEN;
+    if (codes.includes('27') || codes.includes('0')) return MARK_CLOSE;
+    return match;
+  });
+  return stripAnsi(marked);
+}
+
+function stripMarks(value: string): string {
+  return value.replace(MARK_SENTINELS, '');
+}
+
+// Pull the sentinels back out, leaving clean text plus the [from, to) offsets that
+// were highlighted — so Prism only ever sees real source.
+function extractMarks(value: string): { text: string; ranges: [number, number][] } {
+  if (!value.includes(MARK_OPEN) && !value.includes(MARK_CLOSE)) return { text: value, ranges: [] };
+  const ranges: [number, number][] = [];
+  let text = '';
+  let open: number | null = null;
+  for (const char of value) {
+    if (char === MARK_OPEN) {
+      if (open == null) open = text.length;
+      continue;
+    }
+    if (char === MARK_CLOSE) {
+      if (open != null && text.length > open) ranges.push([open, text.length]);
+      open = null;
+      continue;
+    }
+    text += char;
+  }
+  if (open != null && text.length > open) ranges.push([open, text.length]);
+  return { text, ranges };
+}
+
+// Re-cut syntax segments so every highlighted range becomes its own segment; the
+// match class replaces the token class outright (reverse video wins, like the TUI).
+function applyMarks(segments: SyntaxSegment[], ranges: [number, number][]): SyntaxSegment[] {
+  if (ranges.length === 0) return segments;
+  const out: SyntaxSegment[] = [];
+  let offset = 0;
+  for (const segment of segments) {
+    const start = offset;
+    const end = start + segment.text.length;
+    offset = end;
+    let cursor = start;
+    for (const [from, to] of ranges) {
+      if (to <= cursor || from >= end) continue;
+      const hitFrom = Math.max(from, cursor);
+      const hitTo = Math.min(to, end);
+      if (hitFrom > cursor) {
+        out.push({ text: segment.text.slice(cursor - start, hitFrom - start), className: segment.className });
+      }
+      out.push({ text: segment.text.slice(hitFrom - start, hitTo - start), className: MARK_CLASS });
+      cursor = hitTo;
+    }
+    if (cursor < end) out.push({ text: segment.text.slice(cursor - start), className: segment.className });
+  }
+  return out;
 }
 
 function formatDuration(value?: number): string | null {
@@ -550,7 +628,7 @@ function toolRole(role?: string): { border: string; text: string } {
 function resultBody(form: TranscriptForm): string {
   if (form.error != null) return jsonText(form.error);
   const rendered = form.result_render?.trimEnd();
-  if (rendered) return stripAnsi(rendered);
+  if (rendered) return markAnsiHighlights(rendered);
   if (form.result_summary?.trim()) return '';
   if (form.result == null || form.result === '') return '';
   const raw = jsonText(form.result);

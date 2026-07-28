@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Banner, Button, DialogFrame, Input } from '../components/ui';
 import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -22,6 +22,13 @@ const SESSION_LIST_EVENTS = new Set([
 // skipped — the list froze until the app was restarted. Anything older than
 // this is treated as lost.
 const STALE_POLL_MS = 20_000;
+
+// Every session row is a snap-scrolling swipe container: mounting a 400-session
+// fleet means 400 of them, and that layout — not the request — is the lag between
+// tapping Sessions and seeing the list. The rows are already in memory, so only
+// the DOM is rationed: paint a screenful, grow while scrolling.
+const ROW_WINDOW = 24;
+const ROW_WINDOW_STEP = 40;
 
 
 interface Props {
@@ -298,7 +305,35 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
     }
   }
 
-  const groups = groupByProject(visible ?? []);
+  const [windowSize, setWindowSize] = useState(ROW_WINDOW);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // A new filter — or a new gateway — is a new list: start from one screenful.
+  useEffect(() => {
+    setWindowSize(ROW_WINDOW);
+  }, [deferredQuery, activeKey]);
+
+  const allGroups = useMemo(() => groupByProject(visible ?? []), [visible]);
+  const groups = useMemo(() => windowGroups(allGroups, windowSize), [allGroups, windowSize]);
+  const hasMoreRows = (visible?.length ?? 0) > windowSize;
+
+  // Re-observed on every growth step: the sentinel that is still on screen after
+  // a grow reports no NEW intersection, so a single observer would stall halfway.
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    const viewport = listRef.current;
+    if (!sentinel || !viewport || !hasMoreRows) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setWindowSize((current) => current + ROW_WINDOW_STEP);
+        }
+      },
+      { root: viewport, rootMargin: '600px 0px' },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMoreRows, windowSize]);
 
   // A dead gateway is not a sessions problem: there is nothing to navigate, so the
   // shell drops us on the Machines screen instead of rendering a session list
@@ -435,6 +470,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
                 onDelete={startDelete}
               />
             ))}
+            {hasMoreRows && <div ref={sentinelRef} className="h-16" aria-hidden="true" />}
           </div>
         )}
         </div>
@@ -513,7 +549,9 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
   );
 }
 
-function ProjectGroup({
+// Memoised: a 5.5s poll that changes nothing returns the SAME row objects
+// (`reconcileSessions`), so an unchanged group must not re-render its rows.
+const ProjectGroup = memo(function ProjectGroup({
   project,
   sessions,
   conn,
@@ -576,9 +614,9 @@ function ProjectGroup({
       </div>
     </section>
   );
-}
+});
 
-function SessionRow({
+const SessionRow = memo(function SessionRow({
   session,
   conn,
   subscribed,
@@ -674,7 +712,7 @@ function SessionRow({
       {match && <MatchPreview match={match} needle={needle} />}
     </div>
   );
-}
+});
 
 function NavigatorSkeleton() {
   return (
@@ -794,6 +832,21 @@ function sessionSearchText(session: Session): string {
     .filter(Boolean)
     .join(' ')
     .toLowerCase();
+}
+
+/** The first `limit` rows of the grouped list, with group boundaries intact. */
+function windowGroups(
+  groups: Array<[string, Session[]]>,
+  limit: number,
+): Array<[string, Session[]]> {
+  const windowed: Array<[string, Session[]]> = [];
+  let remaining = limit;
+  for (const [project, sessions] of groups) {
+    if (remaining <= 0) break;
+    windowed.push(sessions.length <= remaining ? [project, sessions] : [project, sessions.slice(0, remaining)]);
+    remaining -= sessions.length;
+  }
+  return windowed;
 }
 
 function groupByProject(sessions: Session[]): Array<[string, Session[]]> {

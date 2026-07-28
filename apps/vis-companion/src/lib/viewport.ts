@@ -1,9 +1,36 @@
 import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { App } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
+import type { PluginListenerHandle } from '@capacitor/core';
+import { Keyboard } from '@capacitor/keyboard';
+import type { KeyboardInfo } from '@capacitor/keyboard';
 
 /** Shrink (px) that counts as the keyboard — not a toolbar rounding wobble. */
 const COVERED_EPSILON = 12;
+
+/**
+ * iOS animates its keyboard over 0.25s on UIKit's own curve, and
+ * `keyboardWillShow` fires BEFORE that animation starts. Driving the shell with
+ * the same duration and curve, in the frame that event arrives, makes the shell
+ * and the keyboard one movement — instead of the web layer chasing
+ * `visualViewport`, which iOS delivers late and in two or three coarse steps.
+ */
+const KEYBOARD_ANIMATION_MS = 250;
+const KEYBOARD_EASING = 'cubic-bezier(0.17, 0.59, 0.4, 0.77)';
+
+/** `input` types that never raise a keyboard. */
+const NON_TEXT_INPUT_TYPES = new Set([
+  'button',
+  'checkbox',
+  'color',
+  'file',
+  'image',
+  'radio',
+  'range',
+  'reset',
+  'submit',
+]);
 
 /**
  * Re-measure schedule after a wake (backgrounded app, tab switch, bfcache
@@ -267,14 +294,36 @@ export function useIsViewportRotating(): boolean {
  * while the keyboard covers the home indicator, so a footer does not reserve a
  * dead band above the keyboard.
  */
+// The height the shell is currently pinned to, or null when it is the plain
+// `h-dvh` box. With the native keyboard driver the webview is NOT resized
+// (`resize: 'none'`), so `visualViewport.height` no longer reports the
+// keyboard: anything that needs to know "did the shell just change size?" has
+// to ask here instead of measuring the visual viewport.
+let pinnedShellHeight: number | null = null;
+
+/** The shell's current height in CSS pixels, keyboard pin included. */
+export function shellViewportHeight(): number {
+  return pinnedShellHeight ?? window.visualViewport?.height ?? window.innerHeight;
+}
+
 export function useVisualViewportShell(): CSSProperties | undefined {
   const [box, setBox] = useState<Box | null>(null);
+  // True only while the native keyboard animation is running, so the pin
+  // transitions with the keyboard and snaps for everything else (rotation,
+  // wake, a toolbar appearing).
+  const [animating, setAnimating] = useState(false);
 
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
 
     let frame = 0;
+    // iOS only: Android resizes the webview itself, so `visualViewport` already
+    // tells the whole truth there and a second driver would subtract the
+    // keyboard twice.
+    const nativeKeyboard = Capacitor.getPlatform() === 'ios';
+    // Set while the native driver owns the box.
+    let keyboardPinned = false;
     let timers: number[] = [];
     const clearTimers = () => {
       for (const t of timers) window.clearTimeout(t);
@@ -284,6 +333,10 @@ export function useVisualViewportShell(): CSSProperties | undefined {
     const sync = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
+        // The native keyboard driver owns the box while the keyboard is up: with
+        // `resize: 'none'` the webview keeps its full size, so `visualViewport`
+        // reports no keyboard at all and this would drop the pin mid-animation.
+        if (keyboardPinned) return;
         // A suspended/hidden webview reports whatever it froze at; recording it
         // would outlive the state it described.
         if (document.visibilityState === 'hidden') return;
@@ -315,6 +368,7 @@ export function useVisualViewportShell(): CSSProperties | undefined {
         const top = Math.round(vv.offsetTop + layoutScroll());
         const next: Box | null =
           vv.height > 0 && (covered || top > 1) ? { height: Math.round(vv.height), top } : null;
+        pinnedShellHeight = next ? next.height : null;
         setBox((prev) =>
           prev && next && prev.height === next.height && prev.top === next.top ? prev : next,
         );
@@ -347,8 +401,13 @@ export function useVisualViewportShell(): CSSProperties | undefined {
       const isField =
         tag === 'TEXTAREA' ||
         el.isContentEditable ||
-        (tag === 'INPUT' && !/^(button|checkbox|radio|submit|reset|file|range|color)$/i.test((el as HTMLInputElement).type));
+        (tag === 'INPUT' &&
+          !NON_TEXT_INPUT_TYPES.has((el as HTMLInputElement).type.toLowerCase()));
       if (!isField) return;
+      // Native iOS: `keyboardWillShow` pins the shell and WKWebView's own
+      // scroll-to-reveal is disabled, so the field is already inside the visible
+      // box. Measuring here would only fight the running animation.
+      if (nativeKeyboard) return;
       resync();
       timers.push(
         window.setTimeout(() => {
@@ -384,6 +443,70 @@ export function useVisualViewportShell(): CSSProperties | undefined {
       else sync();
     });
 
+    // Native iOS keyboard: one movement, on the OS's own timings.
+    //
+    // `visualViewport` is the only keyboard signal the web layer has, and on iOS
+    // it arrives late and in coarse steps — the shell lands after the keyboard,
+    // in two or three visible hops, going up and coming back down. The Capacitor
+    // Keyboard plugin reports `keyboardWillShow` with the final height BEFORE
+    // UIKit starts animating, so the shell can cover the same distance over the
+    // same curve and the two move together.
+    //
+    // `resize: 'none'` (capacitor.config.mts) keeps WKWebView at full size so
+    // nothing resizes the webview underneath that animation, and `setScroll`
+    // turns off the native scroll-to-reveal that used to drag the whole fixed
+    // shell up by the layout viewport's scroll offset — the second jump.
+    let disposeKeyboard = () => {};
+    if (nativeKeyboard) {
+      const subs: Promise<PluginListenerHandle>[] = [];
+      const pin = (height: number) => {
+        clearTimers();
+        cancelAnimationFrame(frame);
+        setAnimating(true);
+        const next = { height: Math.max(0, Math.round(height)), top: 0 };
+        pinnedShellHeight = next.height;
+        setBox((prev) =>
+          prev && prev.height === next.height && prev.top === next.top ? prev : next,
+        );
+      };
+      const onWillShow = (info: KeyboardInfo) => {
+        keyboardPinned = true;
+        document.documentElement.style.setProperty('--safe-bottom', '0px');
+        pin(window.innerHeight - info.keyboardHeight);
+      };
+      const onWillHide = () => {
+        document.documentElement.style.setProperty(
+          '--safe-bottom',
+          'env(safe-area-inset-bottom)',
+        );
+        pin(window.innerHeight);
+      };
+      const onDidShow = () => setAnimating(false);
+      const onDidHide = () => {
+        keyboardPinned = false;
+        setAnimating(false);
+        // Back to the plain `h-dvh` box: same height the animation just reached,
+        // so dropping the pin is invisible.
+        pinnedShellHeight = null;
+        setBox(null);
+        sync();
+      };
+      try {
+        subs.push(
+          Keyboard.addListener('keyboardWillShow', onWillShow),
+          Keyboard.addListener('keyboardWillHide', onWillHide),
+          Keyboard.addListener('keyboardDidShow', onDidShow),
+          Keyboard.addListener('keyboardDidHide', onDidHide),
+        );
+        void Keyboard.setScroll({ isDisabled: true }).catch(() => undefined);
+      } catch {
+        /* plugin unavailable */
+      }
+      disposeKeyboard = () => {
+        for (const sub of subs) void sub.then((handle) => handle.remove()).catch(() => undefined);
+      };
+    }
+
     // Native resume: Capacitor fires this on iOS/Android even when the webview
     // emits no viewport event at all. No-op on the web build.
     let disposeNative = () => {};
@@ -410,8 +533,16 @@ export function useVisualViewportShell(): CSSProperties | undefined {
       window.removeEventListener('scroll', sync, true);
       stopRotation();
       disposeNative();
+      disposeKeyboard();
     };
   }, []);
 
-  return box ? { height: `${box.height}px`, transform: `translateY(${box.top}px)` } : undefined;
+  if (!box) return undefined;
+  const style: CSSProperties = {
+    height: `${box.height}px`,
+    transform: `translateY(${box.top}px)`,
+  };
+  if (!animating) return style;
+  const curve = `${KEYBOARD_ANIMATION_MS}ms ${KEYBOARD_EASING}`;
+  return { ...style, transition: `height ${curve}, transform ${curve}` };
 }

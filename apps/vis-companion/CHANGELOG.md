@@ -2,6 +2,11 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 1.0.1 (2715) — 2026-07-28
+<!-- commit: f6a109f89d8ef4cd0fa884034d259e0974882d6a -->
+
+- Labelled ntr recovery, image optimization at ingest, companion back/paste/perf
+
 ## 1.0.1 (2713) — 2026-07-28
 <!-- commit: 1c2478678779fb1647676e015e388b2554d1247a -->
 

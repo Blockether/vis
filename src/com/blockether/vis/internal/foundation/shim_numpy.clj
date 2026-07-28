@@ -284,6 +284,16 @@ def __vis_install_numpy__():
             return _mk([_cast(v, dn) for v in flat], shape, dn)
         if hasattr(obj, '__array__'):
             return _asarray(obj.__array__(), dtype)
+        _tl = getattr(obj, 'tolist', None) or getattr(obj, 'to_list', None)
+        if callable(_tl):
+            return _asarray(_tl(), dtype)
+        _vals = getattr(obj, 'values', None)
+        if _vals is not None and _is_seq(_vals):
+            return _asarray(_vals, dtype)
+        if isinstance(obj, (range, set, frozenset)):
+            return _asarray(list(obj), dtype)
+        if hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, dict)):
+            return _asarray(list(obj), dtype)
         dn = _dtype_name(dtype) if dtype is not None else _values_dtype([obj])
         return _mk([_cast(obj, dn)], (), dn)
 
@@ -1691,6 +1701,152 @@ def __vis_install_numpy__():
                     M[r][c] = M[r][c] - f * M[col][c]
         return M, perm, det_sign
 
+    def _rows(a):
+        A = _asarray(a)
+        if len(A._shape) == 1:
+            return [[float(x) for x in A._d]]
+        n, m = A._shape
+        return [[float(A._d[i * m + j]) for j in range(m)] for i in range(n)]
+
+    def _rows_arr(rows):
+        n = len(rows)
+        m = len(rows[0]) if n else 0
+        return _mk([float(x) for row in rows for x in row], (n, m), _FLOAT)
+
+    def _rows_T(A):
+        if not A:
+            return []
+        return [[A[i][j] for i in range(len(A))] for j in range(len(A[0]))]
+
+    def _rows_mm(A, B):
+        n = len(A)
+        k = len(B)
+        m = len(B[0]) if k else 0
+        out = [[0.0] * m for _ in range(n)]
+        for i in range(n):
+            Ai = A[i]
+            Oi = out[i]
+            for t in range(k):
+                av = Ai[t]
+                if av == 0.0:
+                    continue
+                Bt = B[t]
+                for j in range(m):
+                    Oi[j] = Oi[j] + av * Bt[j]
+        return out
+
+    def _rows_symmetric(A):
+        n = len(A)
+        if n == 0 or len(A[0]) != n:
+            return False
+        for i in range(n):
+            for j in range(i + 1, n):
+                if abs(A[i][j] - A[j][i]) > 1e-9 * (1.0 + abs(A[i][j])):
+                    return False
+        return True
+
+    def _rows_qr(A):
+        # Modified Gram-Schmidt: returns (Q rows n x m, R rows m x m).
+        n = len(A)
+        m = len(A[0]) if n else 0
+        cols = _rows_T(A)
+        Q = []
+        R = [[0.0] * m for _ in range(m)]
+        for j in range(m):
+            v = [float(x) for x in cols[j]]
+            for i in range(len(Q)):
+                sdot = _bi.sum(Q[i][k] * v[k] for k in range(n))
+                R[i][j] = sdot
+                v = [v[k] - sdot * Q[i][k] for k in range(n)]
+            nrm = math.sqrt(_bi.sum(x * x for x in v))
+            if nrm > 1e-13:
+                R[j][j] = nrm
+                Q.append([x / nrm for x in v])
+            else:
+                R[j][j] = 0.0
+                Q.append([0.0] * n)
+        return _rows_T(Q), R
+
+    def _rows_jacobi(A):
+        # Cyclic Jacobi eigensolver for a symmetric matrix.
+        # Returns (eigenvalues, eigenvector columns as rows of V).
+        n = len(A)
+        a = [[float(x) for x in row] for row in A]
+        V = [[1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
+        for _sweep in range(120):
+            off = 0.0
+            for i in range(n):
+                for j in range(i + 1, n):
+                    off = off + a[i][j] * a[i][j]
+            if off < 1e-26:
+                break
+            for pp in range(n):
+                for qq in range(pp + 1, n):
+                    if abs(a[pp][qq]) < 1e-18:
+                        continue
+                    theta = (a[qq][qq] - a[pp][pp]) / (2.0 * a[pp][qq])
+                    sgn = 1.0 if theta >= 0.0 else -1.0
+                    tt = sgn / (abs(theta) + math.sqrt(theta * theta + 1.0))
+                    c = 1.0 / math.sqrt(tt * tt + 1.0)
+                    sn = tt * c
+                    for k in range(n):
+                        akp = a[k][pp]
+                        akq = a[k][qq]
+                        a[k][pp] = c * akp - sn * akq
+                        a[k][qq] = sn * akp + c * akq
+                    for k in range(n):
+                        apk = a[pp][k]
+                        aqk = a[qq][k]
+                        a[pp][k] = c * apk - sn * aqk
+                        a[qq][k] = sn * apk + c * aqk
+                    for k in range(n):
+                        vkp = V[k][pp]
+                        vkq = V[k][qq]
+                        V[k][pp] = c * vkp - sn * vkq
+                        V[k][qq] = sn * vkp + c * vkq
+        return [a[i][i] for i in range(n)], V
+
+    def _rows_nullvec(M):
+        # Unit vector spanning the null space of a (nearly) singular square M.
+        n = len(M)
+        A = [[float(x) for x in row] for row in M]
+        piv_cols = []
+        r = 0
+        for c in range(n):
+            p = None
+            best = 1e-9
+            for i in range(r, n):
+                if abs(A[i][c]) > best:
+                    best = abs(A[i][c])
+                    p = i
+            if p is None:
+                continue
+            A[r], A[p] = A[p], A[r]
+            d = A[r][c]
+            A[r] = [x / d for x in A[r]]
+            for i in range(n):
+                if i != r:
+                    f = A[i][c]
+                    if f != 0.0:
+                        A[i] = [x - f * y for x, y in zip(A[i], A[r])]
+            piv_cols.append(c)
+            r = r + 1
+            if r == n:
+                break
+        free = [c for c in range(n) if c not in piv_cols]
+        v = [0.0] * n
+        if not free:
+            v[n - 1] = 1.0
+            return v
+        fc = free[0]
+        v[fc] = 1.0
+        for k, c in enumerate(piv_cols):
+            v[c] = -A[k][fc]
+        nrm = math.sqrt(_bi.sum(x * x for x in v))
+        if nrm > 0.0:
+            v = [x / nrm for x in v]
+        return v
+
     class _LinAlg:
         def norm(self, a, ord=None):
             A = _asarray(a)
@@ -1767,12 +1923,220 @@ def __vis_install_numpy__():
                         M[r] = [a - f * b for a, b in zip(M[r], M[rank])]
                 rank = rank + 1
             return rank
+        def eigh(self, a, UPLO='L'):
+            A = _rows(a)
+            vals, V = _rows_jacobi(A)
+            order = sorted(range(len(vals)), key=lambda i: vals[i])
+            ev = [vals[i] for i in order]
+            vecs = [[V[r][i] for i in order] for r in range(len(V))]
+            return _mk([float(x) for x in ev], (len(ev),), _FLOAT), _rows_arr(vecs)
+        def eigvalsh(self, a, UPLO='L'):
+            return self.eigh(a)[0]
+        def _qr_eigvals(self, A):
+            n = len(A)
+            M = [[float(x) for x in row] for row in A]
+            for _it in range(500):
+                shift = M[n - 1][n - 1]
+                S = [[M[i][j] - (shift if i == j else 0.0) for j in range(n)] for i in range(n)]
+                Q, R = _rows_qr(S)
+                M = _rows_mm(R, Q)
+                for i in range(n):
+                    M[i][i] = M[i][i] + shift
+                off = 0.0
+                for i in range(1, n):
+                    for j in range(i):
+                        off = off + abs(M[i][j])
+                if off < 1e-11:
+                    break
+            return sorted([M[i][i] for i in range(n)], reverse=True)
+        def eig(self, a):
+            A = _rows(a)
+            n = len(A)
+            if _rows_symmetric(A):
+                vals, vecs = self.eigh(A)
+                return vals, vecs
+            vals = self._qr_eigvals(A)
+            cols = []
+            for lam in vals:
+                cols.append(_rows_nullvec([[A[i][j] - (lam if i == j else 0.0) for j in range(n)] for i in range(n)]))
+            return _mk([float(x) for x in vals], (n,), _FLOAT), _rows_arr(_rows_T(cols))
+        def eigvals(self, a):
+            A = _rows(a)
+            if _rows_symmetric(A):
+                return self.eigvalsh(A)
+            return _mk([float(x) for x in self._qr_eigvals(A)], (len(A),), _FLOAT)
+        def qr(self, a, mode='reduced'):
+            Q, R = _rows_qr(_rows(a))
+            return _rows_arr(Q), _rows_arr(R)
+        def cholesky(self, a):
+            A = _rows(a)
+            n = len(A)
+            L = [[0.0] * n for _ in range(n)]
+            for i in range(n):
+                for j in range(i + 1):
+                    acc = _bi.sum(L[i][k] * L[j][k] for k in range(j))
+                    if i == j:
+                        d = A[i][i] - acc
+                        if d <= 0.0:
+                            raise ValueError('Matrix is not positive definite')
+                        L[i][j] = math.sqrt(d)
+                    else:
+                        L[i][j] = (A[i][j] - acc) / L[j][j]
+            return _rows_arr(L)
+        def svd(self, a, full_matrices=False, compute_uv=True):
+            A = _rows(a)
+            n = len(A)
+            m = len(A[0]) if n else 0
+            B = _rows_mm(_rows_T(A), A)
+            vals, V = _rows_jacobi(B)
+            order = sorted(range(len(vals)), key=lambda i: -vals[i])
+            svals = [math.sqrt(vals[i]) if vals[i] > 0.0 else 0.0 for i in order]
+            Vc = [[V[r][i] for i in order] for r in range(m)]
+            k = _bi.min(n, m)
+            if not compute_uv:
+                return _mk([float(x) for x in svals[:k]], (k,), _FLOAT)
+            Ucols = []
+            for j in range(k):
+                vj = [Vc[r][j] for r in range(m)]
+                av = [_bi.sum(A[i][t] * vj[t] for t in range(m)) for i in range(n)]
+                sv = svals[j]
+                if sv > 1e-13:
+                    Ucols.append([x / sv for x in av])
+                else:
+                    e = [0.0] * n
+                    if j < n:
+                        e[j] = 1.0
+                    Ucols.append(e)
+            Vt = [[Vc[r][j] for r in range(m)] for j in range(k)]
+            return _rows_arr(_rows_T(Ucols)), _mk([float(x) for x in svals[:k]], (k,), _FLOAT), _rows_arr(Vt)
+        def pinv(self, a, rcond=1e-15):
+            U, sv, Vt = self.svd(a)
+            Ur = _rows(U)
+            Vtr = _rows(Vt)
+            svl = [float(x) for x in sv._d]
+            mx = _bi.max(svl) if svl else 0.0
+            inv = [(1.0 / x if (x > 0.0 and x > rcond * mx) else 0.0) for x in svl]
+            V = _rows_T(Vtr)
+            Vs = [[V[i][j] * inv[j] for j in range(len(inv))] for i in range(len(V))]
+            return _rows_arr(_rows_mm(Vs, _rows_T(Ur)))
+        def lstsq(self, a, b, rcond=None):
+            A = _rows(a)
+            B = _asarray(b)
+            one_d = len(B._shape) == 1
+            Br = [[float(x)] for x in B._d] if one_d else _rows(B)
+            X = _rows_mm(_rows(self.pinv(_rows_arr(A))), Br)
+            sol = _mk([row[0] for row in X], (len(X),), _FLOAT) if one_d else _rows_arr(X)
+            return sol, _mk([], (0,), _FLOAT), self.matrix_rank(_rows_arr(A)), self.svd(_rows_arr(A), compute_uv=False)
+        def slogdet(self, a):
+            d = self.det(a)
+            if d == 0.0:
+                return 0.0, float('-inf')
+            return (1.0 if d > 0.0 else -1.0), math.log(abs(d))
 
     linalg = types.ModuleType('numpy.linalg')
     _la = _LinAlg()
-    for _n in ('norm', 'det', 'inv', 'solve', 'matrix_power', 'matrix_rank'):
+    for _n in ('norm', 'det', 'inv', 'solve', 'matrix_power', 'matrix_rank',
+               'eig', 'eigh', 'eigvals', 'eigvalsh', 'svd', 'qr', 'cholesky',
+               'pinv', 'lstsq', 'slogdet'):
         setattr(linalg, _n, getattr(_la, _n))
     mod.linalg = linalg
+
+    # polynomial fitting + covariance/correlation, on top of the linalg core
+    def _cov_rows(m, y=None):
+        M = _asarray(m)
+        rows = [[float(v) for v in M._d]] if len(M._shape) == 1 else _rows(M)
+        if y is not None:
+            Y = _asarray(y)
+            rows = rows + ([[float(v) for v in Y._d]] if len(Y._shape) == 1 else _rows(Y))
+        return rows
+
+    def cov(m, y=None, ddof=1):
+        rows = _cov_rows(m, y)
+        k = len(rows)
+        n = len(rows[0]) if k else 0
+        if n == 0:
+            return 0.0
+        means = [_bi.sum(r) / n for r in rows]
+        den = (n - ddof) if (n - ddof) > 0 else 1
+        out = [[_bi.sum((rows[i][t] - means[i]) * (rows[j][t] - means[j]) for t in range(n)) / den
+                for j in range(k)] for i in range(k)]
+        if k == 1:
+            return out[0][0]
+        return _rows_arr(out)
+
+    def corrcoef(m, y=None):
+        c = cov(m, y)
+        if isinstance(c, float):
+            return 1.0
+        C = _rows(c)
+        k = len(C)
+        out = [[(C[i][j] / math.sqrt(C[i][i] * C[j][j])) if (C[i][i] > 0.0 and C[j][j] > 0.0) else 0.0
+                for j in range(k)] for i in range(k)]
+        return _rows_arr(out)
+
+    def polyfit(x, y, deg):
+        xs = [float(v) for v in _asarray(x)._d]
+        ys = [float(v) for v in _asarray(y)._d]
+        V = [[xv ** (deg - j) for j in range(deg + 1)] for xv in xs]
+        VT = _rows_T(V)
+        A = _rows_mm(VT, V)
+        b = [[_bi.sum(VT[i][k] * ys[k] for k in range(len(ys)))] for i in range(deg + 1)]
+        sol = _rows_mm(_rows(_la.pinv(_rows_arr(A))), b)
+        return _mk([row[0] for row in sol], (deg + 1,), _FLOAT)
+
+    def polyval(p, x):
+        coeffs = [float(v) for v in _asarray(p)._d]
+
+        def _ev(xv):
+            r = 0.0
+            for c in coeffs:
+                r = r * float(xv) + c
+            return r
+        if isinstance(x, (int, float)) and not isinstance(x, bool):
+            return _ev(x)
+        X = _asarray(x)
+        return _mk([_ev(v) for v in X._d], X._shape, _FLOAT)
+
+    def interp(x, xp, fp):
+        XP = [float(v) for v in _asarray(xp)._d]
+        FP = [float(v) for v in _asarray(fp)._d]
+
+        def _one(v):
+            v = float(v)
+            if v <= XP[0]:
+                return FP[0]
+            if v >= XP[-1]:
+                return FP[-1]
+            for i in range(1, len(XP)):
+                if v <= XP[i]:
+                    t = (v - XP[i - 1]) / (XP[i] - XP[i - 1])
+                    return FP[i - 1] + t * (FP[i] - FP[i - 1])
+            return FP[-1]
+        if isinstance(x, (int, float)) and not isinstance(x, bool):
+            return _one(x)
+        X = _asarray(x)
+        return _mk([_one(v) for v in X._d], X._shape, _FLOAT)
+
+    def gradient(a, spacing=1.0):
+        A = _asarray(a)
+        v = [float(x) for x in A._d]
+        n = len(v)
+        h = float(spacing)
+        if n < 2:
+            return _mk([0.0] * n, A._shape, _FLOAT)
+        g = [0.0] * n
+        g[0] = (v[1] - v[0]) / h
+        g[n - 1] = (v[n - 1] - v[n - 2]) / h
+        for i in range(1, n - 1):
+            g[i] = (v[i + 1] - v[i - 1]) / (2.0 * h)
+        return _mk(g, A._shape, _FLOAT)
+
+    mod.cov = cov
+    mod.corrcoef = corrcoef
+    mod.polyfit = polyfit
+    mod.polyval = polyval
+    mod.interp = interp
+    mod.gradient = gradient
 
     random_mod = types.ModuleType('numpy.random')
     _rnd = _Random()

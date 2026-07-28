@@ -10,5 +10,10 @@
     "scheme": "App",
     "scrollEnabled": false,
     "contentInset": "never"
+  },
+  "plugins": {
+    "Keyboard": {
+      "resize": "none"
+    }
   }
 }

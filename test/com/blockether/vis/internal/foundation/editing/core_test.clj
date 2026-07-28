@@ -4246,6 +4246,41 @@
           (expect (string/includes? (str body) "ctx before"))
           (expect (string/includes? (str body) "ctx after"))
           (expect (string/includes? (str body) "hit line"))))
+    (it
+      "overlapping context windows merge into ONE deduplicated, gap-marked block"
+      (let
+        [ctx (fn [ls]
+               (mapv (fn [n]
+                       {"line" n "text" (str "line " n)})
+                     ls))
+         {:keys [body]} (render {"query" "SGR"
+                                 "needles" ["SGR"]
+                                 "hit_count" 3
+                                 "file_count" 1
+                                 "matches" {"src/a.clj" {"48:aaa" {"text" "(def BOLD SGR/BOLD)"
+                                                                   "before" (ctx [46 47])
+                                                                   "after" (ctx [49 50 51])}
+                                                         "50:bbb" {"text" "(def ITALIC SGR/ITALIC)"
+                                                                   "before" (ctx [47 48 49])
+                                                                   "after" (ctx [51 52])}
+                                                         "70:ccc" {"text" "(def LATE SGR/LATE)"
+                                                                   "before" (ctx [68 69])
+                                                                   "after" (ctx [71])}}}})
+         body (str body)
+         occurrences (fn [s]
+                       (count (re-seq (re-pattern (java.util.regex.Pattern/quote s)) body)))]
+
+        ;; Every source line appears EXACTLY once, however many hit windows cover it.
+        (expect (= 1 (occurrences "line 47")))
+        (expect (= 1 (occurrences "line 49")))
+        (expect (= 1 (occurrences "line 51")))
+        ;; A line that is BOTH a match and a neighbour's context keeps its highlight.
+        (expect (= 1 (occurrences "(def BOLD ")))
+        (expect (string/includes? body "\u001B[7mSGR\u001B[0m/BOLD"))
+        ;; Non-adjacent runs are separated, never implied contiguous.
+        (expect (string/includes? body "\u22ef"))
+        (expect (< (string/index-of body "line 52") (string/index-of body "\u22ef")))
+        (expect (< (string/index-of body "\u22ef") (string/index-of body "line 68")))))
     (it "no content hits: ranked file NAMES are the answer and ride the body"
         (let
           [{:keys [summary body]}

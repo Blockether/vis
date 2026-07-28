@@ -450,3 +450,48 @@
               "bc=io.StringIO()\nplt.savefig(bc, format='txt', width=40, height=12, color=True)\nc=bc.getvalue()\n"
               "bp=io.StringIO()\nplt.savefig(bp, format='txt', width=40, height=12)\np=bp.getvalue()\n"
               "(chr(27) in c) and (chr(27) not in p) " "and '│' in p and '└' in p")))))))
+
+(defdescribe
+  matplotlib-explicit-ticks-test
+  (it
+    "xticks/yticks set and read back positions and labels"
+    (with-python-context
+      (expect
+        (true?
+          (ev python-context
+              (str
+                "import matplotlib.pyplot as plt\nplt.clf()\n"
+                "plt.bar([0,1,2],[3,7,2])\n"
+                "plt.xticks([0,1,2], ['a','b','c'])\n"
+                "plt.yticks([0,5,10])\n"
+                "t, l = plt.xticks()\nyt, yl = plt.yticks()\n"
+                "t == [0.0,1.0,2.0] and l == ['a','b','c'] and yt == [0.0,5.0,10.0] and yl == []"))))))
+  (it
+    "Axes.set_xticks/set_xticklabels feed the same state"
+    (with-python-context
+      (expect
+        (true?
+          (ev python-context
+              (str
+                "import matplotlib.pyplot as plt\nplt.clf()\n"
+                "fig, ax = plt.subplots()\n"
+                "ax.bar(range(3), [1,2,3])\n"
+                "ax.set_xticks(range(3))\n"
+                "ax.set_xticklabels(['05.01','12.01','19.01'])\n"
+                "t, l = plt.xticks()\n"
+                "t == [0.0,1.0,2.0] and l == ['05.01','12.01','19.01']"))))))
+  (it
+    "the Java2D renderer draws the explicit labels (PNG differs from the default locator)"
+    (with-python-context
+      (expect
+        (true?
+          (ev python-context
+              (str
+                "import matplotlib.pyplot as plt, io\nplt.clf()\n"
+                "plt.bar([0,1,2],[3,7,2])\n"
+                "a = io.BytesIO()\nplt.savefig(a)\n"
+                "plt.clf()\n"
+                "plt.bar([0,1,2],[3,7,2])\n"
+                "plt.xticks([0,1,2], ['alpha','beta','gamma'])\n"
+                "b = io.BytesIO()\nplt.savefig(b)\n"
+                "len(a.getvalue()) > 0 and a.getvalue() != b.getvalue()")))))))

@@ -633,7 +633,8 @@
 
      label
      (-> (name quota-key)
-         (str/replace #"[_-]" " ")
+         (str/replace "_" " ")
+         (str/replace "-" " ")
          str/capitalize)
 
      raw-remaining

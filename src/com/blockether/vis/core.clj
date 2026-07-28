@@ -494,7 +494,10 @@
              [limits-format-number limits-format/format-limit-number]
              [limits-generic-label limits-format/generic-limit-label]
              [limits-percentage-row? limits-format/percentage-limit-row?]
-             [limits-row-has-signal? limits-format/generic-limit-has-signal?])
+             [limits-row-has-signal? limits-format/generic-limit-has-signal?]
+             [limits-row-exhausted? limits-format/limit-row-exhausted?]
+             [limits-row-pressure limits-format/limit-row-pressure]
+             [limits-prioritize-rows limits-format/prioritize-limit-rows])
 
 ;; =============================================================================
 ;; Persistence facade

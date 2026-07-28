@@ -134,3 +134,32 @@
   (it "is nil when `[:dynamic :limits]` is empty"
       (expect (nil? (lfmt/dynamic-summary {:dynamic {:limits []}})))
       (expect (nil? (lfmt/dynamic-summary {})))))
+
+(defdescribe limit-row-pressure-test
+             (it "flags an overspent metered row as exhausted, not a fresh all-zero row"
+                 (expect (lfmt/limit-row-exhausted? {:remaining 0.0 :limit 1500.0 :used 1532.0}))
+                 (expect (not (lfmt/limit-row-exhausted? {:remaining 0 :limit 0 :used 0})))
+                 (expect (not (lfmt/limit-row-exhausted? {:is-unlimited true}))))
+             (it "ranks exhausted before tight before roomy before unlimited"
+                 (let
+                   [rows [{:id :chat :is-unlimited true} {:id :roomy :remaining 90.0 :limit 100.0}
+                          {:id :premium_interactions :remaining 0.0 :limit 1500.0 :used 1532.0}
+                          {:id :tight :remaining 10.0 :limit 100.0}]]
+                   (expect (= [:premium_interactions :tight :roomy :chat]
+                              (mapv :id (lfmt/prioritize-limit-rows rows))))))
+             (it "summary leads with the bucket that is actually blocking requests"
+                 (let
+                   [limits
+                    {:dynamic {:limits [{:id :chat :label "Chat" :is-unlimited true}
+                                        {:id :completions :label "Completions" :is-unlimited true}
+                                        {:id :premium_interactions
+                                         :label "Premium interactions"
+                                         :remaining 0.0
+                                         :limit 1500.0
+                                         :used 1532.0}]}}
+
+                    out
+                    (lfmt/dynamic-summary limits)]
+
+                   (expect (str/starts-with? out "Premium interactions"))
+                   (expect (str/includes? out "(0 left)")))))

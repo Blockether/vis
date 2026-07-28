@@ -57,6 +57,7 @@ import {
   onViewportRotation,
   scrollAnchorFor,
   type ScrollAnchor,
+  shellViewportHeight,
   useVisualViewportShell,
 } from '../lib/viewport';
 import { answeredTurnCount, markSessionRead } from '../lib/unread';
@@ -791,6 +792,10 @@ export function SessionScreen({
   // Last measured height of the scroller itself, so a box that shrinks under a
   // parked reader can hand the lost pixels back (see the ResizeObserver below).
   const viewportHeightRef = useRef<number | null>(null);
+  // The shell (window / visual viewport) height, so a scroller resize can be told
+  // apart from a keyboard or rotation: same shell, different scroller = the
+  // composer autosized.
+  const shellHeightRef = useRef<number | null>(null);
   // Dictation that was already captured but not yet turned into text. A
   // backgrounded webview loses the network mid-request, and dropping the blob
   // there would throw away a finished sentence.
@@ -1659,24 +1664,35 @@ export function SessionScreen({
     const viewport = scrollRef.current;
     if (!transcript || typeof ResizeObserver === 'undefined') return;
     viewportHeightRef.current = viewport?.clientHeight ?? null;
+    shellHeightRef.current = shellViewportHeight();
 
     const observer = new ResizeObserver(() => {
-      // A reader parked mid-history is anchored by `scrollTop`, measured from the
-      // TOP — so when the scroller gets SHORTER (the composer grows a line as you
-      // type, the keyboard opens) the same `scrollTop` shows different text and
-      // the page appears to slide. That is the "scroll goes weird while I type"
-      // report. Give the lost pixels back so what is on screen stays on screen.
+      // A composer that grows or shrinks a line takes those pixels from the
+      // scroller's BOTTOM edge only: every line already on screen keeps its exact
+      // y, so the still-looking thing to do is NOTHING. Touching `scrollTop` at
+      // all — re-anchoring a mid-history reader or re-following the end — is what
+      // slides the answer bubble up and down as the input stretches while you
+      // type. A shell-height change is the other story: the keyboard really does
+      // eat the bottom of the conversation, so that case keeps its compensation.
       const box = scrollRef.current;
+      let composerOnly = false;
       if (box) {
         const previous = viewportHeightRef.current;
         const height = box.clientHeight;
         viewportHeightRef.current = height;
-        if (!followingRef.current && previous !== null && previous !== height) {
-          const limit = Math.max(0, box.scrollHeight - height);
-          box.scrollTop = Math.max(0, Math.min(limit, box.scrollTop + (previous - height)));
+        const shell = shellViewportHeight();
+        const shellMoved =
+          shellHeightRef.current === null || Math.abs(shell - shellHeightRef.current) > 1;
+        shellHeightRef.current = shell;
+        if (previous !== null && previous !== height) {
+          if (!shellMoved) composerOnly = true;
+          else if (!followingRef.current) {
+            const limit = Math.max(0, box.scrollHeight - height);
+            box.scrollTop = Math.max(0, Math.min(limit, box.scrollTop + (previous - height)));
+          }
         }
       }
-      if (!followingRef.current || resizeScrollFrameRef.current !== null) return;
+      if (composerOnly || !followingRef.current || resizeScrollFrameRef.current !== null) return;
       resizeScrollFrameRef.current = window.requestAnimationFrame(() => {
         resizeScrollFrameRef.current = null;
         if (followingRef.current) scrollToEnd('auto');

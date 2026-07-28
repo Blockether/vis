@@ -42,6 +42,7 @@
 
 def __vis_install_pandas__():
     import sys, types, math, builtins as _bi
+    import datetime as _dt
     import csv as _csv, io as _io, json as _json
 
     _NL = chr(10)
@@ -265,6 +266,210 @@ def __vis_install_pandas__():
         def __and__(self, o): return self._binop(o, lambda a, b: bool(a) and bool(b))
         def __or__(self, o): return self._binop(o, lambda a, b: bool(a) or bool(b))
         def __invert__(self): return Series([not bool(a) for a in self._v], self._i, self.name)
+
+        @property
+        def dt(self):
+            return _DtAccessor(self)
+
+        def rolling(self, window, min_periods=None):
+            return _Rolling(self, window, min_periods)
+
+        def expanding(self, min_periods=1):
+            return _Rolling(self, len(self._v) if self._v else 1, min_periods)
+
+        def quantile(self, q=0.5, interpolation='linear'):
+            sn = sorted(self._num())
+            if _is_seq(q):
+                qs = _to_list(q)
+                return Series([_quant(sn, x) for x in qs], index=list(qs), name=self.name)
+            return _quant(sn, q)
+
+        def prod(self):
+            out = 1.0
+            for x in self._num():
+                out = out * x
+            return out
+
+        def mode(self):
+            counts = {}
+            for v in self._v:
+                if _isna(v):
+                    continue
+                counts[v] = counts.get(v, 0) + 1
+            if not counts:
+                return Series([], name=self.name)
+            top = _bi.max(counts.values())
+            vals = [v for v in counts if counts[v] == top]
+            try:
+                vals = sorted(vals)
+            except Exception:
+                pass
+            return Series(vals, name=self.name)
+
+        def to_frame(self, name=None):
+            nm = name if name is not None else (self.name if self.name is not None else 0)
+            return DataFrame({nm: list(self._v)}, columns=[nm], index=list(self._i))
+
+        def reset_index(self, drop=False, name=None):
+            if drop:
+                return Series(list(self._v), name=self.name)
+            nm = name if name is not None else (self.name if self.name is not None else 0)
+            return DataFrame({'index': list(self._i), nm: list(self._v)},
+                             columns=['index', nm])
+
+        def sort_index(self, ascending=True):
+            order = sorted(range(len(self._v)), key=lambda k: self._i[k], reverse=not ascending)
+            return Series([self._v[k] for k in order], index=[self._i[k] for k in order], name=self.name)
+
+        def shift(self, periods=1, fill_value=None):
+            fill = _NA if fill_value is None else fill_value
+            n = len(self._v)
+            out = []
+            for i in range(n):
+                j = i - periods
+                out.append(self._v[j] if 0 <= j < n else fill)
+            return Series(out, index=list(self._i), name=self.name)
+
+        def diff(self, periods=1):
+            prev = self.shift(periods)
+            out = [(_NA if (_isna(a) or _isna(b)) else a - b) for a, b in zip(self._v, prev._v)]
+            return Series(out, index=list(self._i), name=self.name)
+
+        def pct_change(self, periods=1):
+            prev = self.shift(periods)
+            out = [(_NA if (_isna(a) or _isna(b) or b == 0) else (a - b) / b)
+                   for a, b in zip(self._v, prev._v)]
+            return Series(out, index=list(self._i), name=self.name)
+
+        def clip(self, lower=None, upper=None):
+            def _c(v):
+                if _isna(v):
+                    return v
+                if lower is not None and v < lower:
+                    return lower
+                if upper is not None and v > upper:
+                    return upper
+                return v
+            return Series([_c(v) for v in self._v], index=list(self._i), name=self.name)
+
+        def between(self, left, right, inclusive='both'):
+            def _b(v):
+                if _isna(v):
+                    return False
+                lo = v >= left if inclusive in ('both', 'left') else v > left
+                hi = v <= right if inclusive in ('both', 'right') else v < right
+                return bool(lo and hi)
+            return Series([_b(v) for v in self._v], index=list(self._i), name=self.name)
+
+        def rank(self, method='average', ascending=True):
+            pairs = [(i, v) for i, v in enumerate(self._v) if not _isna(v)]
+            order = sorted(pairs, key=lambda p: p[1], reverse=not ascending)
+            out = [_NA] * len(self._v)
+            k = 0
+            while k < len(order):
+                j = k
+                while j + 1 < len(order) and order[j + 1][1] == order[k][1]:
+                    j = j + 1
+                if method == 'min':
+                    r = float(k + 1)
+                elif method == 'max':
+                    r = float(j + 1)
+                elif method == 'dense':
+                    r = None
+                else:
+                    r = (k + 1 + j + 1) / 2.0
+                for m in range(k, j + 1):
+                    out[order[m][0]] = float(m + 1) if method == 'first' else r
+                k = j + 1
+            if method == 'dense':
+                seen = []
+                for _i9, v in order:
+                    if not seen or seen[-1] != v:
+                        seen.append(v)
+                for i, v in pairs:
+                    out[i] = float(seen.index(v) + 1)
+            return Series(out, index=list(self._i), name=self.name)
+
+        def cumprod(self):
+            out = []
+            acc = 1.0
+            for v in self._v:
+                if not _isna(v):
+                    acc = acc * v
+                out.append(acc)
+            return Series(out, index=list(self._i), name=self.name)
+
+        def cummax(self):
+            out = []
+            acc = None
+            for v in self._v:
+                if not _isna(v):
+                    acc = v if acc is None or v > acc else acc
+                out.append(_NA if acc is None else acc)
+            return Series(out, index=list(self._i), name=self.name)
+
+        def cummin(self):
+            out = []
+            acc = None
+            for v in self._v:
+                if not _isna(v):
+                    acc = v if acc is None or v < acc else acc
+                out.append(_NA if acc is None else acc)
+            return Series(out, index=list(self._i), name=self.name)
+
+        def corr(self, other, method='pearson'):
+            b = other._v if isinstance(other, Series) else _to_list(other)
+            pairs = [(float(x), float(y)) for x, y in zip(self._v, b)
+                     if not _isna(x) and not _isna(y)]
+            if len(pairs) < 2:
+                return _NA
+            mx = _bi.sum(p[0] for p in pairs) / len(pairs)
+            my = _bi.sum(p[1] for p in pairs) / len(pairs)
+            sxy = _bi.sum((p[0] - mx) * (p[1] - my) for p in pairs)
+            sxx = math.sqrt(_bi.sum((p[0] - mx) ** 2 for p in pairs))
+            syy = math.sqrt(_bi.sum((p[1] - my) ** 2 for p in pairs))
+            if sxx == 0.0 or syy == 0.0:
+                return _NA
+            return sxy / (sxx * syy)
+
+        def cov(self, other, ddof=1):
+            b = other._v if isinstance(other, Series) else _to_list(other)
+            pairs = [(float(x), float(y)) for x, y in zip(self._v, b)
+                     if not _isna(x) and not _isna(y)]
+            if len(pairs) - ddof <= 0:
+                return _NA
+            mx = _bi.sum(p[0] for p in pairs) / len(pairs)
+            my = _bi.sum(p[1] for p in pairs) / len(pairs)
+            return _bi.sum((p[0] - mx) * (p[1] - my) for p in pairs) / (len(pairs) - ddof)
+
+        def nlargest(self, n=5):
+            return self.sort_values(ascending=False).head(n)
+
+        def nsmallest(self, n=5):
+            return self.sort_values(ascending=True).head(n)
+
+        def any(self):
+            return _bi.any(bool(v) for v in self._v if not _isna(v))
+
+        def all(self):
+            return _bi.all(bool(v) for v in self._v if not _isna(v))
+
+        def item(self):
+            if len(self._v) != 1:
+                raise ValueError('can only convert an array of size 1 to a scalar')
+            return self._v[0]
+
+        def agg(self, func):
+            return self.aggregate(func)
+
+        def aggregate(self, func):
+            if isinstance(func, list):
+                return Series([self.aggregate(f) for f in func],
+                              index=[f if isinstance(f, str) else getattr(f, '__name__', 'fn') for f in func],
+                              name=self.name)
+            if isinstance(func, str):
+                return getattr(self, func)()
+            return func(self)
 
         def _num(self):
             return [x for x in self._v if not _isna(x)]
@@ -498,9 +703,13 @@ def __vis_install_pandas__():
             return Series(list(data.values()), list(data.keys()), self.name)
 
         def __repr__(self):
+            labs = [str(lab) for lab in self._i]
+            vals = [_fmt(v) for v in self._v]
+            lw = max([len(x) for x in labs] + [0])
+            vw = max([len(x) for x in vals] + [0])
             lines = []
-            for lab, v in zip(self._i, self._v):
-                lines.append(str(lab).rjust(6) + '    ' + _fmt(v))
+            for lab, v in zip(labs, vals):
+                lines.append(lab.ljust(lw) + '    ' + v.rjust(vw))
             tail = 'Name: ' + str(self.name) + _COMMA + ' ' if self.name is not None else ''
             lines.append(tail + 'dtype: ' + self.dtype)
             return _NL.join(lines)
@@ -539,10 +748,160 @@ def __vis_install_pandas__():
 
 
     # ----- DataFrame -----
+    def _med(w):
+        n = sorted(w)
+        k = len(n)
+        if not k:
+            return _NA
+        return float(n[k // 2]) if k % 2 else (float(n[k // 2 - 1]) + float(n[k // 2])) / 2.0
+
+    def _var(w, ddof=1):
+        n = [float(x) for x in w]
+        k = len(n)
+        if k - ddof <= 0:
+            return _NA
+        m = _bi.sum(n) / k
+        return _bi.sum((x - m) ** 2 for x in n) / (k - ddof)
+
+    def _stdev(w, ddof=1):
+        v = _var(w, ddof)
+        return _NA if _isna(v) else math.sqrt(v)
+
+    def _quant(sorted_vals, q):
+        if not sorted_vals:
+            return _NA
+        pos = (len(sorted_vals) - 1) * float(q)
+        lo = int(math.floor(pos))
+        hi = int(math.ceil(pos))
+        if lo == hi:
+            return float(sorted_vals[lo])
+        return float(sorted_vals[lo]) + (float(sorted_vals[hi]) - float(sorted_vals[lo])) * (pos - lo)
+
+    _AGGF = {
+        'mean': lambda s: s.mean(),
+        'sum': lambda s: s.sum(),
+        'min': lambda s: s.min(),
+        'max': lambda s: s.max(),
+        'count': lambda s: s.count(),
+        'size': lambda s: len(s),
+        'median': lambda s: s.median(),
+        'std': lambda s: s.std(),
+        'var': lambda s: s.var(),
+        'prod': lambda s: s.prod(),
+        'nunique': lambda s: s.nunique(),
+        'first': lambda s: s._v[0] if len(s._v) else _NA,
+        'last': lambda s: s._v[-1] if len(s._v) else _NA,
+    }
+
+    class _Rolling:
+        def __init__(self, s, window, min_periods=None):
+            self._s = s
+            self._w = int(window)
+            self._mp = self._w if min_periods is None else int(min_periods)
+
+        def _roll(self, fn):
+            v = self._s._v
+            out = []
+            for i in range(len(v)):
+                lo = i - self._w + 1
+                if lo < 0:
+                    lo = 0
+                win = [x for x in v[lo:i + 1] if not _isna(x)]
+                out.append(_NA if len(win) < self._mp else fn(win))
+            return Series(out, index=list(self._s._i), name=self._s.name)
+
+        def sum(self):
+            return self._roll(lambda w: _bi.sum(w))
+
+        def mean(self):
+            return self._roll(lambda w: _bi.sum(w) / len(w))
+
+        def min(self):
+            return self._roll(lambda w: _bi.min(w))
+
+        def max(self):
+            return self._roll(lambda w: _bi.max(w))
+
+        def count(self):
+            return self._roll(lambda w: float(len(w)))
+
+        def median(self):
+            return self._roll(_med)
+
+        def std(self, ddof=1):
+            return self._roll(lambda w: _stdev(w, ddof))
+
+        def var(self, ddof=1):
+            return self._roll(lambda w: _var(w, ddof))
+
+        def apply(self, fn, raw=True):
+            return self._roll(lambda w: fn(list(w)))
+
+    class _DtAccessor:
+        def __init__(self, s):
+            self._s = s
+
+        def _map(self, fn, name=None):
+            return Series([_NA if _isna(v) else fn(v) for v in self._s._v],
+                          index=list(self._s._i), name=name or self._s.name)
+
+        @property
+        def year(self):
+            return self._map(lambda d: d.year)
+
+        @property
+        def month(self):
+            return self._map(lambda d: d.month)
+
+        @property
+        def day(self):
+            return self._map(lambda d: d.day)
+
+        @property
+        def hour(self):
+            return self._map(lambda d: d.hour)
+
+        @property
+        def minute(self):
+            return self._map(lambda d: d.minute)
+
+        @property
+        def second(self):
+            return self._map(lambda d: d.second)
+
+        @property
+        def dayofweek(self):
+            return self._map(lambda d: d.weekday())
+
+        @property
+        def weekday(self):
+            return self._map(lambda d: d.weekday())
+
+        @property
+        def date(self):
+            return self._map(lambda d: d.date())
+
+        def strftime(self, fmt):
+            return self._map(lambda d: d.strftime(fmt))
+
+        def normalize(self):
+            return self._map(lambda d: _dt.datetime(d.year, d.month, d.day))
+
     class DataFrame:
         def __init__(self, data=None, columns=None, index=None):
             cols = {}
             idx = None
+            if isinstance(data, Series):
+                if index is None:
+                    index = list(data._i)
+                data = {data.name if data.name is not None else 0: list(data._v)}
+            elif (data is not None
+                  and not isinstance(data, (DataFrame, dict, list, tuple))
+                  and hasattr(data, 'tolist') and hasattr(data, 'shape')):
+                # numpy-style ndarray (incl. the vis numpy shim): materialise rows
+                data = data.tolist()
+                if len(data) and not _is_seq(data[0]):
+                    data = [[v] for v in data]
             if data is None:
                 pass
             elif isinstance(data, DataFrame):
@@ -873,6 +1232,165 @@ def __vis_install_pandas__():
                 data[c] = [s.count(), s.mean(), s.std(), s.min(), q(0.25), q(0.5), q(0.75), s.max()]
             return DataFrame(data, columns=cols, index=stats)
 
+        def count(self):
+            return Series([self._col(c).count() for c in self._c], list(self._c))
+
+        def median(self):
+            cols = self._numeric_cols()
+            return Series([self._col(c).median() for c in cols], cols)
+
+        def std(self, ddof=1):
+            cols = self._numeric_cols()
+            return Series([self._col(c).std() for c in cols], cols)
+
+        def var(self, ddof=1):
+            cols = self._numeric_cols()
+            return Series([self._col(c).var() for c in cols], cols)
+
+        def prod(self):
+            cols = self._numeric_cols()
+            return Series([self._col(c).prod() for c in cols], cols)
+
+        def nunique(self):
+            return Series([self._col(c).nunique() for c in self._c], list(self._c))
+
+        def quantile(self, q=0.5):
+            cols = self._numeric_cols()
+            if _is_seq(q):
+                qs = _to_list(q)
+                data = {c: [self._col(c).quantile(x) for x in qs] for c in cols}
+                return DataFrame(data, columns=cols, index=list(qs))
+            return Series([self._col(c).quantile(q) for c in cols], cols)
+
+        def round(self, decimals=0):
+            out = self.copy()
+            for c in out._c:
+                out._d[c] = [(v if _isna(v) or not isinstance(v, (int, float)) or isinstance(v, bool)
+                              else _bi.round(v, decimals)) for v in out._d[c]]
+            return out
+
+        def corr(self, method='pearson', numeric_only=True):
+            cols = self._numeric_cols()
+            data = {c: [(1.0 if c == o else self._col(c).corr(self._col(o))) for o in cols] for c in cols}
+            return DataFrame(data, columns=cols, index=list(cols))
+
+        def cov(self, ddof=1, numeric_only=True):
+            cols = self._numeric_cols()
+            data = {c: [self._col(c).cov(self._col(o), ddof) for o in cols] for c in cols}
+            return DataFrame(data, columns=cols, index=list(cols))
+
+        def sort_index(self, ascending=True):
+            order = sorted(range(self.shape[0]), key=lambda r: self._i[r], reverse=not ascending)
+            return self._take(order)
+
+        def query(self, expr, **kwargs):
+            expr = expr.replace(chr(64), '')
+            env0 = dict(kwargs)
+            keep = []
+            for r in range(self.shape[0]):
+                env = dict(env0)
+                for c in self._c:
+                    if isinstance(c, str):
+                        env[c] = self._d[c][r]
+                env['index'] = self._i[r]
+                if eval(expr, {'__builtins__': _bi}, env):
+                    keep.append(r)
+            return self._take(keep)
+
+        def eval(self, expr, **kwargs):
+            out = []
+            for r in range(self.shape[0]):
+                env = dict(kwargs)
+                for c in self._c:
+                    if isinstance(c, str):
+                        env[c] = self._d[c][r]
+                out.append(eval(expr.replace(chr(64), ''), {'__builtins__': _bi}, env))
+            return Series(out, index=list(self._i))
+
+        def pivot(self, index=None, columns=None, values=None):
+            return self.pivot_table(values=values, index=index, columns=columns, aggfunc='first')
+
+        def pivot_table(self, values=None, index=None, columns=None, aggfunc='mean',
+                        fill_value=None, dropna=True):
+            idxc = index if isinstance(index, list) else ([] if index is None else [index])
+            colc = columns if isinstance(columns, list) else ([] if columns is None else [columns])
+            if values is None:
+                vals = [c for c in self._c
+                        if c not in idxc and c not in colc
+                        and _infer_dtype(self._d[c]) in ('int64', 'float64', 'bool')]
+            else:
+                vals = values if isinstance(values, list) else [values]
+            fn = _AGGF[aggfunc] if isinstance(aggfunc, str) else aggfunc
+            rowkeys = []
+            colkeys = []
+            cells = {}
+            for r in range(self.shape[0]):
+                rk = tuple(self._d[c][r] for c in idxc) if idxc else ('',)
+                ck = tuple(self._d[c][r] for c in colc) if colc else None
+                if rk not in cells:
+                    cells[rk] = {}
+                    rowkeys.append(rk)
+                for v in vals:
+                    key = (ck, v)
+                    if key not in cells[rk]:
+                        cells[rk][key] = []
+                    cells[rk][key].append(self._d[v][r])
+                    if key not in colkeys:
+                        colkeys.append(key)
+            try:
+                rowkeys = sorted(rowkeys)
+                colkeys = sorted(colkeys, key=lambda k: (str(k[0]), str(k[1])))
+            except Exception:
+                pass
+
+            def _label(key):
+                ck, v = key
+                if ck is None:
+                    return v
+                lab = ck[0] if len(ck) == 1 else ck
+                return lab if len(vals) == 1 else (v, lab)
+            outcols = []
+            data = {}
+            for key in colkeys:
+                lab = _label(key)
+                outcols.append(lab)
+                col = []
+                for rk in rowkeys:
+                    got = cells[rk].get(key)
+                    if not got or not [x for x in got if not _isna(x)]:
+                        col.append(_NA if fill_value is None else fill_value)
+                    else:
+                        col.append(fn(Series(got)))
+                data[lab] = col
+            idx = [rk[0] if len(rk) == 1 else rk for rk in rowkeys]
+            return DataFrame(data, columns=outcols, index=idx)
+
+        def to_markdown(self, index=True, tablefmt='pipe'):
+            bar = chr(124)
+
+            def _cell(v):
+                if _isna(v):
+                    return ''
+                if isinstance(v, float):
+                    return _fmt(v)
+                return str(v)
+            head = ([''] if index else []) + [str(c) for c in self._c]
+            rows = []
+            for r in range(self.shape[0]):
+                cells = [_cell(self._d[c][r]) for c in self._c]
+                rows.append(([str(self._i[r])] if index else []) + cells)
+            widths = [len(h) for h in head]
+            for row in rows:
+                for j, cell in enumerate(row):
+                    if len(cell) > widths[j]:
+                        widths[j] = len(cell)
+
+            def _line(cells):
+                return bar + bar.join(' ' + cells[j].ljust(widths[j]) + ' '
+                                      for j in range(len(cells))) + bar
+            sep = bar + bar.join(':' + ('-' * (widths[j] + 1)) for j in range(len(head))) + bar
+            return _NL.join([_line(head), sep] + [_line(row) for row in rows])
+
         def groupby(self, by):
             return _GroupBy(self, by)
 
@@ -1156,6 +1674,49 @@ def __vis_install_pandas__():
             return self._agg(lambda s: len([x for x in s._v if not _isna(x)]), numeric_only=False)
         def size(self):
             return Series([len(self._groups[k]) for k in self._order], self._labels())
+        def transform(self, func):
+            df = self._df
+            n = df.shape[0]
+            vcols = self._valcols(True)
+            single = self._sel is not None and not isinstance(self._sel, list)
+            data = {}
+            for c in vcols:
+                out = [_NA] * n
+                for k in self._order:
+                    rows = self._groups[k]
+                    s = Series([df._d[c][r] for r in rows], name=c)
+                    res = func(s) if callable(func) else getattr(s, func)()
+                    if isinstance(res, Series):
+                        for pos, r in enumerate(rows):
+                            out[r] = res._v[pos]
+                    elif _is_seq(res):
+                        vals = _to_list(res)
+                        for pos, r in enumerate(rows):
+                            out[r] = vals[pos]
+                    else:
+                        for r in rows:
+                            out[r] = res
+                data[c] = out
+            if single:
+                return Series(data[vcols[0]], index=list(df._i), name=vcols[0])
+            return DataFrame(data, columns=vcols, index=list(df._i))
+
+        def filter(self, func):
+            df = self._df
+            keep = []
+            for k in self._order:
+                rows = self._groups[k]
+                if func(df._take(rows)):
+                    keep.extend(rows)
+            keep.sort()
+            return df._take(keep)
+
+        def quantile(self, q=0.5):
+            return self._agg(lambda s: s.quantile(q))
+
+        def prod(self):
+            return self._agg(lambda s: s.prod())
+
         def _apply_one(self, s, f):
             return getattr(s, f)() if isinstance(f, str) else f(s)
         def agg(self, fn=None, **kwargs):
@@ -1286,6 +1847,140 @@ def __vis_install_pandas__():
             return s.apply(cv)
         return float(s)
 
+    Timestamp = _dt.datetime
+    Timedelta = _dt.timedelta
+
+    _DT_FORMATS = ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M',
+                   '%Y-%m-%d', '%Y/%m/%d', '%d/%m/%Y', '%m/%d/%Y', '%Y%m%d')
+
+    def _parse_dt(v, fmt=None):
+        if v is None or _isna(v):
+            return _NA
+        if isinstance(v, _dt.datetime):
+            return v
+        if isinstance(v, _dt.date):
+            return _dt.datetime(v.year, v.month, v.day)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return _dt.datetime.utcfromtimestamp(float(v))
+        s = str(v).strip()
+        if s.endswith('Z'):
+            s = s[:-1]
+        for f in ((fmt,) if fmt else _DT_FORMATS):
+            try:
+                return _dt.datetime.strptime(s, f)
+            except Exception:
+                pass
+        try:
+            return _dt.datetime.fromisoformat(s)
+        except Exception:
+            raise ValueError('could not parse date: ' + str(v))
+
+    def to_datetime(arg, format=None, errors='raise'):
+        def _one(v):
+            try:
+                return _parse_dt(v, format)
+            except Exception:
+                if errors == 'coerce':
+                    return _NA
+                raise
+        if isinstance(arg, Series):
+            return Series([_one(v) for v in arg._v], index=list(arg._i), name=arg.name)
+        if isinstance(arg, DataFrame):
+            data = {c: [_one(v) for v in arg._d[c]] for c in arg._c}
+            return DataFrame(data, columns=list(arg._c), index=list(arg._i))
+        if _is_seq(arg):
+            return Series([_one(v) for v in _to_list(arg)])
+        return _one(arg)
+
+    def _freq_step(freq):
+        f = str(freq).upper()
+        num = ''
+        while f and f[0].isdigit():
+            num = num + f[0]
+            f = f[1:]
+        mult = int(num) if num else 1
+        if f in ('D', 'DAY', 'DAYS'):
+            return ('delta', _dt.timedelta(days=mult))
+        if f in ('W', 'W-SUN', 'WEEK'):
+            return ('delta', _dt.timedelta(weeks=mult))
+        if f in ('H', 'HOUR', 'HOURS'):
+            return ('delta', _dt.timedelta(hours=mult))
+        if f in ('T', 'MIN', 'MINUTE', 'MINUTES'):
+            return ('delta', _dt.timedelta(minutes=mult))
+        if f in ('S', 'SEC', 'SECOND', 'SECONDS'):
+            return ('delta', _dt.timedelta(seconds=mult))
+        if f in ('MS', 'M', 'MONTH', 'ME'):
+            return ('month', mult if f != 'ME' and f != 'M' else -mult)
+        if f in ('Y', 'YS', 'A', 'YEAR', 'YE'):
+            return ('year', mult if f in ('Y', 'YS', 'A', 'YEAR') else -mult)
+        raise ValueError('unsupported freq: ' + str(freq))
+
+    def _add_months(d, k):
+        m = d.month - 1 + k
+        y = d.year + m // 12
+        m = m % 12 + 1
+        day = d.day
+        while True:
+            try:
+                return d.replace(year=y, month=m, day=day)
+            except ValueError:
+                day = day - 1
+
+    def _month_end(d):
+        nxt = _add_months(_dt.datetime(d.year, d.month, 1), 1)
+        return nxt - _dt.timedelta(days=1)
+
+    def date_range(start=None, end=None, periods=None, freq='D'):
+        kind, step = _freq_step(freq)
+        st = _parse_dt(start) if start is not None else None
+        en = _parse_dt(end) if end is not None else None
+
+        def _next(d):
+            if kind == 'delta':
+                return d + step
+            if kind == 'month':
+                k = abs(step)
+                return _month_end(_add_months(d, k)) if step < 0 else _add_months(d, k)
+            k = abs(step)
+            nd = _add_months(d, 12 * k)
+            return _month_end(nd) if step < 0 else nd
+        if st is None:
+            if en is None or periods is None:
+                raise ValueError('date_range needs start, or end plus periods')
+            out = [en]
+            for _k in range(periods - 1):
+                d = out[0]
+                if kind == 'delta':
+                    out.insert(0, d - step)
+                else:
+                    out.insert(0, _add_months(d, -abs(step) * (12 if kind == 'year' else 1)))
+            return out
+        if kind == 'month' and step < 0:
+            st = _month_end(st)
+        out = [st]
+        if periods is not None:
+            while len(out) < periods:
+                out.append(_next(out[-1]))
+            return out
+        if en is None:
+            raise ValueError('date_range needs end or periods')
+        while True:
+            nxt = _next(out[-1])
+            if nxt > en:
+                break
+            out.append(nxt)
+        return out
+
+    def pivot_table(data, values=None, index=None, columns=None, aggfunc='mean', fill_value=None):
+        return data.pivot_table(values=values, index=index, columns=columns,
+                                aggfunc=aggfunc, fill_value=fill_value)
+
+    def crosstab(rows, cols):
+        a = rows._v if isinstance(rows, Series) else _to_list(rows)
+        b = cols._v if isinstance(cols, Series) else _to_list(cols)
+        df = DataFrame({'r': list(a), 'c': list(b), 'n': [1] * len(a)})
+        return df.pivot_table(values='n', index='r', columns='c', aggfunc='sum', fill_value=0)
+
     NA = _NA
     NaN = _NA
 
@@ -1302,6 +1997,12 @@ def __vis_install_pandas__():
     mod.notnull = notna
     mod.unique = unique
     mod.to_numeric = to_numeric
+    mod.to_datetime = to_datetime
+    mod.date_range = date_range
+    mod.pivot_table = pivot_table
+    mod.crosstab = crosstab
+    mod.Timestamp = Timestamp
+    mod.Timedelta = Timedelta
     mod.NA = _NA
     mod.NaN = _NA
     mod.__version__ = '2.0.0-vis-shim'

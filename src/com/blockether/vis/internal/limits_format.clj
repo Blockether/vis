@@ -154,6 +154,44 @@
       (some? (get-in row [:window :resets-at-ms]))
       (pos? (double (or (:limit row) (:remaining row) (:used row) 0)))))
 
+(defn limit-row-exhausted?
+  "True when a metered row has nothing left: not unlimited, a numeric
+   `:remaining` at (or below) zero, and enough context to know that the
+   zero is a WALL — either a positive `:limit` or positive `:used`.
+
+   A brand new all-zero row (`{:remaining 0 :limit 0}`) is NOT exhausted;
+   it simply has not been filled in yet."
+  [{:keys [is-unlimited remaining limit used]}]
+  (boolean (and (not is-unlimited)
+                (number? remaining)
+                (not (pos? (double remaining)))
+                (or (and (number? limit) (pos? (double limit)))
+                    (and (number? used) (pos? (double used)))))))
+
+(defn limit-row-pressure
+  "Sort key ranking a row by how much it constrains the user RIGHT NOW:
+
+     0. exhausted metered rows (0 left, requests are being rejected)
+     1. metered rows, tightest remaining fraction first
+     2. rows with no tank at all (`:is-unlimited`)
+
+   Without this, a provider that reports its unlimited buckets first
+   (GitHub Copilot lists `chat`, `completions`, then `premium_interactions`)
+   summarises as \"Chat unlimited · Completions unlimited\" while the ONE
+   bucket that actually rejects requests sits silently at 0 remaining."
+  [{:keys [is-unlimited remaining limit] :as row}]
+  (cond (limit-row-exhausted? row) [0 0.0]
+        is-unlimited [2 0.0]
+        (and (number? remaining) (number? limit) (pos? (double limit)))
+        [1 (/ (double remaining) (double limit))]
+        :else [1 1.0]))
+
+(defn prioritize-limit-rows
+  "Stable reorder of limit rows by `limit-row-pressure`, so whatever is
+   blocking (or closest to blocking) leads any truncated rendering."
+  [rows]
+  (vec (sort-by limit-row-pressure rows)))
+
 (defn label+usage
   "Compose `\"<label> <usage>\"` for a single row, or `\"<label>\"`
    when the row has no usage signal. Returns nil when both are
@@ -192,6 +230,7 @@
 
       lines
       (->> pick
+           prioritize-limit-rows
            (keep label+usage)
            (take max-rows))]
 

@@ -1588,9 +1588,18 @@ def __vis_install_pytest_compat__():
             src = ns.get('__vis_src__')
             fm = FixtureManager(_fixtures_of(ns, _current_block_names(src)))
             groups.append((_collect(ns, src), fm, src))
+        # pytest counts COLLECTED CASES: every parametrize / parametrized-fixture
+        # combination is one item, not one per test function.
         total = 0
         for _tests, _fm, _src in groups:
-            total += len(_tests)
+            for _t in _tests:
+                _func = _t[2]
+                try:
+                    _n = (len(_fixture_param_cases(_func, _fm))
+                          * len(_expand_params(list(getattr(_func, _MARKS_ATTR, [])))))
+                except Exception:
+                    _n = 1
+                total += max(1, _n)
         _buf = []
         write = _buf.append
         write(_NL + 'vis-pytest: collected ' + str(total) + ' item' + ('' if total == 1 else 's') + _NL + _NL)

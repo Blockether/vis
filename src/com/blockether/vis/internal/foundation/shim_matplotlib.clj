@@ -110,6 +110,31 @@
   ^String [^double v]
   (if (== v (Math/rint v)) (str (long v)) (String/format Locale/ROOT "%.2f" (object-array [v]))))
 
+(defn- even-ticks
+  "Six evenly spaced tick values across [lo hi] (used for log axes)."
+  [^double lo ^double hi]
+  (mapv (fn [i] (+ lo (* (/ (double i) 5.0) (- hi lo)))) (range 6)))
+
+(defn- nice-ticks
+  "matplotlib-ish tick locator: round values (1/2/2.5/5 x 10^k), about `n` of
+   them, covering [lo hi]. Falls back to the endpoints for a degenerate range."
+  [^double lo ^double hi ^long n]
+  (let [span (- hi lo)]
+    (if (or (Double/isNaN span) (Double/isInfinite span) (<= span 0.0))
+      [lo]
+      (let [raw (/ span (double (max 1 n)))
+            mag (Math/pow 10.0 (Math/floor (/ (Math/log raw) (Math/log 10.0))))
+            norm (/ raw mag)
+            step (* mag (double (cond (<= norm 1.0) 1.0
+                                      (<= norm 2.0) 2.0
+                                      (<= norm 2.5) 2.5
+                                      (<= norm 5.0) 5.0
+                                      :else 10.0)))
+            start (* step (Math/ceil (/ lo step)))
+            eps (* 1.0e-9 span)]
+        (vec (take-while (fn [^double v] (<= v (+ hi eps)))
+                         (take 64 (iterate (fn [^double v] (+ v step)) start))))))))
+
 (defn- series-xs [s] (mapv as-double (get s "x")))
 
 (defn- series-ys [s] (mapv as-double (get s "y")))
@@ -304,30 +329,6 @@
              (when (= "bar" (str (get s "kind"))) (get s "labels")))
            series)
 
-     ml
-     62
-
-     mr
-     26
-
-     mt
-     (if (and (string? title) (seq title)) 46 22)
-
-     mb
-     (if (and (string? xlabel) (seq xlabel)) 58 42)
-
-     px0
-     ml
-
-     py0
-     mt
-
-     pw
-     (long (max 1 (- W ml mr)))
-
-     ph
-     (long (max 1 (- H mt mb)))
-
      all-x
      (map xfwd (mapcat series-xs series))
 
@@ -365,14 +366,93 @@
      [ymin ymax]
      (if (== (double ymin) (double ymax)) [(- (double ymin) 1.0) (+ (double ymax) 1.0)] [ymin ymax])
 
+     slots
+     (long (max 1 (long (reduce max 1 (map #(count (series-xs %)) series)))))
+
+     xpad
+     (if (seq xlim)
+       0.0
+       (+ (* 0.05 (- (double xmax) (double xmin)))
+          (if has-bar?
+            (* 0.5 (/ (- (double xmax) (double xmin)) (double (max 1 (dec slots)))))
+            0.0)))
+
+     xmin
+     (- (double xmin) xpad)
+
+     xmax
+     (+ (double xmax) xpad)
+
      ypad
-     (* 0.05 (- (double ymax) (double ymin)))
+     (if (seq ylim) 0.0 (* 0.05 (- (double ymax) (double ymin))))
 
      ymin
-     (- (double ymin) ypad)
+     (if (and has-bar? (>= (double ymin) 0.0)) (double ymin) (- (double ymin) ypad))
 
      ymax
      (+ (double ymax) ypad)
+
+     xticks-spec
+     (seq (get spec "xticks"))
+
+     xticklabels
+     (vec (or (get spec "xticklabels") []))
+
+     yticks-spec
+     (seq (get spec "yticks"))
+
+     yticklabels
+     (vec (or (get spec "yticklabels") []))
+
+     yticks
+     (cond
+       yticks-spec (mapv (fn [v] (yfwd (as-double v))) yticks-spec)
+       ylog? (even-ticks (double ymin) (double ymax))
+       :else (nice-ticks (double ymin) (double ymax) 5))
+
+     xticks
+     (cond
+       xticks-spec (mapv (fn [v] (xfwd (as-double v))) xticks-spec)
+       (or xlog? cat-labels) (even-ticks (double xmin) (double xmax))
+       :else (nice-ticks (double xmin) (double xmax) 5))
+
+     ytick-strs
+     (vec (map-indexed (fn [i v]
+                         (if (< (long i) (long (count yticklabels)))
+                           (str (nth yticklabels i))
+                           (fmt-num (yinv (double v)))))
+                       yticks))
+
+     xtick-strs
+     (vec (map-indexed (fn [i v]
+                         (if (< (long i) (long (count xticklabels)))
+                           (str (nth xticklabels i))
+                           (fmt-num (xinv (double v)))))
+                       xticks))
+
+     ml
+     (long (max 46 (+ 18 (* 6 (long (reduce max 3 (map count ytick-strs)))))))
+
+     mr
+     26
+
+     mt
+     (if (and (string? title) (seq title)) 46 22)
+
+     mb
+     (if (and (string? xlabel) (seq xlabel)) 58 42)
+
+     px0
+     ml
+
+     py0
+     mt
+
+     pw
+     (long (max 1 (- W ml mr)))
+
+     ph
+     (long (max 1 (- H mt mb)))
 
      sxf
      (fn ^double [^double xf]
@@ -396,41 +476,37 @@
     (try
       ;; gridlines + tick labels + frame (all skipped when axis('off'))
       (when-not axis-off?
-        (let [ticks 5]
-          (.setFont g (Font. "SansSerif" Font/PLAIN 10))
-          (let [fm (.getFontMetrics g)]
-            (dotimes [i (inc ticks)]
-              (let
-                [t (/ (double i) ticks)
-                 xv (+ (double xmin) (* t (- (double xmax) (double xmin))))
-                 yv (+ ymin (* t (- ymax ymin)))
-                 xp (int (sxf xv))
-                 yp (int (syf yv))]
-
+        (.setFont g (Font. "SansSerif" Font/PLAIN 10))
+        (let [fm (.getFontMetrics g)]
+          (dotimes [i (count yticks)]
+            (let [yv (double (nth yticks i))
+                  yp (int (syf yv))]
+              (when (and (<= (double ymin) yv) (<= yv (double ymax)))
                 (when grid?
                   (.setColor g (Color. 230 230 230))
-                  (.drawLine g xp py0 xp (+ py0 ph))
                   (.drawLine g px0 yp (+ px0 pw) yp))
                 (.setColor g (Color. 90 90 90))
-                (when-not cat-labels
-                  (let [^String xl (fmt-num (xinv xv))]
-                    (.drawString g
-                                 xl
-                                 (int (- xp (quot (.stringWidth fm xl) 2)))
-                                 (int (+ py0 ph 16)))))
-                (let [^String yl (fmt-num (yinv yv))]
-                  (.drawString g yl (int (- px0 6 (.stringWidth fm yl))) (int (+ yp 4))))))
-            (when cat-labels
-              (.setColor g (Color. 90 90 90))
-              (dotimes [i (count cat-labels)]
-                (let
-                  [^String xl (str (nth cat-labels i))
-                   xp (int (sx (double i)))]
-
-                  (.drawString g
-                               xl
-                               (int (- xp (quot (.stringWidth fm xl) 2)))
-                               (int (+ py0 ph 16))))))))
+                (let [^String yl (nth ytick-strs i)]
+                  (.drawString g yl (int (- px0 6 (.stringWidth fm yl))) (int (+ yp 4)))))))
+          (if (and cat-labels (not xticks-spec))
+            (dotimes [i (count cat-labels)]
+              (let [^String xl (str (nth cat-labels i))
+                    xp (int (sx (double i)))]
+                (when grid?
+                  (.setColor g (Color. 230 230 230))
+                  (.drawLine g xp py0 xp (+ py0 ph)))
+                (.setColor g (Color. 90 90 90))
+                (.drawString g xl (int (- xp (quot (.stringWidth fm xl) 2))) (int (+ py0 ph 16)))))
+            (dotimes [i (count xticks)]
+              (let [xv (double (nth xticks i))
+                    xp (int (sxf xv))]
+                (when (and (<= (double xmin) xv) (<= xv (double xmax)))
+                  (when grid?
+                    (.setColor g (Color. 230 230 230))
+                    (.drawLine g xp py0 xp (+ py0 ph)))
+                  (.setColor g (Color. 90 90 90))
+                  (let [^String xl (nth xtick-strs i)]
+                    (.drawString g xl (int (- xp (quot (.stringWidth fm xl) 2))) (int (+ py0 ph 16)))))))))
         ;; axes frame
         (.setColor g (Color. 60 60 60))
         (.setStroke g (BasicStroke. 1.0))
@@ -725,6 +801,8 @@ def __vis_install_matplotlib__():
                        'ylabel': None, 'grid': False, 'legend': False,
                        'xlim': None, 'ylim': None, 'xscale': 'linear',
                        'yscale': 'linear', 'annotations': [],
+                       'xticks': None, 'xticklabels': None,
+                       'yticks': None, 'yticklabels': None,
                        'width': 640, 'height': 480, 'axis_off': False})
 
     _reset()
@@ -773,6 +851,9 @@ def __vis_install_matplotlib__():
         return color, marker, line
 
     def figure(num=None, figsize=None, dpi=None, **kwargs):
+        # a new figure starts empty, like matplotlib -- otherwise the previous
+        # figure's series leak into it.
+        _reset()
         d = float(dpi or 100)
         if figsize:
             _state['width'] = int(float(figsize[0]) * d)
@@ -971,11 +1052,29 @@ def __vis_install_matplotlib__():
         _state['yscale'] = 'log'
         return r
 
+    def _ticks(axis, args, kwargs):
+        # matplotlib's xticks()/yticks(): no args reads the current locator,
+        # (ticks[, labels]) sets it. Positions are floats in data space; labels
+        # ride along by index and the renderer falls back to formatted numbers.
+        ticks = kwargs.get('ticks')
+        labels = kwargs.get('labels')
+        if len(args) > 0:
+            ticks = args[0]
+        if len(args) > 1:
+            labels = args[1]
+        if ticks is not None:
+            vals = [float(t) for t in list(ticks)]
+            _state[axis + 'ticks'] = vals if vals else None
+        if labels is not None:
+            _state[axis + 'ticklabels'] = [str(v) for v in list(labels)]
+        return (list(_state.get(axis + 'ticks') or []),
+                list(_state.get(axis + 'ticklabels') or []))
+
     def xticks(*args, **kwargs):
-        return [], []
+        return _ticks('x', args, kwargs)
 
     def yticks(*args, **kwargs):
-        return [], []
+        return _ticks('y', args, kwargs)
 
     def tight_layout(*args, **kwargs):
         return None
@@ -1223,10 +1322,10 @@ def __vis_install_matplotlib__():
             yscale(v)
 
         def set_xticks(self, *a, **k):
-            return None
+            return xticks(*a, **k)
 
         def set_yticks(self, *a, **k):
-            return None
+            return yticks(*a, **k)
 
         def tick_params(self, *a, **k):
             return None
@@ -1252,11 +1351,11 @@ def __vis_install_matplotlib__():
         def vlines(self, *a, **k):
             return vlines(*a, **k)
 
-        def set_xticklabels(self, *a, **k):
-            return None
+        def set_xticklabels(self, labels=None, *a, **k):
+            return xticks(None, labels)
 
-        def set_yticklabels(self, *a, **k):
-            return None
+        def set_yticklabels(self, labels=None, *a, **k):
+            return yticks(None, labels)
 
     class _Figure(object):
         # Wraps the single global figure state so the OO idiom
@@ -1568,6 +1667,9 @@ def __vis_install_matplotlib__():
             'ylim': _state['ylim'], 'xscale': _state['xscale'],
             'yscale': _state['yscale'], 'axis_off': _state.get('axis_off', False),
             'annotations': list(_state['annotations']),
+            'xticks': _state.get('xticks'), 'yticks': _state.get('yticks'),
+            'xticklabels': _state.get('xticklabels'),
+            'yticklabels': _state.get('yticklabels'),
             'series': list(_state['series']),
         }
 
@@ -1674,6 +1776,116 @@ def __vis_install_matplotlib__():
         _state['annotations'].append({'x': float(x), 'y': float(y), 'text': str(s)})
         return None
 
+    class _NullCtx(object):
+        def __enter__(self):
+            return None
+
+        def __exit__(self, *a):
+            return False
+
+    def stackplot(x, *ys, labels=None, colors=None, baseline='zero', **kwargs):
+        xs = list(x)
+        layers = []
+        if len(ys) == 1:
+            first = ys[0]
+            probe = None
+            try:
+                probe = first[0]
+            except Exception:
+                probe = None
+            if probe is not None and hasattr(probe, '__iter__') and not isinstance(probe, (str, bytes)):
+                layers = [_nums(row) for row in first]
+            else:
+                layers = [_nums(first)]
+        else:
+            layers = [_nums(y) for y in ys]
+        labs = list(labels) if labels else []
+        cols = list(colors) if colors else []
+        base = [0.0] * len(xs)
+        for k, layer in enumerate(layers):
+            top = [base[i] + (layer[i] if i < len(layer) else 0.0) for i in range(len(xs))]
+            _add_series('fill', xs, top,
+                        labs[k] if k < len(labs) else None,
+                        cols[k] if k < len(cols) else None,
+                        y2=list(base))
+            base = top
+        return []
+
+    _VIRIDIS = ((0.267, 0.005, 0.329), (0.283, 0.141, 0.458), (0.254, 0.265, 0.530),
+                (0.207, 0.372, 0.553), (0.164, 0.471, 0.558), (0.128, 0.567, 0.551),
+                (0.135, 0.659, 0.518), (0.267, 0.749, 0.441), (0.478, 0.821, 0.318),
+                (0.741, 0.873, 0.150), (0.993, 0.906, 0.144))
+    _PLASMA = ((0.050, 0.030, 0.528), (0.294, 0.011, 0.631), (0.472, 0.006, 0.660),
+               (0.627, 0.126, 0.588), (0.752, 0.273, 0.478), (0.851, 0.412, 0.372),
+               (0.929, 0.559, 0.267), (0.976, 0.717, 0.163), (0.949, 0.885, 0.146))
+    _MAGMA = ((0.001, 0.000, 0.014), (0.163, 0.072, 0.310), (0.427, 0.121, 0.507),
+              (0.694, 0.166, 0.472), (0.906, 0.320, 0.383), (0.988, 0.583, 0.408),
+              (0.996, 0.827, 0.601), (0.987, 0.991, 0.750))
+    _COOLWARM = ((0.230, 0.299, 0.754), (0.552, 0.690, 0.996), (0.866, 0.866, 0.866),
+                 (0.968, 0.657, 0.537), (0.706, 0.016, 0.150))
+
+    class _Colormap(object):
+        def __init__(self, name, anchors):
+            self.name = name
+            self.N = 256
+            self._a = anchors
+
+        def __call__(self, v, alpha=1.0):
+            if hasattr(v, '__iter__') and not isinstance(v, (str, bytes)):
+                return [self(x, alpha) for x in v]
+            try:
+                f = float(v)
+            except Exception:
+                f = 0.0
+            if isinstance(v, int) and not isinstance(v, bool) and f > 1.0:
+                f = f / float(self.N - 1)
+            if f < 0.0:
+                f = 0.0
+            if f > 1.0:
+                f = 1.0
+            a = self._a
+            pos = f * (len(a) - 1)
+            lo = int(pos)
+            hi = lo + 1 if lo + 1 < len(a) else lo
+            t = pos - lo
+            rgb = tuple(a[lo][k] + (a[hi][k] - a[lo][k]) * t for k in range(3))
+            return (rgb[0], rgb[1], rgb[2], float(alpha))
+
+        def _hex(self, v):
+            r, g, b, _a = self(v)
+            return '#' + ''.join('%02x' % int(_bi_round(c * 255.0)) for c in (r, g, b))
+
+        def reversed(self):
+            return _Colormap(self.name + '_r', tuple(reversed(self._a)))
+
+    def _bi_round(v):
+        return int(v + 0.5) if v >= 0 else -int(-v + 0.5)
+
+    _CMAPS = {'viridis': _VIRIDIS, 'plasma': _PLASMA, 'magma': _MAGMA,
+              'inferno': _MAGMA, 'coolwarm': _COOLWARM,
+              'gray': ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
+              'grey': ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
+              'binary': ((1.0, 1.0, 1.0), (0.0, 0.0, 0.0)),
+              'hot': ((0.0, 0.0, 0.0), (0.9, 0.0, 0.0), (1.0, 0.8, 0.0), (1.0, 1.0, 1.0)),
+              'cool': ((0.0, 1.0, 1.0), (1.0, 0.0, 1.0)),
+              'jet': ((0.0, 0.0, 0.5), (0.0, 0.5, 1.0), (0.5, 1.0, 0.5),
+                      (1.0, 0.5, 0.0), (0.5, 0.0, 0.0))}
+
+    def get_cmap(name=None, lut=None):
+        if name is None:
+            name = 'viridis'
+        if isinstance(name, _Colormap):
+            return name
+        key = str(name)
+        rev = key.endswith('_r')
+        base = key[:-2] if rev else key
+        anchors = _CMAPS.get(base)
+        if anchors is None:
+            anchors = _VIRIDIS
+            base = 'viridis'
+        cm = _Colormap(base, anchors)
+        return cm.reversed() if rev else cm
+
     pyplot = types.ModuleType('matplotlib.pyplot')
     pyplot.__doc__ = 'vis Java2D-backed matplotlib.pyplot subset.'
     for _fn in (figure, plot, scatter, bar, barh, hist, fill_between, step,
@@ -1682,24 +1894,37 @@ def __vis_install_matplotlib__():
                 xlim, ylim, xscale, yscale, semilogx, semilogy, loglog,
                 xticks, yticks, tight_layout, subplots_adjust,
                 boxplot, imshow, colorbar,
-                clf, cla, close, show, savefig,
+                clf, cla, close, show, savefig, stackplot, get_cmap,
                 subplots, subplot, gca, gcf,
                 use, switch_backend, get_backend, rc, rcdefaults,
                 ion, ioff, isinteractive, draw, draw_if_interactive, pause,
                 set_cmap, margins, minorticks_on, minorticks_off, clim, figtext):
         setattr(pyplot, _fn.__name__, _fn)
     pyplot.Axes = _Axes
+    pyplot.Colormap = _Colormap
     pyplot.rcParams = _rcparams
 
     style = types.ModuleType('matplotlib.style')
     style.use = lambda *a, **k: None
-    style.available = ['default', 'classic']
+    style.context = lambda *a, **k: _NullCtx()
+    style.available = ['default', 'classic', 'ggplot', 'bmh', 'fivethirtyeight',
+                       'seaborn-v0_8', 'seaborn-v0_8-whitegrid', 'dark_background']
+    pyplot.style = style
+
+    cm = types.ModuleType('matplotlib.cm')
+    cm.get_cmap = get_cmap
+    for _cname in _CMAPS:
+        setattr(cm, _cname, get_cmap(_cname))
+    pyplot.cm = cm
+    pyplot.colormaps = get_cmap
 
     mpl = types.ModuleType('matplotlib')
     mpl.__doc__ = 'vis matplotlib-compat shim (no CPython matplotlib wheel).'
     mpl.__version__ = '3.0-vis-java2d'
     mpl.pyplot = pyplot
     mpl.style = style
+    mpl.cm = cm
+    mpl.colormaps = cm
     mpl.use = use
     mpl.get_backend = get_backend
     mpl.rc = rc
@@ -1709,6 +1934,7 @@ def __vis_install_matplotlib__():
     sys.modules['matplotlib'] = mpl
     sys.modules['matplotlib.pyplot'] = pyplot
     sys.modules['matplotlib.style'] = style
+    sys.modules['matplotlib.cm'] = cm
 
     # Autoload: staple the module names onto builtins so `matplotlib.pyplot`,
     # a bare `pyplot`, and the conventional `plt` alias all work WITHOUT any

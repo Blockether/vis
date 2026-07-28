@@ -23,3 +23,9 @@
 (def label+usage limits-format/label+usage)
 
 (def dynamic-summary limits-format/dynamic-summary)
+
+(def limit-row-exhausted? limits-format/limit-row-exhausted?)
+
+(def limit-row-pressure limits-format/limit-row-pressure)
+
+(def prioritize-limit-rows limits-format/prioritize-limit-rows)

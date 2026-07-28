@@ -4783,21 +4783,65 @@
   (str "  " (format (str "%" width "s") (str lineno))
        "  " (str/trimr (highlight-needles needles (str txt)))))
 
-(defn- hit-rows
-  "Rows for ONE match anchor `k` → value `v` (`{\"text\" … \"before\" […]
-   \"after\" […]}`, before/after only with a context window): the before-context,
-   then the matched line, then the after-context — each a line-numbered gutter
-   row. A bare string `v` is tolerated as the lone matched line."
-  [needles width k v]
-  (if (map? v)
-    (concat (map (fn [[ln txt]]
-                   (gutter-row needles width ln txt))
-                 (hit-context-rows (get v "before")))
-            [(gutter-row needles width (rg-anchor-lineno k) (get v "text"))]
-            (map (fn [[ln txt]]
-                   (gutter-row needles width ln txt))
-                 (hit-context-rows (get v "after"))))
-    [(gutter-row needles width (rg-anchor-lineno k) v)]))
+(defn- hit-line-entries
+  "One match anchor `k` → value `v` (`{\"text\" … \"before\" […] \"after\" […]}`,
+   before/after only with a context window) as `[[lineno text match?] …]` with
+   NUMERIC line numbers: the before-context, the matched line, then the
+   after-context. A bare string `v` is tolerated as the lone matched line.
+   Numeric lines are what lets a file's hits merge into one ordered block."
+  [k v]
+  (let
+    [ctx (fn [side]
+           (map (fn [[ln txt]]
+                  [(rg-anchor-lineno-long ln) txt false])
+                (hit-context-rows (get v side))))]
+    (if (map? v)
+      (concat (ctx "before") [[(rg-anchor-lineno-long k) (get v "text") true]] (ctx "after"))
+      [[(rg-anchor-lineno-long k) v true]])))
+
+(defn- file-hit-rows
+  "Gutter rows for ONE file's `hits` (anchor→value pairs), MERGED: every hit's
+   context window and matched line collapse into a single line-ordered,
+   DEDUPLICATED block. Rendering each hit independently re-printed the same
+   source lines once per hit whenever hits sat closer together than the context
+   window — a cluster of matches with `context 14` painted the same paragraph
+   four times over, which is what a reader sees as a broken card. A `⋯` gutter
+   row marks every discontinuity, so a merged block never implies that
+   non-adjacent lines are adjacent. Matched lines win over a context copy of the
+   same line, so needle highlighting is never lost to a neighbour's context."
+  [needles ^long width hits]
+  (let
+    [by-line
+     (reduce (fn [acc [ln txt match?]]
+               (if (and (contains? acc ln) (not match?)) acc (assoc acc ln txt)))
+             (sorted-map)
+             (mapcat (fn [[k v]]
+                       (hit-line-entries k v))
+                     hits))
+
+     gap-row
+     (str "  " (format (str "%" width "s") "⋯"))]
+
+    (loop
+      [rows
+       []
+
+       prev
+       nil
+
+       entries
+       (seq by-line)]
+
+      (if-let [[[ln txt] & more] entries]
+        (recur (cond-> rows
+                 (and prev (> (long ln) (inc (long prev))))
+                 (conj gap-row)
+
+                 true
+                 (conj (gutter-row needles width ln txt)))
+               ln
+               more)
+        rows))))
 
 (defn- render-patch-result
   "patch/write/struct_patch → `{:summary :body}`. The badge already states the
@@ -4933,10 +4977,7 @@
 
          (str (md-inline-code (disp-path (kw->str path)))
               "\n\n```\n"
-              (str/join "\n"
-                        (mapcat (fn [[k v]]
-                                  (hit-rows needles width k v))
-                                kept))
+              (str/join "\n" (file-hit-rows needles width kept))
               (when (pos? extra) (str "\n  … +" extra " more hit" (when (not= 1 extra) "s")))
               "\n```")))
 
