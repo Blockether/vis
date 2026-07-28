@@ -638,7 +638,7 @@ export function App() {
 function Header({ tab, hasConn, onTab }: { tab: Tab; hasConn: boolean; onTab: (tab: Tab) => void }) {
   return (
     <header className="relative z-30 shrink-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
-      <div className="mx-auto flex h-12 w-full max-w-[1400px] items-center justify-between px-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:px-6">
+      <div className="mx-auto flex h-12 w-full max-w-[1400px] items-center justify-between pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
         <div className="flex items-center gap-2.5" aria-label="Vis">
           <img src="/vis-logo.png" alt="" className="h-[18px] w-5 object-contain" />
           <span className="font-mono text-title font-black tracking-[0.18em] text-white">VIS</span>

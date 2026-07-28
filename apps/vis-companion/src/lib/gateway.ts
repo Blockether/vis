@@ -86,6 +86,46 @@ interface RawSessionMatch {
  */
 export const ROUTER_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * Hard deadline for ONE gateway request, body included.
+ *
+ * A suspended iOS/Android webview does not FAIL its in-flight HTTP. The OS
+ * freezes the socket and, after the resume, the promise neither resolves nor
+ * rejects — ever. Every screen that awaits one then waits forever: the session
+ * transcript is the visible casualty, because its loading veil is gated on
+ * exactly this call, so a phone that comes back after a few minutes away sits
+ * on a spinner that only a force-quit clears. No layer below `fetch` reports
+ * that, so the bound lives here. Long enough that a slow phone link never trips
+ * it, short enough that a dead one self-heals without the user restarting.
+ *
+ * The event stream has its own, longer watchdog (a live SSE body is *meant* to
+ * stay open); every endpoint reached through `request` answers immediately —
+ * `auth/poll` included, which the daemon documents as non-blocking.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Deadline for ONE transcription round trip, SCALED to the audio it carries.
+ *
+ * `transcribeVoice` bypasses `request` (it posts raw WAV bytes, not JSON), so it
+ * used to be the one call in the client with no bound at all — and the most
+ * exposed one, because it is issued exactly when a dictation ends, which on a
+ * phone is often the moment the screen locks. A frozen socket then left
+ * `voicePhase` pinned at `transcribing` forever: the mic button disabled, the
+ * send button disabled, the audio trapped in a promise that never settles.
+ *
+ * The bound cannot be a flat 30s: transcription is real work on the daemon and
+ * a 15-minute dictation legitimately takes minutes. So it tracks the payload —
+ * 16 kHz mono Int16 is 32 kB per second of speech (src/lib/voice.ts).
+ */
+const VOICE_TIMEOUT_FLOOR_MS = 60_000;
+const VOICE_BYTES_PER_SECOND = 32_000;
+const VOICE_TIMEOUT_PER_SECOND_MS = 500;
+
+function voiceTimeoutMs(bytes: number): number {
+  return VOICE_TIMEOUT_FLOOR_MS + Math.ceil(bytes / VOICE_BYTES_PER_SECOND) * VOICE_TIMEOUT_PER_SECOND_MS;
+}
+
 /** Router rows per gateway base URL, shared by every screen and client instance. */
 const routerCache = new Map<string, { at: number; rows: RouterProvider[] }>();
 
@@ -285,33 +325,55 @@ export class GatewayClient {
   ): Promise<T> {
     const headers = this.headers();
     if (body !== undefined) headers.set('Content-Type', 'application/json');
-    let res: Response;
+    // Bound the whole exchange, not just the connect: a resumed request usually
+    // parks on the BODY read, with its headers already delivered.
+    const deadline = new AbortController();
+    const timer = window.setTimeout(() => deadline.abort(), REQUEST_TIMEOUT_MS);
+    // A caller that aborted (screen unmounted, session switched) is not a stall,
+    // and must keep reporting itself as one.
+    const stalled = () => deadline.signal.aborted && !signal?.aborted;
+    const seconds = Math.round(REQUEST_TIMEOUT_MS / 1000);
     try {
-      res = await fetch(this.base + path, {
-        method,
-        headers,
-        body: body === undefined ? undefined : JSON.stringify(body),
-        signal,
-      });
-    } catch (e) {
-      throw new GatewayError(0, `network error: ${(e as Error).message}`);
-    }
-    const text = await res.text();
-    let parsed: unknown = undefined;
-    if (text) {
+      const attemptSignal = anySignal(signal ? [signal, deadline.signal] : [deadline.signal]);
+      let res: Response;
       try {
-        parsed = JSON.parse(text);
-      } catch {
-        parsed = text;
+        res = await fetch(this.base + path, {
+          method,
+          headers,
+          body: body === undefined ? undefined : JSON.stringify(body),
+          signal: attemptSignal,
+        });
+      } catch (e) {
+        throw stalled()
+          ? new GatewayError(0, `gateway did not answer within ${seconds}s`)
+          : new GatewayError(0, `network error: ${(e as Error).message}`);
       }
+      let text: string;
+      try {
+        text = await res.text();
+      } catch (e) {
+        throw stalled()
+          ? new GatewayError(0, `gateway stopped sending after ${seconds}s`)
+          : new GatewayError(0, `network error: ${(e as Error).message}`);
+      }
+      let parsed: unknown = undefined;
+      if (text) {
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          parsed = text;
+        }
+      }
+      if (!res.ok) {
+        const msg =
+          (parsed as { error?: { message?: string } })?.error?.message ??
+          `HTTP ${res.status}`;
+        throw new GatewayError(res.status, msg, parsed);
+      }
+      return parsed as T;
+    } finally {
+      window.clearTimeout(timer);
     }
-    if (!res.ok) {
-      const msg =
-        (parsed as { error?: { message?: string } })?.error?.message ??
-        `HTTP ${res.status}`;
-      throw new GatewayError(res.status, msg, parsed);
-    }
-    return parsed as T;
   }
 
   // ── Health / status ─────────────────────────────────────────────
@@ -387,18 +449,39 @@ export class GatewayClient {
 
   async transcribeVoice(sid: string, wav: Blob, signal?: AbortSignal): Promise<VoiceTranscript> {
     let response: Response;
+    let text: string;
+    // Same shape as `request`: bound the whole exchange, keep a caller's own
+    // abort (screen unmounted, session switched) reporting as itself.
+    const deadline = new AbortController();
+    const budget = voiceTimeoutMs(wav.size);
+    const timer = window.setTimeout(() => deadline.abort(), budget);
+    const stalled = () => deadline.signal.aborted && !signal?.aborted;
+    const seconds = Math.round(budget / 1000);
     try {
-      response = await fetch(`${this.base}/v1/sessions/${encodeURIComponent(sid)}/voice`, {
-        method: 'POST',
-        headers: this.headers({ 'Content-Type': 'audio/wav' }),
-        body: wav,
-        signal,
-      });
-    } catch (cause) {
-      throw new GatewayError(0, `network error: ${(cause as Error).message}`);
+      const attemptSignal = anySignal(signal ? [signal, deadline.signal] : [deadline.signal]);
+      try {
+        response = await fetch(`${this.base}/v1/sessions/${encodeURIComponent(sid)}/voice`, {
+          method: 'POST',
+          headers: this.headers({ 'Content-Type': 'audio/wav' }),
+          body: wav,
+          signal: attemptSignal,
+        });
+      } catch (cause) {
+        throw stalled()
+          ? new GatewayError(0, `transcription did not answer within ${seconds}s`)
+          : new GatewayError(0, `network error: ${(cause as Error).message}`);
+      }
+      try {
+        text = await response.text();
+      } catch (cause) {
+        throw stalled()
+          ? new GatewayError(0, `transcription stopped sending after ${seconds}s`)
+          : new GatewayError(0, `network error: ${(cause as Error).message}`);
+      }
+    } finally {
+      window.clearTimeout(timer);
     }
 
-    const text = await response.text();
     let parsed: unknown;
     try {
       parsed = text ? JSON.parse(text) : undefined;

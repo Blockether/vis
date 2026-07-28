@@ -32,6 +32,7 @@ import {
   watchDraftMessageExits,
   writeDraftMessage,
 } from '../lib/draft-messages';
+import { clearPendingVoice, readPendingVoice, savePendingVoice } from '../lib/pending-voice';
 import type {
   ContentBlock,
   IterationAttachment,
@@ -111,6 +112,15 @@ const INITIAL_VISIBLE_TURNS = 24;
 // the rest of the window in ABOVE the fold once the reader already has pixels.
 const FIRST_PAINT_TURNS = 3;
 const HYDRATE_TURNS_PER_FRAME = 10;
+// Last-resort reveal for the loading veil. The veil is dropped by whoever
+// finishes first — the transcript read, or the scroll effect one animation
+// frame after the first paint — and BOTH can be lost on mobile: a webview that
+// is frozen at that moment runs no animation frame, and a request suspended
+// with the app can settle never. The pending flag is consumed either way, so
+// nothing re-arms the reveal and the session looks permanently stuck. Reveal
+// unconditionally after this: a transcript that is still loading paints when it
+// lands, and an unreachable gateway shows its error instead of a spinner.
+const LOADING_VEIL_MAX_MS = 12_000;
 
 function stringField(event: SseEvent, key: string): string {
   const value = event[key];
@@ -541,47 +551,6 @@ function LoadingSession() {
 }
 
 /**
- * Composer-side liveness ticker.
- *
- * The transcript paints its own "Vis is thinking..." line at the END of the live
- * bubble — which is exactly the strip the keyboard covers first. With the input
- * open (the one moment you most want to know whether the turn is still going)
- * there was NO signal at all. This rides the footer's own status row instead, so
- * it is visible whatever the transcript is scrolled to, and it swaps in for the
- * model chip rather than adding a row: the footer keeps a constant height, so a
- * turn starting or ending never resizes the composer under the caret.
- */
-function ComposerActivity({ phase, startedAt }: { phase: string; startedAt?: number }) {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 100);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  const seconds = Math.max(0, Math.round((now - (startedAt ?? now)) / 1000));
-  const elapsed =
-    seconds < 60
-      ? `${seconds}s`
-      : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
-  const frame = LOADING_SPINNER_FRAMES[Math.floor(now / 100) % LOADING_SPINNER_FRAMES.length];
-
-  return (
-    <span
-      className="inline-flex min-w-0 shrink items-center gap-1.5 px-1 py-1 font-mono text-chip text-dialog-hint"
-      role="status"
-      aria-live="polite"
-      title={`${phase}...`}
-    >
-      <span aria-hidden="true" className="text-accent-ink motion-reduce:hidden">{frame}</span>
-      <span aria-hidden="true" className="hidden text-accent-ink motion-reduce:inline">●</span>
-      <span className="truncate">{phase}...</span>
-      <span className="shrink-0 tabular-nums opacity-70">{elapsed}</span>
-    </span>
-  );
-}
-
-/**
  * iOS takes the keyboard down the instant focus leaves the field, and a button
  * press IS a focus change: tapping a paste chip slid the whole shell down, then
  * straight back up as the editor's textarea autofocused — two full keyboard
@@ -751,6 +720,10 @@ export function SessionScreen({
   // typed on the FIRST frame; the effect below covers the cold start, where
   // storage still has to be read.
   const draftMessageId = draftMessageKey(client.base, sid);
+  // Dictated audio waiting for a transcript is filed under the SAME identity as
+  // the draft message, because that is what it becomes: unsent words belonging
+  // to this gateway's copy of this session.
+  const voiceMailboxId = draftMessageId;
   const [prompt, setPrompt] = useState(() => peekDraftMessage(draftMessageId).text);
   const [draftMessageReady, setDraftMessageReady] = useState(false);
   // Same fact, readable SYNCHRONOUSLY: the effects below run in declaration
@@ -1346,11 +1319,18 @@ export function SessionScreen({
   // the end, the part you are about to keep typing after, sits below the fold.
   // Park the caret at the end and scroll there ourselves, one frame later so the
   // autosize effect has already committed the new height.
-  const revealComposerEnd = useCallback((focus: boolean) => {
+  //
+  // It does NOT focus. Taking focus after a dictation raises the on-screen
+  // keyboard on iOS/Android, which is a decision only the reader can make: a
+  // transcript that came out right is meant to be SENT, not edited, and the
+  // keyboard then covers half the transcript for nothing. Whatever had focus
+  // when the words landed keeps it — so a composer that was already focused
+  // (desktop, or a keyboard the user deliberately kept up) stays focused and
+  // the caret still lands at the end.
+  const revealComposerEnd = useCallback(() => {
     requestAnimationFrame(() => {
       const textarea = composerRef.current;
       if (!textarea) return;
-      if (focus) textarea.focus();
       const end = textarea.value.length;
       textarea.setSelectionRange(end, end);
       setCaret(end);
@@ -1360,32 +1340,45 @@ export function SessionScreen({
 
   // Turn captured audio into composer text. Kept apart from the mic button
   // because the button is no longer the only thing that ends a recording.
-  const transcribeVoice = useCallback(async (wav: Blob, refocus: boolean) => {
+  const transcribeVoice = useCallback(async (wav: Blob) => {
+    // Durable BEFORE the request, never only after it fails: iOS tears the
+    // webview down mid-flight (reclaim, crash, reload) and audio that lives in
+    // this closure alone dies with it. Only a transcript empties the outbox.
+    pendingVoiceRef.current = wav;
+    void savePendingVoice(voiceMailboxId, wav);
     try {
       const transcript = await client.transcribeVoice(sid, wav);
       pendingVoiceRef.current = null;
+      void clearPendingVoice(voiceMailboxId);
       const text = transcript.text.trim();
       // A transcript that comes back empty is a REAL outcome (a muted or
       // hijacked mic records perfect silence), so it has to say so: dropping it
       // silently is what makes the button feel dead.
       if (text) {
         setPrompt((current) => `${current.trimEnd()}${current.trim() ? ' ' : ''}${text}`);
-        // Show the TAIL of the dictation, not its opening line, whether or not
-        // this path also takes focus back.
-        revealComposerEnd(refocus);
+        // Show the TAIL of the dictation, not its opening line.
+        revealComposerEnd();
       } else {
         setComposerNotice('No speech recognised — nothing was captured.');
-        if (refocus) requestAnimationFrame(() => composerRef.current?.focus());
       }
     } catch (cause) {
-      // The request dies with the webview when iOS backgrounds the app. Keep the
-      // audio and retry on the next wake rather than losing what was said.
-      pendingVoiceRef.current = wav;
-      setComposerNotice((cause as Error).message);
+      // Offline, asleep, or a gateway that never answered. The words are NOT
+      // lost: they sit in the outbox and drain on the next wake — and `online`
+      // is one of the signals that fires a wake (lib/wake.ts).
+      const message = (cause as Error).message;
+      const unreachable =
+        message.startsWith('network error')
+        || message.includes('did not answer')
+        || message.includes('stopped sending');
+      setComposerNotice(
+        unreachable
+          ? 'Saved what you said — it transcribes as soon as the gateway is reachable.'
+          : message,
+      );
     } finally {
       setVoicePhase('idle');
     }
-  }, [client, sid, revealComposerEnd]);
+  }, [client, sid, revealComposerEnd, voiceMailboxId]);
 
   // End dictation and transcribe what WAS captured. Every path that takes the
   // microphone away lands here, not just the mic button: iOS suspends the
@@ -1394,7 +1387,7 @@ export function SessionScreen({
   // stopped — the words spoken up to that point are simply lost. Finishing here
   // puts them in the composer draft, which is persisted, so they survive even a
   // webview the OS kills outright.
-  const finishVoice = useCallback(async (options?: { refocus?: boolean; notice?: string }) => {
+  const finishVoice = useCallback(async (options?: { notice?: string }) => {
     const recording = recordingRef.current;
     if (!recording) return;
     recordingRef.current = null;
@@ -1408,7 +1401,7 @@ export function SessionScreen({
       setVoicePhase('idle');
       return;
     }
-    await transcribeVoice(wav, options?.refocus ?? false);
+    await transcribeVoice(wav);
   }, [transcribeVoice]);
 
   const finishVoiceRef = useRef(finishVoice);
@@ -1461,19 +1454,27 @@ export function SessionScreen({
     };
   }, [voicePhase]);
 
-  // Audio whose transcription died with the backgrounded webview: retry it the
-  // moment the app is live again.
+  // Audio the gateway has not turned into text yet — because the webview was
+  // backgrounded mid-request, because the phone had no link, or because the app
+  // was killed between the two. Drain it whenever the app is live again.
   const voicePhaseRef = useRef(voicePhase);
   useEffect(() => {
     voicePhaseRef.current = voicePhase;
   });
-  useEffect(() => onWake(() => {
-    const wav = pendingVoiceRef.current;
+  const retryPendingVoice = useCallback(async () => {
+    if (voicePhaseRef.current !== 'idle') return;
+    // The ref is only a fast path: after a cold start it is empty and the
+    // outbox is the sole record that anything was ever said.
+    const wav = pendingVoiceRef.current ?? (await readPendingVoice(voiceMailboxId));
     if (!wav || voicePhaseRef.current !== 'idle') return;
-    pendingVoiceRef.current = null;
     setVoicePhase('transcribing');
-    void transcribeVoice(wav, false);
-  }), [transcribeVoice]);
+      await transcribeVoice(wav);
+  }, [transcribeVoice, voiceMailboxId]);
+  useEffect(() => onWake(() => void retryPendingVoice()), [retryPendingVoice]);
+  // Cold start / session switch: adopt whatever this session still owes.
+  useEffect(() => {
+    void retryPendingVoice();
+  }, [retryPendingVoice]);
 
   useEffect(() => () => {
     void recordingRef.current?.cancel();
@@ -1733,6 +1734,13 @@ export function SessionScreen({
     const timer = window.setTimeout(() => setVeiled(false), VEIL_FADE_MS);
     return () => window.clearTimeout(timer);
   }, [loading, veiled]);
+
+  // The veil can never outlive the watchdog (see LOADING_VEIL_MAX_MS).
+  useEffect(() => {
+    if (!loading) return;
+    const timer = window.setTimeout(() => setLoading(false), LOADING_VEIL_MAX_MS);
+    return () => window.clearTimeout(timer);
+  }, [loading]);
 
   // Deferred Markdown, fonts, and content-visibility can change the transcript's
   // measured height after React commits. Keep a newly opened/followed session at
@@ -2048,7 +2056,7 @@ export function SessionScreen({
     setComposerNotice(null);
 
     if (recordingRef.current) {
-      await finishVoice({ refocus: true });
+      await finishVoice();
       return;
     }
 
@@ -2072,11 +2080,22 @@ export function SessionScreen({
         // nobody will ever stop.
         onInterrupted: (reason) => void finishVoiceRef.current({ notice: reason }),
       });
+      // A gateway we cannot REACH is not a reason to refuse dictation: capture,
+      // resampling and WAV encoding are entirely local, and the result queues in
+      // the voice outbox until the link is back. Only a gateway that ANSWERS
+      // "not ready" can stop a recording.
       let model = voiceModel;
       if (model?.status !== 'ready') {
-        model = await client.voiceModel(sid, true);
-        setVoiceModel(model);
-        if (model.status !== 'ready') {
+        let reachable = true;
+        try {
+          model = await client.voiceModel(sid, true);
+          setVoiceModel(model);
+        } catch {
+          reachable = false;
+        }
+        if (!reachable) {
+          setComposerNotice('Gateway unreachable — recording anyway; it transcribes once it answers.');
+        } else if (model && model.status !== 'ready') {
           await recording.cancel();
           setComposerNotice(
             model.status === 'downloading'
@@ -2737,7 +2756,7 @@ export function SessionScreen({
       >
         <div
           ref={transcriptRef}
-          className={`mx-auto min-h-full w-full max-w-3xl px-[max(0.875rem,env(safe-area-inset-left))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-4 sm:px-6 sm:pt-6 ${
+          className={`mx-auto min-h-full w-full max-w-3xl pl-[max(0.875rem,env(safe-area-inset-left))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-4 sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))] sm:pt-6 ${
             !turns.length && !liveTurn ? 'flex flex-col pb-4 sm:pb-6' : 'pb-10'
           }`}
         >
@@ -2796,7 +2815,11 @@ export function SessionScreen({
         )}
       </div>
 
-      <footer className="relative z-10 shrink-0 border-t border-dialog-edge bg-ink px-[max(0.875rem,env(safe-area-inset-left))] pb-[calc(0.5rem+var(--safe-bottom,env(safe-area-inset-bottom)))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:px-[max(1.5rem,calc((100%_-_46rem)/2))] sm:py-2">
+      {/* `sm:pt-2`, never `sm:py-2`: the `sm` variant is emitted after the base
+          rules, so a shorthand there would drop `--safe-bottom` — and `sm` is
+          exactly where a phone lands when it is turned on its side, home
+          indicator included. */}
+      <footer className="relative z-10 shrink-0 border-t border-dialog-edge bg-ink pl-[max(0.875rem,env(safe-area-inset-left))] pb-[calc(0.5rem+var(--safe-bottom,env(safe-area-inset-bottom)))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:pt-2">
         {/* Anchored to the footer's top edge, so it always clears the queue
             tray and composer no matter how tall they grow. Hidden while a
             completion list occupies the same strip. */}
@@ -3235,12 +3258,6 @@ export function SessionScreen({
             then cost) rides the RIGHT edge. The chip truncates first so the
             numbers survive a narrow phone. */}
         <div className="flex w-full items-center gap-2 pt-1">
-          {activeWork ? (
-            <ComposerActivity
-              phase={liveTurn ? liveProgressPhase(liveTurn) : 'Vis is working'}
-              startedAt={liveTurn?.startedAt}
-            />
-          ) : (
           <button
             type="button"
             className="group inline-flex min-w-0 shrink items-center gap-1.5 px-1 py-1 font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none"
@@ -3256,7 +3273,6 @@ export function SessionScreen({
             <span className="truncate">{modelPref?.model ?? defaultPref?.model ?? 'model'}</span>
             <span aria-hidden="true" className="opacity-40 transition-opacity duration-150 group-hover:opacity-100 motion-reduce:transition-none">▾</span>
           </button>
-          )}
 
           {(usageTokens || usageCost) && (
             <span

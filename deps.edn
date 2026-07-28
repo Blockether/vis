@@ -141,6 +141,12 @@
   net.mikera/vectorz-clj {:mvn/version "0.48.0"}
   ring/ring-core {:mvn/version "1.15.5"}
   ring/ring-jetty-adapter {:mvn/version "1.15.5"}
+  ;; CVE pins: ring-jetty-adapter 1.15.5 still resolves Jetty 12.1.8, which carries
+  ;; CVE-2026-10050/10051/8384/6790. Declaring the two Jetty roots here (top dep wins
+  ;; in tools.deps) lifts the whole Jetty tree to 12.1.11. Drop these once ring ships
+  ;; a release that resolves >= 12.1.11 on its own.
+  org.eclipse.jetty/jetty-server {:mvn/version "12.1.11"}
+  org.eclipse.jetty.ee9/jetty-ee9-servlet {:mvn/version "12.1.11"}
   metosin/reitit-ring {:mvn/version "0.10.1"}
   com.google.zxing/core {:mvn/version "3.5.4"}
   ;; Pure-Java SSH2 (mwiede fork of JSch) backing the sandbox `paramiko` shim.

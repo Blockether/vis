@@ -324,6 +324,13 @@ export function useVisualViewportShell(): CSSProperties | undefined {
     const nativeKeyboard = Capacitor.getPlatform() === 'ios';
     // Set while the native driver owns the box.
     let keyboardPinned = false;
+    // What the keyboard is doing, independent of whether the shell is currently
+    // pinned to it: a rotation has to drop the pin (the numbers behind it belong
+    // to the other orientation) and then rebuild it from fresh ones.
+    let keyboardUp = false;
+    let keyboardHeight = 0;
+    // Assigned only by the native driver below; a no-op elsewhere.
+    let repinKeyboard: () => boolean = () => false;
     let timers: number[] = [];
     const clearTimers = () => {
       for (const t of timers) window.clearTimeout(t);
@@ -333,20 +340,27 @@ export function useVisualViewportShell(): CSSProperties | undefined {
     const sync = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
-        // The native keyboard driver owns the box while the keyboard is up: with
-        // `resize: 'none'` the webview keeps its full size, so `visualViewport`
-        // reports no keyboard at all and this would drop the pin mid-animation.
-        if (keyboardPinned) return;
-        // A suspended/hidden webview reports whatever it froze at; recording it
-        // would outlive the state it described.
-        if (document.visibilityState === 'hidden') return;
         // Mid-rotation iOS reports the PRE-rotation visual viewport against the
         // POST-rotation layout one. That reads as a keyboard, and pinning the
         // shell to it fixes the app at a height the device no longer has —
         // which is the mismatch you see, corrected a few frames later as a
         // jump. Let the plain `h-dvh` box carry the rotation and re-measure
         // once it is over.
+        //
+        // This runs BEFORE the keyboard pin, and releases it too. A pin is
+        // `innerHeight - keyboardHeight` measured in ONE orientation; after the
+        // flip it is a height the device does not have, and iOS does not
+        // reliably re-announce the keyboard for a rotation. With the keyboard
+        // check first, nothing inside the rotation window could ever reach
+        // here, so the shell stayed portrait-tall inside a landscape window:
+        // the composer sat off the bottom edge and the transcript ran past it.
+        // Only this screen keeps a field focused, which is why the session list
+        // rotated cleanly. The keyboard is re-pinned from fresh numbers when
+        // the rotation ends.
         if (isViewportRotating()) {
+          keyboardPinned = false;
+          setAnimating(false);
+          pinnedShellHeight = null;
           setBox(null);
           resetLayoutScroll();
           document.documentElement.style.setProperty(
@@ -355,6 +369,13 @@ export function useVisualViewportShell(): CSSProperties | undefined {
           );
           return;
         }
+        // The native keyboard driver owns the box while the keyboard is up: with
+        // `resize: 'none'` the webview keeps its full size, so `visualViewport`
+        // reports no keyboard at all and this would drop the pin mid-animation.
+        if (keyboardPinned) return;
+        // A suspended/hidden webview reports whatever it froze at; recording it
+        // would outlive the state it described.
+        if (document.visibilityState === 'hidden') return;
         const covered = window.innerHeight - vv.height > COVERED_EPSILON;
         // Keyboard down means the layout viewport belongs at its origin again.
         if (!covered) resetLayoutScroll();
@@ -439,8 +460,16 @@ export function useVisualViewportShell(): CSSProperties | undefined {
     // happens, the settles re-check cheaply, and only the end pays for a full
     // wake schedule.
     const stopRotation = onViewportRotation((phase) => {
-      if (phase === 'end') resync();
-      else sync();
+      if (phase !== 'end') {
+        sync();
+        return;
+      }
+      // The rotation is over and both numbers finally describe the same device.
+      // A keyboard that survived the flip owns the box again — re-pin it here,
+      // because `sync()` cannot see a native keyboard at all (`resize: 'none'`)
+      // and would leave the shell full-height with the composer behind it.
+      if (repinKeyboard()) return;
+      resync();
     });
 
     // Native iOS keyboard: one movement, on the OS's own timings.
@@ -470,16 +499,34 @@ export function useVisualViewportShell(): CSSProperties | undefined {
         );
       };
       const onWillShow = (info: KeyboardInfo) => {
+        keyboardUp = true;
+        keyboardHeight = info.keyboardHeight;
+        // Mid-rotation the two operands describe different devices — iOS reports
+        // the new keyboard height while `innerHeight` is still the old window,
+        // or the reverse. Record the height and let the rotation's `end` do the
+        // arithmetic once they agree.
+        if (isViewportRotating()) return;
         keyboardPinned = true;
         document.documentElement.style.setProperty('--safe-bottom', '0px');
-        pin(window.innerHeight - info.keyboardHeight);
+        pin(window.innerHeight - keyboardHeight);
       };
       const onWillHide = () => {
+        keyboardUp = false;
         document.documentElement.style.setProperty(
           '--safe-bottom',
           'env(safe-area-inset-bottom)',
         );
         pin(window.innerHeight);
+      };
+      // Rebuild the keyboard pin from post-rotation numbers. Snaps rather than
+      // transitions: the rotation already moved everything at once.
+      repinKeyboard = () => {
+        if (!keyboardUp) return false;
+        keyboardPinned = true;
+        document.documentElement.style.setProperty('--safe-bottom', '0px');
+        pin(window.innerHeight - keyboardHeight);
+        setAnimating(false);
+        return true;
       };
       const onDidShow = () => setAnimating(false);
       const onDidHide = () => {

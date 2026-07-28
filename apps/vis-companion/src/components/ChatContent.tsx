@@ -352,12 +352,15 @@ export const Markdown = memo(function Markdown({
       diff blocks drop their own border so the card shows ONE frame, not two. */
   nested?: boolean;
 }) {
-  // Running text (thinking, prose, answers) is justified so the transcript reads as a
-  // typeset column instead of a ragged one — but only with automatic hyphenation, which
-  // is what keeps the extra word-spacing unobtrusive on a phone-width line. Inside an
-  // already-framed tool card (`nested`) the column is too narrow for that trade, so the
-  // card keeps ragged-right.
-  const runningText = nested ? '' : 'hyphens-auto text-justify';
+  // Justification is a WIDTH trade, not a taste one. Word-spacing is the only slack a
+  // justified line has, so the narrower the column the more each unbreakable atom (an
+  // inline `code` path, a URL) has to be paid for by stretching the few words that did
+  // fit — the rivers/holes that make a phone-width transcript unreadable. So: ragged
+  // right (with `text-pretty`, which also stops orphan last lines) up to `sm`, justified
+  // only from `sm` up where the measure is long enough to absorb it, and automatic
+  // hyphenation everywhere so the breaks are words, not gaps. Inside an already-framed
+  // tool card (`nested`) the column never gets wide enough, so the card stays ragged.
+  const runningText = nested ? '' : 'hyphens-auto text-pretty sm:text-justify';
   return (
     <div className="min-w-0 break-words [&>:first-child]:mt-0 [&>:last-child]:mb-0">
       <ReactMarkdown
@@ -379,7 +382,7 @@ export const Markdown = memo(function Markdown({
             </blockquote>
           ),
           code: ({ children: inline }) => (
-            <code className="mx-px inline rounded-none bg-result-path px-0.5 py-px font-mono font-medium text-result-path-foreground">
+            <code className="mx-px inline rounded-none bg-result-path px-0.5 py-px font-mono font-medium text-result-path-foreground [overflow-wrap:anywhere]">
               {inline}
             </code>
           ),
@@ -1314,7 +1317,7 @@ export const UserMessage = memo(function UserMessage(
   return (
     <article className="mt-4 w-full [contain:layout_style]">
       <div className="mb-1 font-mono text-meta font-bold text-you-role">You</div>
-      <div className="inline-block max-w-full whitespace-pre-wrap break-words hyphens-auto border-l-2 border-you-role bg-code px-3 py-2 text-body text-justify text-you-message-foreground">
+      <div className="inline-block max-w-full whitespace-pre-wrap break-words hyphens-auto border-l-2 border-you-role bg-code px-3 py-2 text-body text-pretty sm:text-justify text-you-message-foreground">
         {parts.map((part) => part.type === 'text' ? (
           <span key={part.key}>{part.text}</span>
         ) : part.type === 'image' ? (

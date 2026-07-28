@@ -44,7 +44,10 @@
   org.flywaydb/flyway-core                  {:mvn/version "12.11.0"}
   ;; SQLite-specific Flyway driver. Split out of flyway-core in 10.x+
   ;; - without this jar Flyway can't recognize a `jdbc:sqlite:` URL.
-  org.flywaydb/flyway-database-nc-sqlite    {:mvn/version "12.11.0"}}
+  org.flywaydb/flyway-database-nc-sqlite    {:mvn/version "12.11.0"}
+  ;; CVE pin: Flyway 12.11.0 pulls tools.jackson jackson-databind 3.1.4
+  ;; (CVE-2026-59889). Declared here so the top-level version wins.
+  tools.jackson.core/jackson-databind       {:mvn/version "3.2.1"}}
 
  :aliases
  {:test

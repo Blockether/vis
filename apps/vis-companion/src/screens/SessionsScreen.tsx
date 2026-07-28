@@ -111,7 +111,11 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
       try {
         const next = await (clientRef.current ?? new GatewayClient(connection)).listSessions(signal);
         if (!signal?.aborted) {
-          if (background) refreshAnchorRef.current = visibleListAnchor(listRef.current);
+          // Anchor EVERY reload, not just background polls: a manual refresh can
+          // reorder rows too, and without the anchor the tap yanks the list under
+          // the thumb. The layout effect below no-ops at the top of the list, so
+          // the first paint is unaffected.
+          refreshAnchorRef.current = visibleListAnchor(listRef.current);
           setSessions((current) => reconcileSessions(current, next));
           setLoadError(null);
         }
@@ -386,18 +390,11 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
                         </span>
                       </>
                     )}
-                    {refreshPhase !== 'idle' && (
-                      <>
-                        <span className="opacity-40">·</span>
-                        <span
-                          role="status"
-                          aria-live="polite"
-                          className={refreshPhase === 'done' ? 'font-bold text-ok' : ''}
-                        >
-                          {refreshPhase === 'busy' ? 'refreshing...' : 'updated just now'}
-                        </span>
-                      </>
-                    )}
+                    {/* No refresh status here on purpose. This line is `flex-wrap`,
+                        so appending "· refreshing..." / "· updated just now" could
+                        rewrap it onto a second line and shove the whole list down —
+                        and the phrases differ in width, so it jumped twice per tap.
+                        The button below owns that signal at a fixed width. */}
                   </>
                 )}
               </p>
@@ -409,14 +406,27 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
                 disabled={refreshPhase === 'busy'}
                 onClick={() => void manualRefresh()}
               >
-                <span className="inline-flex items-center gap-1">
-                  {refreshPhase === 'busy' && (
-                    <span
-                      aria-hidden
-                      className="size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none"
-                    />
-                  )}
-                  {refreshPhase === 'done' ? 'Updated' : refreshPhase === 'busy' ? 'Refreshing' : 'Refresh'}
+                {/* Spinner and all three labels share ONE grid cell, so the button is
+                    sized once by its widest state and never resizes mid-refresh. The
+                    header row is `justify-between`, so every pixel this control gains
+                    is a pixel taken from the project counts on the left. */}
+                <span className="grid justify-items-center">
+                  <span aria-hidden className="invisible col-start-1 row-start-1 inline-flex items-center gap-1">
+                    <span className="size-2.5" />
+                    Refreshing
+                  </span>
+                  <span
+                    aria-live="polite"
+                    className={`col-start-1 row-start-1 inline-flex items-center gap-1 ${refreshPhase === 'done' ? 'font-bold text-ok' : ''}`}
+                  >
+                    {refreshPhase === 'busy' && (
+                      <span
+                        aria-hidden
+                        className="size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none"
+                      />
+                    )}
+                    {refreshPhase === 'done' ? 'Updated' : refreshPhase === 'busy' ? 'Refreshing' : 'Refresh'}
+                  </span>
                 </span>
               </Button>
               <Button
@@ -425,13 +435,21 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
                 disabled={createBusy || !active}
                 onClick={() => void createSession()}
               >
-                {createBusy ? (
-                  'Creating...'
-                ) : (
-                  <>
-                    New<span className="hidden min-[390px]:inline"> session</span>
-                  </>
-                )}
+                {/* Same fixed-width stack as Refresh: "Creating..." is wider than
+                    "New" on a narrow phone, and this grid column is content-sized,
+                    so the busy state would otherwise shove the header text left. */}
+                <span className="grid justify-items-center">
+                  <span aria-hidden className="invisible col-start-1 row-start-1">Creating...</span>
+                  <span aria-live="polite" className="col-start-1 row-start-1">
+                    {createBusy ? (
+                      'Creating...'
+                    ) : (
+                      <>
+                        New<span className="hidden min-[390px]:inline"> session</span>
+                      </>
+                    )}
+                  </span>
+                </span>
               </Button>
             </div>
           </div>

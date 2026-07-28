@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 1.0.1 (2719) — 2026-07-28
+<!-- commit: d8bd17eb26201de9bb72849b8e04e13621f0f2bc -->
+
+- Companion: coalesced tool-card grids, justified prose, correct live ticker
+- Release: notes for 1.0.1 (2717)
+
 ## 1.0.1 (2717) — 2026-07-28
 <!-- commit: 445a3b2d4fcd557f87d831b3bcd3a61836114159 -->
 

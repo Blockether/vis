@@ -467,7 +467,7 @@ export function GatewaySettingsDialog({
                             {toggle.label}
                           </p>
                           {toggle.description && (
-                            <p className="mt-0.5 hyphens-auto break-words text-justify text-meta text-dialog-hint">
+                            <p className="mt-0.5 hyphens-auto break-words text-pretty text-meta text-dialog-hint">
                               {toggle.description}
                             </p>
                           )}
