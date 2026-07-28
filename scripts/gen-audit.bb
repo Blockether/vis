@@ -236,7 +236,9 @@
                       (sort-by #(- (nth % 2))))
         total-b  (reduce + 0 (keep #(:size-bytes (nth % 3)) rows))
         copyleft (filter #(re-find #"GPL" (str (:license (nth % 3)))) rows)
-        today    (subs (str (java.time.LocalDate/now)) 0 10)]
+        ;; CI runs in UTC. Pin the generated date to that zone so a local run does
+        ;; not churn the document or fail the gate around a timezone boundary.
+        today    (subs (str (java.time.LocalDate/now java.time.ZoneOffset/UTC)) 0 10)]
     (str
      "# vis — Security & Dependency Audit
 
