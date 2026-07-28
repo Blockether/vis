@@ -2,6 +2,14 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 1.0.1 (2707) — 2026-07-28
+<!-- commit: 16c287e2e477ffef632c2843e499f151e6d45b95 -->
+
+- Images you upload now stay in the conversation after you leave and re-open a session
+- Rotating the phone no longer makes the layout float and resize — it fades back in once settled
+- Tapping the message box keeps you at the bottom of the conversation
+- TestFlight builds now ship these notes automatically
+
 ## 1.0.1 (2706) — 2026-07-28
 <!-- commit: 9c94b083a23e99c5032d72acae95d96d76b5e0ab -->
 
@@ -18,5 +26,3 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Give the arm64 builder the heap it measurably needs
 - Protocol version handshake + compatibility verdict
 - ${VAR} config references, provider-level env gaps, drop "gateway" from user-facing copy
-
-What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.

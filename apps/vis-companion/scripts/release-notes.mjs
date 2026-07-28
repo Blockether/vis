@@ -121,8 +121,11 @@ export const buildNotes = ({ version, build, scope = [], write = true } = {}) =>
       date: new Date().toISOString().slice(0, 10),
     });
     const head = '# Vis Companion — release notes\n\nWhat each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.\n';
-    const prev = existsSync(changelogPath) ? readFileSync(changelogPath, 'utf8') : `${head}`;
-    const body = prev.startsWith('# ') ? prev.slice(prev.indexOf('\n\n') + 2) : prev;
+    const prev = existsSync(changelogPath) ? readFileSync(changelogPath, 'utf8') : '';
+    // Keep only the existing entries: everything from the first `## ` heading on.
+    // Slicing at the first blank line would leave the preamble behind and duplicate it.
+    const firstEntry = prev.search(/^## /m);
+    const body = firstEntry === -1 ? '' : prev.slice(firstEntry);
     writeFileSync(changelogPath, `${head}\n${entry}\n${body.trimStart()}`);
   }
   return { bullets, text: toWhatsNew(bullets), reused: false };

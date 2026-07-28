@@ -478,6 +478,21 @@
        (keep :current-turn)
        count))
 
+(defn session-busy?
+  "True when `sid` still has work the daemon owns: a live `:current-turn`, or a
+   turn parked in the queue. THE guard for view-close teardown — a session is
+   shared, so \"my last view closed\" never proves \"nobody is working here\".
+   Another channel (companion app, web, a second TUI) may be attached to and
+   streaming that very turn."
+  [sid]
+  (let [entry (get @registry sid)]
+    (boolean (or (:current-turn entry)
+                 (some (fn [turn]
+                         (contains? #{"running" "queued"}
+                                    (some-> (:status turn)
+                                            name)))
+                       (vals (:turns entry)))))))
+
 ;; =============================================================================
 ;; Per-session model preference
 ;; =============================================================================
@@ -3491,10 +3506,19 @@
 
    Background resources (background `shell` processes, managed REPLs) are STOPPED here:
    closing the view is the user walking away, and a bg child must not outlive
-   that — the transcript stays resumable, the processes do not."
+   that — the transcript stays resumable, the processes do not.
+
+   BUSY SESSIONS ARE NEVER TORN DOWN. A session is shared across channels, so a
+   closing view only proves THAT view is gone — the companion app, web, or another
+   TUI may be attached to and streaming the very turn this would kill (`lp/close!`
+   drops the runtime mid-turn, which the other client sees as its work being
+   cancelled). A client that wants to STOP work cancels the turn explicitly; this
+   endpoint is a view-lifecycle hint, and on a busy session it is a no-op. The
+   daemon's own shutdown gate (refcount + `running-turn-count`) covers real exit."
   [sid]
-  (try (resources/stop-all! sid) (catch Throwable _ nil))
-  (try (lp/close! sid) (catch Throwable _ nil))
+  (when-not (session-busy? sid)
+    (try (resources/stop-all! sid) (catch Throwable _ nil))
+    (try (lp/close! sid) (catch Throwable _ nil)))
   nil)
 
 (defn close-session!

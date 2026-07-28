@@ -50,7 +50,10 @@
 
 (defn- ms->days ^long [^long ms] (long (quot ms day-ms)))
 
-(def ^:dynamic ^{:doc "Test seam for the gateway journal directory. `nil` (production) resolves to
+(def
+  ^:dynamic
+  ^{:doc
+    "Test seam for the gateway journal directory. `nil` (production) resolves to
                  `~/.vis/gateway/events`, mirroring the private `gateway.bus/events-dir` —
                  journals are addressed by absolute path from several processes, so that
                  location is a fixed contract rather than a user-facing configurable."}
@@ -59,8 +62,7 @@
 
 (defn- events-dir
   ^File []
-  (io/file (or *events-home*
-               (io/file (System/getProperty "user.home") ".vis" "gateway" "events"))))
+  (io/file (or *events-home* (io/file (System/getProperty "user.home") ".vis" "gateway" "events"))))
 
 ;; ---------------------------------------------------------------------------
 ;; Filesystem helpers. Every one of these swallows IO failure: housekeeping is
@@ -87,7 +89,7 @@
           (java.util.concurrent.atomic.AtomicLong. 0)
 
           newest
-          (java.util.concurrent.atomic.AtomicLong. (.lastModified root))]
+          (java.util.concurrent.atomic.AtomicLong. 0)]
 
          (Files/walkFileTree (.toPath root)
                              (proxy [SimpleFileVisitor] []
@@ -102,7 +104,12 @@
                                            (Math/max cur (.toMillis (.lastModifiedTime attrs)))))))
                                  FileVisitResult/CONTINUE)
                                (visitFileFailed [_p _e] FileVisitResult/CONTINUE)))
-         {:bytes (.get total) :newest-ms (.get newest)})
+         ;; Fall back to the directory's own stamp only for an EMPTY tree: a
+         ;; directory's mtime moves when entries are added or removed, so on a
+         ;; tree with files it reads as fresh even when nothing was worked on.
+         {:bytes (.get total)
+          :newest-ms (let [n (.get newest)]
+                       (if (pos? n) n (.lastModified root)))})
        (catch Throwable _ {:bytes 0 :newest-ms (.lastModified root)})))
 
 (defn- delete-tree!
