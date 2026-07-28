@@ -142,17 +142,30 @@
 
     {:exit (.waitFor p) :out out}))
 
+(defn- linux? [] (str/includes? (str/lower-case (str (System/getProperty "os.name"))) "linux"))
+
+(def ^:private linux-sandbox-applicable?
+  ;; Hosted Linux runners can expose bwrap but deny the namespace syscalls it
+  ;; needs (for example, by blocking loopback setup or uid-map writes). Cache an
+  ;; actual net-off launch so real E2E checks run whenever enforcement is viable
+  ;; and do not mistake a present binary for an available kernel capability.
+  (delay (when (and (linux?) (pj/supported?))
+           (try (zero? (:exit (run-jailed (pj/wrap-argv ["bash" "--noprofile" "--norc" "-lc" "true"]
+                                                        {:roots-fn (constantly [])
+                                                         :net-enabled? false}))))
+                (catch Throwable _ false)))))
+
 (defn- sandbox-applicable?
-  "True only when this JVM may apply a fresh Seatbelt profile.
+  "True only when this JVM may apply a fresh, working OS jail.
 
    Managed test JVMs already inherit Seatbelt (`VIS_SEATBELT_ACTIVE=1`), and a
-   nested profile cannot strengthen or replace that kernel policy. macOS CI and
-   an ordinary host JVM run the real enforcement branch; inherited runs exercise
-   the pure compiler/launch contract without pretending nested enforcement ran."
+   nested profile cannot strengthen or replace that kernel policy. On Linux,
+   bubblewrap additionally needs namespace privileges that some hosted runners
+   deny despite shipping the executable."
   []
-  (and (pj/supported?) (not= "1" (System/getenv "VIS_SEATBELT_ACTIVE"))))
-
-(defn- linux? [] (str/includes? (str/lower-case (str (System/getProperty "os.name"))) "linux"))
+  (and (pj/supported?)
+       (not= "1" (System/getenv "VIS_SEATBELT_ACTIVE"))
+       (or (not (linux?)) @linux-sandbox-applicable?)))
 
 (deftest macos-e2e-runner-contract
   (when (= "1" (System/getenv "VIS_REQUIRE_MACOS_SANDBOX_E2E"))
@@ -587,7 +600,7 @@
   ;; Real bubblewrap enforcement — runs ONLY on a Linux host with bwrap (i.e. the
   ;; ubuntu CI job). Proves a wrapped bash reads its workspace but CANNOT read a
   ;; secret outside the bound roots (which simply does not exist inside the jail).
-  (when (and (linux?) (pj/supported?))
+  (when (and (linux?) (sandbox-applicable?))
     (let
       [ws
        (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-bwrap-ws-" (System/nanoTime)))
@@ -641,7 +654,7 @@
   ;; the gateway proxy port (via pasta `-T`), while a sibling loopback port (the
   ;; would-be control plane) and the public internet are both unreachable. This is
   ;; the Linux equivalent of the macOS "only the proxy port" Seatbelt rule.
-  (when (and (linux?) (pj/supported?) (pasta-present?))
+  (when (and (linux?) (sandbox-applicable?) (pasta-present?))
     (let
       [proxy-srv
        (java.net.ServerSocket. 0 16 (java.net.InetAddress/getByName "127.0.0.1"))
