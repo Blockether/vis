@@ -352,6 +352,33 @@
       (boolean (visible? catalog-id model-id))
       true)))
 
+(def compatibility->api-style
+  "The user-facing `compatibility:` knob -> svar's low-level `:api-style`.
+
+   A provider speaks exactly one wire dialect, and that is all a user should
+   have to state: Anthropic Messages, or OpenAI-compatible (chat completions by
+   default, the Responses API when the endpoint serves only that). `api_style`
+   stays as the raw svar escape hatch and wins when both are set."
+  {:anthropic :anthropic
+   :openai :openai-compatible-chat
+   :openai-responses :openai-compatible-responses})
+
+(defn compatibility-api-style
+  "`:api-style` implied by a provider's `compatibility` value. nil when absent or
+   unknown - config validation rejects unknown values long before this."
+  [compatibility]
+  (when compatibility
+    (get compatibility->api-style (keyword (str/replace (name compatibility) "_" "-")))))
+
+(defn provider-api-style
+  "Effective `:api-style` for a provider map: explicit `api_style` first (raw
+   svar value), then the `compatibility` alias, then catalog/preset metadata."
+  ([provider] (provider-api-style provider (provider-template (:id provider))))
+  ([provider template]
+   (or (:api-style provider)
+       (compatibility-api-style (:compatibility provider))
+       (:api-style template))))
+
 (defn provider-base-url
   "Resolve base-url for a provider: explicit field on the provider
    map first (so user-supplied URLs win), then the merged catalog."
@@ -493,7 +520,7 @@
      (:base-url provider)
 
      explicit-api-style
-     (or (:api-style provider) (:api-style template))
+     (provider-api-style provider template)
 
      explicit-headers
      (:llm-headers provider)
@@ -572,7 +599,7 @@
 
 (def ^:private keyword-valued-keys
   "Known scalar fields whose internal runtime representation is a keyword."
-  #{"id" "backend" "api_style"})
+  #{"id" "backend" "api_style" "compatibility"})
 
 (def ^:private svar-yaml->runtime
   "svar owns these ?-suffixed keyword contracts (`:tool-call?`, `:check-context?`,
@@ -599,18 +626,19 @@
                #{:providers :default-provider :default-model :router :system-prompt :workspace
                  :enabled :filesystem :jail :network :environment :db-spec :search :toggles
                  :tui-settings :mcp :name :context :output-limit :id :api-key :models :base-url
-                 :api-style :responses-path :llm-headers :extra-body :rate-limit :budget :tokens
-                 :same-provider-delays-ms :fallback-after-ms :timeout-ms :ttft-timeout-ms
-                 :idle-timeout-ms :semantic-timeout-ms :max-retries :initial-delay-ms :max-delay-ms
-                 :multiplier :max-tokens :max-cost :pricing :context-limits :output-reserve
-                 :failure-threshold :recovery-ms :transient-status-codes :window-ms :cooldown-ms
-                 :max-wait-ms :allow-read-write :allow-read :allow-write :deny-read :deny-write
-                 :path :access :description :inbound-ports :deny-exec :allowed-domains
-                 :denied-domains :exclude-domains :allow-private :rules :host :methods :allow
-                 :method :text :is-replace :include-gitignored-paths :always-exclude :backend
-                 :theme-name :contributors-disabled :servers :transport :command :args :cwd :env
-                 :url :headers :python :resource-cache :message-queue :breaker-threshold
-                 :retry-backoff-ms :halfopen-probe-ms :retry-after-cap-ms})
+                 :api-style :compatibility :responses-path :llm-headers :extra-body :rate-limit
+                 :budget :tokens :same-provider-delays-ms :fallback-after-ms :timeout-ms
+                 :ttft-timeout-ms :idle-timeout-ms :semantic-timeout-ms :max-retries
+                 :initial-delay-ms :max-delay-ms :multiplier :max-tokens :max-cost :pricing
+                 :context-limits :output-reserve :failure-threshold :recovery-ms
+                 :transient-status-codes :window-ms :cooldown-ms :max-wait-ms :allow-read-write
+                 :allow-read :allow-write :deny-read :deny-write :path :access :description
+                 :inbound-ports :deny-exec :allowed-domains :denied-domains :exclude-domains
+                 :allow-private :rules :host :methods :allow :method :text :is-replace
+                 :include-gitignored-paths :always-exclude :backend :theme-name
+                 :contributors-disabled :servers :transport :command :args :cwd :env :url :headers
+                 :python :resource-cache :message-queue :breaker-threshold :retry-backoff-ms
+                 :halfopen-probe-ms :retry-after-cap-ms})
          svar-yaml->runtime))
 
 (defn runtime-config
@@ -1049,8 +1077,8 @@
       (and (nil? (:base-url provider)) (:base-url template))
       (assoc :base-url (:base-url template))
 
-      (and (nil? (:api-style provider)) (:api-style template))
-      (assoc :api-style (:api-style template))
+      (and (nil? (:api-style provider)) (provider-api-style provider template))
+      (assoc :api-style (provider-api-style provider template))
 
       (seq models)
       (assoc :models models))))

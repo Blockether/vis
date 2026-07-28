@@ -505,3 +505,43 @@
                (expect (= (System/getenv "HOME") (:api-key fine)))
                (expect (= {:gapped ["VIS_TEST_UNSET_A"]} (config/provider-env-gaps cfg)))))
            (finally (config/invalidate-config-cache!)))))
+
+(defdescribe
+  provider-compatibility-test
+  "`compatibility:` is the user-facing wire dialect (anthropic / openai /
+   openai-responses). It resolves to svar's low-level `:api-style`, so a custom
+   or self-hosted endpoint needs one obvious word instead of an internal svar
+   enum. Raw `api_style` stays the escape hatch and wins when both are set."
+  (it "maps every accepted value onto an svar api-style"
+      (expect (= :anthropic (config/compatibility-api-style :anthropic)))
+      (expect (= :openai-compatible-chat (config/compatibility-api-style :openai)))
+      (expect (= :openai-compatible-responses (config/compatibility-api-style :openai-responses)))
+      (expect (= :openai-compatible-responses (config/compatibility-api-style :openai_responses))
+              "underscore spelling from YAML keywordization resolves identically"))
+  (it "returns nil for absent or unknown values"
+      (expect (nil? (config/compatibility-api-style nil)))
+      (expect (nil? (config/compatibility-api-style :gemini))))
+  (it "keywordizes `compatibility` off the YAML surface"
+      (expect (= :openai
+                 (:compatibility
+                   (first (:providers (config/runtime-config
+                                        {"providers" [{"id" "gw" "compatibility" "openai"}]})))))))
+  (it "forwards the implied api-style to svar"
+      (expect (= :openai-compatible-chat
+                 (:api-style (config/->svar-provider {:id :gw
+                                                      :api-key "k"
+                                                      :base-url "https://llm.internal/v1"
+                                                      :compatibility :openai
+                                                      :models [{:name "m"}]})))))
+  (it "lets an explicit api_style win over compatibility"
+      (expect (= :gemini
+                 (config/provider-api-style {:id :gw :compatibility :openai :api-style :gemini}
+                                            nil))))
+  (it "carries per-model context and output limits through to svar"
+      (expect (= [{:name "m" :context 262144 :output-limit 32768 :tool-call? true}]
+                 (:models (config/->svar-provider {:id :gw
+                                                   :api-key "k"
+                                                   :models [{:name "m"
+                                                             :context 262144
+                                                             :output-limit 32768
+                                                             :tool-call? true}]}))))))

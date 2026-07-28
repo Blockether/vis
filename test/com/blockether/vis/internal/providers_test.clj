@@ -203,3 +203,30 @@
       (is (= ["claude-opus-4-8" "claude-fable-5"]
              (mapv :name (get-in @saved ["providers" 1 :models])))
           "the complete selected-provider catalog is persisted"))))
+
+(deftest model-options-keeps-vis-yml-order
+  ;; A hand-written `models:` list is an ORDER, not a set. Sorting every id
+  ;; alphabetically reshuffled the user's fleet on every render (and moved the
+  ;; intended default off the top). Configured models lead, in file order; the
+  ;; live catalog is appended after them, sorted.
+  (with-redefs
+    [providers/fetch-models
+     (constantly ["zebra-live" "alpha-live"])
+
+     config/provider-template
+     (constantly nil)
+
+     config/provider-model-visible?
+     (constantly true)]
+
+    (let
+      [provider
+       {:id :fake :models [{:name "zzz-first"} {:name "my-local"} {:name "alpha-live"}]}
+
+       {:keys [models]}
+       (providers/model-options provider (providers/default-model-names provider) true)]
+
+      (is (= ["zzz-first" "my-local" "alpha-live" "zebra-live"] models)
+          "vis.yml order is preserved verbatim; catalog-only ids follow, sorted")
+      (is (= ["zzz-first" "my-local" "alpha-live"] (providers/configured-model-names provider))
+          "configured names come straight off the provider map, in file order"))))

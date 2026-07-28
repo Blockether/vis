@@ -84,13 +84,22 @@ providers:
     api_key: sk-…
     models:
       - name: claude-sonnet-4-5-20250929
-  - id: lmstudio
+  - id: my-gateway
+    compatibility: openai        # anthropic | openai | openai-responses
+    base_url: https://llm.internal/v1
+    api_key: ${LLM_TOKEN}
     models:
       - name: qwen3-coder-30b
-        context: 262144
+        context: 262144          # input window
+        output_limit: 32768      # max output tokens
+        is_tool_call: true
 ```
 
-Per-model keys Vis honors: `:context` (window override for local servers that can't report one), `:output-limit`, `:tool-call?`. Per-provider: `:base-url`, `:api-style`, `:llm-headers`, `:extra-body`. Providers with managed auth (Copilot, coding plans) resolve tokens through their extension at runtime — no `:api-key` needed in the file.
+Per-model keys Vis honors: `context` (input window — the override for servers that can't report one), `output_limit` (max output tokens), `is_tool_call`. Both limits are forwarded to the router, which uses them for pre-flight context checks and output capping, so filling them in makes routing decisions accurate instead of conservative.
+
+Per-provider keys: `compatibility`, `base_url`, `api_style`, `llm_headers`, `extra_body`. **`compatibility`** is the wire dialect the endpoint speaks — `anthropic` (Anthropic Messages), `openai` (OpenAI chat completions), or `openai-responses` (OpenAI Responses API) — and is all a custom or self-hosted endpoint normally needs. `api_style` remains the raw escape hatch for anything outside those two dialects (e.g. `gemini`) and wins if both are set. Providers with managed auth (Copilot, coding plans) resolve tokens through their extension at runtime — no `api_key` needed in the file.
+
+**Model order is your order.** Models are offered in exactly the order you wrote them under a provider in `vis.yml`; anything discovered from the provider's live catalog is appended after them, sorted. The first provider is the active one, and its first model is the default.
 
 Vis is model-agnostic: anything that speaks an OpenAI- or Anthropic-style chat API works, including fully local models.
 

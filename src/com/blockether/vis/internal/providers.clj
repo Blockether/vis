@@ -134,8 +134,8 @@
 
 (defn default-model-names
   "Union of model names already on the provider map plus the preset /
-   provider `:default-models`, deduped. The list-building below sorts,
-   so order here is irrelevant."
+   provider `:default-models`, deduped. Config order leads: the models a
+   user wrote in vis.yml come first and `model-options` keeps them there."
   [provider]
   (->> (concat (map config/model-name (:models provider))
                (:default-models (config/provider-template (:id provider)))
@@ -144,18 +144,35 @@
        distinct
        vec))
 
-(defn model-options
-  "Selectable model ids for a provider: live-fetched + defaults,
-   deduped, sorted, env default pinned first. When `show-all?` is
-   false, dated snapshot variants (gpt-4o-2024-08-06) are hidden.
+(defn configured-model-names
+  "Model names a provider declares in config, in the exact order they are
+   written in vis.yml. Never filtered by svar's catalog visibility rules - an
+   explicitly configured model is a statement of intent, not a suggestion."
+  [provider]
+  (->> (:models provider)
+       (keep config/model-name)
+       distinct
+       vec))
 
-   Returns `{:models [id ...] :hidden-count n}` — channels render
+(defn model-options
+  "Selectable model ids for a provider: configured models first IN vis.yml
+   ORDER, then live-fetched + preset defaults deduped and sorted, env
+   default pinned first. When `show-all?` is false, dated snapshot
+   variants (gpt-4o-2024-08-06) are hidden.
+
+   Returns `{:models [id ...] :hidden-count n}` - channels render
    their own 'show all' affordance from `:hidden-count`."
   ([provider] (model-options provider (default-model-names provider) false))
   ([provider default-models show-all?]
    (let
      [provider-id
       (:id provider)
+
+      configured
+      (configured-model-names provider)
+
+      configured?
+      (set configured)
 
       fetched
       (or (fetch-models provider) [])
@@ -164,10 +181,11 @@
       (filterv #(config/provider-model-visible? provider-id %) (or default-models []))
 
       all-ids
-      (->> (concat fetched defaults)
-           distinct
-           sort
-           vec)
+      (into configured
+            (->> (concat fetched defaults)
+                 distinct
+                 (remove configured?)
+                 sort))
 
       pinned
       (pin-default all-ids)

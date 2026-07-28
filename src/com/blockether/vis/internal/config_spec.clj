@@ -81,7 +81,13 @@
 
 (def model-keys #{"name" "context" "output_limit" "is_tool_call"})
 (def provider-keys
-  #{"id" "api_key" "models" "base_url" "api_style" "responses_path" "llm_headers" "extra_body"})
+  #{"id" "api_key" "models" "base_url" "compatibility" "api_style" "responses_path" "llm_headers"
+    "extra_body"})
+
+(def compatibility-values
+  "The wire dialects a provider may declare. `api_style` remains the raw svar
+   escape hatch for anything outside this two-dialect world (e.g. `gemini`)."
+  #{"anthropic" "openai" "openai-responses"})
 
 (def model-schema
   {"name" non-blank-string?
@@ -100,6 +106,7 @@
    "api_key" string?
    "models" (spec-pred ::models)
    "base_url" non-blank-string?
+   "compatibility" (one-of compatibility-values)
    "api_style" non-blank-string?
    "responses_path" non-blank-string?
    "llm_headers" string-map?

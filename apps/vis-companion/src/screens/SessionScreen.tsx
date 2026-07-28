@@ -1203,6 +1203,24 @@ export function SessionScreen({
     return () => window.clearInterval(timer);
   }, [client, sid, voiceModel?.status, voiceSupported]);
 
+  // A dictation of any length overflows the 112px composer, and a PROGRAMMATIC
+  // value change never scrolls a textarea to its caret (only real user input
+  // does) — so the box keeps showing the FIRST lines of what was just said while
+  // the end, the part you are about to keep typing after, sits below the fold.
+  // Park the caret at the end and scroll there ourselves, one frame later so the
+  // autosize effect has already committed the new height.
+  const revealComposerEnd = useCallback((focus: boolean) => {
+    requestAnimationFrame(() => {
+      const textarea = composerRef.current;
+      if (!textarea) return;
+      if (focus) textarea.focus();
+      const end = textarea.value.length;
+      textarea.setSelectionRange(end, end);
+      setCaret(end);
+      textarea.scrollTop = textarea.scrollHeight;
+    });
+  }, []);
+
   // Turn captured audio into composer text. Kept apart from the mic button
   // because the button is no longer the only thing that ends a recording.
   const transcribeVoice = useCallback(async (wav: Blob, refocus: boolean) => {
@@ -1213,9 +1231,15 @@ export function SessionScreen({
       // A transcript that comes back empty is a REAL outcome (a muted or
       // hijacked mic records perfect silence), so it has to say so: dropping it
       // silently is what makes the button feel dead.
-      if (text) setPrompt((current) => `${current.trimEnd()}${current.trim() ? ' ' : ''}${text}`);
-      else setComposerNotice('No speech recognised — nothing was captured.');
-      if (refocus) requestAnimationFrame(() => composerRef.current?.focus());
+      if (text) {
+        setPrompt((current) => `${current.trimEnd()}${current.trim() ? ' ' : ''}${text}`);
+        // Show the TAIL of the dictation, not its opening line, whether or not
+        // this path also takes focus back.
+        revealComposerEnd(refocus);
+      } else {
+        setComposerNotice('No speech recognised — nothing was captured.');
+        if (refocus) requestAnimationFrame(() => composerRef.current?.focus());
+      }
     } catch (cause) {
       // The request dies with the webview when iOS backgrounds the app. Keep the
       // audio and retry on the next wake rather than losing what was said.
@@ -1224,7 +1248,7 @@ export function SessionScreen({
     } finally {
       setVoicePhase('idle');
     }
-  }, [client, sid]);
+  }, [client, sid, revealComposerEnd]);
 
   // End dictation and transcribe what WAS captured. Every path that takes the
   // microphone away lands here, not just the mic button: iOS suspends the

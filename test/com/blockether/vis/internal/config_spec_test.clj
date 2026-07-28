@@ -13,6 +13,7 @@
                  "models"
                  [{"name" "claude" "context" 200000 "output_limit" 8192 "is_tool_call" true}]
                  "base_url" "https://api.anthropic.com"
+                 "compatibility" "anthropic"
                  "api_style" "anthropic"
                  "responses_path" "/v1/messages"
                  "llm_headers" {"X-Test" "yes"}
