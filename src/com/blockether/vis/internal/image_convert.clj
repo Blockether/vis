@@ -19,14 +19,15 @@
    payload, missing AWT/ImageIO stack, malformed markup) returns nil, never
    throws; the caller then SKIPS the attachment rather than shipping bytes the
    provider refuses."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.awt-boot :as awt-boot])
   (:import (com.github.weisj.jsvg SVGDocument)
            (com.github.weisj.jsvg.parser LoaderContext SVGLoader)
            (com.github.weisj.jsvg.parser.resources ResourcePolicy)
            (com.github.weisj.jsvg.view FloatSize ViewBox)
-           (java.awt Color GraphicsEnvironment RenderingHints)
+           (java.awt Color RenderingHints)
            (java.awt.image BufferedImage)
-           (java.io ByteArrayInputStream ByteArrayOutputStream File InputStream)
+           (java.io ByteArrayInputStream ByteArrayOutputStream InputStream)
            (java.net URI)
            (java.util.zip GZIPInputStream)
            (java.util.logging Level Logger)
@@ -75,41 +76,10 @@
   ;; whole logger family is silenced once, lazily.
   (delay (.setLevel (Logger/getLogger "com.github.weisj.jsvg") Level/OFF) true))
 
-(defonce ^:private awt-ready!
-  ;; GraalVM native-image: AWT works, but only once two JVM assumptions are
-  ;; repaired at runtime.
-  ;;
-  ;;   1. There is no windowing session. Touching a Graphics2D without
-  ;;      `java.awt.headless` loads the platform toolkit (LWCToolkit on macOS)
-  ;;      and dies with NoClassDefFoundError java/awt/event/InputEvent.
-  ;;   2. There is no `java.home`. `sun.awt.FontConfiguration` throws
-  ;;      `java.lang.Error: java.home property not set` before it looks at
-  ;;      anything else, so the FIRST glyph jsvg draws kills the render -- and
-  ;;      `rasterize-svg` swallows it, so every SVG silently degrades to "no
-  ;;      raster". A directory that need not exist satisfies the check, and
-  ;;      `sun.awt.fontconfig` then short-circuits the search for
-  ;;      lib/fontconfig.bfc, which a native binary does not ship. The one-line
-  ;;      config only has to parse: real families come from the platform font
-  ;;      manager (342 of them on macOS), which is why the rendered bytes are
-  ;;      identical to a JVM run.
-  ;;
-  ;; `java.home` is restored immediately -- the font manager reads it exactly
-  ;; once, during this forced init, and nothing else in vis should see a fake
-  ;; JDK home. On a real JVM this is a no-op beyond the headless hint.
-  (delay (try (when (nil? (System/getProperty "java.awt.headless"))
-                (System/setProperty "java.awt.headless" "true"))
-              (when (nil? (System/getProperty "java.home"))
-                (let [cfg (doto (File/createTempFile "vis-fontconfig" ".properties") .deleteOnExit)]
-                  (spit cfg "version=1\nsequence.allfonts=alphabetic\nalphabetic.font=Helvetica\n")
-                  (when (nil? (System/getProperty "sun.awt.fontconfig"))
-                    (System/setProperty "sun.awt.fontconfig" (.getAbsolutePath cfg)))
-                  (System/setProperty "java.home"
-                                      (str (System/getProperty "java.io.tmpdir") "/vis-awt-home"))
-                  (try (.getAvailableFontFamilyNames
-                         (GraphicsEnvironment/getLocalGraphicsEnvironment))
-                       (finally (System/clearProperty "java.home")))))
-              true
-              (catch Throwable _ false))))
+(def ^:private awt-ready!
+  ;; Shared with the PIL / matplotlib shims: every Java2D user in vis needs the
+  ;; same RUNTIME headless + font bootstrap (see `internal.awt-boot`).
+  (delay (awt-boot/ensure!)))
 
 (defn- encode-png
   ^bytes [^BufferedImage img]

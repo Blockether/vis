@@ -21,6 +21,7 @@
    extension turns a host / JVM capability into a real importable Python module
    while `env-python` stays completely generic about which shims exist."
   (:require [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.awt-boot :as awt-boot]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture])
   (:import [java.awt BasicStroke Color Font Graphics2D RenderingHints]
            [java.awt.image BufferedImage]
@@ -734,6 +735,11 @@
    `PolyglotException` (GraalPy does not route host exceptions through Python's
    `except`)."
   [f]
+  ;; `awt-boot/ensure!` forced here: in a native image the headless/font
+  ;; bootstrap must run at runtime before the first Graphics2D call, or Java2D
+  ;; dies with NoClassDefFoundError java/awt/event/InputEvent. Every render funnels
+  ;; through this envelope.
+  (awt-boot/ensure!)
   (try [true (f)] (catch Throwable t [false (str (or (.getMessage t) t))])))
 
 (defn- mpl-bridge-bindings

@@ -17,6 +17,7 @@
    so `Image.show()` surfaces the image inline as a session attachment."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.awt-boot :as awt-boot]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture])
   (:import [java.awt AlphaComposite BasicStroke Color Font RenderingHints]
            [java.awt.image BufferedImage]
@@ -24,7 +25,10 @@
            [java.util Arrays Base64]
            [javax.imageio ImageIO]))
 
-;; Java2D must run headless in a server JVM (no display, no Dock icon on macOS).
+;; Java2D must run headless in a server JVM (no display, no Dock icon on macOS)
+;; AND in a native binary, where a build-time `setProperty` does not survive to
+;; runtime -- `awt-boot/ensure!` (forced by `pil-envelope`) is what actually
+;; arms this at runtime; these two only cover a JVM require of this namespace.
 (System/setProperty "java.awt.headless" "true")
 
 (System/setProperty "apple.awt.UIElement" "true")
@@ -1459,7 +1463,13 @@
 ;; the Python shim can raise as a catchable OSError.
 ;; ---------------------------------------------------------------------------
 
-(defn- pil-envelope [f] (try [true (f)] (catch Throwable t [false (str (or (.getMessage t) t))])))
+(defn- pil-envelope
+  ;; `awt-boot/ensure!` is forced HERE because every host image op funnels
+  ;; through this envelope: in a native image the headless/font bootstrap has to
+  ;; run at runtime before the first Graphics2D call, or Java2D dies with
+  ;; NoClassDefFoundError java/awt/event/InputEvent.
+  [f]
+  (try (awt-boot/ensure!) [true (f)] (catch Throwable t [false (str (or (.getMessage t) t))])))
 
 (defn- pil-bridge-bindings
   "Host callables (Java2D / ImageIO) the PIL shim delegates to. All image ops go
