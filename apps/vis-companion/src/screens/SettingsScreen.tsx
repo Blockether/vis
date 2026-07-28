@@ -23,6 +23,7 @@ import { applyGatewayTheme, resolveTheme } from '../lib/theme';
 import { getThemePref, setThemePref } from '../lib/storage';
 import { Banner, Button, Input } from '../components/ui';
 import { REACH_HINT, REACH_LABEL, bestAddress, hostOf, mergeAddresses, reachOf } from '../lib/endpoints';
+import { onWake } from '../lib/wake';
 import {
   ProviderFlowPanel,
   ProviderSignOutButton,
@@ -950,6 +951,14 @@ function gatewayHost(url: string): string {
 }
 
 /**
+ * How long one address gets to answer before it counts as unreachable.
+ *
+ * Without a deadline the probe inherits the platform's TCP timeout — over a
+ * minute on iOS — so a row can sit red long after the address came back.
+ */
+const PROBE_TIMEOUT_MS = 4000;
+
+/**
  * Which address this device actually talks to.
  *
  * A gateway answers on several at once — Tailscale, LAN, loopback — and pairing
@@ -965,23 +974,29 @@ function AddressPanel({
   gateway: GatewayConn;
   onSelect: (url: string, pinned: boolean) => void | Promise<void>;
 }) {
+  // Key on the contents, not on the array identity: `gateway.alts` is a fresh
+  // array on every reload, and depending on it re-ran the probe forever.
+  const altsKey = (gateway.alts ?? []).join(' ');
   const addresses = useMemo(
-    () => mergeAddresses([gateway.url], gateway.alts),
-    [gateway.url, gateway.alts],
+    () => mergeAddresses([gateway.url], altsKey ? altsKey.split(' ') : []),
+    [gateway.url, altsKey],
   );
   const [reach, setReach] = useState<Record<string, 'checking' | 'online' | 'offline'>>({});
+  const [probeNonce, setProbeNonce] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const token = gateway.token;
   useEffect(() => {
     let cancelled = false;
+    const ctrl = new AbortController();
+    const deadline = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
     setReach(Object.fromEntries(addresses.map((url) => [url, 'checking' as const])));
     void Promise.all(
       addresses.map(async (url) => {
         let ok = false;
         try {
-          ok = await new GatewayClient({ url, token }).ping();
+          ok = await new GatewayClient({ url, token }).ping(ctrl.signal);
         } catch (cause) {
           // Reachable-but-unauthorized still proves the address routes here;
           // only a network failure means the address is unusable from here.
@@ -989,11 +1004,18 @@ function AddressPanel({
         }
         if (!cancelled) setReach((current) => ({ ...current, [url]: ok ? 'online' : 'offline' }));
       }),
-    );
+    ).finally(() => clearTimeout(deadline));
     return () => {
       cancelled = true;
+      clearTimeout(deadline);
+      ctrl.abort();
     };
-  }, [addresses, token]);
+  }, [addresses, token, probeNonce]);
+
+  // A tailnet address is routable seconds *after* the phone wakes, and a probe
+  // taken while the interface was still down would otherwise stay red for the
+  // rest of the session.
+  useEffect(() => onWake(() => setProbeNonce((n) => n + 1)), []);
 
   const choose = async (url: string, pinned: boolean) => {
     setBusy(url);

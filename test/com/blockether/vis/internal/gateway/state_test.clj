@@ -1818,11 +1818,14 @@
                   earlier
                   (state/transcript-page sid {:offset 0 :limit (:offset newest)})]
 
-              (expect (= ["turn-4"] (mapv #(get % "turn_id") (:turns newest))))
-              (expect (= 4 (:offset newest)))
+              ;; The row that BUSTS the budget is kept, not deferred: dropping it
+              ;; would make a single oversized turn (a big image attachment)
+              ;; unreachable on every page. Overshoot is bounded by one turn.
+              (expect (= ["turn-3" "turn-4"] (mapv #(get % "turn_id") (:turns newest))))
+              (expect (= 3 (:offset newest)))
               (expect (:has-more newest))
-              (expect (= ["turn-3"] (mapv #(get % "turn_id") (:turns earlier))))
-              (expect (= 3 (:offset earlier)))
+              (expect (= ["turn-1" "turn-2"] (mapv #(get % "turn_id") (:turns earlier))))
+              (expect (= 1 (:offset earlier)))
               (expect (:has-more earlier))))))))
 
 (defdescribe

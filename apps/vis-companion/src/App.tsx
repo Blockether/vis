@@ -284,7 +284,13 @@ export function App() {
         // Older gateway, or simply offline: what pairing gave us still stands.
       }
       if (cancelled) return;
-      const known = mergeAddresses([activeUrl], knownAltsKey.split(' '), advertised);
+      // What the gateway advertises is authoritative when it answers at all:
+      // an address it no longer serves — a stale DHCP lease, a tailnet IP from
+      // a machine that was re-imaged — has to disappear instead of lingering
+      // forever as an unreachable row nobody can delete.
+      const known = advertised.length
+        ? mergeAddresses([activeUrl], advertised)
+        : mergeAddresses([activeUrl], knownAltsKey.split(' '));
       if (known.join(' ') !== knownAltsKey) {
         await upsertConnection({ url: activeUrl, alts: known });
         if (cancelled) return;
