@@ -2,6 +2,18 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 1.0.1 (2717) — 2026-07-28
+<!-- commit: 445a3b2d4fcd557f87d831b3bcd3a61836114159 -->
+
+- The spinner and timer now stop when the work actually stops — a finished turn no longer looks like it is still running
+- While the keyboard is up you can see what Vis is doing, and for how long, right above the message box
+- Tapping a pasted attachment no longer makes the keyboard drop and jump back
+- The transcript no longer jumps around while an answer is streaming in
+- Coming back to a session after a while away takes you to the latest message instead of where you left off
+- Code blocks that contain code fences render correctly instead of spilling out as plain text
+- Dictation keeps recording when you switch apps or lock the screen
+- Loading sessions and settings now shows a visible "Loading…" placeholder instead of a blank screen
+
 ## 1.0.1 (2715) — 2026-07-28
 <!-- commit: f6a109f89d8ef4cd0fa884034d259e0974882d6a -->
 
