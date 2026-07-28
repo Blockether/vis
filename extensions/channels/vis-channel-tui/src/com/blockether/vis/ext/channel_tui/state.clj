@@ -1349,6 +1349,33 @@
                    :fx [[:set-session-model sid nil nil]
                         [:notify "Model: router default" :info settings-notification-ttl-ms]]}))))
 
+(reg-event-db :clear-session-model-pref
+              ;; The gateway REFUSED (or never received) the pick: drop the optimistic
+              ;; value so the footer falls back to the session's REAL preference instead of
+              ;; advertising a model the session never got. Scoped to `sid` — a switch that
+              ;; happened while the PATCH was in flight must not clobber the new session's
+              ;; display.
+              (fn [db [_ sid]]
+                (if (or (nil? sid) (= (str sid) (str (get-in db [:session :id]))))
+                  (dissoc db :session-model-pref)
+                  db)))
+
+(reg-event-db :sync-session-model
+              ;; The session's model preference changed SOMEWHERE ELSE — the companion app,
+              ;; another TUI process/tab, an embedded caller — and the gateway broadcast it
+              ;; as `session.model_updated`. Project it onto the OWNING tab so the footer
+              ;; chip follows live instead of showing this process's last local pick until a
+              ;; reopen. Same one-source-of-truth the picker writes; nil provider/model means
+              ;; the override was cleared, so fall back to the router default.
+              (fn [db [_ workspace-id {:keys [provider model]}]]
+                (update-tab db
+                            workspace-id
+                            (fn [w]
+                              (if (and (not-empty (str provider)) (not-empty (str model)))
+                                (assoc w
+                                  :session-model-pref {:provider (str provider) :model (str model)})
+                                (dissoc w :session-model-pref))))))
+
 (reg-event-db :set-layout
               (fn [db [_ layout]]
                 ;; Pushed in by the render thread; intentionally does NOT bump
@@ -1681,22 +1708,23 @@
               (fn [db _]
                 (dissoc db :mouse-selection)))
 
-(reg-event-db :set-provider-limits
-              (fn [db [_ provider-id report]]
-                (let [entry {:provider-id provider-id
-                             :report report
-                             :updated-at-ms (System/currentTimeMillis)}]
-                  (cond-> (assoc db
-                            :provider-limits entry
-                            :provider-limits-force? false)
-                    ;; Keep the LAST report per provider, not just the active
-                    ;; slot: cycling the per-session model (C-x c) retargets the
-                    ;; poller, and without this the footer would blank to
-                    ;; "limits: loading…" on every switch even though the gateway
-                    ;; still has that provider's report warm in its own 15s
-                    ;; cache. The footer renders the remembered rows while the
-                    ;; refetch is in flight.
-                    provider-id (assoc-in [:provider-limits-cache provider-id] entry)))))
+(reg-event-db
+  :set-provider-limits
+  (fn [db [_ provider-id report]]
+    (let [entry {:provider-id provider-id :report report :updated-at-ms (System/currentTimeMillis)}]
+      (cond->
+        (assoc db
+          :provider-limits entry
+          :provider-limits-force? false)
+        ;; Keep the LAST report per provider, not just the active
+        ;; slot: cycling the per-session model (C-x c) retargets the
+        ;; poller, and without this the footer would blank to
+        ;; "limits: loading…" on every switch even though the gateway
+        ;; still has that provider's report warm in its own 15s
+        ;; cache. The footer renders the remembered rows while the
+        ;; refetch is in flight.
+        provider-id
+        (assoc-in [:provider-limits-cache provider-id] entry)))))
 
 (reg-event-db :clear-provider-limits
               ;; Only the ACTIVE slot goes; the per-provider cache survives so a
@@ -1783,6 +1811,13 @@
                              ;; (DRAFT)`. `:root` is the cwd for trunk, the clone for a draft.
                              :workspace workspace
                              :title nil
+                             ;; This tab is being REBOUND to another session, so the
+                             ;; previous session's optimistic model pick must not survive:
+                             ;; `session-model-pref` prefers this key over the gateway
+                             ;; value, so a leftover pinned the footer chip (and the codex
+                             ;; verbosity gating) to the OLD session's model until restart.
+                             ;; nil = re-read the new session's real preference.
+                             :session-model-pref nil
                              :messages (or history [])
                              :scroll scroll/follow
                              :input (input/empty-input)
@@ -1876,6 +1911,9 @@
                                                             :workspace workspace
                                                             :workspace/root (:root workspace)
                                                             :title nil
+                                                            ;; Same reason as :init-session — a
+                                                            ;; bound tab shows THIS session's model.
+                                                            :session-model-pref nil
                                                             :messages (or history [])
                                                             :input-history (history-user-texts
                                                                              history)))))
@@ -2651,19 +2689,50 @@
                   (log-scroll! :scroll-to-bottom pre (scroll-snapshot sc) {})
                   (assoc db :scroll sc))))
 
-(reg-event-db :scroll-to-top
-              ;; Emacs M-< (beginning-of-buffer): park at the very top. The layout
-              ;; clamps the offset, so row 0 is the first message.
-              (fn [db _]
-                (let
-                  [pre
-                   (scroll-pre! db)
+(defn- older-history-request
+  "Effect vector for the lazy scroll-up loader, or nil.
 
-                   sc
-                   (scroll/parked 0)]
+   The session opened on its NEWEST turns only (`chat/resume-tail-turns`), so
+   the top of `:messages` is not the top of the session. Once the viewport comes
+   within one screen of that top and the cursor says older turns exist, ask for
+   ONE page. `:history-loading?` (set by the caller) is the in-flight latch, so a
+   fast wheel-up cannot queue a dozen identical fetches."
+  [db sc ^long max-s ^long inner-h]
+  (let
+    [session
+     (:session db)
 
-                  (log-scroll! :scroll-to-top pre (scroll-snapshot sc) {})
-                  (assoc db :scroll sc))))
+     cursor
+     (:history-cursor session)]
+
+    (when (and (:id session)
+               (:has-more cursor)
+               (not (:history-loading? session))
+               (<= (scroll/desired sc max-s) (max 1 inner-h)))
+      [:load-older-history (:id session) (long (or (:offset cursor) 0))])))
+
+(reg-event-fx
+  :scroll-to-top
+  ;; Emacs M-< (beginning-of-buffer): park at the very top. The layout
+  ;; clamps the offset, so row 0 is the first LOADED message — which, in a
+  ;; lazily paged session, still has older turns above it, hence the loader
+  ;; kick.
+  (fn [db _]
+    (let
+      [pre
+       (scroll-pre! db)
+
+       sc
+       (scroll/parked 0)
+
+       load
+       (older-history-request db sc 0 1)
+
+       db'
+       (assoc db :scroll sc)]
+
+      (log-scroll! :scroll-to-top pre (scroll-snapshot sc) {})
+      (if load {:db (assoc-in db' [:session :history-loading?] true) :fx [load]} {:db db'}))))
 
 (reg-event-db :reanchor-scroll
               ;; Scroll-anchoring write-back from the render thread. `anchored` is the
@@ -2674,6 +2743,43 @@
               (fn [db [_ anchored delta]]
                 (assoc db
                   :scroll (scroll/reanchor (:scroll db) (long anchored) (long (or delta 0))))))
+
+(reg-event-db :older-history-loading
+              ;; Latch for the lazy scroll-up loader: ONE in-flight fetch per tab, so
+              ;; a fast wheel-up cannot queue a dozen identical page requests. Scoped
+              ;; by session id — a tab switch mid-fetch must not flip the wrong tab's
+              ;; flag.
+              (fn [db [_ session-id loading?]]
+                (if (= (str session-id) (str (get-in db [:session :id])))
+                  (assoc-in db [:session :history-loading?] (boolean loading?))
+                  db)))
+
+(reg-event-db :prepend-history
+              ;; An OLDER page of the transcript landed (the session opened on its
+              ;; newest turns only). Splice it in ABOVE the current messages and shift
+              ;; the scroll by the page's MEASURED height so the bubble the user is
+              ;; reading stays exactly where it is — `virtual/layout`'s own anchoring
+              ;; can't help here, it deliberately skips a frame where the message
+              ;; count changed.
+              ;;
+              ;; Dropped when the tab has moved on to another session: the fetch is
+              ;; async and its result is only ever valid for the session it was for.
+              (fn [db [_ session-id page shift]]
+                (if-not (= (str session-id) (str (get-in db [:session :id])))
+                  db
+                  (let [older (vec (:messages page))]
+                    (-> db
+                        (update :messages #(into older (or % [])))
+                        ;; Older prompts belong at the FRONT of the up-arrow ring:
+                        ;; the ring is oldest-first and `:history-up` walks back from
+                        ;; the end.
+                        (update :input-history #(into (vec (history-user-texts older)) (or % [])))
+                        (update :session assoc
+                                :history-loading? false
+                                :history-cursor {:offset (:offset page)
+                                                 :total (:total page)
+                                                 :has-more (boolean (:has-more page))})
+                        (update :scroll scroll/shift-prepended (long (or shift 0))))))))
 
 (reg-event-db :ease-scroll
               ;; Render-loop pulse: advance the on-screen position one ease-out step
@@ -2869,23 +2975,32 @@
               (fn [db _]
                 (dissoc db :scroll-to-message-pending)))
 
-(reg-event-db :scroll-up
-              ;; Wheel / arrow / PageUp: park `amount` rows above the current row and
-              ;; ease there. Scrolling up is always a deliberate read-history intent
-              ;; (mode :at), so the streaming follow hands off automatically.
-              (fn [db [_ amount total-h inner-h]]
-                (let
-                  [max-s
-                   (max 0 (- (long total-h) (long inner-h)))
+(reg-event-fx
+  :scroll-up
+  ;; Wheel / arrow / PageUp: park `amount` rows above the current row and
+  ;; ease there. Scrolling up is always a deliberate read-history intent
+  ;; (mode :at), so the streaming follow hands off automatically — and it
+  ;; is the ONE gesture that can run out of loaded history, so it also
+  ;; drives the older-page fetch.
+  (fn [db [_ amount total-h inner-h]]
+    (let
+      [max-s
+       (max 0 (- (long total-h) (long inner-h)))
 
-                   pre
-                   (scroll-pre! db)
+       pre
+       (scroll-pre! db)
 
-                   sc
-                   (scroll/up (:scroll db) (long amount) max-s)]
+       sc
+       (scroll/up (:scroll db) (long amount) max-s)
 
-                  (log-scroll! :scroll-up pre (scroll-snapshot sc) {:amount amount :max-s max-s})
-                  (assoc db :scroll sc))))
+       load
+       (older-history-request db sc max-s (long inner-h))
+
+       db'
+       (assoc db :scroll sc)]
+
+      (log-scroll! :scroll-up pre (scroll-snapshot sc) {:amount amount :max-s max-s})
+      (if load {:db (assoc-in db' [:session :history-loading?] true) :fx [load]} {:db db'}))))
 
 (reg-event-db :scroll-down
               ;; Wheel / arrow / PageDown: ease `amount` rows down; landing within the
@@ -3753,37 +3868,55 @@
                               :input-history-draft nil))))
            :fx [[:session-attach workspace-id session tid token client-turn-id]]})))))
 
-(reg-event-fx
-  :sibling-turn-started
-  ;; A turn STARTED on this session from a SIBLING channel (another TUI, the
-  ;; web) while this tab sat idle — delivered by the tab's persistent event
-  ;; subscription (chat/subscribe-session-events!), which is the only way an
-  ;; idle tab hears about it. Synthesize the running-session shape
-  ;; :attach-running-turn expects and hand off; its guards plus ours (already
-  ;; loading / already attached) make this a no-op for the tab that started
-  ;; or drained onto the turn itself.
-  (fn [db [_ workspace-id {:keys [turn-id request started-at-ms]}]]
-    (let
-      [workspace-id
-       (or workspace-id (current-tab-id db))
+(reg-event-fx :sibling-turn-started
+              ;; A turn STARTED on this session from a SIBLING channel (another TUI, the
+              ;; web) while this tab sat idle — delivered by the tab's persistent event
+              ;; subscription (chat/subscribe-session-events!), which is the only way an
+              ;; idle tab hears about it. Synthesize the running-session shape
+              ;; :attach-running-turn expects and hand off; its guards plus ours (already
+              ;; loading / already attached) make this a no-op for the tab that started
+              ;; or drained onto the turn itself.
+              (fn [db [_ workspace-id {:keys [turn-id request started-at-ms]}]]
+                (let
+                  [workspace-id
+                   (or workspace-id (current-tab-id db))
 
-       target
-       (db-for-tab db workspace-id)
+                   target
+                   (db-for-tab db workspace-id)
 
-       session
-       (:session target)]
+                   session
+                   (:session target)
 
-      (if-not
-        (and workspace-id session turn-id (not (:loading? target)) (not (:gateway-turn-id target)))
-        {:db db}
-        {:db db
-         :fx [[:dispatch
-               [:attach-running-turn workspace-id
-                (assoc session
-                  :status "running"
-                  :current-turn-id turn-id
-                  :running-request request
-                  :running-started-at started-at-ms)]]]}))))
+                   ;; Already OUR live turn — the drain/attach machinery owns it.
+                   ours?
+                   (boolean (and turn-id (= turn-id (:gateway-turn-id target))))
+
+                   ;; BUSY tab: a turn is still streaming here — typically the very turn
+                   ;; whose terminal the gateway used to DRAIN this one. Dropping the start
+                   ;; lost the message outright: `turn.queued.drained` (delivered on the
+                   ;; same subscription, always before our local completion lands) has
+                   ;; already removed the mirrored queue row, so `:drain-pending` finds
+                   ;; nothing and NOTHING paints the new turn. Park it instead and replay
+                   ;; it from `:message-received` the moment the tab settles.
+                   busy?
+                   (boolean (or (:loading? target) (:gateway-turn-id target)))]
+
+                  (cond (or (nil? workspace-id) (nil? session) (nil? turn-id) ours?) {:db db}
+                        busy? {:db (update-tab db
+                                               workspace-id
+                                               #(assoc %
+                                                  :deferred-sibling-start {:turn-id turn-id
+                                                                           :request request
+                                                                           :started-at-ms
+                                                                           started-at-ms}))}
+                        :else {:db (update-tab db workspace-id #(dissoc % :deferred-sibling-start))
+                               :fx [[:dispatch
+                                     [:attach-running-turn workspace-id
+                                      (assoc session
+                                        :status "running"
+                                        :current-turn-id turn-id
+                                        :running-request request
+                                        :running-started-at started-at-ms)]]]}))))
 
 (reg-event-fx :restore-pending-to-input
               ;; A user cancel with a queued backlog must NOT auto-send the next message.
@@ -4221,7 +4354,22 @@
                        (when (some :mine? (:pending-sends ws-final))
                          (vreset! restore-pending? true))
                        (vreset! drain? true)))
-                   ws-final))))))]
+                   ws-final))))))
+
+       ;; A turn the GATEWAY started for this session while this tab was busy
+       ;; (normally the queued message it drained on THIS turn's terminal),
+       ;; parked by `:sibling-turn-started`. Its mirrored queue row is already
+       ;; gone (`turn.queued.drained`), so without this replay the user's
+       ;; message never appears anywhere. A drain scheduled below wins the race
+       ;; and simply re-parks it for the next terminal.
+       deferred
+       (let [w (db-for-tab db' workspace-id)]
+         (when-not (:loading? w) (:deferred-sibling-start w)))
+
+       db'
+       (cond-> db'
+         deferred
+         (update-tab workspace-id #(dissoc % :deferred-sibling-start)))]
 
       {:db (cond-> db'
              ;; Persistent unread dot: a BACKGROUND tab that just FINISHED a
@@ -4242,7 +4390,10 @@
              (conj [:dispatch [:drain-pending workspace-id]])
 
              @restore-pending?
-             (conj [:dispatch [:restore-pending-to-input workspace-id]]))})))
+             (conj [:dispatch [:restore-pending-to-input workspace-id]])
+
+             deferred
+             (conj [:dispatch [:sibling-turn-started workspace-id deferred]]))})))
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
 
@@ -4270,6 +4421,10 @@
           ;; of letting the throw escape into the event loop.
           (try (vis/gateway-set-session-model! sid provider model)
                (catch Throwable t
+                 ;; The optimistic `:session-model-pref` was already written by the
+                 ;; dispatching event. Roll it back, or the chip keeps claiming a
+                 ;; model this session will never route through.
+                 (dispatch [:clear-session-model-pref sid])
                  (vis/notify! (str "Model switch failed: " (ex-message t)) :level :error)))
           ;; The background limits poller no longer resolves the active provider on
           ;; every 1s tick (issue #31); nudge it to re-resolve on its next tick so a

@@ -24,6 +24,8 @@
     "build:android": "npm run build && npm run sync && node scripts/android-prepare.mjs",
     "build:ios": "npm run build && npm run sync",
     "release:ios": "node scripts/ios-release.mjs",
+    "release:android": "node scripts/android-release.mjs",
+    "release:testflight": "node scripts/testflight.mjs",
     "release:notes": "node scripts/release-notes.mjs",
     "secrets": "node scripts/secrets.mjs"
   },

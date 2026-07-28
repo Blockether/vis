@@ -139,6 +139,125 @@
   (try (Files/exists (.toPath f) (into-array LinkOption [])) (catch Throwable _ false)))
 
 ;; ---------------------------------------------------------------------------
+;; Diagnostic logs
+;;
+;; UNLIKE drafts and journals this one deletes on its own. A log file carries no
+;; recoverable work: `~/.vis/logs` is a dedicated write-only sink (nrepl session
+;; logs, JFR dumps) whose entries are never referenced again once the process
+;; that wrote them is gone, and it grows one file per REPL start forever —
+;; hundreds of mostly-empty files accumulate within weeks. Nothing bounded it,
+;; because the Telemere rolling handler only governs `~/.vis/vis.log`.
+;; ---------------------------------------------------------------------------
+
+(def default-log-retention-days
+  "Age past which a diagnostic log is deleted automatically. Three weeks: longer
+   than any plausible debugging window (a bug reported on Friday is still
+   readable the Monday after next), short enough that the directory stays
+   navigable and a `grep` over it does not walk a year of dead sessions."
+  21)
+
+(def
+  ^:dynamic
+  ^{:doc
+    "Test seam for the diagnostic log directory. `nil` (production) resolves to
+                 `~/.vis/logs`, mirroring `internal.paths/logs-dir` — the location is a
+                 fixed contract shared with the sandbox grant, not a configurable."}
+  *logs-home*
+  nil)
+
+(defn- logs-dir
+  ^File []
+  (io/file (or *logs-home* (io/file (System/getProperty "user.home") ".vis" "logs"))))
+
+(defn sweep-logs!
+  "Delete every stale regular file directly under `~/.vis/logs`. Returns
+   `{:root :days :cutoff-ms :file-count :deleted :bytes}` — `:deleted` counts
+   files actually removed and `:bytes` the space reclaimed.
+
+   Never throws and never recurses: only immediate children are considered, only
+   regular files (a symlink or subdirectory is left alone), and every candidate
+   is re-checked with `under?` against the canonical logs root so a hostile
+   symlinked entry cannot walk the delete out of the directory.
+
+   Options: `:days` (defaults to `default-log-retention-days`) and `:now-ms` for
+   tests."
+  ([] (sweep-logs! nil))
+  ([{:keys [days now-ms]}]
+   (let
+     [days
+      (long (or days default-log-retention-days))
+
+      now
+      (long (or now-ms (System/currentTimeMillis)))
+
+      cutoff
+      (- now (* days day-ms))
+
+      dir
+      (logs-dir)
+
+      root
+      (canonical dir)
+
+      files
+      (try (when (.isDirectory dir) (vec (or (.listFiles dir) (make-array File 0))))
+           (catch Throwable _ nil))
+
+      result
+      (reduce (fn [acc ^File f]
+                (try (let
+                       [p
+                        (.toPath f)
+
+                        regular?
+                        (Files/isRegularFile p (into-array LinkOption []))
+
+                        link?
+                        (Files/isSymbolicLink p)
+
+                        size
+                        (.length f)]
+
+                       (if (and regular?
+                                (not link?)
+                                (< (.lastModified f) cutoff)
+                                (under? root (canonical f))
+                                (Files/deleteIfExists p))
+                         (-> acc
+                             (update :deleted inc)
+                             (update :bytes + size))
+                         acc))
+                     (catch Throwable _ acc)))
+              {:deleted 0 :bytes 0}
+              files)]
+
+     (assoc result
+       :root root
+       :days days
+       :cutoff-ms cutoff
+       :file-count (count files)))))
+
+(defn sweep-logs-async!
+  "Fire-and-forget `sweep-logs!` on a lowest-priority daemon thread. Called once
+   per process at startup: hundreds of `File` stats are trivial but they are
+   still disk I/O on the path to first paint, and a sweep that loses the race
+   with a short-lived `vis --version` simply runs on the next start. Returns the
+   thread.
+
+   The body is a `bound-fn` so `*logs-home*` CONVEYS: a new thread otherwise
+   sees only root bindings, which would make a test's temp-dir binding silently
+   sweep the operator's real `~/.vis/logs`. Production binds nothing, so the
+   conveyance is free."
+  ([] (sweep-logs-async! nil))
+  ([opts]
+   (doto (Thread. ^Runnable (bound-fn* #(try (sweep-logs! opts) (catch Throwable _ nil)))
+                  "vis-log-sweep")
+     (.setDaemon true)
+     (.setPriority Thread/MIN_PRIORITY)
+     (.start))))
+
+
+;; ---------------------------------------------------------------------------
 ;; Drafts
 ;; ---------------------------------------------------------------------------
 

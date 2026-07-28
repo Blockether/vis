@@ -574,8 +574,33 @@
 (defn list-turns [sid] (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/turns")) "turns"))
 
 (defn transcript
+  "Every turn of `sid`, hydrated. UNBOUNDED — the whole session is listed AND
+   hydrated, which on a long session is seconds of work and megabytes of JSON.
+   Prefer `transcript-page` for anything interactive."
   [sid]
   (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/transcript")) "turns"))
+
+(defn transcript-page
+  "A WINDOW of `sid`'s transcript — the paging counterpart of `transcript`.
+
+   `opts`: `:limit` window size (nil = the whole transcript), `:offset` 0-based
+   start in the OLDEST-FIRST list (nil = the NEWEST `:limit` turns). The gateway
+   also caps a window in BYTES, so the reply's `offset` can come back HIGHER
+   than the one asked for — page from the RETURNED `offset`, never from your own
+   arithmetic.
+
+   Returns the canonical wire map `{\"turns\" [...] \"total\" n \"offset\" n
+   \"has_more\" bool}` (oldest-first turns)."
+  [sid {:keys [limit offset]}]
+  (let [qs (cond-> []
+             (some? limit)
+             (conj (str "limit=" (enc limit)))
+
+             (some? offset)
+             (conj (str "offset=" (enc offset))))]
+    (send-json! "GET"
+                (str "/v1/sessions/" (enc sid) "/transcript"
+                     (when (seq qs) (str "?" (str/join "&" qs)))))))
 
 (defn transcript-md
   "The gateway-rendered user/assistant dialog Markdown for `sid` — the canonical

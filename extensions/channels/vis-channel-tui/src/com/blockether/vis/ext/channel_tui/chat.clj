@@ -483,14 +483,18 @@
                                     (attachment-image-fence (inc (long i)) d))
                                   descs))))))
 
-(defn- rebuild-history
-  "Reconstruct message history from DB for a session.
+(defn- turns->messages
+  "Wire transcript turns (oldest-first) -> the TUI's flat message vector.
    Returns a vec of {:role :user|:assistant :text str :timestamp #inst ...}.
-   Assistant messages include the code execution trace from all iterations."
-  [session-id]
+   Assistant messages include the code execution trace from all iterations.
+
+   PURE projection over whatever rows it is handed, so ONE window of the
+   transcript (`vis/gateway-transcript-page`) renders byte-identically to the
+   same turns inside a whole-session read. That is what makes lazy paging safe."
+  [transcript-turns]
   (try
     (let
-      [turns (->> (vis/gateway-transcript session-id)
+      [turns (->> (or transcript-turns [])
                   ;; Drop the turn currently IN FLIGHT — the caller ATTACHES to it
                   ;; and streams it live (see resume-session / :attach-running-turn),
                   ;; so rebuilding its half-written `:running` row here would double
@@ -654,6 +658,70 @@
                :data (exception->log-data e)
                :msg (str "Failed to rebuild history: " (ex-message e))})
       [])))
+
+(defn rebuild-history
+  "The WHOLE session's history. UNBOUNDED: the gateway hydrates every turn and
+   every iteration before this returns, which on a long session is seconds of
+   work and megabytes of JSON. Kept for surfaces that genuinely need all of it
+   (cinema's exporter); interactive open goes through `history-page`."
+  [session-id]
+  (try (turns->messages (vis/gateway-transcript session-id))
+       (catch Exception e
+         (t/log! {:level :warn
+                  :id ::rebuild-history-failed
+                  :data (exception->log-data e)
+                  :msg (str "Failed to rebuild history: " (ex-message e))})
+         [])))
+
+(def ^:const resume-tail-turns
+  "How many of the NEWEST turns a session opens with. The TUI lands at the
+   bottom, so anything above the first viewport is invisible work — it is
+   fetched lazily when the user actually scrolls UP."
+  10)
+
+(def ^:const older-page-turns "Window size for one scroll-up page of OLDER turns." 10)
+
+(defn history-page
+  "ONE window of `session-id`'s history, projected like `rebuild-history`.
+
+   `opts`: `:limit` turns (nil = all), `:offset` 0-based start in the
+   OLDEST-FIRST turn list (nil = the NEWEST `:limit` turns). The gateway also
+   caps a window in BYTES, so `:offset` comes back as the window it ACTUALLY
+   served — always page from THAT, never from your own arithmetic.
+
+   Returns `{:messages [...] :offset n :total n :has-more bool}`, or a
+   zero-length page on failure (never nil, so callers need no nil-dance)."
+  [session-id opts]
+  (try (let
+         [page
+          (vis/gateway-transcript-page session-id (select-keys opts [:limit :offset]))
+
+          turns
+          (vec (get page "turns"))]
+
+         {:messages (turns->messages turns)
+          :offset (long (or (get page "offset") 0))
+          :total (long (or (get page "total") 0))
+          :has-more (boolean (get page "has_more"))})
+       (catch Exception e
+         (t/log! {:level :warn
+                  :id ::history-page-failed
+                  :data (exception->log-data e)
+                  :msg (str "Failed to load history page: " (ex-message e))})
+         ;; `:failed` so the scroll-up loader can tell "nothing older exists" from
+         ;; "the gateway blew up" — the latter must NOT retire the cursor, or one
+         ;; transient error would permanently freeze the session's history at the
+         ;; page it happens to have.
+         {:messages [] :offset 0 :total 0 :has-more false :failed true})))
+
+(defn older-history
+  "The page of turns immediately ABOVE `offset` (the current oldest loaded
+   window start). `nil` when there is nothing older left to fetch."
+  [session-id offset]
+  (let [offset (long (or offset 0))]
+    (when (pos? offset)
+      (history-page session-id
+                    {:limit older-page-turns :offset (max 0 (- offset (long older-page-turns)))}))))
 
 (defn- event-get
   "Read field `k` off a canonical string-keyed wire map — ONE deterministic
@@ -1010,6 +1078,13 @@
                            str)
        :title (event-get event :title)}
 
+      ;; The session's model preference was changed in ANOTHER channel (the
+      ;; companion app, a sibling TUI, an embedded caller). Project it so the
+      ;; footer chip tracks the shared pref live instead of this process's last
+      ;; local pick. Blank provider/model = the override was cleared.
+      "session.model_updated"
+      {:phase :model-sync :provider (event-get event :provider) :model (event-get event :model)}
+
       nil)))
 
 (defn subscribe-session-events!
@@ -1048,15 +1123,19 @@
 
 (defn- create-session*
   [_provider-config {:keys [workspace-id root]}]
-  (let [root (or root
-                 (when-not workspace-id
-                   (vis/workspace-normalize-root (System/getProperty "user.dir"))))
-        resp (vis/gateway-create-session! (cond-> {:channel :tui}
-                                            workspace-id
-                                            (assoc :workspace-id workspace-id)
+  (let
+    [root
+     (or root
+         (when-not workspace-id (vis/workspace-normalize-root (System/getProperty "user.dir"))))
 
-                                            root
-                                            (assoc :root root)))]
+     resp
+     (vis/gateway-create-session! (cond-> {:channel :tui}
+                                    workspace-id
+                                    (assoc :workspace-id workspace-id)
+
+                                    root
+                                    (assoc :root root)))]
+
     {:id (java.util.UUID/fromString (get resp "id")) :history []}))
 
 (defn make-session
@@ -1141,9 +1220,21 @@
                                     ;; raw so pulling the row back into the editor re-attaches.
                                     :preview-text (or (get t "request_preview") (get t "request"))
                                     :client-id (get t "idempotency_key")
-                                    :queued-at-ms (get t "queued_at")})))]
+                                    :queued-at-ms (get t "queued_at")})))
+         ;; Open on the NEWEST turns only. Hydrating the whole session before
+         ;; the first paint cost seconds of gateway work and megabytes of JSON
+         ;; for content the user never sees (the view lands at the bottom);
+         ;; older turns stream in as they scroll UP (`chat/older-history`).
+         page (history-page resolved-id {:limit resume-tail-turns})]
 
-        (cond-> {:id resolved-id :history (rebuild-history resolved-id) :status (get soul "status")}
+        (cond->
+          {:id resolved-id
+           :history (:messages page)
+           ;; Cursor for the lazy scroll-up loader. It rides INSIDE the
+           ;; session map, so it is tab-scoped for free (`:session` is
+           ;; already per-tab state).
+           :history-cursor (select-keys page [:offset :total :has-more])
+           :status (get soul "status")}
           tid
           (assoc :current-turn-id tid)
 

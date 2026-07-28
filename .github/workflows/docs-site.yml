@@ -35,10 +35,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '25'
+      # Same pinned GraalVM CE as every other job (.graalvm-version) — one JDK
+      # across CI, so a docs build can never succeed on a JVM the real build
+      # rejects.
+      - uses: ./.github/actions/setup-graalvm-25
 
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:

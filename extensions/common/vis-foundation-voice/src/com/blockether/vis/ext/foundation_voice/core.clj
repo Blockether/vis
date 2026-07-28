@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.foundation-voice.core
   "Local voice input through sherpa-onnx Parakeet ASR."
-  (:require [babashka.process :as process]
+  (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]))
 
 (defn- cli-out! [s] (.println ^java.io.PrintStream vis/original-stdout (str s)))
@@ -18,10 +18,24 @@
 (defn model-status [] {:parakeet (parakeet-status)})
 
 (defn- executable?
+  "True when `cmd` resolves to an executable file on PATH.
+
+  A pure PATH walk on purpose. This used to shell out to `command -v`, but
+  `command` is a POSIX *shell builtin* with no binary behind it: exec'ing it
+  directly throws ENOENT on Debian and macOS alike, the catch swallowed it, and
+  doctor reported every tool as missing — `ffmpeg` warned even in the container
+  that build-asserts `ffmpeg -version`. Staying in-process also avoids paying a
+  fork per check."
   [cmd]
-  (try (zero? (long (:exit
-                      (process/sh {:out :string :err :string :continue true} "command" "-v" cmd))))
-       (catch Throwable _ false)))
+  (try
+    (boolean
+      (some (fn [dir]
+              (let [f (java.io.File. ^String dir ^String cmd)]
+                (and (.isFile f) (.canExecute f))))
+            (str/split (or (System/getenv "PATH") "")
+                       (re-pattern (java.util.regex.Pattern/quote
+                                     (System/getProperty "path.separator" ":"))))))
+    (catch Throwable _ false)))
 
 (defn- resolved? [sym] (boolean (requiring-resolve sym)))
 

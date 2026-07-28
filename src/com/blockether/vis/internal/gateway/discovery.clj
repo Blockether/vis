@@ -51,11 +51,12 @@
 
 (defn- sha256-hex
   ^String [^String s]
-  (let [md
-        (MessageDigest/getInstance "SHA-256")
+  (let
+    [md
+     (MessageDigest/getInstance "SHA-256")
 
-        bs
-        (.digest md (.getBytes s StandardCharsets/UTF_8))]
+     bs
+     (.digest md (.getBytes s StandardCharsets/UTF_8))]
 
     (apply str (map #(format "%02x" (bit-and (int %) 0xff)) bs))))
 
@@ -122,11 +123,12 @@
   [pid]
   (if (nil? pid)
     false
-    (let [now
-          (System/currentTimeMillis)
+    (let
+      [now
+       (System/currentTimeMillis)
 
-          [alive? at]
-          (get @pid-liveness-cache pid)]
+       [alive? at]
+       (get @pid-liveness-cache pid)]
 
       (if (and at (< (- now (long at)) (long PID_LIVENESS_TTL_MS)))
         alive?
@@ -151,14 +153,15 @@
   [db f]
   (locking registry-mutation-monitor
     (.mkdirs (registry-dir))
-    (with-open [raf
-                (RandomAccessFile. (registry-mutation-lock-file db) "rw")
+    (with-open
+      [raf
+       (RandomAccessFile. (registry-mutation-lock-file db) "rw")
 
-                channel
-                (.getChannel raf)
+       channel
+       (.getChannel raf)
 
-                _lock
-                (.lock channel)]
+       _lock
+       (.lock channel)]
 
       (f))))
 
@@ -183,11 +186,12 @@
    the registry for `db`. Registry readers therefore never observe a partial EDN
    file and mistake a live daemon for a missing one. Returns the written entry."
   [db entry]
-  (let [f
-        (registry-file db)
+  (let
+    [f
+     (registry-file db)
 
-        entry
-        (merge {:db (canonical-db db) :created-at (System/currentTimeMillis)} entry)]
+     entry
+     (merge {:db (canonical-db db) :created-at (System/currentTimeMillis)} entry)]
 
     (with-registry-mutation-lock
       db
@@ -221,11 +225,12 @@
   [db pred]
   (try (with-registry-mutation-lock db
                                     (fn []
-                                      (let [f
-                                            (registry-file db)
+                                      (let
+                                        [f
+                                         (registry-file db)
 
-                                            entry
-                                            (read-registry-file f)]
+                                         entry
+                                         (read-registry-file f)]
 
                                         (boolean
                                           (and entry (pred entry) (delete-registry-file! f))))))
@@ -330,41 +335,70 @@
   ^String [s]
   (str "'" (str/replace (str s) "'" "'\\''") "'"))
 
+(def ^:private spawn-argv0
+  "argv[0] that a vis-spawned vis process presents to `ps` / Activity Monitor.
+   ProcessBuilder always reuses the executable PATH as argv[0], so a daemon we
+   launch would otherwise show up as `/long/abs/path/to/vis gateway start …`.
+   Forcing the bare program name makes the process line read `vis gateway start`
+   — the subcommand is the thing an operator scans for."
+  "vis")
+
+(defn- argv0-shell
+  "Absolute path of a shell whose `exec` implements `-a NAME` (argv[0] override),
+   or nil when there is none. Only bash-family shells do; Debian/Ubuntu `/bin/sh`
+   is dash and does not, so we must NOT assume `sh` here."
+  ^String []
+  (first (filter #(try (.canExecute (io/file ^String %)) (catch Throwable _ false))
+                 ["/bin/bash" "/usr/bin/bash" "/usr/local/bin/bash" "/opt/homebrew/bin/bash"])))
+
+(defn unix-launch-cmd
+  "Full `[shell \"-c\" script]` command that detaches `argv` with its stdio in
+   `log-path`. Preferred form runs under bash so the daemon can `exec -a` itself
+   into a readable `vis <subcommand> …` process line; `trap '' HUP` before the
+   exec survives execve, giving the same SIGHUP immunity `nohup` provides. Falls
+   back to plain `nohup` under `sh` when no bash exists (the process line then
+   keeps the absolute executable path, which is cosmetic, not functional)."
+  [argv log-path]
+  (let [tail (str " >" (sh-quote log-path) " 2>&1 &")]
+    (if-let [bash (argv0-shell)]
+      [bash "-c"
+       (str "{ trap '' HUP; exec -a " (sh-quote spawn-argv0)
+            " " (str/join " " (map sh-quote argv))
+            "; }" tail)]
+      ["sh" "-c" (str "nohup " (str/join " " (map sh-quote argv)) tail)])))
+
 (defn spawn-detached!
   "Fire-and-forget launch of a gateway daemon for `db`, fully DETACHED so closing
    the spawner's terminal (SIGHUP) does NOT kill it (D4). On unix this runs the
-   argv under `nohup … &` inside a throwaway `sh` (the daemon is reparented to
-   init); elsewhere it falls back to a plain detached ProcessBuilder. The daemon
+   argv inside a throwaway shell that backgrounds and disowns it (the daemon is
+   reparented to init) and renames it to `vis gateway start …`; elsewhere it
+   falls back to a plain detached ProcessBuilder. The daemon
    SELF-REGISTERS its pid/port on startup, so we never need its pid here. Its
    stdout+stderr are captured to a per-DB boot log under the registry dir so a
    daemon that dies on startup is diagnosable instead of vanishing. Returns nil."
   [{:keys [db] :as opts}]
-  (let [argv
-        (spawn-argv opts)
+  (let
+    [argv
+     (spawn-argv opts)
 
-        _
-        (.mkdirs (registry-dir))
+     _
+     (.mkdirs (registry-dir))
 
-        ;; Per-DB boot log so a daemon that dies on startup (route conflict,
-        ;; bad flag, port clash, …) leaves a diagnosable trace instead of only
-        ;; surfacing to clients as a generic :gateway/start-timeout. Truncated
-        ;; on each spawn, so it always reflects the latest boot.
-        log
-        (io/file (registry-dir) (str (registry-key db) ".log"))
+     ;; Per-DB boot log so a daemon that dies on startup (route conflict,
+     ;; bad flag, port clash, …) leaves a diagnosable trace instead of only
+     ;; surfacing to clients as a generic :gateway/start-timeout. Truncated
+     ;; on each spawn, so it always reflects the latest boot.
+     log
+     (io/file (registry-dir) (str (registry-key db) ".log"))
 
-        pb
-        (if (unix?)
-          (let [cmd (str "nohup "
-                         (str/join " " (map sh-quote argv))
-                         " >"
-                         (sh-quote (.getPath log))
-                         " 2>&1 &")]
-            (ProcessBuilder. ^java.util.List (vec ["sh" "-c" cmd])))
-          (ProcessBuilder. ^java.util.List (vec argv)))]
+     pb
+     (if (unix?)
+       (ProcessBuilder. ^java.util.List (vec (unix-launch-cmd argv (.getPath log))))
+       (ProcessBuilder. ^java.util.List (vec argv)))]
 
     (if (unix?)
       ;; The daemon's own stdio is redirected to `log` by the shell command;
-      ;; discard only the throwaway `sh` wrapper's stdio.
+      ;; discard only the throwaway wrapper shell's stdio.
       (doto pb
         (.redirectOutput ProcessBuilder$Redirect/DISCARD)
         (.redirectError ProcessBuilder$Redirect/DISCARD))
@@ -418,11 +452,12 @@
    the poll loop. Returns the entry or nil on timeout."
   ([db probe] (await-registry! db probe {}))
   ([db probe {:keys [timeout-ms poll-ms on-tick] :or {timeout-ms 8000 poll-ms 100}}]
-   (let [start
-         (System/currentTimeMillis)
+   (let
+     [start
+      (System/currentTimeMillis)
 
-         deadline
-         (+ start (long timeout-ms))]
+      deadline
+      (+ start (long timeout-ms))]
 
      (loop []
 
@@ -472,20 +507,23 @@
   [{:keys [db] :as opts} &
    {:keys [probe spawn timeout-ms poll-ms on-event]
     :or {probe (constantly true) spawn spawn-detached!}}]
-  (let [emit (fn [ev]
-               (when on-event (try (on-event ev) (catch Throwable _ nil))))]
+  (let
+    [emit (fn [ev]
+            (when on-event (try (on-event ev) (catch Throwable _ nil))))]
     (if (memory-db? db)
       {:mode :none}
       (let [existing (read-registry db)]
         (if (registry-fresh? existing probe)
           {:mode :attach :entry existing}
-          (let [await-opts (cond-> {:on-tick (fn [elapsed-ms]
-                                               (emit {:phase :tick :elapsed-ms elapsed-ms}))}
-                             timeout-ms
-                             (assoc :timeout-ms timeout-ms)
+          (let
+            [await-opts (cond->
+                          {:on-tick (fn [elapsed-ms]
+                                      (emit {:phase :tick :elapsed-ms elapsed-ms}))}
+                          timeout-ms
+                          (assoc :timeout-ms timeout-ms)
 
-                             poll-ms
-                             (assoc :poll-ms poll-ms))]
+                          poll-ms
+                          (assoc :poll-ms poll-ms))]
             (if-let [holder (acquire-spawn-lock! db)]
               ;; We are the designated spawner for this DB.
               (try

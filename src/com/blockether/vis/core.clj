@@ -128,6 +128,7 @@
              [gateway-get-turn gateway-client/get-turn]
              [gateway-list-turns gateway-client/list-turns]
              [gateway-transcript gateway-client/transcript]
+             [gateway-transcript-page gateway-client/transcript-page]
              [gateway-transcript-md gateway-client/transcript-md]
              [gateway-transcript-html gateway-client/transcript-html]
              [gateway-turn-trace gateway-client/turn-trace]

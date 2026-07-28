@@ -1,0 +1,147 @@
+name: Mobile release
+
+# Ships the Vis Companion app to both public beta channels from one tag:
+#   iOS      → TestFlight, and (with `public`) an external PUBLIC-LINK group after Beta App Review
+#   Android  → Google Play; track `beta` IS the public "Open testing" channel
+#
+# The build logic is NOT duplicated here. Everything lives in
+# apps/vis-companion/scripts/{ios-release,android-release}.mjs, which a maintainer runs
+# locally with the SAME inputs read from the macOS login keychain instead of GH secrets.
+# CI therefore cannot drift from the local path: it only supplies credentials.
+#
+# Repository secrets (Settings ▸ Secrets and variables ▸ Actions):
+#   iOS      VIS_ASC_KEY_ID, VIS_ASC_ISSUER_ID, VIS_ASC_KEY (the .p8 CONTENTS), VIS_IOS_TEAM_ID
+#   Android  VIS_PLAY_SERVICE_ACCOUNT (service-account JSON), VIS_ANDROID_KEYSTORE (base64 .jks),
+#            VIS_ANDROID_KEYSTORE_PASSWORD, VIS_ANDROID_KEY_ALIAS, VIS_ANDROID_KEY_PASSWORD,
+#            VIS_ANDROID_GOOGLE_SERVICES (google-services.json, optional — push only)
+# Export what you already hold locally:
+#   cd apps/vis-companion && npm run secrets export-keystore | base64   # VIS_ANDROID_KEYSTORE
+#
+# A platform whose secrets are absent is SKIPPED, not failed: a fork, or a repo with only
+# one of the two stores set up, must still get a green run.
+
+on:
+  push:
+    tags: ['companion-v*']
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: Which stores to ship to
+        type: choice
+        options: [both, ios, android]
+        default: both
+      track:
+        description: "Play track (beta = public open testing)"
+        type: choice
+        options: [internal, alpha, beta, production]
+        default: internal
+      public:
+        description: "iOS: also submit for Beta App Review and link the public TestFlight group"
+        type: boolean
+        default: false
+
+concurrency:
+  group: mobile-release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: apps/vis-companion
+
+jobs:
+  ios:
+    # A tag ships to TestFlight; a manual run only when iOS was asked for.
+    if: ${{ github.event_name == 'push' || inputs.platforms != 'android' }}
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      # Version code is `git rev-list --count HEAD`, so a shallow clone would produce a
+      # LOWER build number than the previous release and App Store Connect would reject it.
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/vis-companion/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Have credentials?
+        id: creds
+        env:
+          KEY: ${{ secrets.VIS_ASC_KEY }}
+        run: echo "ok=${{ env.KEY != '' }}" >> "$GITHUB_OUTPUT"
+
+      # xcodebuild and altool both insist on a FILE. Keep it in RUNNER_TEMP (wiped with the
+      # runner) with 0600, never in the workspace where an artifact upload could catch it.
+      - name: Materialise the App Store Connect key
+        if: steps.creds.outputs.ok == 'true'
+        env:
+          VIS_ASC_KEY: ${{ secrets.VIS_ASC_KEY }}
+        run: |
+          umask 077
+          printf '%s\n' "$VIS_ASC_KEY" > "$RUNNER_TEMP/AuthKey_${{ secrets.VIS_ASC_KEY_ID }}.p8"
+
+      - name: Build, upload, distribute
+        if: steps.creds.outputs.ok == 'true'
+        env:
+          VIS_ASC_KEY_ID: ${{ secrets.VIS_ASC_KEY_ID }}
+          VIS_ASC_ISSUER_ID: ${{ secrets.VIS_ASC_ISSUER_ID }}
+          VIS_IOS_TEAM_ID: ${{ secrets.VIS_IOS_TEAM_ID }}
+        run: |
+          export VIS_ASC_KEY_PATH="$RUNNER_TEMP/AuthKey_${VIS_ASC_KEY_ID}.p8"
+          npm run release:ios -- ${{ (github.event_name == 'push' || inputs.public) && '--public' || '' }}
+
+      - name: No iOS credentials
+        if: steps.creds.outputs.ok != 'true'
+        run: echo '::notice::VIS_ASC_KEY is not set — skipping the TestFlight upload'
+
+  android:
+    if: ${{ github.event_name == 'push' || inputs.platforms != 'ios' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/vis-companion/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Have credentials?
+        id: creds
+        env:
+          SA: ${{ secrets.VIS_PLAY_SERVICE_ACCOUNT }}
+          KS: ${{ secrets.VIS_ANDROID_KEYSTORE }}
+        run: echo "ok=${{ env.SA != '' && env.KS != '' }}" >> "$GITHUB_OUTPUT"
+
+      # Every credential goes in through the environment, exactly as the local keychain
+      # path does — android-prepare.mjs/android-release.mjs read env FIRST, keychain second,
+      # so no file with key material is ever created in the workspace.
+      - name: Build the .aab and publish to Play
+        if: steps.creds.outputs.ok == 'true'
+        env:
+          VIS_PLAY_SERVICE_ACCOUNT: ${{ secrets.VIS_PLAY_SERVICE_ACCOUNT }}
+          VIS_ANDROID_KEYSTORE: ${{ secrets.VIS_ANDROID_KEYSTORE }}
+          VIS_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.VIS_ANDROID_KEYSTORE_PASSWORD }}
+          VIS_ANDROID_KEY_ALIAS: ${{ secrets.VIS_ANDROID_KEY_ALIAS }}
+          VIS_ANDROID_KEY_PASSWORD: ${{ secrets.VIS_ANDROID_KEY_PASSWORD }}
+          VIS_ANDROID_GOOGLE_SERVICES: ${{ secrets.VIS_ANDROID_GOOGLE_SERVICES }}
+        run: npm run release:android -- --track ${{ inputs.track || 'beta' }}
+
+      - name: No Play credentials
+        if: steps.creds.outputs.ok != 'true'
+        run: echo '::notice::VIS_PLAY_SERVICE_ACCOUNT / VIS_ANDROID_KEYSTORE not set — skipping the Play upload'

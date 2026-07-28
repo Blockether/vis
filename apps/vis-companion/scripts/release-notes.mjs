@@ -12,10 +12,10 @@
 // hand-edited wording survives a re-run. Deleting the entry makes the next run rebuild it.
 
 import { spawnSync } from 'node:child_process';
-import { createPrivateKey, sign as cryptoSign } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { appIdFor, asc, ascToken, waitForBuild } from './asc.mjs';
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(appDir, '..', '..');
@@ -138,42 +138,7 @@ const toWhatsNew = (bullets) => {
 };
 
 // ── App Store Connect ─────────────────────────────────────────────────────────────────
-
-const base64url = (buf) => Buffer.from(buf).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
-
-/** ES256 JWT. `dsaEncoding: 'ieee-p1363'` is the raw r||s form JOSE wants; DER is rejected. */
-const ascToken = ({ keyId, issuerId, keyPem }) => {
-  const now = Math.floor(Date.now() / 1000);
-  const header = base64url(JSON.stringify({ alg: 'ES256', kid: keyId, typ: 'JWT' }));
-  const payload = base64url(JSON.stringify({ iss: issuerId, iat: now, exp: now + 20 * 60, aud: 'appstoreconnect-v1' }));
-  const signature = base64url(
-    cryptoSign('sha256', Buffer.from(`${header}.${payload}`), {
-      key: createPrivateKey(keyPem),
-      dsaEncoding: 'ieee-p1363',
-    }),
-  );
-  return `${header}.${payload}.${signature}`;
-};
-
-const asc = async (token, method, path, body) => {
-  const res = await fetch(`https://api.appstoreconnect.apple.com${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  const text = await res.text();
-  const json = text ? JSON.parse(text) : {};
-  if (!res.ok) {
-    const detail = json.errors?.map((e) => `${e.title}: ${e.detail}`).join('; ') || text;
-    throw new Error(`ASC ${method} ${path} → ${res.status} ${detail}`);
-  }
-  return json;
-};
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// The signing/HTTP/polling primitives live in ./asc.mjs and are shared with testflight.mjs.
 
 /**
  * Attach `notes` to the TestFlight build as its What to Test text.
@@ -190,19 +155,11 @@ export const publishNotes = async ({ keyId, issuerId, keyPem, bundleId, version,
   // notes are already in CHANGELOG.md, so a bad token must not take the release down.
   try {
 
-    const apps = await asc(token, 'GET', `/v1/apps?filter[bundleId]=${encodeURIComponent(bundleId)}&limit=1`);
-    const appId = apps.data?.[0]?.id;
+    const appId = await appIdFor(token, bundleId);
     if (!appId) return { ok: false, reason: `no app with bundle id ${bundleId}` };
 
-    const query = `/v1/builds?filter[app]=${appId}&filter[version]=${encodeURIComponent(build)}&limit=1`;
-    const deadline = Date.now() + timeoutMs;
-    let buildId;
-    for (;;) {
-      buildId = (await asc(token, 'GET', query)).data?.[0]?.id;
-      if (buildId || Date.now() >= deadline) break;
-      log(`· waiting for App Store Connect to ingest build ${build} …`);
-      await sleep(30_000);
-    }
+    const found = await waitForBuild(token, { appId, build, timeoutMs, log: (m) => log(`· ${m}`) });
+    const buildId = found?.id;
     if (!buildId) return { ok: false, reason: `build ${build} not visible in App Store Connect yet` };
 
     const existing = await asc(token, 'GET', `/v1/builds/${buildId}/betaBuildLocalizations?limit=50`);

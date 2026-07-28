@@ -9,9 +9,10 @@ const COVERED_EPSILON = 12;
  * Re-measure schedule after a wake (backgrounded app, tab switch, bfcache
  * restore). iOS hands the webview stale `visualViewport` metrics for a few
  * frames after resume and fires no further resize/scroll, so one measurement is
- * not enough — settle over roughly half a second.
+ * not enough — settle over roughly a second and a half: a cold resume (the app
+ * was suspended, not just backgrounded) keeps moving well past half a second.
  */
-const WAKE_RESYNC_MS = [0, 60, 160, 320, 600];
+const WAKE_RESYNC_MS = [0, 60, 160, 320, 600, 900, 1400];
 
 type Box = { height: number; top: number };
 
@@ -60,6 +61,24 @@ function viewportSample(): string {
   const width = vv ? Math.round(vv.width) : 0;
   const height = vv ? Math.round(vv.height) : 0;
   return `${window.innerWidth}x${window.innerHeight}x${width}x${height}`;
+}
+
+/**
+ * Undoes a leftover scroll of the LAYOUT viewport.
+ *
+ * iOS reveals a focused field by scrolling the layout viewport — it does that
+ * even though `html` is `overflow: hidden` — and it does not undo it when the
+ * app is suspended with the keyboard up. `position: fixed` resolves against
+ * that layout viewport, so on resume the whole shell comes back shifted up by
+ * the leftover offset: content rides under the status bar and the tab bar sits
+ * below the fold, invisible and untappable, with no further viewport event to
+ * correct it.
+ */
+function resetLayoutScroll(): void {
+  const doc = document.scrollingElement ?? document.documentElement;
+  if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
+  if (doc.scrollTop !== 0) doc.scrollTop = 0;
+  if (doc.scrollLeft !== 0) doc.scrollLeft = 0;
 }
 
 function endRotation() {
@@ -266,6 +285,7 @@ export function useVisualViewportShell(): CSSProperties | undefined {
         // once it is over.
         if (isViewportRotating()) {
           setBox(null);
+          resetLayoutScroll();
           document.documentElement.style.setProperty(
             '--safe-bottom',
             'env(safe-area-inset-bottom)',
@@ -277,6 +297,9 @@ export function useVisualViewportShell(): CSSProperties | undefined {
           vv.height > 0 && (covered || vv.offsetTop > 1)
             ? { height: Math.round(vv.height), top: Math.round(vv.offsetTop) }
             : null;
+        // Keyboard down means the layout viewport belongs at its origin again;
+        // while it is up, iOS owns that scroll to keep the caret visible.
+        if (!next) resetLayoutScroll();
         setBox((prev) =>
           prev && next && prev.height === next.height && prev.top === next.top ? prev : next,
         );

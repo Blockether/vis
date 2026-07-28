@@ -354,6 +354,49 @@
 
     (if (and launcher (.isFile launcher)) (.getAbsolutePath launcher) exe)))
 
+(def ^:private graal-pin
+  "The `.graalvm-version` pin, parsed. That file is the SINGLE source of truth for
+   which JDK vis is built with; the CI action, the Dockerfile and bin/require-graalvm
+   read the same file, so this check can never drift from what CI installs."
+  (delay (let [f (io/file ".graalvm-version")]
+           (when (.isFile f)
+             (into {}
+                   (keep (fn [line]
+                           (when-let
+                             [[_ k v] (re-matches #"\s*([A-Z0-9_]+)=\"?([^\"#]*)\"?\s*" line)]
+                             [k (str/trim v)])))
+                   (str/split-lines (slurp f)))))))
+
+(defn- assert-graalvm-ce!
+  "Refuse to start a native build on anything but the pinned GraalVM COMMUNITY
+   Edition. Three JDKs get this far and each fails later and more expensively:
+   a stock JDK 25 has no `native-image` at all; Oracle GraalVM builds a binary
+   that is no longer GPL+CE-licensed (audit/README.md §4.1 promises CE only);
+   a near CE version is hard-rejected by Truffle/SVM against the org.graalvm.*
+   pins in deps.edn — usually minutes into the image build.
+
+   `java.vendor.version` is the one property that separates all three
+   (\"GraalVM CE 25.1.3+9.1\" vs \"Oracle GraalVM 25.1.3+9.1\" vs \"Temurin-25…\")."
+  []
+  (when-let
+    [{want "GRAAL_VENDOR_VERSION" edition "GRAAL_EDITION" version "GRAAL_VERSION"} @graal-pin]
+    (let [got (or (System/getProperty "java.vendor.version") "unknown JDK")]
+      (when-not (= got want)
+        (throw (ex-info
+                 (str "this build requires "
+                      edition
+                      " "
+                      version
+                      " — the build JVM reports \""
+                      got
+                      "\"\n"
+                      "  expected java.vendor.version: \"" want
+                      "\"\n" "  install it:  bin/require-graalvm --install\n"
+                      "  then:        sdk env   (or: eval \"$(bin/require-graalvm --export)\")\n"
+                      "  Stock JDKs and Oracle GraalVM are NOT substitutes — see .graalvm-version.")
+                 {:expected want :actual got})))
+      (println (str "· " edition " " version " (" got ")")))))
+
 ;; ── Distribution profiles ───────────────────────────────────────────────────
 ;; Profiles select what ships, via `:profile` on `native` / `uber`:
 ;;   :tui       — MINIMAL: the TUI channel only. Voice is dropped
@@ -389,9 +432,8 @@
   [opts]
   (let [p (keyword (or (:profile opts) :voice))]
     (when-not (contains? profile->dropped-libs p)
-      (throw (ex-info
-               (str "Unknown :profile " p " — use :tui, :cross, :voice or :community")
-               {:profile p :available (keys profile->dropped-libs)})))
+      (throw (ex-info (str "Unknown :profile " p " — use :tui, :cross, :voice or :community")
+                      {:profile p :available (keys profile->dropped-libs)})))
     p))
 
 (defn- voice-profile?
@@ -1106,6 +1148,7 @@
    native-image flags; run `native` once first to populate the AOT classes. Honors
    `:oracle-native-image true` (or VIS_ORACLE_NATIVE_IMAGE) to keep the GraalPy JIT in the image."
   [opts]
+  (assert-graalvm-ce!)
   (let
     [profile
      (resolve-profile opts)
@@ -1148,6 +1191,7 @@
      :oracle-native-image true — KEEP the GraalPy JIT in the image (bigger binary, slower
                            build, faster CPU-bound Python). Default: lean interpreter."
   [opts]
+  (assert-graalvm-ce!)
   (let
     [profile
      (resolve-profile opts)

@@ -302,11 +302,12 @@
   #(and (closed-map? mcp-server-schema %)
         ;; Exactly ONE transport-defining key. Prevents a stdio spec with a
         ;; stray :url silently switching to http via inference.
-        (let [has-cmd?
-              (non-blank-string? (get % "command"))
+        (let
+          [has-cmd?
+           (non-blank-string? (get % "command"))
 
-              has-url?
-              (non-blank-string? (get % "url"))]
+           has-url?
+           (non-blank-string? (get % "url"))]
 
           (and (or has-cmd? has-url?) (not (and has-cmd? has-url?))))))
 (s/def ::mcp-servers
@@ -336,38 +337,174 @@
 (defn explain-data [config] (s/explain-data ::config config))
 (defn valid? [config] (s/valid? ::config config))
 
+(def ^:private nested-schemas
+  "Which closed-map schema a parent key nests, so a failure is attributed to the
+   exact dotted field path instead of the whole opaque config map. Each entry is
+   `[schema required nesting]`; nesting is `:map` (the value IS that map),
+   `:vector` (a vector of such maps) or `:map-of` (a user-named map whose VALUES
+   are such maps)."
+  {config-schema {"providers" [provider-schema #{"id"} :vector]
+                  "system_prompt" [prompt-schema #{"text"} :map]
+                  "router" [router-schema #{} :map]
+                  "workspace" [workspace-schema #{} :map]
+                  "jail" [jail-schema #{} :map]
+                  "db_spec" [db-schema #{"backend"} :map]
+                  "search" [search-schema #{} :map]
+                  "tui_settings" [tui-schema #{} :map]
+                  "mcp" [mcp-schema #{} :map]
+                  "python" [python-schema #{} :map]
+                  "message_queue" [message-queue-schema #{} :map]}
+   provider-schema {"models" [model-schema #{"name"} :vector]}
+   router-schema {"rate_limit" [rate-limit-schema #{} :map]
+                  "network" [router-network-schema #{} :map]
+                  "budget" [budget-schema #{} :map]
+                  "tokens" [token-schema #{} :map]}
+   workspace-schema {"filesystem" [workspace-entry-schema #{"id" "path"} :vector]}
+   jail-schema {"filesystem" [jail-filesystem-schema #{} :map] "network" [network-schema #{} :map]}
+   network-schema {"rules" [network-rule-schema #{"host"} :vector]}
+   network-rule-schema {"allow" [network-rule-allow-schema #{"method"} :vector]}
+   mcp-schema {"servers" [mcp-server-schema #{} :map-of]}
+   mcp-server-schema {"auth" [mcp-auth-schema #{} :map]}})
+
+(defn- edit-distance
+  "Levenshtein distance — small inputs only (config key names)."
+  [a b]
+  (let
+    [b
+     (vec b)
+
+     n
+     (count b)]
+
+    (peek (reduce (fn [prev [i ca]]
+                    (reduce (fn [row j]
+                              (conj row
+                                    (min (inc (long (nth row j)))
+                                         (inc (long (nth prev (inc (long j)))))
+                                         (+ (long (nth prev j)) (if (= ca (nth b j)) 0 1)))))
+                            [(inc (long i))]
+                            (range n)))
+                  (vec (range (inc (long n))))
+                  (map-indexed vector a)))))
+
+(defn- closest-key
+  "The known key a typo most likely meant, or nil when nothing is close enough."
+  [k known]
+  (let
+    [k
+     (str/lower-case k)
+
+     [best distance]
+     (first (sort-by second
+                     (map (fn [c]
+                            [c (edit-distance k (str/lower-case c))])
+                          known)))]
+
+    (when (and best (pos? (count k)) (<= (long distance) (max 1 (quot (count k) 3)))) best)))
+
+(defn- field-label [path] (str/join "." path))
+
+(defn- schema-problems
+  "Every reason a string-keyed `m` fails `schema`, each naming its dotted field
+   path. Recurses through `nested-schemas` so the offending LEAF is reported."
+  [schema required path m]
+  (into
+    (into []
+          (comp (remove #(contains? m %))
+                (map #(str (field-label (conj path %)) ": required key is missing")))
+          (sort required))
+    (mapcat
+      (fn [[k v]]
+        (let [label (field-label (conj path (str k)))]
+          (cond (not (string? k)) [(str (pr-str k) ": every config key must be a string")]
+                (not (contains? schema k))
+                (let [hint (closest-key k (keys schema))]
+                  [(str label
+                        ": unknown " (if (empty? path) "top-level config key" "key")
+                        " (config is closed)"
+                        (when hint
+                          (str " — did you mean \"" (field-label (conj path hint)) "\"?")))])
+                ((get schema k) v) nil
+                :else
+                (let [[child child-required nesting] (get-in nested-schemas [schema k])]
+                  (or (when child
+                        (seq
+                          (case nesting
+                            :map
+                            (when (map? v) (schema-problems child child-required (conj path k) v))
+
+                            :vector
+                            (when (vector? v)
+                              (into []
+                                    (mapcat (fn [[i x]]
+                                              (when (map? x)
+                                                (schema-problems child
+                                                                 child-required
+                                                                 (conj path (str k "[" i "]"))
+                                                                 x))))
+                                    (map-indexed vector v)))
+
+                            :map-of
+                            (when (map? v)
+                              (into
+                                []
+                                (mapcat
+                                  (fn [[ck cv]]
+                                    (when (and (string? ck) (map? cv))
+                                      (schema-problems child child-required (conj path k ck) cv))))
+                                v))
+
+                            nil)))
+                      [(str label ": value rejected by the " k " contract")])))))
+      m)))
+
 (defn explain-problems
   "Best-effort, model-readable reasons a string-keyed YAML `config` fails the
-   contract — one line per offending TOP-LEVEL key: a non-string key, an unknown
-   key (config is closed), or a value the section schema rejects. Returns [] for
-   a valid or nil map, so a caller surfaces a `config_error` hint ONLY when the
-   live config is actually denied. This points a fix straight at the key rather
-   than dumping the whole opaque spec problem."
+   contract — one line per offending FIELD, named by its dotted path
+   (`search.include_gitignored_paths`, `providers[1].models[0].context`,
+   `mcp.servers.docs.transport`): a non-string key, an unknown key (maps are
+   closed, with a did-you-mean when a known key is close), a missing required
+   key, or a value the schema rejects. Returns [] for a valid or nil map, so a
+   caller surfaces a `config_error` hint ONLY when the live config is actually
+   denied. This points a fix straight at the field rather than dumping the whole
+   opaque spec problem."
   [config]
   (cond (nil? config) []
         (not (map? config)) ["config: expected a YAML map with string keys"]
-        :else (into []
-                    (keep (fn [[k v]]
-                            (cond (not (string? k)) (str (pr-str k)
-                                                         ": every config key must be a string")
-                                  (not (contains? config-schema k))
-                                  (str k ": unknown top-level config key (config is closed)")
-                                  (not ((get config-schema k) v))
-                                  (str k ": value rejected by the " k " contract")
-                                  :else nil)))
-                    config)))
+        :else (vec (schema-problems config-schema #{} [] config))))
+
+(defn config-error-panel
+  "Caller-facing screen for an invalid config: the offending field lines and
+   nothing else. Entry points print `:vis/panel` verbatim, so a bad YAML key
+   must never reach the fatal path (a Java stack trace tells the user nothing
+   about which key they mistyped)."
+  [fields source]
+  (into ["" (str "  Invalid Vis configuration" (when source (str " in " source)) ":") ""]
+        (concat (map #(str "  - " %) (or (seq fields) ["config: does not match the Vis contract"]))
+                ["" "  Fix the entries above and run vis again." ""])))
 
 (defn assert-config!
-  "Return a string-keyed YAML config when it satisfies the complete contract."
+  "Return a string-keyed YAML config when it satisfies the complete contract.
+   The thrown message names each offending field path, because the raw spec
+   problem for a closed map is an unreadable dump of the entire config.
+
+   The violation is a USER error (`:vis/user-error`) carrying a rendered
+   `:vis/panel`: a mistyped key deserves the field list, never a stack trace."
   ([config] (assert-config! config nil))
   ([config source]
    (if (valid? config)
      config
-     (throw (ex-info (str "Invalid Vis configuration" (when source (str " in " source)))
-                     {:type :vis/invalid-config
-                      :source source
-                      :problems (mapv #(update % :val redact)
-                                      (::s/problems (explain-data config)))})))))
+     (let [fields (explain-problems config)]
+       (throw (ex-info (str "Invalid Vis configuration"
+                            (when source (str " in " source))
+                            (when (seq fields) (str ":\n  - " (str/join "\n  - " fields))))
+                       {:type :vis/invalid-config
+                        :vis/user-error true
+                        :vis/panel (config-error-panel fields source)
+                        :source source
+                        :fields fields
+                        :problems (mapv #(update % :val redact)
+                                        (::s/problems (explain-data config)))}))))))
 
 (def process-jail-config-keys
   #{:disabled? :allow-read-write :allow-read :allow-write :deny-read :deny-write :deny-exec
@@ -383,8 +520,9 @@
          #(rooted-path-list? (or (:deny-exec %) []))
          #(s/valid? (get network-schema "inbound_ports") (:inbound-ports %))
          #(env-var-name-list? (or (:env-passthrough %) []))
-         #(let [d
-                (:path-descriptions %)]
+         #(let
+            [d
+             (:path-descriptions %)]
 
             (or (nil? d) (string-map? d)))))
 
@@ -406,8 +544,9 @@
    A bare name is looked up on every PATH directory (all matches denied); an
    absolute/home path is denied verbatim."
   [names]
-  (let [dirs (some-> (System/getenv "PATH")
-                     (str/split (re-pattern java.io.File/pathSeparator)))]
+  (let
+    [dirs (some-> (System/getenv "PATH")
+                  (str/split (re-pattern java.io.File/pathSeparator)))]
     (into []
           (comp (mapcat (fn [n]
                           (let [n (str n)]
@@ -441,42 +580,42 @@
    `search: false` marks it out of the default search sweep."
   [config]
   (assert-config! config)
-  (let [jail
-        (get config "jail" {})
+  (let
+    [jail
+     (get config "jail" {})
 
-        entries
-        (get-in config ["workspace" "filesystem"] [])
+     entries
+     (get-in config ["workspace" "filesystem"] [])
 
-        by-id
-        (reduce (fn [m e]
-                  (assoc m (get e "id") e))
-                {}
-                entries)
+     by-id
+     (reduce (fn [m e]
+               (assoc m (get e "id") e))
+             {}
+             entries)
 
-        allowed
-        ;; The workspace catalog is the single source of roots. When the jail is
-        ;; DISABLED it confines nothing, so the whole catalog is available and must
-        ;; still appear in the session — `jail.filesystem.allow` is irrelevant and a
-        ;; stale/renamed id in it can never deny-safe the config. Only a live
-        ;; (enabled) jail narrows to the `allow` subset and treats an unknown id as
-        ;; a hard config error.
-        (if (true? (get jail "enabled"))
-          (into []
-                (keep (fn [id]
-                        (or (get by-id id)
-                            (throw (ex-info
-                                     (str "jail.filesystem.allow references unknown workspace id: "
-                                          id)
-                                     {:type :vis/invalid-config :id id})))))
-                (get-in jail ["filesystem" "allow"] []))
-          entries)
+     allowed
+     ;; The workspace catalog is the single source of roots. When the jail is
+     ;; DISABLED it confines nothing, so the whole catalog is available and must
+     ;; still appear in the session — `jail.filesystem.allow` is irrelevant and a
+     ;; stale/renamed id in it can never deny-safe the config. Only a live
+     ;; (enabled) jail narrows to the `allow` subset and treats an unknown id as
+     ;; a hard config error.
+     (if (true? (get jail "enabled"))
+       (into []
+             (keep (fn [id]
+                     (or (get by-id id)
+                         (throw (ex-info
+                                  (str "jail.filesystem.allow references unknown workspace id: " id)
+                                  {:type :vis/invalid-config :id id})))))
+             (get-in jail ["filesystem" "allow"] []))
+       entries)
 
-        descriptions
-        (into {}
-              (keep (fn [e]
-                      (when-let [d (get e "description")]
-                        [(get e "path") d])))
-              allowed)]
+     descriptions
+     (into {}
+           (keep (fn [e]
+                   (when-let [d (get e "description")]
+                     [(get e "path") d])))
+           allowed)]
 
     (assert-process-jail-config!
       {:disabled? (not (true? (get jail "enabled")))
@@ -520,11 +659,12 @@
    is enforced alongside the filesystem and inbound-port confinement."
   [config]
   (assert-config! config)
-  (let [jail
-        (get config "jail" {})
+  (let
+    [jail
+     (get config "jail" {})
 
-        net
-        (get jail "network" {})]
+     net
+     (get jail "network" {})]
 
     (if-not (true? (get jail "enabled"))
       {}

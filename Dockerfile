@@ -8,7 +8,7 @@
 # no ASR model. `docker run` is the whole install.
 #
 # Stages:
-#   jdk      — Oracle GraalVM (JDK 25 LTS), shared by the build and the runtime.
+#   jdk      — GraalVM CE 25.1.3 (see .graalvm-version), shared by build+runtime.
 #   builder  — clojure CLI + `clojure -T:build native`, produces target/vis.
 #   model    — the Parakeet ASR model, fetched once into its own cache layer.
 #   browsers — spel (Playwright) + its browser bundles, in its own layer.
@@ -29,9 +29,10 @@
 # =============================================================================
 
 # ── Version pins (global scope: re-declare `ARG x` inside a stage to use it) ──
-ARG GRAAL_VERSION=25.0.4
+# The GraalVM pin is NOT here: it lives in `.graalvm-version`, the one file the
+# CI action, build.clj and bin/require-graalvm also read. The jdk stage copies
+# and sources it, so this image can never drift from what CI builds with.
 ARG GRAAL_ARCH=x64
-ARG GRAAL_SHA256=76007c309f821aaf435bce63162ea0395587fc77350801c81643fe7feea37276
 ARG CLOJURE_VERSION=1.12.5.1654
 ARG MAVEN_VERSION=3.9.16
 ARG MAVEN_SHA512=831a8591fe20c8243b1dbe7d71e3244f31d1665b0804b2e825e38cbbe5ce0cafb8338851f90780735568773e0a6cd07bbec107cda0b896b008b861075358b6f6
@@ -51,35 +52,42 @@ ARG WITH_CHROME=true
 ARG BASE_IMAGE=debian:bookworm-slim
 
 # ── Stage: jdk ───────────────────────────────────────────────────────────────
-# Oracle GraalVM, not graalvm-community. Same JDK base plus the optimizing
-# native-image. Licensed under the GraalVM Free Terms and Conditions: free for
-# production use AND redistribution, which is what makes baking it into a
-# shipped image legitimate. Served from download.oracle.com with no login and
-# no accept-licence cookie, so the fetch works unattended.
-#   Checksum: curl -sSL https://download.oracle.com/graalvm/25/archive/graalvm-jdk-<v>_linux-<arch>_bin.tar.gz.sha256
-# The versioned archive/ URL is used deliberately over latest/: a moving URL
-# cannot carry a checksum.
+# GraalVM COMMUNITY Edition, at the exact version pinned in `.graalvm-version`.
+# Community, not Oracle, on purpose:
+#   * CE is GPLv2 + Classpath Exception — the Classpath Exception frees the
+#     binary we ship, so redistribution stays FOSS (audit/README.md §4.1 states
+#     CE only). Oracle GraalVM is GFTC-licensed and was deliberately removed.
+#   * CE's version IS the Graal/Truffle train (25.1.x), so it matches the
+#     org.graalvm.* jars pinned in deps.edn as-is. Oracle's version is its JDK
+#     version (25.0.x), which is why this file used to rewrite deps.edn on the
+#     way past — that hack is gone with it.
+# The versioned graalvm-ce-builds asset is used deliberately over any moving
+# URL: a moving URL cannot carry a checksum, and the checksum is in the pin.
 FROM ${BASE_IMAGE} AS jdk
-ARG GRAAL_VERSION
 ARG GRAAL_ARCH
-ARG GRAAL_SHA256
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
+COPY .graalvm-version /etc/graalvm-version
 RUN set -eux; \
-    url="https://download.oracle.com/graalvm/25/archive/graalvm-jdk-${GRAAL_VERSION}_linux-${GRAAL_ARCH}_bin.tar.gz"; \
+    . /etc/graalvm-version; \
+    eval "sha=\${GRAAL_SHA256_linux_${GRAAL_ARCH}}"; \
+    file="graalvm-community-jdk-${GRAAL_ASSET_VERSION}_linux-${GRAAL_ARCH}_bin.tar.gz"; \
+    url="https://github.com/graalvm/graalvm-ce-builds/releases/download/${GRAAL_TAG}/${file}"; \
     curl -fL --retry 3 --retry-delay 5 -o /tmp/graalvm.tar.gz "$url"; \
-    echo "${GRAAL_SHA256}  /tmp/graalvm.tar.gz" | sha256sum -c -; \
+    echo "${sha}  /tmp/graalvm.tar.gz" | sha256sum -c -; \
     mkdir -p /opt/graalvm; \
     tar -xzf /tmp/graalvm.tar.gz -C /opt/graalvm --strip-components=1; \
     rm /tmp/graalvm.tar.gz; \
-    /opt/graalvm/bin/java -version 2>&1 | grep -q 'Oracle GraalVM'
+    got="$(/opt/graalvm/bin/java -XshowSettings:properties -version 2>&1 \
+            | sed -n 's/^ *java\.vendor\.version = //p' | head -n1)"; \
+    test "$got" = "${GRAAL_VENDOR_VERSION}"; \
+    test -x /opt/graalvm/bin/native-image
 
 # ── Stage: builder ───────────────────────────────────────────────────────────
 FROM jdk AS builder
 ARG CLOJURE_VERSION
-ARG GRAAL_VERSION
 ARG VIS_PROFILE
 ARG VIS_ORACLE_NATIVE_IMAGE
 ARG VIS_NATIVE_EXTRA_ARGS
@@ -115,39 +123,50 @@ COPY deps.edn build.clj VERSION ./
 COPY extensions/ ./extensions/
 
 # The org.graalvm.* Maven artifacts must match the Graal compiler in the JDK
-# running the build. deps.edn pins the COMMUNITY train (25.1.x); Oracle's
-# version IS its JDK version (25.0.x). Mismatched, Truffle throws
-# NullPointerException inside HotSpotTruffleRuntimeAccess.getCompilerVersion.
-# Rewritten here, in the build context only — the repo is never modified.
-# Factored into a script because it has to run TWICE: once before the dependency
-# prefetch (so `clojure -P` warms the right jars) and once after `COPY . .`,
-# which restores the pristine deps.edn over the rewritten one. Missing the
-# second call is silent — the build simply resolves 25.1.x and dies minutes
-# later inside TruffleAPIFeature with "Version check failed".
-# Quoted heredoc: the body is literal, so ${GRAAL_VERSION} is expanded by the
-# script at RUN time (build args are in the RUN environment), not by the builder.
-COPY --chmod=0755 <<'EOF' /usr/local/bin/pin-graal
+# running the build; mismatched, Truffle throws NullPointerException inside
+# HotSpotTruffleRuntimeAccess.getCompilerVersion, minutes into the image build.
+# With GraalVM CE the two agree by construction (CE's version IS the Graal
+# train), so this is a CHECK, not the deps.edn rewrite it used to be — and it
+# fails here, in seconds, instead of inside TruffleAPIFeature much later.
+# Quoted heredoc: the body is literal, so the variables are expanded by the
+# script at RUN time (from /etc/graalvm-version), not by the builder.
+COPY --chmod=0755 <<'EOF' /usr/local/bin/check-graal-pins
 #!/bin/sh
 set -eu
-sed -i -E "s|(org\.graalvm\.[a-z]+/[a-z-]+ \{:mvn/version \")[^\"]+(\")|\1${GRAAL_VERSION}\2|" deps.edn
+. /etc/graalvm-version
 grep -n 'org\.graalvm\.' deps.edn
-# every org.graalvm pin must now name the JDK this image builds with
+# every org.graalvm pin must name the JDK this image builds with
 all=$(grep -c 'org\.graalvm\.' deps.edn)
 ok=$(grep -c "org\.graalvm\..*\"${GRAAL_VERSION}\"" deps.edn)
-test "$all" = "$ok"
+if [ "$all" != "$ok" ]; then
+  echo "deps.edn org.graalvm.* pins must all be ${GRAAL_VERSION} (.graalvm-version)" >&2
+  exit 1
+fi
 EOF
 
-RUN pin-graal
+RUN check-graal-pins
 
 RUN clojure -P -T:build || true
 
 COPY . .
 
-# `COPY . .` just put the repo's own deps.edn back. Re-pin.
-RUN pin-graal
+# `COPY . .` just put the repo's own deps.edn back — re-check it.
+RUN check-graal-pins
 
 # `native` honours VIS_ORACLE_NATIVE_IMAGE / VIS_NATIVE_EXTRA_ARGS from the env.
-RUN clojure -T:build native :profile ${VIS_PROFILE} \
+#
+# `-Duser.home=/home/vis` is not cosmetic. Clojure namespaces are initialised at
+# IMAGE BUILD time, so top-level defs that read `user.home` are FOLDED INTO THE
+# BINARY as constants — `config.clj:34` bakes `config-dir`, and `vis.log`,
+# `state.yml`, `vis.mdb` all hang off it. A runtime `-Duser.home` (the wrapper
+# below) comes too late for those: measured, the binary still opened
+# `/root/.vis/vis.log` and died "Permission denied" as the unprivileged user.
+# A `-D` on the native-image command line sets the property in the BUILDER JVM,
+# which is exactly where that folding happens, so the constant bakes as
+# /home/vis/.vis — matching the runtime user's HOME. Setting HOME alone does not
+# do it: the JDK derives user.home from getpwuid(), and the build runs as root.
+RUN VIS_NATIVE_EXTRA_ARGS="-Duser.home=/home/vis ${VIS_NATIVE_EXTRA_ARGS}" \
+    clojure -T:build native :profile ${VIS_PROFILE} \
     && test -x target/vis \
     && ./target/vis --version
 
@@ -343,16 +362,14 @@ COPY --from=model /opt/vis/models /opt/vis/models
 ENV VIS_PARAKEET_MODEL_DIR=/opt/vis/models/${PARAKEET_MODEL}
 
 # ── the binary ──
-# Installed as `vis.bin` behind a wrapper. `native-image` resolves `user.home`
-# ONCE, from the environment the image was BUILT in — proved on this image:
-# with HOME=/tmp/h the binary still opened /root/.vis, and building the whole
-# thing with HOME=/home/vis did not move it either. vis derives ~/.vis from
-# `user.home` in ~30 places (several are top-level defs, so nothing set inside
-# main can fix them), and as the unprivileged `vis` user that is an instant
-# "/root/.vis/vis.log (Permission denied)" at boot.
-# A native image DOES honour a leading -D at runtime (verified), so the wrapper
-# pins user.home to the real HOME for every entry point — CMD, `docker exec`,
-# and every tool the agent shells out to.
+# Installed as `vis.bin` behind a wrapper. Two halves of one problem:
+#   - build time: top-level defs that read `user.home` are constant-folded into
+#     the binary, fixed by `-Duser.home=/home/vis` on the native-image line above.
+#   - run time: everything that reads `user.home` lazily. A native image DOES
+#     honour a leading -D at runtime (verified), so the wrapper pins it to the
+#     real HOME for every entry point — CMD, `docker exec`, and every tool the
+#     agent shells out to. Setting HOME alone fixes neither half: the JDK takes
+#     user.home from getpwuid(), not $HOME.
 COPY --from=builder /build/target/vis /usr/local/bin/vis.bin
 COPY --chmod=0755 <<'EOF' /usr/local/bin/vis
 #!/bin/sh

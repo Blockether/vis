@@ -3849,6 +3849,11 @@
                   (state/dispatch [:set-title (or (:title chunk) "")
                                    (or (:session-id chunk) session-id)])
 
+                  ;; Model preference changed for THIS session somewhere else —
+                  ;; keep the tab's chip in sync with the shared store.
+                  :model-sync
+                  (state/dispatch [:sync-session-model tab-id chunk])
+
                   nil))))
           (catch Throwable _
             (fn [])))
@@ -4198,7 +4203,10 @@
 (defn- init-visible-session!
   "Install a session into app-db and repaint the workspace strip. Returns the\n   cleanup fn for that session's title listener."
   [{:keys [id history] :as session-result}]
-  (state/dispatch [:init-session (select-keys session-result [:id :status :current-turn-id]) history
+  ;; `:history-cursor` MUST survive this projection: the session opened on its
+  ;; newest turns only, and that cursor is the sole record of what is still
+  ;; unfetched above. Drop it and scroll-up silently stops at a false top.
+  (state/dispatch [:init-session (select-keys session-result [:id :status :current-turn-id :history-cursor]) history
                    (session-workspace id)])
   (state/dispatch [:set-title (or (session-db-title id) "")])
   ;; If a turn is IN FLIGHT for this session (e.g. started in the web or a
@@ -4552,7 +4560,41 @@
                        (let [sid (str sid)]
                          (when-let [cleanup (get @session-live-listeners sid)]
                            (vswap! session-live-listeners dissoc sid)
-                           (try (cleanup) (catch Throwable _ nil))))))
+                            (try (cleanup) (catch Throwable _ nil))))))
+       (state/reg-fx
+         :load-older-history
+         ;; Lazy scroll-up paging. The session opened on its NEWEST turns only, and
+         ;; the viewport has come within a screen of the top of what is loaded.
+         ;;
+         ;; Fetch ONE older page on a worker (never the input or render thread),
+         ;; MEASURE it with the same warm the painter's height cache reads, and
+         ;; splice it in with that exact row shift — `virtual/layout` deliberately
+         ;; skips its own anchoring on the frame the message COUNT changes, so the
+         ;; shift has to be handed to it or the viewport jumps a page backwards.
+         ;; Warming here also means the newly reachable bubbles are already hot.
+         (fn [sid offset]
+           (vis/worker-future
+             "tui-load-older-history"
+             (fn []
+               (try
+                 (let [page (chat/older-history sid offset)]
+                   (if (or (nil? page) (:failed page))
+                     (state/dispatch [:older-history-loading sid false])
+                     (let
+                       [size (screen-size screen)
+                        bubble-w (max 1 (- (.getColumns size) render/MESSAGE_SIDE_PAD))
+                        settings (or (:settings @state/app-db) {})
+                        shift (virtual/warm-heights! (:messages page)
+                                                     bubble-w
+                                                     settings
+                                                     {:session-id sid
+                                                      :detail-expansions
+                                                      (:detail-expansions @state/app-db)})]
+
+                       (state/dispatch [:prepend-history sid page shift])
+                       (state/dispatch [:bump-render-version]))))
+                 (catch Throwable _ (state/dispatch [:older-history-loading sid false])))))))
+
        (let [ssh-passphrase-cleanup (volatile! nil)]
          (try
            (vreset! terminal-signal-cleanup (register-terminal-interrupt-handlers!))
@@ -4820,7 +4862,7 @@
               (fn [{:keys [id history] :as session-result} notify?]
                 (when (and id session-result)
                   (state/dispatch [:open-session-tab
-                                   (select-keys session-result [:id :status :current-turn-id])
+                                   (select-keys session-result [:id :status :current-turn-id :history-cursor])
                                    history (session-workspace id)])
                   ;; `:open-session-tab` already reset `:title nil`. Only
                   ;; push a title when the DB actually has one — mirror
@@ -7274,16 +7316,19 @@
     (try (run-chat! (parse-args args))
          (print-session-id-on-exit!)
          (catch Throwable t
-           (if (:vis/user-error (ex-data t))
+           (if-let [ue (loop [c t]
+                         (cond (nil? c) nil
+                               (:vis/user-error (ex-data c)) c
+                               :else (recur (.getCause c))))]
              ;; Caller-facing error: invalid flag value, missing
              ;; session id, etc. Print the message clean and let the
              ;; process exit non-zero - no Java stack trace, no rethrow
              ;; (which would trigger clojure.main's auto-trace dump).
-             (do (if-let [panel (seq (:vis/panel (ex-data t)))]
+             (do (if-let [panel (seq (:vis/panel (ex-data ue)))]
                    (doseq [line panel]
                      (.println ^java.io.PrintStream vis/original-stdout ^String (str line)))
                    (.println ^java.io.PrintStream vis/original-stdout
-                             (str "vis: " (.getMessage t))))
+                             (str "vis: " (.getMessage ^Throwable ue))))
                  (reset! exit-code 2))
              ;; Genuine fatal: dump the trace to the terminal AND the log
              ;; so we can post-mortem it.

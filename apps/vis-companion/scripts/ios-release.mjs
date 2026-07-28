@@ -19,6 +19,8 @@
  *   npm run release:ios -- --prepare    # web + cap sync + stamp versions, then STOP
  *   npm run release:ios -- --prepare --dev  # same, but aps-environment=development
  *                                       # (archive by hand in Xcode: Product > Archive)
+ *   npm run release:ios -- --public     # …and hand it to PUBLIC TestFlight afterwards:
+ *                                       # beta review + public-link group (see testflight.mjs)
  *
  * Upload auth, in order of preference:
  *   1. App Store Connect API key (headless, CI-friendly, no 2FA prompt):
@@ -37,6 +39,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { buildNotes, publishNotes } from './release-notes.mjs';
+import { distribute } from './testflight.mjs';
 
 // Release credentials live in the macOS login keychain (scripts/secrets.mjs),
 // never in a dotfile or this repo. An env var still wins, so CI can inject one.
@@ -390,5 +393,27 @@ if (!has('no-notes')) {
     });
     if (res.ok) console.log(`\n✓ TestFlight "What to Test" set for build ${buildNumber}.\n`);
     else console.log(`\n! notes not published: ${res.reason}\n  They are in CHANGELOG.md — paste them in App Store Connect.\n`);
+  }
+}
+
+// PUBLIC TestFlight. Off by default because it costs a Beta App Review round trip and
+// exposes the build outside the team — both things a routine internal upload must not do
+// implicitly. `--public` (or `--group <name>`) opts in; everything it needs is already in
+// scope, so this is one call, not a second pipeline.
+if (has('public') || flag('group')) {
+  const res = await distribute({
+    keyId,
+    issuerId,
+    keyPem: keyPem ?? (process.env.VIS_ASC_KEY_PATH ? readFileSync(process.env.VIS_ASC_KEY_PATH, 'utf8') : undefined),
+    bundleId,
+    build: buildNumber,
+    group: flag('group') ?? 'Public',
+    review: !has('no-review'),
+    timeoutMs: Number(flag('public-timeout') ?? 30 * 60 * 1000),
+  });
+  if (res.ok) {
+    console.log(`\n✓ build ${buildNumber} is with public TestFlight.${res.publicLink ? `\n  Join link: ${res.publicLink}` : ''}\n`);
+  } else {
+    console.log(`\n! public distribution incomplete: ${res.reason}\n  The build IS uploaded; re-run just this step with:  npm run release:testflight -- --build ${buildNumber}\n`);
   }
 }

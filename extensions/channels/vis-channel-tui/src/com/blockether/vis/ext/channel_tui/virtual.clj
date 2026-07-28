@@ -1379,22 +1379,27 @@
               (cond
                 ;; Top message flush with the viewport top ⇒ it IS the anchor.
                 (>= (long (nth est-off lo)) eff-1) lo
-                ;; Clipped top message that GREW this frame — a disclosure
-                ;; toggle expanded a fold inside it. Anchor on IT so its top
-                ;; stays pinned and the body grows DOWNWARD, matching the
-                ;; browser `<details>` feel. Pinning the first FULLY-visible
-                ;; message BELOW the growth (the `lo+1` fallback) instead lets
-                ;; the freshly-expanded, still-estimated (OVER-shooting) bubble's
-                ;; estimate→real correction yank the viewport UP to earlier
-                ;; content — the "scroll up a little, open a fold, jump to the
-                ;; top" bug. `lo+1` stays for a SHRINKING clipped bubble
-                ;; (never-measured estimate resolving smaller), which must be
-                ;; absorbed into its own off-screen portion.
+                ;; Clipped top message whose height CHANGED against the last
+                ;; frame's MEASURED offsets — a disclosure toggle busted its
+                ;; height-cache key. Anchor on IT so its top stays pinned and
+                ;; the body grows (or shrinks) DOWNWARD, matching the browser
+                ;; `<details>` feel. Pinning the first FULLY-visible message
+                ;; BELOW it (the `lo+1` fallback) instead lets this frame's
+                ;; estimate→real correction of the freshly re-estimated bubble
+                ;; yank the viewport to earlier content — the "scroll up a
+                ;; little, open a fold, jump to the top" bug. The correction
+                ;; goes EITHER way (fold estimates both over- and under-shoot),
+                ;; so test `not=`, not `>`.
+                ;; A never-measured bubble merely entering the viewport is NOT
+                ;; caught here: it carried the very same estimate last frame,
+                ;; so its height is unchanged and it correctly falls through to
+                ;; `lo+1`, absorbing its estimate→real shrink into its own
+                ;; off-screen portion.
                 (and (vector? prev-offsets)
                      (= (long (count prev-offsets)) (inc n))
                      (< lo (dec n))
-                     (> (- (long (nth est-off (inc lo))) (long (nth est-off lo)))
-                        (- (long (nth prev-offsets (inc lo))) (long (nth prev-offsets lo)))))
+                     (not= (- (long (nth est-off (inc lo))) (long (nth est-off lo)))
+                           (- (long (nth prev-offsets (inc lo))) (long (nth prev-offsets lo)))))
                 lo
                 :else (min (dec n) (inc lo)))
               0))
@@ -1583,6 +1588,48 @@
          warmed
          (do (warm-message-height! messages i bubble-w settings session-id detail-expansions)
              (recur (dec i) (inc warmed))))))))
+
+(defn warm-heights!
+  "Warm `messages` (same projection + `bubble-height` the layout uses, into the
+   same sticky cache) and return their TOTAL row height.
+
+   This is what makes a lazily-loaded OLDER page land without a jump: the sum is
+   the exact number of rows the prepended bubbles occupy, so the caller can
+   shift the scroll offset by it (`scroll/shift-prepended`) instead of guessing
+   from estimates that would be corrected — visibly — a frame later.
+
+   Per-message heights are context-free (the turn-separator projection ignores
+   the neighbours), so measuring a page in isolation matches what it measures
+   once spliced into the full vector. Call OFF the render thread."
+  ([messages bubble-w settings] (warm-heights! messages bubble-w settings nil))
+  ([messages bubble-w settings {:keys [session-id detail-expansions]}]
+   (let
+     [messages
+      (vec messages)
+
+      n
+      (long (count messages))
+
+      bubble-w
+      (long bubble-w)]
+
+     (loop
+       [i
+        0
+
+        total
+        0]
+
+       (if (>= i n)
+         total
+         (recur (inc i)
+                (+ (long total)
+                   (long (warm-message-height! messages
+                                               i
+                                               bubble-w
+                                               settings
+                                               session-id
+                                               detail-expansions)))))))))
 
 (defn pre-warm!
   "Spawn a daemon worker thread that calls `project-message` and

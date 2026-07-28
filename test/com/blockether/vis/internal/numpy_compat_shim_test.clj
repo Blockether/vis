@@ -84,6 +84,34 @@
                           "np.sum(a) == 21 and np.sum(a, axis=0).tolist() == [5,7,9] "
                           "and np.sum(a, axis=1).tolist() == [6,15] "
                           "and np.mean(a) == 3.5 and np.mean(a, axis=1).tolist() == [2.0,5.0]"))))))
+  (it "any / all reduce along axes (incl. the .any(axis=) method form)"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str
+                             "import numpy as np\n"
+                             "a = np.array([[1,0],[0,0]])\n"
+                             "np.any(a) == True and a.any() == True "
+                             "and np.any(a, axis=0).tolist() == [True, False] "
+                             "and a.any(axis=1).tolist() == [True, False] "
+                             "and np.all(a, axis=1).tolist() == [False, False] "
+                             "and np.all(a, axis=0, keepdims=True).shape == (1,2)"))))))
+  (it "any / all: axis + keepdims + negative axis + dtype + method/module parity"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str
+                             "import numpy as np\n"
+                             "out = []\n"
+                             "f = np.array([[0,0],[0,0]]); t = np.array([[1,1],[1,1]])\n"
+                             "out += [np.any(f) == False, np.all(t) == True, f.any() == False, t.all() == True]\n"
+                             "b = np.array([[1,0],[0,0]]); c = np.array([[1,1],[1,0]])\n"
+                             "out += [b.any(axis=0).tolist() == [True,False], b.any(axis=1).tolist() == [True,False], np.any(b, axis=0).tolist() == [True,False]]\n"
+                             "out += [c.all(axis=0).tolist() == [True,False], c.all(axis=1).tolist() == [True,False], np.all(c, axis=1).tolist() == [True,False]]\n"
+                             "out += [b.any(axis=-1).tolist() == b.any(axis=1).tolist(), c.all(axis=-1).tolist() == c.all(axis=1).tolist()]\n"
+                             "out += [str(b.any(axis=0).dtype) == 'bool', str(c.all(axis=0).dtype) == 'bool']\n"
+                             "out += [b.any(axis=0, keepdims=True).shape == (1,2), c.all(axis=1, keepdims=True).shape == (2,1)]\n"
+                             "v = np.array([0,0,0]); w = np.array([1,2,3])\n"
+                             "out += [v.any() == False, v.all() == False, w.any() == True, w.all() == True]\n"
+                             "all(out)"))))))
   (it "min / max / argmax / std / var"
       (with-python-context
         (expect (true? (ev python-context

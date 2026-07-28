@@ -3509,6 +3509,28 @@
                                                          {:role :assistant
                                                           :session-turn-id "def456-0000-0000"}
                                                          expansions))))
+    ;; Regression: an ASSISTANT bubble with NO turn id (slash-command output,
+    ;; shell-bang result, a completion that landed without ids) used to fall in
+    ;; the nil-turn-token WILDCARD branch, so its key contained every expansion
+    ;; in the session. One fold click anywhere then busted its cached height,
+    ;; the layout dropped back to its estimate and the transcript jumped.
+    (it "turn-less assistant message ignores another turn's expansions"
+        (expect (= []
+                   (render/message-detail-expansions-key sid
+                                                         {:role :assistant :text "/status output"}
+                                                         expansions))))
+    (it "turn-less assistant message still keys its OWN turn-less nodes"
+        (expect (= [["answer:i1:b2:d1" true]]
+                   (render/message-detail-expansions-key sid
+                                                         {:role :assistant :text "/status output"}
+                                                         (assoc expansions
+                                                           ["s1" "answer:i1:b2:d1"] true)))))
+    (it "a `:tool` kind segment is never mistaken for a turn token"
+        (expect (= []
+                   (render/message-detail-expansions-key sid
+                                                         {:role :assistant :text "/status output"}
+                                                         {["s1" "iteration:tabc12345:i1:tool"]
+                                                          true}))))
     (it "expand-all still keys assistant messages"
         (expect (= :expand-all
                    (render/message-detail-expansions-key

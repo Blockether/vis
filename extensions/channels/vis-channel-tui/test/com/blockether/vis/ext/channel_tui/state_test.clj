@@ -617,6 +617,67 @@
            (expect (= "low" (get-in @state/app-db [:settings :openai-codex-verbosity])))
            (finally (vis/toggle-reset-to-default! "openai_codex_verbosity"))))))
 
+(defdescribe session-model-pref-scope-test
+             ;; The footer chip PREFERS the optimistic `:session-model-pref` over the
+             ;; gateway's stored value. That value belongs to ONE session, so it must not
+             ;; outlive it: leaving it behind made the chip advertise the previous
+             ;; session's model while turns ran on the newly opened session's real
+             ;; preference — "changing the model in the footer didn't reach the session".
+             (it "opening another session in the tab drops the previous session's optimistic pick"
+                 (with-redefs
+                   [vis/notify! (fn [& _]
+                                  nil)]
+                   (reset! state/app-db {:session {:id "sess-1"}
+                                         :session-model-pref {:provider "zai" :model "glm-4.6"}
+                                         :render-version 0})
+                   (state/dispatch [:init-session {:id "sess-2"} [] {}])
+                   (expect (= "sess-2" (get-in @state/app-db [:session :id])))
+                   (expect (nil? (:session-model-pref @state/app-db)))))
+             (it "a REFUSED switch rolls the optimistic pick back instead of leaving the chip lying"
+                 (let [notified (atom [])]
+                   (with-redefs
+                     [vis/gateway-set-session-model! (fn [_sid _provider _model]
+                                                       (throw (ex-info "unknown provider" {})))
+                      vis/notify! (fn [text & _]
+                                    (swap! notified conj text))]
+
+                     (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
+                     (state/dispatch [:set-model "openai" "gpt-5"])
+                     (expect (nil? (:session-model-pref @state/app-db)))
+                     (expect (some #(re-find #"Model switch failed" (str %)) @notified)))))
+             (it "a switch that SUCCEEDS keeps the pick on the chip"
+                 (with-redefs
+                   [vis/gateway-set-session-model!
+                    (fn [_sid provider model]
+                      {:provider provider :model model})
+
+                    vis/notify!
+                    (fn [& _]
+                      nil)]
+
+                   (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
+                   (state/dispatch [:set-model "openai" "gpt-5"])
+                   (expect (= {:provider "openai" :model "gpt-5"}
+                              (:session-model-pref @state/app-db))))))
+
+(defdescribe
+  sync-session-model-test
+  ;; The per-session model pref is shared, but every channel renders its OWN
+  ;; copy: without the gateway's `session.model_updated` broadcast a switch
+  ;; made in the companion app (or a sibling TUI) never moved this footer's
+  ;; chip, which is the whole "I changed the model and nothing changed" bug.
+  (it "projects a sibling channel's model change onto the tab"
+      (reset! state/app-db {:session {:id "sess-1"} :render-version 0})
+      (state/dispatch [:sync-session-model nil {:provider "zai-coding-plan" :model "glm-4.7"}])
+      (expect (= {:provider "zai-coding-plan" :model "glm-4.7"}
+                 (:session-model-pref @state/app-db))))
+  (it "a CLEARED override drops the local pick back to the router default"
+      (reset! state/app-db {:session {:id "sess-1"}
+                            :session-model-pref {:provider "zai-coding-plan" :model "glm-4.7"}
+                            :render-version 0})
+      (state/dispatch [:sync-session-model nil {:provider nil :model nil}])
+      (expect (nil? (:session-model-pref @state/app-db)))))
+
 (defdescribe
   model-shortcut-test
   ;; Ctrl+T sets the ACTIVE SESSION's persisted model preference (the shared,
@@ -741,10 +802,49 @@
               (get k)
               :fn))]
     (it "scroll-up parks (mode :at) so streaming follow hands off"
-        (let [r ((ev :scroll-up) {:scroll scroll/follow} [:scroll-up 9 200 100])]
+        ;; :scroll-up is an fx event now (it can kick the older-history fetch),
+        ;; so the new db hides under :db.
+        (let [r (:db ((ev :scroll-up) {:scroll scroll/follow} [:scroll-up 9 200 100]))]
           ;; max-s = 100; ease from the bottom (100) up to 100-9 = 91.
           (expect (= :at (:mode (:scroll r))))
           (expect (= 91 (:offset (:scroll r))))))
+    (it "scroll-up near the top of a PAGED session asks for one older page"
+        ;; The session opened on its newest turns only, so reaching the top of
+        ;; :messages is not reaching the top of the session.
+        (let
+          [db {:scroll (scroll/parked 300)
+               :session {:id "s1" :history-cursor {:offset 40 :total 100 :has-more true}}}
+           r ((ev :scroll-up) db [:scroll-up 290 1000 30])]
+
+          (expect (= [[:load-older-history "s1" 40]] (:fx r)))
+          ;; latched, so a fast wheel cannot queue a second identical fetch
+          (expect (true? (get-in r [:db :session :history-loading?])))
+          (expect (nil? (:fx ((ev :scroll-up)
+                               (assoc-in db [:session :history-loading?] true)
+                               [:scroll-up 290 1000 30]))))
+          ;; nothing older left -> no request at all
+          (expect (nil? (:fx ((ev :scroll-up)
+                               (assoc-in db [:session :history-cursor :has-more] false)
+                               [:scroll-up 290 1000 30]))))
+          ;; still far from the top -> no request
+          (expect (nil? (:fx ((ev :scroll-up) db [:scroll-up 10 1000 30]))))))
+    (it "prepend-history splices older turns in and holds the viewport still"
+        (let
+          [db {:scroll (scroll/parked 10)
+               :messages [:m1 :m2]
+               :session {:id "s1"
+                         :history-loading? true
+                         :history-cursor {:offset 40 :total 100 :has-more true}}}
+           page {:messages [:o1 :o2] :offset 30 :total 100 :has-more true}
+           r ((ev :prepend-history) db [:prepend-history "s1" page 120])]
+
+          (expect (= [:o1 :o2 :m1 :m2] (:messages r)))
+          ;; the read bubble stays put: offset grows by the measured page height
+          (expect (= 130 (:offset (:scroll r))))
+          (expect (= {:offset 30 :total 100 :has-more true} (get-in r [:session :history-cursor])))
+          (expect (false? (get-in r [:session :history-loading?])))
+          ;; a page for a session this tab no longer shows is dropped whole
+          (expect (= db ((ev :prepend-history) db [:prepend-history "other" page 120])))))
     (it "scroll-down landing in the bottom slack band re-arms FOLLOW"
         (let [r ((ev :scroll-down) {:scroll (scroll/parked 90)} [:scroll-down 30 200 100])]
           ;; max-s 100; 90+30 within slack of 100 -> follow (eases the rest).
@@ -3183,6 +3283,33 @@
         (expect (= :completed (:status assistant)))
         (expect (nil? (:terminal-pending assistant)))
         (expect (false? (:loading? @state/app-db)))))
+  (it "replays a gateway-drained sibling start that landed mid-turn"
+      ;; The gateway drains the queue ON this turn's terminal: completed ->
+      ;; turn.queued.drained (which deletes the mirrored queue row, so
+      ;; :drain-pending has nothing left to fire) -> turn.started. That start
+      ;; arrives while the tab is still busy, so it must be PARKED and replayed
+      ;; once the terminal settles; dropping it loses the message entirely.
+      (with-redefs
+        [vis/worker-future
+         (fn [_ _]
+           (future nil))
+
+         vis/cancellation-set-future!
+         (fn [_ _]
+           nil)]
+
+        (reset! state/app-db (terminal-test-db))
+        (state/dispatch [:sibling-turn-started nil
+                         {:turn-id "t2" :request "second" :started-at-ms 777}])
+        (expect (= "t1" (:gateway-turn-id @state/app-db)))
+        (expect (= "t2" (get-in @state/app-db [:deferred-sibling-start :turn-id])))
+        (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})
+        (settle-marked-terminal!)
+        (let [db @state/app-db]
+          (expect (nil? (:deferred-sibling-start db)))
+          (expect (true? (:loading? db)))
+          (expect (= "t2" (:gateway-turn-id db)))
+          (expect (= 777 (:turn-start-ms db))))))
   (it "settles a stranded failure instead of leaving a pending spinner"
       (reset! state/app-db (terminal-test-db))
       (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "failed"})

@@ -38,6 +38,30 @@ The parser validates this string-keyed map before any internal adaptation. The s
 namespace derives process-jail and network policies directly from that validated map, so
 security enforcement and the YAML schema cannot maintain different key lists.
 
+## Invalid config: what you see
+
+A bad config is a *user error*, not a crash. Vis prints a panel that names every
+offending field by its full path — no stack trace, no log file to open — and exits
+with status 2:
+
+```
+  Invalid Vis configuration in /project/.vis/config.yml:
+
+  - providers[0].models[0].contxt: unknown key (config is closed) — did you mean "providers[0].models[0].context"?
+  - search.include-gitignored-paths: unknown key (config is closed) — did you mean "search.include_gitignored_paths"?
+  - jail.filesystem.allow_reed: unknown key (config is closed)
+  - mcp.servers.docs.transport: value rejected by the transport contract
+
+  Fix the entries above and run vis again.
+```
+
+The most common cause is kebab-case: `search.include-gitignored-paths` must be
+`search.include_gitignored_paths`. Kebab-case names such as
+`:include-gitignored-paths` appear in the CHANGELOG and in engine internals — they
+are the *internal keyword* mirrors of the YAML keys, never the YAML spelling.
+Model names (`providers[].models[].name`) are free-form strings and are never
+validated against a known-model list; a wrong one fails at the provider API, not here.
+
 A small config:
 
 ```yaml

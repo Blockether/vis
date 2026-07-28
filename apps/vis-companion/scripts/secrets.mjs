@@ -24,11 +24,18 @@
  *                                                    [--env sandbox|production]
  *   node scripts/secrets.mjs fcm  <service-account.json> [--project <id>]
  *   node scripts/secrets.mjs android <google-services.json>
+ *   node scripts/secrets.mjs play <service-account.json> [--package <id>]
+ *   node scripts/secrets.mjs keystore <upload.jks> --alias <a> [--store-pass <p>] [--key-pass <p>]
+ *   node scripts/secrets.mjs keystore create [--alias upload]   # generate one, keep it here
+ *   node scripts/secrets.mjs keystore adopt                     # import android/keystore.properties
+ *   node scripts/secrets.mjs export-keystore > upload.jks       # the only way key bytes leave
  *   node scripts/secrets.mjs doctor
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
 
 if (process.platform !== 'darwin') {
   console.error('\n✗ keychain storage is macOS-only; use environment variables elsewhere\n');
@@ -39,6 +46,10 @@ const IOS = 'vis-ios';
 const APNS = 'vis-apns';
 
 const FCM = 'vis-fcm';
+// Google Play: the release path (upload keystore + Play Developer API), the Android
+// mirror of vis-ios. Read by scripts/android-prepare.mjs and scripts/android-release.mjs.
+const PLAY = 'vis-play';
+const ANDROID = 'vis-android';
 
 // name -> [service, account, what it is]. The account names are the contract the
 // readers use; changing one here means changing it in the reader too.
@@ -57,6 +68,12 @@ const SECRETS = {
   fcm_service_account: [FCM, 'service_account', 'Firebase service-account JSON (Android push)'],
   fcm_project_id: [FCM, 'project_id', 'Firebase project id (inferred from the JSON)'],
   fcm_google_services: [FCM, 'google_services', 'google-services.json stamped into the Android build'],
+  play_service_account: [PLAY, 'service_account', 'Google Play Developer API service-account JSON'],
+  play_package: [PLAY, 'package', 'Play package name (defaults to the Capacitor appId)'],
+  keystore: [ANDROID, 'keystore', 'upload keystore (.jks), base64 — signs every release build'],
+  keystore_password: [ANDROID, 'keystore_password', 'keystore password'],
+  key_alias: [ANDROID, 'key_alias', 'key alias inside the keystore'],
+  key_password: [ANDROID, 'key_password', 'key password (defaults to the keystore password)'],
 };
 
 const args = process.argv.slice(2);
@@ -119,7 +136,11 @@ switch (cmd) {
   case 'list': {
     for (const [name, [service, account, what]] of Object.entries(SECRETS)) {
       const v = peek(name);
-      const shown = v ? (v.includes('PRIVATE KEY') ? `${v.length} bytes of key material` : `${v.slice(0, 4)}…`) : '—';
+      const shown = v
+        ? v.includes('PRIVATE KEY') || v.length > 200
+          ? `${v.length} bytes of key material`
+          : `${v.slice(0, 4)}…`
+        : '—';
       console.log(`${v ? '✓' : '·'} ${name.padEnd(14)} ${shown.padEnd(28)} ${service}/${account}  ${what}`);
     }
     break;
@@ -209,6 +230,106 @@ switch (cmd) {
     break;
   }
 
+  case 'play': {
+    // Google Play Developer API service account: what android-release.mjs uploads with,
+    // so a Play release never needs the console. Create it in Google Cloud (the project
+    // linked to the Play developer account), then grant it access in
+    // Play Console ▸ Users and permissions ▸ Invite → Releases: "Release to testing tracks".
+    const path = args[1] ?? die('usage: secrets.mjs play <service-account.json> [--package <id>]');
+    const raw = readFileSync(resolve(path.replace(/^~/, process.env.HOME ?? '~')), 'utf8');
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      die(`${path} is not JSON — download it from Google Cloud ▸ IAM ▸ Service accounts ▸ Keys`);
+    }
+    if (parsed.type !== 'service_account' || !parsed.private_key || !parsed.client_email) {
+      die('that JSON is not a service-account key (needs type, client_email, private_key)');
+    }
+    put('play_service_account', raw);
+    if (flag('package')) put('play_package', flag('package'));
+    console.log(`\n✓ Play service account stored (${parsed.client_email}).`);
+    console.log('  Grant it release access in Play Console ▸ Users and permissions if you have not.');
+    console.log('  Then: npm run release:android -- --track beta');
+    console.log('  The JSON on disk is now redundant — shred it:  rm -P <the file>\n');
+    break;
+  }
+
+  case 'keystore': {
+    // The upload key. Losing it is NOT fatal under Play App Signing (Google holds the app
+    // signing key and you can request an upload-key reset), but it still costs days — so it
+    // lives in the keychain, base64-encoded because a .jks is binary.
+    const alias = flag('alias') ?? 'upload';
+    if (args[1] === 'create') {
+      // Generate one rather than making the user remember keytool's flag soup. The password
+      // is random and only ever exists in the keychain — nobody has to type or store it.
+      const password = randomBytes(24).toString('base64url');
+      const dir = mkdtempSync(join(tmpdir(), 'vis-ks-'));
+      const file = join(dir, 'upload.jks');
+      try {
+        const res = spawnSync(
+          'keytool',
+          ['-genkeypair', '-v', '-keystore', file, '-storetype', 'PKCS12', '-alias', alias, '-keyalg', 'RSA', '-keysize', '4096',
+            '-validity', '10000', '-storepass', password, '-keypass', password,
+            '-dname', flag('dname') ?? 'CN=Vis, OU=Vis Companion, O=Blockether, C=PL'],
+          { stdio: ['ignore', 'ignore', 'inherit'] },
+        );
+        if (res.status !== 0) die('keytool failed — is a JDK on PATH? (brew install temurin)');
+        put('keystore', readFileSync(file).toString('base64'));
+        put('keystore_password', password);
+        put('key_alias', alias);
+        put('key_password', password);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+      console.log(`\n✓ generated a fresh upload keystore (alias ${alias}, PKCS12, RSA 4096).`);
+      console.log('  It exists ONLY in the keychain — back the keychain up, or export it with');
+      console.log('    npm run secrets -- export-keystore > upload.jks   (then store it somewhere safe)\n');
+      break;
+    }
+    if (args[1] === 'adopt') {
+      // Import a keystore that already exists on disk — the usual case: a key was made by
+      // hand before this script existed, has already signed an upload, and MUST NOT be
+      // replaced (Play ties the upload key to the app). Read from android/keystore.properties
+      // so no password is ever typed on a command line.
+      const props = resolve(new URL('../android/keystore.properties', import.meta.url).pathname);
+      if (!existsSync(props)) die('no android/keystore.properties to adopt — pass the .jks path instead');
+      const kv = Object.fromEntries(
+        readFileSync(props, 'utf8')
+          .split('\n')
+          .filter((l) => l.includes('='))
+          .map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()]),
+      );
+      const store = resolve(String(kv.storeFile ?? '').replace(/^~/, process.env.HOME ?? '~'));
+      if (!existsSync(store)) die(`keystore.properties points at ${store}, which does not exist`);
+      put('keystore', readFileSync(store).toString('base64'));
+      put('keystore_password', kv.storePassword ?? die('keystore.properties has no storePassword'));
+      put('key_alias', kv.keyAlias ?? 'upload');
+      put('key_password', kv.keyPassword ?? kv.storePassword);
+      console.log(`\n✓ adopted ${store} (alias ${kv.keyAlias}). It is now reproducible on any machine`);
+      console.log('  with this keychain, and CI can take it as VIS_ANDROID_KEYSTORE (base64).\n');
+      break;
+    }
+    const path = args[1] ?? die('usage: secrets.mjs keystore <upload.jks> --alias <a> [--store-pass <p>]  |  keystore create  |  keystore adopt');
+    const p = resolve(path.replace(/^~/, process.env.HOME ?? '~'));
+    if (!existsSync(p)) die(`no such keystore: ${p}`);
+    const storePass = flag('store-pass') ?? die('--store-pass is required');
+    put('keystore', readFileSync(p).toString('base64'));
+    put('keystore_password', storePass);
+    put('key_alias', alias);
+    put('key_password', flag('key-pass') ?? storePass);
+    console.log(`\n✓ upload keystore stored (alias ${alias}).\n`);
+    break;
+  }
+
+  case 'export-keystore': {
+    // The one way key material leaves the keychain: raw bytes on stdout, never a file this
+    // script chooses. Redirect it yourself, to somewhere you actually want it.
+    const b64 = peek('keystore') ?? die('no keystore stored');
+    process.stdout.write(Buffer.from(b64, 'base64'));
+    break;
+  }
+
   case 'doctor': {
     const need = (names) => names.filter((n) => !peek(n));
     const asc = need(['asc_key', 'asc_key_id', 'asc_issuer_id']);
@@ -217,11 +338,15 @@ switch (cmd) {
     console.log(asc.length ? `· release: falls back to Xcode's signed-in account (missing ${asc.join(', ')})` : '✓ release: App Store Connect API key ready');
     console.log(apns.length ? `· push iOS:     NOT configured (missing ${apns.join(', ')})` : '✓ push iOS:     APNs key ready');
     console.log(fcm.length ? `· push Android: NOT configured (missing ${fcm.join(', ')})` : '✓ push Android: FCM service account ready');
+    const play = need(['play_service_account']);
+    const ks = need(['keystore', 'keystore_password', 'key_alias']);
+    console.log(play.length ? '· Play:          NOT configured (missing play_service_account)' : '✓ Play:          Developer API service account ready');
+    console.log(ks.length ? `· Android sign:  NOT configured (missing ${ks.join(', ')}) — \`npm run secrets keystore create\`` : '✓ Android sign:  upload keystore ready');
     if (!peek('team_id')) console.log('· team_id unset — VIS_IOS_TEAM_ID or the script default is used');
     break;
   }
 
   default:
-    console.log(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 27).join('\n'));
+    console.log(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 32).join('\n'));
     process.exit(cmd ? 1 : 0);
 }

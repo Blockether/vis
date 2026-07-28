@@ -347,3 +347,19 @@
       (assoc sc :pos anchored)
 
       sc)))
+
+(defn shift-prepended
+  "Content `delta` rows tall was PREPENDED ABOVE the whole transcript (an older
+   history page landed). Every absolute row therefore moved DOWN by `delta`, so
+   shift the concrete fields to keep what the user is reading visually put —
+   without this the viewport jumps backwards in time by exactly one page.
+
+   FOLLOW needs nothing: its desired row IS the (new) bottom. Any in-flight
+   ease (`:pos`) shifts too, so an animation mid-load lands where it aimed."
+  [sc ^long delta]
+  (let [sc (norm sc)]
+    (if (or (zero? delta) (not= :at (:mode sc)))
+      sc
+      (cond-> (update sc :offset + delta)
+        (:pos sc)
+        (update :pos + delta)))))

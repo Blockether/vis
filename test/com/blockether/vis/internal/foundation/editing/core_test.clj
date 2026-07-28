@@ -4699,13 +4699,13 @@
                                {"path" (str base "/c") "is_created" true}]}
                      r))
           (expect (= "created 3 dirs" (:summary (render r))))
-          (expect (= (str "\n- ✓ created — `"
+          (expect (= (str "\n- `"
                           base
                           "/a`"
-                          "\n- ✓ created — `"
+                          "\n- `"
                           base
                           "/b`"
-                          "\n- ✓ created — `"
+                          "\n- `"
                           base
                           "/c`")
                      (:body (render r)))))
@@ -4713,7 +4713,7 @@
         (let [r (res {"op" "create_dirs" "paths" [(str base "/a") (str base "/d")]})]
           (expect (= [false true] (mapv #(get % "is_created") (get r "paths"))))
           (expect (= "created 1 of 2 dirs · 1 already existed" (:summary (render r))))
-          (expect (= (str "\n- – already existed — `" base "/a`" "\n- ✓ created — `" base "/d`")
+          (expect (= (str "\n- `" base "/a` — already existed" "\n- `" base "/d` — created")
                      (:body (render r)))))
         (spit (str base "/a/x.txt") "hi")
         (let [r (res {"op" "exists" "paths" [(str base "/a/x.txt") (str base "/a/nope.txt")]})]
@@ -4723,19 +4723,19 @@
                      r))
           (expect (= "1 of 2 paths exist · 1 missing" (:summary (render r))))
           (expect
-            (= (str "\n- ✓ exists — `" base "/a/x.txt`" "\n- ✗ missing — `" base "/a/nope.txt`")
+            (= (str "\n- `" base "/a/x.txt` — exists" "\n- `" base "/a/nope.txt` — missing")
                (:body (render r)))))
         (let [r (res {"op" "delete"
                       "paths" [(str base "/a/x.txt") (str base "/a/nope.txt")]
                       "is_missing_ok" true})]
           (expect (= [true false] (mapv #(get % "is_deleted") (get r "paths"))))
           (expect (= "deleted 1 of 2 paths · 1 already absent" (:summary (render r))))
-          (expect (= (str "\n- ✓ deleted — `"
+          (expect (= (str "\n- `"
                           base
-                          "/a/x.txt`"
-                          "\n- – already absent — `"
+                          "/a/x.txt` — deleted"
+                          "\n- `"
                           base
-                          "/a/nope.txt`")
+                          "/a/nope.txt` — already absent")
                      (:body (render r))))
           (expect (not (fs/exists? (str base "/a/x.txt")))))
         ;; A ONE-element batch still answers the batch shape: the shape follows
@@ -4743,7 +4743,7 @@
         (let [r (res {"op" "exists" "paths" [(str base "/a")]})]
           (expect (= {"action" "exists" "paths" [{"path" (str base "/a") "is_existing" true}]} r))
           (expect (= "1 path exists" (:summary (render r))))
-          (expect (= (str "\n- ✓ exists — `" base "/a`") (:body (render r)))))
+          (expect (= (str "\n- `" base "/a`") (:body (render r)))))
         ;; Long batches keep their paths out of the headline without dropping any.
         (let [card (render {"op" "fs"
                             "action" "delete"
@@ -4752,7 +4752,8 @@
                                           (range 9))})]
           (expect (= "deleted 9 paths" (:summary card)))
           (expect (not (string/includes? (:summary card) "`p0`")))
-          (expect (string/includes? (:body card) "- ✓ deleted — `p8`")))
+          (expect (string/includes? (:body card) "- `p8`"))
+          (expect (not (string/includes? (:body card) "✓"))))
         ;; copy/move refuse the batch key, and an empty batch is not a silent no-op.
         (expect (throws? clojure.lang.ExceptionInfo
                          #(fs-tool {"op" "copy" "paths" ["a"] "src" "a" "dest" "b"})))

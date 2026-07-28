@@ -498,10 +498,10 @@ def __vis_install_numpy__():
             return around(self, decimals)
         def dot(self, other):
             return dot(self, other)
-        def any(self):
-            return _bi.any(bool(v) for v in self._d)
-        def all(self):
-            return _bi.all(bool(v) for v in self._d)
+        def any(self, axis=None, keepdims=False):
+            return any(self, axis, keepdims=keepdims)
+        def all(self, axis=None, keepdims=False):
+            return all(self, axis, keepdims=keepdims)
         def nonzero(self):
             return nonzero(self)
         def sort(self):
@@ -1014,13 +1014,19 @@ def __vis_install_numpy__():
             out.append(acc)
         return _mk(out, (len(out),), A._dtype)
 
-    def _bool_reduce(a):
-        return _asarray(a)._d
+    def any(a, axis=None, keepdims=False):
+        r = _reduce(a, axis, lambda acc, v: bool(acc) or bool(v), False, keepdims)
+        if axis is None and not keepdims:
+            return r
+        out, oshape = r
+        return _mk(out, oshape, _BOOL)
 
-    def any(a, axis=None):
-        return _bi.any(bool(v) for v in _bool_reduce(a))
-    def all(a, axis=None):
-        return _bi.all(bool(v) for v in _bool_reduce(a))
+    def all(a, axis=None, keepdims=False):
+        r = _reduce(a, axis, lambda acc, v: bool(acc) and bool(v), True, keepdims)
+        if axis is None and not keepdims:
+            return r
+        out, oshape = r
+        return _mk(out, oshape, _BOOL)
 
     def count_nonzero(a):
         return _bi.sum(1 for v in _asarray(a)._d if v)

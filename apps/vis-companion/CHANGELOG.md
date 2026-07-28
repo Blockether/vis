@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 1.0.1 (2709) — 2026-07-28
+<!-- commit: d361085f12f1a524b875a1686ddedc8b7c4002b3 -->
+
+- Gateway state test: assert the budget-busting turn is kept, not deferred
+- Release notes: keep one preamble in CHANGELOG.md, human-readable 2707 entry
+
 ## 1.0.1 (2707) — 2026-07-28
 <!-- commit: 16c287e2e477ffef632c2843e499f151e6d45b95 -->
 

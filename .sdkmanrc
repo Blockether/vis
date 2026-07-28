@@ -1,0 +1,4 @@
+# `sdk env` → the ONE JDK vis is built and run with: GraalVM CE 25.1.3.
+# Install it with: bin/require-graalvm --install
+# Pin lives in .graalvm-version (GRAAL_SDKMAN_CANDIDATE); keep both in sync.
+java=25.1.3-graalce

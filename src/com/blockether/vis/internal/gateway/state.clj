@@ -14,7 +14,9 @@
    records, subscribers), nothing else."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
+            [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.format :as fmt]
@@ -32,9 +34,14 @@
             [taoensso.telemere :as tel]))
 
 (def ^:private EVENT_RING_MAX
-  "Per-session event-log ring size. Older events stay durable in the
-   session transcript; the ring only backs SSE cursor replay."
-  10000)
+  "Per-session event-log ring size. Older events stay durable in the session
+   transcript; the ring only backs short SSE cursor reconnects. Override with
+   `VIS_GATEWAY_EVENT_RING_MAX`; values <= 0 use the default of 2000."
+  (let
+    [configured (some-> (System/getenv "VIS_GATEWAY_EVENT_RING_MAX")
+                        str/trim
+                        parse-long)]
+    (if (pos? (long (or configured 0))) (long configured) 2000)))
 
 (def ^:private RESULT_PR_LIMIT 4000)
 
@@ -138,14 +145,58 @@
          :duration-ms-total 0
          :per-session {}}))
 
+(def ^:private MAX_CONCURRENT_TURNS
+  "Process-wide cap for simultaneously executing gateway turns. Each turn can
+   own a GraalPy context and substantial transient heap, so per-session
+   serialization alone is insufficient. Override with
+   `VIS_GATEWAY_MAX_CONCURRENT_TURNS`; values <= 0 use the default of 2."
+  (let
+    [configured (some-> (System/getenv "VIS_GATEWAY_MAX_CONCURRENT_TURNS")
+                        str/trim
+                        parse-long)]
+    (if (pos? (long (or configured 0))) (long configured) 50)))
+
+(defonce ^:private turn-permits (java.util.concurrent.Semaphore. (int MAX_CONCURRENT_TURNS) true))
+
+(defonce ^:private turns-executing (atom 0))
+
+(defonce ^:private turns-waiting (atom 0))
+
+(defn- acquire-turn-permit!
+  "Wait for a process-wide execution slot. Returns false when cancellation wins
+   while queued; no Python environment is opened before a slot is acquired."
+  [cancel-token]
+  (swap! turns-waiting inc)
+  (try (loop []
+
+         (cond (cancellation/cancelled? cancel-token) false
+               (try (.tryAcquire ^java.util.concurrent.Semaphore turn-permits
+                                 100
+                                 java.util.concurrent.TimeUnit/MILLISECONDS)
+                    (catch InterruptedException _ false))
+               true
+               :else (recur)))
+       (finally (swap! turns-waiting dec))))
+
+(defn- release-turn-permit!
+  []
+  (swap! turns-executing dec)
+  (.release ^java.util.concurrent.Semaphore turn-permits))
+
 ;; =============================================================================
 ;; Event log + fan-out
 ;; =============================================================================
 
 (defn- trim-ring
+  "Keep the newest replay events in a persistent queue. `subvec` is deliberately
+   avoided: its view retains the entire historical backing vector and turns a
+   nominally bounded replay ring into an unbounded heap retention path."
   [events]
-  (let [n (count events)]
-    (if (> n (long EVENT_RING_MAX)) (subvec events (- n (long EVENT_RING_MAX))) events)))
+  (loop
+    [ring (if (instance? clojure.lang.PersistentQueue events)
+            events
+            (into clojure.lang.PersistentQueue/EMPTY events))]
+    (if (> (count ring) (long EVENT_RING_MAX)) (recur (pop ring)) ring)))
 
 (defn- fan-out!
   "Deliver `event` to every local SSE sink for `sid`. Runs on the APPENDING
@@ -168,6 +219,30 @@
    the orphan-reap terminal included)."
   [sid]
   {:next-seq (bus/journal-high-water-seq sid)})
+
+(defonce ^:private event-taps
+  ;; key -> (fn [sid event]) run AFTER an event is stored, fanned out and
+  ;; published. Side-channel observers (push notifications) attach here so
+  ;; they see every locally-produced event without this ns depending on them.
+  (atom {}))
+
+(defn add-event-tap!
+  "Register `f` (`[sid event]`, canonical string-keyed event) under `k`, replacing
+   any previous tap with that key. A tap that throws is swallowed — an observer
+   must never break the appender."
+  [k f]
+  (swap! event-taps assoc k f)
+  k)
+
+(defn remove-event-tap! [k] (swap! event-taps dissoc k) k)
+
+(defn- run-event-taps!
+  [sid event]
+  (doseq [[k f] @event-taps]
+    (try (f sid event)
+         (catch Throwable t
+           (tel/log!
+             {:level :debug :id ::event-tap-failed :data {:tap k :error (ex-message t)}})))))
 
 (defn append-event!
   "Append one event for `sid`, fan it out to LOCAL subscribers, and publish
@@ -215,6 +290,7 @@
        ;; Mirror to sibling processes. `turn.started` truncates the journal so
        ;; a file only ever holds the current turn's live deltas.
        (bus/publish! sid event {:store? store? :truncate? (= type "turn.started")})
+       (run-event-taps! sid event)
        event))))
 
 (defn ingest-mirrored-event!
@@ -314,6 +390,18 @@
         (fan-out! sid ev))))
   nil)
 
+(defonce ^:private hydrate-monitors (atom {}))
+
+(defn- hydrate-monitor
+  "Per-sid lock object serializing `subscribe!`'s hydrate of a sibling's
+   in-flight turn."
+  ^Object [sid]
+  (let [k (str sid)]
+    (or (get @hydrate-monitors k)
+        (get (swap! hydrate-monitors (fn [m]
+                                       (if (get m k) m (assoc m k (Object.)))))
+             k))))
+
 (defn subscribe!
   "Register an SSE sink and return the replay vector (canonical string-keyed
    events with `\"seq\"` > `cursor`) ATOMICALLY with the registration, so no
@@ -337,7 +425,12 @@
     sid
     (fn [entry]
       (or entry (fresh-entry sid))))
-  (when-not (:current-turn (get @registry sid)) (bus/hydrate! sid))
+  ;; ONE hydrate at a time per session: the `:current-turn` check and the
+  ;; hydrate are a single atomic step here. Concurrent SSE subscribers otherwise
+  ;; both read `:current-turn` unset and both mirror the sibling's turn, so every
+  ;; event lands in the ring twice (re-sequenced, so no dedup catches it).
+  #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+  (locking (hydrate-monitor sid) (when-not (:current-turn (get @registry sid)) (bus/hydrate! sid)))
   (let [replay (volatile! [])]
     (swap! registry update
       sid
@@ -394,6 +487,21 @@
        (keep :current-turn)
        count))
 
+(defn session-busy?
+  "True when `sid` still has work the daemon owns: a live `:current-turn`, or a
+   turn parked in the queue. THE guard for view-close teardown — a session is
+   shared, so \"my last view closed\" never proves \"nobody is working here\":
+   another channel (companion app, web, a second TUI) may be attached to and
+   streaming that very turn."
+  [sid]
+  (let [entry (get @registry sid)]
+    (boolean (or (:current-turn entry)
+                 (some (fn [turn]
+                         (contains? #{"running" "queued"}
+                                    (some-> (:status turn)
+                                            name)))
+                       (vals (:turns entry)))))))
+
 ;; =============================================================================
 ;; Per-session model preference
 ;; =============================================================================
@@ -406,7 +514,26 @@
    callers all set it here, persisted in the DB and shared across channels."
   [sid provider model]
   (swap! registry update sid #(assoc (or % {:next-seq 0}) :last-active (System/currentTimeMillis)))
-  (smodel/set-model! (lp/db-info) sid provider model))
+  (let
+    [label
+     #(cond (nil? %) nil
+            (keyword? %) (name %)
+            :else (not-empty (str %)))
+
+     result
+     (smodel/set-model! (lp/db-info) sid provider model)]
+
+    ;; BROADCAST the pick. The store is shared, but every attached channel keeps
+    ;; its own display copy (the TUI footer chip, the web rail), and without an
+    ;; event a change made in one channel stayed invisible in the others until
+    ;; they happened to re-read - the "I switched the model and nothing moved"
+    ;; desync. Live-only: the pref is persisted, so a cursor replay must not
+    ;; re-apply an old pick over a newer one.
+    (append-event! sid
+                   "session.model_updated"
+                   {:provider (label provider) :model (label model)}
+                   {:store? false})
+    result))
 
 (defn session-model
   "The session's persisted model preference as `{:provider :model}`
@@ -732,11 +859,10 @@
                         :size (long (or size 0))}))
         (iteration-attachments iteration-id)))
 
-
 (def ^:private activity-phases
   "Coarse 'Vis is doing X' phases surfaced to the LIVE ticker but never pinned
    into the durable trace: a provider wait, response parsing, and shell/tool
-   calls (incl. a nested `shell_run` inside python_execution) that would
+   calls (incl. a nested `shell` call inside python_execution) that would
    otherwise leave the bubble frozen for the whole call."
   #{:provider-call :response-parse :shell-run :shell-bg :tool-start})
 
@@ -944,7 +1070,95 @@
   [answer]
   (content/answer-content answer))
 
+(defn- inline-attachment-preview
+  "Byte-free chip payload for ONE inline (already base64-encoded) upload."
+  [a]
+  (let
+    [pick
+     (fn [& ks]
+       (some (fn [k]
+               (let [v (or (get a k) (get a (keyword k)))]
+                 (when-not (str/blank? (str v)) (str v))))
+             ks))
 
+     b64
+     (str (or (get a "base64") (get a :base64) ""))
+
+     size
+     (long (* 3 (quot (count b64) 4)))]
+
+    (when-let [filename (pick "filename" "name")]
+      {:filename filename
+       :media_type (or (pick "media_type" "media-type") "image")
+       :size size
+       :size_label (attachments/size-label size)})))
+
+(defn- attachment-previews
+  "What a channel needs to PAINT one user message's images - filename, media
+   type, human size - with no pixel bytes at all.
+
+   Two authoring styles feed the same list: inline uploads (companion/web/API
+   post base64) and image PATHS inside the request text (the TUI's drag-drop or
+   clipboard paste). Both resolve HERE, once, at submit time, so a queued row
+   renders identically in every channel instead of each one re-deriving it (or,
+   as before, showing a raw `/var/folders/.../clipboard-....png`).
+   De-duped by filename; never throws."
+  [request inline workspace]
+  (let
+    [root
+     (or (:root workspace) (get workspace "root"))
+
+     from-inline
+     (keep inline-attachment-preview (or inline []))
+
+     from-text
+     (try (map (fn [d]
+                 {:filename (:filename d)
+                  :media_type (:media-type d)
+                  :size (:size d)
+                  :size_label (:size-label d)
+                  :path (:path d)})
+               (attachments/scan-image-descriptors request {:workspace-root root}))
+          (catch Throwable _ nil))]
+
+    (->> (concat from-inline from-text)
+         (reduce (fn [acc p]
+                   (if (some #(= (:filename %) (:filename p)) acc) acc (conj acc p)))
+                 [])
+         vec)))
+
+(defn- request-preview-text
+  "The prose a QUEUE ROW should show for `request`.
+
+   Image paths collapse to `name.png` chips (see
+   `attachments/text->chip-preview`); nil means the message was nothing but
+   images and the channel should paint its attachment chips alone. The
+   untouched `:request` still travels beside it, so pulling a queued message
+   back into a composer restores the exact text — paths included — that
+   re-attaches on re-send."
+  [request _previews]
+  (try (attachments/text->chip-preview request)
+       (catch Throwable _ (not-empty (str/trim (str (or request "")))))))
+
+(def ^:private session-opening-line-max
+  "Character cap for the `first_request` decoration. Long enough for a real
+   opening sentence, short enough that a session LIST never ships a transcript."
+  240)
+
+(defn- session-opening-line
+  "One bounded, path-free, single-line rendering of a session's FIRST user
+   request - what the session opened with. Session pickers show it beside the
+   generated title, so a row says what was actually asked instead of only how
+   the titler named it. nil when there is nothing to show."
+  [request]
+  (some-> (request-preview-text request nil)
+          str
+          (str/replace #"\s+" " ")
+          str/trim
+          not-empty
+          (as-> s (if (> (count s) (long session-opening-line-max))
+                    (str (subs s 0 (long session-opening-line-max)) "\u2026")
+                    s))))
 
 (defn- wire-turn
   [turn]
@@ -952,6 +1166,9 @@
     (let [started-at (or (:created_at turn) (:started_at turn) (:queued_at turn))]
       (-> turn
           (dissoc :cancel-token)
+          ;; Inline uploads carry base64 pixels: a turn LIST must never ship
+          ;; them. `:attachment_previews` is the byte-free chip payload.
+          (dissoc :attachments)
           (assoc :id (or (:id turn) (:turn_id turn))
                  :role (or (:role turn) "assistant")
                  :content (vec (or (:content turn) []))
@@ -996,6 +1213,17 @@
   (some-> (wire-turn (get-in @registry [sid :turns tid]))
           wire/canonical))
 
+(def ^:private persisted-status->wire
+  "Durable engine turn status -> wire status. A map lookup rather than `case`:
+   the constants collide on hash, so `case` degrades to a linear scan anyway."
+  {nil "completed"
+   "" "completed"
+   "success" "completed"
+   "done" "completed"
+   "interrupted" "cancelled"
+   "error" "failed"
+   "running" "streaming"})
+
 (defn- persisted-turn->wire
   "Project one durable engine turn into the canonical role/content message shape."
   [sid row]
@@ -1004,23 +1232,10 @@
      (str (:id row))
 
      status
-     (case
-       (some-> (:status row)
-               name)
-       (nil "" "success" "done")
-       "completed"
-
-       "interrupted"
-       "cancelled"
-
-       "error"
-       "failed"
-
-       "running"
-       "streaming"
-
-       (some-> (:status row)
-               name))
+     (let
+       [raw (some-> (:status row)
+                    name)]
+       (get persisted-status->wire raw raw))
 
      created-at
      (some-> (:created-at row)
@@ -1121,11 +1336,39 @@
     ;; chat thread renders top-to-bottom with no reverse.
     (wire/canonical (vec (concat persisted live)))))
 
+(defn list-queued-turns
+  "ONLY the still-queued rows for `sid`, oldest-first — the exact slice a tray
+   polls for, and nothing else.
+
+   A queued turn lives solely in the in-memory registry overlay: persistence
+   never holds one (a row reaches the DB after it RUNS). So this reads the
+   overlay and skips [[list-turns]]'s whole-history DB hydration. That matters
+   on the wire, not just in the server: a companion polling the backlog every
+   5s was pulling the session's ENTIRE turn history — 600KB of completed
+   `:content` for a long session — just to learn the queue is empty."
+  [sid]
+  (let [{:keys [turns turn-order]} (get @registry sid)]
+    (->> (or turn-order [])
+         (keep #(some-> (get turns %)
+                        wire-turn))
+         (filterv #(= "queued" (:status %)))
+         wire/canonical)))
+
 (defn- with-display-iteration
   "Normalize reasoning and attach the same cached ruff-formatted Python that the
-   local TUI paints. The wire therefore remains identical after reconnects."
+   local TUI paints. The wire therefore remains identical after reconnects.
+
+   `:llm-assistant-message` is dropped: persistence hands it back as a
+   `<-json-lazy` DELAY (the raw provider envelope, forced only by a replay), and
+   a Delay JSON-encodes to the useless string `\"clojure.lang.Delay@1f2e3d\"` —
+   3031 of a real 247-turn session's 3098 iterations shipped exactly that. No
+   consumer needs the field; forcing it would instead paste every tool envelope onto the wire.
+   `transcript/transcript` already dissoc's it for the same reason."
   [iteration]
-  (cond-> (update iteration :thinking normalize-thinking-text)
+  (cond->
+    (-> iteration
+        (dissoc :llm-assistant-message)
+        (update :thinking normalize-thinking-text))
     (seq (:forms iteration))
     (update :forms #(mapv form/with-display-code %))))
 
@@ -1239,6 +1482,128 @@
          (tel/log! :warn ["gateway: transcript hydration failed" (ex-message t)])
          [])))
 
+(def ^:private TRANSCRIPT_PAGE_MAX_BYTES
+  "Byte ceiling for ONE WINDOWED transcript page — the fact that makes a page a
+   page, because turn COUNT does not bound BYTES. Real sessions carry single
+   turns of 5 MB (one grep whose result held a 2.9 MB file), so the newest 24
+   turns of a 38-turn session encode to 9.5 MB: the exact cost paging exists to
+   avoid, silently back. A windowed request therefore hydrates NEWEST-FIRST and
+   stops BEFORE the encoded rows exceed this many bytes — the page shrinks in ROWS
+   instead of growing without bound, and the rows it drops raise `:offset`,
+   which is precisely where the client's next `load earlier` resumes. Never
+   applies to an UNWINDOWED request (the TUI's whole-transcript GET). At least
+   one row always comes back, so an oversized turn still arrives and paging
+   always advances. Override with `VIS_GATEWAY_TRANSCRIPT_PAGE_MAX_BYTES`;
+   values <= 0 use the default of 2 MiB."
+  (let
+    [configured (some-> (System/getenv "VIS_GATEWAY_TRANSCRIPT_PAGE_MAX_BYTES")
+                        str/trim
+                        parse-long)]
+    (if (pos? (long (or configured 0))) (long configured) (* 2 1024 1024))))
+
+(defn- budgeted-page-turns
+  "Hydrate `window` (oldest-first rows) from its NEWEST row BACKWARDS, stopping
+   AT the row that first exceeds `TRANSCRIPT_PAGE_MAX_BYTES` — that row is still
+   INCLUDED, so the page overshoots by at most one turn and a page is never
+   empty. Hydration is where a page's cost lives, so a stopped page never pays
+   for the rows it does not send. Returns `[rows dropped]` — `rows` still
+   oldest-first, `dropped` the number of OLDEST window rows left out, which the
+   caller adds to `:offset`."
+  [db att-by-soul window]
+  (loop
+    [i
+     (dec (count window))
+
+     rows
+     '()
+
+     bytes
+     0]
+
+    (if (neg? i)
+      [(vec rows) 0]
+      (let
+        [row
+         (wire/canonical (transcript-turn db att-by-soul (nth window i)))
+
+         bytes'
+         (+ (long bytes)
+            (long (alength (.getBytes ^String (wire/json-str row)
+                                      java.nio.charset.StandardCharsets/UTF_8))))]
+
+        ;; The busting row is KEPT, not deferred. Deferring it silently ate the
+        ;; newest turn that carried a user image: one 3 MB inline upload two
+        ;; turns from the head cut a 24-turn page down to the one turn above it,
+        ;; so re-entering the session showed no image at all until the user
+        ;; happened to scroll back. Overshoot is bounded by that single row, and
+        ;; the page still always advances (`dropped` counts the rows below it).
+        (if (> bytes' (long TRANSCRIPT_PAGE_MAX_BYTES))
+          [(vec (conj rows row)) i]
+          (recur (dec i) (conj rows row) bytes'))))))
+
+(defn transcript-page
+  "A WINDOW of `sid`'s transcript, hydrated LAZILY — the whole point is that only
+  the rows in the window pay for iteration/attachment hydration, which is where
+  a big session's cost lives (a 247-turn session: ~26 ms to list, ~750 ms to
+  hydrate all of it, ~50 ms to hydrate the newest 30).
+
+  The cursor is an INDEX into the oldest-first list, NOT `:position` — positions
+  are neither unique nor monotonic in practice (one real 247-turn session has
+  172 distinct positions), so they cannot page anything. New turns only ever
+  append, so an offset counted from the OLDEST row is stable while paging
+  backwards.
+
+  A windowed request is ALSO capped in bytes (`TRANSCRIPT_PAGE_MAX_BYTES`): the
+  newest rows are hydrated first and the oldest ones fall out of the page, so
+  `:offset` can come back HIGHER than the one asked for. Clients must page from
+  the RETURNED `:offset`, never from their own arithmetic.
+
+  `opts`: `:limit` window size (nil = every row, unbudgeted — the TUI's
+  whole-transcript read), `:offset` 0-based start in the oldest-first list
+  (nil = the NEWEST `:limit` rows).
+
+  Returns `{:turns <oldest-first window> :total <turn count> :offset <window
+  start> :has-more <older rows exist>}`."
+  [sid {:keys [limit offset]}]
+  (try
+    (let
+      [db
+       (lp/db-info)
+
+       all
+       (vec (persistance/db-list-session-turns db sid))
+
+       total
+       (long (count all))
+
+       lim
+       (long (if limit (max 0 (min (long limit) total)) total))
+
+       start
+       (long (if offset (max 0 (min (long offset) total)) (max 0 (- total lim))))
+
+       end
+       (long (min total (+ start lim)))
+
+       window
+       (subvec all start end)
+
+       att-by-soul
+       (try (persistance/db-list-turns-attachments db (map :id window)) (catch Throwable _ {}))
+
+       [rows dropped]
+       (if limit
+         (budgeted-page-turns db att-by-soul window)
+         [(wire/canonical (mapv (partial transcript-turn db att-by-soul) window)) 0])
+
+       from
+       (long (+ start (long dropped)))]
+
+      {:turns rows :total total :offset from :has-more (pos? from)})
+    (catch Throwable t
+      (tel/log! :warn ["gateway: transcript page hydration failed" (ex-message t)])
+      {:turns [] :total 0 :offset 0 :has-more false})))
+
 (defn turn-trace
   "THE canonical wire trace of ONE persisted turn: its iteration rows (each
   with hydrated `:attachments` re-read from the attachment store) through
@@ -1287,6 +1652,39 @@
         (= tid (:current-turn entry))
         (assoc :current-turn nil)))))
 
+(defn- turn-terminal-payload
+  "Payload for a TERMINAL turn event (`turn.completed` / `turn.failed` /
+   `turn.cancelled`), carrying the SAME `idempotency_key` correlation id that
+   `turn.started` stamps.
+
+   Channels reconcile their optimistic bubble against the terminal event
+   INDEPENDENTLY of the blocking submit/attach worker (the TUI's
+   `:sync-turn-terminal`), and a tab whose submit ack is still in flight knows
+   only the correlation id it minted - never the gateway turn id. Emitting the
+   terminal without that id made the whole independent path unreachable in
+   exactly the case it exists for: the spinner kept running and the answer
+   painted late, when the stranded worker finally returned."
+  [sid tid status]
+  (let [key (get-in @registry [sid :turns tid :idempotency_key])]
+    (cond-> {:turn_id tid :status status}
+      key
+      (assoc :idempotency_key key))))
+
+(defn turn-answer-text
+  "Plain-text projection of ONE finished turn's answer content, or nil.
+
+   Read straight from the live registry (`finish-turn!` has already merged the
+   content patch by the time a terminal event is appended), so this costs one
+   map lookup and never touches the DB. Exists for the push alert: a
+   notification that only says \"turn finished\" makes you open the app to learn
+   anything at all."
+  [sid tid]
+  (try (some-> (get-in @registry [sid :turns tid :content])
+               content/text-projection
+               str/trim
+               not-empty)
+       (catch Throwable _ nil)))
+
 (defn- record-metrics!
   [sid {:keys [tokens cost duration-ms status]}]
   (let
@@ -1327,12 +1725,59 @@
 ;; Turn execution
 ;; =============================================================================
 
-(declare drain-next-queued! queued-after-cancel?)
+(declare drain-next-queued!
+         drop-cancelled-backlog!
+         next-drainable-turn
+         pause-queue!
+         resume-queue!
+         schedule-auto-resume!
+         after-turn-terminal!
+         failure-transient?
+         failure-retry-after-ms
+         re-queue-turn!)
+
+(def ^:private QUEUE_TUNING_DEFAULTS
+  "Built-in queue failure-handling tuning. Every value is overridable per-gateway
+   via the `queue:` block in vis.yml (snake_case string keys → these kebab
+   keywords); `queue-tuning` merges the validated config over these and a
+   `/reload` picks it up without a recompile.
+
+     :breaker-threshold   consecutive failure-pauses after which the breaker trips
+                          OPEN — it stops auto-retrying the head and holds the
+                          whole backlog for an explicit user resume, so a sick
+                          provider can't burn the backlog on a backoff timer.
+     :retry-backoff-ms    exponential backoff (ms) for auto-retrying a queue head
+                          after a TRANSIENT failure, indexed by consecutive fails.
+     :halfopen-probe-ms   half-open probe delay once the breaker is OPEN: auto-
+                          resume ONE head retry this long after each pause so a
+                          lasting outage still self-heals, probed once a minute.
+     :retry-after-cap-ms  upper clamp on a provider-supplied Retry-After so a
+                          bogus/huge value can't wedge the queue for hours."
+  {:breaker-threshold 3
+   :retry-backoff-ms [2000 8000 30000]
+   :halfopen-probe-ms 60000
+   :retry-after-cap-ms 120000})
+
+(defn- queue-tuning
+  "The effective queue tuning: the validated `queue:` config slice merged over
+   [[QUEUE_TUNING_DEFAULTS]]. Read lazily from `config/current-config`, so an
+   operator tunes the breaker/backoff in vis.yml and a `/reload` applies it; an
+   unset key keeps its default."
+  []
+  (merge QUEUE_TUNING_DEFAULTS (:message-queue (config/current-config))))
+
+(defn- queue-breaker-threshold ^long [] (long (:breaker-threshold (queue-tuning))))
+
+(defn- queue-retry-backoff-ms [] (:retry-backoff-ms (queue-tuning)))
+
+(defn- queue-halfopen-probe-ms ^long [] (long (:halfopen-probe-ms (queue-tuning))))
+
+(defn- queue-retry-after-cap-ms ^long [] (long (:retry-after-cap-ms (queue-tuning))))
 
 (def ^:private TURN_STALL_TIMEOUT_MS
-  "Daemon backstop: force-cancel a turn wedged with NO chunk activity for this
-   long. Set ABOVE svar's 4-minute semantic stream timeout so it fires ONLY when
-   svar's own idle/semantic stream watchdogs miss a stalled connection — the
+  "Daemon backstop: force-cancel a turn wedged with NO meaningful progress for
+   this long. Set ABOVE svar's 5-minute semantic stream timeout so it fires ONLY
+   when svar's own idle/semantic stream watchdogs miss a stalled connection — the
    'calling the provider… 8m, nothing moving' hang that freezes the session's
    turn queue. Gated on [[stall-exempt-phases]] (NOT just `:provider-call`) so a
    legitimately long tool / Python-eval phase is never force-cancelled, while a
@@ -1351,14 +1796,23 @@
    never sit idle for `TURN_STALL_TIMEOUT_MS`."
   #{:form-start :form-result :tool-start :shell-run :shell-bg})
 
+(defn- advance-turn-stall-state
+  "Records the live phase, but moves the deadline only for real progress.
+   Streaming callbacks carry cumulative text plus `:delta`; an empty delta is
+   an SSE heartbeat/no-op and must not keep a wedged turn alive."
+  [state chunk now]
+  (let [meaningful? (or (not (contains? chunk :delta)) (seq (:delta chunk)) (:done? chunk))]
+    (cond-> (assoc state :phase (:phase chunk))
+      meaningful?
+      (assoc :last-ms now))))
+
 (defn- start-turn-stall-watchdog!
   "Daemon thread guarding ONE running turn against a stalled provider stream.
    While `tid` remains the session's current turn, it polls the shared `stall`
-   atom (updated by `run-turn!`'s on-chunk with the live phase + last-chunk
-   wall-clock). If the live phase is `:provider-call` and no chunk has landed
-   for `TURN_STALL_TIMEOUT_MS`, it flags the turn stalled and `cancel!`s the
-   token — which closes the in-flight provider stream (svar's cancel-watchdog),
-   so the blocked worker unwinds into a `turn.failed` and the queue drains.
+   atom (updated by `run-turn!` with the live phase + last meaningful-progress
+   wall-clock). If no meaningful progress lands for `TURN_STALL_TIMEOUT_MS`, it
+   flags the turn stalled and `cancel!`s the token, closing the in-flight
+   provider stream so the blocked worker unwinds and the queue drains.
    Self-terminating: exits as soon as `tid` is no longer the current turn."
   [sid tid cancel-token stall]
   (let
@@ -1413,10 +1867,10 @@
 
      on-chunk
      (fn [chunk]
-       ;; Feed the stall-watchdog BEFORE any coalescing drop: record the live
-       ;; phase + wall-clock of the latest provider chunk so a wedged
-       ;; `:provider-call` phase (no chunks arriving at all) is detectable.
-       (when stall (swap! stall assoc :phase (:phase chunk) :last-ms (System/currentTimeMillis)))
+       ;; Empty cumulative stream callbacks are transport heartbeats, not model
+       ;; progress. Keep their live phase for diagnostics without moving the
+       ;; stall deadline.
+       (when stall (swap! stall advance-turn-stall-state chunk (System/currentTimeMillis)))
        (try
          (when caller-on-chunk
            (try (caller-on-chunk chunk)
@@ -1566,25 +2020,44 @@
                          "turn.cancelled"
 
                          "turn.completed")
-                       {:turn_id tid :status status})
+                       (turn-terminal-payload sid tid status))
         (emit-context-updated! sid)
-        ;; A user cancel means "stop", not "advance": do NOT auto-start a turn
-        ;; that was already queued BEFORE the cancel. Leaving that backlog
-        ;; queued lets the channel pull it back into the editor (TUI) or keep
-        ;; it visible/editable (web) instead of firing an uninterruptible
-        ;; follow-up the instant the cancel lands. A message submitted AFTER
-        ;; the cancel fired is the OPPOSITE intent — "stop that, run THIS" —
-        ;; so it drains the moment this worker unwinds (queued-after-cancel?).
+        ;; A user cancel means "stop", not "advance": the backlog queued BEFORE
+        ;; the cancel is DROPPED with it (`drop-cancelled-backlog!`) so nothing
+        ;; can resurrect it later; the channel keeps its own copy and pulls it
+        ;; back into the editor. A message submitted AFTER the cancel fired is
+        ;; the OPPOSITE intent — "stop that, run THIS" — so it survives the drop
+        ;; and drains the moment this worker unwinds.
         ;; A STALL force-cancel, though, is a FAILURE not a user stop — the token
         ;; is cancelled either way, so distinguish on the stall flag and drain.
-        (when (or stalled?
-                  (not (cancellation/cancelled? cancel-token))
-                  (queued-after-cancel? sid tid))
-          (drain-next-queued! sid)))
+        (after-turn-terminal! sid
+                              tid
+                              {:failed? (= "failed" status)
+                               :transient? (failure-transient? {:stalled? stalled? :result result})
+                               :cancel-token cancel-token
+                               :stalled? stalled?
+                               :retry-after-ms (failure-retry-after-ms {:result result})}))
       (catch Throwable t
         (let
           [stalled?
            (boolean (and stall (:stalled? @stall)))
+
+           ;; A USER CANCEL unwinds this worker by THROWING (the engine aborts on
+           ;; the fired token), and this path used to call that "failed": it wrote
+           ;; `turn.failed`, and `after-turn-terminal!` then saw a failure with a
+           ;; backlog and PAUSED the queue with `provider_error` — a TERMINAL pause
+           ;; with no auto-resume. One Esc therefore wedged the whole session: the
+           ;; next message sat held forever and every channel showed a dead turn
+           ;; whose live panel never closed. Esc is not a provider outage — it is
+           ;; exactly a cancelled token that did not stall and carries the
+           ;; `:cancelling_at` stamp `cancel-turn!` writes.
+           user-cancel?
+           (boolean (and (not stalled?)
+                         (cancellation/cancelled? cancel-token)
+                         (some? (get-in @registry [sid :turns tid :cancelling_at]))))
+
+           status
+           (if user-cancel? "cancelled" "failed")
 
            data
            (ex-data t)
@@ -1601,29 +2074,62 @@
               :reasoning-effort {:requested (:requested data) :iterations []}})
 
            err
-           (if stalled?
-             (str "provider stream stalled: no output for "
-                  TURN_STALL_TIMEOUT_MS
-                  "ms (force-cancelled)")
-             (ex-message t))]
+           (cond user-cancel? nil
+                 stalled? (str "provider stream stalled: no output for "
+                               TURN_STALL_TIMEOUT_MS
+                               "ms (force-cancelled)")
+                 :else (ex-message t))]
 
-          (tel/log! :error ["gateway: turn worker failed" tid err])
+          (if user-cancel?
+            (tel/log! :info ["gateway: turn cancelled by user" tid])
+            (tel/log! :error ["gateway: turn worker failed" tid err]))
           (finish-turn! sid
                         tid
                         (cond->
-                          {:status "failed"
+                          {:status status
                            :role "assistant"
-                           :content [(content/error "turn_failed" (or err "Turn failed") false)]
-                           :error err
+                           :content (if user-cancel?
+                                      []
+                                      [(content/error "turn_failed" (or err "Turn failed") false)])
                            :completed_at (System/currentTimeMillis)}
+                          err
+                          (assoc :error err)
+
                           eval
                           (assoc :eval eval)))
-          (append-event! sid "turn.failed" {:turn_id tid :status "failed"})
-          (when (or stalled?
-                    (not (cancellation/cancelled? cancel-token))
-                    (queued-after-cancel? sid tid))
-            (drain-next-queued! sid)))))))
+          ;; Close every block this turn opened. Without it a cancelled/failed turn
+          ;; leaves half-open live panels in every channel — the blank screen the
+          ;; TUI showed after Esc.
+          (doseq [block-id @started-blocks]
+            (append-event! sid "content.block.completed" {:turn_id tid :block_id block-id}))
+          (append-event! sid
+                         (if user-cancel? "turn.cancelled" "turn.failed")
+                         (turn-terminal-payload sid tid status))
+          (emit-context-updated! sid)
+          (after-turn-terminal! sid
+                                tid
+                                {:failed? (not user-cancel?)
+                                 :transient? (and (not user-cancel?)
+                                                  (failure-transient? {:stalled? stalled?
+                                                                       :throwable t}))
+                                 :cancel-token cancel-token
+                                 :stalled? stalled?
+                                 :retry-after-ms (failure-retry-after-ms {:throwable t})}))))))
 
+(defn- cancel-waiting-turn!
+  "Land a turn cancelled while waiting for the global execution permit without
+   constructing a Python environment."
+  [sid tid cancel-token]
+  (finish-turn!
+    sid
+    tid
+    {:status "cancelled" :role "assistant" :content [] :completed_at (System/currentTimeMillis)})
+  (append-event! sid "turn.cancelled" (turn-terminal-payload sid tid "cancelled"))
+  (emit-context-updated! sid)
+  (after-turn-terminal!
+    sid
+    tid
+    {:failed? false :transient? false :cancel-token cancel-token :stalled? false}))
 
 (defn- launch-turn-worker!
   [sid tid request
@@ -1631,10 +2137,6 @@
            engine-opts attachments display-request]}]
   (append-event! sid
                  "turn.started"
-                 ;; Carry the CANONICAL run-start clock (stamped into the registry
-                 ;; row by submit/drain) so every attached channel seeds its
-                 ;; elapsed timer from the ONE shared timestamp — a TUI's local
-                 ;; submit/drain/attach stamp drifts from the actual run start.
                  (cond->
                    {:turn_id tid
                     :request (or display-request request)
@@ -1644,62 +2146,83 @@
                    queued?
                    (assoc :queued? true)
 
-                   ;; Echo the user's INLINE image attachments (web/API base64)
-                   ;; on the live event so a freshly-attached companion turn
-                   ;; renders the picture immediately — the SAME base64 the
-                   ;; history projection inlines (see `att-by-soul`). Without
-                   ;; this the live turn shows only the `[Image #N: …]` caption
-                   ;; until a reload rehydrates the persisted attachment.
+                   (get-in @registry [sid :turns tid :idempotency_key])
+                   (assoc :idempotency_key (get-in @registry [sid :turns tid :idempotency_key]))
+
                    (seq attachments)
                    (assoc :attachments attachments)))
-  (let [stall (atom {:phase nil :last-ms (System/currentTimeMillis)})]
+  (let
+    [stall
+     (atom {:phase nil :last-ms (System/currentTimeMillis)})
+
+     worker
+     (fn []
+       (if (acquire-turn-permit! cancel-token)
+         (do (swap! turns-executing inc)
+             (start-turn-stall-watchdog! sid tid cancel-token stall)
+             (try (run-turn! sid
+                             tid
+                             request
+                             {:messages messages
+                              :model model
+                              :reasoning-default reasoning-default
+                              :cancel-token cancel-token
+                              :extra-body extra-body
+                              :turn-features turn-features
+                              :workspace workspace
+                              :engine-opts engine-opts
+                              :attachments attachments
+                              :display-request display-request
+                              :stall stall})
+                  (finally (release-turn-permit!))))
+         (cancel-waiting-turn! sid tid cancel-token)))]
+
     (cancellation/cancellation-set-future! cancel-token
-                                           (cancellation/worker-future
-                                             (str "gateway-turn-" tid)
-                                             #(run-turn! sid
-                                                         tid
-                                                         request
-                                                         {:messages messages
-                                                          :model model
-                                                          :reasoning-default reasoning-default
-                                                          :cancel-token cancel-token
-                                                          :extra-body extra-body
-                                                          :turn-features turn-features
-                                                          :workspace workspace
-                                                          :engine-opts engine-opts
-                                                          :attachments attachments
-                                                          :display-request display-request
-                                                          :stall stall})))
-    (start-turn-stall-watchdog! sid tid cancel-token stall)))
+                                           (cancellation/worker-future (str "gateway-turn-" tid)
+                                                                       worker))))
 
+(defn- left-queued-by-cancel?
+  "True when queued turn `head` was submitted BEFORE the session's cancel floor
+   — the wall-clock of the last USER cancel, stamped on the entry as
+   `:cancel-floor` by [[drop-cancelled-backlog!]]. Such a turn was deliberately
+   stopped (the user pressed Esc while it sat in the backlog) so it must NEVER
+   auto-start again, no matter which path reaches the queue: a later terminal
+   drain, an attach/resume kick, or a breaker auto-resume. This is the ONE
+   provenance gate; [[drain-next-queued!]] enforces it for every caller.
 
-(defn- first-queued-turn
-  [entry]
+   The floor is read from ONE entry-level key rather than scanning per-turn
+   `:cancelling_at` stamps, because a STALL force-cancel stamps `:cancelling_at`
+   too — that is a failure, not a user stop, and its backlog must still run.
+
+   A head queued AFTER the floor (\"stop that, run THIS\") — or a session with no
+   user cancel at all — drains normally."
+  [entry head]
+  (let
+    [floor
+     (long (or (:cancel-floor entry) 0))
+
+     queued-at
+     (long (or (:queued_at head) 0))]
+
+    (and (pos? floor) (< queued-at floor))))
+
+(defn- next-drainable-turn
+  "The oldest queued turn for `entry` that may auto-start: the first `queued`
+   entry in `:turn-order` that is not [[left-queued-by-cancel?]] (every turn when
+   `force?`, the explicit user resume). Returns `[tid turn]` or nil.
+
+   Gating at SELECTION, not after picking the head, is what keeps the queue from
+   wedging: a pre-cancel straggler that survived [[drop-cancelled-backlog!]]
+   (a submit that raced the cancel sweep, a re-queue) is skipped over rather than
+   parked at the head blocking the message queued AFTER the cancel — the \"stop
+   that, run THIS\" intent."
+  [entry force?]
   (some (fn [tid]
           (let [turn (get-in entry [:turns tid])]
-            (when (= "queued" (:status turn)) [tid turn])))
+            (when (and (= "queued" (:status turn))
+                       (or force? (not (left-queued-by-cancel? entry turn))))
+              [tid turn])))
         (:turn-order entry)))
-
-(defn- queued-after-cancel?
-  "True when the oldest queued turn for `sid` was submitted AFTER turn `tid`'s
-   cancel fired (its `:cancelling_at` stamp, set by `cancel-turn!`). A user
-   cancel normally leaves the backlog queued — stop means stop — but a message
-   typed AFTER Esc is the opposite intent (\"stop that, run THIS\"): while the
-   cancelled provider call unwinds, the dying turn still holds `:current-turn`,
-   so that fresh submit lands in the queue; without this check it would sit
-   there forever because the user-cancel path skips `drain-next-queued!`."
-  [sid tid]
-  (let
-    [entry
-     (get @registry sid)
-
-     cancelling-at
-     (get-in entry [:turns tid :cancelling_at])
-
-     [_ head]
-     (first-queued-turn entry)]
-
-    (boolean (and cancelling-at head (>= (long (or (:queued_at head) 0)) (long cancelling-at))))))
 
 (defn- replace-last-user-message-content
   "Return `messages` with the last user message content replaced by `text`.
@@ -1719,98 +2242,387 @@
     messages))
 
 (defn- drain-next-queued!
-  "Start the oldest queued turn for `sid`, if one exists. Returns the started turn."
-  [sid]
-  (let [decision (volatile! nil)]
-    (swap! registry update
-      sid
-      (fn [entry]
-        (if (or (nil? entry) (:current-turn entry))
-          entry
-          (if-let
-            [[tid
-              {:keys [request messages model reasoning-default cancel-token extra-body turn-features
-                      workspace engine-opts attachments display_request]}]
-             (first-queued-turn entry)]
-            (let
-              [token (or cancel-token (cancellation/cancellation-token))
-               started-at (System/currentTimeMillis)]
+  "Start the oldest DRAINABLE queued turn for `sid`, if one exists. Returns the
+   started turn.
 
-              (vreset! decision
-                       {:tid tid
-                        :request request
-                        :display-request display_request
-                        :messages messages
-                        :model model
-                        :reasoning-default reasoning-default
-                        :cancel-token token
-                        :extra-body extra-body
-                        :turn-features turn-features
-                        :workspace workspace
-                        :engine-opts engine-opts
-                        :attachments attachments})
-              (-> entry
-                  (assoc :current-turn tid
-                         :last-active started-at)
-                  (update-in [:turns tid]
-                             merge
-                             {:status "running" :cancel-token token :started_at started-at})))
-            entry))))
-    (when-let
-      [{:keys [tid request display-request messages model reasoning-default cancel-token extra-body
-               turn-features workspace engine-opts attachments]}
-       @decision]
-      ;; Queue-mirror signal: the queue head is no longer QUEUED. Every
-      ;; attached channel drops its mirrored entry on this, and a replayed
-      ;; event log nets to zero (turn.queued … turn.queued.drained). The
-      ;; turn.started that follows carries :queued? true for attach flows.
-      (append-event! sid "turn.queued.drained" {:turn_id tid} {:store? false})
-      (launch-turn-worker! sid
-                           tid
-                           request
-                           {:messages messages
-                            :model model
-                            :reasoning-default reasoning-default
-                            :cancel-token cancel-token
-                            :queued? true
-                            :extra-body extra-body
-                            :turn-features turn-features
-                            :workspace workspace
-                            :engine-opts engine-opts
-                            :attachments attachments
-                            :display-request display-request})
-      (get-turn sid tid))))
+   THE single place a queued turn becomes running — so it is also the single
+   place the cancel provenance gate lives ([[next-drainable-turn]] /
+   [[left-queued-by-cancel?]]): a turn queued BEFORE the session's last user
+   cancel NEVER auto-starts. Without that gate any later terminal (a fresh turn
+   completing minutes afterwards, an attach kick, a breaker resume) resurrected
+   the stopped backlog and fired it as an uninterruptible follow-up — the
+   queue-storm bug. `:force?` is the explicit user resume that deliberately
+   overrides the gate."
+  ([sid] (drain-next-queued! sid nil))
+  ([sid {:keys [force?]}]
+   (let
+     [decision
+      (volatile! nil)
+
+      ;; Read the session pin HERE, as the turn starts — not at submit. A
+      ;; queued turn inherits the model the session is pinned to NOW.
+      pinned-model
+      (:model (session-model sid))]
+
+     (swap! registry update
+       sid
+       (fn [entry]
+         (if (or (nil? entry) (:current-turn entry))
+           entry
+           (if-let
+             [[tid
+               {:keys [request messages model reasoning-default cancel-token extra-body
+                       turn-features workspace engine-opts attachments display_request]}]
+              (next-drainable-turn entry force?)]
+             (let
+               [token (or cancel-token (cancellation/cancellation-token))
+                started-at (System/currentTimeMillis)]
+
+               (vreset! decision
+                        {:tid tid
+                         :request request
+                         :display-request display_request
+                         :messages messages
+                         :model (or model pinned-model)
+                         :reasoning-default reasoning-default
+                         :cancel-token token
+                         :extra-body extra-body
+                         :turn-features turn-features
+                         :workspace workspace
+                         :engine-opts engine-opts
+                         :attachments attachments})
+               (-> entry
+                   (assoc :current-turn tid
+                          :last-active started-at)
+                   (update-in [:turns tid]
+                              merge
+                              (cond-> {:status "running" :cancel-token token :started_at started-at}
+                                (or model pinned-model)
+                                (assoc :model (or model pinned-model))))))
+             entry))))
+     (when-let
+       [{:keys [tid request display-request messages model reasoning-default cancel-token extra-body
+                turn-features workspace engine-opts attachments]}
+        @decision]
+       ;; Queue-mirror signal: the queue head is no longer QUEUED. Every
+       ;; attached channel drops its mirrored entry on this, and a replayed
+       ;; event log nets to zero (turn.queued … turn.queued.drained). The
+       ;; turn.started that follows carries :queued? true for attach flows.
+       (append-event! sid "turn.queued.drained" {:turn_id tid} {:store? false})
+       (launch-turn-worker! sid
+                            tid
+                            request
+                            {:messages messages
+                             :model model
+                             :reasoning-default reasoning-default
+                             :cancel-token cancel-token
+                             :queued? true
+                             :extra-body extra-body
+                             :turn-features turn-features
+                             :workspace workspace
+                             :engine-opts engine-opts
+                             :attachments attachments
+                             :display-request display-request})
+       (get-turn sid tid)))))
 
 (defn drain-idle!
   "Start the oldest queued turn for `sid` IF the session is idle (no turn in
-   flight) AND the backlog was not deliberately left queued by a user cancel.
-   No-op returning nil otherwise. Lets an attaching channel kick an orphaned
-   backlog — submitted from another channel while this one was away — into
-   motion the moment a client opens/resumes, instead of letting it sit forever.
+   flight). No-op returning nil otherwise. Lets an attaching channel kick an
+   orphaned backlog — submitted from another channel while this one was away —
+   into motion the moment a client opens/resumes, instead of letting it sit
+   forever.
 
-   PROVENANCE GATE: a head turn queued BEFORE the session's most recent cancel
-   fired was left queued by Esc on purpose — stop means stop (the same policy
-   `queued-after-cancel?` encodes for the turn-terminal path). Auto-draining it
-   from a background attach (tab open, project switch) would resurrect work the
-   user explicitly stopped. A head queued AFTER the last cancel — or with no
-   cancel in the session at all — drains normally.
+   The cancel provenance gate is NOT re-implemented here: `drain-next-queued!`
+   owns it for every caller, so a backlog the user stopped with Esc can never be
+   resurrected by a background attach (tab open, project switch) either.
 
    Safe to call redundantly: `drain-next-queued!` guards on `:current-turn`."
   [sid]
+  (drain-next-queued! sid))
+
+(defn- terminal-failure-error
+  [{:keys [throwable result]}]
+  (or throwable (:error result) (some :error (reverse (:trace result)))))
+
+(defn- failure-transient?
+  "Classify a terminal FAILURE as transient (rate-limit / transport / stream
+   stall) vs terminal (auth, bad-request, tool-schema, empty-content). A
+   transient failure earns a backoff auto-retry of the head; a terminal one is
+   held for an explicit resume. Accepts `{:stalled? :throwable :result}` — one
+   of the three, whichever the failing path carries."
+  [{:keys [stalled?] :as failure}]
+  (let [err (terminal-failure-error failure)]
+    (boolean (cond stalled? true
+                   (nil? err) false
+                   :else (or (and (instance? Throwable err)
+                                  (provider-error/transport-throwable? err))
+                             (contains? #{:rate-limit :transport :stream-timeout}
+                                        (provider-error/provider-error-kind err)))))))
+
+(defn- count-queued [entry] (count (filter #(= "queued" (:status %)) (vals (:turns entry)))))
+
+(defn- failure-retry-after-ms
+  "Best-effort provider Retry-After, in ms, for a transient failure — read from an
+   explicit `:retry-after-ms`/`:retry_after_ms` on the error data, or a numeric
+   `retry_after`/`retryAfter` (seconds) in the provider's JSON error body. nil when
+   absent (the caller falls back to the fixed backoff). Header-level Retry-After is
+   not surfaced by the provider layer today, so the error data/body is the only
+   source. Accepts `{:throwable :result}` — whichever the failing path carries."
+  [{:keys [throwable result]}]
   (let
-    [entry
-     (get @registry sid)
+    [err
+     (terminal-failure-error {:throwable throwable :result result})
 
-     [_ head]
-     (first-queued-turn entry)
+     data
+     (or (:data err) (ex-data err) err)
 
-     last-cancel
-     (reduce max 0 (map long (keep :cancelling_at (vals (:turns entry)))))]
+     direct
+     (or (:retry-after-ms data) (:retry_after_ms data))
 
-    (when (and head
-               (or (zero? (long last-cancel))
-                   (>= (long (or (:queued_at head) 0)) (long last-cancel))))
-      (drain-next-queued! sid))))
+     body
+     (some-> (:body data)
+             str)
+
+     secs
+     (when body
+       (some-> (re-find #"(?i)retry[_-]?after\"?\s*[:=]\s*\"?(\d+(?:\.\d+)?)" body)
+               second
+               parse-double))]
+
+    (cond direct (long direct)
+          secs (long (* 1000.0 (double secs)))
+          :else nil)))
+
+(defn- re-queue-turn!
+  "Reset a just-FAILED turn back to QUEUED at the head of `sid`'s backlog so a
+   transient failure RETRIES the same message rather than advancing past it (and
+   losing it). Clears stale failure fields AND the spent cancellation token: the
+   stall watchdog cancels that token to unwind the worker, so carrying it into
+   `drain-next-queued!` would make every retry start already cancelled. The tid
+   keeps its original front slot in `:turn-order`, so `next-drainable-turn`
+   re-selects it ahead of the rest of the backlog. No-op when the turn is gone."
+  [sid tid]
+  (swap! registry update
+    sid
+    (fn [entry]
+      (if (and entry (get-in entry [:turns tid]))
+        (update-in
+          entry
+          [:turns tid]
+          (fn [turn]
+            (->
+              turn
+              (dissoc :content :error :eval :completed_at :duration_ms :cancel-token :cancelling_at)
+              (assoc :status "queued"
+                     :queued_at (System/currentTimeMillis)))))
+        entry))))
+
+(defn- schedule-auto-resume!
+  "After `delay-ms`, auto-resume `sid` IFF it is STILL paused at the same
+   `gen`. Any newer failure or explicit resume bumps `:queue-paused :gen`, so
+   this timer becomes a no-op — no double drain, no resurrecting a stale pause."
+  [sid gen delay-ms]
+  (future (let [d (long delay-ms)]
+            (try (Thread/sleep (max 0 d)) (catch InterruptedException _ nil)))
+          (when (= gen (get-in @registry [sid :queue-paused :gen]))
+            (resume-queue! sid {:auto? true}))))
+
+(defn- pause-queue!
+  "Hold `sid`'s queued backlog after a FAILURE instead of cascading the next
+   message into a sick provider. Bumps the consecutive-failure counter, stamps a
+   `:queue-paused` marker, emits `queue.paused`, and — for a TRANSIENT failure —
+   schedules ONE auto-resume, honouring a provider `retry-after-ms` when present
+   (clamped by [[queue-retry-after-cap-ms]]), else the exponential backoff. At/above
+   [[queue-breaker-threshold]] the breaker is OPEN: it drops the short backoff and
+   probes once per [[queue-halfopen-probe-ms]] so a lasting outage still self-heals
+   without a human. A TERMINAL failure schedules nothing — it waits for a resume."
+  [sid {:keys [reason transient? retry-after-ms]}]
+  (let [captured (volatile! nil)]
+    (swap! registry update
+      sid
+      (fn [entry]
+        (when entry
+          (let
+            [held (count-queued entry)
+             fails (inc (long (:queue-fails entry 0)))
+             gen (inc (long (get-in entry [:queue-paused :gen] 0)))]
+
+            (vreset! captured {:held held :fails fails :gen gen})
+            (-> entry
+                (assoc :queue-fails fails)
+                (assoc :queue-paused {:reason reason
+                                      :is_transient (boolean transient?)
+                                      :held held
+                                      :fails fails
+                                      :gen gen
+                                      :at (System/currentTimeMillis)}))))))
+    (when-let [{:keys [held fails gen]} @captured]
+      (when (pos? (long held))
+        (let
+          [breaker-open? (>= (long fails) (queue-breaker-threshold))
+           backoff (queue-retry-backoff-ms)
+           delay-ms (when transient?
+                      (long
+                        (cond retry-after-ms (min (long retry-after-ms) (queue-retry-after-cap-ms))
+                              breaker-open? (queue-halfopen-probe-ms)
+                              :else (nth backoff (min (dec (long fails)) (dec (count backoff)))))))
+           retry-at (when delay-ms (+ (System/currentTimeMillis) (long delay-ms)))]
+
+          (append-event! sid
+                         "queue.paused"
+                         {:reason reason
+                          :held held
+                          :fails fails
+                          :is_transient (boolean transient?)
+                          :is_breaker_open breaker-open?
+                          :retry_at retry-at})
+          (when delay-ms (schedule-auto-resume! sid gen delay-ms)))))))
+
+(defn resume-queue!
+  "Clear a paused backlog and start its head. `:auto?` marks a breaker/backoff
+   auto-resume; an explicit (user) resume ALSO resets the consecutive-failure
+   counter so the breaker re-arms. No-op when the queue is not paused. Returns
+   the started turn, or nil."
+  [sid {:keys [auto?]}]
+  (let [was (volatile! false)]
+    (swap! registry update
+      sid
+      (fn [entry]
+        (when entry
+          (when (:queue-paused entry) (vreset! was true))
+          (cond-> (dissoc entry :queue-paused)
+            ;; explicit = the user says "go": re-arm the breaker AND lift the
+            ;; cancel floor, so the whole remaining backlog may drain, not just
+            ;; the forced head.
+            (not auto?)
+            (dissoc :queue-fails :cancel-floor)))))
+    (when @was
+      (append-event! sid "queue.resumed" {:is_auto (boolean auto?)})
+      ;; An EXPLICIT (user) resume is deliberate intent, so it overrides the
+      ;; cancel provenance gate; a breaker/backoff auto-resume does not — it
+      ;; retries the head the failure re-queued (freshly stamped `:queued_at`).
+      (drain-next-queued! sid {:force? (not auto?)}))))
+
+(defn queue-paused-info
+  "The live `:queue-paused` marker for `sid` (`{:reason :held :fails :gen …}`),
+   or nil when the queue is running."
+  [sid]
+  (get-in @registry [sid :queue-paused]))
+
+(defn- drop-cancelled-backlog!
+  "Terminally drop every turn still QUEUED for `sid` that was submitted BEFORE
+   turn `tid`'s user cancel fired (its `:cancelling_at` stamp). Stop means stop:
+   the pre-cancel backlog dies WITH the cancel, in ONE atomic registry swap,
+   instead of lingering as a record no path may auto-start.
+
+   This is what makes the queue race-free rather than merely race-guarded. The
+   old policy left those rows queued and relied on each CLIENT to delete them by
+   turn id — a delete that raced the late-bound id, skipped rows mirrored from a
+   sibling, and silently lost on a transport error. Every survivor then either
+   resurrected on a later turn's terminal (the same prompt re-running minutes
+   later) or sat forever as a ghost \"Queued\" row that also BLOCKED a genuinely
+   post-cancel message behind it. Deleting server-side makes client cleanup
+   optional, settles any client blocked on such a turn (`turn.queued.deleted` is
+   terminal for a waiter), and leaves a message queued AFTER the cancel — the
+   \"stop that, run THIS\" intent — untouched at the head.
+
+   The events are appended AFTER the `turn.cancelled` terminal, so a channel
+   restores its own queued text into the composer first and only then drops the
+   mirrors. Returns the dropped turn records."
+  [sid tid]
+  (let [dropped (volatile! [])]
+    (swap! registry update
+      sid
+      (fn [entry]
+        (if-let [cancelling-at (get-in entry [:turns tid :cancelling_at])]
+          (let
+            [stale (filterv (fn [[_ turn]]
+                              (and (= "queued" (:status turn))
+                                   (< (long (or (:queued_at turn) 0)) (long cancelling-at))))
+                     (:turns entry))]
+            (vreset! dropped (mapv second stale))
+            (reduce (fn [e [stale-tid _]]
+                      (-> e
+                          (update :turns dissoc stale-tid)
+                          (update :turn-order
+                                  (fn [order]
+                                    (vec (remove #{stale-tid} order))))
+                          (update :idempotency
+                                  (fn [m]
+                                    (into {} (remove (comp #{stale-tid} val) m))))))
+                    ;; The cancel FLOOR: one entry-level stamp marking "everything
+                    ;; submitted before this instant was stopped". Set only here,
+                    ;; on a real user cancel, so [[left-queued-by-cancel?]] can
+                    ;; refuse a straggler (a re-queue, a racing submit that landed
+                    ;; mid-cancel) long after this sweep.
+                    (assoc entry :cancel-floor (long cancelling-at))
+                    stale))
+          entry)))
+    (doseq [turn @dropped]
+      (append-event! sid
+                     "turn.queued.deleted"
+                     {:turn_id (:turn_id turn) :request (:request turn) :reason "cancelled"}
+                     {:store? false}))
+    @dropped))
+
+(defn- after-turn-terminal!
+  "Post-terminal queue decision, replacing the old blind drain-on-both-paths.
+   Clean success/suspend advances the backlog and re-arms the breaker. A TRANSIENT
+   failure RE-QUEUES the failed message at the head and PAUSES — the backoff/breaker
+   auto-resume then retries THAT same message, so a sick provider never burns the
+   backlog and no message is skipped. A TERMINAL failure (auth/bad-request) is dead:
+   it holds the REST for an explicit resume.
+
+   A USER CANCEL kills the pre-cancel backlog outright ([[drop-cancelled-backlog!]])
+   — stop means stop, with no ghost rows left to resurrect — and then drains only
+   what was queued AFTER the cancel (\"stop that, run THIS\"). A cancelled token is
+   NOT enough to identify one: a STALL force-cancel is a failure, and shutdown's
+   `cancel-all-running!` fires every token at once. A user stop is exactly a
+   cancelled token that is not a stall AND carries the `:cancelling_at` stamp
+   `cancel-turn!` writes; anything else cancelled drains nothing (a dying JVM must
+   not launch one more turn on its way out)."
+  [sid tid {:keys [failed? transient? cancel-token stalled? retry-after-ms]}]
+  (let
+    [cancelled?
+     (cancellation/cancelled? cancel-token)
+
+     user-cancel?
+     (and cancelled? (not stalled?) (some? (get-in @registry [sid :turns tid :cancelling_at])))
+
+     ;; A user stop is NEVER a provider failure. The worker unwinds a cancel by
+     ;; throwing, so a caller can still hand us `:failed? true`; taking that at
+     ;; face value paused the queue (`provider_error`, no auto-resume) and left
+     ;; the session frozen behind a single Esc.
+     failed?
+     (and failed? (not user-cancel?))
+
+     _
+     (when user-cancel? (drop-cancelled-backlog! sid tid))
+
+     drain?
+     (cond (not cancelled?) true
+           stalled? true
+           user-cancel? (boolean (next-drainable-turn (get @registry sid) false))
+           :else false)]
+
+    (cond (not drain?) nil
+          (not failed?) (let [was-paused (volatile! false)]
+                          (swap! registry update
+                            sid
+                            (fn [entry]
+                              (when entry
+                                (when (:queue-paused entry) (vreset! was-paused true))
+                                (dissoc entry :queue-fails :queue-paused))))
+                          (when @was-paused (append-event! sid "queue.resumed" {:is_auto true}))
+                          (drain-next-queued! sid))
+          transient? (do (re-queue-turn! sid tid)
+                         (pause-queue! sid
+                                       {:reason "provider_unhealthy"
+                                        :transient? true
+                                        :retry-after-ms retry-after-ms}))
+          (next-drainable-turn (get @registry sid) false)
+          (pause-queue! sid {:reason "provider_error" :transient? false})
+          :else nil)))
 
 (defn submit-turn!
   "Submit one turn for `sid`. Async: starts immediately when idle, otherwise queues.
@@ -1820,7 +2632,7 @@
    turn still runs per session; busy submissions become visible queued records."
   [sid
    {:keys [request messages idempotency-key model reasoning-default cancel-token extra-body
-           turn-features workspace engine-opts attachments]}]
+           turn-features workspace engine-opts attachments display-request]}]
   (cond
     (or (not (string? request)) (str/blank? request))
     {:error :invalid-request :message "request must be a non-blank string"}
@@ -1830,8 +2642,23 @@
       [tid
        (str (java.util.UUID/randomUUID))
 
-       ;; session pref is {:provider :model}; the engine routes by model name
-       model
+       ;; Byte-free image chips, resolved ONCE at submit time so every channel's
+       ;; queue row (TUI strip, companion tray) paints the same attachments —
+       ;; whether they arrived as inline uploads or as paths inside the text.
+       previews
+       (attachment-previews request attachments workspace)
+
+       request-preview
+       (request-preview-text request previews)
+
+       ;; The pin is resolved when a turn actually STARTS, never frozen here.
+       ;; A turn that waits in the queue must honour a model picked WHILE it
+       ;; waited (companion picker, TUI, another channel) — baking the pin into
+       ;; the queued record made every already-queued message run on the model
+       ;; that happened to be live at submit, so changing the model mid-session
+       ;; appeared to do nothing. Only an EXPLICIT caller model is carried on
+       ;; the queued record; `drain-next-queued!` re-reads the pin at drain.
+       resolved-model
        (or model (:model (session-model sid)))
 
        decision
@@ -1844,84 +2671,130 @@
             (cond (and idempotency-key (get-in entry [:idempotency idempotency-key]))
                   (do (vreset! decision [:idempotent (get-in entry [:idempotency idempotency-key])])
                       entry)
-                  (:current-turn entry) (do
-                                          (vreset! decision [:queued tid])
-                                          (let [queued-at (System/currentTimeMillis)]
-                                            (-> entry
-                                                (assoc :last-active queued-at)
-                                                (assoc-in [:turns tid]
-                                                          (cond->
-                                                            {:turn_id tid
-                                                             :session_id (str sid)
-                                                             :status "queued"
-                                                             :request request
-                                                             :queued_at queued-at}
-                                                            messages
-                                                            (assoc :messages messages)
+                  (:current-turn entry)
+                  (do
+                    (vreset! decision [:queued tid])
+                    (let [queued-at (System/currentTimeMillis)]
+                      (-> entry
+                          (assoc :last-active queued-at)
+                          (assoc-in
+                            [:turns tid]
+                            (cond->
+                              {:turn_id tid
+                               :session_id (str sid)
+                               :status "queued"
+                               :request request
+                               :queued_at queued-at}
+                              ;; The submitter's OWN correlation id, echoed back on
+                              ;; every wire view of this turn and on turn.queued. A
+                              ;; channel paints no queue row of its own, so this is
+                              ;; how it recognises which gateway rows are ITS
+                              ;; submissions - by ID, never by request TEXT (two
+                              ;; identical prompts are indistinguishable by text).
+                              idempotency-key
+                              (assoc :idempotency_key idempotency-key)
 
-                                                            cancel-token
-                                                            (assoc :cancel-token cancel-token)
+                              messages
+                              (assoc :messages messages)
 
-                                                            extra-body
-                                                            (assoc :extra-body extra-body)
+                              cancel-token
+                              (assoc :cancel-token cancel-token)
 
-                                                            turn-features
-                                                            (assoc :turn-features turn-features)
+                              extra-body
+                              (assoc :extra-body extra-body)
 
-                                                            (seq workspace)
-                                                            (assoc :workspace workspace)
+                              turn-features
+                              (assoc :turn-features turn-features)
 
-                                                            engine-opts
-                                                            (assoc :engine-opts engine-opts)
+                              (seq workspace)
+                              (assoc :workspace workspace)
 
-                                                            model
-                                                            (assoc :model model)
+                              engine-opts
+                              (assoc :engine-opts engine-opts)
 
-                                                            reasoning-default
-                                                            (assoc :reasoning-default
-                                                              reasoning-default)
+                              model
+                              (assoc :model model)
 
-                                                            (seq attachments)
-                                                            (assoc :attachments attachments)))
-                                                (update :turn-order (fnil conj []) tid)
-                                                (cond->
-                                                  idempotency-key
-                                                  (assoc-in [:idempotency idempotency-key] tid)))))
-                  :else (do (vreset! decision [:accepted tid])
-                            (let
-                              [token (or cancel-token (cancellation/cancellation-token))
-                               started-at (System/currentTimeMillis)]
+                              reasoning-default
+                              (assoc :reasoning-default reasoning-default)
 
-                              (-> entry
-                                  (assoc :current-turn tid
-                                         :last-active started-at)
-                                  (assoc-in [:turns tid]
-                                            (cond->
-                                              {:turn_id tid
-                                               :session_id (str sid)
-                                               :status "running"
-                                               :request request
-                                               :cancel-token token
-                                               :started_at started-at}
-                                              model
-                                              (assoc :model model)
+                              (seq attachments)
+                              (assoc :attachments attachments)
 
-                                              reasoning-default
-                                              (assoc :reasoning-default reasoning-default)
+                              (seq previews)
+                              (assoc :attachment_previews previews)
 
-                                              (seq attachments)
-                                              (assoc :attachments attachments)))
-                                  (update :turn-order (fnil conj []) tid)
-                                  (cond->
-                                    idempotency-key
-                                    (assoc-in [:idempotency idempotency-key] tid)))))))))
+                              request-preview
+                              (assoc :request_preview request-preview)
+
+                              (not (str/blank? (str display-request)))
+                              (assoc :display_request display-request)))
+                          (update :turn-order (fnil conj []) tid)
+                          (cond->
+                            idempotency-key
+                            (assoc-in [:idempotency idempotency-key] tid)))))
+                  :else (do
+                          (vreset! decision [:accepted tid])
+                          (let
+                            [token (or cancel-token (cancellation/cancellation-token))
+                             started-at (System/currentTimeMillis)]
+
+                            (-> entry
+                                (assoc :current-turn tid
+                                       :last-active started-at)
+                                (assoc-in [:turns tid]
+                                          (cond->
+                                            {:turn_id tid
+                                             :session_id (str sid)
+                                             :status "running"
+                                             :request request
+                                             :cancel-token token
+                                             :started_at started-at}
+                                            idempotency-key
+                                            (assoc :idempotency_key idempotency-key)
+
+                                            resolved-model
+                                            (assoc :model resolved-model)
+
+                                            reasoning-default
+                                            (assoc :reasoning-default reasoning-default)
+
+                                            (seq attachments)
+                                            (assoc :attachments attachments)
+
+                                            (seq previews)
+                                            (assoc :attachment_previews previews)
+
+                                            request-preview
+                                            (assoc :request_preview request-preview)
+
+                                            (not (str/blank? (str display-request)))
+                                            (assoc :display_request display-request)))
+                                (update :turn-order (fnil conj []) tid)
+                                (cond->
+                                  idempotency-key
+                                  (assoc-in [:idempotency idempotency-key] tid)))))))))
       (let [[kind v] @decision]
         (case kind
           :idempotent
           {:turn (get-turn sid v) :idempotent? true}
 
           :queued
-          (do (append-event! sid "turn.queued" {:turn_id tid :request request} {:store? false})
+          (do (append-event! sid
+                             "turn.queued"
+                             (cond-> {:turn_id tid :request request}
+                               idempotency-key
+                               (assoc :idempotency_key idempotency-key)
+
+                               request-preview
+                               (assoc :request_preview request-preview)
+
+                               (seq previews)
+                               (assoc :attachment_previews previews)
+
+                               (not (str/blank? (str display-request)))
+                               (assoc :display_request display-request))
+                             {:store? false})
               {:turn (get-turn sid tid)})
 
           :accepted
@@ -1930,14 +2803,15 @@
                                  tid
                                  request
                                  {:messages messages
-                                  :model model
+                                  :model resolved-model
                                   :reasoning-default reasoning-default
                                   :cancel-token (:cancel-token (get-in @registry [sid :turns tid]))
                                   :extra-body extra-body
                                   :turn-features turn-features
                                   :workspace workspace
                                   :engine-opts engine-opts
-                                  :attachments attachments})
+                                  :attachments attachments
+                                  :display-request display-request})
             {:turn turn}))))))
 
 (defn reconcile-orphaned-turns!
@@ -2030,11 +2904,15 @@
      terminal
      (promise)
 
-     submitted-turn-id
-     (atom nil)
+     ;; We subscribe BEFORE the turn id exists (the subscription must not miss
+     ;; our own first events). Until `submit-turn!` returns that id, an arriving
+     ;; event cannot be classified, so it is BUFFERED — never assumed to be
+     ;; ours. Assuming it handed a SIBLING turn's terminal to this caller.
+     inbox
+     (atom {:turn-id nil :pending []})
 
-     handle-event!
-     (fn [event]
+     dispatch!
+     (fn [event tid]
        (let
          [type
           (get event "type")
@@ -2042,21 +2920,37 @@
           turn_id
           (get event "turn_id")]
 
-         (cond (or (nil? @submitted-turn-id) (= turn_id @submitted-turn-id))
+         (cond (= turn_id tid)
                (do (when on-event (on-event event))
                    (when (contains? #{"turn.completed" "turn.failed"} type)
                      (deliver terminal event))
                    ;; Our own queued record deleted before it ever ran
                    ;; (pulled back into a sibling's editor): synthesize a
                    ;; cancelled terminal so the blocking submit never hangs.
-                   (when (and (= "turn.queued.deleted" type)
-                              (some? @submitted-turn-id)
-                              (= turn_id @submitted-turn-id))
+                   (when (= "turn.queued.deleted" type)
                      (deliver terminal
                               {"type" "turn.completed" "turn_id" turn_id "status" "cancelled"})))
                ;; ANOTHER turn's queue event: forward so the channel can
                ;; mirror the session's queued backlog; never terminal here.
-               (contains? queue-mirror-event-types type) (when on-event (on-event event)))))]
+               (contains? queue-mirror-event-types type) (when on-event (on-event event)))))
+
+     handle-event!
+     (fn [event]
+       (let
+         [tid (:turn-id (swap! inbox (fn [s]
+                                       (cond-> s
+                                         (nil? (:turn-id s))
+                                         (update :pending conj event)))))]
+         (when tid (dispatch! event tid))))
+
+     ;; Atomically publish the id and take the buffered events, so an event
+     ;; racing this hand-off is dispatched exactly once — by us or by its own
+     ;; caller, never both and never neither.
+     adopt-turn!
+     (fn [tid]
+       (let [[old _] (swap-vals! inbox assoc :turn-id tid :pending [])]
+         (doseq [event (:pending old)]
+           (dispatch! event tid))))]
 
     (try (let
            [replay
@@ -2073,9 +2967,21 @@
 
            (when-let [e (:error submit-result)]
              (throw (ex-info (or (:message submit-result) (str e)) submit-result)))
-           (reset! submitted-turn-id turn-id)
+           (adopt-turn! turn-id)
            (doseq [event replay]
              (handle-event! event))
+           ;; A terminal that landed at/just-before our cursor (an idempotent
+           ;; replay of an already-settled turn, or a turn the gateway drained
+           ;; and finished before we adopted it) never arrives as a live event.
+           ;; Recover it from the stored record so we never block forever.
+           (when-not (realized? terminal)
+             (let [turn (get-turn sid turn-id)]
+               (when (contains? terminal-turn-statuses (get turn "status"))
+                 (deliver terminal
+                          (assoc turn
+                            "type" (if (= "failed" (get turn "status"))
+                                     "turn.failed"
+                                     "turn.completed"))))))
            (terminal-event->result (deref terminal) turn-id))
          (finally (unsubscribe! sid sub-id)))))
 
@@ -2149,11 +3055,28 @@
          (finally (unsubscribe! sid sub-id)))))
 
 (defn update-queued-turn!
-  "Replace the prompt text for a queued turn. Returns the updated turn or an error."
+  "Replace the prompt text for a queued turn. Returns the updated turn or an error.
+
+   The row's presentation is re-derived from the NEW text: image chips are
+   re-resolved and the stale `:display_request` (which described the text the
+   submitter authored BEFORE this edit) is dropped, so an edited row never
+   keeps painting the old prompt."
   [sid tid request]
   (cond (or (not (string? request)) (str/blank? request))
         {:error :invalid-request :message "request must be a non-blank string"}
-        :else (let [decision (volatile! nil)]
+        :else (let
+                [decision
+                 (volatile! nil)
+
+                 existing
+                 (get-in @registry [sid :turns tid])
+
+                 previews
+                 (attachment-previews request (:attachments existing) (:workspace existing))
+
+                 request-preview
+                 (request-preview-text request previews)]
+
                 (swap! registry update
                   sid
                   (fn [entry]
@@ -2164,6 +3087,17 @@
                             :else (do (vreset! decision [:updated])
                                       (-> entry
                                           (assoc-in [:turns tid :request] request)
+                                          (update-in [:turns tid] dissoc :display_request)
+                                          (update-in
+                                            [:turns tid]
+                                            (fn [t]
+                                              (cond->
+                                                (dissoc t :attachment_previews :request_preview)
+                                                (seq previews)
+                                                (assoc :attachment_previews previews)
+
+                                                request-preview
+                                                (assoc :request_preview request-preview))))
                                           (update-in [:turns tid :messages]
                                                      replace-last-user-message-content
                                                      request)))))))
@@ -2172,7 +3106,12 @@
                     :updated
                     (do (append-event! sid
                                        "turn.queued.updated"
-                                       {:turn_id tid :request request}
+                                       (cond-> {:turn_id tid :request request}
+                                         request-preview
+                                         (assoc :request_preview request-preview)
+
+                                         (seq previews)
+                                         (assoc :attachment_previews previews))
                                        {:store? false})
                         {:turn (get-turn sid tid)})
 
@@ -2250,15 +3189,16 @@
           (not= "running" (:status turn)) {:error :not-running :status (:status turn)}
           :else
           (do ;; Stamp the cancel wall-clock BEFORE firing the token so the
-              ;; unwinding worker can tell post-cancel submissions (drain
-              ;; them: "stop that, run THIS") from the pre-cancel backlog
-              ;; (leave queued) — see `queued-after-cancel?`.
+            ;; unwinding worker can tell post-cancel submissions (drain
+            ;; them: "stop that, run THIS") from the pre-cancel backlog
+            ;; (dropped) — see `drop-cancelled-backlog!`.
             (swap! registry assoc-in [sid :turns tid :cancelling_at] (System/currentTimeMillis))
-            ;; Durable twin of the stamp above: a JVM death mid-unwind must
-            ;; not leave the engine row `:running` after the process exits).
-            (persist-cancel-stamp! sid)
+            ;; Interrupt live work before touching persistence. The durable stamp may
+            ;; scan/update the session DB and must never postpone cancellation itself.
+            ;; It still completes before this endpoint ACKs; only the ordering changes.
             (some-> (:cancel-token turn)
                     cancellation/cancel!)
+            (persist-cancel-stamp! sid)
             {:status "cancelling"}))))
 
 (defn cancel-current-turn!
@@ -2301,14 +3241,13 @@
 ;; =============================================================================
 
 (def ^:private PREWARM_POOL_DEPTH
-  "Empty, fully-built sessions retained per channel. Two absorbs rapid consecutive
-   creates while a background worker replenishes the first slot."
-  2)
+  "Empty, fully-built sessions retained per channel. One removes cold-start
+   latency without pinning a second unused GraalPy context per channel."
+  1)
 
 (defonce ^:private prewarm-pool (atom {:ready {} :in-flight {} :accepting? false}))
 
 (defonce ^:private prewarm-futures (atom #{}))
-
 
 (defn- session->wire
   [{:keys [id channel title external-id workspace-id]}]
@@ -2445,9 +3384,10 @@
 (defn create-session!
   "Create or adopt a gateway-managed session.
 
-   Ordinary default-workspace creates consume the gateway-owned warm pool and
-   replenish it in the background. `:workspace-id`, `:root`, and `:external-id`
-   require a purpose-built environment and bypass the pool."
+   Default-workspace creates consume the gateway-owned warm pool and replenish
+   it in the background. An explicit `:root` can share that pool only when it
+   matches the gateway launch root; other roots, `:workspace-id`, and
+   `:external-id` require a purpose-built environment."
   [{:keys [channel external-id workspace-id root] :as opts}]
   (let
     [channel
@@ -2457,7 +3397,9 @@
      (assoc opts :channel channel)
 
      pool-eligible?
-     (and (nil? external-id) (nil? workspace-id) (nil? root))
+     (and (nil? external-id)
+          (nil? workspace-id)
+          (or (nil? root) (= (workspace/normalize-root root) (workspace/trunk-root))))
 
      pooled
      (when pool-eligible? (pop-prewarmed! channel))]
@@ -2500,7 +3442,14 @@
   "Canonical (string-keyed) wire soul for one session: persisted record + live
    gateway status. Running sessions include their request, start timestamp, and
    the gateway clock sampled in the same response so remote channels can derive
-   one elapsed baseline without trusting their device wall clock."
+   one elapsed baseline without trusting their device wall clock.
+
+   Carries the SAME `turn_count` / `modified_at` freshness pair the list rows
+   get from `session-summary-extras` (one session-scoped query here, not a
+   whole-store scan). Without them a client holding only a detail row cannot
+   tell that a session moved: its transcript stamp is constant, so a cached
+   transcript never revalidates and an unread mark can only count the page it
+   happens to hold."
   [sid]
   (when-let [session (lp/by-id sid)]
     (let
@@ -2510,7 +3459,10 @@
        last-turn (some->> (:turn-order entry)
                           peek
                           (get (:turns entry)))
-       server-time-ms (System/currentTimeMillis)]
+       server-time-ms (System/currentTimeMillis)
+       stats (try (some-> (lp/db-info)
+                          (persistance/db-session-turn-stats sid))
+                  (catch Throwable _ nil))]
 
       (wire/canonical
         (cond->
@@ -2534,7 +3486,14 @@
            :live (boolean current-turn-id)
            :current_turn_id current-turn-id
            :last_active_at (:last-active entry)
+           :turn_count (long (or (:turn-count stats) 0))
            :server_time_ms server-time-ms}
+          (:latest-turn-at stats)
+          (assoc :modified_at (:latest-turn-at stats))
+
+          (session-opening-line (:first-request stats))
+          (assoc :first_request (session-opening-line (:first-request stats)))
+
           (and current-turn-id (:request current-turn))
           (assoc :running_request (:request current-turn))
 
@@ -2573,6 +3532,9 @@
               (cond-> (assoc s "turn_count" (long (or (:turn-count st) 0)))
                 (:latest-turn-at st)
                 (assoc "modified_at" (:latest-turn-at st))
+
+                (session-opening-line (:first-request st))
+                (assoc "first_request" (session-opening-line (:first-request st)))
 
                 ws
                 (assoc "workspace" ws))))
@@ -2628,8 +3590,35 @@
   ([query] (search-session-ids :all query))
   ([channel query]
    (let [db (try (lp/db-info) (catch Throwable _ nil))]
+     (if db (mapv str (persistance/db-search-session-ids db channel query)) []))))
+
+(defn search-session-matches
+  "Soul-id STRINGS whose TRANSCRIPT matches `query`, each TAGGED with WHERE it hit
+   and carrying up to a handful of MATCH SNIPPETS:
+   `[{:session_id str :is_in_request bool :is_in_reply bool
+      :request_snippet str :reply_snippet str
+      :hits [{:side \"request\"|\"reply\" :snippet str :at ms}]}]`
+   (wire-shaped: snake_case string-ish keys, `is_<foo>` flags). Same SERVER-side
+   deep search as `search-session-ids` — the assistant text never crosses the wire,
+   only these snippet windows. `:is_in_request` = the user's own request matched;
+   `:is_in_reply` = assistant reply text matched. Blank query → []."
+  ([query] (search-session-matches :all query))
+  ([channel query]
+   (let [db (try (lp/db-info) (catch Throwable _ nil))]
      (if db
-       (mapv str (persistance/db-search-session-ids db channel query))
+       (mapv (fn [{:keys [id in-request? in-reply? request-snippet reply-snippet hits]}]
+               {:session_id (str id)
+                :is_in_request (boolean in-request?)
+                :is_in_reply (boolean in-reply?)
+                :request_snippet request-snippet
+                :reply_snippet reply-snippet
+                :hits (mapv (fn [h]
+                              {:side (name (:side h))
+                               :snippet (:snippet h)
+                               :at (some-> (:at h)
+                                           inst-ms)})
+                            (or hits []))})
+             (persistance/db-search-session-matches db channel query))
        []))))
 
 ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
@@ -2696,12 +3685,22 @@
    This is the gateway facade for local clients that are merely closing a view
    (for example a TUI tab or process exit). Use `close-session!` for DELETE.
 
-   Background resources (shell_bg processes, managed REPLs) are STOPPED here:
+   Background resources (background `shell` processes, managed REPLs) are STOPPED here:
    closing the view is the user walking away, and a bg child must not outlive
-   that — the transcript stays resumable, the processes do not."
+   that — the transcript stays resumable, the processes do not.
+
+   A BUSY SESSION IS NEVER TORN DOWN. Sessions are shared across channels, so a
+   closing view only proves THAT view is gone — the companion app, web, or another
+   TUI may be attached to and streaming the very turn this would kill (`lp/close!`
+   drops the runtime mid-turn, which the other client sees as its work being
+   cancelled). A client that wants to STOP work cancels the turn explicitly; this
+   endpoint is a view-lifecycle hint and is a no-op while work is in flight. Real
+   process exit is covered by the daemon's own gate (client refcount +
+   `running-turn-count`)."
   [sid]
-  (try (resources/stop-all! sid) (catch Throwable _ nil))
-  (try (lp/close! sid) (catch Throwable _ nil))
+  (when-not (session-busy? sid)
+    (try (resources/stop-all! sid) (catch Throwable _ nil))
+    (try (lp/close! sid) (catch Throwable _ nil)))
   nil)
 
 (defn close-session!
@@ -2720,6 +3719,7 @@
   (try (lp/delete! sid) (catch Throwable _ nil))
   (swap! registry dissoc sid)
   (bus/forget! sid)
+  (swap! hydrate-monitors dissoc (str sid))
   nil)
 
 (defn set-title! [sid title] (when (lp/by-id sid) (lp/set-title! sid title) (soul sid)))
@@ -2789,13 +3789,25 @@
   (titling/add-global-title-listener! #'broadcast-title-event!))
 
 (defn metrics-snapshot
-  "Global + per-session counters for /metrics."
+  "Global, per-session, concurrency, replay-buffer, and JVM gauges for /metrics."
   []
-  (let [reg @registry]
-    (assoc @metrics
-      :sessions-tracked (count reg)
-      :turns-running (count (keep :current-turn (vals reg)))
-      :auth-refresh (lp/auth-refresh-metrics))))
+  (let
+    [reg
+     @registry
+
+     entries
+     (vals reg)]
+
+    (merge @metrics
+           (lp/gateway-runtime-metrics)
+           {:sessions-tracked (count reg)
+            :turns-running (count (keep :current-turn entries))
+            :turns-executing @turns-executing
+            :turns-waiting @turns-waiting
+            :turn-concurrency-limit MAX_CONCURRENT_TURNS
+            :turns-queued (reduce + 0 (map count-queued entries))
+            :replay-events-retained (reduce + 0 (map #(count (:events %)) entries))
+            :auth-refresh (lp/auth-refresh-metrics)})))
 
 (defn warm-db!
   "Force the persistence backend + shared connection on the CALLER's

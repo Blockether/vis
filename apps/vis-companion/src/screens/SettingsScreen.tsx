@@ -951,12 +951,15 @@ function gatewayHost(url: string): string {
 }
 
 /**
- * How long one address gets to answer before it counts as unreachable.
+ * How long ONE probe attempt gets before it counts as unreachable.
  *
  * Without a deadline the probe inherits the platform's TCP timeout — over a
- * minute on iOS — so a row can sit red long after the address came back.
+ * minute on iOS — so a row can sit red long after the address came back. The
+ * budget is generous on purpose: a tailnet address is cold, and its first
+ * packet has to wake the peer, punch NAT or fall back to a relay, which
+ * routinely outlasts the sub-second a LAN address needs.
  */
-const PROBE_TIMEOUT_MS = 4000;
+const PROBE_TIMEOUT_MS = 9000;
 
 /**
  * Which address this device actually talks to.
@@ -989,26 +992,43 @@ function AddressPanel({
   const token = gateway.token;
   useEffect(() => {
     let cancelled = false;
-    const ctrl = new AbortController();
-    const deadline = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+    const inFlight = new Set<AbortController>();
     setReach(Object.fromEntries(addresses.map((url) => [url, 'checking' as const])));
+
+    // One controller PER address, never one shared across the batch: a single
+    // deadline let the slowest address abort every probe still in flight and
+    // paint reachable rows red by association.
+    const probe = async (url: string): Promise<boolean> => {
+      const ctrl = new AbortController();
+      const deadline = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+      inFlight.add(ctrl);
+      try {
+        return await new GatewayClient({ url, token }).ping(ctrl.signal);
+      } catch (cause) {
+        // Reachable-but-unauthorized still proves the address routes here;
+        // only a network failure means the address is unusable from here.
+        return cause instanceof GatewayError;
+      } finally {
+        clearTimeout(deadline);
+        inFlight.delete(ctrl);
+      }
+    };
+
     void Promise.all(
       addresses.map(async (url) => {
-        let ok = false;
-        try {
-          ok = await new GatewayClient({ url, token }).ping(ctrl.signal);
-        } catch (cause) {
-          // Reachable-but-unauthorized still proves the address routes here;
-          // only a network failure means the address is unusable from here.
-          ok = cause instanceof GatewayError;
-        }
+        // Retry once before declaring an address dead. The first attempt is
+        // what BRINGS a tailnet path up (handshake, relay fallback); judging
+        // the address on that one cold attempt marks a working gateway red
+        // for the rest of the session.
+        let ok = await probe(url);
+        if (!ok && !cancelled) ok = await probe(url);
         if (!cancelled) setReach((current) => ({ ...current, [url]: ok ? 'online' : 'offline' }));
       }),
-    ).finally(() => clearTimeout(deadline));
+    );
+
     return () => {
       cancelled = true;
-      clearTimeout(deadline);
-      ctrl.abort();
+      for (const ctrl of inFlight) ctrl.abort();
     };
   }, [addresses, token, probeNonce]);
 

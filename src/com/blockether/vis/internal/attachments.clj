@@ -11,12 +11,15 @@
 
    Only files the model can genuinely consume are attached: the MIME type
    is sniffed from magic bytes (pi-parity: jpeg / non-animated png / gif /
-   webp / bmp), never trusted from the extension alone. Files over
-   `max-image-bytes` are skipped with a reason the prompt assembler
-   surfaces to the model (providers downscale server-side; vis does no
-   client-side resizing — AWT/ImageIO is unavailable under GraalVM
-   native-image on macOS)."
+   webp / bmp), never trusted from the extension alone. Oversized files are
+   auto-shrunk first (see `image-optimize`: long edge capped at the provider's
+   own resize bound, re-encoded) so a retina screenshot that used to blow past
+   `max-image-bytes` still reaches the model; what cannot be shrunk under the
+   cap is skipped with a reason the prompt assembler surfaces. Where AWT/ImageIO
+   is unavailable (GraalVM native-image on macOS) the optimizer is a no-op and
+   the original bytes flow through unchanged."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.image-optimize :as image-optimize]
             [com.blockether.vis.internal.paths :as paths])
   (:import [java.io File RandomAccessFile]
            [java.nio.file Files]
@@ -36,6 +39,11 @@
   "Attachment count cap per user message. Guards against a pathological
    message (e.g. a pasted directory listing) ballooning the request."
   8)
+
+(def ^:const oversize-rescue-factor
+  "How far past `max-image-bytes` a file may sit and still be worth reading for
+   a shrink attempt. Bounds the memory one pathological drop can cost."
+  4)
 
 (def ^:private sniff-bytes
   "Bytes read from the file head for MIME sniffing (pi parity: enough for
@@ -89,8 +97,9 @@
   (loop [offset (long (count png-signature))]
     (if (> (+ offset 8) (alength b))
       false
-      (let [chunk-length (u32-be b offset)
-            type-offset (+ offset 4)]
+      (let
+        [chunk-length (u32-be b offset)
+         type-offset (+ offset 4)]
 
         (cond (ascii-at? b type-offset "acTL") true
               (ascii-at? b type-offset "IDAT") false
@@ -102,21 +111,23 @@
 (defn- bmp?
   [^bytes b]
   (and (>= (alength b) 30)
-       (let [declared-size
-             (u32-le b 2)
+       (let
+         [declared-size
+          (u32-le b 2)
 
-             pixel-data-offset
-             (u32-le b 10)
+          pixel-data-offset
+          (u32-le b 10)
 
-             dib-header-size
-             (u32-le b 14)]
+          dib-header-size
+          (u32-le b 14)]
 
          (and (or (zero? declared-size) (>= declared-size 26))
               (>= pixel-data-offset (+ 14 dib-header-size))
               (or (zero? declared-size) (< pixel-data-offset declared-size))
-              (let [[planes bpp] (cond (= dib-header-size 12) [(u16-le b 22) (u16-le b 24)]
-                                       (<= 40 dib-header-size 124) [(u16-le b 26) (u16-le b 28)]
-                                       :else [nil nil])]
+              (let
+                [[planes bpp] (cond (= dib-header-size 12) [(u16-le b 22) (u16-le b 24)]
+                                    (<= 40 dib-header-size 124) [(u16-le b 26) (u16-le b 28)]
+                                    :else [nil nil])]
                 (and (= 1 planes) (contains? #{1 4 8 16 24 32} bpp)))))))
 
 (defn detect-image-mime
@@ -137,8 +148,9 @@
   "Read the file head and sniff its MIME type. nil on any read failure."
   [^File f]
   (try (with-open [raf (RandomAccessFile. f "r")]
-         (let [n (int (min (.length raf) (long sniff-bytes)))
-               buf (byte-array n)]
+         (let
+           [n (int (min (.length raf) (long sniff-bytes)))
+            buf (byte-array n)]
 
            (.readFully raf buf)
            (detect-image-mime buf)))
@@ -213,11 +225,12 @@
                   (or single double*))
                 (re-seq quoted-span-pattern text))
           (mapcat (fn [tok]
-                    (let [tok
-                          (unescape-token tok)
+                    (let
+                      [tok
+                       (unescape-token tok)
 
-                          trimmed
-                          (strip-edge-punct tok)]
+                       trimmed
+                       (strip-edge-punct tok)]
 
                       (if (= tok trimmed) [tok] [tok trimmed])))
                   (re-seq escaped-token-pattern text))))
@@ -227,15 +240,16 @@
    extension, or nil. Relative candidates resolve against
    `workspace-root` (falling back to cwd)."
   ^File [candidate workspace-root]
-  (let [^String s (-> candidate
-                      str/trim
-                      strip-file-url
-                      paths/expand-home)]
+  (let
+    [^String s (-> candidate
+                   str/trim
+                   strip-file-url
+                   paths/expand-home)]
     (when (and (seq s) (re-find image-extension-pattern s))
-      (let [f (File. s)
-            f (if (.isAbsolute f)
-                f
-                (File. (str (or workspace-root (System/getProperty "user.dir"))) s))]
+      (let
+        [f (File. s)
+         f
+         (if (.isAbsolute f) f (File. (str (or workspace-root (System/getProperty "user.dir"))) s))]
 
         (when (and (.isFile f) (.canRead f)) f)))))
 
@@ -249,15 +263,39 @@
         (>= n 1024) (format "%.0fKB" (/ (double n) 1024.0))
         :else (str n "B")))
 
+(defn- oversize-skip
+  [^File f ^long max-bytes]
+  {:path (.getAbsolutePath f)
+   :reason
+   (str (size-label (.length f)) " exceeds the " (size-label max-bytes) " attachment limit")})
+
 (defn- attach-file
-  [^File f mime]
-  (let [data (Files/readAllBytes (.toPath f))]
-    {:path (.getAbsolutePath f)
-     :filename (.getName f)
-     :media-type mime
-     :base64 (.encodeToString (Base64/getEncoder) data)
-     :size (alength data)
-     :size-label (size-label (alength data))}))
+  "Read one image file and shrink it when that wins (see `image-optimize`).
+   nil when the payload is still over `max-bytes` after the attempt."
+  [^File f mime ^long max-bytes]
+  (let
+    [raw
+     (Files/readAllBytes (.toPath f))
+
+     optimized
+     (image-optimize/optimize raw mime)
+
+     ^bytes data
+     (or (:bytes optimized) raw)
+
+     media-type
+     (or (:media-type optimized) mime)
+
+     size
+     (alength data)]
+
+    (when (<= size max-bytes)
+      {:path (.getAbsolutePath f)
+       :filename (.getName f)
+       :media-type media-type
+       :base64 (.encodeToString (Base64/getEncoder) data)
+       :size size
+       :size-label (size-label size)})))
 
 (defn- resolved-image-files
   "Ordered, de-duped `[canonical-path File]` pairs for every path-shaped
@@ -324,15 +362,8 @@
      (let [files (resolved-image-files text workspace-root)]
        (reduce (fn [acc [_canonical ^File f]]
                  (try (if-let [mime (sniff-file-mime f)]
-                        (cond (> (.length f) (long max-bytes))
-                              (update acc
-                                      :skipped
-                                      conj
-                                      {:path (.getAbsolutePath f)
-                                       :reason (str (size-label (.length f))
-                                                    " exceeds the "
-                                                    (size-label max-bytes)
-                                                    " attachment limit")})
+                        (cond (> (.length f) (* oversize-rescue-factor (long max-bytes)))
+                              (update acc :skipped conj (oversize-skip f max-bytes))
                               (>= (count (:attached acc)) (long max-images))
                               (update acc
                                       :skipped
@@ -341,7 +372,9 @@
                                        :reason (str "attachment limit of "
                                                     max-images
                                                     " images per message reached")})
-                              :else (update acc :attached conj (attach-file f mime)))
+                              :else (if-let [attached (attach-file f mime (long max-bytes))]
+                                      (update acc :attached conj attached)
+                                      (update acc :skipped conj (oversize-skip f max-bytes))))
                         acc)
                       (catch Throwable _ acc)))
                {:attached [] :skipped []}
@@ -369,26 +402,39 @@
    (reduce
      (fn [acc att]
        (try
-         (let [base64
-               (or (:base64 att) (get att "base64"))
+         (let
+           [base64
+            (or (:base64 att) (get att "base64"))
 
-               filename
-               (or (:filename att) (get att "filename"))
+            filename
+            (or (:filename att) (get att "filename"))
 
-               ^String payload
-               (strip-data-url-prefix (str base64))
+            ^String payload
+            (strip-data-url-prefix (str base64))
 
-               data
-               (.decode (Base64/getDecoder) payload)
+            raw
+            (.decode (Base64/getDecoder) payload)
 
-               size
-               (alength data)
+            label
+            (or (not-empty (str filename)) "image")
 
-               label
-               (or (not-empty (str filename)) "image")
+            sniffed
+            (detect-image-mime raw)
 
-               mime
-               (detect-image-mime data)]
+            ;; Shrink BEFORE the cap check: an oversized retina upload that
+            ;; used to be rejected outright usually fits once its long edge
+            ;; is capped at the provider's own resize bound.
+            optimized
+            (when sniffed (image-optimize/optimize raw sniffed))
+
+            ^bytes data
+            (or (:bytes optimized) raw)
+
+            size
+            (alength data)
+
+            mime
+            (or (:media-type optimized) sniffed)]
 
            (cond (nil? mime)
                  (update acc :skipped conj {:path label :reason "not a supported still image"})
@@ -437,12 +483,13 @@
       (str/replace s
                    image-path-token-pattern
                    (fn [m]
-                     (let [clean (-> (str m)
-                                     (str/replace #"^[\"'(\[{<]+" "")
-                                     (str/replace #"[\"')\]}>.,;:!?]+$" "")
-                                     unescape-token
-                                     strip-file-url)
-                           base (last (str/split clean #"[/\\\\]"))]
+                     (let
+                       [clean (-> (str m)
+                                  (str/replace #"^[\"'(\[{<]+" "")
+                                  (str/replace #"[\"')\]}>.,;:!?]+$" "")
+                                  unescape-token
+                                  strip-file-url)
+                        base (last (str/split clean #"[/\\\\]"))]
 
                        (if (str/blank? (str base)) clean base)))))))
 

@@ -3846,6 +3846,16 @@
       (recur n)
       c)))
 
+(defn- user-error-ex
+  "First throwable in the cause chain that is a caller-facing error.
+   Wrapping (futures, class init, `Compiler$CompilerException`) must not
+   demote a user error — e.g. an invalid `config.yml` — into a stack trace."
+  ^Throwable [^Throwable t]
+  (loop [c t]
+    (cond (nil? c) nil
+          (:vis/user-error (ex-data c)) c
+          :else (recur (.getCause c)))))
+
 (defn- exit-with-fatal-error!
   [^Throwable t]
   (let
@@ -4027,6 +4037,10 @@
       ;; spam - the user only sees logs when they pass --debug / --verbose / -v
       ;; (or set VIS_DEBUG=1).
       (timed-startup! measure? "configure-logging" #(configure-logging! args))
+      ;; Stale-log sweep: `~/.vis/logs` gains a file per nrepl/JFR start and
+      ;; nothing ever removed one. Off-thread and best-effort — see
+      ;; `housekeeping/sweep-logs!` for the retention window and guards.
+      (try (housekeeping/sweep-logs-async!) (catch Throwable _ nil))
       (cond (version-request? args) (println (str "vis " (vis-version)))
             (root-help-request? args) (println (commandline/render-tree (root-command)))
             (fast-help-dispatched? measure? args) nil
@@ -4080,7 +4094,7 @@
                                   (do (shutdown-agents) (System/exit 0))))))))
       (catch Throwable t
         (cond (= :vis/no-provider (:type (ex-data t))) (exit-no-provider!)
-              (:vis/user-error (ex-data t)) (exit-with-user-error! t)
+              (user-error-ex t) (exit-with-user-error! (user-error-ex t))
               :else (exit-with-fatal-error! t)))
       (finally (when measure?
                  (startup-measure-line! "main total" (format-ms (elapsed-ms main-started))))))))

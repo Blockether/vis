@@ -124,6 +124,81 @@ neither set, the upload falls back to `xcodebuild -exportArchive
 account signed into **Xcode → Settings → Accounts** — that is what a local
 release from this machine uses. Artifacts land in `build/ios/`.
 
+### Public TestFlight link
+
+```sh
+npm run release:ios -- --public     # upload, then open the build to the public group
+npm run release:testflight          # same distribution step for the LAST uploaded build
+```
+
+`--public` waits for App Store Connect to finish processing, creates (once) an
+external beta group named **Public** with a public link, attaches the build, and
+submits it for **Beta App Review**. Review takes hours on the first build of a
+version and is usually instant afterwards; the link itself never changes, so it
+can go in a README or a tweet. Internal testers get the build immediately,
+without review. The public URL is printed at the end of the run.
+
+## Release to Google Play (Android)
+
+```sh
+npm run release:android                        # signed .aab → internal track
+npm run release:android -- --track beta        # OPEN testing — the public one
+npm run release:android -- --no-upload         # stop at the signed .aab
+npm run release:android -- --rollout 0.1       # staged 10%
+npm run release:android -- --tracks            # what each track serves today
+```
+
+Play's equivalent of a public TestFlight link is the **`beta` (Open testing)**
+track: anyone with the URL joins, no invite and no tester list. `internal` is
+the fast lane (100 named testers, no review), `alpha` is closed testing.
+
+Versioning matches iOS exactly — `versionName` from `package.json`,
+`versionCode` from `git rev-list --count HEAD` — and both are stamped into the
+gitignored `android/` project by `scripts/android-prepare.mjs`, together with
+the signing config, `sdk.dir`, and the minSdk floor the barcode plugin needs.
+
+Two credentials, both kept in the macOS login keychain, never in the repo:
+
+```sh
+npm run secrets keystore create                # upload key, once, 30-year validity
+npm run secrets play <service-account.json>    # Play Developer API access
+npm run secrets doctor                         # what is configured
+```
+
+Google Play App Signing re-signs the bundle with Google's own key, so the
+upload keystore only proves the upload came from you — but losing it still means
+a support ticket, hence `npm run secrets export-keystore` before you wipe a
+machine. The service account comes from Play Console ▸ Users and permissions ▸
+Invite via API, and needs *Release to testing tracks*.
+
+Gradle needs a **stock JDK 21**: Capacitor 8 compiles with `source 21`, and
+GraalVM's `jlink` cannot run AGP's JdkImageTransform. The script finds one
+itself and says so if none is installed (`sdk install java 21.0.11-tem`).
+
+## Automatic releases
+
+`.github/workflows/mobile-release.yml` runs both stores from one tag:
+
+```sh
+git tag companion-v1.0.2 && git push origin companion-v1.0.2
+```
+
+iOS goes to TestFlight *and* the public group; Android goes to the `beta` track.
+A manual **Run workflow** lets you pick platform, track, and whether to submit
+for Beta App Review. The workflow contains no build logic — it calls the very
+same `release:ios` / `release:android` scripts, reading credentials from
+repository secrets instead of the keychain, so a local release and a CI release
+cannot drift. A platform whose secrets are missing is skipped, not failed.
+
+| Secret | Value |
+| --- | --- |
+| `VIS_ASC_KEY_ID`, `VIS_ASC_ISSUER_ID`, `VIS_ASC_KEY` | App Store Connect API key (`VIS_ASC_KEY` is the `.p8` *contents*) |
+| `VIS_IOS_TEAM_ID` | Apple team id |
+| `VIS_PLAY_SERVICE_ACCOUNT` | the service-account JSON |
+| `VIS_ANDROID_KEYSTORE` | `npm run secrets export-keystore \| base64` |
+| `VIS_ANDROID_KEYSTORE_PASSWORD`, `VIS_ANDROID_KEY_ALIAS`, `VIS_ANDROID_KEY_PASSWORD` | as generated |
+| `VIS_ANDROID_GOOGLE_SERVICES` | `google-services.json` — only needed for Android push |
+
 ## Layout
 
 ```

@@ -6120,15 +6120,23 @@
 (defn- fs-plural [n one many] (if (= 1 n) one many))
 
 (defn- fs-batch-body
-  "One scan-friendly markdown row per batch target. The headline carries the
-   aggregate; this body preserves every path and verdict behind the card's native
-   disclosure affordance instead of wrapping paths across the painted headline."
+  "One scan-friendly markdown row per batch target. The headline already states the
+   verdict whenever every target agrees, so a uniform batch lists bare paths and
+   only a MIXED batch spends a per-row verdict — no decorative glyphs either way."
   [entries status]
-  (str "\n"
-       (str/join "\n"
-                 (map (fn [e]
-                        (str "- " (status e) " — `" (disp-path (get e "path")) "`"))
-                      entries))))
+  (let [verdicts
+        (mapv status entries)
+
+        mixed?
+        (< 1 (count (distinct verdicts)))]
+
+    (str "\n"
+         (str/join "\n"
+                   (map (fn [e v]
+                          (str "- `" (disp-path (get e "path")) "`"
+                               (when mixed? (str " — " v))))
+                        entries
+                        verdicts)))))
 
 (defn- render-fs-batch-result
   "Compact card for `{\"action\" … \"paths\" [entry …]}`.
@@ -6148,15 +6156,15 @@
         (case action
           "delete"
           (fn [e]
-            (if (get e "is_deleted") "✓ deleted" "– already absent"))
+            (if (get e "is_deleted") "deleted" "already absent"))
 
           "create_dirs"
           (fn [e]
-            (if (get e "is_created") "✓ created" "– already existed"))
+            (if (get e "is_created") "created" "already existed"))
 
           "exists"
           (fn [e]
-            (if (get e "is_existing") "✓ exists" "✗ missing"))
+            (if (get e "is_existing") "exists" "missing"))
 
           (fn [_]
             (or (not-empty (str action)) "target")))]

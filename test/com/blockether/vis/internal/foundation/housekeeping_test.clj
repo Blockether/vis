@@ -237,3 +237,64 @@
                  (expect (= "1.0 KB" (housekeeping/format-bytes 1024)))
                  (expect (= "1.0 MB" (housekeeping/format-bytes (* 1024 1024))))
                  (expect (= "2.5 GB" (housekeeping/format-bytes (long (* 2.5 1024 1024 1024)))))))
+
+;; ---------------------------------------------------------------------------
+;; sweep-logs! — the one self-deleting surface
+;; ---------------------------------------------------------------------------
+
+(defdescribe sweep-logs-test
+             (it "keeps the retention window at three weeks"
+                 (expect (= 21 housekeeping/default-log-retention-days)))
+             (it "deletes only files older than the retention window"
+                 (let [logs (tmp-dir "vis-hk-logs")]
+                   (touch! logs "vis-nrepl-fresh.log" 1 "fresh")
+                   (touch! logs "vis-nrepl-edge.log" 20 "edge")
+                   (touch! logs "vis-nrepl-old.log" 22 "old-content")
+                   (touch! logs "vis-nrepl-ancient.log" 400 "ancient")
+                   (binding [housekeeping/*logs-home* (.getPath logs)]
+                     (let [report (housekeeping/sweep-logs! nil)]
+                       (expect (= 4 (:file-count report)))
+                       (expect (= 2 (:deleted report)))
+                       (expect (= (+ (count "old-content") (count "ancient")) (:bytes report)))
+                       (expect (= #{"vis-nrepl-fresh.log" "vis-nrepl-edge.log"}
+                                  (set (map #(.getName ^File %) (.listFiles logs)))))))))
+             (it "honours an explicit :days window"
+                 (let [logs (tmp-dir "vis-hk-logs-days")]
+                   (touch! logs "a.log" 5 "a")
+                   (touch! logs "b.log" 30 "b")
+                   (binding [housekeeping/*logs-home* (.getPath logs)]
+                     (expect (= 2 (:deleted (housekeeping/sweep-logs! {:days 1}))))
+                     (expect (zero? (count (.listFiles logs)))))))
+             (it "leaves subdirectories alone however stale they are"
+                 (let
+                   [logs
+                    (tmp-dir "vis-hk-logs-dir")
+
+                    nested
+                    (touch! logs (str "keep-me" File/separator "inner.log") 90 "x")
+
+                    dir
+                    (.getParentFile nested)]
+
+                   (.setLastModified dir (- (System/currentTimeMillis) (* 90 day-ms)))
+                   (binding [housekeeping/*logs-home* (.getPath logs)]
+                     (expect (zero? (:deleted (housekeeping/sweep-logs! nil))))
+                     (expect (.isDirectory dir))
+                     (expect (.exists nested)))))
+             (it "degrades to zero work when the logs directory does not exist"
+                 (let [missing (io/file (tmp-dir "vis-hk-logs-none") "nope")]
+                   (binding [housekeeping/*logs-home* (.getPath missing)]
+                     (let [report (housekeeping/sweep-logs! nil)]
+                       (expect (zero? (:file-count report)))
+                       (expect (zero? (:deleted report)))
+                       (expect (zero? (:bytes report)))))))
+             (it "sweeps off-thread with the caller's bindings conveyed"
+                 (let [logs (tmp-dir "vis-hk-logs-async")]
+                   (touch! logs "old.log" 60 "old")
+                   (touch! logs "new.log" 1 "new")
+                   (binding [housekeeping/*logs-home* (.getPath logs)]
+                     ;; `bound-fn*` in `sweep-logs-async!` is what keeps this temp-dir
+                     ;; binding visible to the sweeper thread; without it the thread would
+                     ;; fall back to the root binding and sweep the REAL `~/.vis/logs`.
+                     (.join ^Thread (housekeeping/sweep-logs-async! nil) 5000))
+                   (expect (= ["new.log"] (mapv #(.getName ^File %) (.listFiles logs)))))))

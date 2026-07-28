@@ -3778,6 +3778,41 @@
       (:vis.channel-tui/expand-all-details? detail-expansions)
       (conj [:vis.channel-tui/expand-all-details? true]))))
 
+(def ^:private turn-token-re
+  ;; The `:t<up-to-8-hex>` token `detail-node-base-id` stamps into every node-id
+  ;; built for a turn. Bounded by a `:` (or end of id) so kind segments like
+  ;; `:tool` / `:thinking` can never be mistaken for a turn token.
+  #":t[0-9a-fA-F]{1,8}(?=:|$)")
+
+(defn- untagged-detail-expansions-key
+  "Expansion fingerprint for an ASSISTANT bubble that carries no turn id at all —
+   slash-command output, a shell-bang result, a completion that landed without
+   ids. Its own node-ids are built with `session-turn-id` nil, so they carry NO
+   `:t<turn>` token: key it on exactly the turn-LESS nodes.
+
+   `turn-detail-expansions-key` with a nil turn token matches EVERY node in the
+   session, so such a bubble's cached height was busted by every unrelated fold
+   click anywhere in the transcript. It then fell back to its (systematically
+   off) estimate, `total-h` and every offset above the viewport moved, and any
+   frame that could not anchor on `:prev-offsets` (an append changed the message
+   count) painted the transcript at a different place — the \"click something
+   collapsed and the view jumps up\" bug."
+  [session-id detail-expansions]
+  (->> detail-expansions
+       (keep (fn [[k expanded?]]
+               (when (vector? k)
+                 (let
+                   [[cid node-id]
+                    k
+
+                    node-id
+                    (str node-id)]
+
+                   (when (and (= (str session-id) (str cid)) (not (re-find turn-token-re node-id)))
+                     [node-id expanded?])))))
+       sort
+       vec))
+
 (defn message-detail-expansions-key
   "Per-message disclosure-expansion fingerprint for the height cache: the
    subset of `detail-expansions` whose disclosure node-ids belong to
@@ -3800,20 +3835,23 @@
             [baseline
              (:vis.channel-tui/baseline detail-expansions)
 
+             turn-id
+             (or (:client-turn-id message) (:session-turn-id message))
+
              per-turn
-             (if (and (not= :assistant (:role message))
-                      (nil? (:client-turn-id message))
-                      (nil? (:session-turn-id message)))
-               ;; A bubble with no turn id can't be turn-scoped AND carries no
-               ;; disclosures (only user prompts with a `[Pasted #N]` marker do,
-               ;; and those always land with a `:client-turn-id`) — keep the
-               ;; cheap constant key so an unrelated fold click never busts its
-               ;; cached height.
-               []
-               (turn-detail-expansions-key {:session-id session-id
-                                            :session-turn-id (or (:client-turn-id message)
-                                                                 (:session-turn-id message))
-                                            :detail-expansions detail-expansions}))]
+             (cond turn-id (turn-detail-expansions-key {:session-id session-id
+                                                        :session-turn-id turn-id
+                                                        :detail-expansions detail-expansions})
+                   ;; A non-assistant bubble with no turn id can't be turn-scoped AND
+                   ;; carries no disclosures (only user prompts with a `[Pasted #N]`
+                   ;; marker do, and those always land with a `:client-turn-id`) —
+                   ;; keep the cheap constant key so an unrelated fold click never
+                   ;; busts its cached height.
+                   (not= :assistant (:role message)) []
+                   ;; An ASSISTANT bubble with no turn id DOES render disclosures
+                   ;; (slash-command / shell-bang output), so scope it to the
+                   ;; turn-less nodes instead of the whole session.
+                   :else (untagged-detail-expansions-key session-id detail-expansions))]
 
             ;; Fold the bulk baseline in ONLY when a bulk op is active, so the no-bulk
             ;; key shape (and every already-warmed cache entry) is unchanged.

@@ -2,6 +2,14 @@
 
 Keep only non-obvious project contracts here; inspect nearby source and tests for detail.
 
+## The JDK: GraalVM CE 25.1.3, always
+
+- `.graalvm-version` is the SINGLE source of truth (edition, version, release tag, asset digests, expected `java.vendor.version`). `.github/actions/setup-graalvm-25`, the `Dockerfile`, `build.clj` and `bin/require-graalvm` all read it — never hardcode a version anywhere else. Bump it together with the `org.graalvm.*` pins in `deps.edn`.
+- **Community Edition, not Oracle GraalVM**: CE is GPLv2 + Classpath Exception, which is the only reason the shipped binary can be redistributed as FOSS (`audit/README.md` §4.1). Oracle GraalVM builds fine and is still wrong.
+- **Exact version**: Truffle/SVM hard-refuse a JDK whose built-in Truffle differs from the pinned `org.graalvm.*` jars. "25.1.x" is not good enough.
+- Local setup: `bin/require-graalvm --install` then `sdk env` (`.sdkmanrc`), or `eval "$(bin/require-graalvm --export)"`. `bin/require-graalvm --check` verifies the active JDK; `clojure -T:build native` refuses to start on anything else.
+- **The one exception**: the Android Gradle build in `apps/vis-companion` needs a *stock JDK 21* (Capacitor 8 compiles with `source 21`, and GraalVM's `jlink` cannot run AGP's `JdkImageTransform`). That is Gradle-only, deliberate, and enforced in `apps/vis-companion/scripts/android-release.mjs`. Do not "fix" it to GraalVM.
+
 ## Clojure tests (Lazytest)
 
 - Tests use Lazytest. Prefer the `run_tests` language tool with the smallest relevant test namespace; `only` entries are fully qualified top-level test vars (usually `defdescribe` vars).

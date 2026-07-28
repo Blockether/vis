@@ -22,7 +22,7 @@ Then confirm:
 vis help
 ```
 
-Prereqs: `git`, `java` 25+, and the [Clojure CLI](https://clojure.org/guides/install_clojure) 1.12+ — the installer checks for them and tells you what's missing. Building the native binary locally needs Oracle GraalVM or GraalVM CE 25+ with at least 16 GB RAM.
+Prereqs: `git`, `java` 25+, and the [Clojure CLI](https://clojure.org/guides/install_clojure) 1.12+ — the installer checks for them and tells you what's missing. **Building** the native binary needs **GraalVM Community Edition 25.1.3** — exactly that edition and version, pinned in [`.graalvm-version`](.graalvm-version) — plus at least 16 GB RAM. Get it with `bin/require-graalvm --install`, then `sdk env` (the repo ships a `.sdkmanrc`). Oracle GraalVM and stock JDKs are rejected by the build, on purpose: CE's Classpath Exception is what keeps the shipped binary FOSS, and Truffle hard-refuses any other version against the `org.graalvm.*` pins in `deps.edn`.
 
 ## What `vis` runs
 
