@@ -21,6 +21,7 @@
             [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.string :as str]
+            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
@@ -2422,14 +2423,9 @@ del __vis_auto_imports__
          (catch Throwable _ nil))))
 
 (defn- registered-sandbox-shims
-  "The Python sandbox SHIMS contributed by the extension registry
-   (`extension/sandbox-shims`), resolved lazily to avoid a compile-time cycle
-   (env-python is required by the extension kernel). Best-effort: a registry
-   hiccup yields no shims rather than breaking context creation."
+  "The Python sandbox shims contributed by the extension registry."
   []
-  (try (when-let [f (requiring-resolve 'com.blockether.vis.internal.extension/sandbox-shims)]
-         (vec (f)))
-       (catch Throwable _ nil)))
+  (extension/sandbox-shims))
 
 (def ^:private lazy-shim-runtime-python
   "Central LAZY-SHIM runtime installed once per Context, BEFORE the shims.
@@ -2511,12 +2507,9 @@ del __vis_init_lazy__
 ")
 
 (defn- shim-source
-  "Python source of a shim, slurped from its `:shim/source` CLASSPATH RESOURCE
-   (built-ins: `resources/vis-shims/<name>.py`). Resolved through
-   `extension/shim-src` LAZILY - env-python must not require the extension
-   kernel at compile time, because the kernel requires env-python."
+  "Python source of a shim, slurped from its `:shim/source` classpath resource."
   [shim]
-  ((requiring-resolve 'com.blockether.vis.internal.extension/shim-src) shim))
+  (extension/shim-src shim))
 
 (defn- wire-shim-bindings!
   "Wire a shim's host `:shim/bindings` (`{py-name -> fn}`, or a 0-arg fn -> one)
@@ -3231,27 +3224,26 @@ def network_probe(method='GET', url=None, headers=None, body=None):
     ;; above wired (canonical + aliases). Marshalled as JSON and parsed with the
     ;; auto-imported `json` module so no ProxyHashMap crosses the boundary.
     ;; Best-effort: a registry hiccup must never break context creation.
-    (try (when-let
-           [docs-fn (requiring-resolve 'com.blockether.vis.internal.extension/sandbox-symbol-docs)]
-           (let
-             [sym->doc (docs-fn)
-              py-docs (reduce (fn [m [sym _]]
-                                (if-let [d (get sym->doc sym)]
-                                  (reduce #(assoc %1 %2 d)
-                                          m
-                                          (cons (sym->py-name sym) (py-aliases-for-sym sym)))
-                                  m))
-                              {}
-                              (or custom-bindings {}))]
+    (try
+      (let
+        [sym->doc
+         (extension/sandbox-symbol-docs)
 
-             (when (seq py-docs)
-               (.putMember g "__vis_docs_json__" (json/write-json-str py-docs))
-               (.eval
-                 ctx
+         py-docs
+         (reduce (fn [m [sym _]]
+                   (if-let [d (get sym->doc sym)]
+                     (reduce #(assoc %1 %2 d) m (cons (sym->py-name sym) (py-aliases-for-sym sym)))
+                     m))
+                 {}
+                 (or custom-bindings {}))]
+
+        (when (seq py-docs)
+          (.putMember g "__vis_docs_json__" (json/write-json-str py-docs))
+          (.eval ctx
                  "python"
                  "globals().setdefault('__vis_docs__', {}).update(json.loads(__vis_docs_json__))")
-               (.putMember g "__vis_docs_json__" nil))))
-         (catch Throwable _ nil))
+          (.putMember g "__vis_docs_json__" nil)))
+      (catch Throwable _ nil))
     ;; POSIX-compat: route subprocess / os.system to the shell tools. Eval'd
     ;; BEFORE the initial-ns-keys snapshot so any names it parks are baseline
     ;; (filtered out of the model-visible live-vars view).
@@ -3915,13 +3907,6 @@ def network_probe(method='GET', url=None, headers=None, body=None):
              (and cause (instance? clojure.lang.IExceptionInfo cause))
              (merge (sanitize-cause-data (ex-data cause) base)))}))
 
-(def ^:private current-form-idx-var
-  "Lazily resolved `extension/*current-form-idx*` dynamic var. Resolved via
-   `requiring-resolve` (not a ns `:require`) so this sandbox ns stays free of
-   a dependency edge on the extension registry. Bound (to 0) while the block
-   runs so `record-render-entry!` can stamp `:form-idx` on every channel sink
-   entry."
-  (delay (requiring-resolve 'com.blockether.vis.internal.extension/*current-form-idx*)))
 
 ;; ── Per-block eval instrumentation (memory-leak observability) ──────────────
 ;; Every python_execution block is compiled to a FRESH GraalPython code unit
@@ -4130,7 +4115,7 @@ def network_probe(method='GET', url=None, headers=None, body=None):
      outbox-seen
      (atom #{})]
 
-    (with-bindings {@current-form-idx-var 0
+    (with-bindings {#'extension/*current-form-idx* 0
                     #'mpl-capture/*attachment-sink* sink
                     #'mpl-capture/*outbox-seen* outbox-seen}
       (try
