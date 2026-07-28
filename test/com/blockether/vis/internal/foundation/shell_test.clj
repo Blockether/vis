@@ -216,6 +216,24 @@
              (finally (io/delete-file sibling true)
                       (io/delete-file primary true)
                       (io/delete-file parent true)))))
+  (it "allows a descendant of the host filesystem root when the jail is disabled"
+      (let
+        [home
+         (.getCanonicalPath (io/file (System/getProperty "user.home")))
+
+         env
+         {:security-policy {:sandbox false} :jail-policy-fn (constantly {:disabled? true})}]
+
+        (binding
+          [workspace/*workspace-root*
+           (workspace/trunk-root)
+
+           workspace/*filesystem-roots*
+           nil]
+
+          (let [r (:result (shell-run* env "pwd" {"cwd" home}))]
+            (expect (= home (str/trim (get r "stdout"))))
+            (expect (= home (get r "cwd")))))))
   (it "accepts the HOME-relative paths advertised in session access"
       (let
         [home

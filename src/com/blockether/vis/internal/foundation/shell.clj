@@ -211,9 +211,9 @@
 
          allowed?
          (some (fn [^File allowed-root]
-                 (or (= dir allowed-root)
-                     (str/starts-with? (.getPath dir)
-                                       (str (.getPath allowed-root) File/separator))))
+                 ;; Path#startsWith is component-aware and handles a filesystem root
+                 ;; correctly (`/` is not naively joined with another `/`).
+                 (or (= dir allowed-root) (.startsWith (.toPath dir) (.toPath allowed-root))))
                roots)
 
          root-paths
