@@ -2,6 +2,14 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 1.0.1 (2729) — 2026-07-28
+<!-- commit: ffdb768f54f4941281115f156092aace45e1e9f1 -->
+
+- Rotating the phone no longer freezes, jumps or pushes the composer and tab bar off the screen — the layout now follows the real device size from iOS instead of the stale one the webview reports mid-flip
+- Coming back to the app after a long time no longer leaves it taller than the screen
+- iPad split view and Stage Manager resizing are handled the same way
+- `vis update` now explains a diverged history and can recover from it (#53)
+
 ## 1.0.1 (2725) — 2026-07-28
 <!-- commit: 80f263b819ff90eee2cbafd0cccdc2b4e086e39c -->
 
