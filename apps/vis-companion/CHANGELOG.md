@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.13 (2739) — 2026-07-28
+<!-- commit: 5d7cf4c0abd4fb171817c53eeea5548934d3d387 -->
+
+- Link extension shims statically
+- TestFlight notes for 0.1.13 (2737)
+
 ## 0.1.13 (2737) — 2026-07-28
 <!-- commit: 8bcec2f9db96acec8f32a7bdca20c4a17aae4828 -->
 
