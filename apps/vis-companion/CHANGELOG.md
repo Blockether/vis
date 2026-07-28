@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 1.0.1 (2723) — 2026-07-28
+<!-- commit: d9c943e479f8e74cc891d36ce7805ad52e5bbb38 -->
+
+- Companion: kill rotation layout thrash, restore justified prose
+- Release: notes for 1.0.1 (2721)
+
 ## 1.0.1 (2721) — 2026-07-28
 <!-- commit: f11835f3f8432df8ee7e51312bedb289ea28e9b1 -->
 
