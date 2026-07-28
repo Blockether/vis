@@ -37,7 +37,7 @@
             [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.slash :as slash]
-            [com.blockether.vis.internal.strutil :refer [truncate]]
+            [com.blockether.vis.internal.strutil :as strutil :refer [truncate]]
             [com.blockether.vis.internal.titling :as titling]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.workspace :as workspace]
@@ -3429,7 +3429,9 @@
                                    "]" (when-let [label (ntr-hint-label e)]
                                          (str " " label))))
                             shown))
-             (when (pos? extra) (str "; +" extra " more via ntr.describe()")))))))
+             (when (pos? extra)
+               (str " · IMPORTANT " extra " more folded results stay recoverable"
+                    " — browse them with ntr.describe()")))))))
 
 (defn- scope-token-end
   "Index just PAST the iteration address starting at `i` (`t12`, `t1/i2`,
@@ -3559,6 +3561,38 @@
 
     (if (pos? (long end)) (str "**" (subs seg 0 (long end)) "**" (subs seg (long end))) seg)))
 
+(defn- recover-bullet
+  "Markup for the `recover …` metric: ONE accessor per line, every free-text
+   label inside a code span.
+
+   Both matter because a label is FOREIGN prose — another tool's op-card gist,
+   full of paths and flags (`~/vis/bin/vis`, `--ff-only`). Rendered as inline
+   markdown it gets EATEN: a single tilde opens GFM strikethrough (one is
+   enough, two are not required), so one path silently struck through half the
+   breadcrumb. A code span makes the label inert, and it is honest markup —
+   the label quotes what ran. The list replaces a run-on `;`-joined line that
+   neither surface could wrap readably."
+  [seg]
+  (let
+    [entries
+     (->> (split-on (str/triml (subs seg (count "recover"))) "; ")
+          (map str/trim)
+          (remove str/blank?))
+
+     ;; `ntr[\"id\"] <label>` — the accessor stays code the reader retypes, the
+     ;; label becomes a quoted span.
+     line
+     (fn [e]
+       (if-let [end (str/index-of e "] ")]
+         (str (code-ntr (subs e 0 (inc (long end))))
+              " `" (str/trim (subs e (+ (long end) 2))) "`")
+         (code-ntr e)))]
+
+    (if (seq entries)
+      (str "**recover** one stored native result each, no re-run:\n"
+           (str/join "\n" (map #(str "  - " (line %)) entries)))
+      (code-ntr (bold-lead-word seg)))))
+
 (defn- session-fold-card
   "Presentation split of a `session_fold` receipt into an op-card.
 
@@ -3611,7 +3645,9 @@
 
      markup-bullet
      (fn [seg]
-       (code-ntr (bold-lead-word seg)))
+       (if (str/starts-with? seg "recover ")
+         (recover-bullet seg)
+         (code-ntr (bold-lead-word seg))))
 
      ;; Collapsed view = WHAT was folded + HOW MUCH it reclaimed; the rest
      ;; (context level, recovery accessors, kept skills) reads fine one
@@ -4025,8 +4061,8 @@
         (if-let [card (and (map? rendered) (->card rendered))]
           card
           (let
-            [detail (->> [(when code (str "**FORM**\n```" lang "\n" (clip code) "\n```"))
-                          (when msg (str "**TIMEOUT**\n```\n" msg "\n```"))]
+            [detail (->> [(when code (str "**FORM**\n" (strutil/fenced (clip code) lang)))
+                          (when msg (str "**TIMEOUT**\n" (strutil/fenced msg)))]
                          (remove nil?)
                          (str/join "\n\n")
                          not-empty)]
@@ -4039,7 +4075,7 @@
       ;; native tool value, no custom renderer → monospaced Python-literal body, so
       ;; a dict/list reads as structured data rather than reflowed prose.
       (some? (:result result*)) (when-let [s (clip (env/ctx->python-str (:result result*)))]
-                                  {:body (str "```python\n" s "\n```")})
+                                   {:body (strutil/fenced s "python")})
       ;; A `vis-image` fence (matplotlib `plt.show()` → inline PNG, ASCII plot
       ;; carried as its fallback body) rides stdout as MARKDOWN so the channel
       ;; paints it inline; wrapping it in a ``` block would escape the 4-backtick
@@ -4050,7 +4086,7 @@
       ;; (plain stdout is NOT markdown; bare \n collapses to a space through the
       ;; CommonMark SoftLineBreak → :space path if left unwrapped).
       (not (str/blank? (str (:stdout result*)))) {:body
-                                                  (str "```\n" (clip (:stdout result*)) "\n```")}
+                                                   (strutil/fenced (clip (:stdout result*)))}
       :else nil)))
 
 (defn- iteration-results-message
@@ -8951,7 +8987,7 @@
                                " → 'Shell commands'. Then `"
                                cmd
                                "` will run.")
-           (some? err) (str "**shell error**\n\n```\n" (or (:message err) (pr-str err)) "\n```")
+            (some? err) (str "**shell error**\n\n" (strutil/fenced (or (:message err) (pr-str err))))
            display (bang-card->markdown display)
            :else (str "_ran `" cmd "`_"))
 

@@ -45,7 +45,7 @@ const disclosureClass =
 // subtrees pass `live`, so replaying history (or a finished turn re-keyed out of
 // the live slot into the turn list) stays perfectly still.
 export const transcriptEnterClass =
-  'transition-[opacity,transform,translate,scale,rotate] duration-200 ease-out starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none';
+  'transition-[opacity,translate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none';
 
 const toolRoleClasses: Record<string, { border: string; text: string }> = {
   'tool-color/read': { border: 'border-tool-read', text: 'text-tool-read' },
@@ -625,6 +625,17 @@ function toolRole(role?: string): { border: string; text: string } {
   return (normalized && toolRoleClasses[normalized]) || { border: 'border-accent', text: 'text-accent-ink' };
 }
 
+// A fenced block must not be closable by the content it wraps: file text, tool
+// stdout, and pretty-printed JSON can all carry ``` runs of their own, and a
+// fixed triple-backtick wrapper then closes EARLY — the rest of the payload
+// renders as prose (headings, blockquotes) instead of code. CommonMark allows
+// longer fences; pick the shortest safe one. Mirrors `strutil/fenced`.
+function fenced(body: string, lang = ''): string {
+  const longest = (body.match(/`+/g) ?? []).reduce((max, run) => Math.max(max, run.length), 0);
+  const delimiter = '`'.repeat(Math.max(3, longest + 1));
+  return `${delimiter}${lang}\n${body}\n${delimiter}`;
+}
+
 function resultBody(form: TranscriptForm): string {
   if (form.error != null) return jsonText(form.error);
   const rendered = form.result_render?.trimEnd();
@@ -632,7 +643,7 @@ function resultBody(form: TranscriptForm): string {
   if (form.result_summary?.trim()) return '';
   if (form.result == null || form.result === '') return '';
   const raw = jsonText(form.result);
-  return typeof form.result === 'string' ? raw : `\`\`\`json\n${raw}\n\`\`\``;
+  return typeof form.result === 'string' ? raw : fenced(raw, 'json');
 }
 
 function toolCards(form: TranscriptForm): TranscriptForm[] {
@@ -1072,7 +1083,7 @@ export const ContentBlockView = memo(function ContentBlockView({ block }: { bloc
     case 'prose':
       return block.markdown ? <Markdown>{block.markdown}</Markdown> : null;
     case 'code':
-      return <Markdown>{`\`\`\`${block.language ?? ''}\n${block.text ?? ''}\n\`\`\``}</Markdown>;
+      return <Markdown>{fenced(block.text ?? '', block.language ?? '')}</Markdown>;
     case 'reasoning':
       return block.text ? <ThinkingBand>{block.text}</ThinkingBand> : null;
     case 'tool': {

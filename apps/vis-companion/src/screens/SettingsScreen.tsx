@@ -417,9 +417,16 @@ export function GatewaySettingsDialog({
             </SettingsPanel>
           ) : groups === null ? (
             <SettingsPanel title="Loading">
-              <div className="space-y-px bg-dialog-edge" aria-label="Loading settings">
-                {[0, 1, 2].map((item) => (
-                  <div key={item} className="h-12 animate-pulse bg-panel-2" />
+              {/* `bg-panel-2` equals `bg-panel` in the shipped themes, so plain
+                  tinted blocks were an invisible skeleton — a blank hole where
+                  the settings should be. Bars are drawn in `--color-muted`. */}
+              <div className="space-y-px bg-dialog-edge" role="status" aria-live="polite" aria-label="Loading settings">
+                <p className="bg-panel px-4 py-2 font-mono text-ui text-dialog-hint">Loading settings…</p>
+                {['w-1/2', 'w-2/3', 'w-2/5'].map((width) => (
+                  <div key={width} className="animate-pulse bg-panel px-4 py-3.5 motion-reduce:animate-none">
+                    <span className={`block h-2.5 bg-muted/30 ${width}`} />
+                    <span className="mt-2 block h-1.5 w-1/4 bg-muted/20" />
+                  </div>
                 ))}
               </div>
             </SettingsPanel>

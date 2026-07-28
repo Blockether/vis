@@ -34,6 +34,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.mcp.client :as mcp]
             [com.blockether.vis.internal.foundation.mcp.oauth :as mcp-oauth]
+            [com.blockether.vis.internal.strutil :as strutil]
             [taoensso.telemere :as tel]))
 
 (defn- now-ms [] (System/currentTimeMillis))
@@ -306,7 +307,7 @@
 ;; Native op-card renderers
 ;; ---------------------------------------------------------------------------
 
-(defn- mcp-fence [s] (when (seq (str s)) (str "```\n" s "\n```")))
+(defn- mcp-fence [s] (when (seq (str s)) (strutil/fenced s)))
 
 (defn- render-mcp-servers-result
   [r]

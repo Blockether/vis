@@ -245,6 +245,24 @@ if (!infoSrc.includes('CFBundleURLTypes')) {
   console.log('· registered the vis:// URL scheme (CFBundleURLTypes)');
 }
 
+// Dictation must survive the app going to the background, the screen locking or
+// a call arriving: without UIBackgroundModes=audio iOS suspends the WKWebView
+// process, the AudioContext is torn down mid-sentence and the transcript is
+// lost. Same reason as above — `ios/` is gitignored, so stamp it every run.
+{
+  const src = readFileSync(infoPlist, 'utf8');
+  if (!src.includes('UIBackgroundModes')) {
+    const modes = `\t<key>UIBackgroundModes</key>
+\t<array>
+\t\t<string>audio</string>
+\t</array>
+`;
+    const at = src.lastIndexOf('</dict>');
+    writeFileSync(infoPlist, src.slice(0, at) + modes + src.slice(at));
+    console.log('· kept audio capture alive in the background (UIBackgroundModes)');
+  }
+}
+
 if (has('prepare')) {
   console.log(
     `\n✓ prepared ${marketingVersion} (${buildNumber}).\n` +

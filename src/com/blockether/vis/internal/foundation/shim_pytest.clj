@@ -1259,6 +1259,40 @@ def __vis_install_pytest_compat__():
             self.duration = 0.0
 
     _CHAR = {'passed': '.', 'failed': 'F', 'error': 'E', 'skipped': 's', 'xfailed': 'x', 'xpassed': 'X'}
+    _VERB = {'passed': 'PASSED', 'failed': 'FAILED', 'error': 'ERROR', 'skipped': 'SKIPPED', 'xfailed': 'XFAIL', 'xpassed': 'XPASS'}
+    _W = 80
+
+    def _sep(ch, title=None):
+        # pytest's terminal separator: a title centred in a full-width rule.
+        if not title:
+            return ch * _W
+        text = ' ' + title + ' '
+        if len(text) >= _W:
+            return text
+        left = (_W - len(text)) // 2
+        return ch * left + text + ch * (_W - len(text) - left)
+
+    def _progress_tail(ctl):
+        return '[%3d%%]' % ctl.get('pct', 100)
+
+    def _flush_progress(write, ctl):
+        # Close the in-flight progress line with its right-aligned [ nn%].
+        if ctl.get('col'):
+            tail = _progress_tail(ctl)
+            write(' ' * max(1, _W - ctl['col'] - len(tail)) + tail + _NL)
+            ctl['col'] = 0
+
+    def _reason_of(r):
+        # The one-line reason pytest puts after the nodeid in the short summary.
+        txt = (r.longrepr or '').strip()
+        if not txt:
+            return ''
+        lines = [ln for ln in txt.splitlines() if ln.strip()]
+        elines = [ln for ln in lines if ln.lstrip().startswith('E ')]
+        pick = (elines[0] if elines else lines[-1]).strip()
+        if pick.startswith('E '):
+            pick = pick[2:].strip()
+        return (' - ' + pick) if pick else ''
 
     def _run_one(nodeid, func, cls, pkwargs, marks, fm, src, fixparams=None):
         r = _Result(nodeid)
@@ -1357,23 +1391,32 @@ def __vis_install_pytest_compat__():
             fm.teardown('function')
         return r
 
-    def _summary(results, write, elapsed, deselected=0):
+    def _summary(results, write, elapsed, deselected=0, ctl=None):
+        if ctl is not None:
+            _flush_progress(write, ctl)
         counts = {}
         for r in results:
             counts[r.outcome] = counts.get(r.outcome, 0) + 1
         fails = [r for r in results if r.outcome in ('failed', 'error')]
         if fails:
-            write(_NL + _NL + '=' * 26 + ' FAILURES ' + '=' * 26 + _NL)
+            write(_NL + _sep('=', 'FAILURES') + _NL)
             for r in fails:
-                title = ' ' + r.nodeid + ' '
-                pad = max(0, (62 - len(title)) // 2)
-                write(_NL + '_' * pad + title + '_' * pad + _NL)
+                write(_sep('_', r.nodeid) + _NL)
                 write(r.longrepr + _NL)
-        skips = [r for r in results if r.outcome == 'skipped' and r.longrepr]
-        if skips:
-            write(_NL + '------- skipped -------' + _NL)
-            for r in skips:
-                write(r.longrepr + _NL)
+        short = []
+        for r in fails:
+            short.append(('ERROR' if r.outcome == 'error' else 'FAILED') + ' ' + r.nodeid + _reason_of(r))
+        for r in results:
+            if r.outcome == 'skipped' and r.longrepr:
+                skiptxt = r.longrepr.strip()
+                if skiptxt.startswith('SKIPPED'):
+                    short.append(skiptxt.splitlines()[0].strip())
+                else:
+                    short.append('SKIPPED ' + r.nodeid + _reason_of(r))
+        if short:
+            write(_NL + _sep('=', 'short test summary info') + _NL)
+            for s in short:
+                write(s + _NL)
         order = ['failed', 'error', 'passed', 'skipped', 'xfailed', 'xpassed']
         label = {'failed': 'failed', 'error': 'errors', 'passed': 'passed', 'skipped': 'skipped', 'xfailed': 'xfailed', 'xpassed': 'xpassed'}
         parts = []
@@ -1383,9 +1426,7 @@ def __vis_install_pytest_compat__():
         if deselected:
             parts.append(str(deselected) + ' deselected')
         tail = (', '.join(parts) if parts else 'no tests ran') + ' in ' + ('%.2f' % elapsed) + 's'
-        line = ' ' + tail + ' '
-        pad = max(0, (62 - len(line)) // 2)
-        write(_NL + '=' * pad + line + '=' * pad + _NL)
+        write(_NL + _sep('=', tail) + _NL)
         return 1 if (counts.get('failed', 0) + counts.get('error', 0)) else 0
 
     def _discover_paths(paths):
@@ -1522,10 +1563,25 @@ def __vis_install_pytest_compat__():
                             continue
                         r = _run_one(full_id, func, cls, pkwargs, base_marks + casemarks, fm, src, dict(fmap, **indkw))
                         results.append(r)
+                        ctl['done'] = ctl.get('done', 0) + 1
+                        _tot = ctl.get('total') or ctl['done']
+                        ctl['pct'] = int(ctl['done'] * 100.0 / _tot)
                         if verbose:
-                            write(full_id + ' ' + r.outcome.upper() + _NL)
+                            _flush_progress(write, ctl)
+                            _left = full_id + ' ' + _VERB.get(r.outcome, r.outcome.upper())
+                            _tail = _progress_tail(ctl)
+                            write(_left + ' ' * max(1, _W - len(_left) - len(_tail)) + _tail + _NL)
                         else:
+                            _pref = full_id.split('::')[0] if '::' in full_id else '<block>'
+                            if _pref != ctl.get('prefix'):
+                                _flush_progress(write, ctl)
+                                ctl['prefix'] = _pref
+                                write(_pref + ' ')
+                                ctl['col'] = len(_pref) + 1
+                            elif ctl.get('col', 0) >= _W - 8:
+                                _flush_progress(write, ctl)
                             write(_CHAR.get(r.outcome, '?'))
+                            ctl['col'] = ctl.get('col', 0) + 1
                         if r.outcome in ('failed', 'error'):
                             ctl['nfail'] += 1
                             if ctl['maxfail'] and ctl['nfail'] >= ctl['maxfail']:
@@ -1602,10 +1658,18 @@ def __vis_install_pytest_compat__():
                 total += max(1, _n)
         _buf = []
         write = _buf.append
-        write(_NL + 'vis-pytest: collected ' + str(total) + ' item' + ('' if total == 1 else 's') + _NL + _NL)
+        write(_NL + _sep('=', 'test session starts') + _NL)
+        write('platform ' + sys.platform + ' -- Python ' + ('%d.%d.%d' % sys.version_info[:3]) + ', pytest-' + mod.__version__ + ', pluggy-1.5.0' + _NL)
+        try:
+            import os as _os
+            write('rootdir: ' + _os.getcwd() + _NL)
+        except Exception:
+            pass
+        write('collected ' + str(total) + ' item' + ('' if total == 1 else 's') + _NL + _NL)
         results = []
         t_start = time.time()
-        ctl = {'kexpr': kexpr, 'maxfail': maxfail, 'nfail': 0, 'deselected': 0, 'stop': False}
+        ctl = {'kexpr': kexpr, 'maxfail': maxfail, 'nfail': 0, 'deselected': 0, 'stop': False,
+               'total': total, 'done': 0, 'pct': 0, 'col': 0, 'prefix': None}
         for tests, fm, src in groups:
             if ctl['stop']:
                 break
@@ -1615,9 +1679,9 @@ def __vis_install_pytest_compat__():
             r.outcome = 'error'
             r.longrepr = 'ERROR collecting ' + fpath + _NL + _render_failure(_e, None)
             results.append(r)
-            write(_CHAR.get('error', 'E'))
+            _flush_progress(write, ctl)
         elapsed = time.time() - t_start
-        rc = _summary(results, write, elapsed, ctl['deselected'])
+        rc = _summary(results, write, elapsed, ctl['deselected'], ctl)
         mod._vis_last_deselected = ctl['deselected']
         sys.stdout.write(''.join(_buf))
         sys.stdout.flush()
@@ -1643,6 +1707,10 @@ def __vis_install_pytest_compat__():
     mod.exit = exit
     mod.importorskip = importorskip
     mod.main = main
+    # `vis python -m pytest ...` entry point. A shim module has no file and no
+    # loader, so runpy cannot execute it -- the host runner calls console_main
+    # (or main) with sys.argv[1:] instead, exactly like pytest's console script.
+    mod.console_main = main
     mod.FixtureRequest = FixtureRequest
     mod.ExceptionInfo = ExceptionInfo
     mod.OutcomeException = OutcomeException

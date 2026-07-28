@@ -10,7 +10,8 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
-            [com.blockether.vis.internal.foundation.surface-contract :as contract]))
+            [com.blockether.vis.internal.foundation.surface-contract :as contract]
+            [com.blockether.vis.internal.strutil :as strutil]))
 
 (defn- normalize-language
   [x]
@@ -405,7 +406,7 @@
 ;; Defensive: language results vary per pack, so every access is nil-safe.
 ;; =============================================================================
 
-(defn- fence [label s] (when (seq (str s)) (str (when label (str label ":\n")) "```\n" s "\n```")))
+(defn- fence [label s] (when (seq (str s)) (str (when label (str label ":\n")) (strutil/fenced s))))
 
 (defn- md-cell
   "Sanitize a value for ONE markdown table cell: escape `\\`/`|` and collapse every
@@ -706,7 +707,7 @@
   ([label s] (sect label s nil))
   ([label s lang]
    (let [s (str/trimr (str s))]
-     (when (seq s) (str "**" label "**\n```" (or lang "") "\n" s "\n```")))))
+     (when (seq s) (str "**" label "**\n" (strutil/fenced s lang))))))
 
 (defn- render-repl-eval-result
   "repl_eval → a collapsed/expanded op-card modeled on the GIT band (the REPL badge

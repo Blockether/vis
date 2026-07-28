@@ -1,15 +1,25 @@
 export interface WavRecording {
   stop: () => Promise<Blob>;
   cancel: () => Promise<void>;
+  /**
+   * Is the microphone STILL feeding this recording? False once the OS suspended
+   * the audio context or released the track. Backgrounding no longer ends a
+   * dictation on its own (see `UIBackgroundModes` below), so the app needs a way
+   * to ask, on return, whether capture actually survived the trip.
+   */
+  isCapturing: () => boolean;
 }
 
 export interface WavRecordingOptions {
   /**
-   * Fired ONCE when the OS takes the microphone away mid-recording: the app is
-   * backgrounded (iOS suspends the webview, so `onaudioprocess` simply stops),
-   * a call arrives, or another app claims the audio session. Whatever was said
-   * up to that point is still buffered — the caller decides what to do with it,
-   * but it must be told, because nothing else here ever fires again.
+   * Fired ONCE when the OS really takes the microphone away mid-recording: a
+   * call arrives, another app claims the audio session, or the recording hits
+   * its cap. Merely leaving the foreground is NOT one of these: the iOS target
+   * declares the `audio` background mode (`ios/App/App/Info.plist`), which is
+   * what keeps WKWebView's capture — and the JS that drains it — alive while the
+   * app is backgrounded or the screen is locked. Whatever was said up to the
+   * interruption is still buffered; the caller decides what to do with it, but
+   * it must be told, because nothing else here ever fires again.
    */
   onInterrupted?: (reason: string) => void;
 }
@@ -144,10 +154,11 @@ export async function startWavRecording(
     throw new Error('Microphone could not start — tap the mic again');
   }
 
-  // Interruption is SILENT: iOS suspends the context on backgrounding and the
-  // track goes muted when another app grabs the mic. No error, no event on the
-  // recorder — capture just stops while the UI still says "Listening…". These
-  // are the only signals that it happened.
+  // Interruption is SILENT: the context is suspended, or the track goes muted
+  // when another app grabs the mic. No error, no event on the recorder — capture
+  // just stops while the UI still says "Listening…". These are the only signals
+  // that it happened. With the `audio` background mode in place they should no
+  // longer fire merely because the app left the foreground.
   let interrupted = false;
   const interrupt = (reason: string) => {
     if (interrupted || closed) return;
@@ -186,5 +197,6 @@ export async function startWavRecording(
       return encodePcmWav(chunks, outputRate);
     },
     cancel: close,
+    isCapturing: () => !closed && !interrupted && context.state === 'running',
   };
 }

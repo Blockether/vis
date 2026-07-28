@@ -23,6 +23,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.git :as git]
+            [com.blockether.vis.internal.strutil :as strutil]
             [com.blockether.vis.internal.workspace :as workspace])
   (:import (java.io File)))
 
@@ -138,7 +139,7 @@
 (defn- fence
   "Wrap `s` in a code fence, or nil when blank."
   ([s] (fence s nil))
-  ([s lang] (when (seq (str s)) (str "```" (or lang "") "\n" s "\n```"))))
+  ([s lang] (when (seq (str s)) (strutil/fenced s lang))))
 
 (defn- section
   "One labeled git detail section, matching REPL/shell expanded cards."

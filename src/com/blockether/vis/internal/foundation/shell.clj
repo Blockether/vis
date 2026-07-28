@@ -49,7 +49,8 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.pty :as pty]
-            [com.blockether.vis.internal.foundation.pty-bridge :as pty-bridge])
+            [com.blockether.vis.internal.foundation.pty-bridge :as pty-bridge]
+            [com.blockether.vis.internal.strutil :as strutil])
   (:import (java.io File)
            (java.lang ProcessHandle)
            (java.util HashMap)
@@ -1307,7 +1308,7 @@ Gotcha: logs returns \"lines\" as plain STRINGS and NOTHING else carries that ta
   ([s] (fence s nil))
   ([s lang]
    (when-let [s (present-str (normalize-terminal-output s))]
-     (str "```" (or lang "") "\n" s "\n```"))))
+     (strutil/fenced s lang))))
 
 (defn- shell-section
   "One REPL-style labeled shell body section."

@@ -24,6 +24,18 @@ Keep only non-obvious project contracts here; inspect nearby source and tests fo
 - Use canonical type steps only: `text-chip`, `text-meta`, `text-ui`, `text-body`, `text-title`, `text-subhead`, `text-head`, `text-display`; no ad-hoc sizes or `leading-*`.
 - Verify with `npm run lint` and `npm run build` in `apps/vis-companion`.
 
+## Releasing the app ("release" = ship the companion to testers)
+
+All commands run in `apps/vis-companion`, in this order:
+
+1. **Commit (and push) first.** `scripts/release-notes.mjs` derives the build's TestFlight "What to Test" from git history *before* the archive exists, so an uncommitted fix ships in the binary but not in the notes. The build number is `git rev-list --count HEAD`, so committing after the archive also desynchronises the number.
+2. `npm run release:ios` — vite build → `cap sync ios` → stamp `App.xcodeproj` → `xcodebuild archive` → `-exportArchive` → upload to App Store Connect, then push the notes. `versionName` comes from `package.json` "version".
+3. `npm run release:testflight` — the upload only makes the build *exist*. This links it to the public external group and submits it to Beta App Review; without it the build is visible to the team only. Add `--no-review` when the group is already approved.
+
+- Android mirror: `npm run release:android -- --track beta` (Play open testing; `internal` is the default). It needs the stock JDK 21 exception described above.
+- Steps 2 (notes) and 3 need the App Store Connect API key in the macOS keychain service `vis-ios` (`asc_key_id`, `asc_key`, `asc_issuer_id`, `team_id`): `node scripts/secrets.mjs asc <AuthKey_XXXX.p8> --issuer <uuid> --team <id>`. Without the key `release:ios` still uploads through the Apple ID signed into Xcode, but notes and TestFlight distribution are skipped.
+- `apps/vis-companion/CHANGELOG.md` is the source of truth for notes and an existing entry is never regenerated — hand-edit it, then re-push with `npm run release:notes -- --build <number>`.
+
 ## Gateway wire contract
 
 - `gateway/wire.clj` is the deterministic boundary. Wire keys are snake_case strings; engine keys are mechanical kebab-case keyword mirrors.

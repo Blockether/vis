@@ -288,6 +288,12 @@ function reduceLiveEvent(turn: LiveTurn | null, event: SseEvent): LiveTurn | nul
     };
   }
   if (!turn) return turn;
+  // The terminal frame IS the end of the turn (same rule as the TUI). Anything that
+  // arrives after it — a trailing `activity`, a late `block.output`, a replayed
+  // progress frame — must never re-animate a settled bubble. Without this guard a
+  // post-terminal frame put the ticker back up ("Vis is running …") and repainted
+  // progress for work that had already finished.
+  if (turn.status !== 'running') return turn;
 
   if (type === 'content.block.delta') {
     const field = stringField(event, 'field');
@@ -532,6 +538,59 @@ function LoadingSession() {
       <span>&nbsp;&nbsp;Loading session…</span>
     </div>
   );
+}
+
+/**
+ * Composer-side liveness ticker.
+ *
+ * The transcript paints its own "Vis is thinking..." line at the END of the live
+ * bubble — which is exactly the strip the keyboard covers first. With the input
+ * open (the one moment you most want to know whether the turn is still going)
+ * there was NO signal at all. This rides the footer's own status row instead, so
+ * it is visible whatever the transcript is scrolled to, and it swaps in for the
+ * model chip rather than adding a row: the footer keeps a constant height, so a
+ * turn starting or ending never resizes the composer under the caret.
+ */
+function ComposerActivity({ phase, startedAt }: { phase: string; startedAt?: number }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 100);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const seconds = Math.max(0, Math.round((now - (startedAt ?? now)) / 1000));
+  const elapsed =
+    seconds < 60
+      ? `${seconds}s`
+      : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
+  const frame = LOADING_SPINNER_FRAMES[Math.floor(now / 100) % LOADING_SPINNER_FRAMES.length];
+
+  return (
+    <span
+      className="inline-flex min-w-0 shrink items-center gap-1.5 px-1 py-1 font-mono text-chip text-dialog-hint"
+      role="status"
+      aria-live="polite"
+      title={`${phase}...`}
+    >
+      <span aria-hidden="true" className="text-accent-ink motion-reduce:hidden">{frame}</span>
+      <span aria-hidden="true" className="hidden text-accent-ink motion-reduce:inline">●</span>
+      <span className="truncate">{phase}...</span>
+      <span className="shrink-0 tabular-nums opacity-70">{elapsed}</span>
+    </span>
+  );
+}
+
+/**
+ * iOS takes the keyboard down the instant focus leaves the field, and a button
+ * press IS a focus change: tapping a paste chip slid the whole shell down, then
+ * straight back up as the editor's textarea autofocused — two full keyboard
+ * animations for one tap, and the same again on the way out. Cancelling the
+ * mousedown default keeps focus (and the keyboard) exactly where it is until the
+ * next field claims it, so the flow is one still handover.
+ */
+function keepKeyboard(event: ReactMouseEvent<HTMLElement>) {
+  event.preventDefault();
 }
 
 // The session id is the durable handle a user pastes into `vis`/tools, so it is
@@ -805,6 +864,11 @@ export function SessionScreen({
   const settleUntilRef = useRef(0);
   const settleTimersRef = useRef<number[]>([]);
   const followingRef = useRef(true);
+  // A wake after a real absence owes the reader the newest turn, not the pixel
+  // they left on. The wake pins immediately, but the catch-up transcript lands
+  // one round trip later and grows the scroller under them — so the intent has
+  // to survive until that data arrives.
+  const resumePinRef = useRef(false);
   const showJumpRef = useRef(false);
   const liveTurnRef = useRef<LiveTurn | null>(null);
   // turn id -> the image bytes this device sent with it. A queued message drains
@@ -1153,6 +1217,10 @@ export function SessionScreen({
       if (nextTurns) {
         setTurns(nextTurns);
         setTurnsFresh(true);
+        // Turns that arrived while the app was away are exactly why the reader
+        // came back. Pin AFTER they render, or the wake's pin lands on the old
+        // height and the new tail sits below the fold.
+        if (resumePinRef.current) requestAnimationFrame(() => pinToEnd());
       }
       // Same reconcile for the queue: a `turn.queued`/`.deleted` frame dropped
       // by a suspended stream would otherwise leave the tray lying until the
@@ -1174,6 +1242,8 @@ export function SessionScreen({
         setLiveTurn(null);
         liveTurnRef.current = null;
       }
+      // Consumed either way: with no new turns the wake's own pin was enough.
+      resumePinRef.current = false;
     };
     // Never stack: each reconcile is two sequential round-trips (session +
     // transcript), so on a slow gateway a fixed 5s tick would overlap and pile
@@ -1192,9 +1262,18 @@ export function SessionScreen({
     // resume without firing a single DOM event). Force the multiplexed SSE
     // stream to reconnect so a silently frozen background socket does not sit
     // there forever, and drop a latch a suspended request left behind.
-    const stopWake = onWake(() => {
+    // Coming back from a glance at a notification, the place you were reading IS
+    // the answer. Coming back to a session you left hours ago, it is noise: the
+    // work moved on and the last thing you saw is buried. So a long absence
+    // returns to the end of the conversation, a short one does not.
+    const RESUME_AT_END_AFTER_MS = 60_000;
+    const stopWake = onWake(({ awayMs }) => {
       inflightSince = null;
       subscriptions.resync();
+      if (awayMs >= RESUME_AT_END_AFTER_MS) {
+        resumePinRef.current = true;
+        pinToEnd();
+      }
       void reconcile();
     });
     return () => {
@@ -1202,7 +1281,7 @@ export function SessionScreen({
       window.clearInterval(timer);
       stopWake();
     };
-  }, [client, sid, loadTranscript, subscriptions]);
+  }, [client, sid, loadTranscript, subscriptions, pinToEnd]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1337,27 +1416,35 @@ export function SessionScreen({
     finishVoiceRef.current = finishVoice;
   });
 
-  // Backgrounding is an END of dictation, not a pause: the suspended webview
-  // captures nothing and may never come back. Close the recording on every
-  // signal that the app is going away — the Capacitor one is the only reliable
-  // signal on iOS, the DOM ones cover the web build.
+  // Leaving the foreground is NOT the end of a dictation. iOS only suspends the
+  // webview — and with it `onaudioprocess` — when the app has no reason to keep
+  // running; the `audio` entry in `UIBackgroundModes` (ios/App/App/Info.plist) is
+  // that reason, and it is what lets WKWebView's capture survive backgrounding,
+  // the screen locking, and the phone going to sleep. So we let it run.
+  //
+  // Two nets remain. `pagehide` means the page itself is going away (web build,
+  // or a webview the OS tears down) — nothing survives that, so settle what was
+  // said into the composer draft, which IS persisted. And on the way back to the
+  // foreground we ask the recorder whether capture actually survived: if the OS
+  // took the mic anyway (a call, another app, an older iOS), finish here, in the
+  // foreground, where the transcription request can complete.
   useEffect(() => {
     if (voicePhase !== 'recording') return;
-    const finish = () => {
-      void finishVoiceRef.current({
-        notice: 'Dictation ended when the app went to the background — transcribing what was said.',
-      });
+    const finish = (notice: string) => {
+      void finishVoiceRef.current({ notice });
     };
-    const onHidden = () => {
-      if (document.visibilityState === 'hidden') finish();
+    const onPageHide = () => {
+      finish('Dictation ended when the app closed — transcribing what was said.');
     };
-    document.addEventListener('visibilitychange', onHidden);
-    window.addEventListener('pagehide', finish);
+    window.addEventListener('pagehide', onPageHide);
     let removed = false;
     let sub: { remove: () => void } | null = null;
     try {
       void App.addListener('appStateChange', ({ isActive }) => {
-        if (!isActive) finish();
+        if (!isActive) return;
+        if (recordingRef.current && !recordingRef.current.isCapturing()) {
+          finish('Dictation stopped while the app was away — transcribing what was said.');
+        }
       })
         .then((handle) => {
           if (removed) handle.remove();
@@ -1368,8 +1455,7 @@ export function SessionScreen({
       /* plugin unavailable */
     }
     return () => {
-      document.removeEventListener('visibilitychange', onHidden);
-      window.removeEventListener('pagehide', finish);
+      window.removeEventListener('pagehide', onPageHide);
       removed = true;
       sub?.remove();
     };
@@ -1685,7 +1771,12 @@ export function SessionScreen({
           shellHeightRef.current === null || Math.abs(shell - shellHeightRef.current) > 1;
         shellHeightRef.current = shell;
         if (previous !== null && previous !== height) {
-          if (!shellMoved) composerOnly = true;
+          // ...unless the reader is parked at the END. Those pixels come off the
+          // scroller's bottom edge, so the last streamed line slides under the
+          // grown composer and simply stays there: following is silently broken
+          // until the next chunk snaps the view back by the whole accumulated
+          // gap. Re-pin in the frame it grew — one line, not a leap.
+          if (!shellMoved) composerOnly = !followingRef.current;
           else if (!followingRef.current) {
             const limit = Math.max(0, box.scrollHeight - height);
             box.scrollTop = Math.max(0, Math.min(limit, box.scrollTop + (previous - height)));
@@ -1840,8 +1931,14 @@ export function SessionScreen({
   }
 
   function closePasteEditor() {
+    // Focus must travel INPUT -> INPUT. Unmounting the dialog first drops focus
+    // to <body>, iOS takes the keyboard down with its full animation, and the
+    // deferred composer focus drags it straight back up — the shell bounces
+    // twice for a plain cancel. Focus the composer while the dialog is STILL
+    // mounted and the keyboard is handed over without a frame of "nothing is
+    // focused"; `preventScroll` keeps the transcript where it is.
+    composerRef.current?.focus({ preventScroll: true });
     setEditingPaste(null);
-    window.requestAnimationFrame(() => composerRef.current?.focus());
   }
 
   function savePasteEdit() {
@@ -2377,7 +2474,15 @@ export function SessionScreen({
   // alive under a turn that ended. Once this session is no longer live, nothing
   // in the transcript is running: settle every row. Same rule as the TUI, which
   // treats the terminal frame — not the persisted status — as the end of a turn.
-  const turnsSettled = !running && !liveTurn;
+  // A live bubble that ALREADY settled (terminal frame in, persisted row not yet
+  // fetched) is not work in flight: treating it as such kept every persisted
+  // 'running' row spinning with its elapsed clock until the refetch landed.
+  const turnsSettled = !running && (!liveTurn || liveTurn.status !== 'running');
+  // What the composer may advertise as in-flight. `running` on its own is a latch:
+  // set optimistically at submit, cleared by the terminal frame or the 5s
+  // reconcile. Pairing it with the bubble's own status means a settled turn can
+  // never leave a spinner and a growing elapsed counter in the footer.
+  const activeWork = running && (!liveTurn || liveTurn.status === 'running');
   const turnRows = useMemo(
     () =>
       visibleTurns.map((turn, index) => {
@@ -2546,6 +2651,7 @@ export function SessionScreen({
               <button
                 type="button"
                 className="grid min-h-10 min-w-10 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
+                onMouseDown={keepKeyboard}
                 onClick={closePasteEditor}
                 aria-label="Close paste editor"
               >
@@ -2570,6 +2676,7 @@ export function SessionScreen({
               <button
                 type="button"
                 className="min-h-9 border border-dialog-edge px-3 text-ui text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err focus-visible:outline-none"
+                onMouseDown={keepKeyboard}
                 onClick={closePasteEditor}
               >
                 Cancel
@@ -2577,6 +2684,7 @@ export function SessionScreen({
               <button
                 type="button"
                 className="min-h-9 border border-accent bg-accent px-3 text-ui text-accent-foreground transition-colors hover:bg-accent/85 focus-visible:outline-none"
+                onMouseDown={keepKeyboard}
                 onClick={savePasteEdit}
               >
                 Save
@@ -2868,6 +2976,7 @@ export function SessionScreen({
                   <button
                     type="button"
                     className="max-w-56 truncate px-2 text-left underline decoration-dotted underline-offset-2 transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none"
+                    onMouseDown={keepKeyboard}
                     onClick={() => openPasteEditor(paste.id)}
                     aria-label={`Edit pasted block ${paste.id}`}
                     title="Edit this paste"
@@ -2877,6 +2986,7 @@ export function SessionScreen({
                   <button
                     type="button"
                     className="grid min-h-7 w-7 place-items-center border-l border-code-edge text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err"
+                    onMouseDown={keepKeyboard}
                     onClick={() => removePaste(paste.id)}
                     aria-label={`Remove pasted block ${paste.id}`}
                   >
@@ -3054,32 +3164,39 @@ export function SessionScreen({
               }}
             />
 
-            {(!running || !!(prompt.trim() || attachments.length)) && (
-              <button
-                type="button"
-                className="grid size-8 shrink-0 place-items-center border border-dialog-edge bg-dialog-title text-ui font-bold text-dialog-title-foreground transition-[background-color,color,transform,translate,scale,rotate] duration-150 hover:bg-accent-2 active:scale-[0.94] disabled:scale-100 disabled:bg-button disabled:text-dialog-hint motion-reduce:transition-none sm:size-7"
-                onClick={send}
-                disabled={(!prompt.trim() && !attachments.length) || voicePhase !== 'idle'}
-                aria-label={running ? 'Queue message' : 'Send message'}
-                title={running ? 'Queue behind the running turn' : 'Send'}
-              >
-                {'↑'}
-              </button>
-            )}
-            {/* The stop affordance retires the moment the cancel is accepted: the
-                live bubble then carries the single "Vis is cancelling" line, and
-                the finished turn carries "Cancelled by user." — one state at a
-                time, never a button offering to cancel a cancel. */}
-            {running && !liveTurn?.cancelling && (
-              <button
-                type="button"
-                className="grid size-8 shrink-0 place-items-center border border-err bg-cancelled transition-[background-color,transform,translate,scale,rotate] duration-150 hover:bg-warn-surface active:scale-[0.94] motion-reduce:transition-none sm:size-7"
-                onClick={cancel}
-                aria-label="Stop response"
-              >
-                <span className="size-1.5 bg-err" />
-              </button>
-            )}
+            {/* The action rail keeps a CONSTANT footprint. Send and stop used to
+                mount and unmount independently, so starting a turn, typing during
+                one, or a turn simply ending resized the textarea under the caret.
+                Both squares are always laid out; only the stop button's contents
+                come and go.
+
+                The stop affordance still retires the moment the cancel is
+                accepted: the live bubble then carries the single "Vis is
+                cancelling" line, and the finished turn carries "Cancelled by
+                user." — one state at a time, never a button offering to cancel a
+                cancel. */}
+            <div className="grid size-8 shrink-0 place-items-center sm:size-7">
+              {activeWork && !liveTurn?.cancelling && (
+                <button
+                  type="button"
+                  className="grid size-full place-items-center border border-err bg-cancelled transition-[background-color,opacity,transform,translate,scale,rotate] duration-150 hover:bg-warn-surface active:scale-[0.94] starting:scale-90 starting:opacity-0 motion-reduce:transition-none"
+                  onClick={cancel}
+                  aria-label="Stop response"
+                >
+                  <span className="size-1.5 bg-err" />
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              className="grid size-8 shrink-0 place-items-center border border-dialog-edge bg-dialog-title text-ui font-bold text-dialog-title-foreground transition-[background-color,color,transform,translate,scale,rotate] duration-150 hover:bg-accent-2 active:scale-[0.94] disabled:scale-100 disabled:bg-button disabled:text-dialog-hint motion-reduce:transition-none sm:size-7"
+              onClick={send}
+              disabled={(!prompt.trim() && !attachments.length) || voicePhase !== 'idle'}
+              aria-label={running ? 'Queue message' : 'Send message'}
+              title={running ? 'Queue behind the running turn' : 'Send'}
+            >
+              {'↑'}
+            </button>
           </div>
         </div>
 
@@ -3088,6 +3205,12 @@ export function SessionScreen({
             then cost) rides the RIGHT edge. The chip truncates first so the
             numbers survive a narrow phone. */}
         <div className="flex w-full items-center gap-2 pt-1">
+          {activeWork ? (
+            <ComposerActivity
+              phase={liveTurn ? liveProgressPhase(liveTurn) : 'Vis is working'}
+              startedAt={liveTurn?.startedAt}
+            />
+          ) : (
           <button
             type="button"
             className="group inline-flex min-w-0 shrink items-center gap-1.5 px-1 py-1 font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none"
@@ -3103,6 +3226,7 @@ export function SessionScreen({
             <span className="truncate">{modelPref?.model ?? defaultPref?.model ?? 'model'}</span>
             <span aria-hidden="true" className="opacity-40 transition-opacity duration-150 group-hover:opacity-100 motion-reduce:transition-none">▾</span>
           </button>
+          )}
 
           {(usageTokens || usageCost) && (
             <span

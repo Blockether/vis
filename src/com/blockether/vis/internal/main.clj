@@ -3141,11 +3141,15 @@
 (defn- python-program-plan
   "Given the args from the program selector onward, return the run plan:
    `-c CODE …` → `{:mode :code :code CODE :argv [\"-c\" …trailing]}`,
+   `-m MOD …`  → `{:mode :module :module MOD :argv [MOD …trailing]}`,
    `- …`       → `{:mode :stdin :argv [\"-\" …trailing]}`,
    `FILE …`    → `{:mode :file :file FILE :argv [FILE …trailing]}`.
-   Trailing tokens ride into `argv` verbatim (CPython semantics)."
+   Trailing tokens ride into `argv` verbatim (CPython semantics; for `-m` the
+   module name takes the `argv[0]` slot, as CPython puts the module there)."
   [prog]
   (cond (= "-c" (first prog)) {:mode :code :code (second prog) :argv (into ["-c"] (drop 2 prog))}
+        (= "-m" (first prog))
+        {:mode :module :module (second prog) :argv (into [(or (second prog) "-m")] (drop 2 prog))}
         (= "-" (first prog)) {:mode :stdin :argv (vec prog)}
         :else {:mode :file :file (first prog) :argv (vec prog)}))
 
@@ -3192,6 +3196,58 @@
                 {:network? network? :inherit-env? inherit-env? :env-overrides env-overrides}
                 (if (empty? prog) {:mode :interactive :argv []} (python-program-plan prog))))))))
 
+(def ^:private python-module-runner-src
+  "Python helper installed for `vis python -m MODULE`.
+
+   Real CPython drives `-m` through `runpy`, which needs a loader that can hand
+   back module CODE. Sandbox shims are synthesised `types.ModuleType` objects
+   (no file, no loader), so `runpy` can never run them -- for those the console
+   entry point (`console_main`/`main`, called with `sys.argv[1:]`) IS the module's
+   `__main__`. Everything else (real stdlib modules and packages on disk) falls
+   through to `runpy` with CPython semantics."
+  "import sys as _sys
+
+def __vis_run_module__(name):
+    import importlib, runpy
+    mod = None
+    try:
+        mod = importlib.import_module(name)
+    except ImportError:
+        mod = None
+    if mod is not None and getattr(mod, '__file__', None) is None:
+        entry = getattr(mod, 'console_main', None) or getattr(mod, 'main', None)
+        if callable(entry):
+            try:
+                rc = entry(_sys.argv[1:])
+            except SystemExit as _e:
+                rc = _e.code
+            return 0 if rc is None else (rc if isinstance(rc, int) else 1)
+    try:
+        runpy.run_module(name, run_name='__main__', alter_sys=True)
+        return 0
+    except SystemExit as _e:
+        return 0 if _e.code is None else (_e.code if isinstance(_e.code, int) else 1)
+    except ImportError:
+        _sys.stdout.write('vis python: No module named ' + str(name) + chr(10))
+        return 1
+")
+
+(defn- run-python-module!
+  "Run `MODULE` as `__main__` in `ctx` (`vis python -m MODULE`), rendering its
+   output to the real terminal. Returns the module's exit code."
+  [ctx module]
+  (if (str/blank? module)
+    (do (stdout! "vis python -m requires a MODULE argument.") 2)
+    (let
+      [{:keys [stdout result error]}
+       (env/run-python-block
+         ctx
+         (str python-module-runner-src "\n__vis_run_module__(" (pr-str module) ")\n"))]
+      (when (seq stdout) (write-stdout! stdout))
+      (cond error (do (stdout! (or (:message error) (pr-str error))) 1)
+            (integer? result) (int result)
+            :else 0))))
+
 (defn- cli-python!
   "`vis python` -- run code in the embedded GraalPy sandbox (all shims, no tool
    bindings). Modes: `-c CODE` (run a string), `FILE.py` (run a file), `-` or
@@ -3202,7 +3258,7 @@
   [_parsed residual]
   (config/init-cli!)
   (let
-    [{:keys [network? inherit-env? env-overrides mode code file argv]}
+    [{:keys [network? inherit-env? env-overrides mode code file module argv]}
      (parse-python-cli-args residual)
 
      env
@@ -3227,6 +3283,9 @@
          (if (.isFile f)
            (run-python-source! ctx (slurp f))
            (do (stdout! (str "vis python: no such file: " file)) 2)))
+
+       :module
+       (run-python-module! ctx module)
 
        :interactive
        (if (some? (System/console))
@@ -3288,8 +3347,9 @@
      :cmd/subcommands #(registry/registered-under ["gateway"])}
     {:cmd/name "python"
      :cmd/doc "Run code in the embedded GraalPy sandbox (all shims, no tool bindings)."
-     :cmd/usage "vis python [OPTS] [-c CODE | FILE.py | -] [ARG...]"
+     :cmd/usage "vis python [OPTS] [-c CODE | -m MODULE | FILE.py | -] [ARG...]"
      :cmd/examples ["vis python -c \"import requests; print(requests.__version__)\""
+                    "vis python -m pytest tests/ -q   # module run as __main__"
                     "vis python script.py --flag foo   # ARGs land in sys.argv"
                     "vis python -c \"import os; print(os.environ['HOME'])\"   # env inherited"
                     "vis python --no-env -c \"import os; print(dict(os.environ))\"   # scrubbed"

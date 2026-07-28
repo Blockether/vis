@@ -30,6 +30,16 @@ const STALE_POLL_MS = 20_000;
 const ROW_WINDOW = 24;
 const ROW_WINDOW_STEP = 40;
 
+// Same frames as the session transcript's spinner and the TUI's
+// `paint-content-loading!` — one vocabulary for "working" across the product.
+const SKELETON_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+// Two placeholder projects with ragged title widths: an even grid reads as a
+// rendered table, a ragged one reads as text that has not arrived yet.
+const SKELETON_GROUPS = [
+  ['w-3/5', 'w-2/5', 'w-1/2'],
+  ['w-1/2', 'w-2/3'],
+];
+
 
 interface Props {
   active: GatewayConn | null;
@@ -345,13 +355,9 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
   if (loadError) return null;
 
   return (
-    <section className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col pb-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:pb-6 sm:pt-6">
+    <section aria-label="Sessions" className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col pb-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:pb-6 sm:pt-6">
       <div className="flex h-full min-h-0 flex-col overflow-hidden border-y border-dialog-edge bg-panel sm:border">
-        <header className="relative flex min-h-9 items-center justify-center bg-dialog-title px-4 py-1.5 text-dialog-title-foreground sm:min-h-8">
-          <h1 className="truncate font-mono text-ui font-black uppercase tracking-[0.1em]">Session navigator</h1>
-        </header>
-
-        <div className="border-t border-dialog-edge bg-panel-2 px-3 py-2.5 sm:px-4 sm:py-3">
+        <div className="bg-panel-2 px-3 py-2.5 sm:px-4 sm:py-3">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="font-mono text-body font-bold text-white">Projects</p>
@@ -714,16 +720,46 @@ const SessionRow = memo(function SessionRow({
   );
 });
 
+// The list has nothing to paint yet. The previous skeleton was drawn in panel
+// tints — and `--panel2` EQUALS `--surface` in the shipped themes (light: both
+// #faf3eb), so it rendered as three invisible boxes: the screen read as a blank
+// hole rather than as work in progress. Placeholder bars therefore use
+// `--color-muted`, a mid grey that separates from every gateway surface, and the
+// Braille spinner says it in words — the same one the session transcript and the
+// TUI use, so "busy" looks identical everywhere.
 function NavigatorSkeleton() {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 100);
+    return () => window.clearInterval(timer);
+  }, []);
+  const frame = SKELETON_SPINNER_FRAMES[Math.floor(now / 100) % SKELETON_SPINNER_FRAMES.length];
   return (
-    <div className="animate-pulse motion-reduce:animate-none" aria-label="Loading sessions">
-      {[0, 1].map((index) => (
-        <div key={index} className="border-t border-dialog-edge first:border-t-0">
-          <div className="h-11 bg-panel-2" />
-          <div className="h-12 border-t border-dialog-edge" />
-          <div className="h-12 border-t border-dialog-edge" />
-        </div>
-      ))}
+    <div role="status" aria-live="polite" aria-label="Loading sessions">
+      <div className="flex items-center gap-2 border-t border-dialog-edge px-3 py-2.5 font-mono text-ui text-dialog-hint sm:px-4">
+        <span aria-hidden className="text-accent-ink motion-reduce:hidden">{frame}</span>
+        <span aria-hidden className="hidden text-accent-ink motion-reduce:inline">●</span>
+        <span>Loading sessions…</span>
+      </div>
+      <div className="animate-pulse motion-reduce:animate-none" aria-hidden="true">
+        {SKELETON_GROUPS.map((rows, group) => (
+          <div key={group} className="border-t border-dialog-edge">
+            <div className="flex min-h-9 items-center gap-2 bg-panel-2 px-3 sm:px-4">
+              <span className="h-2 w-28 bg-muted/40" />
+              <span className="ml-auto h-2 w-10 bg-muted/25" />
+            </div>
+            {rows.map((width, row) => (
+              <div key={row} className="border-t border-dialog-edge px-3 py-3 sm:px-4">
+                <div className="flex items-center gap-2">
+                  <span className="size-1.5 shrink-0 bg-muted/40" />
+                  <span className={`h-2.5 bg-muted/30 ${width}`} />
+                </div>
+                <span className="mt-2 ml-3.5 block h-1.5 w-1/3 bg-muted/20" />
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

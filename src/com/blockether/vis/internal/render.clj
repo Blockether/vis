@@ -11,7 +11,8 @@
   (:require [clojure.string :as str]
             [clojure+.walk :as cwalk]
             [com.blockether.ruff :as ruff]
-            [com.blockether.vis.internal.persistance :as persistance])
+            [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.strutil :as strutil])
   (:import [org.commonmark.ext.gfm.strikethrough Strikethrough StrikethroughExtension]
            [org.commonmark.ext.gfm.tables TableBlock TableCell TablesExtension]
            [org.commonmark.node BlockQuote BulletList Code Emphasis FencedCodeBlock HardLineBreak
@@ -1246,7 +1247,7 @@
                src
                (raw-body node)]
 
-              (str "```" (or lang "") "\n" src "\n```\n\n"))
+              (str (strutil/fenced src lang) "\n\n"))
 
             :ul
             (str (render-md-list :ul children opts) "\n")

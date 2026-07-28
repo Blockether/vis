@@ -1150,7 +1150,7 @@
         ;; No summary → the tool name alone still beats a bare id.
         (expect (str/includes? out "ntr[\"toolu_B\"] cat;"))
         ;; Capped list, and the overflow browses the store the same labelled way.
-        (expect (str/includes? out "; +2 more via ntr.describe()"))
+        (expect (str/includes? out " · IMPORTANT 2 more folded results stay recoverable"))
         (expect (not (str/includes? out "toolu_G")))))
   (it "a long label is truncated instead of drowning the breadcrumb"
       (let
@@ -1184,9 +1184,25 @@
         ;; `~67% of budget` qualifies the `saved …` it follows, so the pair
         ;; stays on ONE bullet instead of stranding a bare percentage.
         (expect (= (str "\nbigger task\n\n" "- **saved** ~60k tokens · ~67% of budget\n"
-                        "- **context** 94% (90k/96k tokens)\n" "- **recover** `ntr[\"toolu_A\"]`")
+                        "- **context** 94% (90k/96k tokens)\n"
+                        "- **recover** one stored native result each, no re-run:\n"
+                        "  - `ntr[\"toolu_A\"]`")
                    (:body card)))
         (expect (not (str/includes? (:body card) "```")))))
+  (it "a tilde in an accessor label can't strike out the breadcrumb"
+      ;; ONE tilde opens GFM strikethrough and tool gists are full of `~/vis/…`
+      ;; paths, so every label is monospaced — and each accessor gets its own
+      ;; line instead of one unwrappable run-on.
+      (let
+        [card (session-fold-card
+                (str "folded t1/i1 · recover ntr[\"toolu_A\"] shell: $ bash -n ~/vis/bin/vis; "
+                     "ntr[\"toolu_B\"] cat"
+                     " · IMPORTANT 3 more folded results stay recoverable"))]
+        (expect (str/includes? (:body card)
+                               "\n  - `ntr[\"toolu_A\"]` `shell: $ bash -n ~/vis/bin/vis`"))
+        (expect (str/includes? (:body card) "\n  - `ntr[\"toolu_B\"]`"))
+        (expect (str/includes? (:body card)
+                               "- **IMPORTANT** 3 more folded results stay recoverable"))))
   (it "a gist-less fold still renders its metrics as wrapping bullets"
       (let
         [card (session-fold-card "folded t1/i1 · saved ~0 tokens · context 44% (42k/96k tokens)")]

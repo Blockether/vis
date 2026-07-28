@@ -131,7 +131,17 @@
       (let [p (parse-python-cli-args [])]
         (expect (= :interactive (:mode p)))
         (expect (true? (:network? p)))
-        (expect (true? (:inherit-env? p))))))
+        (expect (true? (:inherit-env? p)))))
+  (it "-m forwards the module as argv[0] with trailing args after it"
+      (let [p (parse-python-cli-args ["-m" "pytest" "tests/" "-q"])]
+        (expect (= :module (:mode p)))
+        (expect (= "pytest" (:module p)))
+        (expect (= ["pytest" "tests/" "-q"] (:argv p)))))
+  (it "-m with no module name still parses (module blank, runner rejects later)"
+      (let [p (parse-python-cli-args ["-m"])]
+        (expect (= :module (:mode p)))
+        (expect (nil? (:module p)))
+        (expect (= ["-m"] (:argv p))))))
 
 (defdescribe python-cli-env-overrides-test
              (it "parses K=V, bare K (empty), and keeps later = in the value"

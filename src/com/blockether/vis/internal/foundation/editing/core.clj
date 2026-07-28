@@ -48,6 +48,7 @@
             [com.blockether.vis.internal.git :as git]
             [com.blockether.vis.internal.gitignore :as gitignore]
             [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.strutil :as strutil]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture])
   (:import (com.github.difflib DiffUtils UnifiedDiffUtils)
@@ -4520,21 +4521,6 @@
   [p]
   (paths/abbreviate-home p))
 
-(defn- code-fence-delimiter
-  "Markdown fence delimiter (a backtick run) longer than any backtick run in
-   `body`. A file's own content or a unified diff of it can carry Markdown
-   fences — editing/reading `configuration.md` (which shows ```diff examples)
-   produces a diff whose context lines include a bare ``` closing fence. A fixed
-   triple-backtick wrapper is then ambiguous and closes early, so the rest of
-   the body renders as prose. CommonMark permits longer fences; pick the
-   shortest safe one."
-  [body]
-  (let
-    [max-run (->> (re-seq #"`+" (str body))
-                  (map count)
-                  (reduce max 0))]
-    (apply str (repeat (max 3 (inc (long max-run))) "`"))))
-
 (defn- render-ls-result
   "cat-on-directory → `{:summary :body}`: the summary is the dir path + entry
    count; the body lists entries one per row, `name/` for subdirs, two-space
@@ -4565,8 +4551,7 @@
 
     {:summary (str "`" (disp-path (get r "path")) "/` · " n " " (if (= 1 n) "entry" "entries"))
      :body (when (seq entries)
-             (let [fence (code-fence-delimiter body)]
-               (str "\n" fence "\n" body "\n" fence)))}))
+             (str "\n" (strutil/fenced body)))}))
 
 (defn- render-cat-result
   "cat → `{:summary :body}`: the summary is the path + the LINE SPANS read +
@@ -4660,10 +4645,10 @@
                  [joined
                   (str/join "\n" rows)
 
-                  fence
-                  (code-fence-delimiter joined)]
+                  fenced
+                  (strutil/fenced joined lang)]
 
-                 (str "\n" fence (or lang "") "\n" joined "\n" fence)))})))
+                 (str "\n" fenced)))})))
 
 (defn- render-exists-result
   "file_exists → `{:summary}` only (no body): the path + presence mark. `r` is
@@ -4883,8 +4868,7 @@
                               (for [{:strs [path changed diff]} summaries]
                                 (let
                                   [diff-block (when (and changed (seq (str diff)))
-                                                (let [fence (code-fence-delimiter diff)]
-                                                  (str fence "diff\n" diff "\n" fence)))]
+                                                (strutil/fenced diff "diff"))]
                                   (if (= n 1)
                                     (or diff-block "")
                                     (str "`" (disp-path path)
@@ -4973,13 +4957,14 @@
          [ordered (sort-by (comp rg-anchor-lineno-long key) hits)
           width (hit-gutter-width hits)
           kept (take grep-card-max-hits-per-file ordered)
-          extra (max 0 (- (count ordered) (count kept)))]
+           extra (max 0 (- (count ordered) (count kept)))
 
-         (str (md-inline-code (disp-path (kw->str path)))
-              "\n\n```\n"
-              (str/join "\n" (file-hit-rows needles width kept))
-              (when (pos? extra) (str "\n  … +" extra " more hit" (when (not= 1 extra) "s")))
-              "\n```")))
+           hits (str (str/join "\n" (file-hit-rows needles width kept))
+                     (when (pos? extra) (str "\n  … +" extra " more hit" (when (not= 1 extra) "s"))))]
+
+          (str (md-inline-code (disp-path (kw->str path)))
+               "\n\n"
+               (strutil/fenced hits))))
 
      body
      (str (when (seq blocks) (str "\n" (str/join "\n\n" blocks)))
@@ -5096,7 +5081,7 @@
         [sk (some-> (get r "skeleton")
                     kw->str
                     not-empty)]
-        {:summary (str (or loc "struct_index") win) :body (str "\n```\n" sk "\n```")}
+        {:summary (str (or loc "struct_index") win) :body (str "\n" (strutil/fenced sk))}
         {:summary (str (or loc "struct_index") " · no structural index" win)}))))
 
 (defn- render-occurrences-result
@@ -5250,7 +5235,7 @@
              kw->str)]
 
     {:summary (str (or kind "node") (when line (str " @" line (when eol (str ".." eol)))))
-     :body (when (seq txt) (str "\n```\n" txt "\n```"))}))
+     :body (when (seq txt) (str "\n" (strutil/fenced txt)))}))
 
 ;; -----------------------------------------------------------------------------
 ;; Conditional advertising — the tree-sitter structural editors are only useful
