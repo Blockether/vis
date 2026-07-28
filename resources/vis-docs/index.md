@@ -112,7 +112,7 @@ vis help
 
 **Needs:** `java` 21+, the [Clojure CLI](https://clojure.org/guides/install_clojure), and `git`. The installer checks for them and tells you what is missing. These are required to **run** Vis; the native build (below) is what removes the JVM dependency for daily use.
 
-**Update:** `vis update` does a fast-forward `git pull` of your source checkout, keeping you on the latest source. It does **not** fetch a binary.
+**Update:** `vis update` fetches and fast-forwards your source checkout, keeping you on the latest source. It does **not** fetch a binary. If your branch has diverged from its upstream (usually an upstream force-push) it prints how far each side moved and stops; `vis update --reset` then hard-resets onto the upstream and prints the old HEAD so `git reset --hard <sha>` can bring your commits back. With uncommitted changes it refuses either way — commit or stash first.
 
 ## Native or JVM?
 

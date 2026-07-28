@@ -199,3 +199,30 @@
            (catch clojure.lang.ExceptionInfo e
              (expect (= :vis.cli/unknown-toggle (:type (ex-data e))))
              (expect (true? (:vis/user-error (ex-data e))))))))
+
+(defdescribe
+  update-plan-test
+  (let [up {:upstream "origin/main"}]
+    (it "reports a missing upstream instead of pulling"
+        (expect (= :no-upstream (:action (#'main/update-plan {:upstream nil} {})))))
+    (it "does nothing when the branch matches its upstream"
+        (expect (= :up-to-date (:action (#'main/update-plan (merge up {:ahead 0 :behind 0}) {})))))
+    (it "does not pull when the branch is only ahead"
+        (expect (= :ahead-only (:action (#'main/update-plan (merge up {:ahead 2 :behind 0}) {})))))
+    (it "fast-forwards when the branch is only behind"
+        (expect (= :fast-forward
+                   (:action (#'main/update-plan (merge up {:ahead 0 :behind 3}) {})))))
+    (it "asks before discarding local commits on diverged history"
+        (expect (= :diverged-confirm
+                   (:action (#'main/update-plan (merge up {:ahead 1 :behind 2}) {})))))
+    (it "resets diverged history only once --reset authorises it"
+        (expect (= :diverged-reset
+                   (:action (#'main/update-plan (merge up {:ahead 1 :behind 2}) {:reset? true})))))
+    (it "refuses to reset over uncommitted changes even with --reset"
+        (expect (= :diverged-dirty
+                   (:action (#'main/update-plan
+                             (merge up {:ahead 1 :behind 2 :dirty? true})
+                             {:reset? true})))))
+    (it "renders the divergence sentence git itself prints"
+        (expect (= "Your branch and 'origin/main' have diverged, 1 and 2 commits each."
+                   (#'main/diverged-line "origin/main" {:ahead 1 :behind 2}))))))

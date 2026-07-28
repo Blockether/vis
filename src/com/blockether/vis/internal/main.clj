@@ -2945,27 +2945,164 @@
 
     {:exit (:exit result) :out (:out result) :err (:err result)}))
 
+(defn- git-line
+  "Trimmed stdout of a successful git command, or nil (non-zero exit or empty)."
+  [args dir]
+  (let [{:keys [exit out]} (process-result (into ["git"] args) dir)]
+    (when (zero? (long exit)) (not-empty (str/trim (or out ""))))))
+
+(defn- update-facts
+  "Post-fetch state of the checkout: tracking branch, ahead/behind counts
+   against it, and whether the working tree is dirty."
+  [root]
+  (let
+    [upstream
+     (git-line ["rev-parse" "--abbrev-ref" "--symbolic-full-name" "@{upstream}"] root)
+
+     counts
+     (when upstream (git-line ["rev-list" "--left-right" "--count" (str "HEAD..." upstream)] root))
+
+     [ahead behind]
+     (some->> counts
+              (re-seq #"\d+")
+              (mapv parse-long))]
+
+    {:branch (git-line ["rev-parse" "--abbrev-ref" "HEAD"] root)
+     :upstream upstream
+     :head (git-line ["rev-parse" "HEAD"] root)
+     :ahead (or ahead 0)
+     :behind (or behind 0)
+     :dirty? (boolean (git-line ["status" "--porcelain"] root))}))
+
+(defn- update-plan
+  "Pure decision for `vis update` from post-fetch facts. `:action` is one of
+   `:no-upstream`, `:up-to-date`, `:ahead-only`, `:fast-forward`,
+   `:diverged-dirty` (refuse), `:diverged-reset` (already authorised) or
+   `:diverged-confirm` (needs a y/N answer or `--reset`)."
+  [{:keys [upstream ahead behind dirty?]} {:keys [reset?]}]
+  (let
+    [ahead
+     (long (or ahead 0))
+
+     behind
+     (long (or behind 0))
+
+     base
+     {:ahead ahead :behind behind}]
+
+    (cond (nil? upstream) {:action :no-upstream}
+          (and (zero? ahead) (zero? behind)) (assoc base :action :up-to-date)
+          (zero? behind) (assoc base :action :ahead-only)
+          (zero? ahead) (assoc base :action :fast-forward)
+          dirty? (assoc base :action :diverged-dirty)
+          reset? (assoc base :action :diverged-reset)
+          :else (assoc base :action :diverged-confirm))))
+
+(defn- diverged-line
+  "The exact sentence git itself prints, so the report is recognisable."
+  [upstream {:keys [ahead behind]}]
+  (str "Your branch and '" upstream "' have diverged, " ahead " and " behind " commits each."))
+
+(defn- update-reset!
+  "Discard the local commits by moving the branch onto its upstream. The old
+   HEAD is printed first: `git reset --hard <sha>` puts the work back."
+  [root {:keys [upstream head]}]
+  (let [reset (process-result ["git" "reset" "--hard" upstream] root)]
+    (when-not (zero? (long (:exit reset)))
+      (throw (ex-info "git reset --hard failed"
+                      {:type :update/git-reset-failed :stderr (:err reset) :stdout (:out reset)})))
+    (stdout! (str/trim (or (:out reset) "")))
+    (when head (stdout! (str "Discarded commits stay reachable: git reset --hard " head)))))
+
+(defn- confirm-reset?
+  "Ask on the controlling terminal; no terminal means no consent."
+  [prompt]
+  (when-let [console (System/console)]
+    (.printf console "%s" (into-array Object [prompt]))
+    (let
+      [answer (some-> (.readLine console)
+                      str/trim
+                      str/lower-case)]
+      (contains? #{"y" "yes"} answer))))
+
 (defn- cli-update!
-  [_parsed _residual]
+  [parsed _residual]
   (config/init-cli!)
   (let [^java.io.File root (source-checkout-root)]
     (when-not (git-checkout? root)
       (throw (ex-info "Vis update requires a git source checkout"
                       {:type :update/not-git-checkout :path (.getPath root)})))
     (stdout! (str "Updating Vis source at " (.getPath root)))
-    (let
-      [fetch (process-result ["git" "fetch" "--tags" "origin"] root)
-       pull (when (zero? (long (:exit fetch))) (process-result ["git" "pull" "--ff-only"] root))]
-
+    (let [fetch (process-result ["git" "fetch" "--tags" "origin"] root)]
       (when-not (zero? (long (:exit fetch)))
         (throw (ex-info
                  "git fetch failed"
                  {:type :update/git-fetch-failed :stderr (:err fetch) :stdout (:out fetch)})))
-      (when-not (zero? (long (:exit pull)))
-        (throw (ex-info "git pull --ff-only failed"
-                        {:type :update/git-pull-failed :stderr (:err pull) :stdout (:out pull)})))
-      (stdout! (str/trim (or (:out pull) "")))
-      (stdout! "Vis update complete.")))
+      (let
+        [{:keys [branch upstream] :as facts} (update-facts root)
+         plan (update-plan facts {:reset? (boolean (get parsed "reset"))})
+         fast-forward! (fn []
+                         (let [pull (process-result ["git" "merge" "--ff-only" upstream] root)]
+                           (when-not (zero? (long (:exit pull)))
+                             (throw (ex-info "git merge --ff-only failed"
+                                             {:type :update/git-pull-failed
+                                              :stderr (:err pull)
+                                              :stdout (:out pull)})))
+                           (stdout! (str/trim (or (:out pull) "")))))
+         local-commits
+         (fn []
+           (when-let
+             [log (git-line ["log" "--oneline" "--max-count" "10" (str upstream "..HEAD")] root)]
+             (stdout! (str "Local commits not on " upstream ":\n" log))))]
+
+        (case (:action plan)
+          :no-upstream
+          (throw (ex-info (str "Branch '" branch "' has no upstream to update from")
+                          {:type :update/no-upstream :branch branch}))
+
+          :up-to-date
+          (stdout! (str "Already up to date with " upstream "."))
+
+          :ahead-only
+          (stdout!
+            (str "Nothing to pull: " (:ahead plan) " local commit(s) ahead of " upstream "."))
+
+          :fast-forward
+          (fast-forward!)
+
+          :diverged-dirty
+          (do (stdout! (diverged-line upstream plan))
+              (throw (ex-info
+                       (str (diverged-line upstream plan)
+                            " The working tree also has uncommitted changes:"
+                            " commit or stash them, then re-run `vis update --reset`"
+                            " to discard the "
+                            (:ahead plan)
+                            " local commit(s).")
+                       {:type :update/diverged-dirty :ahead (:ahead plan) :behind (:behind plan)})))
+
+          :diverged-reset
+          (do (stdout! (diverged-line upstream plan)) (local-commits) (update-reset! root facts))
+
+          :diverged-confirm
+          (do (stdout! (diverged-line upstream plan))
+              (local-commits)
+              (if (confirm-reset? (str "Reset "
+                                       branch
+                                       " to "
+                                       upstream
+                                       " and discard "
+                                       (:ahead plan)
+                                       " local commit(s)? [y/N] "))
+                (update-reset! root facts)
+                (throw (ex-info (str (diverged-line upstream plan)
+                                     " Working tree is clean, so this is most likely an upstream"
+                                     " force-push. Re-run `vis update --reset` to hard-reset onto "
+                                     upstream
+                                     " (the old HEAD stays recoverable via the reflog).")
+                                {:type :update/diverged
+                                 :ahead (:ahead plan)
+                                 :behind (:behind plan)}))))))))
   (shutdown-agents))
 
 (defn- cli-gateway-start!
@@ -3339,7 +3476,13 @@ def __vis_run_module__(name):
      :cmd/subcommands #(registry/registered-under ["extension"])}
     {:cmd/name "update"
      :cmd/doc "Update the source checkout used by this Vis installation."
-     :cmd/usage "vis update"
+     :cmd/usage "vis update [--reset]"
+     :cmd/args [{:name "reset"
+                 :kind :flag
+                 :type :boolean
+                 :doc (str "When history diverged (upstream force-push), hard-reset the branch"
+                           " onto its upstream, discarding local commits.")}]
+     :cmd/examples ["vis update" "vis update --reset"]
      :cmd/run-fn cli-update!}
     {:cmd/name "gateway"
      :cmd/doc "Start, inspect, or stop the long-lived gateway daemon."
