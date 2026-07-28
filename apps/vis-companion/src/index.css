@@ -253,6 +253,24 @@
 }
 
 @layer base {
+  /* A rotation re-lays out every line in the transcript, and anything with its
+     own clock then plays THROUGH that reflow: an entry keyframe fades a bubble
+     in from the portrait geometry while the landscape one is still settling, a
+     height transition chases a box that moved for a different reason, smooth
+     scrolling animates a correction that should be instant. The standard shell
+     fix is to kill motion for the duration of the flip and let the relayout be
+     a single jump. `data-rotating` is set on `html` by `lib/viewport.ts`
+     between the rotation `start` and `end` phases. */
+  html[data-rotating] *,
+  html[data-rotating] *::before,
+  html[data-rotating] *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@layer base {
   html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;

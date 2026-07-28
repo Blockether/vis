@@ -25,6 +25,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { parseUserMessage } from '../lib/paste';
 import { formatCost, formatTokens, turnUsage } from '../lib/usage';
+import { isViewportRotating, onViewportRotation } from '../lib/viewport';
 import type {
   ContentBlock,
   GatewayAttachment,
@@ -353,14 +354,18 @@ export const Markdown = memo(function Markdown({
   nested?: boolean;
 }) {
   // Justification is a WIDTH trade, not a taste one. Word-spacing is the only slack a
-  // justified line has, so the narrower the column the more each unbreakable atom (an
-  // inline `code` path, a URL) has to be paid for by stretching the few words that did
-  // fit — the rivers/holes that make a phone-width transcript unreadable. So: ragged
-  // right (with `text-pretty`, which also stops orphan last lines) up to `sm`, justified
-  // only from `sm` up where the measure is long enough to absorb it, and automatic
-  // hyphenation everywhere so the breaks are words, not gaps. Inside an already-framed
-  // tool card (`nested`) the column never gets wide enough, so the card stays ragged.
-  const runningText = nested ? '' : 'hyphens-auto text-pretty sm:text-justify';
+  // justified line has, so every unbreakable atom it cannot fit — an inline `code` path,
+  // a URL — is paid for by stretching the handful of words that did fit, which is where
+  // the rivers come from. The cure is not to stop justifying: it is to leave no atom
+  // unbreakable. Automatic hyphenation gives ordinary words legal break points
+  // (`hyphenate-limit-chars` keeps them from being silly two-letter ones), and `code`,
+  // links and the wrapper break anywhere, so a long path splits at the line edge instead
+  // of leaving a hole behind it. `text-pretty` still handles the last line. Inside an
+  // already-framed tool card (`nested`) the column is ~30 characters wide, which no
+  // amount of breaking rescues, so the card stays ragged.
+  const runningText = nested
+    ? ''
+    : 'hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty text-justify';
   return (
     <div className="min-w-0 break-words [&>:first-child]:mt-0 [&>:last-child]:mb-0">
       <ReactMarkdown
@@ -369,7 +374,7 @@ export const Markdown = memo(function Markdown({
           a: ({ children: label, ...props }) => (
             <a
               {...props}
-              className="font-medium text-link underline underline-offset-3 hover:text-link-hover"
+              className="font-medium text-link underline underline-offset-3 [overflow-wrap:anywhere] hover:text-link-hover"
               target="_blank"
               rel="noreferrer"
             >
@@ -906,6 +911,62 @@ function normalizeReasoning(value: string): string {
     .trim();
 }
 
+// Collapsed-height measurement for THINKING bands, batched across the whole
+// transcript.
+//
+// One `ResizeObserver` per band is the obvious shape and the wrong one here: a
+// rotation resizes EVERY band in the same frame, so the browser delivers N
+// callbacks, each doing `getComputedStyle` + `scrollHeight` (a forced
+// synchronous layout) followed by its own `setState`. A long session holds
+// dozens of them, and that read-write-read-write thrash is what makes the
+// transcript churn while the device is still turning.
+//
+// So: ONE observer for every band on screen, all measurements coalesced into a
+// single animation frame (one layout flush, one React batch), and nothing
+// measured while the viewport is mid-rotation — those widths are transitional
+// and every intermediate answer is thrown away anyway. The pending set survives
+// the skip and is replayed once, from settled geometry, when the flip ends.
+const bandMeasures = new WeakMap<Element, () => void>();
+const observedBands = new Set<Element>();
+const pendingBands = new Set<Element>();
+let bandFrame: number | null = null;
+let bandObserver: ResizeObserver | null = null;
+
+function flushBands() {
+  bandFrame = null;
+  if (isViewportRotating()) return;
+  const targets = [...pendingBands];
+  pendingBands.clear();
+  for (const band of targets) bandMeasures.get(band)?.();
+}
+
+function scheduleBands(bands: Iterable<Element>) {
+  for (const band of bands) pendingBands.add(band);
+  if (bandFrame !== null || typeof window === 'undefined') return;
+  bandFrame = window.requestAnimationFrame(flushBands);
+}
+
+function observeBand(band: Element, measure: () => void): () => void {
+  if (typeof ResizeObserver === 'undefined') return () => {};
+  bandMeasures.set(band, measure);
+  observedBands.add(band);
+  if (!bandObserver) {
+    bandObserver = new ResizeObserver((entries) =>
+      scheduleBands(entries.map((entry) => entry.target)),
+    );
+    onViewportRotation((phase) => {
+      if (phase === 'end') scheduleBands(observedBands);
+    });
+  }
+  bandObserver.observe(band);
+  return () => {
+    bandObserver?.unobserve(band);
+    observedBands.delete(band);
+    pendingBands.delete(band);
+    bandMeasures.delete(band);
+  };
+}
+
 export const ThinkingBand = memo(function ThinkingBand({ children }: { children: string }) {
   const normalized = normalizeReasoning(children);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -925,9 +986,7 @@ export const ThinkingBand = memo(function ThinkingBand({ children }: { children:
     };
 
     measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(body);
-    return () => observer.disconnect();
+    return observeBand(body, measure);
   }, [normalized]);
 
   // Collapsing is derived, not stored: a block with nothing hidden is never expanded.
@@ -1317,7 +1376,7 @@ export const UserMessage = memo(function UserMessage(
   return (
     <article className="mt-4 w-full [contain:layout_style]">
       <div className="mb-1 font-mono text-meta font-bold text-you-role">You</div>
-      <div className="inline-block max-w-full whitespace-pre-wrap break-words hyphens-auto border-l-2 border-you-role bg-code px-3 py-2 text-body text-pretty sm:text-justify text-you-message-foreground">
+      <div className="inline-block max-w-full whitespace-pre-wrap break-words hyphens-auto [hyphenate-limit-chars:6_3_3] border-l-2 border-you-role bg-code px-3 py-2 text-body text-pretty text-justify text-you-message-foreground">
         {parts.map((part) => part.type === 'text' ? (
           <span key={part.key}>{part.text}</span>
         ) : part.type === 'image' ? (

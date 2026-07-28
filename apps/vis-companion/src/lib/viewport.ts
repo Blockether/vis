@@ -121,6 +121,7 @@ function endRotation() {
   rotationGuard = null;
   if (!rotating) return;
   rotating = false;
+  document.documentElement.removeAttribute('data-rotating');
   emitRotation('end');
 }
 
@@ -153,6 +154,10 @@ function beginRotation() {
   // rotation; the second must extend the window, not restart the snapshot.
   if (!rotating) {
     rotating = true;
+    // Every clock in the app is stopped for the duration (see `index.css`): an
+    // entry keyframe or a height transition that keeps playing through the flip
+    // animates FROM the old geometry into the new one, which is the sloshing.
+    document.documentElement.setAttribute('data-rotating', '');
     emitRotation('start');
   }
   // rAF stalls in a hidden webview, so the loop above could never close the
