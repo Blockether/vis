@@ -950,6 +950,9 @@ export function SessionScreen({
   const disclosureScrollFrameRef = useRef<number | null>(null);
   const prependScrollHeightRef = useRef<number | null>(null);
   const scrollMetricsFrameRef = useRef<number | null>(null);
+  // A rotation has one terminal scroll write: keep observers and stale scroll
+  // events from competing with that write until it has landed.
+  const rotationRestorePendingRef = useRef(false);
   // Last measured height of the scroller itself, so a box that shrinks under a
   // parked reader can hand the lost pixels back (see the ResizeObserver below).
   const viewportHeightRef = useRef<number | null>(null);
@@ -1234,17 +1237,38 @@ export function SessionScreen({
     if (followingRef.current) scrollToEnd('auto');
   }, [scrollToEnd]);
 
-  // The snapshot is taken when the orientation flips and replayed on every
-  // settle, because the reflow arrives over several frames (composer autosize,
-  // re-wrapped code blocks, images) rather than in one.
-  useEffect(
-    () =>
-      onViewportRotation((phase) => {
-        if (phase === 'start') captureScrollAnchor();
-        else restoreScrollAnchor();
-      }),
-    [captureScrollAnchor, restoreScrollAnchor],
-  );
+  // Rotation is one transaction: snapshot before intermediate reflows, then wait
+  // two paint frames after the final viewport measurement before restoring once.
+  // `settle` is intentionally ignored; it only says the OS geometry is still in
+  // motion and replaying an anchor there makes the transcript jump.
+  useEffect(() => {
+    let firstFrame: number | null = null;
+    let finalFrame: number | null = null;
+    const stop = onViewportRotation((phase) => {
+      if (phase === 'start') {
+        rotationRestorePendingRef.current = true;
+        captureScrollAnchor();
+        return;
+      }
+      if (phase !== 'end') return;
+      if (firstFrame !== null) window.cancelAnimationFrame(firstFrame);
+      if (finalFrame !== null) window.cancelAnimationFrame(finalFrame);
+      firstFrame = window.requestAnimationFrame(() => {
+        firstFrame = null;
+        finalFrame = window.requestAnimationFrame(() => {
+          finalFrame = null;
+          restoreScrollAnchor();
+          rotationRestorePendingRef.current = false;
+        });
+      });
+    });
+    return () => {
+      stop();
+      if (firstFrame !== null) window.cancelAnimationFrame(firstFrame);
+      if (finalFrame !== null) window.cancelAnimationFrame(finalFrame);
+      rotationRestorePendingRef.current = false;
+    };
+  }, [captureScrollAnchor, restoreScrollAnchor]);
 
   // Pass the session's meta `row` and the transcript is re-read ONLY when that
   // row says a turn was persisted since the copy already on screen — a long
@@ -2026,14 +2050,10 @@ export function SessionScreen({
       // type. A shell-height change is the other story: the keyboard really does
       // eat the bottom of the conversation, so that case keeps its compensation.
       // A rotation resizes both observed boxes several times before the layout
-      // settles, and the compensation below is written for a keyboard: same
-      // width, same wrapping, only the bottom edge moved. Mid-flip none of that
-      // holds — the column re-wraps, so `scrollHeight` is a different number
-      // about different content — and nudging `scrollTop` per frame fights the
-      // rotation anchor (captured on `start`, replayed on every settle), which
-      // is what makes the transcript slosh. Keep the cache honest, do nothing
-      // else; the anchor owns the scroll position for the whole window.
-      if (isViewportRotating()) {
+      // settles. Those measurements belong to different geometries, so this
+      // keyboard-only compensation must not issue a competing scroll write. The
+      // rotation transaction restores its snapshot once after the final paint.
+      if (isViewportRotating() || rotationRestorePendingRef.current) {
         const box = scrollRef.current;
         if (box) viewportHeightRef.current = box.clientHeight;
         shellHeightRef.current = shellViewportHeight();
@@ -2675,8 +2695,12 @@ export function SessionScreen({
       scrollMetricsFrameRef.current = null;
       const viewport = scrollRef.current;
       if (!viewport) return;
-      // Inside the settle window the only scrolls are the ones we issued; a stale
-      // event delivered after the transcript grew must not cancel following.
+      // Rotation owns the scroll position through its terminal anchor restore.
+      // A stale scroll event from a reflow must not change following or overwrite
+      // the snapshot while that transaction is pending.
+      if (isViewportRotating() || rotationRestorePendingRef.current) return;
+      // Outside rotation, the opening/keyboard pin still owns its own delayed
+      // scroll events so they cannot be misread as a reader leaving the end.
       if (Date.now() <= settleUntilRef.current) {
         followingRef.current = true;
         if (showJumpRef.current) {
