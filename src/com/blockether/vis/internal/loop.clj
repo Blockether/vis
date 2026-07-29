@@ -1283,7 +1283,7 @@
    fallback) has ALREADY run by the time an exception escapes to the loop, so an
    error of these kinds is terminal by construction: fail the turn once, with the
    styled provider card, and let the user retry or switch provider."
-  #{:rate-limit :auth :billing :anthropic-extra-usage :resource-mismatch})
+  #{:rate-limit :auth :billing :anthropic-extra-usage :resource-mismatch :output-budget-too-small})
 
 (defn- non-correctable-provider-error?
   "True when this provider failure, or a bounded cause, has a kind in

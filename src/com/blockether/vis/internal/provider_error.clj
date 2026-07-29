@@ -81,6 +81,33 @@
                   (str/includes? text "top level")
                   (some #(str/includes? text %) ["oneof" "allof" "anyof"])))))
 
+(defn output-budget-too-small-error?
+  "True when a provider rejected the request because the OUTPUT-token budget it
+   was given is below that model's minimum — e.g. `gpt-5.6-terra` 400s on
+   `max_output_tokens: 8` but accepts `16`. Deterministic like a schema defect:
+   an unchanged retry fails identically, raising the configured floor fixes it."
+  [status message]
+  (let
+    [text (some-> message
+                  str/lower-case)]
+    (boolean (and text
+                  (= 400 status)
+                  (some #(str/includes? text %)
+                        ["max_output_tokens" "max output tokens" "max_tokens" "max tokens"])
+                  (re-find #"minimum|at least|too small|greater than or equal|>=|must be greater"
+                           text)))))
+
+(defn output-budget-minimum
+  "The minimum output-token count the provider NAMED in its rejection, when it
+   named one (`Expected a value >= 16`, `must be at least 16`). nil otherwise."
+  [message]
+  (some->
+    (re-find
+      #"(?i)(?:>=|greater than or equal to|at least|minimum(?:\s+value)?(?:\s+of|\s+is)?)\s*(\d+)"
+      (str message))
+    second
+    parse-long))
+
 (defn auth-provider-error?
   [status message wrapper-message]
   (let [text (str (or message "") "\n" (or wrapper-message ""))]
@@ -344,7 +371,10 @@
      (:tool-name data)
 
      schema-field
-     (:tool-schema-field data)]
+     (:tool-schema-field data)
+
+     output-budget-too-small?
+     (output-budget-too-small-error? status (str provider-message "\n" message))]
 
     (cond
       (context-overflow-error? err)
@@ -384,6 +414,13 @@
                                                                                   "input_schema")
                              "` — a schema defect, not an outage." (when (seq provider-message)
                                                                      (str " " provider-message)))
+      output-budget-too-small?
+      (str "WHAT HAPPENED: the provider rejected the request because the output-token budget "
+           "was below this model's minimum"
+           (when-let [minimum (output-budget-minimum (str provider-message "\n" message))]
+             (str " (it requires at least " minimum ")"))
+           " — a request defect, not an outage." (when (seq provider-message)
+                                                   (str " " provider-message)))
       (auth-provider-error? status provider-message message)
       (str "WHAT HAPPENED: the provider rejected your credentials."
            (when (seq provider-message) (str " " provider-message)))
@@ -456,6 +493,9 @@
         (str "Native tool schema rejected: " tool-name)
         "Native tool schema rejected")
 
+      :output-budget-too-small
+      "Output token budget too small"
+
       :auth
       "Provider authentication failed"
 
@@ -512,6 +552,10 @@
 
       :tool-schema
       "NEXT STEP: update Vis or disable the offending extension, then retry."
+
+      :output-budget-too-small
+      (str "NEXT STEP: raise `max_tokens`/`max_output_tokens` for this provider (its `extra_body` "
+           "in vis.yml) or drop the override, then retry — an unchanged retry fails identically.")
 
       :auth
       (auth-provider-next-step data)
@@ -604,6 +648,8 @@
           (empty-content-error? err) :empty-content
           (invalid-thinking-signature-message? provider-message) :invalid-thinking-signature
           schema-rejection? :tool-schema
+          (output-budget-too-small-error? status (str provider-message "\n" message))
+          :output-budget-too-small
           (auth-provider-error? status provider-message message) :auth
           (billing-required-error? status) :billing
           (anthropic-extra-usage-error? status provider-message message) :anthropic-extra-usage

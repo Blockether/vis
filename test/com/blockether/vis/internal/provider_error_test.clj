@@ -190,6 +190,36 @@
         (expect (some #{["Provider path" "tools.11.custom.input_schema"]}
                       (perr/provider-error-facts err))))))
 
+(defdescribe
+  output-budget-too-small-test
+  (let
+    [message
+     "Invalid 'max_output_tokens': integer below minimum value. Expected a value >= 16, but got 8 instead."
+
+     err
+     {:message "Exceptional status code: 400"
+      :data {:status 400 :body (str "{\"error\":{\"message\":\"" message "\"}}")}}]
+
+    (it "classifies the provider's output-token floor separately from an outage"
+        (expect (= :output-budget-too-small (perr/provider-error-kind err)))
+        (expect (= "Output token budget too small" (perr/provider-error-title err))))
+    (it "names the minimum the provider asked for and forbids an unchanged retry"
+        (expect (re-find #"at least 16" (perr/provider-error-explanation err)))
+        (expect (re-find #"request defect" (perr/provider-error-explanation err)))
+        (expect (re-find #"max_output_tokens" (perr/provider-error-next-step err)))
+        (expect (not (perr/provider-error-retryable? err))))
+    (it "does not hijack unrelated 400s or a max_tokens mention without a floor"
+        (expect (not= :output-budget-too-small
+                      (perr/provider-error-kind
+                        {:message "Exceptional status code: 400"
+                         :data {:status 400 :body "{\"error\":{\"message\":\"bad request\"}}"}})))
+        (expect (not (perr/output-budget-too-small-error? 400
+                                                          "max_tokens exhausted while reasoning")))
+        (expect
+          (not (perr/output-budget-too-small-error? 500 "max_output_tokens must be at least 16"))))
+    (it "reads no minimum when the provider named none"
+        (expect (nil? (perr/output-budget-minimum "max_output_tokens is too small"))))))
+
 (defdescribe empty-content-kind-test
              (it "typed :svar.llm/empty-content → honest empty-response card, no 'rejected' wording"
                  (let

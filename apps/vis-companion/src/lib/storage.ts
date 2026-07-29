@@ -5,6 +5,7 @@
 // app reconnects to the SAME gateway the TUI/other channels use.
 
 import { Preferences } from '@capacitor/preferences';
+import { bridged } from './bridge';
 import type { GatewayConn, ThemePref } from './types';
 
 const CONNS_KEY = 'vis.connections';
@@ -15,22 +16,44 @@ const THEME_PREF_KEY = 'vis.themePref';
 // persists, and remembers the user's own choice locally across reloads.
 const DEFAULT_THEME_PREF: ThemePref = 'light';
 
-async function getRaw(key: string): Promise<string | null> {
+function localGet(key: string): string | null {
   try {
-    const { value } = await Preferences.get({ key });
-    return value ?? null;
-  } catch {
-    // Web fallback when the plugin is unavailable.
     return globalThis.localStorage?.getItem(key) ?? null;
+  } catch {
+    return null;
   }
 }
 
-async function setRaw(key: string, value: string): Promise<void> {
+function localSet(key: string, value: string): void {
   try {
-    await Preferences.set({ key, value });
-  } catch {
     globalThis.localStorage?.setItem(key, value);
+  } catch {
+    // Private mode / quota: the Preferences write is the real store.
   }
+}
+
+// Reads and writes go through BOTH stores on purpose. Preferences is the
+// durable one (it survives a webview data reset), localStorage is the one that
+// answers even when the native bridge does not — see `lib/bridge.ts`. Mirroring
+// every value into localStorage is what makes the fallback real data instead of
+// an empty app: a silent bridge must never look like "no gateway paired".
+async function getRaw(key: string): Promise<string | null> {
+  const value = await bridged(
+    async () => (await Preferences.get({ key })).value ?? null,
+    () => localGet(key),
+  );
+  if (value !== null) localSet(key, value);
+  return value;
+}
+
+async function setRaw(key: string, value: string): Promise<void> {
+  localSet(key, value);
+  await bridged(
+    async () => {
+      await Preferences.set({ key, value });
+    },
+    () => undefined,
+  );
 }
 
 export async function loadConnections(): Promise<GatewayConn[]> {

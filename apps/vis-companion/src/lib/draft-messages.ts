@@ -15,6 +15,7 @@
 // way out of the app — visibility change, pagehide, unload.
 
 import { Preferences } from '@capacitor/preferences';
+import { bridged } from './bridge';
 import type { ComposerPaste } from './paste';
 
 const DRAFT_MESSAGES_KEY = 'vis.draftMessages';
@@ -90,11 +91,18 @@ export async function hydrateDraftMessages(): Promise<DraftMessageStore> {
   if (hydrated && store) return store;
   hydration ??= (async () => {
     let raw: string | null = null;
-    try {
-      raw = (await Preferences.get({ key: DRAFT_MESSAGES_KEY })).value ?? null;
-    } catch {
-      raw = globalThis.localStorage?.getItem(DRAFT_MESSAGES_KEY) ?? null;
-    }
+    // Bounded: a silent native bridge must not leave the composer without its
+    // draft forever (see `lib/bridge.ts`); localStorage holds the same value.
+    raw = await bridged(
+      async () => (await Preferences.get({ key: DRAFT_MESSAGES_KEY })).value ?? null,
+      () => {
+        try {
+          return globalThis.localStorage?.getItem(DRAFT_MESSAGES_KEY) ?? null;
+        } catch {
+          return null;
+        }
+      },
+    );
     // A write that landed while we were reading wins: it is newer than disk.
     store = { ...parseStore(raw), ...(store ?? {}) };
     hydrated = true;
@@ -184,11 +192,13 @@ export async function flushDraftMessages(): Promise<void> {
   } catch {
     // Private-mode/quota: the plugin write below is still worth attempting.
   }
-  try {
-    await Preferences.set({ key: DRAFT_MESSAGES_KEY, value });
-  } catch {
+  await bridged(
+    async () => {
+      await Preferences.set({ key: DRAFT_MESSAGES_KEY, value });
+    },
     // Already mirrored to localStorage above.
-  }
+    () => undefined,
+  );
 }
 
 let listening = false;

@@ -41,6 +41,13 @@ type Tab = 'sessions' | 'connect';
 /** Stable empty watch list for when no gateway stream is subscribed. */
 const NO_SUBSCRIBED_IDS = new Set<string>();
 
+// The splash is allowed to be a moment, never a state. Reading the stored
+// gateways is a native bridge call, and an iOS bridge can go silent after the
+// OS recycled the webview in the background (`lib/bridge.ts`), so the reveal is
+// also on a timer: painting a connection-less shell beats painting nothing
+// until the user force-quits.
+const BOOT_REVEAL_MS = 3_000;
+
 export function App() {
   const [conns, setConns] = useState<GatewayConn[]>([]);
   const [active, setActive] = useState<GatewayConn | null>(null);
@@ -279,8 +286,17 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    // Mount-time gateway load: the flag flips only when the request settles.
-    void refresh().finally(() => setReady(true));
+    // Mount-time gateway load: the flag flips when the read settles, or when the
+    // watchdog fires.
+    let revealed = false;
+    const reveal = () => {
+      if (revealed) return;
+      revealed = true;
+      setReady(true);
+    };
+    const timer = window.setTimeout(reveal, BOOT_REVEAL_MS);
+    void refresh().finally(reveal);
+    return () => window.clearTimeout(timer);
   }, [refresh]);
 
   // Paint the app-local theme (default light) immediately on mount, before any
