@@ -7,6 +7,7 @@
    never back on the loop."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.internal.strutil :refer [truncate]]
@@ -270,6 +271,94 @@
   [:zai-coding-plan :openai-codex :anthropic-coding-plan :github-copilot-individual
    :github-copilot-business :github-copilot-enterprise])
 
+;; -----------------------------------------------------------------------------
+;; `titling:` config (Blockether/vis#71)
+;; -----------------------------------------------------------------------------
+;;
+;; Auto-titling is COSMETIC; the foreground turn is not. On a gateway with a
+;; small shared RPM/concurrency budget the title `ask!` fired alongside the
+;; user's request burns the very slot that request needs, and a trivial first
+;; message comes back 429. So the LLM route is (a) optional, (b) pinnable to one
+;; provider/model instead of walking the whole fleet, and (c) DEFERRED past the
+;; foreground turn by default.
+
+(def ^:private DEFAULT_TITLING_MODE "llm")
+
+(def ^:private DEFAULT_TITLING_SCHEDULING "after_turn")
+
+(defn- titling-config
+  "The `titling:` block of the merged config, string-keyed. Never throws: a
+   broken config must not cost the session its name."
+  []
+  (try (let [m (get (config/load-config-raw) "titling")]
+         (when (map? m) m))
+       (catch Throwable _ nil)))
+
+(defn- cfg-word
+  [cfg k default]
+  (or (some-> (get cfg k)
+              str
+              str/trim
+              not-empty
+              str/lower-case)
+      default))
+
+(defn- titling-mode [cfg] (cfg-word cfg "mode" DEFAULT_TITLING_MODE))
+
+(defn- titling-disabled? [cfg] (= "disabled" (titling-mode cfg)))
+
+(defn- llm-titling? [cfg] (= "llm" (titling-mode cfg)))
+
+(defn- deferred-llm-title?
+  "True unless the operator explicitly asked for the old concurrent behaviour.
+   `idle` is an alias of `after_turn`: both mean \"not while the user's turn is
+   in flight\"."
+  [cfg]
+  (not= "immediate" (cfg-word cfg "scheduling" DEFAULT_TITLING_SCHEDULING)))
+
+(defn- first-sentence-title
+  "The request's first sentence, sanitized/clipped like any other title. Purely
+   local — no provider call, no quota."
+  [user-request]
+  (let
+    [s
+     (-> (str user-request)
+         (str/replace uuid-text-pattern " ")
+         str/trim)
+
+     sentence
+     (or (first (str/split s #"(?<=[.!?])\s+|\R" 2)) s)]
+
+    (sanitize-auto-title sentence)))
+
+(defn- local-auto-title
+  "The deterministic title for the configured mode. Always available, always
+   instant; `first_sentence` falls back to first-words when the sentence yields
+   nothing usable."
+  [cfg user-request]
+  (if (= "first_sentence" (titling-mode cfg))
+    (or (first-sentence-title user-request) (fallback-auto-title user-request))
+    (fallback-auto-title user-request)))
+
+(defn- auto-title-routing
+  "Routing for the title side-channel. An explicit `titling.provider` (plus an
+   optional `titling.model`) PINS the call, so a constrained deployment can name
+   the one cheap endpoint it is happy to spend on instead of having svar walk
+   the configured fleet."
+  [cfg]
+  (if-let
+    [provider (some-> (get cfg "provider")
+                      str
+                      str/trim
+                      not-empty)]
+    (cond-> {:provider (keyword provider)}
+      (some-> (get cfg "model")
+              str
+              str/trim
+              not-empty)
+      (assoc :model (str/trim (str (get cfg "model")))))
+    {:prefer-providers AUTO_TITLE_PROVIDER_ORDER :optimize [:cost :speed]}))
+
 (defn- model-auto-title!
   "Generate a session title off the model's visible surface. A single `ask!`
    declares the preferred plan order via `:prefer-providers`; svar walks it
@@ -288,8 +377,7 @@
                                     {:messages (auto-title-prompt previous-title user-request)
                                      :spec auto-title-spec
                                      :reasoning :off
-                                     :routing {:prefer-providers AUTO_TITLE_PROVIDER_ORDER
-                                               :optimize [:cost :speed]}
+                                     :routing (auto-title-routing (titling-config))
                                      :ttft-timeout-ms AUTO_TITLE_TTFT_MS
                                      :idle-timeout-ms AUTO_TITLE_IDLE_MS
                                      :semantic-timeout-ms AUTO_TITLE_SEMANTIC_MS}))}
@@ -368,41 +456,77 @@
         (if (str/blank? rest) s rest))
       s)))
 
-(defn maybe-auto-title!
-  "Title the session asynchronously on a normal LLM turn. Two-phase so a slow
-   or hung provider can never leave the tab untitled:
+(defn- auto-title-pass!
+  "One titling pass. Phase 1 is the deterministic LOCAL title (it cannot hang and
+   costs no quota); phase 2 — only when `llm?` — is the hard-deadline-bounded
+   `ask!` that overwrites it and freezes it."
+  [{:keys [db-info session-id session-title-atom] :as env} cfg user-request llm?]
+  ;; Announce "generating title" so a channel (TUI) can spinner the tab; only
+  ;; the LLM phase can actually take time, and the finally always clears it.
+  (broadcast-title-pending! session-id llm?)
+  (try (when-not (usable-existing-title (some-> session-title-atom
+                                                deref))
+         (when-let [local (local-auto-title cfg user-request)]
+           (set-title-with-broadcast! db-info session-id session-title-atom local)
+           (mark-provisional-title! session-id true)))
+       (when llm?
+         (when-let [title (model-auto-title! env nil user-request)]
+           (set-title-with-broadcast! db-info session-id session-title-atom title)
+           (mark-provisional-title! session-id false)))
+       (catch Throwable t
+         (tel/log! {:level :warn
+                    :id ::auto-title-update-failed
+                    :data {:session-id session-id :error (ex-message t)}}
+                   "Auto-title update failed; keeping existing title"))
+       (finally (broadcast-title-pending! session-id false))))
 
-   1. FALLBACK-FIRST — write a deterministic first-words title up front (it
-      cannot hang), marked PROVISIONAL, so the tab is titled instantly.
+(defn- titleable?
+  [{:keys [db-info session-id session-title-atom] :as env}]
+  (boolean
+    (and db-info session-id (:router env) (title-needs-generation? session-id session-title-atom))))
+
+(defn maybe-auto-title!
+  "Title the session at the START of a normal LLM turn. Two-phase so a slow or
+   hung provider can never leave the tab untitled:
+
+   1. FALLBACK-FIRST — write a deterministic local title up front (it cannot
+      hang and spends no provider quota), marked PROVISIONAL, so the tab is
+      titled instantly.
    2. LLM UPGRADE — a hard-deadline-bounded `ask!` (`model-auto-title!`) that
       OVERWRITES the fallback with a real title and freezes it. On failure the
       provisional fallback stays and a LATER turn retries the upgrade.
 
-   A real (non-provisional) LLM title is generated once and never regenerated.
-   Titles are host-owned; there is no model-facing override. Returns a future
+   Phase 2 runs here ONLY under `titling.scheduling: immediate`. By default it
+   is handed to `after-turn-auto-title!` instead, so the title call never
+   competes with the user's own request for a constrained gateway's slot
+   (Blockether/vis#71); with `titling.mode` other than `llm` it never runs at
+   all. A real (non-provisional) LLM title is generated once and never
+   regenerated. Titles are host-owned; there is no model-facing override.
+   Returns a future or nil; callers intentionally do not wait."
+  [env user-request]
+  (let
+    [user-request
+     (strip-leading-slash-command user-request)
+
+     cfg
+     (titling-config)]
+
+    (when (and (not (titling-disabled? cfg)) (titleable? env))
+      (if (and (llm-titling? cfg) (not (deferred-llm-title? cfg)))
+        (future (auto-title-pass! env cfg user-request true))
+        ;; Local-only: cheap and synchronous, no future, no provider slot.
+        (do (auto-title-pass! env cfg user-request false) nil)))))
+
+(defn after-turn-auto-title!
+  "The DEFERRED LLM title upgrade, run once the foreground turn has finished
+   (`titling.scheduling: after_turn`, the default). Auto-title quality is
+   cosmetic while foreground responsiveness is core, so on a rate-limited
+   gateway the title call waits its turn instead of racing the user's request
+   for the same slot (Blockether/vis#71). Skipped entirely when the mode is not
+   `llm`, when the session already has a frozen LLM title, or when the operator
+   asked for `immediate` (that call already happened up front). Returns a future
    or nil; callers intentionally do not wait."
-  [{:keys [db-info session-id session-title-atom] :as env} user-request]
-  (let [user-request (strip-leading-slash-command user-request)]
-    (when
-      (and db-info session-id (:router env) (title-needs-generation? session-id session-title-atom))
-      (future
-        ;; Announce "generating title" so a channel (TUI) can spinner the
-        ;; tab; always clear it in the finally.
-        (broadcast-title-pending! session-id true)
-        (try
-          ;; 1. Fallback-first: never leave the tab untitled while the LLM runs.
-          (when-not (usable-existing-title (some-> session-title-atom
-                                                   deref))
-            (when-let [fallback (fallback-auto-title user-request)]
-              (set-title-with-broadcast! db-info session-id session-title-atom fallback)
-              (mark-provisional-title! session-id true)))
-          ;; 2. LLM upgrade: overwrite + freeze on success; keep fallback on fail.
-          (when-let [title (model-auto-title! env nil user-request)]
-            (set-title-with-broadcast! db-info session-id session-title-atom title)
-            (mark-provisional-title! session-id false))
-          (catch Throwable t
-            (tel/log! {:level :warn
-                       :id ::auto-title-update-failed
-                       :data {:session-id session-id :error (ex-message t)}}
-                      "Auto-title update failed; keeping existing title"))
-          (finally (broadcast-title-pending! session-id false)))))))
+  [env user-request]
+  (let [cfg (titling-config)]
+    (when (and (llm-titling? cfg) (deferred-llm-title? cfg) (titleable? env))
+      (future (auto-title-pass! env cfg (strip-leading-slash-command user-request) true)))))

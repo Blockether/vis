@@ -5,7 +5,22 @@
             [lazytest.core :refer [defdescribe it expect]]))
 
 ;; The interesting fns are private; reach them the way loop-test does.
-(def ^:private maybe-auto-title! (deref #'titling/maybe-auto-title!))
+(defn- with-titling-cfg
+  "Run `f` with the `titling:` config block pinned, so a test never depends on
+   the operator's own `~/.vis` config."
+  [cfg f]
+  (with-redefs-fn {#'titling/titling-config (constantly cfg)} f))
+
+(defn- maybe-auto-title!
+  "The classic single-shot behaviour (`titling.scheduling: immediate`): both the
+   deterministic phase and the LLM upgrade run from this one call. Waits for the
+   returned future so the redef stays in force for the whole pass."
+  [env user-request]
+  (with-titling-cfg {"scheduling" "immediate"}
+                    (fn []
+                      (let [f (titling/maybe-auto-title! env user-request)]
+                        (when f @f)
+                        f))))
 
 (def ^:private provisional-title? (deref #'titling/provisional-title?))
 
@@ -201,3 +216,127 @@
 
         @(maybe-auto-title! (env* sid title*) "/new-session build a json parser")
         (expect (= "build a json parser" @title*))))))
+
+(defdescribe
+  titling-config-test
+  (it "DEFAULT scheduling defers the LLM call past the foreground turn (Blockether/vis#71)"
+      ;; The title `ask!` used to race the user's own request for the same
+      ;; rate-limited gateway slot. Now the turn-start pass is LOCAL ONLY.
+      (let
+        [sid
+         (fresh-sid)
+
+         title*
+         (atom "")
+
+         asks
+         (atom 0)
+
+         request
+         "please explain the deferred titling design"]
+
+        (with-redefs
+          [titling/set-title-with-broadcast!
+           (fn [_ _ a t]
+             (reset! a t))
+
+           svar/ask!
+           (fn [_ _]
+             (swap! asks inc)
+             {:result {:title "Deferred LLM Title"}})]
+
+          (with-titling-cfg {}
+                            (fn []
+                              (expect (nil? (titling/maybe-auto-title! (env* sid title*) request)))
+                              (expect (= request @title*))
+                              (expect (zero? @asks)) ; no provider slot spent during the turn
+                              (expect (true? (provisional-title? sid)))
+                              ;; …and the upgrade happens once the turn is done
+                              (let [f (titling/after-turn-auto-title! (env* sid title*) request)]
+                                (expect (some? f))
+                                @f
+                                (expect (= 1 @asks))
+                                (expect (= "Deferred LLM Title" @title*))
+                                (expect (false? (provisional-title? sid)))))))))
+  (it "mode first_sentence titles from the request itself and NEVER calls a provider"
+      (let
+        [sid
+         (fresh-sid)
+
+         title*
+         (atom "")]
+
+        (with-redefs
+          [titling/set-title-with-broadcast!
+           (fn [_ _ a t]
+             (reset! a t))
+
+           svar/ask!
+           (fn [_ _]
+             (throw (ex-info "must not call a provider" {})))]
+
+          (with-titling-cfg {"mode" "first_sentence"}
+                            (fn []
+                              (titling/maybe-auto-title! (env* sid title*)
+                                                         "Fix the parser. Then ship the release.")
+                              (expect (= "Fix the parser" @title*))
+                              ;; nothing is deferred either — the mode is local
+                              (expect (nil? (titling/after-turn-auto-title!
+                                              (env* sid title*)
+                                              "Fix the parser. Then ship the release."))))))))
+  (it "mode disabled writes no title at all"
+      (let
+        [sid
+         (fresh-sid)
+
+         title*
+         (atom "")]
+
+        (with-redefs
+          [titling/set-title-with-broadcast!
+           (fn [_ _ _ _]
+             (throw (ex-info "must not title" {})))
+
+           svar/ask!
+           (fn [_ _]
+             (throw (ex-info "must not call a provider" {})))]
+
+          (with-titling-cfg {"mode" "disabled"}
+                            (fn []
+                              (expect (nil? (titling/maybe-auto-title! (env* sid title*)
+                                                                       "name this session please")))
+                              (expect (= "" @title*))
+                              (expect (nil? (titling/after-turn-auto-title!
+                                              (env* sid title*)
+                                              "name this session please"))))))))
+  (it "an explicit provider/model PINS the title call instead of walking the fleet"
+      (let
+        [sid
+         (fresh-sid)
+
+         title*
+         (atom "")
+
+         seen
+         (atom nil)]
+
+        (with-redefs
+          [titling/set-title-with-broadcast!
+           (fn [_ _ a t]
+             (reset! a t))
+
+           svar/ask!
+           (fn [_ opts]
+             (reset! seen opts)
+             {:result {:title "Pinned Title Route"}})]
+
+          (with-titling-cfg {"mode" "llm"
+                             "scheduling" "immediate"
+                             "provider" "rbi_genai"
+                             "model" "gpt-5.4-mini"}
+                            (fn []
+                              @(titling/maybe-auto-title! (env* sid title*)
+                                                          "pin the titling route to one endpoint")
+                              (expect (= {:provider :rbi_genai :model "gpt-5.4-mini"}
+                                         (:routing @seen)))
+                              (expect (= "Pinned Title Route" @title*))))))))

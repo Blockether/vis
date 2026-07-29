@@ -26,7 +26,7 @@ Config is YAML only, validated exactly as parsed:
 `com.blockether.vis.internal.config-spec/config` is the complete `clojure.spec`
 contract for the original string-keyed YAML representation. It covers these closed
 top-level blocks: `providers`, `router`, `system_prompt`, `workspace`, `jail`,
-`environment`, `db_spec`, `search`, `toggles`, `tui_settings`, `mcp`, `python`, and `message_queue`. Filesystem
+`environment`, `db_spec`, `search`, `toggles`, `tui_settings`, `mcp`, `python`, `titling`, and `message_queue`. Filesystem
 admission is a closed block at `jail.filesystem`, and egress policy is a closed block at `jail.network`.
 
 Nested maps are also closed except maps whose keys are user-defined, such as environment
@@ -407,6 +407,39 @@ toggles:
 ```
 
 When `web_search` is false, Vis does not bind `search`, `search_web`, `search_code`, or `search_papers`; no request can be sent to Exa through that extension.
+
+## Session titling
+
+Vis names a session from its first request. The name is written locally and
+instantly (a deterministic fallback title), then — by default — **upgraded once**
+by a short LLM call. That upgrade is cosmetic, so it must never compete with your
+own turn for a rate-limited gateway's slot: it runs *after* the foreground turn
+finishes, not alongside it. The `titling:` block controls all of it:
+
+```yaml
+titling:
+  # llm (default) | first_sentence | first_words | disabled
+  mode: llm
+  # after_turn (default) | idle (alias) | immediate
+  scheduling: after_turn
+  # optional: pin the title call instead of walking the provider fleet
+  provider: zai-coding-plan
+  model: glm-4.7
+```
+
+- `mode: llm` — local fallback first, then one LLM upgrade; generated once and
+  never regenerated.
+- `mode: first_sentence` / `first_words` — purely local titles. No provider call,
+  no quota, no 429 on a trivial first message.
+- `mode: disabled` — no auto-title at all.
+- `scheduling: after_turn` (default, `idle` is an alias) — the LLM call is
+  deferred past the user's turn. `immediate` restores the old concurrent
+  behaviour.
+- `provider` / `model` — pin the title call to one cheap endpoint. Without them
+  Vis walks its own cheap-first provider order.
+
+A broken or missing `titling:` block never costs the session its name: config
+errors here fall back to the defaults.
 
 ## Database
 

@@ -256,9 +256,11 @@
 (def python-keys #{"resource_cache" "source_paths"})
 (def message-queue-keys
   #{"breaker_threshold" "retry_backoff_ms" "halfopen_probe_ms" "retry_after_cap_ms"})
+(def titling-keys #{"mode" "provider" "model" "scheduling"})
 (def config-keys
   #{"providers" "default_provider" "default_model" "router" "system_prompt" "workspace" "jail"
-    "environment" "db_spec" "grep" "toggles" "tui_settings" "mcp" "python" "message_queue"})
+    "environment" "db_spec" "grep" "toggles" "tui_settings" "mcp" "python" "message_queue"
+    "titling"})
 
 (def prompt-schema {"text" string? "is_replace" boolean?})
 (s/def ::prompt-map #(closed-map? prompt-schema #{"text"} %))
@@ -333,6 +335,24 @@
 (def mcp-schema {"servers" (spec-pred ::mcp-servers)})
 (s/def ::mcp #(closed-map? mcp-schema %))
 
+(def titling-modes
+  "How a session gets its name. Only `llm` spends a provider call; the other
+   two derive the title locally from the request itself, and `disabled` leaves
+   the session unnamed (Blockether/vis#71)."
+  #{"llm" "first_sentence" "first_words" "disabled"})
+(def titling-schedules
+  "When the `llm` mode is allowed to call. `after_turn` (the default, `idle` is
+   its alias) waits for the foreground turn to finish so auto-titling can never
+   compete with the user's own request for a rate-limited gateway's slot;
+   `immediate` restores the old concurrent behaviour."
+  #{"after_turn" "idle" "immediate"})
+(def titling-schema
+  {"mode" titling-modes
+   "provider" non-blank-string?
+   "model" non-blank-string?
+   "scheduling" titling-schedules})
+(s/def ::titling #(closed-map? titling-schema %))
+
 (def config-schema
   {"providers" (spec-pred ::providers)
    "default_provider" non-blank-string?
@@ -348,7 +368,8 @@
    "tui_settings" (spec-pred ::tui-settings)
    "mcp" (spec-pred ::mcp)
    "python" (spec-pred ::python)
-   "message_queue" (spec-pred ::message-queue)})
+   "message_queue" (spec-pred ::message-queue)
+   "titling" (spec-pred ::titling)})
 
 (s/def ::config #(closed-map? config-schema %))
 
@@ -371,7 +392,8 @@
                   "tui_settings" [tui-schema #{} :map]
                   "mcp" [mcp-schema #{} :map]
                   "python" [python-schema #{} :map]
-                  "message_queue" [message-queue-schema #{} :map]}
+                  "message_queue" [message-queue-schema #{} :map]
+                  "titling" [titling-schema #{} :map]}
    provider-schema {"models" [model-schema #{"name"} :vector]}
    router-schema {"rate_limit" [rate-limit-schema #{} :map]
                   "network" [router-network-schema #{} :map]

@@ -88,7 +88,11 @@
    "message_queue" {"breaker_threshold" 3
                     "retry_backoff_ms" [2000 8000 30000]
                     "halfopen_probe_ms" 60000
-                    "retry_after_cap_ms" 120000}})
+                    "retry_after_cap_ms" 120000}
+   "titling" {"mode" "llm"
+              "provider" "rbi_genai"
+              "model" "gpt-5.4-mini"
+              "scheduling" "after_turn"}})
 
 (defdescribe
   config-contract-test
@@ -167,7 +171,14 @@
                    (assoc-in full-config ["message_queue" "retry_backoff_ms"] []))))
     (expect (not (config-spec/valid?
                    (assoc-in full-config ["message_queue" "retry_backoff_ms"] ["2s"]))))
-    (expect (not (config-spec/valid? (assoc-in full-config ["message_queue" "unknown"] 1)))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["message_queue" "unknown"] 1))))
+    ;; Titling: a closed block with two enums (Blockether/vis#71).
+    (expect (config-spec/valid? (assoc-in full-config ["titling" "mode"] "first_sentence")))
+    (expect (config-spec/valid? (assoc-in full-config ["titling" "scheduling"] "idle")))
+    (expect (not (config-spec/valid? (assoc-in full-config ["titling" "mode"] "clever"))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["titling" "scheduling"] "whenever"))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["titling" "provider"] ""))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["titling" "unknown"] 1)))))
   (it "derives process-jail and network maps from the same string contract"
       (expect (= {:disabled? false
                   :allow-read-write ["/opt/svar" "~/generated" "~/.m2" "~/.vis"]
@@ -377,6 +388,8 @@
         [config-spec/python-keys config-spec/python-schema (set (keys (get full-config "python")))]
         [config-spec/message-queue-keys config-spec/message-queue-schema
          (set (keys (get full-config "message_queue")))]
+        [config-spec/titling-keys config-spec/titling-schema
+         (set (keys (get full-config "titling")))]
         [config-spec/mcp-server-keys config-spec/mcp-server-schema
          (into #{} (mapcat keys) servers)]]]
 
