@@ -81,6 +81,40 @@
                   (str/includes? text "top level")
                   (some #(str/includes? text %) ["oneof" "allof" "anyof"])))))
 
+(def ^:private GATEWAY_INJECTED_TOOL_FIELD_PATTERN
+  "Provider path of a tool-payload field Vis does NOT emit, e.g.
+   `tools.0.custom.strict`."
+  #"(?i)tools\.\d+(?:\.(?:custom|function))?\.(strict|additionalProperties)")
+
+(def ^:private GATEWAY_FIELD_REJECTION_PATTERN
+  #"(?i)extra inputs are not permitted|unrecognized request argument|unknown field|is not permitted")
+
+(defn gateway-injected-tool-field
+  "The tool-payload FIELD an OpenAI-compatible gateway added on Vis' behalf and
+   the upstream then rejected, lower-cased — or nil.
+
+   Vis never emits `strict` nor a tool-level `additionalProperties`: LiteLLM
+   forwards them into the Bedrock Converse `toolSpec` while translating our tool
+   defs, and Bedrock's Anthropic-compatible validator answers
+   `tools.0.custom.strict: Extra inputs are not permitted`. So this is NOT a
+   defect in a Vis tool schema — no schema edit can avoid it, and an unchanged
+   retry fails identically."
+  [message]
+  (let [text (str message)]
+    (when (re-find GATEWAY_FIELD_REJECTION_PATTERN text)
+      (some-> (re-find GATEWAY_INJECTED_TOOL_FIELD_PATTERN text)
+              second
+              str/lower-case))))
+
+(defn gateway-tool-field-rejection
+  "`gateway-injected-tool-field` over an error's own body + message."
+  [err]
+  (let [data (or (:data err) (ex-data err) err)]
+    (gateway-injected-tool-field (str (some-> (:body data)
+                                              str)
+                                      "\n"
+                                      (or (ex-message err) (:message err) (str err))))))
+
 (defn output-budget-too-small-error?
   "True when a provider rejected the request because the OUTPUT-token budget it
    was given is below that model's minimum — e.g. `gpt-5.6-terra` 400s on
@@ -409,6 +443,12 @@
       (invalid-thinking-signature-message? provider-message)
       (str "WHAT HAPPENED: Anthropic rejected a `thinking` block signature — usually "
            "preserved thinking replayed across a provider/model switch.")
+      (gateway-tool-field-rejection err)
+      (str "WHAT HAPPENED: the gateway added `"
+           (gateway-tool-field-rejection err)
+           "` to the tool payload and this provider path rejected its own addition. Vis "
+           "never sends that field, so no tool schema can fix it."
+           (when (seq provider-message) (str " " provider-message)))
       schema-rejection? (str "WHAT HAPPENED: tool `" (or tool-name "unknown")
                              "` has a top-level `oneOf`/`allOf`/`anyOf` in `" (or schema-field
                                                                                   "input_schema")
@@ -489,9 +529,11 @@
       "Provider rejected the request"
 
       :tool-schema
-      (if-let [tool-name (:tool-name data)]
-        (str "Native tool schema rejected: " tool-name)
-        "Native tool schema rejected")
+      (if-let [field (gateway-tool-field-rejection err)]
+        (str "Gateway sent an unsupported tool field: " field)
+        (if-let [tool-name (:tool-name data)]
+          (str "Native tool schema rejected: " tool-name)
+          "Native tool schema rejected"))
 
       :output-budget-too-small
       "Output token budget too small"
@@ -551,7 +593,13 @@
       "NEXT STEP: retry — Vis resends with plain context. If it persists, don't replay preserved thinking across a provider/model switch."
 
       :tool-schema
-      "NEXT STEP: update Vis or disable the offending extension, then retry."
+      (if-let [field (gateway-tool-field-rejection err)]
+        (str "NEXT STEP: fix it at the gateway — LiteLLM must stop forwarding `"
+             field
+             "` for this model (`bedrock_converse_supports_strict_tools: false` in its model "
+             "map, or a newer LiteLLM) — or switch model/provider. An unchanged retry fails "
+             "identically.")
+        "NEXT STEP: update Vis or disable the offending extension, then retry.")
 
       :output-budget-too-small
       (str "NEXT STEP: raise `max_tokens`/`max_output_tokens` for this provider (its `extra_body` "
@@ -641,13 +689,17 @@
      (provider-body-message body-raw)
 
      schema-rejection?
-     (tool-schema-rejection-message? (str provider-message "\n" message))]
+     (tool-schema-rejection-message? (str provider-message "\n" message))
+
+     gateway-field?
+     (some? (gateway-tool-field-rejection err))]
 
     (cond (context-overflow-error? err) :context-overflow
           (stream-timeout-error? err) :stream-timeout
           (empty-content-error? err) :empty-content
           (invalid-thinking-signature-message? provider-message) :invalid-thinking-signature
           schema-rejection? :tool-schema
+          gateway-field? :tool-schema
           (output-budget-too-small-error? status (str provider-message "\n" message))
           :output-budget-too-small
           (auth-provider-error? status provider-message message) :auth

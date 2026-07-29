@@ -191,6 +191,29 @@
                       (perr/provider-error-facts err))))))
 
 (defdescribe
+  gateway-injected-tool-field-test
+  (let
+    [message
+     "litellm.BadRequestError: BedrockException - {\"message\":\"The model returned the following errors: tools.0.custom.strict: Extra inputs are not permitted\"}"
+
+     err
+     {:message "Exceptional status code: 400"
+      :data {:status 400 :body (str "{\"error\":{\"message\":\"" message "\"}}")}}]
+
+    (it "names the field the GATEWAY injected, which Vis never sends"
+        (expect (= "strict" (perr/gateway-tool-field-rejection err))))
+    (it "is terminal like any other tool-payload rejection, not an outage"
+        (expect (= :tool-schema (perr/provider-error-kind err)))
+        (expect (not (perr/provider-error-retryable? err))))
+    (it "blames the gateway instead of a Vis extension schema"
+        (expect (= "Gateway sent an unsupported tool field: strict"
+                   (perr/provider-error-title err)))
+        (expect (re-find #"never sends that field" (perr/provider-error-explanation err)))
+        (expect (re-find #"gateway" (perr/provider-error-next-step err)))
+        (expect (not (re-find #"disable the offending extension"
+                              (perr/provider-error-next-step err)))))))
+
+(defdescribe
   output-budget-too-small-test
   (let
     [message
