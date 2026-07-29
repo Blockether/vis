@@ -375,15 +375,21 @@
         (when (zero? exit) (not-empty (str/trim (or out ""))))))))
 
 (defn- auto-install-graalvm?
-  "Did the caller opt IN to downloading the pinned JDK? Installing a whole JDK
-   is not something a build should do behind someone's back, so it stays
-   explicit: `:auto-install-graalvm true` or VIS_AUTO_INSTALL_GRAALVM=1."
+  "May this build install the pinned JDK by itself? YES by default: a missing
+   GraalVM CE is a machine-setup detail, and `bin/require-graalvm --install`
+   downloads, checksums and installs exactly the pin — so `clojure -T:build
+   native` just works on a stock JDK, and on Oracle GraalVM too (Oracle is not
+   a CE substitute, so it is installed alongside rather than accepted).
+   Opt OUT with `:auto-install-graalvm false` or VIS_AUTO_INSTALL_GRAALVM=0
+   (also `false`/`no`), which turns the missing JDK back into a hard refusal."
   [opts]
-  (or (boolean (:auto-install-graalvm opts))
-      (contains? #{"1" "true" "yes"}
-                 (some-> (System/getenv "VIS_AUTO_INSTALL_GRAALVM")
-                         str/trim
-                         str/lower-case))))
+  (let
+    [env (some-> (System/getenv "VIS_AUTO_INSTALL_GRAALVM")
+                 str/trim
+                 str/lower-case)]
+    (cond (contains? opts :auto-install-graalvm) (boolean (:auto-install-graalvm opts))
+          (contains? #{"0" "false" "no"} env) false
+          :else true)))
 
 (defn- rerun-under-graalvm!
   "Re-run THIS build task in a child process rooted at `home` — the `nvm use`
@@ -424,9 +430,9 @@
    (\"GraalVM CE 25.1.3+9.1\" vs \"Oracle GraalVM 25.1.3+9.1\" vs \"Temurin-25…\").
 
    Wrong JVM, in order: already installed → re-exec the task under it;
-   not installed and auto-install opted in → install it, then re-exec;
-   otherwise → the hard refusal, because silently downloading a JDK is the one
-   thing this check must not do."
+   not installed → install the pin with `bin/require-graalvm --install`, then
+   re-exec under it; installation declined (`:auto-install-graalvm false` /
+   VIS_AUTO_INSTALL_GRAALVM=0) or failed → the hard refusal."
   [task opts]
   (when-let
     [{want "GRAAL_VENDOR_VERSION" edition "GRAAL_EDITION" version "GRAAL_VERSION"} @graal-pin]
@@ -435,7 +441,11 @@
         (println (str "· " edition " " version " (" got ")"))
         (let
           [switched? (= "1" (System/getenv "VIS_GRAALVM_SWITCHED"))
-           home (when-not switched? (resolve-pinned-graalvm (auto-install-graalvm? opts)))]
+           installed (when-not switched? (resolve-pinned-graalvm false))
+           home (or installed
+                    (when (and (not switched?) (auto-install-graalvm? opts))
+                      (println (str "· " edition " " version " is missing — installing it"))
+                      (resolve-pinned-graalvm true)))]
 
           (if home
             (rerun-under-graalvm! home task opts)
@@ -455,12 +465,11 @@
                   "  install it here:  clojure -T:build "
                   (name task)
                   " :auto-install-graalvm true\n"
-                  "           or:      VIS_AUTO_INSTALL_GRAALVM=1 clojure -T:build "
-                  (name task)
-                  "\n"
-                  "  install it yourself:  bin/require-graalvm --install\n"
+                  "           or:      VIS_AUTO_INSTALL_GRAALVM=1 clojure -T:build " (name task)
+                  "\n" "  install it yourself:  bin/require-graalvm --install\n"
                   "  then:                 sdk env   (or: eval \"$(bin/require-graalvm --export)\")\n"
-                  "  An already-installed pinned JDK is picked up and used automatically.\n"
+                  "  An already-installed pinned JDK is picked up and used automatically, and a\n"
+                  "  missing one is installed automatically unless VIS_AUTO_INSTALL_GRAALVM=0.\n"
                   "  Stock JDKs and Oracle GraalVM are NOT substitutes — see .graalvm-version.")
                 {:expected want :actual got :task task}))))))))
 
@@ -1276,8 +1285,9 @@
                            voice-capable profile.
      :oracle-native-image true — KEEP the GraalPy JIT in the image (bigger binary, slower
                            build, faster CPU-bound Python). Default: lean interpreter.
-     :auto-install-graalvm true — download + install the pinned GraalVM CE when it is
-                           missing (VIS_AUTO_INSTALL_GRAALVM=1 does the same). An
+     :auto-install-graalvm false — keep a missing GraalVM CE a hard error instead of
+                           installing the pin (VIS_AUTO_INSTALL_GRAALVM=0 does the same).
+                           By default a missing pin is downloaded + installed, and an
                            already-installed pinned JDK is switched to automatically."
   [opts]
   (assert-graalvm-ce! :native opts)
