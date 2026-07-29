@@ -81,6 +81,9 @@ jobs:
           # policy/compiler assertions and runs real bubblewrap E2E when its
           # runner kernel permits the required unprivileged namespaces.
           VIS_REQUIRE_MACOS_SANDBOX_E2E: ${{ runner.os == 'macOS' && '1' || '0' }}
+          # macos-26-arm64 has a smaller default JVM heap than the full Truffle
+          # suite needs; retain headroom for native allocations and subprocesses.
+          JAVA_TOOL_OPTIONS: ${{ runner.os == 'macOS' && '-Xmx5g' || '' }}
         run: clojure -M:test
 
   # Every extension must resolve its own deps.edn cleanly — catches stale
