@@ -1774,7 +1774,11 @@
                                                            nil)
                             #'cancellation/cancellation-set-future! (fn [& _]
                                                                       nil)}
-             #(#'state/launch-turn-worker! sid tid "hello" {:cancel-token :token}))
+             #(#'state/launch-turn-worker!
+                sid
+                tid
+                "hello"
+                {:cancel-token (cancellation/cancellation-token)}))
            (expect (= "cid-1"
                       (->> @events
                            (filter (comp #{"turn.started"} first))
@@ -1782,6 +1786,43 @@
                            second
                            :idempotency_key)))
            (finally (swap! registry dissoc sid)))))
+  (it "always lands a terminal for a turn whose token is cancelled at launch"
+      ;; The worker runs on a FutureTask: cancelling it BEFORE its thread enters
+      ;; `run` skips the body entirely. `turn.started` is already on the wire by
+      ;; then, so landing nothing pinned `:current-turn` to a turn nobody runs —
+      ;; an empty assistant row forever and a queue that never drains again.
+      (let
+        [registry
+         @#'state/registry
+
+         sid
+         (str "cancel-at-launch-" (java.util.UUID/randomUUID))
+
+         tid
+         "turn-1"
+
+         token
+         (cancellation/cancellation-token)
+
+         landed
+         (atom [])]
+
+        (try (swap! registry assoc
+               sid
+               {:next-seq 0
+                :current-turn tid
+                :turns {tid {:turn_id tid :session_id sid :status "running" :started_at 123}}})
+             (cancellation/cancel! token)
+             (with-redefs-fn {#'state/append-event! (fn [& _]
+                                                      nil)
+                              #'state/cancel-waiting-turn! (fn [_sid t _token]
+                                                             (swap! landed conj t)
+                                                             nil)}
+               #(do (#'state/launch-turn-worker! sid tid "hello" {:cancel-token token})
+                    (loop [n 0]
+                      (when (and (empty? @landed) (< n 200)) (Thread/sleep 10) (recur (inc n))))))
+             (expect (= [tid] @landed))
+             (finally (swap! registry dissoc sid)))))
   (it "echoes the submitter's correlation id on every terminal event"
       ;; A channel reconciles its optimistic bubble against the terminal event
       ;; INDEPENDENTLY of its blocking submit worker, and a tab whose submit ack is

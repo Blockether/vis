@@ -2237,31 +2237,60 @@
     [stall
      (atom {:phase nil :last-ms (System/currentTimeMillis)})
 
+     ;; Single-claim ticket for this turn's ONE terminal landing. `turn.started`
+     ;; is already on the wire and `:current-turn` already points at `tid`, so
+     ;; EXACTLY one of {the worker body, the cancel hook} must finish the turn.
+     ;; Zero would pin the session to a turn nobody is running: the UI shows an
+     ;; empty assistant row forever and every later message piles up `queued`
+     ;; with nothing to drain it.
+     claimed
+     (java.util.concurrent.atomic.AtomicBoolean. false)
+
      worker
      (fn []
-       (if (acquire-turn-permit! cancel-token)
-         (do (swap! turns-executing inc)
-             (start-turn-stall-watchdog! sid tid cancel-token stall)
-             (try (run-turn! sid
-                             tid
-                             request
-                             {:messages messages
-                              :model model
-                              :reasoning-default reasoning-default
-                              :cancel-token cancel-token
-                              :extra-body extra-body
-                              :turn-features turn-features
-                              :workspace workspace
-                              :engine-opts engine-opts
-                              :attachments attachments
-                              :display-request display-request
-                              :stall stall})
-                  (finally (release-turn-permit!))))
-         (cancel-waiting-turn! sid tid cancel-token)))]
+       (when (.compareAndSet claimed false true)
+         (if (acquire-turn-permit! cancel-token)
+           (do (swap! turns-executing inc)
+               (start-turn-stall-watchdog! sid tid cancel-token stall)
+               (try (run-turn! sid
+                               tid
+                               request
+                               {:messages messages
+                                :model model
+                                :reasoning-default reasoning-default
+                                :cancel-token cancel-token
+                                :extra-body extra-body
+                                :turn-features turn-features
+                                :workspace workspace
+                                :engine-opts engine-opts
+                                :attachments attachments
+                                :display-request display-request
+                                :stall stall})
+                    (finally (release-turn-permit!))))
+           (cancel-waiting-turn! sid tid cancel-token))))
 
-    (cancellation/cancellation-set-future! cancel-token
-                                           (cancellation/worker-future (str "gateway-turn-" tid)
-                                                                       worker))))
+     fut
+     (cancellation/worker-future (str "gateway-turn-" tid) worker)]
+
+    ;; Deliberately NOT `cancellation-set-future!`. That registers a bare
+    ;; `.cancel(true)`, and a `FutureTask` cancelled BEFORE its thread enters
+    ;; `run` never invokes the body at all — so a cancel racing the launch (or a
+    ;; token already cancelled when the queue head drains: app backgrounded,
+    ;; view closed, stop pressed) killed the worker after `turn.started` and
+    ;; before anything could emit a terminal. THAT is the wedged-session bug.
+    ;; Interrupt the worker, then land the cancellation ourselves iff we win the
+    ;; claim — winning means the body has not started and never will.
+    (cancellation/on-cancel!
+      cancel-token
+      (fn []
+        (try (.cancel ^java.util.concurrent.Future fut true) (catch Throwable _ nil))
+        (when (.compareAndSet claimed false true)
+          ;; Off the cancelling thread: this lands a terminal and drains the
+          ;; queue, which must never run inside an HTTP/UI cancel handler.
+          (cancellation/worker-future (str "gateway-turn-cancel-" tid)
+                                      (fn []
+                                        (cancel-waiting-turn! sid tid cancel-token))))))
+    fut))
 
 (defn- left-queued-by-cancel?
   "True when queued turn `head` was submitted BEFORE the session's cancel floor
