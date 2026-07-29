@@ -16,7 +16,7 @@
       (expect
         (.contains
           help
-          "Vis - persistent sandboxed Recursive Language Model powered by an embedded Python REPL."))
+          "Vis - a coding agent that edits, runs and verifies code in your repo, with a persistent sandboxed Python REPL."))
       (expect (.contains help "vis [FLAGS] \"prompt\""))
       (expect (.contains help "--full-trace-json-stream"))
       (expect (.contains help "--provider PROVIDER"))

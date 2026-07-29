@@ -3993,7 +3993,7 @@ def __vis_run_module__(name):
 
 (def ^:private DEFAULT_DOC
   (str
-    "Vis - persistent sandboxed Recursive Language Model powered by an embedded Python REPL.\n" "\n"
+    "Vis - a coding agent that edits, runs and verifies code in your repo, with a persistent sandboxed Python REPL.\n" "\n"
     "USAGE\n" "  vis [FLAGS] \"prompt\"          Run one-shot agent work.\n"
     "  vis [FLAGS]                    Show this help.\n"
     "  vis <command> [args...]        Run a command.\n"
