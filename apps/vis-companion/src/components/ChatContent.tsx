@@ -604,14 +604,16 @@ function turnMetaSummary(turn: TranscriptTurn): string | null {
 function turnFallbackNote(turn: TranscriptTurn): string | null {
   if (turn.meta_fallback_note?.trim()) return turn.meta_fallback_note.trim();
   const routing = turnRouting(turn);
-  if (!routing.fallback) return null;
-
   const fallbackTypes = new Set([
     'llm.routing/provider-fallback',
     'llm.routing/format-fallback',
   ]);
-  const event = routing.trace.find((item) => fallbackTypes.has(String(item.type ?? '')));
-  const retries = routing.trace.filter((item) => item.type === 'llm.routing/provider-retry').length;
+  const retryEvents = routing.trace.filter((item) => item.type === 'llm.routing/provider-retry');
+  if (!routing.fallback && !retryEvents.length) return null;
+
+  const fallbackEvent = routing.trace.find((item) => fallbackTypes.has(String(item.type ?? '')));
+  const event = fallbackEvent ?? retryEvents.at(-1);
+  const retries = retryEvents.length;
   const from = modelPair(routing.selected) ?? 'previous model';
   const status = event?.status;
   const reason = event?.reason;

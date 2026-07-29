@@ -64,8 +64,8 @@
   (it
     "keeps the sectioned core contract explicit and non-contradictory"
     (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-      ;; Context safety is worth a small fixed prompt cost; keep the whole core below 4.5k.
-      (expect (< (count text) 4500))
+      ;; Context safety is worth a small fixed prompt cost; keep the whole core below 4.7k.
+      (expect (< (count text) 4700))
       (let
         [steps (mapv #(str/index-of text %)
                      ["use `grep` to locate unknown code" "known supported file" "`struct_index`"
@@ -97,18 +97,21 @@
           "Direct native tools: single operations" "simple edits" "small fixed call sets"
           "default for most Python/data work" "YAML/JSON/TOML/CSV" "over shell."
           "Call advertised native tools directly" "for unadvertised sandbox" "read-only `session`"
-          "raw data, not rendered text" "Use documented keys" "After one shape/type error"
-          "inspect keys/types" "adapt to what you saw" "read it by that name"
+          "raw data, not rendered text" "Use documented keys"
+          "Before re-running or scanning transcript" "recover raw result" "saved id"
+          "`ntr.describe()`" "labelled candidates" "not `ntr.keys()`/`items()` to discover results"
+          "shape/type" "inspect keys/types" "then adapt" "read it by that name"
           "reproduce before editing" "rerun the same check after the fix" "batch independent reads"
           "Write only files the task asked" "Python extensions" "`run_tests(\"python\")`" "native"
           "CLI: `vis python -m pytest <paths>`" "on your own and report what you did"
           "Keep secrets out of answers" "Commit, push, publish" "Treat context as a budget"
-          "act before the provider fails" "approaches `auto_compress_above`"
-          "immediately when its `hint` asks" "one broad `through`/range fold"
-          "Fold settled search sweeps" "superseded reads" "Preserve decisions, findings"
-          "exact physical paths" "verbatim" "breadcrumb lacks a needed path"
-          "`grep` before any path-taking tool" "Fold only settled steps" "last completed scope"
-          "confirm meaningful reduction" "saved nothing"
+          "act before the provider fails" "Fold obsolete settled work"
+          "one broad `through`/range fold"
+          "When edit-ready and headroom permits, patch before folding"
+          "Before unavoidable folds, checkpoint"
+          "paths/symbols, hypothesis, edit/test, and dirty files"
+          "decisions, verification, recovery IDs" "exact paths; confirm reduction"
+          "Fold only settled steps through the last completed scope"
           ;; REPL lifecycle: the agent must reuse managed REPLs and STOP the ones
           ;; it started, or every session leaks a JVM/interpreter child.
           "Before `repl_eval` or any REPL lifecycle change"

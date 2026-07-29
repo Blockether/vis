@@ -543,9 +543,14 @@
   ;; shell/tool call) projects back to the phase the live spinner reads, so an
   ;; ATTACHED tab shows "Vis is running: …" like a locally-run turn.
   (let [g->c @#'chat/gateway-event->chunk]
-    (it "a nested tool activity projects to :tool-start naming the op"
-        (expect (= {:phase :tool-start :iteration 2 :tool-event {:op "shell"}}
-                   (g->c {"type" "activity" "activity" "tool" "op" "shell" "iteration" 2}))))
+    (it "a nested tool activity keeps the precise live label"
+        (expect
+          (= {:phase :tool-start :iteration 2 :tool-event {:op "shell" :label "clojure -M:test"}}
+             (g->c {"type" "activity"
+                    "activity" "tool"
+                    "op" "shell"
+                    "label" "clojure -M:test"
+                    "iteration" 2}))))
     (it "a shell-run activity projects to :shell-run with its command"
         (expect
           (= {:phase :shell-run :iteration 1 :cmd "clojure -M:test"}

@@ -117,13 +117,14 @@
   "Coarse live-progress phases (provider wait, response parse, nested shell/tool
    call) ship as an EPHEMERAL `activity` event (store? false) so a long call
    never leaves the bubble frozen; nothing persists into the durable trace."
-  (it "a nested tool-start ships an ephemeral activity event naming the op"
+  (it "a nested tool-start ships an ephemeral activity event with its precise label"
       (let
-        [[type store? payload] (#'state/chunk->event
-                                {:phase :tool-start :iteration 2 :tool-event {:op :shell}})]
+        [[type store? payload]
+         (#'state/chunk->event
+          {:phase :tool-start :iteration 2 :tool-event {:op :shell :label "clojure -M:test"}})]
         (expect (= "activity" type))
         (expect (false? store?))
-        (expect (= {:activity "tool" :iteration 2 :op "shell"} payload))))
+        (expect (= {:activity "tool" :iteration 2 :op "shell" :label "clojure -M:test"} payload))))
   (it "provider-call and shell-run project to ephemeral activity events"
       (expect (= ["activity" false {:activity "provider-call" :iteration 1}]
                  (#'state/chunk->event {:phase :provider-call :iteration 1})))

@@ -1506,14 +1506,36 @@ export function SessionScreen({
     };
   }, [client, sid, loadTranscript, subscriptions, pinToEnd, acceptQueueBacklog]);
 
+  const refreshSlashCommands = useCallback((signal?: AbortSignal) => {
+    return client
+      .slashes(signal)
+      .then((commands) => setSlashCommands(mergeSlashCommands(commands)))
+      .catch(() => {
+        if (signal?.aborted) return;
+        setSlashCommands(mergeSlashCommands([]));
+      });
+  }, [client]);
+
+  // The palette is derived on the gateway and MOVES at runtime: `/reload`
+  // rescans extensions, skills, agents, harness commands and prompt templates,
+  // so a skill dropped into `.agents/skills` mid-session has to show up without
+  // restarting the app. Fetch it on mount, on every wake, and again the moment
+  // the composer enters slash mode — that is exactly when a stale list shows.
   useEffect(() => {
     const controller = new AbortController();
-    void client
-      .slashes(controller.signal)
-      .then((commands) => setSlashCommands(mergeSlashCommands(commands)))
-      .catch(() => setSlashCommands(mergeSlashCommands([])));
-    return () => controller.abort();
-  }, [client]);
+    void refreshSlashCommands(controller.signal);
+    const stopWake = onWake(() => void refreshSlashCommands());
+    return () => {
+      controller.abort();
+      stopWake();
+    };
+  }, [refreshSlashCommands]);
+
+  const slashMode = prompt.trimStart().startsWith('/');
+
+  useEffect(() => {
+    if (slashMode) void refreshSlashCommands();
+  }, [slashMode, refreshSlashCommands]);
 
   useEffect(() => {
     const controller = new AbortController();

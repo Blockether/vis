@@ -2,6 +2,11 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.14 (2781) — 2026-07-29
+<!-- commit: 636ea5af07bb6fcea247870d9771f7d56efee6a7 -->
+
+- Stabilize transcript rotation
+
 ## 0.1.14 (2780) — 2026-07-29
 <!-- commit: df93fefef6194b1309ca45cfc2e4370fde1fca65 -->
 

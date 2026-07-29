@@ -85,12 +85,20 @@
                  (expect (str/starts-with? (fmt/meta-summary-line fallback-result)
                                            "openai/gpt-4o"))))
 
-(defdescribe meta-fallback-note-test
-             (it "tells the routing story: from <selected> — <status>, retried N×"
-                 (expect (= "↳ from blockether/glm-5.1 — 429, retried 3×"
-                            (fmt/meta-fallback-note fallback-result))))
-             (it "is nil when there was no fallback"
-                 (expect (nil? (fmt/meta-fallback-note normal-result)))))
+(defdescribe
+  meta-fallback-note-test
+  (it "tells the routing story: from <selected> — <status>, retried N×"
+      (expect (= "↳ from blockether/glm-5.1 — 429, retried 3×"
+                 (fmt/meta-fallback-note fallback-result))))
+  (it "surfaces the final provider error for retry-only traces"
+      (expect (= "↳ from anthropic/claude-opus-5 — 529, retried 2×"
+                 (fmt/meta-fallback-note
+                   {:llm-selected {:provider :anthropic :model "claude-opus-5"}
+                    :llm-routing-trace
+                    [{:event/type :llm.routing/provider-retry :status 529 :reason :rate-limit}
+                     {:event/type :llm.routing/provider-retry :status 529 :reason :rate-limit}]}))))
+  (it "is nil when there was no fallback or retry"
+      (expect (nil? (fmt/meta-fallback-note normal-result)))))
 
 (defdescribe format-meta-line-test
              (it "is identical to meta-summary-line when there's no fallback"

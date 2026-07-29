@@ -3110,20 +3110,34 @@
             util
             (get ctx "engine_utilization")
 
+            ;; Price the DELTA this intent still removes, not its entire selector.
+            ;; A model can fold repeatedly before the next provider projection has
+            ;; re-stamped visible weights; the earlier summary already hid its raw
+            ;; payload even though its old weight is still present in this ctx.
             expanded
             (ctx-engine/expand-through [base] (or universe []))
 
+            existing
+            (ctx-engine/expand-through (get ctx "session_summaries") (or universe []))
+
+            already-scopes
+            (into #{} (mapcat #(get % "scopes")) existing)
+
             scopes
-            (into #{} (mapcat #(get % "scopes")) expanded)
+            (set/difference (into #{} (mapcat #(get % "scopes")) expanded) already-scopes)
 
             ;; Whole-turn intent also removes the turn's Q/A recap from the
-            ;; prior-turn context — price that too (`engine_turn_weights`,
-            ;; stamped by `previous-turn-context`), so a bare `tN` /
-            ;; turn-spanning range fold reports its FULL reclaim, not just the
-            ;; trailer iterations still carrying weights.
+            ;; prior-turn context. Apply the same delta rule: a wider re-fold
+            ;; must not recharge a recap an earlier whole-turn fold removed.
+            already-turns
+            (into #{} (mapcat #(get % "turns")) existing)
+
+            new-turns
+            (set/difference (into #{} (mapcat #(get % "turns")) expanded) already-turns)
+
             qa-toks
             (let [tw (get ctx "engine_turn_weights")]
-              (reduce + 0 (keep #(get tw %) (into #{} (mapcat #(get % "turns")) expanded))))
+              (reduce + 0 (keep #(get tw %) new-turns)))
 
             toks
             (+ (long (reduce + 0 (keep #(get weights %) scopes))) (long qa-toks))
@@ -3318,7 +3332,7 @@
                 "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
                 "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}"))))}))
 
-(def ^:private MAX_FOLD_NTR_HINTS 5)
+(def ^:private MAX_FOLD_NTR_HINTS 3)
 
 (def ^:private MAX_FOLD_NTR_GIST_CHARS 44)
 
@@ -3417,7 +3431,7 @@
 
    Every shown accessor is LABELLED with what it holds (`ntr[\"toolu_…\"] cat:
    loop.clj lines 3300-3370`): the point of the clause is deciding WHICH handle to
-   spend a fetch on, and an id alone can't be decided about. Advertise only the 5
+   spend a fetch on, and an id alone can't be decided about. Advertise only the 3
    NEWEST entries; recover older results through `ntr.describe()`, which browses the
    whole store the same labelled way — not bare `ntr.keys()`. Accepts labelled entry
    maps and legacy bare id strings. Returns a leading-` · ` fragment, or nil when the
@@ -3434,7 +3448,7 @@
         [shown (vec (take-last MAX_FOLD_NTR_HINTS ids))
          extra (- (count ids) (count shown))]
 
-        (str " · recover "
+        (str " · recover raw result/no rerun: "
              (str/join "; "
                        (map (fn [e]
                               (str "ntr[" (pr-str (str (get e "id")))
@@ -3442,9 +3456,7 @@
                                          (str " " label))))
                             shown))
              (when (pos? extra)
-               (str " · IMPORTANT " extra
-                    " more folded results stay recoverable"
-                    " — browse them with ntr.describe()")))))))
+               (str " · +" extra " older labelled results: ntr.describe() → ntr[id]")))))))
 
 (defn- scope-token-end
   "Index just PAST the iteration address starting at `i` (`t12`, `t1/i2`,
@@ -3587,8 +3599,13 @@
    neither surface could wrap readably."
   [seg]
   (let
-    [entries
-     (->> (split-on (str/triml (subs seg (count "recover"))) "; ")
+    [prefix
+     (if (str/starts-with? seg "recover raw result/no rerun:")
+       "recover raw result/no rerun:"
+       "recover")
+
+     entries
+     (->> (split-on (str/triml (subs seg (count prefix))) "; ")
           (map str/trim)
           (remove str/blank?))
 
@@ -3601,7 +3618,7 @@
          (code-ntr e)))]
 
     (if (seq entries)
-      (str "**recover** one stored native result each, no re-run:\n"
+      (str "**recover** exact raw result, no re-run:\n"
            (str/join "\n" (map #(str "  - " (line %)) entries)))
       (code-ntr (bold-lead-word seg)))))
 
@@ -3609,7 +3626,7 @@
   "Presentation split of a `session_fold` receipt into an op-card.
 
    The verb returns ONE dense line — `folded <label> · saved … · context … ·
-   recover ntr[…] → <gist>` — and every channel used to paint it as a headline
+   recover raw result/no rerun: ntr[…] → <gist>` — and every channel used to paint it as a headline
    plus a VERBATIM ``` fence. That fence is what made folds unreadable: the TUI
    CHAR-folds a language-less block (cuts mid-word, mid-`ntr[\"…\"]`) and the
    companion hands it `overflow-x-auto`, so the longest, densest line we emit
@@ -10724,9 +10741,8 @@
         (fn native-result-ids []
           (vec (persistance/db-native-result-ids-for-session db-info session-id)))
         ;; `index` is the LABELLED discovery callback behind `ntr.describe()`:
-        ;; {"id" "tool" "gist"} per stored native result, newest first, and NOT
-        ;; one payload is thawed to build it — a whole window of opaque
-        ;; `toolu_…` ids gets named without a single fetch.
+        ;; {"id" "tool" "gist"} per latest-turn result, newest first, and NOT one
+        ;; payload is thawed to build it. Exact `ntr[id]` recovery remains session-wide.
         (symbol "__vis_native_result_index__")
         (fn native-result-index []
           (mapv (fn [e]
@@ -10736,7 +10752,7 @@
 
                     (:gist e)
                     (assoc "gist" (str (:gist e)))))
-                (persistance/db-native-result-index-for-session db-info session-id)))}
+                (persistance/db-native-result-index-for-latest-turn db-info session-id)))}
        ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
        ;; binding map so none of the child-dispatch verbs are
        ;; bound (sub_loop + parallel/sequence/selector/retry).

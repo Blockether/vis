@@ -376,41 +376,34 @@
   "  ·  ")
 
 (defn meta-fallback-note
-  "Faint routing note, present only when the turn fell back to another model:
+  "Faint routing note when a turn fell back or retried a provider:
      ↳ from <selected-model> — <reason>, retried N×
-   `reason` prefers the HTTP status (429) on the fallback event, then the reason
-   keyword, then the free-form error. Retries count `:llm.routing/provider-retry`
-   events in the trace. Returns nil when there was no fallback. Shared so the TUI
-   can float it on its own faint row while the CLI folds it inline."
+   `reason` prefers the HTTP status (429) on a fallback event, then the reason
+   keyword, then the free-form error. Retry-only traces use their final retry
+   event, so a provider failure is never rendered as merely `retried N×`.
+   Returns nil when the trace has neither a fallback nor retries. Shared so the
+   TUI can float it on its own faint row while the CLI folds it inline."
   [{:keys [llm-selected llm-fallback? llm-routing-trace]}]
-  (when llm-fallback?
-    (let
-      [from
-       (or (model-pair-label llm-selected) "previous model")
+  (let [retry-events (filter #(= :llm.routing/provider-retry (:event/type %)) llm-routing-trace)]
+    (when (or llm-fallback? (seq retry-events))
+      (let
+        [from (or (model-pair-label llm-selected) "previous model")
+         fallback-event (first (filter #(contains? #{:llm.routing/provider-fallback
+                                                     :llm.routing/format-fallback}
+                                                   (:event/type %))
+                                       llm-routing-trace))
+         ev (or fallback-event (last retry-events))
+         retries (count retry-events)
+         status (:status ev)
+         why (cond (some? status) (str status)
+                   (some? (:reason ev)) (name (:reason ev))
+                   (seq (str (:error ev))) (str (:error ev))
+                   :else nil)
+         tail (->> [why (when (pos? retries) (str "retried " retries "×"))]
+                   (remove (fn [s]
+                             (or (nil? s) (str/blank? (str s))))))]
 
-       ev
-       (first (filter #(contains? #{:llm.routing/provider-fallback :llm.routing/format-fallback}
-                                  (:event/type %))
-                      llm-routing-trace))
-
-       retries
-       (count (filter #(= :llm.routing/provider-retry (:event/type %)) llm-routing-trace))
-
-       status
-       (:status ev)
-
-       why
-       (cond (some? status) (str status)
-             (some? (:reason ev)) (name (:reason ev))
-             (seq (str (:error ev))) (str (:error ev))
-             :else nil)
-
-       tail
-       (->> [why (when (pos? retries) (str "retried " retries "×"))]
-            (remove (fn [s]
-                      (or (nil? s) (str/blank? (str s))))))]
-
-      (str "↳ from " from (when (seq tail) (str " — " (str/join ", " tail)))))))
+        (str "↳ from " from (when (seq tail) (str " — " (str/join ", " tail))))))))
 
 (defn meta-summary-line
   "The canonical, humanized turn-summary MAIN line, shared verbatim by the CLI

@@ -950,7 +950,10 @@
          (event-get event :cmd)
 
          op
-         (event-get event :op)]
+         (event-get event :op)
+
+         label
+         (event-get event :label)]
 
         (case (str activity)
           "provider-call"
@@ -966,7 +969,11 @@
           {:phase :shell-bg :iteration iteration :cmd (or cmd op)}
 
           "tool"
-          {:phase :tool-start :iteration iteration :tool-event {:op op}}
+          {:phase :tool-start
+           :iteration iteration
+           :tool-event (cond-> {:op op}
+                         label
+                         (assoc :label label))}
 
           nil))
 

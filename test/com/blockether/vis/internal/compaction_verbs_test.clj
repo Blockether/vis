@@ -875,7 +875,10 @@
             [text ["ACTION REQUIRED" "210k" "144k" "Fold settled search/tool sweeps"
                    "one broad session_fold" "last completed scope"
                    "preserve decisions, edits, and verification" "preserve exact physical paths"
-                   "never bare or abbreviated filenames" "confirm the receipt saved tokens"]]
+                   "If the edit is ready and the next patch fits available headroom, patch first"
+                   "compact actionable checkpoint" "exact paths/symbols" "hypothesis"
+                   "intended edit/test" "dirty files" "never bare or abbreviated filenames"
+                   "confirm the receipt saved tokens"]]
             (expect (str/includes? hint text)))))
     (it "never silently expires while pressure remains"
         (expect (some? (eng/over-budget-hint required 6 6)))
@@ -957,6 +960,53 @@
         (expect (str/includes? (:block @standing) "session ="))
         (expect (str/includes? delta "session[\"turn\"] = 2"))
         (expect (str/includes? delta "session[\"resources\"]")))))
+  (it "a broader re-fold charges only scopes newly visible since the earlier fold"
+      ;; Multiple `session_fold` calls can happen before the next provider projection
+      ;; re-stamps `engine_iter_weights`. The second card and rebase ledger must not
+      ;; charge the first fold's raw payload again merely because its old weight remains.
+      (let
+        [ca
+         (atom {"session_turn" 3
+                "engine_iter_universe" ["t1/i1" "t1/i2" "t1/i3"]
+                "engine_iter_weights" {"t1/i1" 120000 "t1/i2" 80000 "t1/i3" 30000}
+                "engine_utilization" {"auto_compress_above" 200000}})
+
+         rebase
+         (atom {:reclaimed-tokens 0 :pending? false})
+
+         sf
+         (get (compaction-verbs ca rebase) 'session-fold)
+
+         first-card
+         (sf ["t1/i1"] "first")
+
+         broader-card
+         (sf {"through" "t1/i3"} "broader")]
+
+        (expect (= "folded t1/i1 · saved ~120k tokens · ~60% of budget → first" first-card))
+        ;; t1/i1 was already collapsed by `first-card`; only t1/i2 + t1/i3 are new.
+        (expect (= "folded through t1/i3 · saved ~110k tokens · ~55% of budget → broader"
+                   broader-card))
+        (expect (= {:reclaimed-tokens 230000 :pending? true} @rebase))))
+  (it "a broader whole-turn re-fold does not recharge an already removed Q/A recap"
+      (let
+        [ca
+         (atom {"session_turn" 3
+                "engine_iter_universe" ["t1/i1" "t1/i2"]
+                "engine_iter_weights" {"t1/i1" 10000 "t1/i2" 20000}
+                "engine_turn_weights" {1 50000}
+                "engine_utilization" {"auto_compress_above" 100000}})
+
+         rebase
+         (atom {:reclaimed-tokens 0 :pending? false})
+
+         sf
+         (get (compaction-verbs ca rebase) 'session-fold)]
+
+        (expect (= "folded t1 · saved ~80k tokens · ~80% of budget → first" (sf ["t1"] "first")))
+        (expect (= "folded through t1/i2 · saved ~0 tokens → broader"
+                   (sf {"through" "t1/i2"} "broader")))
+        (expect (= {:reclaimed-tokens 80000 :pending? false} @rebase))))
   ;; The verb RETURN string is the tool card the human sees. It is enriched with
   ;; how much wire the fold reclaims — in ~tokens (summed from `engine_iter_weights`)
   ;; AND as a fraction of the OPERATING ceiling (`auto_compress_above`, grown to the
@@ -1082,38 +1132,42 @@
         (=
           "# ⋯ folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44% (42k/96k tokens) · big cat dump"
           line))))
-  (it "a fold breadcrumb carries its folded steps' ntr[...] recovery accessors"
-      ;; The scope→accessor index rides the DURABLE breadcrumb so a harness
-      ;; restart (which drops the per-call `# saved: ntr[…]` lines) can't strip
-      ;; the recovery handles. Drops and python_execution-only folds (no stored
-      ;; result) carry none.
-      (let
-        [tr
-         [[1
-           {:forms-vec [{:scope "t1/i1/f1"
-                         :svar/tool-call-id "toolu_A"
-                         :result "a"
-                         :vis/tool-name "grep"
-                         :result-summary "`ntr` · 2 files"}]}]
-          [2
-           {:forms-vec
-            [{:scope "t1/i2/f1" :svar/tool-call-id "toolu_B" :result "b" :vis/tool-name "cat"}]}]]
+  (it
+    "a fold breadcrumb carries its folded steps' ntr[...] recovery accessors"
+    ;; The scope→accessor index rides the DURABLE breadcrumb so a harness
+    ;; restart (which drops the per-call `# saved: ntr[…]` lines) can't strip
+    ;; the recovery handles. Drops and python_execution-only folds (no stored
+    ;; result) carry none.
+    (let
+      [tr
+       [[1
+         {:forms-vec [{:scope "t1/i1/f1"
+                       :svar/tool-call-id "toolu_A"
+                       :result "a"
+                       :vis/tool-name "grep"
+                       :result-summary "`ntr` · 2 files"}]}]
+        [2
+         {:forms-vec
+          [{:scope "t1/i2/f1" :svar/tool-call-id "toolu_B" :result "b" :vis/tool-name "cat"}]}]]
 
-         folded
-         (apply-summaries tr [{"scopes" #{"t1/i1" "t1/i2"} "gist" "did it"}])
+       folded
+       (apply-summaries tr [{"scopes" #{"t1/i1" "t1/i2"} "gist" "did it"}])
 
-         dropped
-         (apply-summaries tr [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])
+       dropped
+       (apply-summaries tr [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])
 
-         printed
-         (apply-summaries [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "p"}]}]]
-                          [{"scopes" #{"t1/i1"} "gist" "no store"}])]
+       printed
+       (apply-summaries [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "p"}]}]]
+                        [{"scopes" #{"t1/i1"} "gist" "no store"}])]
 
-        (expect (= (str "# ⋯ folded t1/i1-i2 · recover ntr[\"toolu_A\"] grep: ntr, 2 files; "
-                        "ntr[\"toolu_B\"] cat · did it")
-                   (:content (irm (second (first folded))))))
-        (expect (= "# ⋯ dropped t1/i1 · misread" (:content (irm (second (first dropped))))))
-        (expect (= "# ⋯ folded t1/i1 · no store" (:content (irm (second (first printed))))))))
+      (expect
+        (=
+          (str
+            "# ⋯ folded t1/i1-i2 · recover raw result/no rerun: ntr[\"toolu_A\"] grep: ntr, 2 files; "
+            "ntr[\"toolu_B\"] cat · did it")
+          (:content (irm (second (first folded))))))
+      (expect (= "# ⋯ dropped t1/i1 · misread" (:content (irm (second (first dropped))))))
+      (expect (= "# ⋯ folded t1/i1 · no store" (:content (irm (second (first printed))))))))
   (it "with NO stamped utilization the card degrades to the bare confirmation"
       (let [sf (get (compaction-verbs (atom {"session_turn" 2})) 'session-fold)]
         (expect (= "folded t1/i1 → g" (sf ["t1/i1"] "g")))))
@@ -1126,9 +1180,10 @@
                                           "engine_iter_universe" ["t1/i1"]
                                           "engine_iter_ntr" {"t1/i1" ["toolu_A" "toolu_B"]}}))
                  'session-fold)]
-        (expect (= "folded t1/i1 · recover ntr[\"toolu_A\"]; ntr[\"toolu_B\"] → g"
-                   (sf ["t1/i1"] "g")))))
-  (it "a fold advertises only its 5 newest labelled recovery accessors"
+        (expect
+          (= "folded t1/i1 · recover raw result/no rerun: ntr[\"toolu_A\"]; ntr[\"toolu_B\"] → g"
+             (sf ["t1/i1"] "g")))))
+  (it "a fold advertises only its 3 newest labelled recovery accessors"
       ;; Older results stay available through ntr.describe(); the breadcrumb must
       ;; favor the newest work and never grow without bound.
       (let
@@ -1146,13 +1201,13 @@
          out
          (sf ["t1/i1"] "g")]
 
-        ;; Everything older than the 5 newest is deliberately omitted; the 5th-from-end
+        ;; Everything older than the 3 newest is deliberately omitted; the 3rd-from-end
         ;; and newest entries remain labelled and selectable.
         (expect (not (str/includes? out "ntr[\"toolu_0\"]")))
-        (expect (not (str/includes? out "ntr[\"toolu_20\"]")))
-        (expect (str/includes? out "ntr[\"toolu_21\"] cat;"))
+        (expect (not (str/includes? out "ntr[\"toolu_22\"]")))
+        (expect (str/includes? out "ntr[\"toolu_23\"] cat;"))
         (expect (str/includes? out "ntr[\"toolu_25\"] cat"))
-        (expect (str/includes? out " · IMPORTANT 21 more folded results stay recoverable"))))
+        (expect (str/includes? out " · +23 older labelled results: ntr.describe() → ntr[id]"))))
   (it "a long label is truncated instead of drowning the breadcrumb"
       (let
         [sf
@@ -1178,9 +1233,11 @@
    shape reads correctly in the TUI and on the web."
   (it "splits a full receipt into headline + gist paragraph + metric bullets"
       (let
-        [card (session-fold-card (str "folded t1/i1 · saved ~60k tokens · ~67% of budget"
-                                      " · context 94% (90k/96k tokens) · recover ntr[\"toolu_A\"]"
-                                      " → bigger task"))]
+        [card (session-fold-card
+                (str
+                  "folded t1/i1 · saved ~60k tokens · ~67% of budget"
+                  " · context 94% (90k/96k tokens) · recover raw result/no rerun: ntr[\"toolu_A\"]"
+                  " → bigger task"))]
         ;; Collapsed view: WHAT was folded + HOW MUCH it reclaimed.
         (expect (= "folded `t1/i1` · saved **~60k tokens**" (:summary card)))
         ;; `~67% of budget` qualifies the `saved …` it follows, so the pair
@@ -1188,8 +1245,7 @@
         (expect (= (str "\nbigger task\n\n"
                         "- **saved** ~60k tokens · ~67% of budget\n"
                         "- **context** 94% (90k/96k tokens)\n"
-                        "- **recover** one stored native result each, no re-run:\n"
-                        "  - `ntr[\"toolu_A\"]`")
+                        "- **recover** exact raw result, no re-run:\n" "  - `ntr[\"toolu_A\"]`")
                    (:body card)))
         (expect (not (str/includes? (:body card) "```")))))
   (it "a tilde in an accessor label can't strike out the breadcrumb"
