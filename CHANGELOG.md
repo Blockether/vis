@@ -7,6 +7,165 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.13] - 2026-07-29
+
+### Changed
+- chore(deps): svar 0.7.86 -- every quota/credit/budget wall is a hard error
+- feat(companion): collapse recorded non-image attachments into one disclosure row
+- feat(python): read packaging metadata with Python's own parsers, add `python.source_paths`
+- fix(companion): a dead event stream can no longer silently freeze an open session
+- feat(python): ruff config discovery, `vis python -m ruff`, formatted shims
+- feat(python): ruff-powered format_code/lint_code for the Python pack
+- feat(python): infer more src-layout import roots for vis python (#62)
+- fix(sandbox): stop losing the real Python error on warm contexts
+- fix(gateway): avoid holding the state lock across session work
+- feat(companion): expire superseded TestFlight builds
+- fix(sandbox): always grant the ~/.vis session folder in the engine
+- feat(introspection): gate session self-inspection behind a toggle
+- docs(companion): TestFlight notes for 0.1.13 (2755)
+- feat(provider-error): classify a too-small output-token budget
+- fix(reload): re-hydrate feature toggles from config on /reload
+- refactor(tools): always respect .gitignore; config-only filesystem + search scope
+- docs(companion): TestFlight notes for 0.1.13 (2751)
+- feat: web-search toggle, typed extension schemas, honest python CLI exits
+- refactor(tools): use ranges-only line windows
+- test(shims): cover deferred shim dependency loading
+- test(loop): tolerate runner JIT activity after timeout
+- docs(audit): refresh generated dependency audit
+- fix(ci): size macOS heap for Truffle suite
+- test(jail): align contract with supported runtime
+- fix(ci): probe Linux jail capability before E2E
+- fix(audit): generate inventory date in UTC
+- fix(ci): prepare generated Android project before Gradle
+- docs(audit): refresh dependency inventory
+- docs(companion): TestFlight notes for 0.1.13 (2739)
+- fix(python): link extension shims statically
+- docs(companion): TestFlight notes for 0.1.13 (2737)
+- fix(native): arm AWT headless at runtime, not at image-build time
+- build(companion): one version everywhere, from the repo-root VERSION
+- feat(queue): cancelled turn returns queued messages to the input
+- shims: move every sandbox shim's Python into real .py resources
+- companion: release notes for 1.0.1 (2732)
+- attachments: drop image optimization, keep container conversion only
+- providers: add OpenRouter and persist auth files in snake_case
+- release: notes for 1.0.1 (2729)
+- companion: native iOS viewport bridge for rotation and resume
+- cli: make `vis update` explain and recover from diverged history (#53)
+- companion: clamp the shell to the device when iOS resumes an oversized webview
+- release: notes for 1.0.1 (2725)
+- companion cold-open cache, justified fold cards, config-driven model pick
+- release: notes for 1.0.1 (2723)
+- companion: kill rotation layout thrash, restore justified prose
+- release: notes for 1.0.1 (2721)
+- companion: request/transcription deadlines, durable voice outbox, rotation + typography fixes
+- fix(shell): allow host-root descendants outside jail
+- companion: coalesced tool-card grids, justified prose, correct live ticker
+- release: notes for 1.0.1 (2717)
+- companion: honest live status, one-motion keyboard, resume at the end
+- companion: one-motion iOS keyboard; TUI limits, shims, editing fixes
+- labelled ntr recovery, image optimization at ingest, companion back/paste/perf
+- release: update version files for v0.1.12, bump to next dev version
+
+### Package changes
+
+#### com.blockether/vis
+- chore(deps): svar 0.7.86 -- every quota/credit/budget wall is a hard error (02252578e)
+- feat(companion): collapse recorded non-image attachments into one disclosure row (9dba6166e)
+- feat(python): read packaging metadata with Python's own parsers, add `python.source_paths` (f8ac1d4ec)
+- fix(companion): a dead event stream can no longer silently freeze an open session (c229e28d5)
+- feat(python): ruff config discovery, `vis python -m ruff`, formatted shims (83082fdb9)
+- feat(python): ruff-powered format_code/lint_code for the Python pack (99352e9a6)
+- feat(python): infer more src-layout import roots for vis python (#62) (8a0a4751d)
+- fix(sandbox): stop losing the real Python error on warm contexts (655a6586d)
+- fix(gateway): avoid holding the state lock across session work (3b4363478)
+- feat(companion): expire superseded TestFlight builds (922f6ca97)
+- fix(sandbox): always grant the ~/.vis session folder in the engine (edbdb1375)
+- feat(introspection): gate session self-inspection behind a toggle (38db934ae)
+- docs(companion): TestFlight notes for 0.1.13 (2755) (db43ca288)
+- feat(provider-error): classify a too-small output-token budget (8f20677e1)
+- fix(reload): re-hydrate feature toggles from config on /reload (75893813a)
+- refactor(tools): always respect .gitignore; config-only filesystem + search scope (6f89aaa01)
+- docs(companion): TestFlight notes for 0.1.13 (2751) (4966f3233)
+- feat: web-search toggle, typed extension schemas, honest python CLI exits (a9ee2d552)
+- refactor(tools): use ranges-only line windows (136c408dd)
+- test(shims): cover deferred shim dependency loading (df5a6b7c1)
+- test(loop): tolerate runner JIT activity after timeout (522367ffa)
+- docs(audit): refresh generated dependency audit (a68962e34)
+- fix(ci): size macOS heap for Truffle suite (e0da867db)
+- test(jail): align contract with supported runtime (7218a90c2)
+- fix(ci): probe Linux jail capability before E2E (2df6f1102)
+- fix(audit): generate inventory date in UTC (3d53adf52)
+- fix(ci): prepare generated Android project before Gradle (69bfc6842)
+- docs(audit): refresh dependency inventory (42a8c63e4)
+- docs(companion): TestFlight notes for 0.1.13 (2739) (98d98e7b3)
+- fix(python): link extension shims statically (5d7cf4c0a)
+- docs(companion): TestFlight notes for 0.1.13 (2737) (606941f36)
+- fix(native): arm AWT headless at runtime, not at image-build time (8bcec2f9d)
+- build(companion): one version everywhere, from the repo-root VERSION (6fc89832e)
+- feat(queue): cancelled turn returns queued messages to the input (505bb13d8)
+- shims: move every sandbox shim's Python into real .py resources (ce39c555b)
+- companion: release notes for 1.0.1 (2732) (cbe597b9d)
+- attachments: drop image optimization, keep container conversion only (b8e0e9875)
+- providers: add OpenRouter and persist auth files in snake_case (3ee3993c6)
+- release: notes for 1.0.1 (2729) (a1152ddff)
+- companion: native iOS viewport bridge for rotation and resume (ffdb768f5)
+- cli: make `vis update` explain and recover from diverged history (#53) (f369fdaed)
+- companion: clamp the shell to the device when iOS resumes an oversized webview (1b7da420f)
+- release: notes for 1.0.1 (2725) (2bc67ac68)
+- companion cold-open cache, justified fold cards, config-driven model pick (80f263b81)
+- release: notes for 1.0.1 (2723) (1911c5883)
+- companion: kill rotation layout thrash, restore justified prose (d9c943e47)
+- release: notes for 1.0.1 (2721) (5340873cd)
+- companion: request/transcription deadlines, durable voice outbox, rotation + typography fixes (f11835f3f)
+- fix(shell): allow host-root descendants outside jail (e226f48d2)
+- companion: coalesced tool-card grids, justified prose, correct live ticker (d8bd17eb2)
+- release: notes for 1.0.1 (2717) (406756439)
+- companion: honest live status, one-motion keyboard, resume at the end (445a3b2d4)
+- companion: one-motion iOS keyboard; TUI limits, shims, editing fixes (154a0e343)
+- labelled ntr recovery, image optimization at ingest, companion back/paste/perf (f6a109f89)
+- release: update version files for v0.1.12, bump to next dev version (f07ee491c)
+
+#### com.blockether/vis-channel-tui
+- refactor(tools): always respect .gitignore; config-only filesystem + search scope (6f89aaa01)
+- feat(queue): cancelled turn returns queued messages to the input (505bb13d8)
+- attachments: drop image optimization, keep container conversion only (b8e0e9875)
+- companion cold-open cache, justified fold cards, config-driven model pick (80f263b81)
+- companion: one-motion iOS keyboard; TUI limits, shims, editing fixes (154a0e343)
+
+#### com.blockether/vis-foundation-search
+- feat: web-search toggle, typed extension schemas, honest python CLI exits (a9ee2d552)
+
+#### com.blockether/vis-language-clojure
+- feat(queue): cancelled turn returns queued messages to the input (505bb13d8)
+
+#### com.blockether/vis-language-python
+- feat(python): ruff config discovery, `vis python -m ruff`, formatted shims (83082fdb9)
+- feat(python): ruff-powered format_code/lint_code for the Python pack (99352e9a6)
+
+#### com.blockether/vis-persistance-sqlite
+- refactor(tools): always respect .gitignore; config-only filesystem + search scope (6f89aaa01)
+- companion: request/transcription deadlines, durable voice outbox, rotation + typography fixes (f11835f3f)
+- labelled ntr recovery, image optimization at ingest, companion back/paste/perf (f6a109f89)
+
+#### com.blockether/vis-provider-anthropic
+- providers: add OpenRouter and persist auth files in snake_case (3ee3993c6)
+
+#### com.blockether/vis-provider-github-copilot
+- providers: add OpenRouter and persist auth files in snake_case (3ee3993c6)
+- companion: one-motion iOS keyboard; TUI limits, shims, editing fixes (154a0e343)
+- labelled ntr recovery, image optimization at ingest, companion back/paste/perf (f6a109f89)
+
+#### com.blockether/vis-provider-openai-codex
+- providers: add OpenRouter and persist auth files in snake_case (3ee3993c6)
+
+#### com.blockether/vis-provider-openrouter
+- providers: add OpenRouter and persist auth files in snake_case (3ee3993c6)
+
+#### com.blockether/vis-provider-zai
+- providers: add OpenRouter and persist auth files in snake_case (3ee3993c6)
+
+
+
 ## [v0.1.12] - 2026-07-28
 
 ### Changed
@@ -1614,7 +1773,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.12...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.13...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -1627,3 +1786,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.10]: https://github.com/Blockether/vis/releases/tag/v0.1.10
 [v0.1.11]: https://github.com/Blockether/vis/releases/tag/v0.1.11
 [v0.1.12]: https://github.com/Blockether/vis/releases/tag/v0.1.12
+[v0.1.13]: https://github.com/Blockether/vis/releases/tag/v0.1.13
