@@ -11,7 +11,8 @@
    Security consumers derive their internal policy maps through the adapters at
    the end of this namespace, so validation and enforcement share one contract."
   (:require [clojure.spec.alpha :as s]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [com.blockether.vis.internal.paths :as paths]))
 
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 (defn- positive-int? [x] (and (integer? x) (pos? (long x))))
@@ -577,6 +578,41 @@
   [entry]
   (false? (get entry "search")))
 
+(def vis-home-entry
+  "Vis's OWN session folder — `~/.vis`: `state.yml`, the session DB, the gateway
+   event journals, drafts and logs. An IMPLICIT `workspace.filesystem` catalog
+   entry the engine always grants, independent of what a project declares and of
+   `jail.filesystem.allow`: Vis must reach its own state even inside a live jail,
+   and that reach is engine-level — never a feature toggle (the `introspection`
+   toggle governs the session_state/sessions TOOLS, not this grant). Kept out of
+   the DEFAULT search sweep (`search: false`); explicit paths still reach it."
+  {"id" "vis-home"
+   "path" "~/.vis"
+   "description"
+   "Vis' own session folder — session DB, gateway event journals, state.yml, drafts, logs."
+   "search" false})
+
+(defn- same-root?
+  "True when two catalog paths denote the same directory once `~` is expanded and
+   a trailing separator dropped."
+  [a b]
+  (letfn [(norm [p]
+            (some-> p
+                    str
+                    paths/expand-home
+                    paths/unixify
+                    (str/replace #"/+$" "")))]
+    (= (norm a) (norm b))))
+
+(defn- with-vis-home
+  "Append the implicit `~/.vis` entry unless the catalog already declares that
+   path — an explicit entry stays the operator's (its id, description and access
+   win)."
+  [entries]
+  (if (some #(same-root? (get % "path") (get vis-home-entry "path")) entries)
+    (vec entries)
+    (conj (vec entries) vis-home-entry)))
+
 (defn process-jail-config
   "Derive the internal process-jail policy from validated string-keyed config.
    The `workspace.filesystem` catalog is the single source of roots. When the
@@ -584,7 +620,11 @@
    available and the `allow` list is ignored. When ENABLED,
    `jail.filesystem.allow` selects which catalog ids enter the OS jail
    (deny-by-omission). Each admitted entry's `access` sets RW vs read-only and
-   `search: false` marks it out of the default search sweep."
+   `search: false` marks it out of the default search sweep.
+
+   Vis's own session folder (`vis-home-entry`, `~/.vis`) is ALWAYS appended to the
+   admitted set — engine-level, so it survives both an undeclared catalog and a
+   live jail's deny-by-omission. A catalog entry for the same path wins."
   [config]
   (assert-config! config)
   (let
@@ -616,6 +656,9 @@
                                   {:type :vis/invalid-config :id id})))))
              (get-in jail ["filesystem" "allow"] []))
        entries)
+
+     allowed
+     (with-vis-home allowed)
 
      descriptions
      (into {}

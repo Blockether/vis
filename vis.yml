@@ -39,10 +39,7 @@ workspace:
     - id: infrastructure
       path: ~/infrastructure
       description: Blockether Ansible infra — Hetzner servers, Dokku app deploys, SSH-CA, OpenBao secrets.
-    - id: vis-home
-      path: ~/.vis
-      description: Vis' own state/config/log home — read state.yml, inspect logs, diagnose config.
-      search: false
+    # (`~/.vis` — Vis' own session folder — is granted implicitly by the engine.)
     # Managed REPL / test-runner dependency caches. Granted so a jailed JVM/Node
     # resolves already-cached artifacts, but kept OUT of the default search sweep.
     - id: m2
@@ -89,7 +86,7 @@ toggles:
 #   # here is not confined-granted. Access (RW vs read-only) comes from the
 #   # catalog entry above.
 #   filesystem:
-#     allow: [spel, fff, clj-fff, tree-sitter, svar, vis-home, m2, clojure, clj-tslp, graal, npm]
+#     allow: [spel, fff, clj-fff, tree-sitter, svar, m2, clojure, clj-tslp, graal, npm]
 #
 #   # Outbound egress allowlist. A bare host also matches its subdomains, so
 #   # `github.com` covers `api.github.com`, and `githubusercontent.com` covers

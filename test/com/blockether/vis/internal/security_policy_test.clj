@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.security-policy-test
-  (:require [com.blockether.vis.internal.paths :as paths]
+  (:require [com.blockether.vis.internal.config-spec :as config-spec]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.security-policy :as policy]
             [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]])
@@ -39,7 +40,9 @@
        view
        (policy/access-view snapshot [(.getPath project)])]
 
-      (expect (= [(.getCanonicalPath sibling) (.getCanonicalPath cache)]
+      ;; The implicit session folder (`~/.vis`) is always granted, engine-level.
+      (expect (= [(.getCanonicalPath sibling) (.getCanonicalPath cache)
+                  (.getPath (java.io.File. home ".vis"))]
                  (policy/read-write-roots snapshot)))
       (expect (= "~/vis" (policy/home-relative (.getPath project) (.getPath home))))
       (expect (= "~/vis/AGENTS.md"
@@ -49,10 +52,12 @@
       (expect (= "relative/AGENTS.md" (paths/abbreviate-home "relative/AGENTS.md" (.getPath home))))
       (expect (= (str (.getPath home) "-other/AGENTS.md")
                  (paths/abbreviate-home (str (.getPath home) "-other/AGENTS.md") (.getPath home))))
-      (expect (= ["~/vis" "~/spel" "~/.m2"] (get-in view ["filesystem" "read_write"])))
+      (expect (= ["~/vis" "~/spel" "~/.m2" "~/.vis"] (get-in view ["filesystem" "read_write"])))
       (expect (= ["~/read-only"] (get-in view ["filesystem" "process_read_only"])))
-      (expect (= ["~/.m2"] (get-in view ["filesystem" "no_search"])))
-      (expect (= {"~/spel" "Sibling repo" "~/.m2" "Maven cache"}
+      (expect (= ["~/.m2" "~/.vis"] (get-in view ["filesystem" "no_search"])))
+      (expect (= {"~/spel" "Sibling repo"
+                  "~/.m2" "Maven cache"
+                  "~/.vis" (get config-spec/vis-home-entry "description")}
                  (get-in view ["filesystem" "descriptions"])))
       (expect (= [5273] (get-in view ["network" "inbound_ports"])))
       (expect (= "reload" (get view "changes_require")))

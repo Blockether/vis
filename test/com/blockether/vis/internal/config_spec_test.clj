@@ -136,7 +136,9 @@
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "deny_exec"] "curl"))))
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "deny_exec"] [""]))))
     ;; Descriptions of ADMITTED roots flow into the derived policy, keyed by grant path.
-    (expect (= {"/opt/svar" "a sibling repo" "~/.m2" "maven cache"}
+    (expect (= {"/opt/svar" "a sibling repo"
+                "~/.m2" "maven cache"
+                "~/.vis" (get config-spec/vis-home-entry "description")}
                (:path-descriptions (config-spec/process-jail-config full-config))))
     ;; Network is policy data, never an independent on/off escape hatch.
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "network" "enabled"] false))))
@@ -163,16 +165,18 @@
     (expect (not (config-spec/valid? (assoc-in full-config ["message_queue" "unknown"] 1)))))
   (it "derives process-jail and network maps from the same string contract"
       (expect (= {:disabled? false
-                  :allow-read-write ["/opt/svar" "~/generated" "~/.m2"]
+                  :allow-read-write ["/opt/svar" "~/generated" "~/.m2" "~/.vis"]
                   :allow-read ["~/reference"]
                   :allow-write []
                   :deny-read []
                   :deny-write []
                   :deny-exec []
-                  :no-search ["~/.m2"]
+                  :no-search ["~/.m2" "~/.vis"]
                   :inbound-ports [5273 8080]
                   :env-passthrough ["CI" "MY_TOKEN"]
-                  :path-descriptions {"/opt/svar" "a sibling repo" "~/.m2" "maven cache"}}
+                  :path-descriptions {"/opt/svar" "a sibling repo"
+                                      "~/.m2" "maven cache"
+                                      "~/.vis" (get config-spec/vis-home-entry "description")}}
                  (config-spec/process-jail-config full-config)))
       (expect (true? (:disabled? (config-spec/process-jail-config
                                    (assoc-in full-config ["jail" "enabled"] false)))))
@@ -227,7 +231,7 @@
        (assoc-in with-ghost ["jail" "enabled"] true)]
 
       ;; disabled => full catalog RW roots (svar, gen, cache), allow ignored.
-      (expect (= ["/opt/svar" "~/generated" "~/.m2"]
+      (expect (= ["/opt/svar" "~/generated" "~/.m2" "~/.vis"]
                  (:allow-read-write (config-spec/process-jail-config disabled))))
       (expect (= ["~/reference"] (:allow-read (config-spec/process-jail-config disabled))))
       ;; enabled => allow narrows the jail, and the ghost id is a hard error.
@@ -235,6 +239,35 @@
                  (try (config-spec/process-jail-config enabled)
                       nil
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
+  (it "always grants Vis's own session folder (~/.vis), whatever the catalog and the jail say"
+      ;; ENGINE-LEVEL, not a feature toggle: `~/.vis` holds state.yml, the session
+      ;; DB, the gateway event journals and the logs, so Vis must reach its own
+      ;; state even with an empty catalog or a live deny-by-omission jail.
+      (let
+        [vis-home
+         (get config-spec/vis-home-entry "path")
+
+         bare
+         (config-spec/process-jail-config {})
+
+         jailed
+         (config-spec/process-jail-config (-> full-config
+                                              (assoc-in ["jail" "enabled"] true)
+                                              (assoc-in ["jail" "filesystem" "allow"] ["svar"])))
+
+         explicit
+         (config-spec/process-jail-config
+           {"workspace" {"filesystem" [{"id" "vh" "path" "~/.vis/" "access" "read-only"}]}})]
+
+        (expect (= [vis-home] (:allow-read-write bare)))
+        ;; Out of the DEFAULT search sweep — explicit paths still reach it.
+        (expect (= [vis-home] (:no-search bare)))
+        (expect (contains? (:path-descriptions bare) vis-home))
+        ;; A live jail narrows to `allow`, but never away from the session folder.
+        (expect (= ["/opt/svar" vis-home] (:allow-read-write jailed)))
+        ;; An explicit catalog entry for the same path wins (here: read-only).
+        (expect (= [] (:allow-read-write explicit)))
+        (expect (= ["~/.vis/"] (:allow-read explicit)))))
   (it "redacts credentials from validation failures"
       (let
         [bad

@@ -235,6 +235,10 @@
                         "filesystem" {"allow" ["full" "read" "cache"]}
                         "network" {"allowed_domains" ["approved.example"] "inbound_ports" [5273]}}})
 
+         vis-home-root
+         ;; Engine-level implicit grant: Vis's own session folder.
+         (.getCanonicalPath (java.io.File. (System/getProperty "user.home") ".vis"))
+
          snapshot
          (with-redefs [config/load-config-raw #(deref cfg)]
            ((ns-resolve 'com.blockether.vis.internal.loop 'security-config-snapshot)))]
@@ -249,10 +253,11 @@
                              "network" {"allowed_domains" ["escaped.example"]
                                         "inbound_ports" [9999]}}})
         (expect (= true (:sandbox snapshot)))
-        (expect (= ["/approved/full" "/approved/cache"]
+        ;; Vis's own session folder is granted implicitly by the engine.
+        (expect (= ["/approved/full" "/approved/cache" vis-home-root]
                    (get-in snapshot [:process-jail :allow-read-write])))
         (expect (= ["/approved/read"] (get-in snapshot [:process-jail :allow-read])))
-        (expect (= ["/approved/cache"] (get-in snapshot [:process-jail :no-search])))
+        (expect (= ["/approved/cache" vis-home-root] (get-in snapshot [:process-jail :no-search])))
         (expect (= [5273] (get-in snapshot [:process-jail :inbound-ports])))
         (expect (= ["approved.example"] (get-in snapshot [:network :allowed-domains])))
         (expect (not= @cfg snapshot))))

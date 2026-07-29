@@ -249,6 +249,8 @@ currently have no OS boundary and a requested `jail.enabled: true` fails loud.
 Filesystem roots are declared once in the `workspace.filesystem` catalog (`id`,
 `path`, optional `description`, `access` = `read-write`/`read-only`, `search`),
 and `jail.filesystem.allow` lists the ids that enter the jail (deny-by-omission).
+Vis's own session folder `~/.vis` is granted implicitly (read/write, `search: false`)
+whatever the catalog and the allow list say; declare it to override that.
 
 ```yaml
 # vis.yml
