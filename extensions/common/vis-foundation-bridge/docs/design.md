@@ -34,7 +34,7 @@ Observation tools:
   `{:configured? false :status "unconfigured" ...}`.
 - When configured, `br/check` returns Bridge's **canonical status summary**
   (`:summary-version` 1, produced by `bridge.api/check` — the same shape as
-  `bb bridge check --format summary`): `:counts`, `:required-obligations`
+  `bb bridge check --format json`): `:counts`, `:required-obligations`
   (flattened, failed first), `:recommended-obligations`,
   `:evidence-receipts`, and `:next-action`, plus the Vis envelope keys
   `:configured?`, `:profile-path`, and `:policy-path`. The extension adds no
