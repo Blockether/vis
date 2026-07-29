@@ -36,6 +36,7 @@ All commands run in `apps/vis-companion`, in this order:
 3. `npm run release:testflight` — the upload only makes the build *exist*. This links it to the public external group and submits it to Beta App Review; without it the build is visible to the team only. Add `--no-review` when the group is already approved.
 
 - Android mirror: `npm run release:android -- --track beta` (Play open testing; `internal` is the default). It needs the stock JDK 21 exception described above.
+- A TestFlight build can never be deleted, only **expired** (`expired: true`, one-way). Testers see builds grouped by the version string, and the newest *installable* one wins — an uploaded-but-never-distributed build keeps the older one on screen. `npm run release:expire` lists builds and, with `--yes`, expires all but the newest (`--keep N`, `--build <n>`, `--version <v>`, `--list`); it needs the same ASC key as `release:testflight`.
 - Steps 2 (notes) and 3 need the App Store Connect API key in the macOS keychain service `vis-ios` (`asc_key_id`, `asc_key`, `asc_issuer_id`, `team_id`): `node scripts/secrets.mjs asc <AuthKey_XXXX.p8> --issuer <uuid> --team <id>`. Without the key `release:ios` still uploads through the Apple ID signed into Xcode, but notes and TestFlight distribution are skipped.
 - `apps/vis-companion/CHANGELOG.md` is the source of truth for notes and an existing entry is never regenerated — hand-edit it, then re-push with `npm run release:notes -- --build <number>`.
 

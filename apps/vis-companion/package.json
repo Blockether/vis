@@ -31,6 +31,7 @@
     "release:ios": "node scripts/ios-release.mjs",
     "release:android": "node scripts/android-release.mjs",
     "release:testflight": "node scripts/testflight.mjs",
+    "release:expire": "node scripts/expire.mjs",
     "release:notes": "node scripts/release-notes.mjs",
     "secrets": "node scripts/secrets.mjs"
   },
