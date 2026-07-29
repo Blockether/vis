@@ -3775,13 +3775,15 @@
                  (.delete (java.io.File. ^String pc))))))
   (it "actually overlaps calls on bounded platform workers (wall ≈ max, not sum)"
       ;; Bind two SLOW fake observation tools via set-python-binding! so their
-      ;; host bodies (Thread/sleep) overlap. 3×250ms serial=750ms; concurrent≈250.
+      ;; host bodies (Thread/sleep) overlap. 3×400ms serial=1200ms; concurrent≈400.
+      ;; The per-call sleep is deliberately far above batch overhead so a loaded
+      ;; CI runner cannot push a genuinely concurrent batch over the threshold.
       (let [env (lp/create-environment ::router {:db :memory})]
         (try (let
                [pc (:python-context env)
                 slow (fn [nm]
                        (fn [& _args]
-                         (Thread/sleep 250)
+                         (Thread/sleep 400)
                          {"op" nm "v" nm}))]
 
                (env/set-python-binding! pc 'slowcat (slow "slowcat"))
@@ -3796,8 +3798,8 @@
 
                  (expect (= 3 (count out)))
                  (expect (every? (comp nil? :error) out))
-                 ;; Concurrency proof: comfortably under the 750ms serial floor.
-                 (expect (< dt 600))))
+                 ;; Concurrency proof: comfortably under the 1200ms serial floor.
+                 (expect (< dt 900) (str "observation batch wall-ms=" dt))))
              (finally (lp/dispose-environment! env))))))
 
 (defdescribe
