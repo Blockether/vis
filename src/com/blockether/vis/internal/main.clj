@@ -3187,117 +3187,81 @@
 ;; identically under the JVM and the native image: both drive the same
 ;; `env/*` machinery.
 
-(defn- toml-tables
-  "Split TOML `text` into a map of dotted table name -> raw table body.
+(def ^:private declared-import-roots-src
+  "Python source of the packaging-metadata reader, embedded in the native image
+   by build.clj's `-H:IncludeResources=vis-python/.*`."
+  (delay (some-> (io/resource "vis-python/import_roots.py") slurp)))
 
-   A deliberately small scanner: enough to read the handful of packaging keys
-   `vis python` cares about, without taking on a TOML dependency."
-  [text]
-  (loop
-    [lines
-     (str/split-lines (or text ""))
+(defn- resolve-import-root
+  "`path` as a `java.io.File`: absolute entries stand alone, relative ones
+   resolve against `dir`, and a leading `~` expands to the home directory."
+  ^java.io.File [^String dir ^String path]
+  (let [expanded (paths/expand-home path)
+        f (io/file expanded)]
+    (if (.isAbsolute f) f (io/file dir expanded))))
 
-     table
-     nil
+(defn- existing-import-roots
+  "`paths` (raw, relative to `dir`) reduced to the canonical paths of the
+   directories that actually exist, in declaration order, without duplicates."
+  [^String dir paths]
+  (->> paths
+       (remove str/blank?)
+       (map str/trim)
+       (remove #{"." "./"})
+       distinct
+       (map #(resolve-import-root dir %))
+       (filter #(.isDirectory ^java.io.File %))
+       (mapv #(.getCanonicalPath ^java.io.File %))))
 
-     acc
-     {}]
+(defn- declared-import-roots
+  "Raw import roots `dir`'s packaging metadata declares, in declaration order.
 
-    (if-let [line (first lines)]
-      (let
-        [trimmed (str/trim line)
-         header (second (re-matches #"\[\[?([^\]\[]+)\]\]?" trimmed))]
-
-        (if header
-          (recur (rest lines) (str/trim header) acc)
-          (recur (rest lines)
-                 table
-                 (cond-> acc
-                   table
-                   (update table (fnil conj []) line)))))
-      (into {}
-            (map (fn [[k v]]
-                   [k (str/join "\n" v)]))
-            acc))))
-
-(defn- toml-value-fragment
-  "Raw right-hand side of key `k` inside TOML table `body` (array, inline table
-   or string)."
-  [body k]
-  (when (seq body)
-    (second (re-find (re-pattern (str "(?s)(?:\\A|\\n)\\s*"
-                                      k
-                                      "\\s*=\\s*(\\[[^\\]]*\\]|\\{[^}]*\\}|\"[^\"]*\"|'[^']*')"))
-                     body))))
-
-(defn- toml-strings
-  "Every quoted string literal inside a TOML value `fragment`."
-  [fragment]
-  (->> (re-seq #"\"([^\"]*)\"|'([^']*)'" (or fragment ""))
-       (keep (fn [[_ dq sq]]
-               (or dq sq)))
-       (remove str/blank?)))
-
-(defn- ini-value-lines
-  "Value lines of INI key `k` inside section `body`: the same-line remainder
-   plus any indented continuation lines, trimmed, blanks dropped."
-  [body k]
-  (some->> (re-find (re-pattern (str "(?m)^[ \\t]*" k "[ \\t]*=([^\\n]*(?:\\n[ \\t]+[^\\n]*)*)"))
-                    (or body ""))
-           second
-           str/split-lines
-           (map str/trim)
-           (remove str/blank?)))
-
-(defn- pyproject-declared-roots
-  "Import roots `text` (a `pyproject.toml`) declares, as raw relative paths."
-  [text]
+   Parsed by PYTHON'S OWN parsers inside `ctx` -- `tomllib` for `pyproject.toml`,
+   `configparser` for `setup.cfg` / `pytest.ini` / `tox.ini` -- never a regex
+   over the file text. Unreadable or absent metadata yields nothing."
+  [^org.graalvm.polyglot.Context ctx ^String dir]
   (let
-    [tables
-     (toml-tables text)
+    [^org.graalvm.polyglot.Value bindings
+     (.getBindings ctx "python")
 
-     strings
-     (fn [table k]
-       (toml-strings (toml-value-fragment (get tables table) k)))]
+     entry
+     "__vis_declared_import_roots__"
 
-    (concat (strings "tool.setuptools.packages.find" "where")
-            (strings "tool.setuptools" "package-dir")
-            (strings "tool.pdm.build" "package-dir")
-            ;; pytest's own first-class import-root option.
-            (strings "tool.pytest.ini_options" "pythonpath")
-            (->> (re-seq #"from\s*=\s*\"([^\"]*)\"|from\s*=\s*'([^']*)'"
-                         (or (toml-value-fragment (get tables "tool.poetry") "packages") ""))
-                 (keep (fn [[_ dq sq]]
-                         (or dq sq))))
-            (->> (strings "tool.hatch.build.targets.wheel" "packages")
-                 (keep #(.getParent (io/file ^String %)))))))
+     arg
+     "__vis_project_dir__"]
 
-(defn- ini-declared-roots
-  "Import roots `dir`'s INI-style project files declare, as raw relative paths:
-   setuptools' `setup.cfg` src layout and pytest's `pythonpath` option wherever
-   pytest accepts it outside `pyproject.toml`."
-  [dir]
-  (let
-    [sections
-     (fn [name]
-       (let [f (io/file dir ^String name)]
-         (when (.isFile f) (toml-tables (slurp f)))))
+    (try (.eval ctx "python" ^String @declared-import-roots-src)
+         (.putMember bindings arg dir)
+         (let [^org.graalvm.polyglot.Value roots
+               (.eval ctx "python" (str entry "(globals()[" (pr-str arg) "])"))]
+           (mapv #(.asString (.getArrayElement roots (long %)))
+                 (range (.getArraySize roots))))
+         (catch Throwable _ [])
+         ;; The CLI interpreter is the human's own scope -- leave nothing behind.
+         (finally (.removeMember bindings arg)
+                  (.removeMember bindings entry)))))
 
-     setup-cfg
-     (sections "setup.cfg")]
+(defn- configured-import-roots
+  "Import roots the user declared in merged config as `python.source_paths` --
+   the explicit escape hatch for a project whose layout vis cannot infer (or
+   does not infer the way the user wants):
 
-    (concat
-      ;; [options] package_dir = \n  =src   (also `pkg = src`)
-      (->> (ini-value-lines (get setup-cfg "options") "package_dir")
-           (map #(str/trim (last (str/split % #"=")))))
-      (mapcat (fn [[file section]]
-                (mapcat #(str/split % #"[,\s]+")
-                        (ini-value-lines (get (sections file) section) "pythonpath")))
-              [["setup.cfg" "tool:pytest"] ["pytest.ini" "pytest"] ["tox.ini" "pytest"]]))))
+     python:
+       source_paths: [src, lib/vendor]
+
+   Relative entries resolve against `dir`, `~` expands, and any config failure
+   degrades to nothing rather than breaking `vis python`."
+  [^String dir]
+  (try (let [configured (get-in (config/load-config-raw) ["python" "source_paths"])]
+         (existing-import-roots dir (cond (string? configured) [configured]
+                                          (sequential? configured) configured
+                                          :else nil)))
+       (catch Throwable _ [])))
 
 (defn- python-project-import-roots
-  "Import roots declared by `dir`'s project metadata — the `src` layout that
-   every packaging backend spells differently, plus pytest's own `pythonpath`:
+  "Import roots for `dir`: the ones configured in `python.source_paths` first,
+   then the `src` layout that every packaging backend spells differently, plus
+   pytest's own `pythonpath`:
 
      [tool.setuptools.packages.find]   where       = [\"src\"]
      [tool.setuptools]                 package-dir = {\"\" = \"src\"}
@@ -3310,25 +3274,12 @@
 
    Returns canonical paths of the directories that actually exist, in
    declaration order, so `vis python -m pytest tests/` imports the project the
-   same way an explicit `PYTHONPATH=src` invocation would. Purely declarative:
-   a project without such metadata gets nothing inferred."
-  [dir]
-  (let
-    [pyproject
-     (io/file dir "pyproject.toml")
-
-     ini-present?
-     (boolean (some #(.isFile (io/file dir ^String %)) ["setup.cfg" "pytest.ini" "tox.ini"]))]
-
-    (when (or (.isFile pyproject) ini-present?)
-      (->> (concat (when (.isFile pyproject) (pyproject-declared-roots (slurp pyproject)))
-                   (ini-declared-roots dir))
-           (remove str/blank?)
-           (remove #{"." "./"})
-           distinct
-           (map #(io/file dir ^String %))
-           (filter #(.isDirectory ^java.io.File %))
-           (mapv #(.getCanonicalPath ^java.io.File %))))))
+   same way an explicit `PYTHONPATH=src` invocation would. Inference is purely
+   declarative: a project without such metadata gets nothing inferred, and
+   `python.source_paths` is how a user says it outright."
+  [ctx ^String dir]
+  (vec (distinct (concat (configured-import-roots dir)
+                         (existing-import-roots dir (declared-import-roots ctx dir))))))
 
 (defn- python-cli-context
   "Build a fresh standalone GraalPy sandbox for `vis python`: all shims
@@ -3338,8 +3289,9 @@
 
    Unlike the agent sandbox this is a HUMAN-run interpreter, so it gets
    real-`python` niceties: `argv` is bound to `sys.argv`; `env` is merged
-   into `os.environ`; and `sys.path` is prepended with `PYTHONPATH` plus any
-   `src`-layout import root declared by the project's packaging metadata. The
+   into `os.environ`; and `sys.path` is prepended with `PYTHONPATH`, the
+   configured `python.source_paths`, and any `src`-layout import root the
+   project's packaging metadata declares. The
    process stdin is wired to guest `sys.stdin`, so it works alongside `-c`/FILE."
   [{:keys [network? argv env]}]
   (let
@@ -3360,8 +3312,8 @@
     (env/seed-cli-runtime! python-context {:argv argv :env env})
     ;; GraalPy receives the environment after interpreter startup, so PYTHONPATH
     ;; needs the same explicit sys.path setup a process launch would perform.
-    ;; Explicit entries come first; inferred project roots are merged in after
-    ;; them, never replacing what the caller asked for.
+    ;; Explicit entries come first; configured and inferred project roots are
+    ;; merged in after them, never replacing what the caller asked for.
     (let
       [separator
        java.io.File/pathSeparator
@@ -3372,7 +3324,7 @@
                     (re-pattern (java.util.regex.Pattern/quote separator))))
 
        roots
-       (distinct (concat explicit (python-project-import-roots cwd)))]
+       (distinct (concat explicit (python-project-import-roots python-context cwd)))]
 
       (when (seq roots)
         (let

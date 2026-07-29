@@ -68,7 +68,8 @@
    "db_spec" {"backend" "sqlite" "path" "/tmp/vis.db"}
    "grep" {"include_gitignored_paths" ["repositories/"] "always_exclude" ["target/"]}
    "toggles" {"reasoning_level" "deep"}
-   "python" {"resource_cache" "~/.vis/cache/graal-resources"}
+    "python" {"resource_cache" "~/.vis/cache/graal-resources"
+              "source_paths" ["src" "lib/vendor"]}
    "tui_settings" {"theme_name" "dark" "contributors_disabled" ["voice"]}
    "mcp" {"servers" {"local" {"transport" "stdio"
                               "command" "npx"
@@ -153,7 +154,11 @@
                    (assoc-in full-config ["jail" "network" "rules" 0 "ports"] ["443"]))))
     ;; GraalPy resource cache: closed block, non-blank path only.
     (expect (not (config-spec/valid? (assoc-in full-config ["python" "cache"] "/x"))))
-    (expect (not (config-spec/valid? (assoc-in full-config ["python" "resource_cache"] ""))))
+     (expect (not (config-spec/valid? (assoc-in full-config ["python" "resource_cache"] ""))))
+     ;; Extra import roots: a list of strings, never a bare string or a number.
+     (expect (config-spec/valid? (assoc-in full-config ["python" "source_paths"] [])))
+     (expect (not (config-spec/valid? (assoc-in full-config ["python" "source_paths"] "src"))))
+     (expect (not (config-spec/valid? (assoc-in full-config ["python" "source_paths"] [1]))))
     ;; Queue tuning: a closed block of positive numbers; the backoff is a non-empty list.
     (expect (config-spec/valid? (assoc-in full-config ["message_queue" "breaker_threshold"] 5)))
     (expect (not (config-spec/valid?

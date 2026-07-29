@@ -638,7 +638,8 @@
                  :allow-private :rules :host :methods :allow :method :text :is-replace
                  :include-gitignored-paths :always-exclude :backend :theme-name
                  :contributors-disabled :servers :transport :command :args :cwd :env :url :headers
-                 :python :resource-cache :message-queue :breaker-threshold :retry-backoff-ms
+                 :python :resource-cache :source-paths :message-queue :breaker-threshold
+                 :retry-backoff-ms
                  :halfopen-probe-ms :retry-after-cap-ms})
          svar-yaml->runtime))
 

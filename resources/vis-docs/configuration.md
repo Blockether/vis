@@ -345,6 +345,46 @@ initializes, so changing it requires restarting the client and the gateway
 daemon — `/reload` is not enough. An unusable configured path silently degrades
 to steps 3–4 rather than failing startup.
 
+## Python import roots
+
+`vis python` puts a project's own packages on `sys.path` before running, so
+`vis python -m pytest tests/` imports a `src/` layout the same way an explicit
+`PYTHONPATH=src` invocation would.
+
+The roots are read from the project's packaging metadata with Python's own
+parsers — `tomllib` for `pyproject.toml`, `configparser` for `setup.cfg`,
+`pytest.ini` and `tox.ini` — never by pattern-matching the file text. Inference
+is strictly declarative: nothing is guessed from directory names, a project
+without such metadata gets nothing, and a malformed file yields nothing instead
+of a partial scrape. Recognized declarations:
+
+```toml
+[tool.setuptools.packages.find]      where       = ["src"]
+[tool.setuptools]                    package-dir = {"" = "src"}
+[tool.pdm.build]                     package-dir = "src"
+[tool.poetry]                        packages    = [{include = "pkg", from = "src"}]
+[tool.hatch.build.targets.wheel]     packages    = ["src/pkg"]   # parent wins
+[tool.pytest.ini_options]            pythonpath  = ["src"]
+```
+
+plus `package_dir` under `setup.cfg`'s `[options]` and pytest's `pythonpath`
+under `setup.cfg` `[tool:pytest]`, `pytest.ini` `[pytest]` and `tox.ini`
+`[pytest]`.
+
+When that is wrong, absent, or simply not how you lay a project out, say it
+outright:
+
+```yaml
+# vis.yml
+python:
+  source_paths: [src, lib/vendor, ~/shared/py]
+```
+
+Configured paths come **first**, ahead of anything inferred. Relative entries
+resolve against the working directory, `~` expands, and an entry that is not an
+existing directory is dropped. An explicit `PYTHONPATH` in the environment still
+precedes both.
+
 ## Extension environment overrides
 
 Extensions declare the environment variables they read (API keys and the like). The `environment` map overrides the process environment per variable — set once in config instead of exporting in every shell:

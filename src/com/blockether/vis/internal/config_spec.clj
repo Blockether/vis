@@ -248,7 +248,7 @@
 (def mcp-server-keys
   #{"transport" "command" "args" "cwd" "env" "url" "headers" "enabled" "timeout_ms" "listen"
     "auth"})
-(def python-keys #{"resource_cache"})
+(def python-keys #{"resource_cache" "source_paths"})
 (def message-queue-keys
   #{"breaker_threshold" "retry_backoff_ms" "halfopen_probe_ms" "retry_after_cap_ms"})
 (def config-keys
@@ -273,10 +273,16 @@
 (s/def ::tui-settings #(closed-map? tui-schema %))
 
 (def python-schema
-  ;; GraalPy internal-resource cache root (where the Python stdlib extracts at
-  ;; runtime). Read ONCE per process at polyglot-engine boot; the explicit
-  ;; `-Dpolyglot.engine.userResourceCache` system property wins over this key.
-  {"resource_cache" non-blank-string?})
+  ;; `resource_cache`: GraalPy internal-resource cache root (where the Python
+  ;; stdlib extracts at runtime). Read ONCE per process at polyglot-engine boot;
+  ;; the explicit `-Dpolyglot.engine.userResourceCache` system property wins over
+  ;; this key.
+  ;; `source_paths`: extra import roots prepended to `sys.path` for `vis python`,
+  ;; on top of what the project's own packaging metadata declares -- the escape
+  ;; hatch for a layout vis cannot infer. Relative to the working directory; `~`
+  ;; expands.
+  {"resource_cache" non-blank-string?
+   "source_paths" string-list?})
 (s/def ::python #(closed-map? python-schema %))
 
 (def message-queue-schema

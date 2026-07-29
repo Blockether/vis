@@ -311,70 +311,86 @@
 
 (defdescribe
   python-src-layout-inference-test
-  (it "infers the setuptools `where` root, so plain `-m pytest` imports the project"
-      (let
-        [root (write-project! (str "[project]\nname = \"sample\"\n\n"
-                                   "[tool.setuptools.packages.find]\n" "where = [\"src\"]\n\n"
-                                   "[tool.pytest.ini_options]\n" "testpaths = [\"tests\"]\n")
+  ;; The declarations are read by PYTHON's own `tomllib`/`configparser` inside a
+  ;; GraalPy context, so these cases need a live interpreter -- one for the ns.
+  (let [ctx (python-cli-context {:network? false})
+
+        roots
+        (fn [^java.io.File root]
+          (python-project-import-roots ctx (.getCanonicalPath root)))]
+
+    (it "infers the setuptools `where` root, so plain `-m pytest` imports the project"
+        (let
+          [root (write-project! (str "[project]\nname = \"sample\"\n\n"
+                                     "[tool.setuptools.packages.find]\n" "where = [\"src\"]\n\n"
+                                     "[tool.pytest.ini_options]\n" "testpaths = [\"tests\"]\n")
+                                ["src"])]
+          (expect (= [(.getCanonicalPath (java.io.File. root "src"))] (roots root)))))
+    (it "infers a poetry `from` root"
+        (let
+          [root (write-project! (str "[tool.poetry]\nname = \"sample\"\n"
+                                     "packages = [{include = \"sample\", from = \"lib\"}]\n")
+                                ["lib"])]
+          (expect (= [(.getCanonicalPath (java.io.File. root "lib"))] (roots root)))))
+    (it "infers the parent of a hatch wheel package path"
+        (let
+          [root (write-project! (str "[tool.hatch.build.targets.wheel]\n"
+                                     "packages = [\"src/sample\"]\n")
+                                ["src/sample"])]
+          (expect (= [(.getCanonicalPath (java.io.File. root "src"))] (roots root)))))
+    (it "stays silent without packaging metadata — inference is declarative only"
+        (let [root (write-project! "[project]\nname = \"flat\"\n" ["flat"])]
+          (expect (empty? (roots root)))))
+    (it "ignores a declared root that does not exist on disk"
+        (let
+          [root (write-project! (str "[tool.setuptools.packages.find]\n" "where = [\"src\"]\n") [])]
+          (expect (empty? (roots root)))))
+    (it "reports nothing for a directory without a pyproject.toml"
+        (let
+          [root (.toFile (java.nio.file.Files/createTempDirectory
+                           "vis-python-nopyproject-"
+                           (make-array java.nio.file.attribute.FileAttribute 0)))]
+          (expect (empty? (roots root)))))
+    (it "survives a malformed pyproject.toml instead of scraping it"
+        (let [root (write-project! "[tool.setuptools\nwhere = oops\n" ["src"])]
+          (expect (empty? (roots root)))))
+    (it "infers a setuptools `package-dir` inline table"
+        (let
+          [root (write-project! (str "[tool.setuptools]\n" "package-dir = {\"\" = \"src\"}\n")
+                                ["src"])]
+          (expect (= [(.getCanonicalPath (java.io.File. root "src"))] (roots root)))))
+    (it "infers a pdm `package-dir` string"
+        (let [root (write-project! (str "[tool.pdm.build]\n" "package-dir = \"src\"\n") ["src"])]
+          (expect (= [(.getCanonicalPath (java.io.File. root "src"))] (roots root)))))
+    (it "honours pytest's own `pythonpath` option in pyproject.toml"
+        (let
+          [root (write-project! (str "[tool.pytest.ini_options]\n" "pythonpath = [\"lib\"]\n")
+                                ["lib"])]
+          (expect (= [(.getCanonicalPath (java.io.File. root "lib"))] (roots root)))))
+    (it "infers the setup.cfg `package_dir` src layout"
+        (let
+          [root (write-files! {"setup.cfg" (str "[metadata]\nname = sample\n\n"
+                                                "[options]\npackage_dir =\n    =src\n")}
                               ["src"])]
-        (expect (= [(.getCanonicalPath (java.io.File. root "src"))]
-                   (python-project-import-roots (.getCanonicalPath root))))))
-  (it "infers a poetry `from` root"
-      (let
-        [root (write-project! (str "[tool.poetry]\nname = \"sample\"\n"
-                                   "packages = [{include = \"sample\", from = \"lib\"}]\n")
-                              ["lib"])]
-        (expect (= [(.getCanonicalPath (java.io.File. root "lib"))]
-                   (python-project-import-roots (.getCanonicalPath root))))))
-  (it "infers the parent of a hatch wheel package path"
-      (let
-        [root (write-project! (str "[tool.hatch.build.targets.wheel]\n"
-                                   "packages = [\"src/sample\"]\n")
-                              ["src/sample"])]
-        (expect (= [(.getCanonicalPath (java.io.File. root "src"))]
-                   (python-project-import-roots (.getCanonicalPath root))))))
-  (it "stays silent without packaging metadata — inference is declarative only"
-      (let [root (write-project! "[project]\nname = \"flat\"\n" ["flat"])]
-        (expect (empty? (python-project-import-roots (.getCanonicalPath root))))))
-  (it "ignores a declared root that does not exist on disk"
-      (let
-        [root (write-project! (str "[tool.setuptools.packages.find]\n" "where = [\"src\"]\n") [])]
-        (expect (empty? (python-project-import-roots (.getCanonicalPath root))))))
-  (it "reports nothing for a directory without a pyproject.toml"
-      (let
-        [root (.toFile (java.nio.file.Files/createTempDirectory
-                         "vis-python-nopyproject-"
-                         (make-array java.nio.file.attribute.FileAttribute 0)))]
-        (expect (nil? (python-project-import-roots (.getCanonicalPath root))))))
-  (it "infers a setuptools `package-dir` inline table"
-      (let
-        [root (write-project! (str "[tool.setuptools]\n" "package-dir = {\"\" = \"src\"}\n")
-                              ["src"])]
-        (expect (= [(.getCanonicalPath (java.io.File. root "src"))]
-                   (python-project-import-roots (.getCanonicalPath root))))))
-  (it "infers a pdm `package-dir` string"
-      (let [root (write-project! (str "[tool.pdm.build]\n" "package-dir = \"src\"\n") ["src"])]
-        (expect (= [(.getCanonicalPath (java.io.File. root "src"))]
-                   (python-project-import-roots (.getCanonicalPath root))))))
-  (it "honours pytest's own `pythonpath` option in pyproject.toml"
-      (let
-        [root (write-project! (str "[tool.pytest.ini_options]\n" "pythonpath = [\"lib\"]\n")
-                              ["lib"])]
-        (expect (= [(.getCanonicalPath (java.io.File. root "lib"))]
-                   (python-project-import-roots (.getCanonicalPath root))))))
-  (it "infers the setup.cfg `package_dir` src layout"
-      (let
-        [root (write-files! {"setup.cfg" (str "[metadata]\nname = sample\n\n"
-                                              "[options]\npackage_dir =\n    =src\n")}
-                            ["src"])]
-        (expect (= [(.getCanonicalPath (java.io.File. root "src"))]
-                   (python-project-import-roots (.getCanonicalPath root))))))
-  (it "honours a whitespace-separated `pythonpath` in pytest.ini"
-      (let [root (write-files! {"pytest.ini" "[pytest]\npythonpath = src other\n"} ["src" "other"])]
-        (expect (= [(.getCanonicalPath (java.io.File. root "src"))
-                    (.getCanonicalPath (java.io.File. root "other"))]
-                   (python-project-import-roots (.getCanonicalPath root))))))
-  (it "honours `pythonpath` under tox.ini's [pytest] section"
-      (let [root (write-files! {"tox.ini" "[pytest]\npythonpath = lib\n"} ["lib"])]
-        (expect (= [(.getCanonicalPath (java.io.File. root "lib"))]
-                   (python-project-import-roots (.getCanonicalPath root)))))))
+          (expect (= [(.getCanonicalPath (java.io.File. root "src"))] (roots root)))))
+    (it "honours a whitespace-separated `pythonpath` in pytest.ini"
+        (let [root (write-files! {"pytest.ini" "[pytest]\npythonpath = src other\n"}
+                                 ["src" "other"])]
+          (expect (= [(.getCanonicalPath (java.io.File. root "src"))
+                      (.getCanonicalPath (java.io.File. root "other"))]
+                     (roots root)))))
+    (it "honours `pythonpath` under tox.ini's [pytest] section"
+        (let [root (write-files! {"tox.ini" "[pytest]\npythonpath = lib\n"} ["lib"])]
+          (expect (= [(.getCanonicalPath (java.io.File. root "lib"))] (roots root)))))
+    (it "prepends the configured `python.source_paths`, ahead of what it infers"
+        (let
+          [root (write-project! (str "[tool.setuptools.packages.find]\n" "where = [\"src\"]\n")
+                                ["src" "vendor"])]
+          (with-redefs [config/load-config-raw (fn [] {"python" {"source_paths" ["vendor"]}})]
+            (expect (= [(.getCanonicalPath (java.io.File. root "vendor"))
+                        (.getCanonicalPath (java.io.File. root "src"))]
+                       (roots root))))))
+    (it "drops a configured source path that is not a directory"
+        (let [root (write-project! "[project]\nname = \"flat\"\n" [])]
+          (with-redefs [config/load-config-raw (fn [] {"python" {"source_paths" ["nope"]}})]
+            (expect (empty? (roots root))))))))

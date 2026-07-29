@@ -1119,6 +1119,10 @@
        ;; context creation via io/resource. Without this pattern EVERY shim
        ;; (numpy, pandas, yaml, ...) is missing in the native binary.
        "-H:IncludeResources=vis-shims/.*"
+       ;; Python helper sources (resources/vis-python/*.py) slurped at RUNTIME
+       ;; via io/resource -- e.g. the packaging-metadata reader `vis python`
+       ;; uses to discover a project's import roots.
+       "-H:IncludeResources=vis-python/.*"
        ;; vendored Prism highlighter, inlined into standalone HTML
        ;; transcript exports at RUNTIME via io/resource.
        "-H:IncludeResources=vis-transcript/.*"
