@@ -73,7 +73,9 @@
         (expect (every? some? steps))
         (expect (apply < steps)))
       (expect (str/includes? text "`grep` FIRST"))
-      (expect (str/includes? text "`~/.vis/gateway/events/<id>.ndjson`"))
+      ;; Session introspection (gateway event journals, session_state) is toggle-
+      ;; gated and lives in the `foundation-introspection` extension prompt, NOT core.
+      (expect (not (str/includes? text "`~/.vis/gateway/events/<id>.ndjson`")))
       (expect (str/includes? text "never grep `.`"))
       (expect (str/includes? text "never open with it"))
       (expect (str/includes? text "the first move, before docs"))

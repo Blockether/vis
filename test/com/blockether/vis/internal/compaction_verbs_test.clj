@@ -21,6 +21,7 @@
             [com.blockether.vis.internal.ctx-renderer :as cr]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.toggles :as toggles]
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -579,8 +580,15 @@
         (expect (str/includes? (:description t) "the live iteration you are emitting right now"))
         (expect (str/includes? (:description t) "already-completed iterations"))
         (expect (str/includes? (:description t) "folding changes rendering, not storage"))
-        (expect (str/includes? (:description t) "`await session_state()`"))
-        (expect (str/includes? (:description t) "`transcript/turns/iterations/blocks`"))
+        ;; The `session_state` recovery hint is INTROSPECTION-gated: session
+        ;; self-inspection only exists while the `introspection` toggle is ON
+        ;; (default OFF), so the description must not advertise it otherwise.
+        (expect (not (str/includes? (:description t) "`await session_state()`")))
+        (let
+          [on (with-redefs [toggles/enabled? (constantly true)]
+                (session-fold-tool))]
+          (expect (str/includes? (:description on) "`await session_state()`"))
+          (expect (str/includes? (:description on) "`transcript/turns/iterations/blocks`")))
         (expect (str/includes? (:description t)
                                "Broader/newer folds supersede fully covered breadcrumbs"))
         (expect (str/includes? (:description t) "partial overlaps remain"))
@@ -1081,15 +1089,15 @@
       ;; result) carry none.
       (let
         [tr
-         [[1 {:forms-vec [{:scope "t1/i1/f1"
-                          :svar/tool-call-id "toolu_A"
-                          :result "a"
-                          :vis/tool-name "grep"
-                          :result-summary "`ntr` · 2 files"}]}]
-          [2 {:forms-vec [{:scope "t1/i2/f1"
-                          :svar/tool-call-id "toolu_B"
-                          :result "b"
-                          :vis/tool-name "cat"}]}]]
+         [[1
+           {:forms-vec [{:scope "t1/i1/f1"
+                         :svar/tool-call-id "toolu_A"
+                         :result "a"
+                         :vis/tool-name "grep"
+                         :result-summary "`ntr` · 2 files"}]}]
+          [2
+           {:forms-vec
+            [{:scope "t1/i2/f1" :svar/tool-call-id "toolu_B" :result "b" :vis/tool-name "cat"}]}]]
 
          folded
          (apply-summaries tr [{"scopes" #{"t1/i1" "t1/i2"} "gist" "did it"}])
@@ -1123,13 +1131,21 @@
   (it "a fold advertises only its 24 newest labelled recovery accessors"
       ;; Older results stay available through ntr.describe(); the breadcrumb must
       ;; favor the newest work and never grow without bound.
-      (let [entries (mapv (fn [i] {"id" (str "toolu_" i) "tool" "cat"}) (range 26))
-            sf (get (compaction-verbs
-                      (atom {"session_turn" 2
-                             "engine_iter_universe" ["t1/i1"]
-                             "engine_iter_ntr" {"t1/i1" entries}}))
-                    'session-fold)
-            out (sf ["t1/i1"] "g")]
+      (let
+        [entries
+         (mapv (fn [i]
+                 {"id" (str "toolu_" i) "tool" "cat"})
+               (range 26))
+
+         sf
+         (get (compaction-verbs (atom {"session_turn" 2
+                                       "engine_iter_universe" ["t1/i1"]
+                                       "engine_iter_ntr" {"t1/i1" entries}}))
+              'session-fold)
+
+         out
+         (sf ["t1/i1"] "g")]
+
         ;; The two oldest entries are deliberately omitted; the next (24th-from-end)
         ;; and newest entries remain labelled and selectable.
         (expect (not (str/includes? out "ntr[\"toolu_0\"]")))
@@ -1139,16 +1155,17 @@
         (expect (str/includes? out " · IMPORTANT 2 more folded results stay recoverable"))))
   (it "a long label is truncated instead of drowning the breadcrumb"
       (let
-        [sf (get (compaction-verbs
-                   (atom {"session_turn" 2
-                          "engine_iter_universe" ["t1/i1"]
-                          "engine_iter_ntr"
-                          {"t1/i1" [{"id" "toolu_A"
-                                     "tool" "repl_eval"
-                                     "gist" (apply str (repeat 12 "long "))}]}}))
-                 'session-fold)
+        [sf
+         (get (compaction-verbs (atom {"session_turn" 2
+                                       "engine_iter_universe" ["t1/i1"]
+                                       "engine_iter_ntr"
+                                       {"t1/i1" [{"id" "toolu_A"
+                                                  "tool" "repl_eval"
+                                                  "gist" (apply str (repeat 12 "long "))}]}}))
+              'session-fold)
 
-         out (sf ["t1/i1"] "g")]
+         out
+         (sf ["t1/i1"] "g")]
 
         (expect (str/includes? out "repl_eval: long long long long long long long long lon…")))))
 
@@ -1168,7 +1185,8 @@
         (expect (= "folded `t1/i1` · saved **~60k tokens**" (:summary card)))
         ;; `~67% of budget` qualifies the `saved …` it follows, so the pair
         ;; stays on ONE bullet instead of stranding a bare percentage.
-        (expect (= (str "\nbigger task\n\n" "- **saved** ~60k tokens · ~67% of budget\n"
+        (expect (= (str "\nbigger task\n\n"
+                        "- **saved** ~60k tokens · ~67% of budget\n"
                         "- **context** 94% (90k/96k tokens)\n"
                         "- **recover** one stored native result each, no re-run:\n"
                         "  - `ntr[\"toolu_A\"]`")

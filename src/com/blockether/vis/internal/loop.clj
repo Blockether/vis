@@ -2060,42 +2060,42 @@
                                           resolved)))]
 
         (some->>
-          (reduce
-            (fn [out {:keys [turn user-request answer interrupted? forms iter-scopes] :as td}]
-              (if-let [summary (covering-summary td)]
-                (if (seq iter-scopes)
-                  ;; The trailer's apply-summaries path owns the ONE durable
-                  ;; breadcrumb (anchored at this turn's folded iterations).
-                  ;; Removing the complete Q/A representation here avoids
-                  ;; echoing that checkpoint in a second wire location.
-                  out
-                  ;; No done iterations → no trailer anchor exists anywhere.
-                  ;; Materialize the checkpoint HERE so the fold never
-                  ;; erases a turn without a visible tombstone. Consecutive
-                  ;; turns covered by the SAME summary share one entry.
-                  (let [prev (peek out)]
-                    (if (and (:checkpoint? prev) (identical? (:summary prev) summary))
-                      (conj (pop out) (update prev :turns conj turn))
-                      (conj
+          (reduce (fn [out {:keys [turn user-request answer interrupted? forms iter-scopes] :as td}]
+                    (if-let [summary (covering-summary td)]
+                      (if (seq iter-scopes)
+                        ;; The trailer's apply-summaries path owns the ONE durable
+                        ;; breadcrumb (anchored at this turn's folded iterations).
+                        ;; Removing the complete Q/A representation here avoids
+                        ;; echoing that checkpoint in a second wire location.
                         out
-                        {:checkpoint? true
-                         :summary summary
-                         :turns [turn]
-                         :gist
-                         (or
-                           (some-> (get summary "gist")
-                                   str
-                                   str/trim
-                                   not-empty)
-                           "(dropped — raw turn data remains in session storage; recover via `await session_state()`)")}))))
-                (conj out
-                      {:turn turn
-                       :user-request user-request
-                       :answer answer
-                       :interrupted? interrupted?
-                       :results (vec (take 40 (prior-turn-scope-index forms resolved)))})))
-            []
-            turn-data)
+                        ;; No done iterations → no trailer anchor exists anywhere.
+                        ;; Materialize the checkpoint HERE so the fold never
+                        ;; erases a turn without a visible tombstone. Consecutive
+                        ;; turns covered by the SAME summary share one entry.
+                        (let [prev (peek out)]
+                          (if (and (:checkpoint? prev) (identical? (:summary prev) summary))
+                            (conj (pop out) (update prev :turns conj turn))
+                            (conj out
+                                  {:checkpoint? true
+                                   :summary summary
+                                   :turns [turn]
+                                   :gist (or (some-> (get summary "gist")
+                                                     str
+                                                     str/trim
+                                                     not-empty)
+                                             (str
+                                               "(dropped — raw turn data remains in session storage"
+                                               (when (toggles/enabled? "introspection")
+                                                 "; recover via `await session_state()`")
+                                               ")"))}))))
+                      (conj out
+                            {:turn turn
+                             :user-request user-request
+                             :answer answer
+                             :interrupted? interrupted?
+                             :results (vec (take 40 (prior-turn-scope-index forms resolved)))})))
+                  []
+                  turn-data)
           not-empty
           (mapv #(dissoc % :summary)))))
     (catch Throwable t
@@ -4731,18 +4731,21 @@
   []
   {:name "session_fold"
    :description
-   (str "Collapse SETTLED wire steps into a breadcrumb — folding changes rendering, not "
-        "storage, so fold a step once its takeaway is captured. Settled = every PRIOR turn "
-        "plus the current turn's already-completed iterations (read `session[\"turn\"]`); the "
-        "live iteration you are emitting right now, and any future step, is not settled and "
-        "blocks the call — fold through the last finished iteration instead "
-        "({\"through\": \"tN/iK\"}). Recover a folded result via `ntr[tool_id]` (one native "
-        "result, no re-run, survives a restart; the breadcrumb lists its accessors, each "
-        "labelled with the tool and gist of what it holds, and `ntr.describe()` browses the "
-        "rest the same way), else walk "
-        "`await session_state()` → `transcript/turns/iterations/blocks` (`code`/`result`). "
-        "Broader/newer folds supersede fully covered breadcrumbs; equal scopes keep the newer "
-        "gist; partial overlaps remain.")
+   (str
+     "Collapse SETTLED wire steps into a breadcrumb — folding changes rendering, not "
+     "storage, so fold a step once its takeaway is captured. Settled = every PRIOR turn "
+     "plus the current turn's already-completed iterations (read `session[\"turn\"]`); the "
+     "live iteration you are emitting right now, and any future step, is not settled and "
+     "blocks the call — fold through the last finished iteration instead "
+     "({\"through\": \"tN/iK\"}). Recover a folded result via `ntr[tool_id]` (one native "
+     "result, no re-run, survives a restart; the breadcrumb lists its accessors, each "
+     "labelled with the tool and gist of what it holds, and `ntr.describe()` browses the "
+     "rest the same way)"
+     (if (toggles/enabled? "introspection")
+       ", else walk `await session_state()` → `transcript/turns/iterations/blocks` (`code`/`result`). "
+       ". ")
+     "Broader/newer folds supersede fully covered breadcrumbs; equal scopes keep the newer "
+     "gist; partial overlaps remain.")
    :result
    "String receipt naming the folded scope and, when retained, its labelled `ntr[...]` recovery accessors."
    :schema

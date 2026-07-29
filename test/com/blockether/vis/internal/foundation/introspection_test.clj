@@ -5,6 +5,8 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.env-python :as env-python]
             [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
+            [com.blockether.vis.internal.prompt]
+            [com.blockether.vis.internal.foundation.core]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe patch-diagnosis-contract-test
@@ -156,3 +158,44 @@
 
                    (expect (extension/tool-result? result))
                    (expect (= [] (:result result))))))
+
+(defdescribe
+  introspection-toggle-gate-test
+  "Session introspection is NOT core policy: symbols AND prompt hang off the
+   `introspection` toggle, which is OFF by default."
+  (it "registers an `introspection` toggle that defaults OFF"
+      (let [spec (first (filter #(= "introspection" (:id %)) (vis/registered-toggles)))]
+        (expect (some? spec))
+        (expect (false? (boolean (:default spec))))
+        (expect (false? (vis/toggle-enabled? "introspection")))))
+  (it "owns the session symbols behind an activation-fn bound to that toggle"
+      (let
+        [ext
+         introspection/vis-extension
+
+         activation
+         (:ext/activation-fn ext)]
+
+        (expect (= "foundation-introspection" (:ext/name ext)))
+        (expect (= (set introspection/all-symbols) (set (:ext.engine/symbols (:ext/engine ext)))))
+        (expect (false? (boolean (activation {}))))
+        (with-redefs [vis/toggle-enabled? (constantly true)]
+          (expect (true? (boolean (activation {})))))))
+  (it "keeps gateway-event / session_state guidance out of core, in its own prompt"
+      (let
+        [text
+         ((:ext/prompt-fn introspection/vis-extension) {})
+
+         core
+         (var-get #'com.blockether.vis.internal.prompt/CORE_SYSTEM_PROMPT)]
+
+        (expect (str/includes? text "~/.vis/gateway/events/<id>.ndjson"))
+        (expect (str/includes? text "await session_state()"))
+        (expect (not (str/includes? core "gateway/events")))
+        (expect (not (str/includes? core "session_state")))))
+  (it "is not bundled into foundation-core's symbol set"
+      (let
+        [core-symbols (set (:ext.engine/symbols
+                             (:ext/engine
+                               com.blockether.vis.internal.foundation.core/vis-extension)))]
+        (expect (empty? (filter core-symbols introspection/all-symbols))))))

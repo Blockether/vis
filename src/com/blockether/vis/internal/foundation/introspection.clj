@@ -15,8 +15,8 @@
    Failures return nil/[], never throw, so a misbehaving introspection
    call cannot break iteration execution.
 
-   Opt-in: not auto-loaded by default. Add this jar to the classpath
-   to enable."
+   Gated: the extension registered at the bottom of this namespace binds its
+   symbols and prompt only while the `introspection` toggle is ON (default OFF)."
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
@@ -909,6 +909,51 @@ not `json.dumps` and slice the raw list (a `[:N]` cut silently drops the session
 
 (def all-symbols [session-state-symbol session-report-html-symbol sessions-symbol])
 
-;; The extension that owns all `v/`-aliased symbols is built
-;; and registered by `com.blockether.vis.internal.foundation.core`,
-;; not here - this namespace only exposes doc-bearing symbols.
+;; ---------------------------------------------------------------------------
+;; The introspection extension. Self-inspection (`session_state` / `sessions` /
+;; `session_report_html`, plus the gateway event journals) is NOT core agent
+;; policy: most projects never want the agent reading its own transcripts, so
+;; the whole surface — symbols AND prompt guidance — hangs off the
+;; `introspection` toggle, which is OFF by default. Turn it on in `vis.yml`
+;; (`toggles: { introspection: true }`) or from the settings dialog.
+;; ---------------------------------------------------------------------------
+
+(vis/register-toggle! {:id "introspection"
+                       :label "Session introspection"
+                       :description
+                       (str "Let the agent inspect its OWN history: `session_state` / `sessions` / "
+                            "`session_report_html`, plus the gateway event journals under "
+                            "`~/.vis/gateway/events`. OFF by default — enable it for debugging Vis "
+                            "itself, not for ordinary project work.")
+                       :default false
+                       :owner :vis
+                       :persist? true
+                       :group :sandbox})
+
+(def ^:private INTROSPECTION_PROMPT
+  (str
+    "## Session introspection\n"
+    "- Read a session's raw wire history from `~/.vis/gateway/events/<id>.ndjson`; never grep `.`.\n"
+    "- Current conversation: `await session_state()` → `transcript/turns/iterations/blocks`\n"
+    "  (`code`/`result`); it is also the recovery path for folded content.\n"
+    "- Another conversation: `await sessions()` for the index, then `await session_state(id)`.\n"
+    "- Select and filter these structures in `python_execution`; never dump them whole.\n"))
+
+(defn- introspection-prompt [_env] INTROSPECTION_PROMPT)
+
+(def vis-extension
+  (vis/extension
+    {:ext/name "foundation-introspection"
+     :ext/description
+     "Session self-introspection: `session_state` (identity, per-turn rollup, failures, diagnosis, full transcript), `sessions` (newest-first index of past conversations) and `session_report_html` (standalone HTML transcript), plus the guidance for reading `~/.vis/gateway/events/<id>.ndjson`. Bound only while the `introspection` toggle is ON (default OFF)."
+     :ext/version "0.1.0"
+     :ext/author "Blockether"
+     :ext/owner "vis"
+     :ext/license "Apache-2.0"
+     :ext/kind "foundation"
+     :ext/activation-fn (fn [_env]
+                          (vis/toggle-enabled? "introspection"))
+     :ext/engine {:ext.engine/builtin? true :ext.engine/symbols all-symbols}
+     :ext/prompt-fn introspection-prompt}))
+
+(vis/register-extension! vis-extension)

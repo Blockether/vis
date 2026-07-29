@@ -3,7 +3,6 @@
             [com.blockether.vis.internal.foundation.doctor :as doctor]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
-            [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.foundation.language-surface :as language-surface]
             [com.blockether.vis.internal.foundation.self-docs :as self-docs]
             [com.blockether.vis.internal.foundation.workspace-ctx :as workspace-ctx]
@@ -37,12 +36,21 @@
 (defn- session-workspace-block
   "Resolve the env's pinned workspace and render the canonical session workspace CTX block."
   [env]
-  (let [db (:db-info env)
-        ws-id (or (:workspace/id env) (some-> env :workspace :id))
-        pair (when (and db ws-id) (workspace/workspace-with-session db ws-id))]
-    (workspace-ctx/render-block
-      (assoc (or pair {:workspace (fallback-workspace env)})
-             :filesystem-roots (workspace/env-filesystem-roots env)))))
+  (let
+    [db
+     (:db-info env)
+
+     ws-id
+     (or (:workspace/id env)
+         (some-> env
+                 :workspace
+                 :id))
+
+     pair
+     (when (and db ws-id) (workspace/workspace-with-session db ws-id))]
+
+    (workspace-ctx/render-block (assoc (or pair {:workspace (fallback-workspace env)})
+                                  :filesystem-roots (workspace/env-filesystem-roots env)))))
 
 (defn- combined-ctx
   "Foundation-core's single `:ext/ctx-fn` fn. Contributes the workspace
@@ -75,7 +83,7 @@
   (vis/extension
     {:ext/name "foundation-core"
      :ext/description
-     "Foundation kernel (bare Python functions): session_state/sessions, language facade (format_code/lint_code/run_tests/repl_eval/repl), file I/O (cat/grep/patch/struct_index/struct_patch/write/fs), session workspace/VCS, project shape (repositories/languages/monorepo), main_agent_instructions, and vis_docs (vis's embedded self-documentation). Sandbox symbol introspection is an engine system call (doc / apropos), not a tool. Answers are plain markdown strings — no DSL."
+     "Foundation kernel (bare Python functions): language facade (format_code/lint_code/run_tests/repl_eval/repl), file I/O (cat/grep/patch/struct_index/struct_patch/write/fs), session workspace/VCS, project shape (repositories/languages/monorepo), main_agent_instructions, and vis_docs (vis's embedded self-documentation). Session introspection (session_state/sessions) ships separately as `foundation-introspection`, behind the `introspection` toggle. Sandbox symbol introspection is an engine system call (doc / apropos), not a tool. Answers are plain markdown strings — no DSL."
      :ext/version "0.7.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -86,8 +94,7 @@
      ;; routes the binding through `extension/builtin-sandbox-bindings` instead
      ;; of the aliased-namespace path third-party extensions use.
      :ext/engine {:ext.engine/builtin? true
-                  :ext.engine/symbols (vec (concat introspection/all-symbols
-                                                   language-surface/symbols
+                  :ext.engine/symbols (vec (concat language-surface/symbols
                                                    (editing/available-editing-symbols)
                                                    environment/environment-symbols
                                                    self-docs/symbols))}

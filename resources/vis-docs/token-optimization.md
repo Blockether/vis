@@ -108,6 +108,8 @@ Folding changes rendering, not storage. There is no destructive `unfold` command
 
 This recovers evidence without restoring it to the model wire. Filter in `python_execution`; never dump a full transcript back into context.
 
+`session_state` / `sessions` / `session_report_html` are bound only while the `introspection` toggle is ON (default OFF — enable it in `vis.yml` under `toggles:` or from the settings dialog). With it OFF, `ntr[tool_id]` remains the recovery path.
+
 ### The budget stays visible
 
 The fold breadcrumb shows the reclaimed scope and a token estimate. Its `~N% of budget` measures that reclaim against the **operating ceiling** — `auto_compress_above` (the ~144k soft compaction guardrail), or the live handled context (`last_request_tokens`) once a bigger task has grown past it — not the 1M hard per-call max, so a working fold never reads as noise. `session["utilization"]["now"]` reports total saved context and the scopes still represented on the wire.
