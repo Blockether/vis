@@ -2,6 +2,22 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.13 (2751) — 2026-07-29
+<!-- commit: a9ee2d5522d859b2a149673820c1cd43b64f42ce -->
+
+- Web-search toggle, typed extension schemas, honest python CLI exits
+- Use ranges-only line windows
+- Cover deferred shim dependency loading
+- Tolerate runner JIT activity after timeout
+- Refresh generated dependency audit
+- Size macOS heap for Truffle suite
+- Align contract with supported runtime
+- Probe Linux jail capability before E2E
+- Generate inventory date in UTC
+- Prepare generated Android project before Gradle
+- Refresh dependency inventory
+- TestFlight notes for 0.1.13 (2739)
+
 ## 0.1.13 (2739) — 2026-07-28
 <!-- commit: 5d7cf4c0abd4fb171817c53eeea5548934d3d387 -->
 
