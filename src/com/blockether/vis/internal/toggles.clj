@@ -23,7 +23,8 @@
    identical to the registered id. `coerce-config-value` maps YAML strings
    onto each toggle's type, so a config-declared toggle behaves exactly like
    a UI flip. Hydration happens at process start (call
-   `hydrate-from-config!` once after `config/load-config-raw`).
+   `hydrate-from-config!` once after `config/load-config-raw`) and again on
+   `/reload`, so editing the YAML applies without a restart.
 
    Contract:
      - Toggle ids are non-blank snake_case strings (`reasoning_level`,

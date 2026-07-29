@@ -6,7 +6,11 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.egress-proxy :as egress]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.agents :as agents]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.persistance :as ps]
+            [com.blockether.vis.internal.prompt-templates :as prompt-templates]
+            [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.python-extensions :as pyx]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.python-test-runner :as runner]
@@ -1144,48 +1148,45 @@ vis.extension(
 
 (defn- symbol-entry-of
   [ext sym]
-  (some #(when (= sym (:ext.symbol/symbol %)) %)
-        (get-in ext [:ext/engine :ext.engine/symbols])))
+  (some #(when (= sym (:ext.symbol/symbol %)) %) (get-in ext [:ext/engine :ext.engine/symbols])))
 
 (defdescribe
   python-native-tool-test
   (it "a Python symbol carrying schema= is a first-class native tool"
-      (with-loaded {"weather.py" weather-py}
-                   (fn [_ _]
-                     (let
-                       [ext
-                        (registered "weather")
+      (with-loaded
+        {"weather.py" weather-py}
+        (fn [_ _]
+          (let
+            [ext
+             (registered "weather")
 
-                        entry
-                        (symbol-entry-of ext 'lookup)]
+             entry
+             (symbol-entry-of ext 'lookup)]
 
-                       (expect (true? (:ext.symbol/native-tool? entry)))
-                       (expect (= "Look up the weather for ONE city."
-                                  (:ext.symbol/description entry)))
-                       (expect (= "Object with string `city` and number `temp_c`."
-                                  (:ext.symbol/result entry)))
-                       ;; schema vocabulary is KEYWORDIZED, property names stay strings
-                       (expect (= {:type "object"
-                                   :properties {"city" {:type "string"
-                                                        :description "City name."}}
-                                   :required ["city"]
-                                   :additionalProperties false}
-                                  (:ext.symbol/schema entry)))
-                       (expect (= :tool-color/search (:ext.symbol/color-role entry)))
-                       ;; and it shows up in the ONE native-tool walk
-                       (let [tools (extension/native-tools-for [ext])]
-                         (expect (= ["lookup"] (mapv :name tools)))
-                         (expect (fn? (:render (first tools)))))))))
+            (expect (true? (:ext.symbol/native-tool? entry)))
+            (expect (= "Look up the weather for ONE city." (:ext.symbol/description entry)))
+            (expect (= "Object with string `city` and number `temp_c`." (:ext.symbol/result entry)))
+            ;; schema vocabulary is KEYWORDIZED, property names stay strings
+            (expect (= {:type "object"
+                        :properties {"city" {:type "string" :description "City name."}}
+                        :required ["city"]
+                        :additionalProperties false}
+                       (:ext.symbol/schema entry)))
+            (expect (= :tool-color/search (:ext.symbol/color-role entry)))
+            ;; and it shows up in the ONE native-tool walk
+            (let [tools (extension/native-tools-for [ext])]
+              (expect (= ["lookup"] (mapv :name tools)))
+              (expect (fn? (:render (first tools)))))))))
   (it "the model-facing doc is the description + result + generated params"
-      (with-loaded {"weather.py" weather-py}
-                   (fn [_ _]
-                     (let [text (extension/symbol-doc-text
-                                  (symbol-entry-of (registered "weather") 'lookup))]
-                       (expect (str/includes? text "Look up the weather for ONE city."))
-                       (expect (str/includes? text "Raw result:"))
-                       (expect (str/includes? text "`city` (string, required)"))
-                       ;; the implementation docstring never reaches the model
-                       (expect (not (str/includes? text "Implementation docstring")))))))
+      (with-loaded
+        {"weather.py" weather-py}
+        (fn [_ _]
+          (let [text (extension/symbol-doc-text (symbol-entry-of (registered "weather") 'lookup))]
+            (expect (str/includes? text "Look up the weather for ONE city."))
+            (expect (str/includes? text "Raw result:"))
+            (expect (str/includes? text "`city` (string, required)"))
+            ;; the implementation docstring never reaches the model
+            (expect (not (str/includes? text "Implementation docstring")))))))
   (it "render= becomes the symbol's op-card renderer"
       (with-loaded {"weather.py" weather-py}
                    (fn [_ _]
@@ -1202,3 +1203,46 @@ vis.extension(
                    (fn [result _]
                      (expect (= 1 (:failed result)))
                      (expect (nil? (registered "broken")))))))
+
+;; =============================================================================
+;; /reload re-hydrates feature toggles
+;; =============================================================================
+
+(defdescribe
+  reload-slash-toggles-test
+  "`/reload` is the ONE user-facing re-read of `vis.yml`. Toggles used to be
+   hydrated only at process start (gateway `install-toggle-persistence!`, TUI
+   `screen/run-chat!`), so `web_search: false` in the YAML kept the tool live
+   until a restart while `/reload` reported success."
+  (it "a toggle edited in vis.yml applies after /reload — #64"
+      (toggles/register-toggle!
+        {:id "test_reload_gate" :label "Reload gate" :default true :persist? true})
+      (toggles/set-value! "test_reload_gate" true)
+      (expect (true? (toggles/enabled? "test_reload_gate")))
+      (try (with-redefs
+             [pyx/reload-python-extensions!
+              (fn [& _]
+                {:loaded 0 :failed 0})
+
+              config/reload-config!
+              (constantly {})
+
+              config/current-config
+              (constantly {})
+
+              config/load-config-raw
+              (constantly {"toggles" {"test_reload_gate" false}})
+
+              extension/run-reload-hooks!
+              (constantly {})
+
+              agents/reload!
+              (constantly nil)
+
+              prompt-templates/reload!
+              (constantly [])]
+
+             (let [res ((var pyx/reload-slash) {:channel/id :tui :command/argv []})]
+               (expect (= :ok (:slash/status res)))))
+           (expect (false? (toggles/enabled? "test_reload_gate")))
+           (finally (toggles/reset-to-default! "test_reload_gate")))))

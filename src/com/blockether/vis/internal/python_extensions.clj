@@ -49,6 +49,7 @@
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.security-policy :as security-policy]
+            [com.blockether.vis.internal.toggles :as toggles]
             [taoensso.telemere :as tel])
   (:import [java.io File]
            [org.graalvm.polyglot Context Engine EnvironmentAccess PolyglotAccess Source Value]
@@ -664,17 +665,15 @@ def __vis_registration__():
 ;; Clojure-authored native tool schema has
 ;; (`{:type "object" :properties {"path" {:type "string"}}}`).
 (def ^:private json-schema-words
-  #{"type" "properties" "required" "description" "items" "prefixItems" "enum"
-    "const" "default" "examples" "format" "pattern" "title" "not" "oneOf"
-    "anyOf" "allOf" "additionalProperties" "patternProperties" "minimum"
-    "maximum" "exclusiveMinimum" "exclusiveMaximum" "multipleOf" "minLength"
-    "maxLength" "minItems" "maxItems" "uniqueItems" "minProperties"
-    "maxProperties" "nullable" "$ref" "$defs" "definitions"})
+  #{"type" "properties" "required" "description" "items" "prefixItems" "enum" "const" "default"
+    "examples" "format" "pattern" "title" "not" "oneOf" "anyOf" "allOf" "additionalProperties"
+    "patternProperties" "minimum" "maximum" "exclusiveMinimum" "exclusiveMaximum" "multipleOf"
+    "minLength" "maxLength" "minItems" "maxItems" "uniqueItems" "minProperties" "maxProperties"
+    "nullable" "$ref" "$defs" "definitions"})
 
 ;; Vocabulary words whose VALUE is a map keyed by author-chosen names rather
 ;; than by schema words — those keys must survive as strings.
-(def ^:private json-schema-name-maps
-  #{"properties" "patternProperties" "$defs" "definitions"})
+(def ^:private json-schema-name-maps #{"properties" "patternProperties" "$defs" "definitions"})
 
 (defn- py-schema
   "Python JSON Schema dict -> the host schema shape (keyword vocabulary keys,
@@ -682,35 +681,28 @@ def __vis_registration__():
    sent to the provider but read as EMPTY by every host projection
    (`doc(name)` params, wire docs), which reads `:properties` / `:required`."
   [x]
-  (cond
-    (map? x)
-    (into {}
-          (map (fn [[k v]]
-                 (let [ks (str k)]
-                   (if (contains? json-schema-words ks)
-                     [(keyword ks)
-                      (if (and (map? v) (contains? json-schema-name-maps ks))
-                        (into {}
-                              (map (fn [[pk pv]]
-                                     [(str pk) (py-schema pv)]))
-                              v)
-                        (py-schema v))]
-                     [ks (py-schema v)]))))
-          x)
-
-    (sequential? x)
-    (mapv py-schema x)
-
-    :else x))
+  (cond (map? x) (into {}
+                       (map (fn [[k v]]
+                              (let [ks (str k)]
+                                (if (contains? json-schema-words ks)
+                                  [(keyword ks)
+                                   (if (and (map? v) (contains? json-schema-name-maps ks))
+                                     (into {}
+                                           (map (fn [[pk pv]]
+                                                  [(str pk) (py-schema pv)]))
+                                           v)
+                                     (py-schema v))]
+                                  [ks (py-schema v)]))))
+                       x)
+        (sequential? x) (mapv py-schema x)
+        :else x))
 
 (defn- ->color-role
   "Op-card badge colour role for a Python `color_role='search'`, or the fully
    qualified `'tool-color/search'`. The host vocabulary is namespaced under
    `tool-color`."
   [s]
-  (if (str/includes? s "/")
-    (keyword s)
-    (keyword "tool-color" s)))
+  (if (str/includes? s "/") (keyword s) (keyword "tool-color" s)))
 
 (defn- render-adapter
   "`:ext.symbol/render` for one Python-backed symbol. The Python callable gets
@@ -719,26 +711,19 @@ def __vis_registration__():
    renderer yields nil, so a bad op card never breaks the tool itself."
   [ext-name ^Context ctx ^Value pyfn]
   (fn [result]
-    (try
-      (let [r (call-py-ext ext-name nil ctx pyfn [(stringify-deep result)])]
-        (cond
-          (string? r)
-          {:summary r}
+    (try (let [r (call-py-ext ext-name nil ctx pyfn [(stringify-deep result)])]
+           (cond (string? r) {:summary r}
+                 (map? r) (cond-> {}
+                            (some? (get r "summary"))
+                            (assoc :summary (str (get r "summary")))
 
-          (map? r)
-          (cond-> {}
-            (some? (get r "summary"))
-            (assoc :summary (str (get r "summary")))
-
-            (string? (get r "body"))
-            (assoc :body (get r "body")))
-
-          :else nil))
-      (catch Throwable t
-        (tel/log! {:level :warn
-                   :id ::render-failed
-                   :data {:extension ext-name :error (ex-message t)}})
-        nil))))
+                            (string? (get r "body"))
+                            (assoc :body (get r "body")))
+                 :else nil))
+         (catch Throwable t
+           (tel/log!
+             {:level :warn :id ::render-failed :data {:extension ext-name :error (ex-message t)}})
+           nil))))
 
 (defn- ->symbol-entry
   "`spec` is a Python registration dict — STRING keys (strings-only boundary).
@@ -772,10 +757,11 @@ def __vis_registration__():
        (assoc :hidden? true)
 
        (get spec "is_native_tool")
-       (assoc :native-tool? true
-              :schema (py-schema (get spec "schema"))
-              :description (str (get spec "description"))
-              :result (str (get spec "result")))
+       (assoc :native-tool?
+         true :schema
+         (py-schema (get spec "schema")) :description
+         (str (get spec "description")) :result
+         (str (get spec "result")))
 
        render
        (assoc :render (render-adapter ext-name ctx render))
@@ -1479,6 +1465,17 @@ def __vis_registration__():
 
      _config
      (config/reload-config!)
+
+     ;; Feature toggles live in the `toggles:` slot of the merged YAML and are
+     ;; otherwise hydrated ONLY at process start (gateway
+     ;; `install-toggle-persistence!`, TUI `screen/run-chat!`). Without this the
+     ;; in-memory registry keeps the pre-edit value, so turning a capability off
+     ;; in `vis.yml` (e.g. `web_search: false`) had no effect until a full
+     ;; restart — `/reload` said "Reloaded" while the tool stayed live. Re-hydrate
+     ;; from the freshly re-read raw config so YAML is the source of truth again;
+     ;; ids absent from the file keep their current in-memory value.
+     _toggles
+     (try (toggles/hydrate-from-config! (or (config/load-config-raw) {})) (catch Throwable _ nil))
 
      cfg-changes
      (config-diff old-config (config/current-config))
