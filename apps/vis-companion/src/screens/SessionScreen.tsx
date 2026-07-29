@@ -541,8 +541,6 @@ const FALLBACK_SLASHES: SlashCommand[] = [
   { name: '/draft apply', doc: 'Apply the active draft workspace.' },
   { name: '/draft abandon', doc: 'Abandon the active draft workspace.' },
   { name: '/draft list', doc: 'List draft workspaces.' },
-  { name: '/fs list', doc: 'List filesystem permissions.' },
-  { name: '/fs add', doc: 'Add an allowed filesystem root.' },
   { name: '/reload', doc: 'Reload extensions, skills, prompts, and context files.' },
 ];
 

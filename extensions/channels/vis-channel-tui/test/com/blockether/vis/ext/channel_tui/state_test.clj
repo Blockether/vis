@@ -1568,6 +1568,22 @@
           (state/dispatch [:attach-running-turn "s1" {:id "s1" :status "idle" :queued-turns []}])
           (expect (= :unset @drained))))))
 
+(defn- inert-schedule!
+  "Deterministic stand-in for the real trailing-flush timer.
+
+   Cadence assertions below only care about the SYNCHRONOUS dispatch decisions,
+   so the scheduled trailing flush must never fire on a background thread: the
+   shared `progress-trailing-flush-scheduler` raced them on slow CI hosts and
+   painted an extra (harmless in production, fatal to an `=`) duplicate frame."
+  [_f _delay-ms]
+  (reify
+    java.util.concurrent.Future
+      (cancel [_ _] true)
+      (isCancelled [_] false)
+      (isDone [_] false)
+      (get [_] nil)
+      (get [_ _ _] nil)))
+
 (defdescribe
   live-progress-rate-test
   (it "coalesces reasoning redraws to the 80ms frame cadence and flushes lifecycle chunks"
@@ -1582,7 +1598,7 @@
          (atom 0)
 
          update!
-         (make-progress-render-updater #(swap! events conj %) #(long @now-ms))]
+         (make-progress-render-updater #(swap! events conj %) #(long @now-ms) inert-schedule!)]
 
         (update! [:t0] {:phase :reasoning})
         (reset! now-ms 79)
@@ -1611,7 +1627,7 @@
          (atom 0)
 
          update!
-         (make-progress-render-updater #(swap! events conj %) #(long @now-ms))]
+         (make-progress-render-updater #(swap! events conj %) #(long @now-ms) inert-schedule!)]
 
         ;; First reasoning frame lands.
         (update! [:r 0] {:phase :reasoning})
@@ -1639,7 +1655,7 @@
          (atom 0)
 
          update!
-         (make-progress-render-updater #(swap! events conj %) #(long @now-ms))]
+         (make-progress-render-updater #(swap! events conj %) #(long @now-ms) inert-schedule!)]
 
         ;; Hammer both streams in lockstep for 200ms.
         (doseq [t (range 0 201 10)]
@@ -3505,6 +3521,27 @@
         (expect (= "typing" (input/input->text (:input db))))
         (expect (not (get-in db [:messages 1 :pending?])))
         (expect (true? (get-in db [:messages 3 :pending?])))))
+  (it "a stale generation settles with the trace parked on its own placeholder"
+      ;; Issue #61: the next turn owns `:progress` now, so the late callback of the
+      ;; PREVIOUS generation has no live iterations to publish. `clear-active-turn-state`
+      ;; parks what the user watched onto that generation's placeholder
+      ;; (`[:terminal-pending :trace]`); the stale branch must settle from there instead
+      ;; of dropping every iteration the user saw.
+      (let [trace [{:id :iter-1 :forms [{:id :form-1}]}]]
+        (reset! state/app-db (-> (terminal-test-db)
+                                 (assoc :live-turn-client-id "c2"
+                                        :gateway-turn-id "t2")
+                                 (assoc-in [:messages 1 :terminal-pending :trace] trace)
+                                 (update :messages
+                                         into
+                                         [{:role :user :text "second" :client-turn-id "c2"}
+                                          {:role :assistant :pending? true :client-turn-id "c2"}])))
+        (state/dispatch [:message-received nil (vis/markdown->ast "old answer")
+                         {:client-turn-id "c1" :status :cancelled}])
+        (let [db @state/app-db]
+          (expect (= trace (get-in db [:messages 1 :traces])))
+          (expect (not (get-in db [:messages 1 :pending?])))
+          (expect (true? (get-in db [:messages 3 :pending?]))))))
   (it "the delayed reconciler isolates c1 after an immediate resend"
       (reset! state/app-db (terminal-test-db))
       (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})

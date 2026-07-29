@@ -1220,12 +1220,12 @@
                       (set (mapv #(get % "name") (get (:result (cat-tool dir arg)) "entries"))))]
 
                    (expect (= #{"a.txt"} (names {})))
-                   (expect (= #{"a.txt"} (names {"is_respect_gitignore" true})))
                    (expect (contains? (names {"is_hidden" true}) ".hidden"))
                    (expect (contains? (names {"is_hidden" true}) ".gitignore"))
-                   ;; hidden and gitignore are independent axes
+                   ;; hidden and gitignore are independent axes; gitignored entries are
+                   ;; ALWAYS skipped — there is no per-call opt-out any more
                    (expect (not (contains? (names {"is_hidden" true}) "ignored.txt")))
-                   (expect (contains? (names {"is_respect_gitignore" false}) "ignored.txt"))))
+                   (expect (not (contains? (names {}) "ignored.txt")))))
              (it "(cat dir {\"depth\" 2}) nests a children vector under subdirs"
                  (let
                    [_
@@ -2744,7 +2744,7 @@
                                          "/vis-safe-path-probe.txt"))))
           ;; ...but a NON-temp path outside every root is still rejected.
           (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))
-          ;; Vis's own config home is available without a /fs grant.
+          ;; Vis's own config home is always available.
           (expect (some? (safe-path (str (System/getProperty "user.home") "/.vis/config.yml"))))))))
   (it
     "expands a leading ~ / ~/ so a home-relative path resolves to the real file (regression: was treated as a literal ~ segment under cwd)"
@@ -3560,7 +3560,7 @@
 
           (expect (= [vis-home primary] (mapv str (:roots (rsr ["."]))))))))
     (it
-      "a real DRAFT clone under the drafts store (~/.vis/drafts) is KEPT in the default sweep even though it is under ~/.vis — so an in-draft session (its primary + /fs-add clones) stays searchable, while the raw ~/.vis grant is still pruned"
+      "a real DRAFT clone under the drafts store (~/.vis/drafts) is KEPT in the default sweep even though it is under ~/.vis — so an in-draft session stays searchable, while the raw ~/.vis grant is still pruned"
       (let
         [rsr
          @#'editing/resolve-search-roots
@@ -4472,12 +4472,11 @@
                (finally (Thread/interrupted)))))))
 
 (defdescribe
-  is-respect-gitignore-override-test
-  ;; `.gitignore`d files are hidden from rg/find_files by default, but a caller
-  ;; must be able to reach vendored / corporate repos the project ignores by
-  ;; passing is_respect_gitignore=false. That flag is handed THROUGH to fff
-  ;; (`:respect-ignore-files? false`), so both rg and find_files stay on the
-  ;; native index — no raw filesystem walk anywhere on the opt-out path.
+  gitignore-always-respected-test
+  ;; `.gitignore` is ALWAYS honored: there is no per-call opt-out any more. The
+  ;; former `is_respect_gitignore` parameter is GONE — the find spec rejects it as
+  ;; an unknown key, and `vis.yml`'s `:grep` overlay is the only way to widen what
+  ;; search sees. Everything stays on the native fff index; no raw filesystem walk.
   (let
     [grep
      (private-fn "rg-search")
@@ -4495,82 +4494,37 @@
        (write-temp! (str dir "/vendor/corp/secret.txt") "NEEDLE_TOKEN here\n")
        (temp-dir-path dir))]
 
-    (it "rg hides the ignored file by default and reveals it with the override"
-        (let [path (fixture! "gitignore-override-rg")]
+    (it "rg never surfaces a gitignored file, and the removed flag is inert"
+        (let [path (fixture! "gitignore-always-rg")]
           (expect (zero? (:total-file-count (grep {"query" ["NEEDLE_TOKEN"] "paths" [path]}))))
-          (let [r (grep {"query" ["NEEDLE_TOKEN"] "paths" [path] "is_respect_gitignore" false})]
-            (expect (= 1 (:total-file-count r)))
-            (expect (some #(string/includes? (:path %) "vendor/corp/secret.txt") (:hits r))))))
-    (it
-      "is_respect_gitignore=false never walks a root's tree — fff itself serves the no-ignore index"
-      ;; "secret token" strict-matches nothing (no single path holds BOTH
-      ;; words), so the relaxed fallback fires a per-token scan for "secret"
-      ;; AND "token". Every pass is served natively: the fff index is created
-      ;; with `:respect-ignore-files? false`, so it already contains the
-      ;; ignored file. There is no Clojure walk left to fall back to — the
-      ;; former `find-walk-files` escape hatch is deleted.
-      (let
-        [path
-         (fixture! "gitignore-override-walkonce")
-
-         r
-         (find-search [{"query" "secret token" "paths" [path] "is_respect_gitignore" false}])]
-
-        (expect (nil? (core-var "find-walk-files")))
-        ;; the fallback still surfaces the file via the "secret" token
-        (expect (some (fn [p]
-                        (string/includes? p "vendor/corp/secret.txt"))
-                      (get r "paths")))))
-    (it "the default (respect-gitignore) path never triggers a direct filesystem walk"
-        ;; With the flag left on, find_files stays on the fff index. No walk
-        ;; helper exists in the ns at all any more.
-        (let [path (fixture! "gitignore-override-nowalk")]
-          (find-search [{"query" "secret" "paths" [path]}])
-          (expect (nil? (core-var "find-walk-files")))
-          (expect (nil? (core-var "score-walked-candidates")))))
-    (it "is_respect_gitignore=false still skips hidden .git metadata (is_hidden default false)"
-        ;; Opting out of .gitignore must not drag VCS internals in: a file buried
-        ;; in a dot-prefixed .git dir stays invisible because the is_hidden gate
-        ;; (default false) prunes hidden dirs during the walk.
-        (let
-          [dir
-           "gitignore-override-gitdir"
-
-           path
-           (fixture! dir)
-
-           _
-           (write-temp! (str dir "/vendor/corp/.git/config_secret.txt") "x\n")
-
-           paths-of
-           (fn [spec]
-             (get (find-search [spec]) "paths"))]
-
-          ;; the tracked (gitignored) file IS reachable with the override ...
-          (expect (some #(string/includes? % "vendor/corp/secret.txt")
-                        (paths-of {"query" "secret" "paths" [path] "is_respect_gitignore" false})))
-          ;; ... but the .git-buried file stays hidden even with the override
-          (expect (empty? (paths-of
-                            {"query" "config" "paths" [path] "is_respect_gitignore" false})))))
-    (it "find_files hides the ignored file by default and reveals it with the override"
+          (expect (zero? (:total-file-count (grep {"query" ["NEEDLE_TOKEN"]
+                                                   "paths" [path]
+                                                   "is_respect_gitignore" false}))))))
+    (it "the find spec REJECTS is_respect_gitignore as an unknown key"
         (let
           [path
-           (fixture! "gitignore-override-find")
+           (fixture! "gitignore-always-unknown-key")
 
-           paths-of
-           (fn [spec]
-             (get (find-search [spec]) "paths"))]
+           thrown
+           (try (find-search [{"query" "secret" "paths" [path] "is_respect_gitignore" false}])
+                nil
+                (catch Exception e e))]
 
-          (expect (empty? (paths-of {"query" "secret" "paths" [path]})))
-          (let [hit (paths-of {"query" "secret" "paths" [path] "is_respect_gitignore" false})]
-            (expect (some #(string/includes? % "vendor/corp/secret.txt") hit)))))))
+          (expect (some? thrown))
+          (expect (= :ext.foundation.editing/invalid-find-args (:type (ex-data thrown))))
+          (expect (= ["is_respect_gitignore"] (:unknown (ex-data thrown))))))
+    (it "find_files never surfaces a gitignored file and never walks the tree"
+        (let [path (fixture! "gitignore-always-find")]
+          (expect (empty? (get (find-search [{"query" "secret" "paths" [path]}]) "paths")))
+          (expect (nil? (core-var "find-walk-files")))
+          (expect (nil? (core-var "score-walked-candidates")))))))
 
 (defdescribe
   tool-ignore-negation-layering-test
   ;; `.gitignore` still hides a path from git AND our tools by default, but a
   ;; `!`-negation in a TOOL-ONLY `.ignore`/`.rgignore` (files git never reads)
-  ;; re-includes it for rg/find_files while is_respect_gitignore stays at its
-  ;; DEFAULT true. Precedence (LOW→HIGH): .gitignore < .ignore < .rgignore, so a
+  ;; re-includes it for rg/find_files while `.gitignore` itself keeps hiding it.
+  ;; Precedence (LOW→HIGH): .gitignore < .ignore < .rgignore, so a
   ;; higher-precedence rule (incl. a re-ignore) wins. fff's index only knows
   ;; .gitignore, so both tools must bypass it when a tool-only ignore file is
   ;; present or the `!` would never surface.
@@ -4653,12 +4607,12 @@
   grep-overlay-config-test
   ;; Issue #23: a `:grep {:include-gitignored-paths [...]}` config overlay
   ;; re-includes chosen gitignored subtrees for rg AND find_files with
-  ;; is_respect_gitignore left at its DEFAULT — the walker descends the
+  ;; `.gitignore` ALWAYS respected — the walker descends the
   ;; excluded dir (which a `.gitignore` `!` negation can never do: git never
   ;; descends an excluded directory, so a negation on a child is dead code),
   ;; while `:always-exclude` (defaults: `.git/`, `node_modules/`, `target/`, …)
-  ;; keeps pruning INSIDE the rescued subtree. An EXPLICIT per-call
-  ;; is_respect_gitignore — either value — wins over the overlay.
+  ;; keeps pruning INSIDE the rescued subtree. Config is the ONLY lever: there
+  ;; is no per-call gitignore opt-out.
   (let
     [grep
      (private-fn "rg-search")
@@ -4720,16 +4674,15 @@
           (overlay! {:include-gitignored-paths ["repositories/**"]}
                     (fn []
                       (expect (has? (rg-files path) "repositories/corp/secret.txt"))))))
-    (it "an explicit per-call is_respect_gitignore — either value — beats the overlay"
+    (it "the overlay is the ONLY lever — no per-call gitignore opt-out exists"
         (let [path (fixture! "search-overlay-explicit")]
+          ;; without config the gitignored subtree stays hidden …
+          (expect (not (has? (rg-files path) "repositories/corp/secret.txt")))
           (overlay! {:include-gitignored-paths ["repositories/"]}
                     (fn []
-                      ;; explicit true → pure gitignore: the rescued subtree stays hidden
-                      (expect (not (has? (rg-files path {"is_respect_gitignore" true})
-                                         "repositories/corp/secret.txt")))
-                      ;; explicit false → full walk: even node_modules shows
-                      (expect (has? (rg-files path {"is_respect_gitignore" false})
-                                    "secret_dep.txt"))))))
+                      ;; … and with it the rescue applies to EVERY call
+                      (expect (has? (rg-files path) "repositories/corp/secret.txt"))
+                      (expect (not (has? (rg-files path) "secret_dep.txt")))))))
     (it "an explicit :always-exclude REPLACES the defaults"
         (let [path (fixture! "search-overlay-replace")]
           (overlay! {:include-gitignored-paths ["repositories/"] :always-exclude ["*.md"]}
@@ -5038,9 +4991,7 @@
 
          files
          (fn [q]
-           (set (:files
-                  (rg
-                    {"query" q "paths" [dir] "is_files_only" true "is_respect_gitignore" false}))))
+           (set (:files (rg {"query" q "paths" [dir] "is_files_only" true}))))
 
          _
          (files "zzpoolseed")

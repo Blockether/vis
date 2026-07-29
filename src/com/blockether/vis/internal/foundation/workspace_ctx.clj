@@ -33,12 +33,11 @@
    stringified `git/vcs-kind`).
 
    workspace identity — `\"root\"` `\"sandbox\"` `\"id\"` `\"label\"`
-     `\"filesystem_roots\"` (the `workspace/` namespace folds away — the
-     block IS the workspace)
+     `\"filesystem_roots\"` (configured `workspace.filesystem` catalog entries)
    `\"changed\"` / `\"changed_paths\"` — since-fork edits
    session linkage — `\"session_state_id\"` `\"session_id\"` `\"session_title\"`
      `\"session_fork_of\"` (foreign namespaces stay folded)"
-  [{:keys [workspace session-state]}]
+  [{:keys [workspace session-state filesystem-roots]}]
   (let
     [root
      (canonical-path (or (:root workspace) (workspace/cwd)))
@@ -67,16 +66,11 @@
       (:label workspace)
       (assoc "label" (:label workspace))
 
-      (seq (:filesystem-roots workspace))
+      (seq filesystem-roots)
       (assoc "filesystem_roots"
-        ;; Extra dirs the session may also operate on, addressed by their REAL
-        ;; path (`"dir"`). `"isolated"` marks the ones whose edits land in a
-        ;; hidden draft copy until /draft apply. The clone path itself is
-        ;; deliberately NOT surfaced — the model always reads/writes `"dir"`.
-        (mapv (fn [r]
-                (let [{:keys [dir isolated]} (workspace/public-filesystem-root r false)]
-                  {"dir" dir "isolated" isolated}))
-              (workspace/filesystem-roots workspace)))
+        (mapv (fn [{:keys [trunk]}]
+                {"dir" trunk "isolated" false})
+              filesystem-roots))
 
       changed
       (assoc "changed"

@@ -316,3 +316,72 @@
         (let [block (first (perr/provider-error-content err))]
           (expect (= "provider_billing" (get block "code")))
           (expect (false? (get block "retryable")))))))
+
+(def ^:private bedrock-timeout-err
+  "A gateway timeout that reaches Vis ONLY as prose on the routing attempts —
+   the wrapper still says the generic `Provider unavailable` (issue #60)."
+  {:message "Provider unavailable"
+   :data {:attempts [{:provider "bedrock"
+                      :model "claude-opus-4-8"
+                      :reason :error
+                      :error {:message (str "litellm.Timeout: BedrockException: Timeout Error - "
+                                            "litellm.Timeout: Connection timed out. Timeout "
+                                            "passed=Timeout(connect=5.0, read=600.0), time "
+                                            "taken=0.001 seconds. Received Model "
+                                            "Group=claude-opus-4-8")}}]}})
+
+(def ^:private resource-mismatch-err
+  "Azure OpenAI refusing an item created under another resource (issue #59)."
+  {:message "Provider unavailable"
+   :data {:status 400
+          :body (str "{\"error\":{\"message\":\"The requested item was created under a different "
+                     "Azure OpenAI resource. Use the same resource that created the item to "
+                     "access it.\"}}")}})
+
+(defdescribe
+  upstream-timeout-classification-test
+  "An UPSTREAM timeout is its own kind — never the generic outage bucket."
+  (it "classifies a Bedrock/litellm timeout hidden on the attempts"
+      (expect (= :upstream-timeout (perr/provider-error-kind bedrock-timeout-err))))
+  (it "titles it as a timeout, not as `Provider unavailable`"
+      (expect (= "Provider request timed out" (perr/provider-error-title bedrock-timeout-err)))
+      (expect (nil? (re-find #"(?i)provider unavailable"
+                             (perr/provider-error-title bedrock-timeout-err)))))
+  (it "says the request never reached the model on a CONNECT timeout"
+      (expect (= :connect
+                 (perr/upstream-timeout-phase nil
+                                              (perr/provider-error-upstream-text
+                                                bedrock-timeout-err))))
+      (expect (str/includes? (perr/provider-error-explanation bedrock-timeout-err)
+                             "never reached the model")))
+  (it "distinguishes a READ timeout, where the model may have started"
+      (let [err {:message "Provider unavailable" :data {:status 504}}]
+        (expect (= :upstream-timeout (perr/provider-error-kind err)))
+        (expect (= :read (perr/upstream-timeout-phase 504 "")))
+        (expect (str/includes? (perr/provider-error-explanation err) "may have started"))))
+  (it "keeps a timeout retryable"
+      (expect (true? (perr/provider-error-retryable? bedrock-timeout-err))))
+  (it "leaves svar's TYPED stream watchdogs alone"
+      (let [err {:message "stream stalled" :data {:type :svar.core/stream-idle-timeout}}]
+        (expect (= :stream-timeout (perr/provider-error-kind err)))))
+  (it "leaves a bare transport drop alone"
+      (expect (= :transport (perr/provider-error-kind {:message "closed" :data {}})))))
+
+(defdescribe resource-mismatch-classification-test
+             "A conversation pinned to another backend resource is TERMINAL, not an outage."
+             (it "classifies the Azure resource-mismatch body"
+                 (expect (= :resource-mismatch (perr/provider-error-kind resource-mismatch-err))))
+             (it "titles the pinning instead of a generic outage"
+                 (expect (= "Conversation pinned to another provider resource"
+                            (perr/provider-error-title resource-mismatch-err))))
+             (it "explains that an identical retry fails identically"
+                 (expect (str/includes? (perr/provider-error-explanation resource-mismatch-err)
+                                        "identical retry fails identically")))
+             (it "never suggests a blind retry"
+                 (let [next-step (perr/provider-error-next-step resource-mismatch-err)]
+                   (expect (str/includes? next-step "don't retry as-is"))
+                   (expect (false? (perr/provider-error-retryable? resource-mismatch-err)))))
+             (it "marks the typed content non-retryable and kind-specific"
+                 (let [[c] (perr/provider-error-content resource-mismatch-err)]
+                   (expect (= "provider_resource-mismatch" (get c "code")))
+                   (expect (false? (get c "retryable"))))))

@@ -206,9 +206,9 @@ Managed language dependency caches (`~/.m2`, `~/.clojure`, `~/.npm`, …) are **
 implicit — grant them as catalog entries (typically `search: false`) and list
 their ids under `jail.filesystem.allow`.
 
-`/cd` changes the active workspace root. `/fs add <path>` adds a temporary session
-root. Those roots participate in draft isolation and the same policy; they are not
-a second permission store.
+`/cd` changes the active workspace root. To add filesystem locations, edit the
+`workspace.filesystem` catalog in `vis.yml` and run `/reload`; `jail.filesystem.allow`
+independently controls which catalog entries a sandbox may access.
 
 ## Environment scrubbing
 

@@ -78,7 +78,7 @@
 
 (defn- tree-stats
   "Recursive size in bytes plus the newest regular-file mtime, in ONE walk.
-   Symlinks are never followed (a draft's `/fs add` roots may be linked back to
+   Symlinks are never followed (draft clones may be linked back to the
    trunk; counting them would report the user's whole source tree as
    reclaimable). The mtime is what makes an orphan directory safe to judge:
    a directory's own timestamp only moves when entries are added or removed, so

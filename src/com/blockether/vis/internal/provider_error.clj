@@ -230,6 +230,91 @@
 
 (declare provider-error-attempts)
 
+(defn- ->error-text
+  "Best-effort human text for ONE upstream failure value — a string, an svar
+   error map or a Throwable — so classification can read a cause svar recorded
+   as data rather than as prose."
+  [x]
+  (cond (nil? x) nil
+        (string? x) x
+        (keyword? x) (name x)
+        (instance? Throwable x) (str (ex-message x) " " (:body (ex-data x)))
+        (map? x) (str (or (:message x) (ex-message x)) " " (:body (or (:data x) x)))
+        :else (str x)))
+
+(defn provider-error-upstream-text
+  "EVERY scrap of upstream failure text Vis holds for `err`, lowercased and
+   joined: the wrapper message, the raw upstream body, and the per-provider
+   attempt reasons/errors svar records on a routing failure.
+
+   Classification must read THIS and not only the wrapper message. An
+   `all-providers-exhausted` / `Provider unavailable` wrapper keeps the real
+   cause (`litellm.Timeout: BedrockException: Timeout Error …`) down on the
+   attempts — which is exactly how an upstream timeout used to be presented as
+   a generic outage."
+  [err]
+  (let [data (or (:data err) (ex-data err) err)]
+    (str/lower-case (str/join "\n"
+                              (remove str/blank?
+                                (map ->error-text
+                                     (concat [(or (ex-message err) (:message err)) (:body data)
+                                              (:error data)]
+                                             (mapcat (fn [a]
+                                                       [(:reason a) (:error a)])
+                                                     (provider-error-attempts err)))))))))
+
+(defn upstream-timeout-error?
+  "True when the UPSTREAM request timed out: a provider/gateway/SDK deadline that
+   arrives as message text (`litellm.Timeout: BedrockException: Timeout Error`)
+   or as HTTP 408/504 — NOT svar's own typed stream watchdogs, which
+   `stream-timeout-error?` already owns. Text-based on purpose: these carry no
+   typed `ex-data`, only prose, and collapsing them into `Provider unavailable`
+   hides both the real failure mode and the right recovery."
+  [status text]
+  (let [text (str/lower-case (str text))]
+    (or (= 408 status)
+        (= 504 status)
+        (str/includes? text "timeout error")
+        (str/includes? text "litellm.timeout")
+        (str/includes? text "timed out")
+        (str/includes? text "read timeout")
+        (str/includes? text "connect timeout")
+        (str/includes? text "connection timeout")
+        (str/includes? text "gateway timeout")
+        (str/includes? text "deadline exceeded")
+        (str/includes? text "etimedout"))))
+
+(defn upstream-timeout-phase
+  "`:connect` (the request never reached the model), `:read` (it did, and the
+   response never finished) or nil (the provider only said 'deadline'). The
+   phase is the whole difference between 'safe, nothing ran' and 'the model may
+   have started', so the NEXT STEP line depends on it."
+  [status text]
+  (let [text (str/lower-case (str text))]
+    (cond (or (str/includes? text "connection timed out")
+              (str/includes? text "connect timeout")
+              (str/includes? text "connection timeout"))
+          :connect
+          (or (= 504 status)
+              (str/includes? text "read timeout")
+              (str/includes? text "read timed out")
+              (str/includes? text "response timed out")
+              (str/includes? text "stream timed out"))
+          :read
+          :else nil)))
+
+(defn resource-mismatch-error?
+  "True when the conversation/item is PINNED to a different backend resource —
+   Azure OpenAI's 'The requested item was created under a different Azure OpenAI
+   resource', a stored response read from the wrong deployment. Emphatically not
+   transient: the identical request against the identical endpoint fails the
+   identical way, so suggesting a blind retry is wrong."
+  [text]
+  (let [text (str/lower-case (str text))]
+    (or (str/includes? text "created under a different")
+        (str/includes? text "same resource that created")
+        (str/includes? text "different azure openai resource"))))
+
 (defn provider-error-explanation
   "The `WHAT HAPPENED:` prose line — the single canonical human sentence for this
    failure, shared by every surface. The actionable step lives in
@@ -314,6 +399,23 @@
       (rate-limit-error? status provider-message message)
       (str "WHAT HAPPENED: the provider rate-limited this request."
            (when (seq provider-message) (str " " provider-message)))
+      (resource-mismatch-error? (provider-error-upstream-text err))
+      (str "WHAT HAPPENED: this conversation is pinned to a different provider resource — the "
+           "item was created under another deployment/endpoint, so the one Vis just called "
+           "cannot read it. Not an outage: an identical retry fails identically."
+           (when (seq provider-message) (str " " provider-message)))
+      (upstream-timeout-error? status (provider-error-upstream-text err))
+      (let [phase (upstream-timeout-phase status (provider-error-upstream-text err))]
+        (str "WHAT HAPPENED: the provider request timed out upstream"
+             (case phase
+               :connect
+               " while connecting — the request never reached the model"
+
+               :read
+               " while reading the response — the model may have started work"
+
+               "")
+             ". Nothing was rejected; your transcript and tool results are intact."))
       (or (= "All providers exhausted" message) (= "Provider unavailable" message))
       (if (or (= "Provider unavailable" message) (<= (count (provider-error-attempts err)) 1))
         (str "WHAT HAPPENED: the selected provider failed before a usable response. No "
@@ -366,6 +468,12 @@
       :rate-limit
       "Provider rate-limited"
 
+      :upstream-timeout
+      "Provider request timed out"
+
+      :resource-mismatch
+      "Conversation pinned to another provider resource"
+
       :transport
       "Could not reach provider"
 
@@ -416,6 +524,24 @@
 
       :rate-limit
       (rate-limit-next-step)
+
+      :upstream-timeout
+      (case (upstream-timeout-phase (:status data) (provider-error-upstream-text err))
+        :connect
+        (str "NEXT STEP: retry — the request never reached the model. If it keeps timing "
+             "out, check network/proxy reachability or switch provider/model.")
+
+        :read
+        (str "NEXT STEP: retry — the model may have started, so re-read the last output "
+             "before assuming nothing ran. If it repeats, trim the request or switch to a "
+             "faster model.")
+
+        (str "NEXT STEP: retry once; if it repeats, raise the provider request timeout or switch "
+             "provider/model."))
+
+      :resource-mismatch
+      (str "NEXT STEP: don't retry as-is — point Vis back at the resource/deployment that created "
+           "this conversation, or start a fresh session (or switch provider/model).")
 
       :transport
       (transport-next-step)
@@ -483,7 +609,17 @@
           (anthropic-extra-usage-error? status provider-message message) :anthropic-extra-usage
           (rate-limit-error? status provider-message message) :rate-limit
           (transport-error? status provider-message message) :transport
+          (resource-mismatch-error? (provider-error-upstream-text err)) :resource-mismatch
+          (upstream-timeout-error? status (provider-error-upstream-text err)) :upstream-timeout
           :else :generic)))
+
+(defn provider-error-retryable?
+  "Whether retrying the SAME request can plausibly succeed. Surfaces read this
+   so they never suggest a blind retry for a terminal or pinned failure (auth,
+   billing, tool schema, resource mismatch, context overflow)."
+  [err]
+  (contains? #{:rate-limit :transport :overloaded :empty-content :stream-timeout :upstream-timeout}
+             (provider-error-kind err)))
 
 (defn provider-failure?
   "True when `err` is a PROVIDER failure — presentable as the styled card
@@ -602,6 +738,7 @@
      :provider-message (not-empty provider-message)
      :wrapper-message (not-empty message)
      :provider-id (provider-id-of data)
+     :is-retryable (provider-error-retryable? err)
      :attempts (not-empty (provider-error-attempts err))
      :body (provider-error-raw-body err)}))
 
@@ -632,7 +769,7 @@
      (provider-error-info err)
 
      retryable?
-     (contains? #{:rate-limit :transport :overloaded :empty-content :stream-timeout} kind)
+     (provider-error-retryable? err)
 
      message
      (str/join "\n\n" (remove str/blank? [title explanation next-step]))]

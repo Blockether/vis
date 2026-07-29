@@ -9,8 +9,7 @@
      - symlink escapes are defeated by resolving the path through the REAL path
        of its nearest existing ancestor (so a symlink inside a root that points
        outside is rejected, and a symlink whose target is inside is allowed).
-     - the root set is read LIVE via `roots-fn` on every check, so
-       `/fs add|/fs remove` takes effect immediately.
+     - the root set is supplied by the current environment, rebuilt after `/reload`.
 
    GraalPy's own stdlib / internal resources live OUTSIDE the roots, so the
    confined FS is wrapped with `allowLanguageHomeAccess` +
@@ -18,7 +17,7 @@
    bundled resources) before it reaches the Context.
 
    OUTBOX tap — an optional engine-managed capture directory (`$VIS_OUTBOX`,
-   distinct from the user `/fs` roots): the sandbox may WRITE there and every
+   distinct from configured filesystem roots): the sandbox may WRITE there and every
    file it closes is handed to `on-close` so the engine can persist it as a
    `session_iteration_attachment` (the implicit twin of `vis_attach`). Reads,
    and writes anywhere else, are untouched.
@@ -36,8 +35,8 @@
   (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
 
 (def ^:private temp-roots
-  "System temp directories the sandbox may ALWAYS read/write, independent of the
-   user's `/fs` roots — `/tmp` (and the JVM `java.io.tmpdir`, e.g. `$TMPDIR`).
+  "System temp directories the sandbox may ALWAYS read/write, independent of
+   configured filesystem roots — `/tmp` (and the JVM `java.io.tmpdir`, e.g. `$TMPDIR`).
    Canonicalized ONCE via `toRealPath` (symlinks resolved, so macOS `/tmp` ->
    `/private/tmp` matches). Held in a delay so the syscall happens on first use,
    not at class-load. Non-existent/unresolvable entries are dropped."
@@ -75,7 +74,7 @@
 
 (def ^:private vis-always-roots
   "The `~/.vis` directory tree that the sandbox may ALWAYS read/write,
-   independent of the user's `/fs` roots. Canonicalized ONCE via `real-path`
+   independent of configured filesystem roots. Canonicalized ONCE via `real-path`
    (which resolves the real path of `~/.vis`, even before a child exists). Held
    in a delay so the syscall happens on first use. Kept SEPARATE from
    `temp-roots`: a write here is NOT tapped to the OUTBOX (only temp writes are)."
@@ -87,7 +86,7 @@
 
 (defn- current-real-roots
   "Canonical (real) Paths of the CURRENT filesystem roots. Reads the root STRINGS
-   fresh each call (so `/fs add|/fs remove` applies live), but MEMOIZES the expensive
+   fresh each call, but MEMOIZES the expensive
    `toRealPath` syscall per root string in `cache` (a string→Path atom). A root
    dir's canonical path is stable, so this turns what was a stat-per-root on EVERY
    file op — an os.walk/glob over a big tree was a syscall storm — into one stat
@@ -116,20 +115,28 @@
 
    The four-argument form preserves already-created filesystem closures across a
    hot reload; those closures predate operation-specific diagnostics."
-  (^Path [roots-fn cache extra-roots p]
-   (confine! roots-fn cache extra-roots "file-read" p))
+  (^Path [roots-fn cache extra-roots p] (confine! roots-fn cache extra-roots "file-read" p))
   (^Path [roots-fn cache extra-roots operation p]
-   (let [^Path pp (if (instance? Path p) p (Paths/get (str p) (make-array String 0)))
-         real (real-path pp)
-         roots (into (vec extra-roots) (current-real-roots roots-fn cache))]
-     (when-not (some (fn [^Path root] (.startsWith real root)) roots)
+   (let
+     [^Path pp
+      (if (instance? Path p) p (Paths/get (str p) (make-array String 0)))
+
+      real
+      (real-path pp)
+
+      roots
+      (into (vec extra-roots) (current-real-roots roots-fn cache))]
+
+     (when-not (some (fn [^Path root]
+                       (.startsWith real root))
+                     roots)
        ;; This is a policy decision made by Vis, not an ambiguous OS EACCES/EPERM.
        ;; IOException is intentional: GraalPy preserves its message in the guest
        ;; error, whereas it replaces SecurityException with generic PermissionError.
        ;; Keep paths and roots out of the guest-visible message: they may be secret.
-       (throw (IOException.
-                (str "[vis:sandbox_denied] operation=" operation
-                     " reason=outside_approved_filesystem_roots"))))
+       (throw (IOException. (str "[vis:sandbox_denied] operation="
+                                 operation
+                                 " reason=outside_approved_filesystem_roots"))))
      pp)))
 
 (defn- write-opts?
@@ -167,7 +174,7 @@
 
    `outbox` (optional) — `{:dir <existing dir path string> :on-close (fn [^Path])}`.
    Its real path is treated as an always-allowed root (so the sandbox can write
-   there even though it is not a user `/fs` root); a WRITE channel closed under it
+   there even though it is outside configured filesystem roots); a WRITE channel closed under it
    fires `on-close` with the file path. The SAME `on-close` also fires for a
    write closed under any system temp root (`/tmp`, `$TMPDIR`), so plain /tmp
    scratch streams to the DB too, not just `$VIS_OUTBOX`. Nil ⇒ no tap."
@@ -238,7 +245,8 @@
         (copy [src dst opts] (.copy d (c "file-read" src) (c "file-write" dst) opts))
         (move [src dst opts] (.move d (c "file-write" src) (c "file-write" dst) opts))
         (createLink [link existing] (.createLink d (c "file-write" link) (c "file-read" existing)))
-        (createSymbolicLink [link target attrs] (.createSymbolicLink d (c "file-write" link) (c "file-read" target) attrs))
+        (createSymbolicLink [link target attrs]
+          (.createSymbolicLink d (c "file-write" link) (c "file-read" target) attrs))
         (readSymbolicLink [link] (.readSymbolicLink d (c "file-read" link)))
         (setAttribute [p attr value opts] (.setAttribute d (c "file-write" p) attr value opts))
         ;; default interface methods — proxy does NOT inherit them, so delegate

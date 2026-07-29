@@ -378,11 +378,11 @@ db_spec:
 
 ## Grep
 
-The `grep` block tunes what `grep` may see. By default
-both honor `.gitignore`; `include_gitignored_paths` re-includes chosen
-gitignored subtrees — the walker descends them as if
-`is_respect_gitignore=False` were passed **for those subtrees only**,
-bypassing every nested `.gitignore` layer inside them, while the rest of
+The `grep` block tunes what `grep` may see. `.gitignore` is ALWAYS
+honored — there is no per-call opt-out — so this config block is the only
+way to change what search sees. `include_gitignored_paths` re-includes
+chosen gitignored subtrees: the walker descends them, bypassing every
+nested `.gitignore` layer inside them, while the rest of
 the workspace keeps honoring `.gitignore`. This is the fix for
 intentionally-gitignored vendored or cloned repos (`repositories/**`): a
 `.gitignore` `!` negation cannot re-include them (git never descends into
@@ -432,8 +432,8 @@ Semantics:
   the key replaces the defaults (vectors replace on merge, like everywhere
   else in config). It guards the re-included subtrees; outside them
   `.gitignore` already governs.
-- An explicit per-call `is_respect_gitignore` — either value — wins over
-  the overlay for that call.
+- There is no per-call gitignore flag: edit `vis.yml` and `/reload` to
+  change what search sees.
 - Hidden files stay governed by `is_hidden`: re-including `repositories/`
   never surfaces the repos' `.git` internals (doubly guarded — `.git/` is
   also in the default `always_exclude`).

@@ -74,7 +74,17 @@ jobs:
           MD
       - name: Install bubblewrap + passt (Linux jail enforcer + filtered egress)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap passt
+        # Ubuntu 24.04 ships an AppArmor policy that denies UNPRIVILEGED user
+        # namespaces, so an installed `bwrap` can still fail to create the
+        # namespace the Linux jail E2E contract requires (the suite then fails
+        # on `sandbox-applicable?`). Relax the knob, then PROVE a real namespace
+        # launches here so a denied kernel is a clear setup failure, not a
+        # mysterious test failure 4 minutes later.
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap passt
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+          bwrap --unshare-all --ro-bind / / /bin/true
       - name: Run test suite
         env:
           # These are hard CI contracts, not best-effort coverage: macOS must

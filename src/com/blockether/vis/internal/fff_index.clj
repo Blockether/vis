@@ -84,8 +84,8 @@
 
    `respect-ignore-files?` (default true) is handed STRAIGHT to fff: false makes
    fff's own native walker skip `.gitignore`/`.ignore`/`.git/info/exclude`/global
-   ignores, so an `is_respect_gitignore false` caller stays on the fast native
-   index instead of falling back to a raw filesystem walk.
+   ignores. vis' search tools ALWAYS pass true — gitignore is honored
+   unconditionally and only the `vis.yml` `:grep` overlay widens it.
 
    NO `:frecency-db-path` / `:history-db-path` — deliberately. Those are the
    ONLY things that make fff open an LMDB env, and fff opens it in heed's

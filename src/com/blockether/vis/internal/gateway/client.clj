@@ -879,24 +879,6 @@
   (decode-workspace (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/workspace"))
                          "workspace")))
 
-(defn add-filesystem-root!
-  "Add `path` as an extra filesystem root for `sid` IN THE DAEMON, returning the
-   refreshed `session-workspace-info`. The daemon owns the session's DB, so the
-   new root is what every channel reads back (fixing the local-only mutation that
-   never reached the running session)."
-  [sid path]
-  (decode-workspace
-    (get (send-json! "POST" (str "/v1/sessions/" (enc sid) "/workspace/roots") {:path path})
-         "workspace")))
-
-(defn remove-filesystem-root!
-  "Remove `path` from `sid`'s extra filesystem roots IN THE DAEMON, returning the
-   refreshed `session-workspace-info`."
-  [sid path]
-  (decode-workspace
-    (get (send-json! "DELETE" (str "/v1/sessions/" (enc sid) "/workspace/roots") {:path path})
-         "workspace")))
-
 (defn change-root!
   "Repoint `sid`'s PRIMARY filesystem root to `path` IN THE DAEMON, returning the
    refreshed `session-workspace-info` (whose `:id` is the newly pinned workspace)."

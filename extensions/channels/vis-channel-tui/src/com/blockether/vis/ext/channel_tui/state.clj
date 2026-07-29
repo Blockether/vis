@@ -1845,22 +1845,9 @@
       (some? (:current_turn_id session))
       (some? (:current-turn-id session))))
 
-(defn- clear-active-turn-state
-  [db]
-  (assoc db
-    :loading? false
-    :cancelling? false
-    :progress nil
-    :turn-start-ms nil
-    :cancel-token nil
-    :gateway-turn-id nil
-    :live-turn-client-id nil
-    :cancelling-at-ms nil
-    :liveness-probed-at-ms nil))
-
 (defn- park-live-trace
   "Stash the iterations the user already WATCHED onto the pending assistant
-   placeholder, so a LOCAL cancel may clear `:progress` without erasing them.
+   placeholder, so clearing `:progress` never erases them.
 
    `:message-received` reads exactly this slot (`[:terminal-pending :trace]`) when a
    synthetic cancellation carries no trace of its own — the same slot the gateway
@@ -1883,6 +1870,25 @@
     (if (and idx trace (empty? (get-in messages [idx :terminal-pending :trace])))
       (assoc db :messages (assoc-in messages [idx :terminal-pending :trace] trace))
       db)))
+
+(defn- clear-active-turn-state
+  "Settle this tab's in-flight turn state. ALWAYS parks the live trace first:
+   `:progress` is the only home of the iterations painted live, so every path
+   that stops a turn — the gateway terminal, a cancel, the not-running
+   reconcile, the next turn starting — would otherwise drop everything the user
+   watched the moment the turn ended (issue #61). Parking is idempotent and
+   writes only onto a still-pending placeholder that has no trace yet."
+  [db]
+  (assoc (park-live-trace db)
+    :loading? false
+    :cancelling? false
+    :progress nil
+    :turn-start-ms nil
+    :cancel-token nil
+    :gateway-turn-id nil
+    :live-turn-client-id nil
+    :cancelling-at-ms nil
+    :liveness-probed-at-ms nil))
 
 (defn- reconcile-in-flight-state
   [next-db previous-db session]
@@ -4470,7 +4476,20 @@
              stale-generation? (assoc workspace
                                  :messages (replace-pending-assistant
                                              (:messages workspace)
-                                             (completion-response answer nil nil completion))
+                                             ;; A NEWER turn already owns the tab, so this
+                                             ;; generation's `:progress` is gone. Settle it with
+                                             ;; the trace parked on its own placeholder (issue
+                                             ;; #61) — otherwise starting the next turn wipes
+                                             ;; every iteration the user watched on this one.
+                                             (completion-response
+                                               answer
+                                               (or terminal-trace
+                                                   (not-empty (vec (get-in
+                                                                     (vec (:messages workspace))
+                                                                     [matching-pending-index
+                                                                      :terminal-pending :trace]))))
+                                               nil
+                                               completion))
                                  :scroll scroll/follow)
              :else
              (let

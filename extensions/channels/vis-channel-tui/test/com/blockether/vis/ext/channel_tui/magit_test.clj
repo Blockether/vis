@@ -708,70 +708,16 @@
       (expect (= [{:root "/here" :trunk "/here" :label "here" :draft? false}]
                  (magit/workspace-roots nil "/here"))))
   (it "blank fallback and nil workspace yield no roots"
-      (expect (= [] (magit/workspace-roots nil "")) (= [] (magit/workspace-roots nil nil))))
-  (it "trunk workspace: primary root, no draft flag"
+      (expect (= [] (magit/workspace-roots nil "")))
+      (expect (= [] (magit/workspace-roots nil nil))))
+  (it "trunk workspace uses its primary root"
       (let [roots (magit/workspace-roots {:root "/w/proj"} "/ignored")]
         (expect (= [{:root "/w/proj" :trunk "/w/proj" :label "proj" :draft? false}] roots))))
-  (it "extra filesystem roots follow the primary, in order"
-      (let
-        [roots (magit/workspace-roots {:root "/w/proj"
-                                       :filesystem-roots [{:dir "/w/other"} {:dir "/w/third"}]}
-                                      nil)]
-        (expect (= ["/w/proj" "/w/other" "/w/third"] (mapv :root roots)))
-        (expect (= ["proj" "other" "third"] (mapv :label roots)))
-        (expect (every? (comp false? :draft?) roots))))
-  (it "draft workspace: every entry points at the CLONE, labelled by the trunk"
-      (let
-        [roots (magit/workspace-roots {:root "/clones/proj"
-                                       :repo-root "/real/proj"
-                                       :draft? true
-                                       :fork-ms 5
-                                       :filesystem-roots [{:dir "/real/other"
-                                                           :isolated true
-                                                           :draft-dir "/clones/other"}]}
-                                      nil)]
-        (expect (= [{:root "/clones/proj" :trunk "/real/proj" :label "proj" :draft? true}
-                    {:root "/clones/other" :trunk "/real/other" :label "other" :draft? true}]
-                   roots))))
-  (it "accepts the canonical snake wire shape the detached TUI receives"
-      (let
-        [kebab
-         (magit/workspace-roots {:root "/c/p"
-                                 :repo-root "/r/p"
-                                 :draft? true
-                                 :fork-ms 1
-                                 :filesystem-roots [{:dir "/r/o" :isolated true :draft-dir "/c/o"}]}
-                                nil)
-
-         snake
-         (magit/workspace-roots {:root "/c/p"
-                                 :repo_root "/r/p"
-                                 :draft? true
-                                 :fork_ms 1
-                                 :filesystem_roots [{:dir "/r/o" :isolated true :draft_dir "/c/o"}]}
-                                nil)]
-
-        (expect (= kebab snake))))
-  (it "a non-isolated extra root uses its :dir path"
-      (let
-        [roots (magit/workspace-roots {:root "/w/proj" :filesystem-roots [{:dir "/w/other"}]} nil)]
-        (expect (= "/w/other" (:root (second roots))))
-        (expect (false? (:draft? (second roots))))))
-  (it "an :isolated extra root is marked a draft and edits its draft-dir"
-      (let
-        [roots (magit/workspace-roots {:root "/w/proj"
-                                       :filesystem-roots
-                                       [{:dir "/r/o" :isolated true :draft-dir "/c/o"}]}
-                                      nil)]
-        (expect (true? (:draft? (second roots))))
-        ;; git acts on the draft-dir (the working copy), not the real dir
-        (expect (= "/c/o" (:root (second roots))))))
-  (it "dedupes an extra root equal to the primary"
-      (let
-        [roots (magit/workspace-roots {:root "/w/proj"
-                                       :filesystem-roots [{:dir "/w/proj"} {:dir "/w/other"}]}
-                                      nil)]
-        (expect (= ["/w/proj" "/w/other"] (mapv :root roots))))))
+  (it "draft workspace uses its clone labelled by the trunk"
+      (expect (= [{:root "/clones/proj" :trunk "/real/proj" :label "proj" :draft? true}]
+                 (magit/workspace-roots
+                   {:root "/clones/proj" :repo-root "/real/proj" :draft? true :fork-ms 5}
+                   nil)))))
 
 (defdescribe
   multi-status-rows-test
@@ -925,15 +871,13 @@
        clone
        (str store "/proj")]
 
-      ;; fork the trunk the way a draft backend does: a full copy
       (git-run! store "clone" "-q" trunk clone)
       (git-run! clone "config" "user.email" "test@vis.dev")
       (git-run! clone "config" "user.name" "Vis Test")
-      ;; the DRAFT edit exists only in the clone
       (spit (str clone "/a.txt") "one\nDRAFT\n")
       (let
         [ws
-         {:root clone :repo_root trunk :draft? true :fork_ms 1 :filesystem_roots []}
+         {:root clone :repo_root trunk :draft? true :fork_ms 1}
 
          roots
          (magit/workspace-roots ws nil)
@@ -944,63 +888,11 @@
          rows
          (magit/multi-status-rows repos #{[clone :section :unstaged]} nil)]
 
-        ;; buffer reads the clone: the draft edit is visible
         (expect (= [clone] (mapv :root roots)))
         (expect (true? (:draft? (first roots))))
         (expect (some #(and (= :file (:kind %)) (= "a.txt" (:path %))) rows))
-        ;; the trunk stays clean before AND after acting on the draft
         (expect (empty? (:unstaged (magit/status-model trunk))))
         (expect (:ok? (magit/stage-file! clone "a.txt")))
         (expect (= ["a.txt"] (mapv :path (:staged (magit/status-model clone)))))
         (expect (empty? (:staged (magit/status-model trunk))))
-        (expect (empty? (:unstaged (magit/status-model trunk)))))))
-  (it
-    "a draft with an extra filesystem root shows BOTH clones, never the trunks"
-    (let
-      [trunk-a
-       (init-repo!)
-
-       trunk-b
-       (init-repo!)
-
-       store
-       (temp-dir!)
-
-       clone-a
-       (str store "/a")
-
-       clone-b
-       (str store "/b")]
-
-      (git-run! store "clone" "-q" trunk-a clone-a)
-      (git-run! store "clone" "-q" trunk-b clone-b)
-      (spit (str clone-a "/a.txt") "one\nDRAFT-A\n")
-      (spit (str clone-b "/fresh.txt") "DRAFT-B\n")
-      (let
-        [ws
-         {:root clone-a
-          :repo_root trunk-a
-          :draft? true
-          :fork_ms 1
-          :filesystem_roots [{:dir trunk-b :isolated true :draft_dir clone-b}]}
-
-         roots
-         (magit/workspace-roots ws nil)
-
-         rows
-         (magit/multi-status-rows (magit/load-repos roots) #{[clone-a :section :unstaged]} nil)]
-
-        (expect (= [clone-a clone-b] (mapv :root roots)))
-        (expect (every? :draft? roots))
-        ;; both drafts' changes render, each under its own repo header
-        (expect (= [clone-a]
-                   (->> rows
-                        (filter #(= "a.txt" (:path %)))
-                        (mapv :root))))
-        (expect (= [clone-b]
-                   (->> rows
-                        (filter #(= "fresh.txt" (:path %)))
-                        (mapv :root))))
-        ;; and neither trunk leaked into the buffer
-        (expect (not-any? #(= trunk-a (:root %)) rows))
-        (expect (not-any? #(= trunk-b (:root %)) rows))))))
+        (expect (empty? (:unstaged (magit/status-model trunk))))))))

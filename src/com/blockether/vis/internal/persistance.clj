@@ -416,8 +416,6 @@
 ;; Label override + focus stamp + per-repo focus pointer.
 (defdelegate db-workspace-update-label! [db-info workspace-id label])
 
-(defdelegate db-workspace-set-filesystem-roots! [db-info workspace-id roots])
-
 (defdelegate db-workspace-touch-focus! [db-info workspace-id])
 
 (defdelegate db-repo-focus-get [db-info repo-id])

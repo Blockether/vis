@@ -1283,7 +1283,7 @@
    fallback) has ALREADY run by the time an exception escapes to the loop, so an
    error of these kinds is terminal by construction: fail the turn once, with the
    styled provider card, and let the user retry or switch provider."
-  #{:rate-limit :auth :billing :anthropic-extra-usage})
+  #{:rate-limit :auth :billing :anthropic-extra-usage :resource-mismatch})
 
 (defn- non-correctable-provider-error?
   "True when this provider failure, or a bounded cause, has a kind in
@@ -9130,13 +9130,7 @@
                (assoc env
                  :workspace ws
                  :workspace/id (:id ws)
-                 :workspace/root (:root ws)
-                 ;; Carry the extra filesystem roots across the mid-session
-                 ;; env rebuild too — create-environment seeds them, but
-                 ;; a /draft refresh re-derived the env from the row and
-                 ;; dropped them, silently reverting to primary-root-only
-                 ;; confinement for the rest of the session.
-                 :workspace/filesystem-roots (vec (:filesystem-roots ws))))))
+                 :workspace/root (:root ws)))))
          env)
 
      ;; Turn-start health gate: probe LOCAL providers (Ollama/LM Studio)
@@ -10799,9 +10793,7 @@
      (when (or active-workspace (seq configured-rw-roots))
        (fn []
          (let [ws @workspace-atom]
-           (vec (distinct (concat (when ws [(str (:root ws))])
-                                  (when ws (keep :clone (workspace/filesystem-roots ws)))
-                                  configured-rw-roots))))))
+           (vec (distinct (concat (when ws [(str (:root ws))]) configured-rw-roots))))))
 
      access-view-fn
      (fn []
@@ -10810,7 +10802,7 @@
           @workspace-atom
 
           live-roots
-          (concat (when ws [(:root ws)]) (when ws (keep :trunk (workspace/filesystem-roots ws))))]
+          (when ws [(:root ws)])]
 
          (security-policy/access-view security-config live-roots)))
 
@@ -10948,8 +10940,7 @@
        (assoc :workspace
          active-workspace :workspace/id
          (:id active-workspace) :workspace/root
-         (:root active-workspace) :workspace/filesystem-roots
-         (vec (:filesystem-roots active-workspace))
+         (:root active-workspace)
          ;; Every workspace is a rift CoW clone — always a sandbox.
          ;; Reported on :workspace/sandbox?, NOT as a VCS. The
          ;; model-facing :vcs/kind is the real repo VCS, computed in

@@ -147,11 +147,8 @@ retry.
 Once entered, file tools, searches, shell commands, and the agent's cwd resolve
 to the draft root. Relative paths cannot silently fall back to trunk.
 
-Extra filesystem roots are workspace-specific. `/draft new` forks the current
-primary root; it does not automatically copy roots previously added on trunk.
-Add an extra root again with `/fs add <path>` while inside the draft to isolate
-it there. Apply then lands that isolated root into its real directory, while
-abandon discards its clone.
+Configured `workspace.filesystem` catalog entries remain available after `/reload`.
+They are not draft-specific and drafts only isolate the active workspace root.
 
 Use bare `/draft` at any time to check whether the session is on trunk or in a
 draft.

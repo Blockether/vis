@@ -278,3 +278,57 @@
                     (.delete (.toFile package))
                     (.delete (.toFile src))
                     (.delete (.toFile dir)))))))
+
+(def ^:private python-project-import-roots
+  #'com.blockether.vis.internal.main/python-project-import-roots)
+
+(defn- write-project!
+  "Materialise a throwaway project: `pyproject.toml` plus the `dirs` that its
+   metadata points at. Returns the project root as a `java.io.File`."
+  [pyproject dirs]
+  (let
+    [root (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-python-srclayout-"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (doseq [d dirs]
+      (.mkdirs (java.io.File. root ^String d)))
+    (spit (java.io.File. root "pyproject.toml") pyproject)
+    root))
+
+(defdescribe
+  python-src-layout-inference-test
+  (it "infers the setuptools `where` root, so plain `-m pytest` imports the project"
+      (let
+        [root (write-project! (str "[project]\nname = \"sample\"\n\n"
+                                   "[tool.setuptools.packages.find]\n" "where = [\"src\"]\n\n"
+                                   "[tool.pytest.ini_options]\n" "testpaths = [\"tests\"]\n")
+                              ["src"])]
+        (expect (= [(.getCanonicalPath (java.io.File. root "src"))]
+                   (python-project-import-roots (.getCanonicalPath root))))))
+  (it "infers a poetry `from` root"
+      (let
+        [root (write-project! (str "[tool.poetry]\nname = \"sample\"\n"
+                                   "packages = [{include = \"sample\", from = \"lib\"}]\n")
+                              ["lib"])]
+        (expect (= [(.getCanonicalPath (java.io.File. root "lib"))]
+                   (python-project-import-roots (.getCanonicalPath root))))))
+  (it "infers the parent of a hatch wheel package path"
+      (let
+        [root (write-project! (str "[tool.hatch.build.targets.wheel]\n"
+                                   "packages = [\"src/sample\"]\n")
+                              ["src/sample"])]
+        (expect (= [(.getCanonicalPath (java.io.File. root "src"))]
+                   (python-project-import-roots (.getCanonicalPath root))))))
+  (it "stays silent without packaging metadata — inference is declarative only"
+      (let [root (write-project! "[project]\nname = \"flat\"\n" ["flat"])]
+        (expect (empty? (python-project-import-roots (.getCanonicalPath root))))))
+  (it "ignores a declared root that does not exist on disk"
+      (let
+        [root (write-project! (str "[tool.setuptools.packages.find]\n" "where = [\"src\"]\n") [])]
+        (expect (empty? (python-project-import-roots (.getCanonicalPath root))))))
+  (it "reports nothing for a directory without a pyproject.toml"
+      (let
+        [root (.toFile (java.nio.file.Files/createTempDirectory
+                         "vis-python-nopyproject-"
+                         (make-array java.nio.file.attribute.FileAttribute 0)))]
+        (expect (nil? (python-project-import-roots (.getCanonicalPath root)))))))

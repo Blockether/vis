@@ -30,9 +30,9 @@
    "session_language_tools" {"clojure" ["repl_eval" "repl"]}
    "session_routing" {"model" "gpt-5.5"}})
 
-;; A realistic cross-turn state change: the user added a filesystem root.
+;; A realistic cross-turn state change: the session title changed.
 (def ^:private changed-ctx
-  (assoc-in base-ctx ["session_workspace" "filesystem_roots"] [{"dir" "/repo/src"}]))
+  (assoc-in base-ctx ["session_workspace" "session_title"] "Renamed session"))
 
 (defdescribe
   ctx-cache-stability-test
@@ -62,7 +62,7 @@
          (cr/render-ctx-delta m0 m1)]
 
         (expect (some? delta))
-        (expect (str/includes? delta "filesystem_roots")) ; only what moved
+        (expect (str/includes? delta "session_title")) ; only what moved
         (expect (str/includes? delta "session[")) ; append-only assignment
         ;; far cheaper than re-sending the frozen block
         (expect (< (count delta) (quot (count (cr/render-ctx-static {:ctx changed-ctx})) 2)))))
@@ -104,7 +104,7 @@
    block ONCE, reuse it across turns, and diff the current util-inclusive map
    against the baseline CARRIED across turns. Proves the cached system prefix
    stays byte-identical while changes ride as appended deltas."
-  ;; A turn-2 ctx that BOTH gained a filesystem root AND measured utilization.
+  ;; A turn-2 ctx with a changed session title and measured utilization.
   ;; `"engine_utilization"` is the engine-stamped key `session-view` derives
   ;; `"session_utilization"` from (ctx_engine/session-view) — same as the live loop.
   (let
@@ -129,7 +129,7 @@
            delta (cr/render-ctx-delta baseline cur)]
 
           (expect (some? delta))
-          (expect (str/includes? delta "filesystem_roots")) ; the state change
+          (expect (str/includes? delta "session_title")) ; the state change
           (expect (str/includes? delta "utilization")) ; live token usage as a delta
           (expect (every? #(str/starts-with? % "session[") (str/split-lines delta)))))
     (it "ctx-delta-map carries utilization but ctx-static-map (the frozen block) does NOT"

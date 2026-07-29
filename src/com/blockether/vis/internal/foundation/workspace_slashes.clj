@@ -48,7 +48,7 @@
 (defn- sync-confinement!
   "Push the freshly-mutated workspace `ws` into the live sandbox confinement
    pointer (`:workspace-atom`, deref'd by the gateway's `sandbox-roots-fn` on
-   every real-fs access) so a `/fs`/`/cd` change takes effect THIS turn — not
+   every real-fs access) so a `/cd` change takes effect THIS turn — not
    only from the next `run-turn!` workspace re-resolve. No-op when the ctx has no
    atom (other channels build their own ctx). Returns `ws` for threading."
   [ctx ws]
@@ -360,10 +360,9 @@
           paths/expand-home))
 
 (defn- handle-fs-root
-  "`/cd <path>` — change the session's
-   PRIMARY filesystem root. The session then works in <path>: shell cwd,
-   relative paths, file tools, and search all follow. Additional filesystem
-   roots carry over. Bare (no path) shows the current root."
+  "`/cd <path>` — change the session's primary workspace root. The session then
+   works in <path>: shell cwd, relative paths, file tools, and search all follow.
+   Bare (no path) shows the current root."
   [ctx]
   (let
     [db
@@ -378,31 +377,19 @@
      path
      (argv-path ctx)]
 
-    (cond (nil? path)
-          {:slash/status :ok
-           :slash/title (str "Root: " (or (:root current) "(none)"))
-           :slash/body
-           "/cd <path> to work in a different directory. Additional filesystem roots carry over."
-           :slash/data {:root (:root current)}}
+    (cond (nil? path) {:slash/status :ok
+                       :slash/title (str "Root: " (or (:root current) "(none)"))
+                       :slash/body "/cd <path> to work in a different directory."
+                       :slash/data {:root (:root current)}}
           (nil? state-id) (err "Send a message first, then /cd <path> (session not ready yet)")
-          :else (try
-                  (let
-                    [ws
-                     (sync-confinement! ctx (workspace/change-root! db state-id path))
-
-                     roots
-                     (workspace/filesystem-roots ws)]
-
-                    {:slash/status :ok
-                     :slash/title (str "Root changed — now working in " (:root ws))
-                     :slash/body
-                     (str "Shell, file tools, and search operate here from the next turn."
-                          (when (seq roots)
-                            (str "\nAdditional filesystem roots kept (" (count roots)
-                                 "):\n" (str/join "\n" (map #(str "  " (:trunk %)) roots)))))
-                     :slash/data {:root (:root ws) :workspace-id (:id ws) :filesystem-roots roots}})
-                  (catch Exception e
-                    (err (str "Can't change root to '" path "': " (or (ex-message e) (str e)))))))))
+          :else (try (let [ws (sync-confinement! ctx (workspace/change-root! db state-id path))]
+                       {:slash/status :ok
+                        :slash/title (str "Root changed — now working in " (:root ws))
+                        :slash/body "Shell, file tools, and search operate here from the next turn."
+                        :slash/data {:root (:root ws) :workspace-id (:id ws)}})
+                     (catch Exception e
+                       (err (str "Can't change root to '" path
+                                 "': " (or (ex-message e) (str e)))))))))
 
 ;; =============================================================================
 ;; Specs vec

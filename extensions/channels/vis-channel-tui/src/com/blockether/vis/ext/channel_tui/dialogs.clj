@@ -2618,8 +2618,7 @@
 
    `root-or-repos` is either ONE root (string/File — the classic single-repo
    buffer) or a vector of repo entries `{:root :label :draft?}` from
-   `magit/workspace-roots` — the session's primary workspace root plus every
-   extra filesystem root (`/fs`, the dir picker). With several roots each repo
+   `magit/workspace-roots` — the session's primary workspace root.
    gets a `Repository <label> — <path>` header and its own full section stack;
    for a DRAFT session the entries already point at the CLONES the session
    edits, so the buffer shows the draft's git state, not the trunk's.

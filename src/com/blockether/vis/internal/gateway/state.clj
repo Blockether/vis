@@ -601,13 +601,7 @@
   "Workspace state for a channel surface (the web footer AND the TUI
    directory picker), in THE canonical string-keyed wire shape:
    `{\"id\" \"draft?\" \"root\" \"repo_root\" \"label\" \"fork_ms\"
-   \"filesystem_roots\" \"git\"}` for the session pinned to `sid` (soul id), or
-   nil. `\"id\"` is the workspace-id every filesystem-root mutation
-   (`add/remove-filesystem-root!`) needs — WITHOUT it the TUI picker treats the
-   session as read-only and C-a silently no-ops. `\"filesystem_roots\"` is the
-   the PUBLIC element shape `[{\"dir\" \"isolated\" \"draft_dir\"}]`. Lets the footer announce
-   that the session — and its extra roots — are isolated drafts. Resolves
-   soul → latest state → workspace; never throws."
+   \"git\"}` for the session pinned to `sid`, or nil. Resolves soul → latest\n   state → workspace; never throws."
   [sid]
   (try (when-let [db (lp/db-info)]
          (when-let [ws (resolve-workspace db sid)]
@@ -617,8 +611,6 @@
                             :repo-root (:repo-root ws)
                             :label (:label ws)
                             :fork-ms (:fork-ms ws)
-                            :filesystem-roots (mapv #(workspace/public-filesystem-root % true)
-                                                    (workspace/filesystem-roots ws))
                             ;; Git working-tree status resolved HERE, in the gateway/daemon
                             ;; that owns the repo on disk — streamed to channels as a cached
                             ;; session fact instead of each client re-walking git locally (a
@@ -627,27 +619,6 @@
                             ;; per repo root, so repeated fetches never re-walk a warm root.
                             :git (git/workspace-status (:root ws))})))
        (catch Throwable _ nil)))
-
-(defn add-filesystem-root!
-  "Add `path` as an extra filesystem root for the session pinned to `sid`, then
-   return the refreshed `session-workspace-info`. Runs SERVER-SIDE in the daemon
-   so the draft backend-fork and DB write land where the session actually lives;
-   every channel (web footer, TUI picker/footer) then reads the same roots back
-   over the gateway. Channel-agnostic twin of `set-session-model!`."
-  [sid path]
-  (when-let [db (lp/db-info)]
-    (when-let [ws (resolve-workspace db sid)]
-      (workspace/add-filesystem-root! db (:id ws) path)))
-  (session-workspace-info sid))
-
-(defn remove-filesystem-root!
-  "Remove `path` from the session's extra filesystem roots and return the
-   refreshed `session-workspace-info`. Server-side twin of `add-filesystem-root!`."
-  [sid path]
-  (when-let [db (lp/db-info)]
-    (when-let [ws (resolve-workspace db sid)]
-      (workspace/remove-filesystem-root! db (:id ws) path)))
-  (session-workspace-info sid))
 
 (defn change-root!
   "Repoint the session pinned to `sid` at `path` as its PRIMARY root, then return

@@ -1842,20 +1842,6 @@
     (json-response {:workspace (state/session-workspace-info sid)})
     (session-404 (get-in request [:path-params :sid]))))
 
-(defn- add-filesystem-root-handler
-  [request]
-  (if-let [sid (path-sid request)]
-    (let [{:strs [path]} (body-json request)]
-      (json-response {:workspace (state/add-filesystem-root! sid path)}))
-    (session-404 (get-in request [:path-params :sid]))))
-
-(defn- remove-filesystem-root-handler
-  [request]
-  (if-let [sid (path-sid request)]
-    (let [path (or (get (body-json request) "path") (get-in request [:query-params "path"]))]
-      (json-response {:workspace (state/remove-filesystem-root! sid path)}))
-    (session-404 (get-in request [:path-params :sid]))))
-
 (defn- change-root-handler
   [request]
   (if-let [sid (path-sid request)]
@@ -2488,8 +2474,6 @@
         [(sid-route "/iterations/:iid/attachments/:idx") {:get attachment-bytes-handler}]
         [(sid-route "/model") {:get session-model-handler :patch set-session-model-handler}]
         [(sid-route "/workspace") {:get workspace-handler}]
-        [(sid-route "/workspace/roots")
-         {:post add-filesystem-root-handler :delete remove-filesystem-root-handler}]
         [(sid-route "/workspace/root") {:patch change-root-handler}]
         [(sid-route "/workspace/drafts") {:get drafts-handler :post create-draft-handler}]
         [(sid-route "/workspace/drafts/:workspace-id") {:delete abandon-draft-handler}]

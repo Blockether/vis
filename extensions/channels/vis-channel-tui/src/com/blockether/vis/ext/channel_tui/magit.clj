@@ -968,60 +968,20 @@
     (if (str/blank? (str n)) (str path) (str n))))
 
 (defn workspace-roots
-  "Ordered repo entries the magit buffer shows for one SESSION: the primary
-   workspace root first, then every extra filesystem root (`/fs`, the dir
-   picker). Accepts the gateway `session-workspace-info` map in EITHER key
-   shape (in-process kebab or canonical snake wire); `ws` nil → one entry for
-   `fallback-root`.
-
-   DRAFT semantics: each entry's `:root` is the path the session actually
-   EDITS — for a draft that's the CLONE (primary `:root`, extras' `:draft-dir`
-   when `:isolated`), never the trunk — with `:trunk` carrying the real dir
-   (the extra's `:dir`) and `:draft?` set. Deduped by `:root`, order preserved.
-
-   Entry: `{:root abs-path :trunk abs-path :label basename :draft? bool}`."
+  "The single repository entry the magit buffer shows for a session. A draft's
+   `:root` is its working clone and `:repo-root` remains its trunk. Accepts the
+   gateway workspace map in either in-process kebab or canonical snake shape."
   [ws fallback-root]
-  (let
-    [primary-root
-     (or (wget ws :root)
-         (some-> fallback-root
-                 str
-                 not-empty))
-
-     primary-trunk
-     (or (wget ws :repo-root) primary-root)
-
-     primary
-     (when primary-root
-       {:root (str primary-root)
-        :trunk (str primary-trunk)
-        :label (root-label primary-trunk)
-        :draft? (boolean (or (wget ws :draft?) (wget ws :fork-ms)))})
-
-     extras
-     (->> (or (wget ws :filesystem-roots) [])
-          (keep (fn [e]
-                  (let
-                    [dir
-                     (wget e :dir)
-
-                     isolated?
-                     (boolean (wget e :isolated))
-
-                     working
-                     (or (when isolated? (wget e :draft-dir)) dir)]
-
-                    (when dir
-                      {:root (str working)
-                       :trunk (str dir)
-                       :label (root-label dir)
-                       :draft? isolated?})))))]
-
-    (->> (into (if primary [primary] []) extras)
-         (reduce (fn [{:keys [seen out] :as acc} {:keys [root] :as entry}]
-                   (if (contains? seen root) acc {:seen (conj seen root) :out (conj out entry)}))
-                 {:seen #{} :out []})
-         :out)))
+  (or (when-let
+        [root (or (wget ws :root)
+                  (some-> fallback-root
+                          str
+                          not-empty))]
+        [{:root (str root)
+          :trunk (str (or (wget ws :repo-root) root))
+          :label (root-label (or (wget ws :repo-root) root))
+          :draft? (boolean (or (wget ws :draft?) (wget ws :fork-ms)))}])
+      []))
 
 (defn repo-row
   "The repo header row a multi-root buffer shows above each repo's sections."

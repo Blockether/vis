@@ -354,35 +354,115 @@
                              [k (str/trim v)])))
                    (str/split-lines (slurp f)))))))
 
+(def ^:private graalvm-script
+  "The one resolver/installer — the same file CI, the Dockerfile and humans use.
+   Printing a home on stdout means success; every diagnostic goes to stderr."
+  "bin/require-graalvm")
+
+(defn- resolve-pinned-graalvm
+  "Where the pinned GraalVM CE home is, according to `bin/require-graalvm`.
+   With `install?` false the script only SEARCHES what is already on this
+   machine — no download, no network; with true it may fetch + checksum +
+   install it. Returns the home path, or nil when nothing usable was found."
+  [install?]
+  (let [script (io/file graalvm-script)]
+    (when (.isFile script)
+      (let
+        [{:keys [exit out]} (b/process {:command-args (cond-> ["bash" (.getPath script)]
+                                                        install?
+                                                        (conj "--install"))
+                                        :out :capture})]
+        (when (zero? exit) (not-empty (str/trim (or out ""))))))))
+
+(defn- auto-install-graalvm?
+  "Did the caller opt IN to downloading the pinned JDK? Installing a whole JDK
+   is not something a build should do behind someone's back, so it stays
+   explicit: `:auto-install-graalvm true` or VIS_AUTO_INSTALL_GRAALVM=1."
+  [opts]
+  (or (boolean (:auto-install-graalvm opts))
+      (contains? #{"1" "true" "yes"}
+                 (some-> (System/getenv "VIS_AUTO_INSTALL_GRAALVM")
+                         str/trim
+                         str/lower-case))))
+
+(defn- rerun-under-graalvm!
+  "Re-run THIS build task in a child process rooted at `home` — the `nvm use`
+   move. Truffle/SVM read the RUNNING JDK, so switching JDKs means a new
+   process, never a new system property; the child is marked so a still-wrong
+   JVM fails hard instead of forking forever. Never returns: the child's exit
+   code becomes ours."
+  [home task opts]
+  (println (str "· " home))
+  (println (str "· re-running :" (name task) " under the pinned GraalVM CE"))
+  (let
+    [args
+     (into ["clojure" "-T:build" (name task)]
+           (mapcat (fn [[k v]]
+                     [(str k) (pr-str v)]))
+           (dissoc opts :auto-install-graalvm))
+
+     {:keys [exit]}
+     (b/process {:command-args args
+                 :env {"JAVA_HOME" home
+                       "GRAALVM_HOME" home
+                       "PATH"
+                       (str home "/bin" java.io.File/pathSeparator (or (System/getenv "PATH") ""))
+                       "VIS_GRAALVM_SWITCHED" "1"}})]
+
+    (System/exit (or exit 1))))
+
 (defn- assert-graalvm-ce!
-  "Refuse to start a native build on anything but the pinned GraalVM COMMUNITY
-   Edition. Three JDKs get this far and each fails later and more expensively:
-   a stock JDK 25 has no `native-image` at all; Oracle GraalVM builds a binary
-   that is no longer GPL+CE-licensed (audit/README.md §4.1 promises CE only);
-   a near CE version is hard-rejected by Truffle/SVM against the org.graalvm.*
-   pins in deps.edn — usually minutes into the image build.
+  "Refuse to build on anything but the pinned GraalVM COMMUNITY Edition — but
+   switch to it by itself when it is already on this machine. Three JDKs get
+   this far and each fails later and more expensively: a stock JDK 25 has no
+   `native-image` at all; Oracle GraalVM builds a binary that is no longer
+   GPL+CE-licensed (audit/README.md §4.1 promises CE only); a near CE version
+   is hard-rejected by Truffle/SVM against the org.graalvm.* pins in deps.edn —
+   usually minutes into the image build.
 
    `java.vendor.version` is the one property that separates all three
-   (\"GraalVM CE 25.1.3+9.1\" vs \"Oracle GraalVM 25.1.3+9.1\" vs \"Temurin-25…\")."
-  []
+   (\"GraalVM CE 25.1.3+9.1\" vs \"Oracle GraalVM 25.1.3+9.1\" vs \"Temurin-25…\").
+
+   Wrong JVM, in order: already installed → re-exec the task under it;
+   not installed and auto-install opted in → install it, then re-exec;
+   otherwise → the hard refusal, because silently downloading a JDK is the one
+   thing this check must not do."
+  [task opts]
   (when-let
     [{want "GRAAL_VENDOR_VERSION" edition "GRAAL_EDITION" version "GRAAL_VERSION"} @graal-pin]
     (let [got (or (System/getProperty "java.vendor.version") "unknown JDK")]
-      (when-not (= got want)
-        (throw (ex-info
-                 (str "this build requires "
-                      edition
-                      " "
-                      version
-                      " — the build JVM reports \""
-                      got
-                      "\"\n"
-                      "  expected java.vendor.version: \"" want
-                      "\"\n" "  install it:  bin/require-graalvm --install\n"
-                      "  then:        sdk env   (or: eval \"$(bin/require-graalvm --export)\")\n"
-                      "  Stock JDKs and Oracle GraalVM are NOT substitutes — see .graalvm-version.")
-                 {:expected want :actual got})))
-      (println (str "· " edition " " version " (" got ")")))))
+      (if (= got want)
+        (println (str "· " edition " " version " (" got ")"))
+        (let
+          [switched? (= "1" (System/getenv "VIS_GRAALVM_SWITCHED"))
+           home (when-not switched? (resolve-pinned-graalvm (auto-install-graalvm? opts)))]
+
+          (if home
+            (rerun-under-graalvm! home task opts)
+            (throw
+              (ex-info
+                (str
+                  "this build requires "
+                  edition
+                  " "
+                  version
+                  " — the build JVM reports \""
+                  got
+                  "\"\n"
+                  "  expected java.vendor.version: \""
+                  want
+                  "\"\n"
+                  "  install it here:  clojure -T:build "
+                  (name task)
+                  " :auto-install-graalvm true\n"
+                  "           or:      VIS_AUTO_INSTALL_GRAALVM=1 clojure -T:build "
+                  (name task)
+                  "\n"
+                  "  install it yourself:  bin/require-graalvm --install\n"
+                  "  then:                 sdk env   (or: eval \"$(bin/require-graalvm --export)\")\n"
+                  "  An already-installed pinned JDK is picked up and used automatically.\n"
+                  "  Stock JDKs and Oracle GraalVM are NOT substitutes — see .graalvm-version.")
+                {:expected want :actual got :task task}))))))))
 
 ;; ── Distribution profiles ───────────────────────────────────────────────────
 ;; Profiles select what ships, via `:profile` on `native` / `uber`:
@@ -1150,7 +1230,7 @@
    native-image flags; run `native` once first to populate the AOT classes. Honors
    `:oracle-native-image true` (or VIS_ORACLE_NATIVE_IMAGE) to keep the GraalPy JIT in the image."
   [opts]
-  (assert-graalvm-ce!)
+  (assert-graalvm-ce! :native-image-only opts)
   (let
     [profile
      (resolve-profile opts)
@@ -1191,9 +1271,12 @@
                            binary (default: download on first use). Requires a
                            voice-capable profile.
      :oracle-native-image true — KEEP the GraalPy JIT in the image (bigger binary, slower
-                           build, faster CPU-bound Python). Default: lean interpreter."
+                           build, faster CPU-bound Python). Default: lean interpreter.
+     :auto-install-graalvm true — download + install the pinned GraalVM CE when it is
+                           missing (VIS_AUTO_INSTALL_GRAALVM=1 does the same). An
+                           already-installed pinned JDK is switched to automatically."
   [opts]
-  (assert-graalvm-ce!)
+  (assert-graalvm-ce! :native opts)
   (let
     [profile
      (resolve-profile opts)

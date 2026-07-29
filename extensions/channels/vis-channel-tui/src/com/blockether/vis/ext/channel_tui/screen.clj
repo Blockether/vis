@@ -5241,12 +5241,9 @@
                               (let
                                 [db @state/app-db
                                  fallback (or (:workspace/root db) (System/getProperty "user.dir"))
-                                 ;; Every root the session edits in: the
-                                 ;; primary workspace root PLUS each extra
-                                 ;; filesystem root (/fs, the dir picker).
-                                 ;; For a DRAFT these entries already point
-                                 ;; at the clones, so the buffer shows the
-                                 ;; draft's git state, never the trunk's.
+                                 ;; The primary workspace root. For a DRAFT it points
+                                 ;; at the clone, so the buffer shows the draft's git
+                                 ;; state, never the trunk's.
                                  repos (magit/workspace-roots (:workspace db) fallback)]
 
                                 (with-dialog-lock #(dlg/magit-dialog! screen repos)))))
@@ -7066,8 +7063,7 @@
                                      (state/dispatch [:send-message
                                                       (str slash-text " " (str/trim val))]))))
                                (state/dispatch [:reset-input]))
-                             ;; UI-intent slash (e.g. /workspace → navigator,
-                             ;; /fs → directory picker): realize the intent
+                             ;; UI-intent slash (for example /workspace → navigator): realize the intent
                              ;; in the channel instead of dispatching to the
                              ;; engine. Typed nested slashes never match
                              ;; `exact-command`, so this resolves them by full

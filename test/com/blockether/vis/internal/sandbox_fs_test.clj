@@ -76,7 +76,7 @@
                             []
                             "file-read"
                             (p (str root "/inside.txt")))))))
-  (it "allows a path under the OUTBOX dir even though it is not a /fs root"
+  (it "allows a path under the OUTBOX dir even though it is outside configured roots"
       (let
         [root
          (tmp-root)
@@ -248,7 +248,7 @@
        seen
        (atom #{})
 
-       ;; bogus /fs root + an outbox dir the probe is NOT under, so the tap
+       ;; A bogus configured root plus an unrelated outbox dir proves the tap
        ;; can ONLY fire via the system-temp-root widening.
        fs
        (sfs/confined-filesystem (fn []
@@ -275,7 +275,7 @@
 
 (defdescribe
   confined-fs-temp-roots-test
-  (it "ALWAYS allows the system temp dirs (/tmp, $TMPDIR) even when NOT a /fs root"
+  (it "ALWAYS allows the system temp dirs (/tmp, $TMPDIR) even when outside configured roots"
       (let
         [fs
          (sfs/confined-filesystem (fn []
@@ -297,7 +297,7 @@
 (defdescribe
   confined-fs-vis-always-roots-test
   (it
-    "ALWAYS allows all of ~/.vis (including config) even when it is not a /fs root"
+    "ALWAYS allows all of ~/.vis (including config) even when outside configured roots"
     (let
       [home
        (System/getProperty "user.home")
@@ -314,7 +314,7 @@
        _
        (do (.mkdirs ext-dir) (.mkdirs logs-dir))
 
-       ;; A bogus /fs root proves the always-on ~/.vis widening is sufficient.
+       ;; A bogus configured root proves the always-on ~/.vis widening is sufficient.
        fs
        (sfs/confined-filesystem (fn []
                                   ["/no/such/workspace/root"]))

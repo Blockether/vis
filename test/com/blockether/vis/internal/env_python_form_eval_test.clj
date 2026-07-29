@@ -856,16 +856,22 @@ await patch({'path': css})" "t1/i1")]
     [mk (fn []
           (:python-context (ep/create-python-context {} (constantly []))))]
     (it "open() policy denial names the exact blocked operation and safe remedy"
-        (let [m (get-in (ep/run-python-block (mk) "open('/etc/hosts').read()" "t1/i1")
-                        [:error :message])]
+        (let
+          [m (get-in (ep/run-python-block (mk) "open('/etc/hosts').read()" "t1/i1")
+                     [:error :message])]
           (expect (some? m))
           (expect (clojure.string/includes? (str m) "Sandbox policy denied file-read"))
           (expect (clojure.string/includes? (str m) "outside approved filesystem roots"))
           (expect (clojure.string/includes? (str m) "cat(path)"))
-          (expect (clojure.string/includes? (str m) "repl_eval"))))
+          (expect (clojure.string/includes? (str m) "repl_eval"))
+          (expect (clojure.string/includes? (str m) "workspace.filesystem"))
+          (expect (clojure.string/includes? (str m) "vis.yml"))
+          (expect (clojure.string/includes? (str m) "/reload"))
+          (expect (not (clojure.string/includes? (str m) "/fs")))))
     (it "write denial names file-write rather than collapsing it into a read"
-        (let [m (get-in (ep/run-python-block (mk) "open('/etc/vis-nope', 'w')" "t1/i1")
-                        [:error :message])]
+        (let
+          [m (get-in (ep/run-python-block (mk) "open('/etc/vis-nope', 'w')" "t1/i1")
+                     [:error :message])]
           (expect (clojure.string/includes? (str m) "Sandbox policy denied file-write"))))
     (it "importlib exec_module on a project file → the same steer"
         (let

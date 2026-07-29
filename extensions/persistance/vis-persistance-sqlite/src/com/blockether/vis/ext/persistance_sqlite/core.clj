@@ -590,21 +590,6 @@
 ;; Workspace - trunk-native work units
 ;; =============================================================================
 
-(defn- normalize-fs-root-entry
-  "ADAPTER (named, single): a persisted `filesystem_roots` entry parses with
-   STRING keys (`<-json` never keywordizes); the workspace facade's internal
-   confinement shape is `{:trunk :clone :fork-ms :backend}` (host-only, never
-   crosses the Python boundary). Key spellings match exactly what `->json`
-   writes from that internal shape."
-  [e]
-  (if-not (map? e)
-    e
-    {:trunk (get e "trunk")
-     :clone (get e "clone")
-     :fork-ms (get e "fork-ms")
-     :backend (some-> (get e "backend")
-                      str
-                      keyword)}))
 
 (defn- row->workspace
   "Project a `workspace` row from SQLite into the canonical Clojure shape
@@ -647,11 +632,8 @@
       (assoc :label (:label row))
 
       (:last_focused_at_ms row)
-      (assoc :last-focused-at-ms (:last_focused_at_ms row))
+      (assoc :last-focused-at-ms (:last_focused_at_ms row)))))
 
-      (:filesystem_roots row)
-      (assoc :filesystem-roots
-        (mapv normalize-fs-root-entry (or (<-json (:filesystem_roots row)) []))))))
 
 (defn db-workspace-insert!
   "Insert a workspace row. Returns the inserted record (canonical shape).
@@ -732,28 +714,6 @@
           (row->workspace (query-one! tx-info
                                       {:select [:*] :from :workspace :where [:= :id id]})))))))
 
-(defn db-workspace-set-filesystem-roots!
-  "Persist the workspace's extra filesystem roots as a JSON array of canonical
-   path strings. `roots` is a coll of strings (deduped/canonicalized by the
-   caller). Empty/nil stores NULL (no extra roots). Returns the updated record."
-  [db-info workspace-id roots]
-  (when (and (ds db-info) workspace-id)
-    (let
-      [id
-       (->ref workspace-id)
-
-       rs
-       (vec (distinct (filter some? roots)))
-
-       stored
-       (when (seq rs) (->json rs))]
-
-      (sqlite-write-tx!
-        db-info
-        (fn [tx-info]
-          (execute! tx-info {:update :workspace :set {:filesystem_roots stored} :where [:= :id id]})
-          (row->workspace (query-one! tx-info
-                                      {:select [:*] :from :workspace :where [:= :id id]})))))))
 
 (defn db-workspace-touch-focus!
   "Stamp `last_focused_at_ms` to now-ms on the workspace row. Called by

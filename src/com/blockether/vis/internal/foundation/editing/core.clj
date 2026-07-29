@@ -11,7 +11,7 @@
         (cat path :tail)      ; last 400 lines (tail)
         (cat path :tail n)    ; last n lines
         (cat dir)             ; a DIRECTORY path -> shallow listing {:path :entries [{name path type size}] :depth}
-        (cat dir opts)        ; opts keys: depth (recurse) / is_hidden / is_respect_gitignore
+        (cat dir opts)        ; opts keys: depth (recurse) / is_hidden
         (grep query)         ; -> content hits (anchored) + ranked file-NAME matches;
                               ; query = a term or list of terms (OR), smart-case
                               ; substring. Opts: paths/include/limit/is_hidden
@@ -179,7 +179,7 @@
    enumeration, which then had rg OPEN AND READ every file in the tree (measured
    170ms vs 8ms on this repo) for no extra recall.
    Returns a File vec, deduped by canonical path."
-  [roots needles respect-ignore-files? overlay]
+  [roots needles overlay]
   (let
     [rel-files
      (fn [^File base items]
@@ -199,7 +199,7 @@
            (fn [^File root]
              (cond (.isFile root) [root]
                    :else (fff-index/with-index
-                           [idx (fff-index/lease root respect-ignore-files? overlay)]
+                           [idx (fff-index/lease root true overlay)]
                            (let [base (.getCanonicalFile root)]
                              ;; doall: realize the lazy hits INSIDE with-open, before the fresh
                              ;; instance is closed.
@@ -1035,17 +1035,17 @@
    - `:exclude-globs` — the `:grep :always-exclude` config guarding what
      those re-includes would otherwise drag in.
 
-   The config half is active only on the DEFAULT gitignore-respecting path: an
-   EXPLICIT per-call `is_respect_gitignore` (either value) wins over it."
-  [is_respect_gitignore is_gitignore_explicit]
+   The config half ALWAYS applies: `.gitignore` is honored unconditionally and
+   `vis.yml` is the only way to widen or narrow what search sees."
+  []
   (let
     [{:keys [include-gitignored-paths always-exclude]}
-     (when (and is_respect_gitignore (not is_gitignore_explicit)) (config/search-overlay))
+     (config/search-overlay)
 
      overlay
-     {:custom-ignore-filenames (when is_respect_gitignore [".rgignore"])
+     {:custom-ignore-filenames [".rgignore"]
       :exclude-globs (vec always-exclude)
-      :unignore-globs (when is_respect_gitignore (vec include-gitignored-paths))}]
+      :unignore-globs (vec include-gitignored-paths)}]
 
     (when (some seq (vals overlay)) overlay)))
 
@@ -1245,17 +1245,15 @@
 (defn- list-dir
   "Shallow (`depth` 1) directory listing as MODEL data — the cat-on-directory read.
    Entries sort directories first, then files, each alphabetical. Hidden entries
-   and gitignored paths are skipped unless opted in; `depth` > 1 nests
-   `\"children\"`. Returns `{\"path\" \"type\" \"entries\" \"depth\"}`."
-  [^File d
-   {:keys [depth is_hidden is_respect_gitignore]
-    :or {depth 1 is_hidden false is_respect_gitignore true}}]
+   are skipped unless opted in and gitignored paths are ALWAYS skipped; `depth` > 1
+   nests `\"children\"`. Returns `{\"path\" \"type\" \"entries\" \"depth\"}`."
+  [^File d {:keys [depth is_hidden] :or {depth 1 is_hidden false}}]
   (let
     [levels
      (long depth)
 
      node
-     (when is_respect_gitignore (load-ignore-node d))
+     (load-ignore-node d)
 
      entries
      (->> (or (.listFiles d) (into-array File []))
@@ -1557,9 +1555,8 @@
 (defn- check-interrupt!
   "Throw `InterruptedException` when the worker thread has been interrupted
    (e.g. by `cancel!` cancelling the turn's worker future). Long recursive
-   directory walks poll this so Esc aborts them promptly instead of running
-   the whole tree to completion - the symptom when `/fs add ..` widens the
-   session onto a huge parent tree and the spinner hangs on 'cancelling'."
+   directory walks poll this so Esc aborts them promptly instead of traversing a
+   huge configured catalog path and leaving the spinner stuck on 'cancelling'."
   []
   (when (.isInterrupted (Thread/currentThread))
     (throw (InterruptedException. "directory walk cancelled"))))
@@ -1680,20 +1677,18 @@
                            :got args})))
 
      allowed-keys
-     #{"query" "paths" "path" "limit" "include" "context" "is_hidden" "is_respect_gitignore"}
+     #{"query" "paths" "path" "limit" "include" "context" "is_hidden"}
 
      unknown-keys
      (seq (remove allowed-keys (keys spec)))]
 
     (when unknown-keys
-      (throw
-        (ex-info
-          (str "find spec has unknown keys: "
-               (str/join ", " (map str unknown-keys))
-               ". Allowed: query, paths, limit, include, context, is_hidden, is_respect_gitignore.")
-          {:type :ext.foundation.editing/invalid-find-args
-           :unknown (vec unknown-keys)
-           :allowed (vec (sort allowed-keys))})))
+      (throw (ex-info (str "find spec has unknown keys: "
+                           (str/join ", " (map str unknown-keys))
+                           ". Allowed: query, paths, limit, include, context, is_hidden.")
+                      {:type :ext.foundation.editing/invalid-find-args
+                       :unknown (vec unknown-keys)
+                       :allowed (vec (sort allowed-keys))})))
     (let
       [raw-query
        (get spec "query")
@@ -1773,8 +1768,6 @@
        :context context
        :limit limit
        :is_hidden (boolean (get spec "is_hidden"))
-       :is_respect_gitignore (get spec "is_respect_gitignore" true)
-       :is_gitignore_explicit (contains? spec "is_respect_gitignore")
        :is_ls ls?})))
 
 (defn- find-scan
@@ -1784,12 +1777,10 @@
    itself at score 1.0. The single-query building block `find-search` runs
    once for the strict whole-query pass and once per token for the fallback.
 
-   Directory roots ALWAYS go through fff (fast, frecency-ranked) — including
-   when the caller opted OUT of gitignore (`is_respect_gitignore` is passed
-   THROUGH to fff's native walker) and including `.rgignore` / `:grep`
-   overlay projects, which fff honors natively via `overlay`. vis walks no
-   tree here."
-  [roots query is_hidden is_respect_gitignore candidate-page overlay]
+   Directory roots ALWAYS go through fff (fast, frecency-ranked), including
+   `.rgignore` / `:grep` overlay projects, which fff honors natively via
+   `overlay`. `.gitignore` is always respected; vis walks no tree here."
+  [roots query is_hidden candidate-page overlay]
   (->> roots
        (mapcat
          (fn [^File root]
@@ -1800,7 +1791,7 @@
                                   :source :direct-file
                                   :score 1.0}]
                  :else (fff-index/with-index
-                         [idx (fff-index/lease root is_respect_gitignore overlay)]
+                         [idx (fff-index/lease root true overlay)]
                          (let [base (.getCanonicalFile root)]
                            ;; doall: realize hits INSIDE with-open, before the
                            ;; fresh instance is closed.
@@ -1855,9 +1846,9 @@
   "ls-mode listing for a BLANK grep query: enumerate every file under
    `roots` (a FILE root lists itself) ranked by frecency then recency, capped at
    `limit`. There is no pattern to match, so this is `ls`, not a fuzzy search —
-   it skips the whole query-scoring path. Honors `is_hidden`/`is_respect_gitignore`
-   and the same fff ignore `overlay` as the scored path."
-  [roots limit is_hidden is_respect_gitignore overlay]
+   it skips the whole query-scoring path. Honors `is_hidden` and the same fff
+   ignore `overlay` as the scored path."
+  [roots limit is_hidden overlay]
   (->> roots
        (mapcat
          (fn [^File root]
@@ -1868,7 +1859,7 @@
                                   :source :direct-file
                                   :score 1.0}]
                  :else (fff-index/with-index
-                         [idx (fff-index/lease root is_respect_gitignore overlay)]
+                         [idx (fff-index/lease root true overlay)]
                          (let [base (.getCanonicalFile root)]
                            (doall
                              (->> (:items
@@ -1901,8 +1892,7 @@
 (defn- find-search
   [args]
   (let
-    [{:keys [query paths limit is_hidden is_respect_gitignore is_gitignore_explicit is_ls]
-      scope-misses :missing}
+    [{:keys [query paths limit is_hidden is_ls] scope-misses :missing}
      (coerce-find-spec args)
 
      {roots :roots find-resolutions :resolutions searched-paths :searched-paths}
@@ -1917,11 +1907,11 @@
      ;; `.rgignore` + the `:grep` config overlay (issue #23), handed to fff
      ;; itself — see `fff-ignore-overlay`.
      search-overlay
-     (fff-ignore-overlay is_respect_gitignore is_gitignore_explicit)
+     (fff-ignore-overlay)
 
      scan
      (fn [q]
-       (find-scan roots q is_hidden is_respect_gitignore candidate-page search-overlay))
+       (find-scan roots q is_hidden candidate-page search-overlay))
 
      strict
      (if is_ls [] (scan query))
@@ -1946,7 +1936,7 @@
 
      [ranked fuzzy?]
      (if is_ls
-       [(find-ls roots limit is_hidden is_respect_gitignore search-overlay) false]
+       [(find-ls roots limit is_hidden search-overlay) false]
        (if (or (seq strict) (< (count tokens) 2))
          [strict false]
          (let
@@ -2086,10 +2076,7 @@
       (assoc "include" (get spec "include"))
 
       (contains? spec "is_hidden")
-      (assoc "is_hidden" (get spec "is_hidden"))
-
-      (contains? spec "is_respect_gitignore")
-      (assoc "is_respect_gitignore" (get spec "is_respect_gitignore")))))
+      (assoc "is_hidden" (get spec "is_hidden")))))
 
 (defn- content-result
   "Build grep's CONTENT hits from an `rg-search` result: an ordered
@@ -2446,8 +2433,6 @@
      :paths paths
      :include (or include [])
      :is_hidden (boolean (get spec "is_hidden"))
-     :is_respect_gitignore (get spec "is_respect_gitignore" true)
-     :is_gitignore_explicit (contains? spec "is_respect_gitignore")
      :limit (let [l (get spec "limit")]
               (if (and (integer? l) (pos? (long l))) (long l) default-grep-limit))
      :context context
@@ -2596,8 +2581,7 @@
    `r[...]`); only the wire VIEW is bounded by the 64KB per-observation clip."
   [spec]
   (let
-    [{:keys [needles paths include is_hidden is_respect_gitignore is_gitignore_explicit limit
-             context is_files_only]}
+    [{:keys [needles paths include is_hidden limit context is_files_only]}
      (coerce-rg-spec spec)
 
      before-ctx
@@ -2665,17 +2649,17 @@
      ;; `.rgignore` + the `:grep` config overlay (issue #23) — handed to fff
      ;; itself, see `fff-ignore-overlay`.
      search-overlay
-     (fff-ignore-overlay is_respect_gitignore is_gitignore_explicit)
+     (fff-ignore-overlay)
 
      ;; fff-first, ALWAYS: fff OWNS discovery. It enumerates the correct universe (nested
      ;; `.gitignore`-aware — NEVER descends node_modules/target/…) and needle-narrows via
-     ;; native grep, ~280× faster than a raw walk. `is_respect_gitignore` is passed THROUGH
-     ;; to fff's walker, and `.rgignore` / the `:grep` overlay ride along as fff's own
+     ;; native grep, ~280× faster than a raw walk. `.gitignore` is ALWAYS respected by
+     ;; fff's walker, and `.rgignore` / the `:grep` overlay ride along as fff's own
      ;; ignore overlay — so there is no raw-walk fallback left (that bypass cost 120s on
      ;; this workspace). fff surfaces dotfiles a walk hid by descent, so re-apply the
      ;; include globs + hidden-below-root guard here.
      candidates
-     (->> (rg-fff-candidate-files roots needles is_respect_gitignore search-overlay)
+     (->> (rg-fff-candidate-files roots needles search-overlay)
           (filter include-file?)
           (remove (fn [^File f]
                     (and (not is_hidden) (rg-hidden-below-root? roots f)))))
@@ -3655,7 +3639,7 @@
    Each key IS the `patch` from_anchor — copy it straight into an edit.
    Not \"eof\"/\"truncated\" → paginate from \"next_offset\".
    A DIRECTORY path lists its entries instead: {\"path\", \"entries\" [{\"name\" \"path\" \"type\" \"size\"}…], \"depth\"};
-   opts {\"depth\": N} recurses (default 1), {\"is_hidden\": true} adds dotfiles, {\"is_respect_gitignore\": false} adds ignored."
+   opts {\"depth\": N} recurses (default 1), {\"is_hidden\": true} adds dotfiles; gitignored paths are ALWAYS skipped."
   ([path]
    (if (map? path)
      ;; All-kwargs form: `cat(path=\"p\", ranges=rs)` collapses at the Python
@@ -3687,11 +3671,7 @@
          (dir-listing-success path
                               (list-dir f
                                         {:depth (or (get arg "depth") 1)
-                                         :is_hidden (boolean (get arg "is_hidden"))
-                                         :is_respect_gitignore
-                                         (if (contains? arg "is_respect_gitignore")
-                                           (boolean (get arg "is_respect_gitignore"))
-                                           true)}))
+                                         :is_hidden (boolean (get arg "is_hidden"))}))
          (let
            [raw-ranges (get arg "ranges")
             ;; Empty JSON arrays are a common optional-argument serialization
@@ -5312,7 +5292,7 @@
      :description
      (str
        "Read ONE sufficient file region as patch-ready `lineno:hash` anchored lines. "
-       "A DIRECTORY path switches to listing mode (entries one level deep; `depth`/`is_hidden`/`is_respect_gitignore` apply only there). "
+       "A DIRECTORY path switches to listing mode (entries one level deep; `depth`/`is_hidden` apply only there). "
        "Pass physical paths exactly as `grep`/`struct_index` returned them; never reconstruct a path from a language namespace or module name. "
        "For supported code run `struct_index` first, then read only the body you need; a write invalidates pre-write anchors for that file, not other files.")
      :render render-cat-result
@@ -5341,9 +5321,7 @@
                 "Directory listing only: nesting depth (default 1, a shallow one-level listing)."}
        "is_hidden" {:type "boolean"
                     :description
-                    "Directory listing only: include dotfiles / hidden entries (default false)."}
-       "is_respect_gitignore"
-       {:type "boolean" :description "Directory listing only: honor .gitignore (default true)."}}
+                    "Directory listing only: include dotfiles / hidden entries (default false)."}}
       :required ["path"]
       :additionalProperties false
       :maxProperties 4}
@@ -5396,11 +5374,7 @@
        "limit"
        {:type "integer" :minimum 1 :description "Maximum ranked filename matches (default 50)."}
        "is_hidden" {:type "boolean"
-                    :description "Also match dotfiles / hidden dirs (default false)."}
-       "is_respect_gitignore"
-       {:type "boolean"
-        :description
-        "Honor .gitignore (default true). Set false to include files inside gitignored directories."}}
+                    :description "Also match dotfiles / hidden dirs (default false)."}}
       :required ["query"]
       :additionalProperties false}
      :before-fn (path-protected-before-fn :grep :dir :read find-arg-paths)

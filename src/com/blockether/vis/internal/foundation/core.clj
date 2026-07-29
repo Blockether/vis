@@ -35,25 +35,14 @@
   {:root (or (workspace/workspace-root env) (workspace/normalize-root (workspace/cwd)))})
 
 (defn- session-workspace-block
-  "Resolve the env's pinned workspace + session-state and render the
-   canonical `\"session_workspace\"` CTX block. If no DB / pin exists yet,
-   render the current root as a real workspace; VCS detection inside
-   `workspace-ctx/render-block` decides `\"vcs_kind\"` (`\"git\"`, `\"none\"`, ...)."
+  "Resolve the env's pinned workspace and render the canonical session workspace CTX block."
   [env]
-  (let
-    [db
-     (:db-info env)
-
-     ws-id
-     (or (:workspace/id env)
-         (some-> env
-                 :workspace
-                 :id))
-
-     pair
-     (when (and db ws-id) (workspace/workspace-with-session db ws-id))]
-
-    (workspace-ctx/render-block (or pair {:workspace (fallback-workspace env)}))))
+  (let [db (:db-info env)
+        ws-id (or (:workspace/id env) (some-> env :workspace :id))
+        pair (when (and db ws-id) (workspace/workspace-with-session db ws-id))]
+    (workspace-ctx/render-block
+      (assoc (or pair {:workspace (fallback-workspace env)})
+             :filesystem-roots (workspace/env-filesystem-roots env)))))
 
 (defn- combined-ctx
   "Foundation-core's single `:ext/ctx-fn` fn. Contributes the workspace

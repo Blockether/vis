@@ -2042,15 +2042,7 @@
             (workspace/for-session d sid))]
       (stdout! (str "  Workspace:    "
                     (if (workspace/draft? ws) "draft (isolated workspace)" "trunk (live)")))
-      (stdout! (str "  Root:         " (:root ws)))
-      (let [roots (workspace/filesystem-roots ws)]
-        (when (seq roots)
-          (stdout! (str "  Filesystem dirs (" (count roots) "):"))
-          (doseq [{:keys [trunk clone fork-ms]} roots]
-            (stdout! (str "    "
-                          trunk
-                          (when (and fork-ms (not= clone trunk))
-                            " (isolated draft copy — lands on /draft apply)")))))))
+      (stdout! (str "  Root:         " (:root ws))))
     (when (seq states)
       (stdout! "")
       (stdout! "  States")
@@ -2202,8 +2194,7 @@
 
 (defn- cli-draft-session!
   "Start a DRAFT for a session using an available isolation backend
-   and pin the session to the draft, so subsequent turns (+ any `/fs add`
-   filesystem roots) run isolated until `/draft apply` or `/draft abandon`."
+   and pin the session to the draft until `/draft apply` or `/draft abandon`."
   [parsed _residual]
   (config/init-cli!)
   (let
@@ -2246,7 +2237,6 @@
                   (stdout! (str "\n  Started draft for session " (:id session)))
                   (stdout! (str "    Clone: " (:root draft)))
                   (stdout! (str "    Trunk: " (:repo-root draft) "  (where /draft apply lands)"))
-                  (stdout! "    Add filesystem dirs: /fs add <path>  (auto-cloned into the draft)")
                   (stdout! "    Land: /draft apply   ·   Discard: /draft abandon")
                   (stdout! "")
                   (shutdown-agents)))))))
@@ -3197,6 +3187,90 @@
 ;; identically under the JVM and the native image: both drive the same
 ;; `env/*` machinery.
 
+(defn- toml-tables
+  "Split TOML `text` into a map of dotted table name -> raw table body.
+
+   A deliberately small scanner: enough to read the handful of packaging keys
+   `vis python` cares about, without taking on a TOML dependency."
+  [text]
+  (loop
+    [lines
+     (str/split-lines (or text ""))
+
+     table
+     nil
+
+     acc
+     {}]
+
+    (if-let [line (first lines)]
+      (let
+        [trimmed (str/trim line)
+         header (second (re-matches #"\[\[?([^\]\[]+)\]\]?" trimmed))]
+
+        (if header
+          (recur (rest lines) (str/trim header) acc)
+          (recur (rest lines)
+                 table
+                 (cond-> acc
+                   table
+                   (update table (fnil conj []) line)))))
+      (into {}
+            (map (fn [[k v]]
+                   [k (str/join "\n" v)]))
+            acc))))
+
+(defn- toml-value-fragment
+  "Raw right-hand side of key `k` inside TOML table `body` (array or string)."
+  [body k]
+  (when (seq body)
+    (second (re-find (re-pattern
+                       (str "(?s)(?:\\A|\\n)\\s*" k "\\s*=\\s*(\\[[^\\]]*\\]|\"[^\"]*\"|'[^']*')"))
+                     body))))
+
+(defn- toml-strings
+  "Every quoted string literal inside a TOML value `fragment`."
+  [fragment]
+  (->> (re-seq #"\"([^\"]*)\"|'([^']*)'" (or fragment ""))
+       (keep (fn [[_ dq sq]]
+               (or dq sq)))
+       (remove str/blank?)))
+
+(defn- python-project-import-roots
+  "Import roots declared by `dir`'s `pyproject.toml` — the `src` layout that
+   every packaging backend spells differently:
+
+     [tool.setuptools.packages.find]   where    = [\"src\"]
+     [tool.poetry]                     packages = [{include = \"pkg\", from = \"src\"}]
+     [tool.hatch.build.targets.wheel]  packages = [\"src/pkg\"]
+
+   Returns canonical paths of the directories that actually exist, in
+   declaration order, so `vis python -m pytest tests/` imports the project the
+   same way an explicit `PYTHONPATH=src` invocation would. Purely declarative:
+   a project without such metadata gets nothing inferred."
+  [dir]
+  (let [pyproject (io/file dir "pyproject.toml")]
+    (when (.isFile pyproject)
+      (let
+        [tables (toml-tables (slurp pyproject))
+         setuptools (toml-strings (toml-value-fragment (get tables "tool.setuptools.packages.find")
+                                                       "where"))
+         poetry (->> (re-seq #"from\s*=\s*\"([^\"]*)\"|from\s*=\s*'([^']*)'"
+                             (or (toml-value-fragment (get tables "tool.poetry") "packages") ""))
+                     (keep (fn [[_ dq sq]]
+                             (or dq sq))))
+         hatch (->> (toml-strings (toml-value-fragment (get tables "tool.hatch.build.targets.wheel")
+                                                       "packages"))
+                    (keep #(.getParent (io/file ^String %))))]
+
+        (->> (concat setuptools poetry hatch)
+             (remove str/blank?)
+             (remove #{"." "./"})
+             distinct
+             (map #(io/file dir ^String %))
+             (filter #(.isDirectory ^java.io.File %))
+             (mapv #(.getCanonicalPath ^java.io.File %)))))))
+
 (defn- python-cli-context
   "Build a fresh standalone GraalPy sandbox for `vis python`: all shims
    installed, filesystem rooted at the current working directory, network
@@ -3205,8 +3279,9 @@
 
    Unlike the agent sandbox this is a HUMAN-run interpreter, so it gets
    real-`python` niceties: `argv` is bound to `sys.argv`; `env` is merged
-   into `os.environ`; and `PYTHONPATH` is prepended to `sys.path`. The process
-   stdin is wired to guest `sys.stdin`, so it works alongside `-c`/FILE."
+   into `os.environ`; and `sys.path` is prepended with `PYTHONPATH` plus any
+   `src`-layout import root declared by the project's `pyproject.toml`. The
+   process stdin is wired to guest `sys.stdin`, so it works alongside `-c`/FILE."
   [{:keys [network? argv env]}]
   (let
     [cwd
@@ -3226,20 +3301,36 @@
     (env/seed-cli-runtime! python-context {:argv argv :env env})
     ;; GraalPy receives the environment after interpreter startup, so PYTHONPATH
     ;; needs the same explicit sys.path setup a process launch would perform.
-    (when-let [pythonpath (not-empty (get env "PYTHONPATH"))]
-      (let
-        [^org.graalvm.polyglot.Value bindings
-         (.getBindings ^org.graalvm.polyglot.Context python-context "python")
-         binding-name "__vis_cli_pythonpath__"]
+    ;; Explicit entries come first; inferred project roots are merged in after
+    ;; them, never replacing what the caller asked for.
+    (let
+      [separator
+       java.io.File/pathSeparator
 
-        (.putMember bindings binding-name pythonpath)
-        (try (.eval ^org.graalvm.polyglot.Context python-context
-                    "python"
-                    (str "import os, sys\n"
-                         "sys.path[:0] = [p for p in globals()["
-                         (pr-str binding-name)
-                         "].split(os.pathsep) if p]\n"))
-             (finally (.removeMember bindings binding-name)))))
+       explicit
+       (remove str/blank?
+         (str/split (or (get env "PYTHONPATH") "")
+                    (re-pattern (java.util.regex.Pattern/quote separator))))
+
+       roots
+       (distinct (concat explicit (python-project-import-roots cwd)))]
+
+      (when (seq roots)
+        (let
+          [^org.graalvm.polyglot.Value bindings
+           (.getBindings ^org.graalvm.polyglot.Context python-context "python")
+
+           binding-name
+           "__vis_cli_pythonpath__"]
+
+          (.putMember bindings binding-name (str/join separator roots))
+          (try (.eval ^org.graalvm.polyglot.Context python-context
+                      "python"
+                      (str "import os, sys\n"
+                           "sys.path[:0] = [p for p in globals()["
+                           (pr-str binding-name)
+                           "].split(os.pathsep) if p]\n"))
+               (finally (.removeMember bindings binding-name))))))
     python-context))
 
 (defn- run-python-source!
