@@ -1488,6 +1488,8 @@ export class GatewayClient {
       signal?: AbortSignal;
       onOpen?: () => void;
       onError?: (error: unknown) => void;
+      /** Fired once the retry loop has ENDED — the stream is no longer running. */
+      onClosed?: () => void;
     } = {},
   ): () => void {
     const controller = new AbortController();
@@ -1569,13 +1571,15 @@ export class GatewayClient {
           }
           if (!signal.aborted) throw new GatewayError(0, 'event stream closed');
         } catch (error) {
-          if (signal.aborted) return;
+          if (signal.aborted) break;
           opts.onError?.(error);
-          if (
-            error instanceof GatewayError
-            && error.status >= 400
-            && error.status < 500
-          ) return;
+          // A 4xx is NOT a reason to abandon the app's only push channel. A
+          // token refresh racing a request (401), a proxy's 403/404, or the
+          // gateway's own 400 "no valid sids" right after it restarted used to
+          // end this loop FOREVER: the open session screen then sat silent —
+          // no stall watchdog fires, because there is no socket left to stall —
+          // until the user backed out and re-entered. Every failure now backs
+          // off and retries; the hub supervises what is left.
           await abortableDelay(retryMs, signal);
           retryMs = Math.min(retryMs * 2, 5_000);
         } finally {
@@ -1583,6 +1587,7 @@ export class GatewayClient {
           attempt.abort();
         }
       }
+      opts.onClosed?.();
     })();
 
     return () => controller.abort();

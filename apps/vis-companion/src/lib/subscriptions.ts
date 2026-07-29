@@ -17,6 +17,13 @@ const TURN_TERMINAL_EVENTS = new Set(['turn.completed', 'turn.failed', 'turn.can
 // reconnects against the gateway in one tick; one is enough.
 const RESYNC_MIN_INTERVAL_MS = 1_000;
 
+// The stream's supervisor tick. `streamSessionEvents` retries on its own, but it
+// can still END (the caller aborted, or it gave up); nothing else in the app
+// notices, and while you stay inside one session NO wake event ever fires to
+// call resync(). Without this the chat you are typing in silently stops
+// updating until you leave and re-open it.
+const SUPERVISOR_INTERVAL_MS = 10_000;
+
 /**
  * One long-lived, multiplexed gateway subscription for every visited session.
  * Session views may mount/unmount without stopping their stream; a bounded
@@ -38,6 +45,7 @@ export class SessionSubscriptionHub {
   private disposed = false;
   private lastResyncAt = 0;
   private readonly stopWake: () => void;
+  private supervisor: ReturnType<typeof setInterval> | null = null;
 
   constructor(client: GatewayClient) {
     this.client = client;
@@ -46,6 +54,9 @@ export class SessionSubscriptionHub {
     // wake — no screen has to remember to ask, so a frozen socket can never
     // outlive the resume and force an app restart.
     this.stopWake = onWake(() => this.resync());
+    // Second safety net, for the case wake events cannot cover: the app stays
+    // in the foreground on one session and the stream dies anyway.
+    this.supervisor = setInterval(() => this.ensureStream(), SUPERVISOR_INTERVAL_MS);
   }
 
   watchSessions(sessionIds: Iterable<string>): void {
@@ -59,6 +70,7 @@ export class SessionSubscriptionHub {
       changed = true;
     }
     if (changed) this.restart();
+    else this.ensureStream();
   }
 
   isWatching(sid: string): boolean {
@@ -123,6 +135,8 @@ export class SessionSubscriptionHub {
   dispose(): void {
     this.disposed = true;
     this.stopWake();
+    if (this.supervisor) clearInterval(this.supervisor);
+    this.supervisor = null;
     this.stopStream?.();
     this.stopStream = null;
     this.setConnected(false);
@@ -133,20 +147,39 @@ export class SessionSubscriptionHub {
     this.ended.clear();
   }
 
+  /**
+   * Start the stream when it is NOT running — it ended, or never started. The
+   * hub owns liveness: `stopStream` is nulled the moment the retry loop exits,
+   * so a dead stream is always detectable instead of looking connected.
+   */
+  private ensureStream(): void {
+    if (this.disposed || this.stopStream || this.cursors.size === 0) return;
+    this.restart();
+  }
+
   private restart(): void {
     if (this.disposed) return;
     this.stopStream?.();
     this.stopStream = null;
     this.setConnected(false);
     if (this.cursors.size === 0) return;
-    this.stopStream = this.client.streamSessionEvents(
+    const stop = this.client.streamSessionEvents(
       this.cursors,
       (event) => this.ingest(event),
       {
         onOpen: () => this.setConnected(true),
         onError: () => this.setConnected(false),
+        // Only clear the handle when it is still OURS: a later restart() has
+        // already installed its own stream and must not be torn down by the
+        // old one's exit.
+        onClosed: () => {
+          if (this.stopStream !== stop) return;
+          this.stopStream = null;
+          this.setConnected(false);
+        },
       },
     );
+    this.stopStream = stop;
   }
 
   private ingest(event: SseEvent): void {
