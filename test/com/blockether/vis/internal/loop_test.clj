@@ -2052,7 +2052,10 @@
                [svar/ask! (fn [_router opts]
                             (reset! seen opts)
                             {:result {:title "Current Bug Triage"}})]
-               (let [f (maybe-auto-title! env "Wez to sprawdz")]
+               ;; The LLM upgrade is DEFERRED past the foreground turn by
+               ;; default (Blockether/vis#71), so it is this entry point that
+               ;; carries it, not `maybe-auto-title!`.
+               (let [f (titling/after-turn-auto-title! env "Wez to sprawdz")]
                  @f
                  (expect (= "Current Bug Triage" @(:session-title-atom env)))
                  (expect (str/includes? (-> @seen
@@ -2082,7 +2085,7 @@
                        (reset! seen opts)
                        (throw (ex-info "Exceptional status code: 400" {})))]
           (let
-            [f (maybe-auto-title!
+            [f (titling/after-turn-auto-title!
                  env
                  "1dff1f5a-76dc-431e-ad2b-97af14c731f1 can you check why TUI title is missing?")]
             @f
