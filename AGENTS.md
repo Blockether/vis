@@ -55,6 +55,10 @@ IDs are snake_case strings. Hydrate from merged config so `/reload` applies proj
 
 One lazy shim per `shim_*.clj`, one registered extension, and inclusion in `builtin-extension-nses`. The Python body is NEVER a Clojure string: it lives in `resources/vis-shims/<name>.py` and the spec carries `:shim/source "vis-shims/<name>.py"` (read by `extension/shim-src`, embedded natively by build.clj's `-H:IncludeResources=vis-shims/.*`). Verify imports are absent at context creation and present after import.
 
+## Python format/lint (ruff, in-process)
+
+`format_code`/`lint_code` for Python run **ruff via the `com.blockether/ruff` FFI** (`extensions/languages/vis-language-python/.../ruff.clj`), never a `ruff` subprocess or a PyPI install — so it works in the native image and needs nothing on PATH. Line length comes from `[tool.ruff]` in `pyproject.toml` or `ruff.toml`; only syntax errors and `E9xx`/`F6xx`/`F7xx`/`F82x` are reported at `error` level, everything else is a warning. A missing target is a failure, never a silent clean run. Bump ruff itself in the sibling `Blockether/clj-ruff` repo (Rust `native/ruff-c`), release it, then move the pin in `deps.edn`.
+
 ## TUI rendering
 
 Render paint code in the `vis-channel-tui` REPL with Lanterna `DefaultVirtualTerminal`; inspect the back-buffer. Dialogs use `dialogs/draw-dialog-chrome!` on flat `t/terminal-bg`, without panel tint or shadow.

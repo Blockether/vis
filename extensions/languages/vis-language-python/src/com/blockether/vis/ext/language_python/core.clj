@@ -9,6 +9,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.language-python.interpreter :as interpreter]
             [com.blockether.vis.ext.language-python.repl-manager :as repl]
+            [com.blockether.vis.ext.language-python.ruff :as pyruff]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.python-test-runner :as ptr]))
 
@@ -329,7 +330,7 @@
   (vis/extension
     {:ext/name "language-python"
      :ext/description
-     "Python language pack: a managed Python REPL (uv/poetry/venv/python3) behind the generic repl/repl_eval/repl_stop facade. Activates on Python workspaces."
+     "Python language pack: ruff format_code + lint_code (in-process, no ruff binary) and a managed Python REPL (uv/poetry/venv/python3) behind the generic repl/repl_eval/repl_stop facade. Activates on Python workspaces."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -337,6 +338,8 @@
      :ext/activation-fn activation-fn
      :ext/language-tools [{:language "python"
                            :repl-eval-fn py-repl-eval-fn
+                           :format-fn pyruff/py-format-fn
+                           :lint-fn pyruff/py-lint-fn
                            :test-fn py-test-fn
                            :start-repl-fn (fn [env op opts]
                                             (py-start-repl-fn env op opts))}]
