@@ -295,6 +295,20 @@
     (spit (java.io.File. root "pyproject.toml") pyproject)
     root))
 
+(defn- write-files!
+  "Materialise a throwaway project from a `name -> content` map, plus the `dirs`
+   its metadata points at. Returns the project root as a `java.io.File`."
+  [files dirs]
+  (let
+    [root (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-python-srclayout-"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (doseq [d dirs]
+      (.mkdirs (java.io.File. root ^String d)))
+    (doseq [[name content] files]
+      (spit (java.io.File. root ^String name) content))
+    root))
+
 (defdescribe
   python-src-layout-inference-test
   (it "infers the setuptools `where` root, so plain `-m pytest` imports the project"
@@ -331,4 +345,36 @@
         [root (.toFile (java.nio.file.Files/createTempDirectory
                          "vis-python-nopyproject-"
                          (make-array java.nio.file.attribute.FileAttribute 0)))]
-        (expect (nil? (python-project-import-roots (.getCanonicalPath root)))))))
+        (expect (nil? (python-project-import-roots (.getCanonicalPath root))))))
+  (it "infers a setuptools `package-dir` inline table"
+      (let
+        [root (write-project! (str "[tool.setuptools]\n" "package-dir = {\"\" = \"src\"}\n")
+                              ["src"])]
+        (expect (= [(.getCanonicalPath (java.io.File. root "src"))]
+                   (python-project-import-roots (.getCanonicalPath root))))))
+  (it "infers a pdm `package-dir` string"
+      (let [root (write-project! (str "[tool.pdm.build]\n" "package-dir = \"src\"\n") ["src"])]
+        (expect (= [(.getCanonicalPath (java.io.File. root "src"))]
+                   (python-project-import-roots (.getCanonicalPath root))))))
+  (it "honours pytest's own `pythonpath` option in pyproject.toml"
+      (let
+        [root (write-project! (str "[tool.pytest.ini_options]\n" "pythonpath = [\"lib\"]\n")
+                              ["lib"])]
+        (expect (= [(.getCanonicalPath (java.io.File. root "lib"))]
+                   (python-project-import-roots (.getCanonicalPath root))))))
+  (it "infers the setup.cfg `package_dir` src layout"
+      (let
+        [root (write-files! {"setup.cfg" (str "[metadata]\nname = sample\n\n"
+                                              "[options]\npackage_dir =\n    =src\n")}
+                            ["src"])]
+        (expect (= [(.getCanonicalPath (java.io.File. root "src"))]
+                   (python-project-import-roots (.getCanonicalPath root))))))
+  (it "honours a whitespace-separated `pythonpath` in pytest.ini"
+      (let [root (write-files! {"pytest.ini" "[pytest]\npythonpath = src other\n"} ["src" "other"])]
+        (expect (= [(.getCanonicalPath (java.io.File. root "src"))
+                    (.getCanonicalPath (java.io.File. root "other"))]
+                   (python-project-import-roots (.getCanonicalPath root))))))
+  (it "honours `pythonpath` under tox.ini's [pytest] section"
+      (let [root (write-files! {"tox.ini" "[pytest]\npythonpath = lib\n"} ["lib"])]
+        (expect (= [(.getCanonicalPath (java.io.File. root "lib"))]
+                   (python-project-import-roots (.getCanonicalPath root)))))))

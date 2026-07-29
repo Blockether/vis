@@ -3221,11 +3221,13 @@
             acc))))
 
 (defn- toml-value-fragment
-  "Raw right-hand side of key `k` inside TOML table `body` (array or string)."
+  "Raw right-hand side of key `k` inside TOML table `body` (array, inline table
+   or string)."
   [body k]
   (when (seq body)
-    (second (re-find (re-pattern
-                       (str "(?s)(?:\\A|\\n)\\s*" k "\\s*=\\s*(\\[[^\\]]*\\]|\"[^\"]*\"|'[^']*')"))
+    (second (re-find (re-pattern (str "(?s)(?:\\A|\\n)\\s*"
+                                      k
+                                      "\\s*=\\s*(\\[[^\\]]*\\]|\\{[^}]*\\}|\"[^\"]*\"|'[^']*')"))
                      body))))
 
 (defn- toml-strings
@@ -3236,40 +3238,97 @@
                (or dq sq)))
        (remove str/blank?)))
 
-(defn- python-project-import-roots
-  "Import roots declared by `dir`'s `pyproject.toml` — the `src` layout that
-   every packaging backend spells differently:
+(defn- ini-value-lines
+  "Value lines of INI key `k` inside section `body`: the same-line remainder
+   plus any indented continuation lines, trimmed, blanks dropped."
+  [body k]
+  (some->> (re-find (re-pattern (str "(?m)^[ \\t]*" k "[ \\t]*=([^\\n]*(?:\\n[ \\t]+[^\\n]*)*)"))
+                    (or body ""))
+           second
+           str/split-lines
+           (map str/trim)
+           (remove str/blank?)))
 
-     [tool.setuptools.packages.find]   where    = [\"src\"]
-     [tool.poetry]                     packages = [{include = \"pkg\", from = \"src\"}]
-     [tool.hatch.build.targets.wheel]  packages = [\"src/pkg\"]
+(defn- pyproject-declared-roots
+  "Import roots `text` (a `pyproject.toml`) declares, as raw relative paths."
+  [text]
+  (let
+    [tables
+     (toml-tables text)
+
+     strings
+     (fn [table k]
+       (toml-strings (toml-value-fragment (get tables table) k)))]
+
+    (concat (strings "tool.setuptools.packages.find" "where")
+            (strings "tool.setuptools" "package-dir")
+            (strings "tool.pdm.build" "package-dir")
+            ;; pytest's own first-class import-root option.
+            (strings "tool.pytest.ini_options" "pythonpath")
+            (->> (re-seq #"from\s*=\s*\"([^\"]*)\"|from\s*=\s*'([^']*)'"
+                         (or (toml-value-fragment (get tables "tool.poetry") "packages") ""))
+                 (keep (fn [[_ dq sq]]
+                         (or dq sq))))
+            (->> (strings "tool.hatch.build.targets.wheel" "packages")
+                 (keep #(.getParent (io/file ^String %)))))))
+
+(defn- ini-declared-roots
+  "Import roots `dir`'s INI-style project files declare, as raw relative paths:
+   setuptools' `setup.cfg` src layout and pytest's `pythonpath` option wherever
+   pytest accepts it outside `pyproject.toml`."
+  [dir]
+  (let
+    [sections
+     (fn [name]
+       (let [f (io/file dir ^String name)]
+         (when (.isFile f) (toml-tables (slurp f)))))
+
+     setup-cfg
+     (sections "setup.cfg")]
+
+    (concat
+      ;; [options] package_dir = \n  =src   (also `pkg = src`)
+      (->> (ini-value-lines (get setup-cfg "options") "package_dir")
+           (map #(str/trim (last (str/split % #"=")))))
+      (mapcat (fn [[file section]]
+                (mapcat #(str/split % #"[,\s]+")
+                        (ini-value-lines (get (sections file) section) "pythonpath")))
+              [["setup.cfg" "tool:pytest"] ["pytest.ini" "pytest"] ["tox.ini" "pytest"]]))))
+
+(defn- python-project-import-roots
+  "Import roots declared by `dir`'s project metadata — the `src` layout that
+   every packaging backend spells differently, plus pytest's own `pythonpath`:
+
+     [tool.setuptools.packages.find]   where       = [\"src\"]
+     [tool.setuptools]                 package-dir = {\"\" = \"src\"}
+     [tool.poetry]                     packages    = [{include = \"pkg\", from = \"src\"}]
+     [tool.hatch.build.targets.wheel]  packages    = [\"src/pkg\"]
+     [tool.pdm.build]                  package-dir = \"src\"
+     [tool.pytest.ini_options]         pythonpath  = [\"src\"]
+     setup.cfg [options]               package_dir = =src
+     setup.cfg [tool:pytest] / pytest.ini / tox.ini [pytest]  pythonpath = src
 
    Returns canonical paths of the directories that actually exist, in
    declaration order, so `vis python -m pytest tests/` imports the project the
    same way an explicit `PYTHONPATH=src` invocation would. Purely declarative:
    a project without such metadata gets nothing inferred."
   [dir]
-  (let [pyproject (io/file dir "pyproject.toml")]
-    (when (.isFile pyproject)
-      (let
-        [tables (toml-tables (slurp pyproject))
-         setuptools (toml-strings (toml-value-fragment (get tables "tool.setuptools.packages.find")
-                                                       "where"))
-         poetry (->> (re-seq #"from\s*=\s*\"([^\"]*)\"|from\s*=\s*'([^']*)'"
-                             (or (toml-value-fragment (get tables "tool.poetry") "packages") ""))
-                     (keep (fn [[_ dq sq]]
-                             (or dq sq))))
-         hatch (->> (toml-strings (toml-value-fragment (get tables "tool.hatch.build.targets.wheel")
-                                                       "packages"))
-                    (keep #(.getParent (io/file ^String %))))]
+  (let
+    [pyproject
+     (io/file dir "pyproject.toml")
 
-        (->> (concat setuptools poetry hatch)
-             (remove str/blank?)
-             (remove #{"." "./"})
-             distinct
-             (map #(io/file dir ^String %))
-             (filter #(.isDirectory ^java.io.File %))
-             (mapv #(.getCanonicalPath ^java.io.File %)))))))
+     ini-present?
+     (boolean (some #(.isFile (io/file dir ^String %)) ["setup.cfg" "pytest.ini" "tox.ini"]))]
+
+    (when (or (.isFile pyproject) ini-present?)
+      (->> (concat (when (.isFile pyproject) (pyproject-declared-roots (slurp pyproject)))
+                   (ini-declared-roots dir))
+           (remove str/blank?)
+           (remove #{"." "./"})
+           distinct
+           (map #(io/file dir ^String %))
+           (filter #(.isDirectory ^java.io.File %))
+           (mapv #(.getCanonicalPath ^java.io.File %))))))
 
 (defn- python-cli-context
   "Build a fresh standalone GraalPy sandbox for `vis python`: all shims
@@ -3280,7 +3339,7 @@
    Unlike the agent sandbox this is a HUMAN-run interpreter, so it gets
    real-`python` niceties: `argv` is bound to `sys.argv`; `env` is merged
    into `os.environ`; and `sys.path` is prepended with `PYTHONPATH` plus any
-   `src`-layout import root declared by the project's `pyproject.toml`. The
+   `src`-layout import root declared by the project's packaging metadata. The
    process stdin is wired to guest `sys.stdin`, so it works alongside `-c`/FILE."
   [{:keys [network? argv env]}]
   (let
@@ -3615,7 +3674,8 @@ def __vis_run_module__(name):
      :cmd/usage "vis python [OPTS] [-c CODE | -m MODULE | FILE.py | -] [ARG...]"
      :cmd/examples ["vis python -c \"import requests; print(requests.__version__)\""
                     "vis python -m pytest tests/ -q   # module run as __main__"
-                    "PYTHONPATH=src vis python -m pytest tests/   # src-layout project"
+                    "vis python -m pytest tests/   # src layout inferred from project metadata"
+                    "PYTHONPATH=extra vis python -m pytest tests/   # merged with inferred roots"
                     "vis python script.py --flag foo   # ARGs land in sys.argv"
                     "vis python -c \"import os; print(os.environ['HOME'])\"   # env inherited"
                     "vis python --no-env -c \"import os; print(dict(os.environ))\"   # scrubbed"
