@@ -786,9 +786,11 @@ function formCode(form: TranscriptForm): string {
 function showFormCode(form: TranscriptForm, code: string): boolean {
   if (!code) return false;
   if (!form.tool_name) return true;
-  // Python failures already carry the numbered source excerpt and caret in the
-  // runtime error. Rendering the submitted source as well repeats the same code.
-  return form.tool_name === 'python_execution' && form.error == null;
+  // The model's OWN program is always shown — succeeded or failed. On a failure
+  // the result card carries the exception text but not the source that raised it,
+  // so hiding the program left a bare message with nothing to read it against.
+  // The TUI keeps the source under a failing `python_execution` too; same rule here.
+  return form.tool_name === 'python_execution';
 }
 
 const PYTHON_PREVIEW_LINES = 5;

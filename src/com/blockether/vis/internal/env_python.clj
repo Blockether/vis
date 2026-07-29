@@ -824,6 +824,26 @@ def __vis_error_pos__(e):
         tb = tb.tb_next
     return None if line is None else (line, col, end_col)
 
+def __vis_err_pos_now__():
+    # HOST-CALLED, right after a block failed: compute the failing <prog>
+    # position from the exception stashed by `__vis_run_async__`, then release
+    # it (a traceback pins frames). This deliberately does NOT run inside the
+    # guest `except`: walking traceback frames touches `tb_frame`/`f_code`, and
+    # once GraalPy has COMPILED the driver those accesses can raise an INTERNAL
+    # Truffle `NullPointerException: Null receiver values are not supported by
+    # libraries` that NO guest `except` can catch - it would replace the model's
+    # real error at the host boundary (every uncaught error in a warm session
+    # became an opaque host-null fault). Called from the host's PolyglotException
+    # handler the same fault is catchable there, and costs only the caret.
+    g = globals()
+    e = g.get('__vis_err_obj__')
+    g['__vis_err_obj__'] = None
+    if e is None:
+        return g.get('__vis_err_pos__')
+    pos = __vis_error_pos__(e)
+    g['__vis_err_pos__'] = pos
+    return pos
+
 class CancelledError(BaseException):
     pass
 
@@ -1192,7 +1212,8 @@ def __vis_run_async__(src):
     g = globals()
     g['__vis_printed_results__'] = []   # per-block reset (real python list, appendable)
     g['__vis_only_results__'] = True    # cleared if the block prints anything that isn't a tool result
-    g['__vis_err_pos__'] = None         # deepest <prog> failing position, set by the drive except below
+    g['__vis_err_pos__'] = None         # deepest <prog> failing position, computed by __vis_err_pos_now__
+    g['__vis_err_obj__'] = None         # the raised exception, stashed for that host-driven lookup
     tree = __vis_ast__.parse(src)
     tree = __vis_AwaitFix__().visit(tree)
     __vis_ast__.fix_missing_locations(tree)
@@ -1241,7 +1262,12 @@ def __vis_run_async__(src):
     try:
         g['__vis_async_result__'] = __vis_drive__(g['__vis_main__']())
     except BaseException as __vis_err__:
-        g['__vis_err_pos__'] = __vis_error_pos__(__vis_err__)
+        # Stash the exception ONLY, then re-raise UNCHANGED. Deriving the failing
+        # position here would walk its traceback frames, which on a warm (JIT-ed)
+        # interpreter can hit an uncatchable internal Truffle null-receiver NPE and
+        # DESTROY this real error. The host asks for the position afterwards via
+        # `__vis_err_pos_now__`, where that fault is catchable.
+        g['__vis_err_obj__'] = __vis_err__
         raise
     return assigned
 
@@ -3744,10 +3770,12 @@ def network_probe(method='GET', url=None, headers=None, body=None):
      ;; EACCES/EPERM from Seatbelt or bubblewrap, they are deterministic and safe
      ;; to report because they contain neither the denied path nor approved roots.
      sandbox-denial-operation
-     (some->> base
-              str
-              (re-find #"\[vis:sandbox_denied\] operation=([^ ]+) reason=outside_approved_filesystem_roots")
-              second)
+     (some->>
+       base
+       str
+       (re-find
+         #"\[vis:sandbox_denied\] operation=([^ ]+) reason=outside_approved_filesystem_roots")
+       second)
 
      ;; Generic sandbox capability denial — opaque runtime errors which cannot be
      ;; distinguished reliably from a host-level permission failure.
@@ -3805,54 +3833,52 @@ def network_probe(method='GET', url=None, headers=None, body=None):
                             (str base))))
 
      hint
-     (cond prose-hint prose-hint
-           non-ascii? (str "A non-ASCII character leaked into CODE position - it is only "
-                           "legal inside a \"...\" string or a `#` comment. This is almost always "
-                           "a smart em-dash, en-dash, curly quote, or x that you "
-                           "meant as prose. Replace it with plain ASCII, or move that whole line "
-                           "into a `#` comment. Original parser error: ")
-           quote-hint (str quote-hint " Original parser error: ")
-           bracket-hint (str bracket-hint " Original parser error: ")
-           undefined-name
-           (str "`"
-                undefined-name
-                "` is not defined. If it's a TOOL you expected, it is "
-                "likely an extension that is inactive — its symbols are removed while off. Run "
-                "`apropos(\""
-                undefined-name
-                "\")`; if it isn't listed, ask the USER to enable "
-                "it and do NOT retry the name. If it's a variable, define it first. "
-                "Original error: ")
-           foreign-attr (str "`." foreign-attr
-                             "` failed: foreign/polyglot value, no such method. Read it with "
-                             "result[\"key\"] or result[0]. Original error: ")
-           native-nondict (str
-                            "`." (second native-nondict)
-                            "` failed: value is a `" (first native-nondict)
-                            "`, not a dict. Index it (result[0] / result[\"key\"]) or guard with "
-                            "`isinstance(x, dict)`. Original error: ")
-           indent? (str "Python is INDENTATION-sensitive: a block (after def / if / for / with / "
-                        "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
-                        "statement must start at column 0. Re-indent that region. Original error: ")
-           host-npe? (str "This is an INTERNAL engine/tool fault — a host call returned null "
-                          "(a Java NullPointerException). It is usually NOT your Python: the "
-                          "common cause is a value the engine handed back as null (a tool that "
-                          "returned nothing), so check what the failing expression is indexing / "
-                          "printing first. Then take a different approach (another tool, "
-                          "different arguments, or read the inputs first); if it keeps "
-                          "happening, tell the USER — it likely needs a fix in vis itself. "
-                          "Original error: ")
-           sandbox-denial-operation
-           (str "Sandbox policy denied " sandbox-denial-operation
-                ": the resource is outside approved filesystem roots. "
-                "Use cat(path) to read, patch(path) to edit, repl_eval(language, code) for project code, "
-                "or ask the USER to add the path to workspace.filesystem in vis.yml and run /reload. Original error: ")
-           sandbox-denied?
-           (str "Your sandbox has NO real filesystem / native / process access — "
-                "importlib + exec_module on a project file, open(), subprocess, and sockets "
-                "CANNOT run here. To READ a project file use cat(path); to RUN project code "
-                "(import its modules, use its deps) use repl_eval(language, code) — that runs "
-                "in the project's interpreter where the file is importable. Original error: "))
+     (cond
+       prose-hint prose-hint
+       non-ascii? (str "A non-ASCII character leaked into CODE position - it is only "
+                       "legal inside a \"...\" string or a `#` comment. This is almost always "
+                       "a smart em-dash, en-dash, curly quote, or x that you "
+                       "meant as prose. Replace it with plain ASCII, or move that whole line "
+                       "into a `#` comment. Original parser error: ")
+       quote-hint (str quote-hint " Original parser error: ")
+       bracket-hint (str bracket-hint " Original parser error: ")
+       undefined-name
+       (str "`"
+            undefined-name
+            "` is not defined. If it's a TOOL you expected, it is "
+            "likely an extension that is inactive — its symbols are removed while off. Run "
+            "`apropos(\""
+            undefined-name
+            "\")`; if it isn't listed, ask the USER to enable "
+            "it and do NOT retry the name. If it's a variable, define it first. "
+            "Original error: ")
+       foreign-attr (str "`." foreign-attr
+                         "` failed: foreign/polyglot value, no such method. Read it with "
+                         "result[\"key\"] or result[0]. Original error: ")
+       native-nondict (str "`." (second native-nondict)
+                           "` failed: value is a `" (first native-nondict)
+                           "`, not a dict. Index it (result[0] / result[\"key\"]) or guard with "
+                           "`isinstance(x, dict)`. Original error: ")
+       indent? (str "Python is INDENTATION-sensitive: a block (after def / if / for / with / "
+                    "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
+                    "statement must start at column 0. Re-indent that region. Original error: ")
+       host-npe? (str "Engine fault: a host call returned null (Java NullPointerException) — "
+                      "usually NOT your Python. Check what the failing expression indexes or "
+                      "prints, then try another approach; if it repeats, tell the USER. "
+                      "Original error: ")
+       sandbox-denial-operation
+       (str
+         "Sandbox policy denied "
+         sandbox-denial-operation
+         ": the resource is outside approved filesystem roots. "
+         "Use cat(path) to read, patch(path) to edit, repl_eval(language, code) for project code, "
+         "or ask the USER to add the path to workspace.filesystem in vis.yml and run /reload. Original error: ")
+       sandbox-denied?
+       (str "Your sandbox has NO real filesystem / native / process access — "
+            "importlib + exec_module on a project file, open(), subprocess, and sockets "
+            "CANNOT run here. To READ a project file use cat(path); to RUN project code "
+            "(import its modules, use its deps) use repl_eval(language, code) — that runs "
+            "in the project's interpreter where the file is importable. Original error: "))
 
      ;; FAILING SOURCE POSITION, babashka-style. A runtime error's top-level
      ;; PolyglotException loses its guest frames to the async trampoline, so the
@@ -3861,7 +3887,10 @@ def network_probe(method='GET', url=None, headers=None, body=None):
      ;; `loc` (1-based). Runtime pos WINS over `loc` (nil or shallow-wrong there).
      err-pos
      (when (and (not host?) (not syntax?))
-       (try (->clj (.getMember (.getBindings ^Context python-context "python") "__vis_err_pos__"))
+       ;; Computed HERE, not in the guest `except`: the walk touches traceback
+       ;; frames and can raise an internal Truffle NPE on a warm interpreter,
+       ;; which is catchable at this host boundary but not in guest Python.
+       (try (->clj (.eval ^Context python-context "python" "__vis_err_pos_now__()"))
             (catch Throwable _ nil)))
 
      pos

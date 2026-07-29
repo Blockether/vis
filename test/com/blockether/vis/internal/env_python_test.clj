@@ -66,6 +66,44 @@
 
                    (expect (= "1970\n1970\nTrue\n" (:stdout result))))))
 
+(defdescribe
+  block-error-fidelity-test
+  "The model must ALWAYS see its own Python error. The caret/position walk
+   (`__vis_error_pos__`) reads Truffle traceback frames, and on a warm
+   JIT-compiled context that walk can die with an internal
+   `NullPointerException: Null receiver values are not supported by libraries`
+   that guest code cannot catch. It used to run INSIDE the guest `except`, so
+   the internal fault REPLACED the real exception and every failing block
+   surfaced as `INTERNAL engine/tool fault - a host call returned null`. The
+   walk now runs on the HOST side, where it is catchable: a broken position
+   walk may only cost the caret span, never the message."
+  (it "reports the real Python exception for an uncaught error"
+      (let
+        [ctx
+         (:python-context (ep/create-python-context {}))
+
+         err
+         (:error (ep/run-python-block ctx "raise ValueError('probe-real')"))]
+
+        (expect (str/includes? (:message err) "ValueError: probe-real"))
+        (expect (= :python/runtime (:phase (:data err))))))
+  (it "keeps the real exception when the position walk itself fails"
+      (let
+        [ctx
+         (:python-context (ep/create-python-context {}))
+
+         _
+         (ep/run-python-block ctx
+                              (str "def __vis_err_pos_now__():\n"
+                                   "    raise RuntimeError('simulated truffle fault')\n"
+                                   "globals()['__vis_err_pos_now__'] = __vis_err_pos_now__\n"))
+
+         err
+         (:error (ep/run-python-block ctx "raise ValueError('probe-degraded')"))]
+
+        (expect (str/includes? (:message err) "ValueError: probe-degraded"))
+        (expect (not (str/includes? (:message err) "host call returned null"))))))
+
 (defdescribe python-binding-aliases-test
              ;; A native tool is reachable in the sandbox under its canonical Python name
              ;; PLUS the intentional compatibility aliases. `fs` also answers to `fs_tool`

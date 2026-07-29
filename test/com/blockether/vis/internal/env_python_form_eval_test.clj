@@ -1083,7 +1083,7 @@ await patch({'path': css})" "t1/i1")]
                             "Cannot invoke \"java.util.Map.get(Object)\" because \"row\" is null"))]
                    (expect (= :python/host (get-in err [:data :phase])))
                    (expect (true? (get-in err [:data :host-null?])))
-                   (expect (str/includes? (:message err) "INTERNAL engine/tool fault"))
+                   (expect (str/includes? (:message err) "Engine fault:"))
                    ;; the raw Java message is preserved as the trailing original error.
                    (expect (str/includes? (:message err) "is null"))))
              (it "does NOT tag a non-null host error (real message survives untouched)"
@@ -1217,4 +1217,4 @@ await patch({'path': css})" "t1/i1")]
                     (ep/map-polyglot-error c pe code)]
 
                    (expect (true? (get-in err [:data :host-null?])))
-                   (expect (str/includes? (:message err) "INTERNAL engine/tool fault")))))
+                   (expect (str/includes? (:message err) "Engine fault:")))))
