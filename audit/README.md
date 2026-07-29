@@ -179,7 +179,7 @@ _Shipped binary runtime — the `vis` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
 | `com.blockether/fff` | `0.12.0` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.3.2` | MIT | 11 KB | Blockether (in-house) |
-| `com.blockether/svar` | `0.7.86` | Apache-2.0 | 497 KB | Blockether (in-house) |
+| `com.blockether/svar` | `0.7.88` | Apache-2.0 | 498 KB | Blockether (in-house) |
 | `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.25` | MIT | 164 KB | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
