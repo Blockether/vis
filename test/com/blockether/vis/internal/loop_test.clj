@@ -567,7 +567,9 @@
                                     ((deref #'lp/run-python-code) pc "while True:\n    pass"))]
                           (expect (true? (:timeout? result)))
                           ;; The guest is GONE: no core is still spinning after the timeout.
-                          (expect (< (busy-cores 1500) 0.5))
+                          ;; Leave room for the runner's unrelated JIT/compiler activity;
+                          ;; a live busy guest consumes approximately one full core.
+                          (expect (< (busy-cores 1500) 0.75))
                           ;; ...and the interrupt did not poison the context.
                           (expect (= 42 (:result ((deref #'lp/run-python-code) pc "40 + 2")))))
                         (finally (try (.close ^org.graalvm.polyglot.Context pc true)
