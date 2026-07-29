@@ -145,20 +145,66 @@
 
 ;; ── project configuration ───────────────────────────────────────────────────
 
-(defdescribe project-ruff-opts-test
-             "ruff options are read from the project, and explicit opts win."
-             (it "reads line-length from [tool.ruff] in pyproject.toml"
+(defdescribe config-for-test
+             "ruff's OWN configuration discovery is what vis uses."
+             (it "finds a pyproject.toml carrying [tool.ruff]"
                  (let [root (sample-project)]
-                   (try (expect (= {:line-length 100} (pyruff/project-ruff-opts root)))
+                   (try (expect (= (.getCanonicalPath (io/file root "pyproject.toml"))
+                                   (some-> (pyruff/config-for (io/file root "src/pkg/a.py"))
+                                           io/file
+                                           .getCanonicalPath)))
                         (finally (cleanup root)))))
-             (it "reads line-length from a top-level ruff.toml"
-                 (let [root (tmp-dir)]
+             (it "prefers a ruff.toml over pyproject.toml"
+                 (let [root (sample-project)]
                    (try (spit! root "ruff.toml" "line-length = 60\n")
-                        (expect (= {:line-length 60} (pyruff/project-ruff-opts root)))
+                        (expect (= (.getCanonicalPath (io/file root "ruff.toml"))
+                                   (some-> (pyruff/config-for (io/file root "src/pkg/a.py"))
+                                           io/file
+                                           .getCanonicalPath)))
                         (finally (cleanup root)))))
-             (it "returns no options for a project without ruff config"
+             (it "returns nil for a tree without any ruff configuration"
                  (let [root (tmp-dir)]
-                   (try (expect (empty? (pyruff/project-ruff-opts root)))
+                   (try (spit! root "a.py" "x = 1\n")
+                        (expect (nil? (pyruff/config-for (io/file root "a.py"))))
+                        (finally (cleanup root))))))
+
+(defdescribe project-config-test
+             "the discovered config drives the run, and explicit opts win."
+             (it "reports the configuration file it used and no hint"
+                 (let [root (sample-project)]
+                   (try (let [r (:result (pyruff/py-lint-fn (env root) {"path" "src"}))]
+                          (expect (= "pyproject.toml" (get r "config")))
+                          (expect (nil? (get r "hint"))))
+                        (finally (cleanup root)))))
+             (it "hints at a ruff config file when the project pins nothing"
+                 (let [root (tmp-dir)]
+                   (try (spit! root "a.py" "x = 1\n")
+                        (let [r (:result (pyruff/py-lint-fn (env root) {"path" "a.py"}))]
+                          (expect (nil? (get r "config")))
+                          (expect (= pyruff/no-config-hint (get r "hint")))
+                          (expect (re-find #"ruff[.]toml" (get r "hint"))))
+                        (finally (cleanup root)))))
+             (it "honours select and line-length from ruff.toml"
+                 (let [root (tmp-dir)]
+                   (try (spit! root "ruff.toml" "line-length = 20\nlint.select = [\"E501\"]\n")
+                        (spit! root "a.py" (str "x = \"" (apply str (repeat 40 "a")) "\"\n"))
+                        (let [r (:result (pyruff/py-lint-fn (env root) {"path" "a.py"}))]
+                          (expect (= "E501" (get-in r ["findings" 0 "type"]))))
+                        (finally (cleanup root)))))
+             (it "honours per-file-ignores from ruff.toml"
+                 (let [root (tmp-dir)]
+                   (try (spit! root
+                               "ruff.toml"
+                               (str "lint.select = [\"F\"]\n"
+                                    "[lint.per-file-ignores]\n\"scripts/*.py\" = [\"F401\"]\n"))
+                        (spit! root "scripts/s.py" "import os\n")
+                        (spit! root "lib.py" "import os\n")
+                        (let
+                          [ignored (:result (pyruff/py-lint-fn (env root) {"path" "scripts"}))
+                           flagged (:result (pyruff/py-lint-fn (env root) {"path" "lib.py"}))]
+
+                          (expect (= [] (get ignored "findings")))
+                          (expect (= "F401" (get-in flagged ["findings" 0 "type"]))))
                         (finally (cleanup root)))))
              (it "lets an explicit line-length override the project config"
                  (let [root (sample-project)]

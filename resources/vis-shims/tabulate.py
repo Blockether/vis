@@ -4,8 +4,10 @@
 # tabulate-compatible module in PURE Python (stdlib only). Covers the common
 # tablefmts agents reach for. A correctness-focused SUBSET.
 
+
 def __vis_install_tabulate__():
     import sys, types, math, builtins as _bi
+
     _NL = chr(10)
     _TAB = chr(9)
 
@@ -14,10 +16,10 @@ def __vis_install_tabulate__():
 
     def _fmtcell(x, floatfmt):
         if x is None:
-            return ''
+            return ""
         if isinstance(x, float):
             try:
-                return ('{:' + floatfmt + '}').format(x)
+                return ("{:" + floatfmt + "}").format(x)
             except Exception:
                 return str(x)
         return str(x)
@@ -26,11 +28,11 @@ def __vis_install_tabulate__():
         rows = []
         hdr = []
         # pandas DataFrame duck-type
-        if hasattr(tabular_data, 'to_dict') and hasattr(tabular_data, 'columns'):
+        if hasattr(tabular_data, "to_dict") and hasattr(tabular_data, "columns"):
             cols = list(tabular_data.columns)
-            recs = tabular_data.to_dict('records')
+            recs = tabular_data.to_dict("records")
             rows = [[r.get(c) for c in cols] for r in recs]
-            if headers == 'keys' or headers == () or headers == []:
+            if headers == "keys" or headers == () or headers == []:
                 hdr = [str(c) for c in cols]
             elif isinstance(headers, (list, tuple)):
                 hdr = [str(h) for h in headers]
@@ -39,48 +41,74 @@ def __vis_install_tabulate__():
             cols = list(tabular_data.keys())
             n = max((len(_bi.list(v)) for v in tabular_data.values()), default=0)
             for i in range(n):
-                rows.append([tabular_data[c][i] if i < len(tabular_data[c]) else None for c in cols])
-            if headers == 'keys':
+                rows.append(
+                    [
+                        tabular_data[c][i] if i < len(tabular_data[c]) else None
+                        for c in cols
+                    ]
+                )
+            if headers == "keys":
                 hdr = [str(c) for c in cols]
             elif isinstance(headers, (list, tuple)) and headers:
                 hdr = [str(h) for h in headers]
             return rows, hdr
-        data = [list(r) if isinstance(r, (list, tuple)) else _bi.list(r) if hasattr(r, '__iter__') and not isinstance(r, str) else [r] for r in tabular_data]
-        if isinstance(data and data[0], dict) or (data and isinstance(tabular_data[0], dict)):
+        data = [
+            list(r)
+            if isinstance(r, (list, tuple))
+            else _bi.list(r)
+            if hasattr(r, "__iter__") and not isinstance(r, str)
+            else [r]
+            for r in tabular_data
+        ]
+        if isinstance(data and data[0], dict) or (
+            data and isinstance(tabular_data[0], dict)
+        ):
             keys = []
             for r in tabular_data:
                 for k in r.keys():
                     if k not in keys:
                         keys.append(k)
             rows = [[r.get(k) for k in keys] for r in tabular_data]
-            if headers == 'keys':
+            if headers == "keys":
                 hdr = [str(k) for k in keys]
             elif isinstance(headers, (list, tuple)) and headers:
                 hdr = [str(h) for h in headers]
             return rows, hdr
         rows = data
-        if headers == 'firstrow':
+        if headers == "firstrow":
             hdr = [str(x) for x in rows[0]] if rows else []
             rows = rows[1:]
         elif isinstance(headers, (list, tuple)) and headers:
             hdr = [str(h) for h in headers]
         return rows, hdr
 
-    def tabulate(tabular_data, headers=(), tablefmt='simple', floatfmt='g',
-                 numalign='right', stralign='left', showindex=False, missingval='', colalign=None):
+    def tabulate(
+        tabular_data,
+        headers=(),
+        tablefmt="simple",
+        floatfmt="g",
+        numalign="right",
+        stralign="left",
+        showindex=False,
+        missingval="",
+        colalign=None,
+    ):
         rows, hdr = _rows_and_headers(tabular_data, headers)
-        if showindex is True or showindex == 'always':
+        if showindex is True or showindex == "always":
             rows = [[i] + list(r) for i, r in enumerate(rows)]
             if hdr:
-                hdr = [''] + hdr
+                hdr = [""] + hdr
         elif isinstance(showindex, (list, tuple)):
             rows = [[showindex[i]] + list(r) for i, r in enumerate(rows)]
             if hdr:
-                hdr = [''] + hdr
+                hdr = [""] + hdr
         ncol = max([len(r) for r in rows] + [len(hdr)] + [0])
         colnum = []
         for j in range(ncol):
-            colnum.append(all(_isnum(r[j]) for r in rows if j < len(r) and r[j] is not None) and any(j < len(r) and r[j] is not None for r in rows))
+            colnum.append(
+                all(_isnum(r[j]) for r in rows if j < len(r) and r[j] is not None)
+                and any(j < len(r) and r[j] is not None for r in rows)
+            )
         srows = []
         for r in rows:
             cells = []
@@ -90,7 +118,11 @@ def __vis_install_tabulate__():
             srows.append(cells)
         widths = []
         for j in range(ncol):
-            w = max([len(hdr[j]) if j < len(hdr) else 0] + [len(sr[j]) for sr in srows] + [0])
+            w = max(
+                [len(hdr[j]) if j < len(hdr) else 0]
+                + [len(sr[j]) for sr in srows]
+                + [0]
+            )
             widths.append(w)
 
         def _align(text, j):
@@ -100,121 +132,209 @@ def __vis_install_tabulate__():
                 al = numalign
             else:
                 al = stralign
-            if al == 'right':
+            if al == "right":
                 return text.rjust(widths[j])
-            if al == 'center':
+            if al == "center":
                 return text.center(widths[j])
             return text.ljust(widths[j])
 
         def _line(cells):
-            return [_align(cells[j] if j < len(cells) else '', j) for j in range(ncol)]
+            return [_align(cells[j] if j < len(cells) else "", j) for j in range(ncol)]
 
         fmt = tablefmt
         out = []
-        if fmt in ('plain',):
+        if fmt in ("plain",):
             if hdr:
-                out.append('  '.join(_line(hdr)).rstrip())
+                out.append("  ".join(_line(hdr)).rstrip())
             for sr in srows:
-                out.append('  '.join(_line(sr)).rstrip())
+                out.append("  ".join(_line(sr)).rstrip())
             return _NL.join(out)
-        if fmt in ('simple', 'presto', 'orgtbl'):
-            sep = ' | ' if fmt in ('presto', 'orgtbl') else '  '
+        if fmt in ("simple", "presto", "orgtbl"):
+            sep = " | " if fmt in ("presto", "orgtbl") else "  "
             if hdr:
-                out.append(sep.join(_line(hdr)).rstrip() if fmt == 'simple' else sep.join(_line(hdr)))
-            rule = ('-+-' if fmt in ('presto',) else '-+-' if fmt == 'orgtbl' else '  ').join('-' * widths[j] for j in range(ncol)) if fmt != 'simple' else '  '.join('-' * widths[j] for j in range(ncol))
-            if fmt == 'orgtbl':
-                rule = '|-' + '-+-'.join('-' * widths[j] for j in range(ncol)) + '-|'
+                out.append(
+                    sep.join(_line(hdr)).rstrip()
+                    if fmt == "simple"
+                    else sep.join(_line(hdr))
+                )
+            rule = (
+                (
+                    "-+-" if fmt in ("presto",) else "-+-" if fmt == "orgtbl" else "  "
+                ).join("-" * widths[j] for j in range(ncol))
+                if fmt != "simple"
+                else "  ".join("-" * widths[j] for j in range(ncol))
+            )
+            if fmt == "orgtbl":
+                rule = "|-" + "-+-".join("-" * widths[j] for j in range(ncol)) + "-|"
             out.append(rule)
             for sr in srows:
                 line = sep.join(_line(sr))
-                if fmt == 'orgtbl':
-                    line = '| ' + ' | '.join(_line(sr)) + ' |'
-                out.append(line.rstrip() if fmt == 'simple' else line)
-            if fmt == 'orgtbl' and hdr:
-                out[0] = '| ' + ' | '.join(_line(hdr)) + ' |'
+                if fmt == "orgtbl":
+                    line = "| " + " | ".join(_line(sr)) + " |"
+                out.append(line.rstrip() if fmt == "simple" else line)
+            if fmt == "orgtbl" and hdr:
+                out[0] = "| " + " | ".join(_line(hdr)) + " |"
             return _NL.join(out)
-        if fmt in ('github', 'pipe'):
+        if fmt in ("github", "pipe"):
+
             def row(cells):
-                return '| ' + ' | '.join(_line(cells)) + ' |'
+                return "| " + " | ".join(_line(cells)) + " |"
+
             if hdr:
                 out.append(row(hdr))
             aligns = []
             for j in range(ncol):
-                al = colalign[j] if (colalign and j < len(colalign) and colalign[j]) else (numalign if colnum[j] else stralign)
-                dash = '-' * max(3, widths[j])
-                if al == 'right':
-                    aligns.append(dash[:-1] + ':')
-                elif al == 'center':
-                    aligns.append(':' + dash[1:-1] + ':')
+                al = (
+                    colalign[j]
+                    if (colalign and j < len(colalign) and colalign[j])
+                    else (numalign if colnum[j] else stralign)
+                )
+                dash = "-" * max(3, widths[j])
+                if al == "right":
+                    aligns.append(dash[:-1] + ":")
+                elif al == "center":
+                    aligns.append(":" + dash[1:-1] + ":")
                 else:
-                    aligns.append(':' + dash[1:] if fmt == 'pipe' else dash)
-            out.append('| ' + ' | '.join(aligns) + ' |')
+                    aligns.append(":" + dash[1:] if fmt == "pipe" else dash)
+            out.append("| " + " | ".join(aligns) + " |")
             for sr in srows:
                 out.append(row(sr))
             return _NL.join(out)
-        if fmt in ('grid', 'fancy_grid'):
-            if fmt == 'fancy_grid':
-                ch = {'h': chr(9472), 'v': chr(9474), 'tl': chr(9484), 'tr': chr(9488),
-                      'bl': chr(9492), 'br': chr(9496), 'lm': chr(9500), 'rm': chr(9508),
-                      'tm': chr(9516), 'bm': chr(9524), 'cm': chr(9532)}
+        if fmt in ("grid", "fancy_grid"):
+            if fmt == "fancy_grid":
+                ch = {
+                    "h": chr(9472),
+                    "v": chr(9474),
+                    "tl": chr(9484),
+                    "tr": chr(9488),
+                    "bl": chr(9492),
+                    "br": chr(9496),
+                    "lm": chr(9500),
+                    "rm": chr(9508),
+                    "tm": chr(9516),
+                    "bm": chr(9524),
+                    "cm": chr(9532),
+                }
             else:
-                ch = {'h': '-', 'v': '|', 'tl': '+', 'tr': '+', 'bl': '+', 'br': '+',
-                      'lm': '+', 'rm': '+', 'tm': '+', 'bm': '+', 'cm': '+'}
+                ch = {
+                    "h": "-",
+                    "v": "|",
+                    "tl": "+",
+                    "tr": "+",
+                    "bl": "+",
+                    "br": "+",
+                    "lm": "+",
+                    "rm": "+",
+                    "tm": "+",
+                    "bm": "+",
+                    "cm": "+",
+                }
+
             def rule(l, m, r):
-                return l + m.join(ch['h'] * (widths[j] + 2) for j in range(ncol)) + r
+                return l + m.join(ch["h"] * (widths[j] + 2) for j in range(ncol)) + r
+
             def row(cells):
-                return ch['v'] + ch['v'].join(' ' + _align(cells[j] if j < len(cells) else '', j) + ' ' for j in range(ncol)) + ch['v']
-            out.append(rule(ch['tl'], ch['tm'], ch['tr']))
+                return (
+                    ch["v"]
+                    + ch["v"].join(
+                        " " + _align(cells[j] if j < len(cells) else "", j) + " "
+                        for j in range(ncol)
+                    )
+                    + ch["v"]
+                )
+
+            out.append(rule(ch["tl"], ch["tm"], ch["tr"]))
             if hdr:
                 out.append(row(hdr))
-                out.append(rule(ch['lm'], ch['cm'], ch['rm']))
+                out.append(rule(ch["lm"], ch["cm"], ch["rm"]))
             for sr in srows:
                 out.append(row(sr))
-            out.append(rule(ch['bl'], ch['bm'], ch['br']))
+            out.append(rule(ch["bl"], ch["bm"], ch["br"]))
             return _NL.join(out)
-        if fmt in ('rst',):
+        if fmt in ("rst",):
+
             def rule():
-                return '  '.join('=' * widths[j] for j in range(ncol))
+                return "  ".join("=" * widths[j] for j in range(ncol))
+
             out.append(rule())
             if hdr:
-                out.append('  '.join(_line(hdr)))
+                out.append("  ".join(_line(hdr)))
                 out.append(rule())
             for sr in srows:
-                out.append('  '.join(_line(sr)))
+                out.append("  ".join(_line(sr)))
             out.append(rule())
             return _NL.join(out)
-        if fmt in ('tsv',):
+        if fmt in ("tsv",):
             if hdr:
                 out.append(_TAB.join(hdr))
             for sr in srows:
                 out.append(_TAB.join(sr))
             return _NL.join(out)
-        if fmt in ('html', 'unsafehtml'):
+        if fmt in ("html", "unsafehtml"):
             lt = chr(60)
             gt = chr(62)
+
             def tag(t, inner):
-                return lt + t + gt + inner + lt + '/' + t + gt
-            html = [lt + 'table' + gt]
+                return lt + t + gt + inner + lt + "/" + t + gt
+
+            html = [lt + "table" + gt]
             if hdr:
-                html.append(lt + 'thead' + gt + lt + 'tr' + gt + ''.join(tag('th', h) for h in hdr) + lt + '/tr' + gt + lt + '/thead' + gt)
-            html.append(lt + 'tbody' + gt)
+                html.append(
+                    lt
+                    + "thead"
+                    + gt
+                    + lt
+                    + "tr"
+                    + gt
+                    + "".join(tag("th", h) for h in hdr)
+                    + lt
+                    + "/tr"
+                    + gt
+                    + lt
+                    + "/thead"
+                    + gt
+                )
+            html.append(lt + "tbody" + gt)
             for sr in srows:
-                html.append(lt + 'tr' + gt + ''.join(tag('td', c) for c in sr) + lt + '/tr' + gt)
-            html.append(lt + '/tbody' + gt + lt + '/table' + gt)
+                html.append(
+                    lt + "tr" + gt + "".join(tag("td", c) for c in sr) + lt + "/tr" + gt
+                )
+            html.append(lt + "/tbody" + gt + lt + "/table" + gt)
             return _NL.join(html)
         # fallback = simple
-        return tabulate(tabular_data, headers, 'simple', floatfmt, numalign, stralign, showindex, missingval)
+        return tabulate(
+            tabular_data,
+            headers,
+            "simple",
+            floatfmt,
+            numalign,
+            stralign,
+            showindex,
+            missingval,
+        )
 
-    mod = types.ModuleType('tabulate')
+    mod = types.ModuleType("tabulate")
     mod.tabulate = tabulate
-    mod.tabulate_formats = ['plain', 'simple', 'github', 'pipe', 'orgtbl', 'presto',
-                            'grid', 'fancy_grid', 'rst', 'tsv', 'html']
-    mod.__version__ = '0.9.0-vis-shim'
-    sys.modules['tabulate'] = mod
+    mod.tabulate_formats = [
+        "plain",
+        "simple",
+        "github",
+        "pipe",
+        "orgtbl",
+        "presto",
+        "grid",
+        "fancy_grid",
+        "rst",
+        "tsv",
+        "html",
+    ]
+    mod.__version__ = "0.9.0-vis-shim"
+    sys.modules["tabulate"] = mod
     try:
         _bi.tabulate = tabulate
     except Exception:
         pass
+
 
 __vis_install_tabulate__()
 del __vis_install_tabulate__

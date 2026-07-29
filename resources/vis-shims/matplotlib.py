@@ -1,24 +1,40 @@
 # vis sandbox matplotlib-compat shim (Java2D-backed pyplot subset).
 
+
 def __vis_install_matplotlib__():
     import sys
     import types
     import base64
 
-    _COLORS = set('bgrcmykw')
-    _MARKERS = set('o.,x+*sdv^<>ph')
+    _COLORS = set("bgrcmykw")
+    _MARKERS = set("o.,x+*sdv^<>ph")
 
     _state = {}
 
     def _reset():
         _state.clear()
-        _state.update({'series': [], 'title': None, 'xlabel': None,
-                       'ylabel': None, 'grid': False, 'legend': False,
-                       'xlim': None, 'ylim': None, 'xscale': 'linear',
-                       'yscale': 'linear', 'annotations': [],
-                       'xticks': None, 'xticklabels': None,
-                       'yticks': None, 'yticklabels': None,
-                       'width': 640, 'height': 480, 'axis_off': False})
+        _state.update(
+            {
+                "series": [],
+                "title": None,
+                "xlabel": None,
+                "ylabel": None,
+                "grid": False,
+                "legend": False,
+                "xlim": None,
+                "ylim": None,
+                "xscale": "linear",
+                "yscale": "linear",
+                "annotations": [],
+                "xticks": None,
+                "xticklabels": None,
+                "yticks": None,
+                "yticklabels": None,
+                "width": 640,
+                "height": 480,
+                "axis_off": False,
+            }
+        )
 
     _reset()
 
@@ -36,27 +52,32 @@ def __vis_install_matplotlib__():
             out.append(float(v))
         return out
 
-    def _add_series(kind, x, y, label, color, marker=None,
-                    linestyle=None, y2=None, labels=None):
+    def _add_series(
+        kind, x, y, label, color, marker=None, linestyle=None, y2=None, labels=None
+    ):
         s = {
-            'kind': kind, 'x': _nums(x), 'y': _nums(y),
-            'label': label, 'color': color, 'marker': marker,
-            'linestyle': linestyle,
-            'y2': (_nums(y2) if y2 is not None else None),
-            'labels': labels,
+            "kind": kind,
+            "x": _nums(x),
+            "y": _nums(y),
+            "label": label,
+            "color": color,
+            "marker": marker,
+            "linestyle": linestyle,
+            "y2": (_nums(y2) if y2 is not None else None),
+            "labels": labels,
         }
-        _state['series'].append(s)
+        _state["series"].append(s)
         return s
 
     def _parse_fmt(fmt):
         color = None
         marker = None
         line = None
-        s = fmt or ''
-        for ls in ('--', '-.', ':', '-'):
+        s = fmt or ""
+        for ls in ("--", "-.", ":", "-"):
             if ls in s:
                 line = ls
-                s = s.replace(ls, '', 1)
+                s = s.replace(ls, "", 1)
                 break
         for ch in s:
             if ch in _COLORS and color is None:
@@ -71,8 +92,8 @@ def __vis_install_matplotlib__():
         _reset()
         d = float(dpi or 100)
         if figsize:
-            _state['width'] = int(float(figsize[0]) * d)
-            _state['height'] = int(float(figsize[1]) * d)
+            _state["width"] = int(float(figsize[0]) * d)
+            _state["height"] = int(float(figsize[1]) * d)
         return _Figure()
 
     def plot(*args, **kwargs):
@@ -89,22 +110,26 @@ def __vis_install_matplotlib__():
                 y = list(a[i])
                 x = list(range(len(y)))
                 i += 1
-            fmt = ''
+            fmt = ""
             if i < n and isinstance(a[i], str):
                 fmt = a[i]
                 i += 1
             color, marker, line = _parse_fmt(fmt)
-            kind = 'scatter' if (marker and not line) else 'line'
-            s = _add_series(kind, x, y, kwargs.get('label'),
-                            kwargs.get('color', color),
-                            marker=kwargs.get('marker', marker),
-                            linestyle=kwargs.get('linestyle',
-                                                  kwargs.get('ls', line)))
+            kind = "scatter" if (marker and not line) else "line"
+            s = _add_series(
+                kind,
+                x,
+                y,
+                kwargs.get("label"),
+                kwargs.get("color", color),
+                marker=kwargs.get("marker", marker),
+                linestyle=kwargs.get("linestyle", kwargs.get("ls", line)),
+            )
             handles.append(_Line(s))
         return handles
 
     def scatter(x, y, s=None, c=None, label=None, color=None, **kwargs):
-        _add_series('scatter', x, y, label, color or c)
+        _add_series("scatter", x, y, label, color or c)
         return None
 
     def _is_number(v):
@@ -137,17 +162,17 @@ def __vis_install_matplotlib__():
     def bar(x, height, width=0.8, label=None, color=None, **kwargs):
         pos, labels = _categorical(x)
         if pos is not None:
-            _add_series('bar', pos, height, label, color, labels=labels)
+            _add_series("bar", pos, height, label, color, labels=labels)
         else:
-            _add_series('bar', x, height, label, color)
+            _add_series("bar", x, height, label, color)
         return None
 
     def barh(y, width, height=0.8, label=None, color=None, **kwargs):
         pos, labels = _categorical(y)
         if pos is not None:
-            _add_series('bar', pos, width, label, color, labels=labels)
+            _add_series("bar", pos, width, label, color, labels=labels)
         else:
-            _add_series('bar', y, width, label, color)
+            _add_series("bar", y, width, label, color)
         return None
 
     def hist(x, bins=10, label=None, color=None, **kwargs):
@@ -169,7 +194,7 @@ def __vis_install_matplotlib__():
                 idx = 0
             counts[idx] += 1
         centers = [lo + (i + 0.5) * w for i in range(bins)]
-        _add_series('bar', centers, counts, label, color)
+        _add_series("bar", centers, counts, label, color)
         return counts, centers
 
     def fill_between(x, y1, y2=0, label=None, color=None, **kwargs):
@@ -180,116 +205,126 @@ def __vis_install_matplotlib__():
             y2l = [float(y2)] * n
         else:
             y2l = _nums(y2)
-        _add_series('fill', xs, y1l, label, color, y2=y2l)
+        _add_series("fill", xs, y1l, label, color, y2=y2l)
         return None
 
     def step(x, y, *args, label=None, color=None, **kwargs):
-        _add_series('step', x, y, label, color)
+        _add_series("step", x, y, label, color)
         return None
 
     def axhline(y=0, color=None, linestyle=None, ls=None, label=None, **kwargs):
-        _add_series('hline', [], [y], label, color, linestyle=(linestyle or ls))
+        _add_series("hline", [], [y], label, color, linestyle=(linestyle or ls))
         return None
 
     def axvline(x=0, color=None, linestyle=None, ls=None, label=None, **kwargs):
-        _add_series('vline', [x], [], label, color, linestyle=(linestyle or ls))
+        _add_series("vline", [x], [], label, color, linestyle=(linestyle or ls))
         return None
 
     def pie(sizes, labels=None, colors=None, autopct=None, **kwargs):
-        _add_series('pie', list(sizes), [], None, None,
-                    labels=(list(labels) if labels else None))
+        _add_series(
+            "pie",
+            list(sizes),
+            [],
+            None,
+            None,
+            labels=(list(labels) if labels else None),
+        )
         return None
 
-    def errorbar(x, y, yerr=None, xerr=None, fmt='', label=None, color=None, **kwargs):
-        _add_series('line', x, y, label, color)
+    def errorbar(x, y, yerr=None, xerr=None, fmt="", label=None, color=None, **kwargs):
+        _add_series("line", x, y, label, color)
         return None
 
     def text(x, y, s, **kwargs):
-        _state['annotations'].append({'x': float(x), 'y': float(y), 'text': str(s)})
+        _state["annotations"].append({"x": float(x), "y": float(y), "text": str(s)})
         return None
 
     def annotate(s, xy=None, xytext=None, **kwargs):
         pt = xytext or xy or (0, 0)
-        _state['annotations'].append({'x': float(pt[0]), 'y': float(pt[1]), 'text': str(s)})
+        _state["annotations"].append(
+            {"x": float(pt[0]), "y": float(pt[1]), "text": str(s)}
+        )
         return None
 
     def title(s, **kwargs):
-        _state['title'] = str(s)
+        _state["title"] = str(s)
 
     def suptitle(s, **kwargs):
-        _state['title'] = str(s)
+        _state["title"] = str(s)
 
     def xlabel(s, **kwargs):
-        _state['xlabel'] = str(s)
+        _state["xlabel"] = str(s)
 
     def ylabel(s, **kwargs):
-        _state['ylabel'] = str(s)
+        _state["ylabel"] = str(s)
 
     def grid(b=True, **kwargs):
-        _state['grid'] = bool(b)
+        _state["grid"] = bool(b)
 
     def legend(*args, **kwargs):
-        _state['legend'] = True
+        _state["legend"] = True
 
     def xlim(*args, **kwargs):
         if len(args) == 2:
-            _state['xlim'] = [float(args[0]), float(args[1])]
+            _state["xlim"] = [float(args[0]), float(args[1])]
         elif len(args) == 1 and args[0] is not None:
-            _state['xlim'] = [float(args[0][0]), float(args[0][1])]
-        return _state['xlim']
+            _state["xlim"] = [float(args[0][0]), float(args[0][1])]
+        return _state["xlim"]
 
     def ylim(*args, **kwargs):
         if len(args) == 2:
-            _state['ylim'] = [float(args[0]), float(args[1])]
+            _state["ylim"] = [float(args[0]), float(args[1])]
         elif len(args) == 1 and args[0] is not None:
-            _state['ylim'] = [float(args[0][0]), float(args[0][1])]
-        return _state['ylim']
+            _state["ylim"] = [float(args[0][0]), float(args[0][1])]
+        return _state["ylim"]
 
     def xscale(v, **kwargs):
-        _state['xscale'] = str(v)
+        _state["xscale"] = str(v)
 
     def yscale(v, **kwargs):
-        _state['yscale'] = str(v)
+        _state["yscale"] = str(v)
 
     def semilogx(*args, **kwargs):
         r = plot(*args, **kwargs)
-        _state['xscale'] = 'log'
+        _state["xscale"] = "log"
         return r
 
     def semilogy(*args, **kwargs):
         r = plot(*args, **kwargs)
-        _state['yscale'] = 'log'
+        _state["yscale"] = "log"
         return r
 
     def loglog(*args, **kwargs):
         r = plot(*args, **kwargs)
-        _state['xscale'] = 'log'
-        _state['yscale'] = 'log'
+        _state["xscale"] = "log"
+        _state["yscale"] = "log"
         return r
 
     def _ticks(axis, args, kwargs):
         # matplotlib's xticks()/yticks(): no args reads the current locator,
         # (ticks[, labels]) sets it. Positions are floats in data space; labels
         # ride along by index and the renderer falls back to formatted numbers.
-        ticks = kwargs.get('ticks')
-        labels = kwargs.get('labels')
+        ticks = kwargs.get("ticks")
+        labels = kwargs.get("labels")
         if len(args) > 0:
             ticks = args[0]
         if len(args) > 1:
             labels = args[1]
         if ticks is not None:
             vals = [float(t) for t in list(ticks)]
-            _state[axis + 'ticks'] = vals if vals else None
+            _state[axis + "ticks"] = vals if vals else None
         if labels is not None:
-            _state[axis + 'ticklabels'] = [str(v) for v in list(labels)]
-        return (list(_state.get(axis + 'ticks') or []),
-                list(_state.get(axis + 'ticklabels') or []))
+            _state[axis + "ticklabels"] = [str(v) for v in list(labels)]
+        return (
+            list(_state.get(axis + "ticks") or []),
+            list(_state.get(axis + "ticklabels") or []),
+        )
 
     def xticks(*args, **kwargs):
-        return _ticks('x', args, kwargs)
+        return _ticks("x", args, kwargs)
 
     def yticks(*args, **kwargs):
-        return _ticks('y', args, kwargs)
+        return _ticks("y", args, kwargs)
 
     def tight_layout(*args, **kwargs):
         return None
@@ -309,9 +344,9 @@ def __vis_install_matplotlib__():
     def _human_size(n):
         # Compact byte-size label for the vis-image fence (B / KB / MB).
         n = float(n)
-        for unit in ('B', 'KB', 'MB'):
-            if n < 1024.0 or unit == 'MB':
-                return (str(int(n)) + ' B') if unit == 'B' else ('%.1f %s' % (n, unit))
+        for unit in ("B", "KB", "MB"):
+            if n < 1024.0 or unit == "MB":
+                return (str(int(n)) + " B") if unit == "B" else ("%.1f %s" % (n, unit))
             n = n / 1024.0
 
     _img_seq = [0]
@@ -324,7 +359,7 @@ def __vis_install_matplotlib__():
         # (`__vis_mpl_render_file__`), so this works even when the sandbox's own
         # Python filesystem is denied. Returns True on success, False (no bridge /
         # render error) so show() can fall back to the plain ASCII print.
-        render = globals().get('__vis_mpl_render_file__')
+        render = globals().get("__vis_mpl_render_file__")
         if render is None:
             return False
         try:
@@ -338,16 +373,33 @@ def __vis_install_matplotlib__():
             h = int(h)
             size = _human_size(int(nbytes))
             _img_seq[0] += 1
-            title = spec.get('title') or 'matplotlib figure'
-            summary = ('[Image #' + str(_img_seq[0]) + ': ' + str(title) + ' '
-                       + str(w) + '×' + str(h) + ', ' + size + ']')
-            fence = '`' * 4
-            lines = [fence + 'vis-image', summary, path, 'image/png',
-                     str(w) + 'x' + str(h), size]
-            if spec.get('series'):
+            title = spec.get("title") or "matplotlib figure"
+            summary = (
+                "[Image #"
+                + str(_img_seq[0])
+                + ": "
+                + str(title)
+                + " "
+                + str(w)
+                + "×"
+                + str(h)
+                + ", "
+                + size
+                + "]"
+            )
+            fence = "`" * 4
+            lines = [
+                fence + "vis-image",
+                summary,
+                path,
+                "image/png",
+                str(w) + "x" + str(h),
+                size,
+            ]
+            if spec.get("series"):
                 lines.append(_render_ascii(spec, 74, 22, False))
             lines.append(fence)
-            print('\n'.join(lines))
+            print("\n".join(lines))
             return True
         except Exception:
             return False
@@ -358,12 +410,17 @@ def __vis_install_matplotlib__():
         # riding along as the fence's text fallback. No bridge (or a render failure)
         # falls back to printing the ASCII plot straight to stdout, so `plt.show()`
         # still shows the plot in a purely textual environment.
-        if _state.get('series'):
+        if _state.get("series"):
             if _emit_image():
                 return None
-            print(_render_ascii(_spec(), kwargs.get('width', 74),
-                                kwargs.get('height', 22),
-                                kwargs.get('color', True)))
+            print(
+                _render_ascii(
+                    _spec(),
+                    kwargs.get("width", 74),
+                    kwargs.get("height", 22),
+                    kwargs.get("color", True),
+                )
+            )
         return None
 
     class _Line(object):
@@ -371,37 +428,43 @@ def __vis_install_matplotlib__():
         # and the common set_* mutators (they edit the accumulated series).
         def __init__(self, s):
             self._s = s
+
         def set_label(self, v):
-            self._s['label'] = v
+            self._s["label"] = v
             return None
+
         def set_color(self, v):
-            self._s['color'] = v
+            self._s["color"] = v
             return None
+
         def set_linestyle(self, v):
-            self._s['linestyle'] = v
+            self._s["linestyle"] = v
             return None
+
         def set_linewidth(self, *a, **k):
             return None
+
         def get_label(self):
-            return self._s.get('label')
+            return self._s.get("label")
 
     def axis(*args, **kwargs):
         if not args:
             return (0.0, 1.0, 0.0, 1.0)
         a = args[0]
-        if a is False or a == 'off':
-            _state['axis_off'] = True
-        elif a is True or a == 'on':
-            _state['axis_off'] = False
+        if a is False or a == "off":
+            _state["axis_off"] = True
+        elif a is True or a == "on":
+            _state["axis_off"] = False
         elif isinstance(a, (list, tuple)) and len(a) == 4:
-            _state['xlim'] = [float(a[0]), float(a[1])]
-            _state['ylim'] = [float(a[2]), float(a[3])]
+            _state["xlim"] = [float(a[0]), float(a[1])]
+            _state["ylim"] = [float(a[2]), float(a[3])]
         return (0.0, 1.0, 0.0, 1.0)
 
     def _quartiles(vals):
         xs = sorted(_nums(vals))
         if not xs:
             return None
+
         def q(p):
             if len(xs) == 1:
                 return xs[0]
@@ -409,13 +472,13 @@ def __vis_install_matplotlib__():
             lo = int(idx)
             hi = min(lo + 1, len(xs) - 1)
             return xs[lo] + (xs[hi] - xs[lo]) * (idx - lo)
-        return {'lo': xs[0], 'q1': q(0.25), 'q2': q(0.5),
-                'q3': q(0.75), 'hi': xs[-1]}
+
+        return {"lo": xs[0], "q1": q(0.25), "q2": q(0.5), "q3": q(0.75), "hi": xs[-1]}
 
     def boxplot(data, positions=None, labels=None, **kwargs):
         try:
             first = data[0]
-            seqs = data if hasattr(first, '__iter__') else [data]
+            seqs = data if hasattr(first, "__iter__") else [data]
         except Exception:
             seqs = [data]
         stats = []
@@ -423,48 +486,82 @@ def __vis_install_matplotlib__():
             st = _quartiles(d)
             if st:
                 stats.append(st)
-        pos = ([float(p) for p in positions] if positions
-               else list(range(1, len(stats) + 1)))
+        pos = (
+            [float(p) for p in positions]
+            if positions
+            else list(range(1, len(stats) + 1))
+        )
         ally = []
         for st in stats:
-            ally.append(st['lo'])
-            ally.append(st['hi'])
-        s = _add_series('box', pos, ally, None, None)
-        s['stats'] = stats
-        s['positions'] = pos
-        return {'boxes': stats}
+            ally.append(st["lo"])
+            ally.append(st["hi"])
+        s = _add_series("box", pos, ally, None, None)
+        s["stats"] = stats
+        s["positions"] = pos
+        return {"boxes": stats}
 
-    def imshow(data, cmap=None, aspect=None, extent=None,
-               vmin=None, vmax=None, **kwargs):
+    def imshow(
+        data, cmap=None, aspect=None, extent=None, vmin=None, vmax=None, **kwargs
+    ):
         rows = [_nums(r) for r in data]
         nr = len(rows)
         nc = max((len(r) for r in rows), default=0)
         flat = [v for r in rows for v in r]
         lo = float(vmin) if vmin is not None else (min(flat) if flat else 0.0)
         hi = float(vmax) if vmax is not None else (max(flat) if flat else 1.0)
-        s = _add_series('image', [0.0, float(nc)], [0.0, float(nr)], None, None)
-        s['rows'] = rows
-        s['nrows'] = nr
-        s['ncols'] = nc
-        s['vmin'] = lo
-        s['vmax'] = hi
+        s = _add_series("image", [0.0, float(nc)], [0.0, float(nr)], None, None)
+        s["rows"] = rows
+        s["nrows"] = nr
+        s["ncols"] = nc
+        s["vmin"] = lo
+        s["vmax"] = hi
         return s
 
     def colorbar(*args, **kwargs):
         return None
 
-    def hlines(y, xmin=None, xmax=None, colors=None, color=None,
-               linestyles=None, linestyle=None, label=None, **kwargs):
+    def hlines(
+        y,
+        xmin=None,
+        xmax=None,
+        colors=None,
+        color=None,
+        linestyles=None,
+        linestyle=None,
+        label=None,
+        **kwargs,
+    ):
         for yy in _nums(y):
-            _add_series('hline', [], [yy], label, color or colors,
-                        linestyle=(linestyle or linestyles))
+            _add_series(
+                "hline",
+                [],
+                [yy],
+                label,
+                color or colors,
+                linestyle=(linestyle or linestyles),
+            )
         return None
 
-    def vlines(x, ymin=None, ymax=None, colors=None, color=None,
-               linestyles=None, linestyle=None, label=None, **kwargs):
+    def vlines(
+        x,
+        ymin=None,
+        ymax=None,
+        colors=None,
+        color=None,
+        linestyles=None,
+        linestyle=None,
+        label=None,
+        **kwargs,
+    ):
         for xx in _nums(x):
-            _add_series('vline', [xx], [], label, color or colors,
-                        linestyle=(linestyle or linestyles))
+            _add_series(
+                "vline",
+                [xx],
+                [],
+                label,
+                color or colors,
+                linestyle=(linestyle or linestyles),
+            )
         return None
 
     class _Axes(object):
@@ -578,31 +675,42 @@ def __vis_install_matplotlib__():
         # delegates to the module-level artist / renderer.
         def savefig(self, *a, **k):
             return savefig(*a, **k)
+
         def suptitle(self, s, **k):
-            _state['title'] = str(s)
+            _state["title"] = str(s)
             return None
+
         def tight_layout(self, *a, **k):
             return None
+
         def subplots_adjust(self, *a, **k):
             return None
+
         def set_size_inches(self, w, h=None, **k):
-            if h is None and hasattr(w, '__len__'):
+            if h is None and hasattr(w, "__len__"):
                 w, h = w[0], w[1]
-            _state['width'] = int(float(w) * 100)
-            _state['height'] = int(float(h) * 100)
+            _state["width"] = int(float(w) * 100)
+            _state["height"] = int(float(h) * 100)
             return None
+
         def add_subplot(self, *a, **k):
             return _Axes()
+
         def add_axes(self, *a, **k):
             return _Axes()
+
         def gca(self, *a, **k):
             return _Axes()
+
         def colorbar(self, *a, **k):
             return None
+
         def legend(self, *a, **k):
             return legend(*a, **k)
+
         def clf(self, *a, **k):
             _reset()
+
         def align_labels(self, *a, **k):
             return None
 
@@ -622,20 +730,42 @@ def __vis_install_matplotlib__():
     def gcf(*args, **kwargs):
         return _Figure()
 
-    _TAB10 = [(31, 119, 180), (255, 127, 14), (44, 160, 44), (214, 39, 40),
-              (148, 103, 189), (140, 86, 75), (227, 119, 194),
-              (127, 127, 127), (188, 189, 34), (23, 190, 207)]
+    _TAB10 = [
+        (31, 119, 180),
+        (255, 127, 14),
+        (44, 160, 44),
+        (214, 39, 40),
+        (148, 103, 189),
+        (140, 86, 75),
+        (227, 119, 194),
+        (127, 127, 127),
+        (188, 189, 34),
+        (23, 190, 207),
+    ]
     _CNAMED = {
-        'b': (31, 119, 180), 'g': (44, 160, 44), 'r': (214, 39, 40),
-        'c': (23, 190, 207), 'm': (191, 0, 191), 'y': (188, 189, 34),
-        'k': (70, 70, 70), 'w': (230, 230, 230), 'blue': (31, 119, 180),
-        'orange': (255, 127, 14), 'green': (44, 160, 44), 'red': (214, 39, 40),
-        'purple': (148, 103, 189), 'brown': (140, 86, 75),
-        'pink': (227, 119, 194), 'gray': (127, 127, 127),
-        'grey': (127, 127, 127), 'olive': (188, 189, 34),
-        'cyan': (23, 190, 207), 'magenta': (191, 0, 191),
-        'yellow': (188, 189, 34), 'black': (70, 70, 70),
-        'white': (230, 230, 230),
+        "b": (31, 119, 180),
+        "g": (44, 160, 44),
+        "r": (214, 39, 40),
+        "c": (23, 190, 207),
+        "m": (191, 0, 191),
+        "y": (188, 189, 34),
+        "k": (70, 70, 70),
+        "w": (230, 230, 230),
+        "blue": (31, 119, 180),
+        "orange": (255, 127, 14),
+        "green": (44, 160, 44),
+        "red": (214, 39, 40),
+        "purple": (148, 103, 189),
+        "brown": (140, 86, 75),
+        "pink": (227, 119, 194),
+        "gray": (127, 127, 127),
+        "grey": (127, 127, 127),
+        "olive": (188, 189, 34),
+        "cyan": (23, 190, 207),
+        "magenta": (191, 0, 191),
+        "yellow": (188, 189, 34),
+        "black": (70, 70, 70),
+        "white": (230, 230, 230),
     }
 
     def _rgb(color, idx):
@@ -649,24 +779,23 @@ def __vis_install_matplotlib__():
             # resolves its first entry, so hex/named specs never reach float().
             nums = color[:3]
             if len(color) >= 3 and all(
-                    isinstance(v, (int, float)) and not isinstance(v, bool)
-                    for v in nums):
-                return tuple(max(0, min(255, int(round(float(v) * 255))))
-                             for v in nums)
+                isinstance(v, (int, float)) and not isinstance(v, bool) for v in nums
+            ):
+                return tuple(max(0, min(255, int(round(float(v) * 255)))) for v in nums)
             if len(color):
                 return _rgb(color[0], idx)
             return _TAB10[idx % len(_TAB10)]
         s = str(color).strip()
-        if s.startswith('#'):
+        if s.startswith("#"):
             h = s[1:]
             if len(h) == 3:
-                h = ''.join(ch * 2 for ch in h)
+                h = "".join(ch * 2 for ch in h)
             if len(h) >= 6:
                 try:
                     return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
                 except ValueError:
                     pass
-        if len(s) >= 2 and s[0] == 'C' and s[1:].isdigit():
+        if len(s) >= 2 and s[0] == "C" and s[1:].isdigit():
             return _TAB10[int(s[1:]) % len(_TAB10)]
         return _CNAMED.get(s.lower(), _TAB10[idx % len(_TAB10)])
 
@@ -679,28 +808,28 @@ def __vis_install_matplotlib__():
         # BRAILLE canvas (2x4 sub-cell dots => smooth high-res curves) inside a
         # box-drawing frame with y/x tick labels, title, axis labels and a
         # per-series legend. `color=True` adds ANSI truecolor per series.
-        series = spec.get('series') or []
-        title = spec.get('title')
-        xlabel = spec.get('xlabel')
-        ylabel = spec.get('ylabel')
+        series = spec.get("series") or []
+        title = spec.get("title")
+        xlabel = spec.get("xlabel")
+        ylabel = spec.get("ylabel")
         all_x = []
         all_y = []
         has_bar = False
         cat_labels = None
         for s in series:
-            k = str(s.get('kind'))
-            if k in ('pie', 'image', 'box'):
+            k = str(s.get("kind"))
+            if k in ("pie", "image", "box"):
                 continue
-            if k == 'bar':
+            if k == "bar":
                 has_bar = True
-                if cat_labels is None and s.get('labels'):
-                    cat_labels = s.get('labels')
-            all_x += [float(v) for v in (s.get('x') or [])]
-            all_y += [float(v) for v in (s.get('y') or [])]
-            if s.get('y2') is not None:
-                all_y += [float(v) for v in s.get('y2')]
-        xlim = spec.get('xlim')
-        ylim = spec.get('ylim')
+                if cat_labels is None and s.get("labels"):
+                    cat_labels = s.get("labels")
+            all_x += [float(v) for v in (s.get("x") or [])]
+            all_y += [float(v) for v in (s.get("y") or [])]
+            if s.get("y2") is not None:
+                all_y += [float(v) for v in s.get("y2")]
+        xlim = spec.get("xlim")
+        ylim = spec.get("ylim")
         if xlim:
             xmin, xmax = float(xlim[0]), float(xlim[1])
         elif all_x:
@@ -744,13 +873,13 @@ def __vis_install_matplotlib__():
         legend = []
         ci = 0
         for s in series:
-            k = str(s.get('kind'))
-            if k in ('pie', 'image', 'box'):
+            k = str(s.get("kind"))
+            if k in ("pie", "image", "box"):
                 continue
-            rgb = _rgb(s.get('color'), ci)
-            xs = [float(v) for v in (s.get('x') or [])]
-            ysv = [float(v) for v in (s.get('y') or [])]
-            if k == 'bar':
+            rgb = _rgb(s.get("color"), ci)
+            xs = [float(v) for v in (s.get("x") or [])]
+            ysv = [float(v) for v in (s.get("y") or [])]
+            if k == "bar":
                 base = dyof(max(ymin, min(ymax, 0.0)))
                 for x, y in zip(xs, ysv):
                     dc = dxof(x)
@@ -759,18 +888,18 @@ def __vis_install_matplotlib__():
                     for rr in range(lo, hi + 1):
                         for off in (-1, 0, 1):
                             dput(dc + off, rr, rgb)
-            elif k == 'hline':
+            elif k == "hline":
                 for y in ysv:
                     dr = dyof(y)
                     for dc in range(DW):
                         dput(dc, dr, rgb)
-            elif k == 'vline':
+            elif k == "vline":
                 for x in xs:
                     dc = dxof(x)
                     for dr in range(DH):
                         dput(dc, dr, rgb)
-            elif k == 'fill':
-                y2 = [float(v) for v in (s.get('y2') or [])]
+            elif k == "fill":
+                y2 = [float(v) for v in (s.get("y2") or [])]
                 for i2, x in enumerate(xs):
                     if i2 >= len(ysv):
                         break
@@ -780,10 +909,10 @@ def __vis_install_matplotlib__():
                     lo, hi = (r1, r2) if r1 <= r2 else (r2, r1)
                     for rr in range(lo, hi + 1):
                         dput(dc, rr, rgb)
-            elif k == 'scatter':
+            elif k == "scatter":
                 for x, y in zip(xs, ysv):
                     dput(dxof(x), dyof(y), rgb)
-            elif k == 'step':
+            elif k == "step":
                 pts = list(zip(xs, ysv))
                 for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
                     c1, c2 = dxof(x1), dxof(x2)
@@ -800,27 +929,29 @@ def __vis_install_matplotlib__():
                     n = max(abs(c2 - c1), abs(r2 - r1), 1)
                     for t in range(n + 1):
                         f = t / n
-                        dput(int(round(c1 + (c2 - c1) * f)),
-                             int(round(r1 + (r2 - r1) * f)), rgb)
+                        dput(
+                            int(round(c1 + (c2 - c1) * f)),
+                            int(round(r1 + (r2 - r1) * f)),
+                            rgb,
+                        )
                 for x, y in pts:
                     dput(dxof(x), dyof(y), rgb)
-            lbl = s.get('label')
+            lbl = s.get("label")
             legend.append((rgb, str(lbl) if lbl else None))
             ci += 1
 
         def fmt(v):
             if abs(v) < 1e15 and float(v) == int(v):
                 return str(int(v))
-            return '%.3g' % v
+            return "%.3g" % v
 
         def paint(txt, rgb):
             if not color or rgb is None:
                 return txt
-            return '\x1b[38;2;%d;%d;%dm%s\x1b[0m' % (
-                rgb[0], rgb[1], rgb[2], txt)
+            return "\x1b[38;2;%d;%d;%dm%s\x1b[0m" % (rgb[0], rgb[1], rgb[2], txt)
 
         def dim(txt):
-            return ('\x1b[90m' + txt + '\x1b[0m') if color else txt
+            return ("\x1b[90m" + txt + "\x1b[0m") if color else txt
 
         nyt = min(5, Hc)
         yticks = {}
@@ -830,17 +961,17 @@ def __vis_install_matplotlib__():
         lw = max((len(v) for v in yticks.values()), default=1)
         out = []
         if title:
-            out.append(' ' * (lw + 1) + str(title).center(Wc))
+            out.append(" " * (lw + 1) + str(title).center(Wc))
         if ylabel:
-            out.append(' ' * (lw + 1) + str(ylabel)[:Wc])
+            out.append(" " * (lw + 1) + str(ylabel)[:Wc])
         for r in range(Hc):
             buf = []
             for cc in cell[r]:
                 bits, rgb = cc
-                buf.append(paint(chr(0x2800 + bits), rgb) if bits else ' ')
-            axis = '┤' if r in yticks else '│'
-            out.append(yticks.get(r, '').rjust(lw) + dim(axis) + ''.join(buf))
-        axisrow = ['─'] * Wc
+                buf.append(paint(chr(0x2800 + bits), rgb) if bits else " ")
+            axis = "┤" if r in yticks else "│"
+            out.append(yticks.get(r, "").rjust(lw) + dim(axis) + "".join(buf))
+        axisrow = ["─"] * Wc
         nxt = min(5, Wc)
         xt = {}
         if cat_labels:
@@ -854,68 +985,81 @@ def __vis_install_matplotlib__():
                 xt[int(round(t * (Wc - 1)))] = fmt(xmin + t * (xmax - xmin))
         for col in xt:
             if 0 <= col < Wc:
-                axisrow[col] = '┬'
-        out.append(' ' * lw + dim('└' + ''.join(axisrow)))
-        xrow = [' '] * Wc
+                axisrow[col] = "┬"
+        out.append(" " * lw + dim("└" + "".join(axisrow)))
+        xrow = [" "] * Wc
         for col, label in xt.items():
             start = min(max(0, col - len(label) // 2), Wc - len(label))
             for j, chc in enumerate(label):
                 if 0 <= start + j < Wc:
                     xrow[start + j] = chc
-        out.append(' ' * (lw + 1) + ''.join(xrow))
+        out.append(" " * (lw + 1) + "".join(xrow))
         if xlabel:
-            out.append(' ' * (lw + 1) + str(xlabel).center(Wc))
+            out.append(" " * (lw + 1) + str(xlabel).center(Wc))
         labs = [(rgb, l) for (rgb, l) in legend if l]
         if labs:
-            out.append('')
-            out.append(' ' * (lw + 1) +
-                       '   '.join(paint('●', rgb) + ' ' + l
-                                  for rgb, l in labs))
-        return '\n'.join(out)
+            out.append("")
+            out.append(
+                " " * (lw + 1)
+                + "   ".join(paint("●", rgb) + " " + l for rgb, l in labs)
+            )
+        return "\n".join(out)
 
     def _spec():
         return {
-            'width': _state['width'], 'height': _state['height'],
-            'title': _state['title'], 'xlabel': _state['xlabel'],
-            'ylabel': _state['ylabel'], 'grid': _state['grid'],
-            'legend': _state['legend'], 'xlim': _state['xlim'],
-            'ylim': _state['ylim'], 'xscale': _state['xscale'],
-            'yscale': _state['yscale'], 'axis_off': _state.get('axis_off', False),
-            'annotations': list(_state['annotations']),
-            'xticks': _state.get('xticks'), 'yticks': _state.get('yticks'),
-            'xticklabels': _state.get('xticklabels'),
-            'yticklabels': _state.get('yticklabels'),
-            'series': list(_state['series']),
+            "width": _state["width"],
+            "height": _state["height"],
+            "title": _state["title"],
+            "xlabel": _state["xlabel"],
+            "ylabel": _state["ylabel"],
+            "grid": _state["grid"],
+            "legend": _state["legend"],
+            "xlim": _state["xlim"],
+            "ylim": _state["ylim"],
+            "xscale": _state["xscale"],
+            "yscale": _state["yscale"],
+            "axis_off": _state.get("axis_off", False),
+            "annotations": list(_state["annotations"]),
+            "xticks": _state.get("xticks"),
+            "yticks": _state.get("yticks"),
+            "xticklabels": _state.get("xticklabels"),
+            "yticklabels": _state.get("yticklabels"),
+            "series": list(_state["series"]),
         }
 
     def savefig(fname, format=None, dpi=None, **kwargs):
         # Text targets (.txt/.asc filename, or format 'ascii'/'txt') get the
         # pure-Python ASCII render; everything else goes through the Java2D PNG
         # backend and writes the returned bytes.
-        is_text = str(format).lower() in ('ascii', 'txt') or (
-            isinstance(fname, str) and fname.lower().endswith(('.txt', '.asc')))
+        is_text = str(format).lower() in ("ascii", "txt") or (
+            isinstance(fname, str) and fname.lower().endswith((".txt", ".asc"))
+        )
         if is_text:
-            txt = _render_ascii(_spec(),
-                                int(kwargs.get('width', 74)),
-                                int(kwargs.get('height', 22)),
-                                bool(kwargs.get('color', False)))
-            if hasattr(fname, 'write'):
+            txt = _render_ascii(
+                _spec(),
+                int(kwargs.get("width", 74)),
+                int(kwargs.get("height", 22)),
+                bool(kwargs.get("color", False)),
+            )
+            if hasattr(fname, "write"):
                 fname.write(txt)
             else:
-                with open(fname, 'w') as _f:
+                with open(fname, "w") as _f:
                     _f.write(txt)
             return fname
-        render = globals().get('__vis_mpl_render__')
+        render = globals().get("__vis_mpl_render__")
         if render is None:
-            raise RuntimeError('vis: matplotlib Java2D backend is not bound in this sandbox.')
+            raise RuntimeError(
+                "vis: matplotlib Java2D backend is not bound in this sandbox."
+            )
         env = render(_spec())
         if not env[0]:
-            raise RuntimeError('matplotlib render failed: ' + str(env[1]))
+            raise RuntimeError("matplotlib render failed: " + str(env[1]))
         data = base64.b64decode(env[1])
-        if hasattr(fname, 'write'):
+        if hasattr(fname, "write"):
             fname.write(data)
         else:
-            with open(fname, 'wb') as _f:
+            with open(fname, "wb") as _f:
                 _f.write(data)
         return fname
 
@@ -927,13 +1071,20 @@ def __vis_install_matplotlib__():
             return None
 
     _rcparams = _RcParams()
-    _rcparams.update({
-        'figure.figsize': [6.4, 4.8], 'figure.dpi': 100.0,
-        'savefig.dpi': 100.0, 'lines.linewidth': 1.5, 'font.size': 10.0,
-        'axes.grid': False, 'interactive': False, 'backend': 'Agg',
-    })
+    _rcparams.update(
+        {
+            "figure.figsize": [6.4, 4.8],
+            "figure.dpi": 100.0,
+            "savefig.dpi": 100.0,
+            "lines.linewidth": 1.5,
+            "font.size": 10.0,
+            "axes.grid": False,
+            "interactive": False,
+            "backend": "Agg",
+        }
+    )
 
-    _backend = ['Agg']
+    _backend = ["Agg"]
 
     def use(backend=None, *a, **k):
         # matplotlib.use(...) — record the requested backend name; the vis shim
@@ -988,7 +1139,7 @@ def __vis_install_matplotlib__():
         return None
 
     def figtext(x, y, s, *a, **k):
-        _state['annotations'].append({'x': float(x), 'y': float(y), 'text': str(s)})
+        _state["annotations"].append({"x": float(x), "y": float(y), "text": str(s)})
         return None
 
     class _NullCtx(object):
@@ -998,7 +1149,7 @@ def __vis_install_matplotlib__():
         def __exit__(self, *a):
             return False
 
-    def stackplot(x, *ys, labels=None, colors=None, baseline='zero', **kwargs):
+    def stackplot(x, *ys, labels=None, colors=None, baseline="zero", **kwargs):
         xs = list(x)
         layers = []
         if len(ys) == 1:
@@ -1008,7 +1159,11 @@ def __vis_install_matplotlib__():
                 probe = first[0]
             except Exception:
                 probe = None
-            if probe is not None and hasattr(probe, '__iter__') and not isinstance(probe, (str, bytes)):
+            if (
+                probe is not None
+                and hasattr(probe, "__iter__")
+                and not isinstance(probe, (str, bytes))
+            ):
                 layers = [_nums(row) for row in first]
             else:
                 layers = [_nums(first)]
@@ -1018,26 +1173,61 @@ def __vis_install_matplotlib__():
         cols = list(colors) if colors else []
         base = [0.0] * len(xs)
         for k, layer in enumerate(layers):
-            top = [base[i] + (layer[i] if i < len(layer) else 0.0) for i in range(len(xs))]
-            _add_series('fill', xs, top,
-                        labs[k] if k < len(labs) else None,
-                        cols[k] if k < len(cols) else None,
-                        y2=list(base))
+            top = [
+                base[i] + (layer[i] if i < len(layer) else 0.0) for i in range(len(xs))
+            ]
+            _add_series(
+                "fill",
+                xs,
+                top,
+                labs[k] if k < len(labs) else None,
+                cols[k] if k < len(cols) else None,
+                y2=list(base),
+            )
             base = top
         return []
 
-    _VIRIDIS = ((0.267, 0.005, 0.329), (0.283, 0.141, 0.458), (0.254, 0.265, 0.530),
-                (0.207, 0.372, 0.553), (0.164, 0.471, 0.558), (0.128, 0.567, 0.551),
-                (0.135, 0.659, 0.518), (0.267, 0.749, 0.441), (0.478, 0.821, 0.318),
-                (0.741, 0.873, 0.150), (0.993, 0.906, 0.144))
-    _PLASMA = ((0.050, 0.030, 0.528), (0.294, 0.011, 0.631), (0.472, 0.006, 0.660),
-               (0.627, 0.126, 0.588), (0.752, 0.273, 0.478), (0.851, 0.412, 0.372),
-               (0.929, 0.559, 0.267), (0.976, 0.717, 0.163), (0.949, 0.885, 0.146))
-    _MAGMA = ((0.001, 0.000, 0.014), (0.163, 0.072, 0.310), (0.427, 0.121, 0.507),
-              (0.694, 0.166, 0.472), (0.906, 0.320, 0.383), (0.988, 0.583, 0.408),
-              (0.996, 0.827, 0.601), (0.987, 0.991, 0.750))
-    _COOLWARM = ((0.230, 0.299, 0.754), (0.552, 0.690, 0.996), (0.866, 0.866, 0.866),
-                 (0.968, 0.657, 0.537), (0.706, 0.016, 0.150))
+    _VIRIDIS = (
+        (0.267, 0.005, 0.329),
+        (0.283, 0.141, 0.458),
+        (0.254, 0.265, 0.530),
+        (0.207, 0.372, 0.553),
+        (0.164, 0.471, 0.558),
+        (0.128, 0.567, 0.551),
+        (0.135, 0.659, 0.518),
+        (0.267, 0.749, 0.441),
+        (0.478, 0.821, 0.318),
+        (0.741, 0.873, 0.150),
+        (0.993, 0.906, 0.144),
+    )
+    _PLASMA = (
+        (0.050, 0.030, 0.528),
+        (0.294, 0.011, 0.631),
+        (0.472, 0.006, 0.660),
+        (0.627, 0.126, 0.588),
+        (0.752, 0.273, 0.478),
+        (0.851, 0.412, 0.372),
+        (0.929, 0.559, 0.267),
+        (0.976, 0.717, 0.163),
+        (0.949, 0.885, 0.146),
+    )
+    _MAGMA = (
+        (0.001, 0.000, 0.014),
+        (0.163, 0.072, 0.310),
+        (0.427, 0.121, 0.507),
+        (0.694, 0.166, 0.472),
+        (0.906, 0.320, 0.383),
+        (0.988, 0.583, 0.408),
+        (0.996, 0.827, 0.601),
+        (0.987, 0.991, 0.750),
+    )
+    _COOLWARM = (
+        (0.230, 0.299, 0.754),
+        (0.552, 0.690, 0.996),
+        (0.866, 0.866, 0.866),
+        (0.968, 0.657, 0.537),
+        (0.706, 0.016, 0.150),
+    )
 
     class _Colormap(object):
         def __init__(self, name, anchors):
@@ -1046,7 +1236,7 @@ def __vis_install_matplotlib__():
             self._a = anchors
 
         def __call__(self, v, alpha=1.0):
-            if hasattr(v, '__iter__') and not isinstance(v, (str, bytes)):
+            if hasattr(v, "__iter__") and not isinstance(v, (str, bytes)):
                 return [self(x, alpha) for x in v]
             try:
                 f = float(v)
@@ -1068,74 +1258,148 @@ def __vis_install_matplotlib__():
 
         def _hex(self, v):
             r, g, b, _a = self(v)
-            return '#' + ''.join('%02x' % int(_bi_round(c * 255.0)) for c in (r, g, b))
+            return "#" + "".join("%02x" % int(_bi_round(c * 255.0)) for c in (r, g, b))
 
         def reversed(self):
-            return _Colormap(self.name + '_r', tuple(reversed(self._a)))
+            return _Colormap(self.name + "_r", tuple(reversed(self._a)))
 
     def _bi_round(v):
         return int(v + 0.5) if v >= 0 else -int(-v + 0.5)
 
-    _CMAPS = {'viridis': _VIRIDIS, 'plasma': _PLASMA, 'magma': _MAGMA,
-              'inferno': _MAGMA, 'coolwarm': _COOLWARM,
-              'gray': ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
-              'grey': ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
-              'binary': ((1.0, 1.0, 1.0), (0.0, 0.0, 0.0)),
-              'hot': ((0.0, 0.0, 0.0), (0.9, 0.0, 0.0), (1.0, 0.8, 0.0), (1.0, 1.0, 1.0)),
-              'cool': ((0.0, 1.0, 1.0), (1.0, 0.0, 1.0)),
-              'jet': ((0.0, 0.0, 0.5), (0.0, 0.5, 1.0), (0.5, 1.0, 0.5),
-                      (1.0, 0.5, 0.0), (0.5, 0.0, 0.0))}
+    _CMAPS = {
+        "viridis": _VIRIDIS,
+        "plasma": _PLASMA,
+        "magma": _MAGMA,
+        "inferno": _MAGMA,
+        "coolwarm": _COOLWARM,
+        "gray": ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
+        "grey": ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
+        "binary": ((1.0, 1.0, 1.0), (0.0, 0.0, 0.0)),
+        "hot": ((0.0, 0.0, 0.0), (0.9, 0.0, 0.0), (1.0, 0.8, 0.0), (1.0, 1.0, 1.0)),
+        "cool": ((0.0, 1.0, 1.0), (1.0, 0.0, 1.0)),
+        "jet": (
+            (0.0, 0.0, 0.5),
+            (0.0, 0.5, 1.0),
+            (0.5, 1.0, 0.5),
+            (1.0, 0.5, 0.0),
+            (0.5, 0.0, 0.0),
+        ),
+    }
 
     def get_cmap(name=None, lut=None):
         if name is None:
-            name = 'viridis'
+            name = "viridis"
         if isinstance(name, _Colormap):
             return name
         key = str(name)
-        rev = key.endswith('_r')
+        rev = key.endswith("_r")
         base = key[:-2] if rev else key
         anchors = _CMAPS.get(base)
         if anchors is None:
             anchors = _VIRIDIS
-            base = 'viridis'
+            base = "viridis"
         cm = _Colormap(base, anchors)
         return cm.reversed() if rev else cm
 
-    pyplot = types.ModuleType('matplotlib.pyplot')
-    pyplot.__doc__ = 'vis Java2D-backed matplotlib.pyplot subset.'
-    for _fn in (figure, plot, scatter, bar, barh, hist, fill_between, step,
-                axhline, axvline, hlines, vlines, pie, errorbar, text, annotate,
-                title, suptitle, xlabel, ylabel, grid, legend, axis,
-                xlim, ylim, xscale, yscale, semilogx, semilogy, loglog,
-                xticks, yticks, tight_layout, subplots_adjust,
-                boxplot, imshow, colorbar,
-                clf, cla, close, show, savefig, stackplot, get_cmap,
-                subplots, subplot, gca, gcf,
-                use, switch_backend, get_backend, rc, rcdefaults,
-                ion, ioff, isinteractive, draw, draw_if_interactive, pause,
-                set_cmap, margins, minorticks_on, minorticks_off, clim, figtext):
+    pyplot = types.ModuleType("matplotlib.pyplot")
+    pyplot.__doc__ = "vis Java2D-backed matplotlib.pyplot subset."
+    for _fn in (
+        figure,
+        plot,
+        scatter,
+        bar,
+        barh,
+        hist,
+        fill_between,
+        step,
+        axhline,
+        axvline,
+        hlines,
+        vlines,
+        pie,
+        errorbar,
+        text,
+        annotate,
+        title,
+        suptitle,
+        xlabel,
+        ylabel,
+        grid,
+        legend,
+        axis,
+        xlim,
+        ylim,
+        xscale,
+        yscale,
+        semilogx,
+        semilogy,
+        loglog,
+        xticks,
+        yticks,
+        tight_layout,
+        subplots_adjust,
+        boxplot,
+        imshow,
+        colorbar,
+        clf,
+        cla,
+        close,
+        show,
+        savefig,
+        stackplot,
+        get_cmap,
+        subplots,
+        subplot,
+        gca,
+        gcf,
+        use,
+        switch_backend,
+        get_backend,
+        rc,
+        rcdefaults,
+        ion,
+        ioff,
+        isinteractive,
+        draw,
+        draw_if_interactive,
+        pause,
+        set_cmap,
+        margins,
+        minorticks_on,
+        minorticks_off,
+        clim,
+        figtext,
+    ):
         setattr(pyplot, _fn.__name__, _fn)
     pyplot.Axes = _Axes
     pyplot.Colormap = _Colormap
     pyplot.rcParams = _rcparams
 
-    style = types.ModuleType('matplotlib.style')
+    style = types.ModuleType("matplotlib.style")
     style.use = lambda *a, **k: None
     style.context = lambda *a, **k: _NullCtx()
-    style.available = ['default', 'classic', 'ggplot', 'bmh', 'fivethirtyeight',
-                       'seaborn-v0_8', 'seaborn-v0_8-whitegrid', 'dark_background']
+    style.available = [
+        "default",
+        "classic",
+        "ggplot",
+        "bmh",
+        "fivethirtyeight",
+        "seaborn-v0_8",
+        "seaborn-v0_8-whitegrid",
+        "dark_background",
+    ]
     pyplot.style = style
 
-    cm = types.ModuleType('matplotlib.cm')
+    cm = types.ModuleType("matplotlib.cm")
     cm.get_cmap = get_cmap
     for _cname in _CMAPS:
         setattr(cm, _cname, get_cmap(_cname))
     pyplot.cm = cm
     pyplot.colormaps = get_cmap
 
-    mpl = types.ModuleType('matplotlib')
-    mpl.__doc__ = 'vis matplotlib-compat shim (no CPython matplotlib wheel).'
-    mpl.__version__ = '3.0-vis-java2d'
+    mpl = types.ModuleType("matplotlib")
+    mpl.__doc__ = "vis matplotlib-compat shim (no CPython matplotlib wheel)."
+    mpl.__version__ = "3.0-vis-java2d"
     mpl.pyplot = pyplot
     mpl.style = style
     mpl.cm = cm
@@ -1146,21 +1410,23 @@ def __vis_install_matplotlib__():
     mpl.rcdefaults = rcdefaults
     mpl.rcParams = _rcparams
 
-    sys.modules['matplotlib'] = mpl
-    sys.modules['matplotlib.pyplot'] = pyplot
-    sys.modules['matplotlib.style'] = style
-    sys.modules['matplotlib.cm'] = cm
+    sys.modules["matplotlib"] = mpl
+    sys.modules["matplotlib.pyplot"] = pyplot
+    sys.modules["matplotlib.style"] = style
+    sys.modules["matplotlib.cm"] = cm
 
     # Autoload: staple the module names onto builtins so `matplotlib.pyplot`,
     # a bare `pyplot`, and the conventional `plt` alias all work WITHOUT any
     # explicit import.
     try:
         import builtins as _b
+
         _b.matplotlib = mpl
         _b.pyplot = pyplot
         _b.plt = pyplot
     except Exception:
         pass
+
 
 __vis_install_matplotlib__()
 del __vis_install_matplotlib__

@@ -16,6 +16,7 @@
 # Installed once per sandbox context (main + every sub_loop fork) by
 # env_python/build-agent-context, right after the apropos/doc introspection.
 
+
 def __vis_install_posix_compat__():
     import sys
     import types
@@ -53,8 +54,11 @@ def __vis_install_posix_compat__():
             self.stdout = output
             self.stderr = stderr
             super().__init__(
-                "Command " + repr(cmd) + " returned non-zero exit status "
-                + repr(returncode) + "."
+                "Command "
+                + repr(cmd)
+                + " returned non-zero exit status "
+                + repr(returncode)
+                + "."
             )
 
     class TimeoutExpired(Exception):
@@ -65,8 +69,7 @@ def __vis_install_posix_compat__():
             self.stdout = output
             self.stderr = stderr
             super().__init__(
-                "Command " + repr(cmd) + " timed out after "
-                + str(timeout) + " seconds"
+                "Command " + repr(cmd) + " timed out after " + str(timeout) + " seconds"
             )
 
     class CompletedProcess(object):
@@ -90,10 +93,25 @@ def __vis_install_posix_compat__():
                     self.returncode, self.args, self.stdout, self.stderr
                 )
 
-    def run(args, capture_output=False, text=True, shell=False, cwd=None,
-            timeout=None, check=False, input=None, encoding=None, errors=None,
-            env=None, stdout=None, stderr=None, stdin=None, bufsize=-1,
-            universal_newlines=None, **kwargs):
+    def run(
+        args,
+        capture_output=False,
+        text=True,
+        shell=False,
+        cwd=None,
+        timeout=None,
+        check=False,
+        input=None,
+        encoding=None,
+        errors=None,
+        env=None,
+        stdout=None,
+        stderr=None,
+        stdin=None,
+        bufsize=-1,
+        universal_newlines=None,
+        **kwargs,
+    ):
         # `text`/`universal_newlines` decide bytes-vs-str on the returned
         # streams; capture_output/stdout/stderr are accepted but the shell tool
         # always captures, so they only affect whether we surface the text.
@@ -106,8 +124,12 @@ def __vis_install_posix_compat__():
             opts["cwd"] = str(cwd)
         r = sr(cmd, opts) if opts else sr(cmd)
         if r.get("timed_out"):
-            raise TimeoutExpired(cmd, r.get("timeout_secs", timeout),
-                                 r.get("stdout", ""), r.get("stderr", ""))
+            raise TimeoutExpired(
+                cmd,
+                r.get("timeout_secs", timeout),
+                r.get("stdout", ""),
+                r.get("stderr", ""),
+            )
         rc = r.get("exit")
         out = r.get("stdout", "")
         err = r.get("stderr", "")
@@ -234,6 +256,7 @@ def __vis_install_posix_compat__():
 
         def _os_popen(command, mode="r", buffering=-1):
             import io
+
             return io.StringIO(getoutput(command))
 
         _os.system = _os_system

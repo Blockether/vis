@@ -3538,6 +3538,7 @@
     com.blockether.vis.internal.foundation.shim-matplotlib
     com.blockether.vis.internal.foundation.shim-requests
     com.blockether.vis.internal.foundation.shim-pytest
+    com.blockether.vis.internal.foundation.shim-ruff
     com.blockether.vis.internal.foundation.shim-pil
     com.blockether.vis.internal.foundation.shim-numpy
     com.blockether.vis.internal.foundation.shim-bs4

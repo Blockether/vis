@@ -107,7 +107,7 @@
   com.blockether/vis-language-typescript-bun {:local/root
                                               "extensions/languages/vis-language-typescript-bun"}
   com.blockether/vis-workspace-rift {:local/root "extensions/workspaces/vis-workspace-rift"}
-  com.blockether/svar {:mvn/version "0.7.84"}
+  com.blockether/svar {:mvn/version "0.7.85"}
   com.blockether/anomaly {:mvn/version "1.0.1"}
   org.clojure/tools.deps {:mvn/version "0.31.1638"}
   org.commonmark/commonmark {:mvn/version "0.29.0"}
@@ -124,7 +124,7 @@
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
   com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.25"}
-  com.blockether/ruff {:mvn/version "0.2.0"}
+  com.blockether/ruff {:mvn/version "0.3.2"}
   org.clojure/core.memoize {:mvn/version "1.2.281"}
   com.blockether/fff {:mvn/version "0.12.0"}
   com.taoensso/telemere {:mvn/version "1.2.1"}

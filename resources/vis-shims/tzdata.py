@@ -1,4 +1,3 @@
-
 def __vis_install_tzdata__():
     import datetime as _dt
     import types as _types
@@ -38,7 +37,7 @@ def __vis_install_tzdata__():
 
         @classmethod
         def from_file(cls, fobj, key=None):
-            raise ValueError('ZoneInfo.from_file is unavailable in this sandbox')
+            raise ValueError("ZoneInfo.from_file is unavailable in this sandbox")
 
         @classmethod
         def clear_cache(cls, only_keys=None):
@@ -49,7 +48,9 @@ def __vis_install_tzdata__():
                     cls._cache.pop(str(k), None)
 
         def _info(self, dt):
-            ok, payload = __vis_tz_info__(self.key, [dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second])
+            ok, payload = __vis_tz_info__(
+                self.key, [dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second]
+            )
             if not ok:
                 raise ValueError(str(payload))
             return payload
@@ -71,17 +72,19 @@ def __vis_install_tzdata__():
 
         def fromutc(self, dt):
             if dt.tzinfo is not self:
-                raise ValueError('fromutc: dt.tzinfo is not self')
-            ok, payload = __vis_tz_fromutc__(self.key, [dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second])
+                raise ValueError("fromutc: dt.tzinfo is not self")
+            ok, payload = __vis_tz_fromutc__(
+                self.key, [dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second]
+            )
             if not ok:
                 raise ValueError(str(payload))
-            return (dt + _dt.timedelta(seconds=payload[0]))
+            return dt + _dt.timedelta(seconds=payload[0])
 
         def __str__(self):
             return self.key
 
         def __repr__(self):
-            return 'zoneinfo.ZoneInfo(key=' + repr(self.key) + ')'
+            return "zoneinfo.ZoneInfo(key=" + repr(self.key) + ")"
 
         def __reduce__(self):
             return (self.__class__, (self.key,))
@@ -89,18 +92,24 @@ def __vis_install_tzdata__():
     def available_timezones():
         return set(__vis_tz_available__())
 
-    _zi_mod = _types.ModuleType('zoneinfo')
+    _zi_mod = _types.ModuleType("zoneinfo")
     _zi_mod.ZoneInfo = ZoneInfo
     _zi_mod.ZoneInfoNotFoundError = ZoneInfoNotFoundError
     _zi_mod.available_timezones = available_timezones
     _zi_mod.TZPATH = ()
     _zi_mod.reset_tzpath = lambda to=None: None
-    _zi_mod.__all__ = ['ZoneInfo', 'ZoneInfoNotFoundError', 'available_timezones', 'reset_tzpath', 'TZPATH']
+    _zi_mod.__all__ = [
+        "ZoneInfo",
+        "ZoneInfoNotFoundError",
+        "available_timezones",
+        "reset_tzpath",
+        "TZPATH",
+    ]
 
     # a bare tzdata package so `import tzdata` succeeds (libs probe for it)
-    _tzdata_mod = _types.ModuleType('tzdata')
-    _tzdata_mod.IANA_VERSION = 'system'
-    _tzdata_mod.__version__ = 'system'
+    _tzdata_mod = _types.ModuleType("tzdata")
+    _tzdata_mod.IANA_VERSION = "system"
+    _tzdata_mod.__version__ = "system"
 
     # ============================ pytz ============================
     class UnknownTimeZoneError(KeyError):
@@ -112,12 +121,12 @@ def __vis_install_tzdata__():
     class _BaseTz(_dt.tzinfo):
         def localize(self, dt, is_dst=False):
             if dt.tzinfo is not None:
-                raise ValueError('Not naive datetime (tzinfo is already set)')
+                raise ValueError("Not naive datetime (tzinfo is already set)")
             return dt.replace(tzinfo=self)
 
         def normalize(self, dt):
             if dt.tzinfo is None:
-                raise ValueError('Naive time - no tzinfo set')
+                raise ValueError("Naive time - no tzinfo set")
             return dt.astimezone(self)
 
     class _PytzZone(_BaseTz):
@@ -141,10 +150,10 @@ def __vis_install_tzdata__():
             return self.zone
 
         def __repr__(self):
-            return '<DstTzInfo ' + repr(self.zone) + '>'
+            return "<DstTzInfo " + repr(self.zone) + ">"
 
     class _UTC(_BaseTz):
-        zone = 'UTC'
+        zone = "UTC"
 
         def utcoffset(self, dt):
             return _ZERO
@@ -153,22 +162,22 @@ def __vis_install_tzdata__():
             return _ZERO
 
         def tzname(self, dt):
-            return 'UTC'
+            return "UTC"
 
         def fromutc(self, dt):
             return dt + _ZERO
 
         def __str__(self):
-            return 'UTC'
+            return "UTC"
 
         def __repr__(self):
-            return '<UTC>'
+            return "<UTC>"
 
     _utc = _UTC()
 
     def _pytz_timezone(name):
         name = str(name)
-        if name in ('UTC', 'GMT', 'Etc/UTC', 'Etc/GMT'):
+        if name in ("UTC", "GMT", "Etc/UTC", "Etc/GMT"):
             return _utc
         try:
             return _PytzZone(name)
@@ -178,16 +187,16 @@ def __vis_install_tzdata__():
     def _FixedOffset(minutes):
         return _dt.timezone(_dt.timedelta(minutes=minutes))
 
-    _pytz_mod = _types.ModuleType('pytz')
+    _pytz_mod = _types.ModuleType("pytz")
     _pytz_mod.timezone = _pytz_timezone
     _pytz_mod.utc = _utc
     _pytz_mod.UTC = _utc
     _pytz_mod.FixedOffset = _FixedOffset
     _pytz_mod.UnknownTimeZoneError = UnknownTimeZoneError
     _pytz_mod.Error = Error
-    _pytz_mod.AmbiguousTimeError = type('AmbiguousTimeError', (Error,), {})
-    _pytz_mod.NonExistentTimeError = type('NonExistentTimeError', (Error,), {})
-    _pytz_mod.InvalidTimeError = type('InvalidTimeError', (Error,), {})
+    _pytz_mod.AmbiguousTimeError = type("AmbiguousTimeError", (Error,), {})
+    _pytz_mod.NonExistentTimeError = type("NonExistentTimeError", (Error,), {})
+    _pytz_mod.InvalidTimeError = type("InvalidTimeError", (Error,), {})
     _allzones = sorted(__vis_tz_available__())
     _pytz_mod.all_timezones = list(_allzones)
     _pytz_mod.all_timezones_set = set(_allzones)
@@ -195,11 +204,11 @@ def __vis_install_tzdata__():
     _pytz_mod.common_timezones_set = set(_allzones)
     _pytz_mod.country_timezones = {}
     _pytz_mod.country_names = {}
-    _pytz_mod.__version__ = 'system'
+    _pytz_mod.__version__ = "system"
 
     # ============================ dateutil ============================
     def _gettz(name=None):
-        if name is None or name == '':
+        if name is None or name == "":
             try:
                 return ZoneInfo(__vis_tz_local__())
             except Exception:
@@ -216,7 +225,7 @@ def __vis_install_tzdata__():
             td = _dt.timedelta(seconds=int(offset))
         return _dt.timezone(td, name if name else None)
 
-    _tz_mod = _types.ModuleType('dateutil.tz')
+    _tz_mod = _types.ModuleType("dateutil.tz")
     _tz_mod.gettz = _gettz
     _tz_mod.tzutc = lambda: _dt.timezone.utc
     _tz_mod.tzlocal = lambda: _gettz(None)
@@ -226,7 +235,7 @@ def __vis_install_tzdata__():
     # ----- relativedelta -----
     def _days_in_month(y, m):
         if m == 2:
-            leap = (y % 4 == 0 and (y % 100 != 0 or y % 400 == 0))
+            leap = y % 4 == 0 and (y % 100 != 0 or y % 400 == 0)
             return 29 if leap else 28
         return (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)[m - 1]
 
@@ -250,22 +259,42 @@ def __vis_install_tzdata__():
             return hash((self.weekday, self.n))
 
         def __repr__(self):
-            names = ('MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU')
+            names = ("MO", "TU", "WE", "TH", "FR", "SA", "SU")
             s = names[self.weekday]
             if self.n is None:
                 return s
-            return s + '(' + repr(self.n) + ')'
+            return s + "(" + repr(self.n) + ")"
 
     MO, TU, WE, TH, FR, SA, SU = (weekday(i) for i in range(7))
 
     class relativedelta(object):
-        def __init__(self, dt1=None, dt2=None, years=0, months=0, days=0, leapdays=0,
-                     weeks=0, hours=0, minutes=0, seconds=0, microseconds=0,
-                     year=None, month=None, day=None, weekday=None, yearday=None,
-                     nlyearday=None, hour=None, minute=None, second=None, microsecond=None):
+        def __init__(
+            self,
+            dt1=None,
+            dt2=None,
+            years=0,
+            months=0,
+            days=0,
+            leapdays=0,
+            weeks=0,
+            hours=0,
+            minutes=0,
+            seconds=0,
+            microseconds=0,
+            year=None,
+            month=None,
+            day=None,
+            weekday=None,
+            yearday=None,
+            nlyearday=None,
+            hour=None,
+            minute=None,
+            second=None,
+            microsecond=None,
+        ):
             if dt1 is not None and dt2 is not None:
                 # difference mode (relative-only, approximate like dateutil)
-                delta = dt1 - dt2 if hasattr(dt1, 'toordinal') else None
+                delta = dt1 - dt2 if hasattr(dt1, "toordinal") else None
                 months_ = (dt1.year - dt2.year) * 12 + (dt1.month - dt2.month)
                 self.years = 0
                 self.months = 0
@@ -332,13 +361,17 @@ def __vis_install_tzdata__():
                     year=other.year if other.year is not None else self.year,
                     month=other.month if other.month is not None else self.month,
                     day=other.day if other.day is not None else self.day,
-                    weekday=other.weekday if other.weekday is not None else self.weekday,
+                    weekday=other.weekday
+                    if other.weekday is not None
+                    else self.weekday,
                     hour=other.hour if other.hour is not None else self.hour,
                     minute=other.minute if other.minute is not None else self.minute,
                     second=other.second if other.second is not None else self.second,
-                    microsecond=other.microsecond if other.microsecond is not None else self.microsecond,
+                    microsecond=other.microsecond
+                    if other.microsecond is not None
+                    else self.microsecond,
                 )
-            if not hasattr(other, 'year'):
+            if not hasattr(other, "year"):
                 return NotImplemented
             year = (self.year if self.year is not None else other.year) + self.years
             month = self.month if self.month is not None else other.month
@@ -349,20 +382,27 @@ def __vis_install_tzdata__():
             while month < 1:
                 month += 12
                 year -= 1
-            day = min(self.day if self.day is not None else other.day, _days_in_month(year, month))
-            repl = {'year': year, 'month': month, 'day': day}
+            day = min(
+                self.day if self.day is not None else other.day,
+                _days_in_month(year, month),
+            )
+            repl = {"year": year, "month": month, "day": day}
             if self.hour is not None:
-                repl['hour'] = self.hour
+                repl["hour"] = self.hour
             if self.minute is not None:
-                repl['minute'] = self.minute
+                repl["minute"] = self.minute
             if self.second is not None:
-                repl['second'] = self.second
+                repl["second"] = self.second
             if self.microsecond is not None:
-                repl['microsecond'] = self.microsecond
+                repl["microsecond"] = self.microsecond
             ret = other.replace(**repl)
-            ret = ret + _dt.timedelta(days=self.days, hours=self.hours,
-                                      minutes=self.minutes, seconds=self.seconds,
-                                      microseconds=self.microseconds)
+            ret = ret + _dt.timedelta(
+                days=self.days,
+                hours=self.hours,
+                minutes=self.minutes,
+                seconds=self.seconds,
+                microseconds=self.microseconds,
+            )
             if self.weekday is not None:
                 wd = self.weekday.weekday
                 n = self.weekday.n if self.weekday.n is not None else 1
@@ -387,39 +427,86 @@ def __vis_install_tzdata__():
 
         def __neg__(self):
             return relativedelta(
-                years=-self.years, months=-self.months, days=-self.days,
-                hours=-self.hours, minutes=-self.minutes, seconds=-self.seconds,
-                microseconds=-self.microseconds, year=self.year, month=self.month,
-                day=self.day, weekday=self.weekday, hour=self.hour, minute=self.minute,
-                second=self.second, microsecond=self.microsecond)
+                years=-self.years,
+                months=-self.months,
+                days=-self.days,
+                hours=-self.hours,
+                minutes=-self.minutes,
+                seconds=-self.seconds,
+                microseconds=-self.microseconds,
+                year=self.year,
+                month=self.month,
+                day=self.day,
+                weekday=self.weekday,
+                hour=self.hour,
+                minute=self.minute,
+                second=self.second,
+                microsecond=self.microsecond,
+            )
 
         def __mul__(self, k):
             k = int(k)
             return relativedelta(
-                years=self.years * k, months=self.months * k, days=self.days * k,
-                hours=self.hours * k, minutes=self.minutes * k, seconds=self.seconds * k,
-                microseconds=self.microseconds * k, year=self.year, month=self.month,
-                day=self.day, weekday=self.weekday, hour=self.hour, minute=self.minute,
-                second=self.second, microsecond=self.microsecond)
+                years=self.years * k,
+                months=self.months * k,
+                days=self.days * k,
+                hours=self.hours * k,
+                minutes=self.minutes * k,
+                seconds=self.seconds * k,
+                microseconds=self.microseconds * k,
+                year=self.year,
+                month=self.month,
+                day=self.day,
+                weekday=self.weekday,
+                hour=self.hour,
+                minute=self.minute,
+                second=self.second,
+                microsecond=self.microsecond,
+            )
 
         __rmul__ = __mul__
 
         def __repr__(self):
             parts = []
-            for a in ('years', 'months', 'days', 'hours', 'minutes', 'seconds', 'microseconds'):
+            for a in (
+                "years",
+                "months",
+                "days",
+                "hours",
+                "minutes",
+                "seconds",
+                "microseconds",
+            ):
                 v = getattr(self, a)
                 if v:
-                    parts.append(a + '=' + repr(v))
-            for a in ('year', 'month', 'day', 'weekday', 'hour', 'minute', 'second', 'microsecond'):
+                    parts.append(a + "=" + repr(v))
+            for a in (
+                "year",
+                "month",
+                "day",
+                "weekday",
+                "hour",
+                "minute",
+                "second",
+                "microsecond",
+            ):
                 v = getattr(self, a)
                 if v is not None:
-                    parts.append(a + '=' + repr(v))
-            return 'relativedelta(' + ', '.join(parts) + ')'
+                    parts.append(a + "=" + repr(v))
+            return "relativedelta(" + ", ".join(parts) + ")"
 
-    _rd_mod = _types.ModuleType('dateutil.relativedelta')
+    _rd_mod = _types.ModuleType("dateutil.relativedelta")
     _rd_mod.relativedelta = relativedelta
     _rd_mod.weekday = weekday
-    _rd_mod.MO, _rd_mod.TU, _rd_mod.WE, _rd_mod.TH, _rd_mod.FR, _rd_mod.SA, _rd_mod.SU = MO, TU, WE, TH, FR, SA, SU
+    (
+        _rd_mod.MO,
+        _rd_mod.TU,
+        _rd_mod.WE,
+        _rd_mod.TH,
+        _rd_mod.FR,
+        _rd_mod.SA,
+        _rd_mod.SU,
+    ) = MO, TU, WE, TH, FR, SA, SU
     _rd_mod.weekdays = (MO, TU, WE, TH, FR, SA, SU)
 
     # ----- parser -----
@@ -427,26 +514,56 @@ def __vis_install_tzdata__():
         pass
 
     _MONTHS = {}
-    _mfull = ('january', 'february', 'march', 'april', 'may', 'june', 'july',
-              'august', 'september', 'october', 'november', 'december')
+    _mfull = (
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+    )
     for _i, _mn in enumerate(_mfull):
         _MONTHS[_mn] = _i + 1
         _MONTHS[_mn[:3]] = _i + 1
 
     _ISO_FMTS = (
-        '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M',
-        '%Y-%m-%d %H:%M', '%Y-%m-%d', '%Y/%m/%d %H:%M:%S', '%Y/%m/%d',
-        '%B %d %Y', '%B %d, %Y', '%d %B %Y', '%b %d %Y', '%b %d, %Y',
-        '%d %b %Y', '%Y%m%d', '%H:%M:%S', '%H:%M',
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d",
+        "%B %d %Y",
+        "%B %d, %Y",
+        "%d %B %Y",
+        "%b %d %Y",
+        "%b %d, %Y",
+        "%d %b %Y",
+        "%Y%m%d",
+        "%H:%M:%S",
+        "%H:%M",
     )
-    _MDY_FMTS = ('%m/%d/%Y %H:%M:%S', '%m/%d/%Y %H:%M', '%m/%d/%Y', '%m/%d/%y')
-    _DMY_FMTS = ('%d/%m/%Y %H:%M:%S', '%d/%m/%Y %H:%M', '%d/%m/%Y', '%d/%m/%y',
-                 '%d.%m.%Y %H:%M:%S', '%d.%m.%Y')
+    _MDY_FMTS = ("%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M", "%m/%d/%Y", "%m/%d/%y")
+    _DMY_FMTS = (
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%d/%m/%Y",
+        "%d/%m/%y",
+        "%d.%m.%Y %H:%M:%S",
+        "%d.%m.%Y",
+    )
 
     def _try_iso(s):
         t = s
-        if t.endswith('Z') or t.endswith('z'):
-            t = t[:-1] + '+00:00'
+        if t.endswith("Z") or t.endswith("z"):
+            t = t[:-1] + "+00:00"
         try:
             return _dt.datetime.fromisoformat(t)
         except Exception:
@@ -458,8 +575,8 @@ def __vis_install_tzdata__():
 
     def _try_rfc(s):
         low = s.lower()
-        _wk = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
-        if (',' not in s) or (not any(low.startswith(w) for w in _wk)):
+        _wk = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+        if ("," not in s) or (not any(low.startswith(w) for w in _wk)):
             return None
         try:
             return _eut.parsedate_to_datetime(s)
@@ -474,7 +591,7 @@ def __vis_install_tzdata__():
         for fmt in order:
             try:
                 d = _dt.datetime.strptime(s, fmt)
-                if '%Y' not in fmt and '%y' not in fmt:
+                if "%Y" not in fmt and "%y" not in fmt:
                     d = d.replace(year=1900)
                 return d
             except Exception:
@@ -482,10 +599,10 @@ def __vis_install_tzdata__():
         return None
 
     def _clean_token(tok):
-        return tok.strip().strip(',').strip()
+        return tok.strip().strip(",").strip()
 
     def _try_tokens(s, default, dayfirst):
-        raw = s.replace(',', ' ').split()
+        raw = s.replace(",", " ").split()
         toks = [t for t in (x.strip() for x in raw) if t]
         year = month = day = None
         hour = minute = second = 0
@@ -497,14 +614,14 @@ def __vis_install_tzdata__():
             if tl in _MONTHS:
                 month = _MONTHS[tl]
                 continue
-            if tl in ('am', 'pm'):
+            if tl in ("am", "pm"):
                 ampm = tl
                 continue
-            if tl in ('utc', 'gmt', 'z'):
+            if tl in ("utc", "gmt", "z"):
                 tzoff = _dt.timezone.utc
                 continue
-            if ':' in t:
-                bits = t.split(':')
+            if ":" in t:
+                bits = t.split(":")
                 try:
                     hour = int(bits[0])
                     minute = int(bits[1]) if len(bits) > 1 else 0
@@ -513,15 +630,17 @@ def __vis_install_tzdata__():
                 except Exception:
                     pass
             core = t
-            if (t.startswith('+') or t.startswith('-')) and ':' in t:
+            if (t.startswith("+") or t.startswith("-")) and ":" in t:
                 try:
-                    sign = 1 if t[0] == '+' else -1
-                    hh, mm = t[1:].split(':')
-                    tzoff = _dt.timezone(sign * _dt.timedelta(hours=int(hh), minutes=int(mm)))
+                    sign = 1 if t[0] == "+" else -1
+                    hh, mm = t[1:].split(":")
+                    tzoff = _dt.timezone(
+                        sign * _dt.timedelta(hours=int(hh), minutes=int(mm))
+                    )
                     continue
                 except Exception:
                     pass
-            digits = core.rstrip('stndrh')
+            digits = core.rstrip("stndrh")
             try:
                 nums.append(int(digits))
             except Exception:
@@ -564,9 +683,9 @@ def __vis_install_tzdata__():
             year = default.year if default is not None else _dt.date.today().year
         if month is None or day is None:
             return None
-        if ampm == 'pm' and hour < 12:
+        if ampm == "pm" and hour < 12:
             hour += 12
-        if ampm == 'am' and hour == 12:
+        if ampm == "am" and hour == 12:
             hour = 0
         try:
             d = _dt.datetime(year, month, day, hour, minute, second)
@@ -576,14 +695,46 @@ def __vis_install_tzdata__():
             d = d.replace(tzinfo=tzoff)
         return d
 
-    _TZ_ABBR = {'utc': 0, 'gmt': 0, 'z': 0, 'ut': 0, 'est': -18000, 'edt': -14400,
-                'cst': -21600, 'cdt': -18000, 'mst': -25200, 'mdt': -21600,
-                'pst': -28800, 'pdt': -25200, 'bst': 3600, 'cet': 3600, 'cest': 7200,
-                'eet': 7200, 'eest': 10800, 'ist': 19800, 'jst': 32400, 'kst': 32400,
-                'aest': 36000, 'aedt': 39600, 'nzst': 43200, 'hst': -36000, 'akst': -32400}
+    _TZ_ABBR = {
+        "utc": 0,
+        "gmt": 0,
+        "z": 0,
+        "ut": 0,
+        "est": -18000,
+        "edt": -14400,
+        "cst": -21600,
+        "cdt": -18000,
+        "mst": -25200,
+        "mdt": -21600,
+        "pst": -28800,
+        "pdt": -25200,
+        "bst": 3600,
+        "cet": 3600,
+        "cest": 7200,
+        "eet": 7200,
+        "eest": 10800,
+        "ist": 19800,
+        "jst": 32400,
+        "kst": 32400,
+        "aest": 36000,
+        "aedt": 39600,
+        "nzst": 43200,
+        "hst": -36000,
+        "akst": -32400,
+    }
 
-    def parse(timestr, parserinfo=None, default=None, ignoretz=False, tzinfos=None,
-              dayfirst=False, yearfirst=False, fuzzy=False, fuzzy_with_tokens=False, **kw):
+    def parse(
+        timestr,
+        parserinfo=None,
+        default=None,
+        ignoretz=False,
+        tzinfos=None,
+        dayfirst=False,
+        yearfirst=False,
+        fuzzy=False,
+        fuzzy_with_tokens=False,
+        **kw,
+    ):
         if not isinstance(timestr, str):
             timestr = str(timestr)
         s = timestr.strip()
@@ -594,10 +745,10 @@ def __vis_install_tzdata__():
             if tzinfos and _ab in tzinfos:
                 _tzv = tzinfos[_ab]
                 _tzab = _tzv
-                s = ' '.join(_pp[:-1])
+                s = " ".join(_pp[:-1])
             elif _ab.lower() in _TZ_ABBR:
                 _tzab = _TZ_ABBR[_ab.lower()]
-                s = ' '.join(_pp[:-1])
+                s = " ".join(_pp[:-1])
         got = _try_iso(s)
         if got is None:
             got = _try_rfc(s)
@@ -606,7 +757,7 @@ def __vis_install_tzdata__():
         if got is None:
             got = _try_tokens(s, default, dayfirst)
         if got is None:
-            raise ParserError('Unknown string format: ' + timestr)
+            raise ParserError("Unknown string format: " + timestr)
         if _tzab is not None and got.tzinfo is None and not ignoretz:
             if isinstance(_tzab, int):
                 got = got.replace(tzinfo=_dt.timezone(_dt.timedelta(seconds=_tzab)))
@@ -623,30 +774,30 @@ def __vis_install_tzdata__():
     def isoparse(s):
         r = _try_iso(str(s).strip())
         if r is None:
-            raise ParserError('Unknown ISO format: ' + str(s))
+            raise ParserError("Unknown ISO format: " + str(s))
         return r
 
-    _parser_mod = _types.ModuleType('dateutil.parser')
+    _parser_mod = _types.ModuleType("dateutil.parser")
     _parser_mod.parse = parse
     _parser_mod.isoparse = isoparse
     _parser_mod.ParserError = ParserError
 
     # dateutil package
-    _du_mod = _types.ModuleType('dateutil')
+    _du_mod = _types.ModuleType("dateutil")
     _du_mod.tz = _tz_mod
     _du_mod.parser = _parser_mod
     _du_mod.relativedelta = _rd_mod
-    _du_mod.__version__ = 'system'
+    _du_mod.__version__ = "system"
     _du_mod.__path__ = []
 
     # ---- register in sys.modules ----
-    _sys.modules['zoneinfo'] = _zi_mod
-    _sys.modules['tzdata'] = _tzdata_mod
-    _sys.modules['pytz'] = _pytz_mod
-    _sys.modules['dateutil'] = _du_mod
-    _sys.modules['dateutil.tz'] = _tz_mod
-    _sys.modules['dateutil.parser'] = _parser_mod
-    _sys.modules['dateutil.relativedelta'] = _rd_mod
+    _sys.modules["zoneinfo"] = _zi_mod
+    _sys.modules["tzdata"] = _tzdata_mod
+    _sys.modules["pytz"] = _pytz_mod
+    _sys.modules["dateutil"] = _du_mod
+    _sys.modules["dateutil.tz"] = _tz_mod
+    _sys.modules["dateutil.parser"] = _parser_mod
+    _sys.modules["dateutil.relativedelta"] = _rd_mod
 
     # staple onto builtins so they resolve without import
     try:

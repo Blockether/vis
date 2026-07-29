@@ -57,7 +57,11 @@ One lazy shim per `shim_*.clj`, one registered extension, and inclusion in `buil
 
 ## Python format/lint (ruff, in-process)
 
-`format_code`/`lint_code` for Python run **ruff via the `com.blockether/ruff` FFI** (`extensions/languages/vis-language-python/.../ruff.clj`), never a `ruff` subprocess or a PyPI install — so it works in the native image and needs nothing on PATH. Line length comes from `[tool.ruff]` in `pyproject.toml` or `ruff.toml`; only syntax errors and `E9xx`/`F6xx`/`F7xx`/`F82x` are reported at `error` level, everything else is a warning. A missing target is a failure, never a silent clean run. Bump ruff itself in the sibling `Blockether/clj-ruff` repo (Rust `native/ruff-c`), release it, then move the pin in `deps.edn`.
+`format_code`/`lint_code` for Python run **ruff via the `com.blockether/ruff` FFI** (`extensions/languages/vis-language-python/.../ruff.clj`), never a `ruff` subprocess or a PyPI install — so it works in the native image and needs nothing on PATH. Configuration is ruff's own: the nearest `pyproject.toml` `[tool.ruff]` / `ruff.toml` / `.ruff.toml` above the target wins, including `select`/`ignore`/`per-file-ignores`/`line-length`, and relative globs are anchored at the config file's own directory. With no config file anywhere, ruff's own defaults apply and `lint_code` says so in its note — write a `ruff.toml` to make it project-specific. Only syntax errors and `E9xx`/`F6xx`/`F7xx`/`F82x` are reported at `error` level, everything else is a warning. A missing target is a failure, never a silent clean run.
+
+The same engine is exposed to sandbox Python as the `ruff` shim (`src/com/blockether/vis/internal/foundation/shim_ruff.clj` + `resources/vis-shims/ruff.py`), so `vis python -m ruff check|format <paths>` works with no ruff installed. `ruff.toml` at the repo root is the project config, and the shims themselves are formatted with it.
+
+Bump ruff itself in the sibling `Blockether/clj-ruff` repo (Rust `native/ruff-c`), release it (tag `vX.Y.Z` → the "Release & Deploy to Clojars" workflow), then move the pin in `deps.edn`.
 
 ## TUI rendering
 

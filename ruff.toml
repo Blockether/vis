@@ -1,0 +1,53 @@
+# ruff configuration for the Python that ships INSIDE vis.
+#
+# The only Python in this repository is the sandbox shim layer
+# (`resources/vis-shims/*.py`, embedded into the native image) plus the Python
+# language pack's fixtures. It runs on GraalPy, which is CPython 3.11
+# compatible — hence `target-version`.
+#
+# This file is what `format_code` / `lint_code` for Python discover: the packs
+# call ruff IN-PROCESS (com.blockether/ruff) and let ruff resolve the nearest
+# config exactly as the `ruff` CLI would, so `vis python -m ruff check` and the
+# tools agree. Without this file both fall back to ruff's own defaults and say
+# so in a `hint`.
+
+target-version = "py311"
+line-length = 88
+indent-width = 4
+
+extend-exclude = [".venv", "__pycache__", "build", "dist", "target", "node_modules"]
+
+[lint]
+# Sane and non-pedantic: real breakage (E9/F), pycodestyle errors, import
+# hygiene, likely bugs, and modern syntax. Deliberately NOT the refactoring
+# families (RET/SIM/ANN/D) — they turn a lint run into a style argument.
+select = ["E4", "E7", "E9", "F", "W", "I", "B", "UP", "C4"]
+ignore = [
+  # Shims mirror third-party APIs, so signatures keep their upstream shape.
+  "B008",
+]
+
+[lint.per-file-ignores]
+# A shim's job is to stand in for an upstream package inside the sandbox: it
+# re-exports names it never uses, is imported for its side effects, and reaches
+# for globals the Clojure host injects at context creation (`__vis_*__`), none
+# of which ruff can see.
+#
+# The second group is style, not correctness: every shim is ONE `def
+# __vis_install_x__()` preamble with its stdlib imports grouped on a line inside
+# that function (E401/I001 have no import block to sort), small lambdas (E731),
+# handler closures built in loops (B023/B007), and deliberately conservative
+# 3.11-era syntax (UP*/C4*) because the code is GraalPy-embedded and mirrors the
+# upstream package's own shape. Rewriting proven shim internals to satisfy a
+# modernization rule is churn; real breakage (E9/F6/F7/F82) still fails here.
+"**/vis-shims/*.py" = [
+  "F401", "F811", "F821", "E402", "E741", "B904", "B905", "UP004",
+  "E401", "E731", "I001", "B007", "B023", "F841", "UP", "C4",
+]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "lf"
+docstring-code-format = true

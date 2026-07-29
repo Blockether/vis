@@ -1,6 +1,7 @@
 def __vis_install_xlsxwriter__():
     import sys, types, base64, datetime
-    _bi = sys.modules['builtins']
+
+    _bi = sys.modules["builtins"]
     _new = __vis_xlsx_new__
     _add_sheet = __vis_xlsx_add_sheet__
     _add_format = __vis_xlsx_add_format__
@@ -19,11 +20,11 @@ def __vis_install_xlsxwriter__():
             raise XlsxWriterException(str(msg))
 
     def _cell_to_rowcol(cell):
-        cell = cell.upper().replace('$', '')
+        cell = cell.upper().replace("$", "")
         i = 0
         col = 0
         while i < len(cell) and cell[i].isalpha():
-            col = col * 26 + (ord(cell[i]) - ord('A') + 1)
+            col = col * 26 + (ord(cell[i]) - ord("A") + 1)
             i += 1
         row = int(cell[i:]) if i < len(cell) else 1
         return (row - 1, col - 1)
@@ -32,7 +33,7 @@ def __vis_install_xlsxwriter__():
         if not s or not s[0].isalpha():
             return False
         seen = False
-        for ch in s.replace('$', ''):
+        for ch in s.replace("$", ""):
             if ch.isalpha():
                 if seen:
                     return False
@@ -44,17 +45,17 @@ def __vis_install_xlsxwriter__():
 
     def _detect(data):
         if data is None:
-            return ('blank', '')
+            return ("blank", "")
         if isinstance(data, bool):
-            return ('boolean', data)
+            return ("boolean", data)
         if isinstance(data, (int, float)):
-            return ('number', float(data))
+            return ("number", float(data))
         if isinstance(data, (datetime.datetime, datetime.date, datetime.time)):
-            return ('datetime', data.isoformat())
+            return ("datetime", data.isoformat())
         s = str(data)
-        if s.startswith('='):
-            return ('formula', s)
-        return ('string', s)
+        if s.startswith("="):
+            return ("formula", s)
+        return ("string", s)
 
     class Format:
         def __init__(self, props=None):
@@ -66,12 +67,13 @@ def __vis_install_xlsxwriter__():
             self._id = None
 
         def __getattr__(self, name):
-            if name.startswith('set_'):
+            if name.startswith("set_"):
                 key = name[4:]
 
                 def setter(value=True):
                     self._props[key] = value
                     self._id = None
+
                 return setter
             raise AttributeError(name)
 
@@ -89,7 +91,9 @@ def __vis_install_xlsxwriter__():
             return args[0], args[1], args[2:]
 
         def _put(self, r, c, kind, val, fmt):
-            ok, res = _write(self._wb._h, self.index, r, c, kind, val, self._wb._fmt_id(fmt))
+            ok, res = _write(
+                self._wb._h, self.index, r, c, kind, val, self._wb._fmt_id(fmt)
+            )
             _raise(ok, res)
             return 0
 
@@ -98,35 +102,51 @@ def __vis_install_xlsxwriter__():
             data = rest[0] if rest else None
             fmt = rest[1] if len(rest) > 1 else None
             kind, val = _detect(data)
-            if kind == 'string' and (val.startswith('http://') or val.startswith('https://') or val.startswith('mailto:')):
+            if kind == "string" and (
+                val.startswith("http://")
+                or val.startswith("https://")
+                or val.startswith("mailto:")
+            ):
                 return self.write_url(r, c, val, fmt)
             return self._put(r, c, kind, val, fmt)
 
         def write_string(self, *args):
             r, c, rest = self._rc(args)
-            return self._put(r, c, 'string', str(rest[0]) if rest else '', rest[1] if len(rest) > 1 else None)
+            return self._put(
+                r,
+                c,
+                "string",
+                str(rest[0]) if rest else "",
+                rest[1] if len(rest) > 1 else None,
+            )
 
         def write_number(self, *args):
             r, c, rest = self._rc(args)
-            return self._put(r, c, 'number', float(rest[0]), rest[1] if len(rest) > 1 else None)
+            return self._put(
+                r, c, "number", float(rest[0]), rest[1] if len(rest) > 1 else None
+            )
 
         def write_boolean(self, *args):
             r, c, rest = self._rc(args)
-            return self._put(r, c, 'boolean', bool(rest[0]), rest[1] if len(rest) > 1 else None)
+            return self._put(
+                r, c, "boolean", bool(rest[0]), rest[1] if len(rest) > 1 else None
+            )
 
         def write_formula(self, *args):
             r, c, rest = self._rc(args)
-            return self._put(r, c, 'formula', str(rest[0]), rest[1] if len(rest) > 1 else None)
+            return self._put(
+                r, c, "formula", str(rest[0]), rest[1] if len(rest) > 1 else None
+            )
 
         def write_datetime(self, *args):
             r, c, rest = self._rc(args)
             v = rest[0]
-            iso = v.isoformat() if hasattr(v, 'isoformat') else str(v)
-            return self._put(r, c, 'datetime', iso, rest[1] if len(rest) > 1 else None)
+            iso = v.isoformat() if hasattr(v, "isoformat") else str(v)
+            return self._put(r, c, "datetime", iso, rest[1] if len(rest) > 1 else None)
 
         def write_blank(self, *args):
             r, c, rest = self._rc(args)
-            return self._put(r, c, 'blank', '', rest[1] if len(rest) > 1 else None)
+            return self._put(r, c, "blank", "", rest[1] if len(rest) > 1 else None)
 
         def write_url(self, *args):
             r, c, rest = self._rc(args)
@@ -134,7 +154,9 @@ def __vis_install_xlsxwriter__():
             fmt = rest[1] if len(rest) > 1 else None
             string = rest[2] if len(rest) > 2 else None
             tip = rest[3] if len(rest) > 3 else None
-            ok, res = _url(self._wb._h, self.index, r, c, url, string, tip, self._wb._fmt_id(fmt))
+            ok, res = _url(
+                self._wb._h, self.index, r, c, url, string, tip, self._wb._fmt_id(fmt)
+            )
             _raise(ok, res)
             return 0
 
@@ -157,7 +179,7 @@ def __vis_install_xlsxwriter__():
         def merge_range(self, *args):
             args = list(args)
             if args and isinstance(args[0], str):
-                a, b = args[0].split(':')
+                a, b = args[0].split(":")
                 r1, c1 = _cell_to_rowcol(a)
                 r2, c2 = _cell_to_rowcol(b)
                 rest = args[1:]
@@ -167,16 +189,26 @@ def __vis_install_xlsxwriter__():
             data = rest[0] if rest else None
             fmt = rest[1] if len(rest) > 1 else None
             kind, val = _detect(data)
-            ok, res = _merge(self._wb._h, self.index, r1, c1, r2, c2, kind, val, self._wb._fmt_id(fmt))
+            ok, res = _merge(
+                self._wb._h,
+                self.index,
+                r1,
+                c1,
+                r2,
+                c2,
+                kind,
+                val,
+                self._wb._fmt_id(fmt),
+            )
             _raise(ok, res)
             return 0
 
         def set_column(self, *args):
             args = list(args)
             if args and isinstance(args[0], str):
-                a, b = (args[0].split(':') + [args[0]])[:2]
-                first_col = _cell_to_rowcol(a + '1')[1]
-                last_col = _cell_to_rowcol(b + '1')[1]
+                a, b = (args[0].split(":") + [args[0]])[:2]
+                first_col = _cell_to_rowcol(a + "1")[1]
+                last_col = _cell_to_rowcol(b + "1")[1]
                 rest = args[1:]
             else:
                 first_col, last_col = args[0], args[1]
@@ -184,14 +216,29 @@ def __vis_install_xlsxwriter__():
             width = rest[0] if rest else None
             cell_format = rest[1] if len(rest) > 1 else None
             options = rest[2] if len(rest) > 2 else None
-            hidden = bool(options.get('hidden')) if options else False
-            ok, res = _set_col(self._wb._h, self.index, first_col, last_col, width, self._wb._fmt_id(cell_format), hidden)
+            hidden = bool(options.get("hidden")) if options else False
+            ok, res = _set_col(
+                self._wb._h,
+                self.index,
+                first_col,
+                last_col,
+                width,
+                self._wb._fmt_id(cell_format),
+                hidden,
+            )
             _raise(ok, res)
             return 0
 
         def set_row(self, row, height=None, cell_format=None, options=None):
-            hidden = bool(options.get('hidden')) if options else False
-            ok, res = _set_row(self._wb._h, self.index, row, height, self._wb._fmt_id(cell_format), hidden)
+            hidden = bool(options.get("hidden")) if options else False
+            ok, res = _set_row(
+                self._wb._h,
+                self.index,
+                row,
+                height,
+                self._wb._fmt_id(cell_format),
+                hidden,
+            )
             _raise(ok, res)
             return 0
 
@@ -220,7 +267,7 @@ def __vis_install_xlsxwriter__():
         def add_worksheet(self, name=None):
             ok, res = _add_sheet(self._h, name)
             _raise(ok, res)
-            ws = Worksheet(self, res['index'], res['name'])
+            ws = Worksheet(self, res["index"], res["name"])
             self.worksheets_objs.append(ws)
             return ws
 
@@ -260,10 +307,10 @@ def __vis_install_xlsxwriter__():
             data = base64.b64decode(b64)
             self.data = data
             if self.filename is not None:
-                if hasattr(self.filename, 'write'):
+                if hasattr(self.filename, "write"):
                     self.filename.write(data)
                 else:
-                    with open(self.filename, 'wb') as f:
+                    with open(self.filename, "wb") as f:
                         f.write(data)
 
         def __enter__(self):
@@ -273,28 +320,28 @@ def __vis_install_xlsxwriter__():
             self.close()
             return False
 
-    mod = types.ModuleType('xlsxwriter')
+    mod = types.ModuleType("xlsxwriter")
     mod.Workbook = Workbook
     mod.Worksheet = Worksheet
     mod.Format = Format
     mod.XlsxWriterException = XlsxWriterException
-    mod.__version__ = '3.2.9'
+    mod.__version__ = "3.2.9"
 
-    _wbmod = types.ModuleType('xlsxwriter.workbook')
+    _wbmod = types.ModuleType("xlsxwriter.workbook")
     _wbmod.Workbook = Workbook
     mod.workbook = _wbmod
-    _wsmod = types.ModuleType('xlsxwriter.worksheet')
+    _wsmod = types.ModuleType("xlsxwriter.worksheet")
     _wsmod.Worksheet = Worksheet
     mod.worksheet = _wsmod
-    _fmtmod = types.ModuleType('xlsxwriter.format')
+    _fmtmod = types.ModuleType("xlsxwriter.format")
     _fmtmod.Format = Format
     mod.format = _fmtmod
-    _exc = types.ModuleType('xlsxwriter.exceptions')
+    _exc = types.ModuleType("xlsxwriter.exceptions")
     _exc.XlsxWriterException = XlsxWriterException
     mod.exceptions = _exc
 
     def _col_to_name(col):
-        name = ''
+        name = ""
         col += 1
         while col > 0:
             col, rem = divmod(col - 1, 26)
@@ -302,21 +349,27 @@ def __vis_install_xlsxwriter__():
         return name
 
     def xl_rowcol_to_cell(row, col, row_abs=False, col_abs=False):
-        return ('$' if col_abs else '') + _col_to_name(col) + ('$' if row_abs else '') + str(row + 1)
+        return (
+            ("$" if col_abs else "")
+            + _col_to_name(col)
+            + ("$" if row_abs else "")
+            + str(row + 1)
+        )
 
-    _util = types.ModuleType('xlsxwriter.utility')
+    _util = types.ModuleType("xlsxwriter.utility")
     _util.xl_cell_to_rowcol = _cell_to_rowcol
     _util.xl_rowcol_to_cell = xl_rowcol_to_cell
     _util.xl_col_to_name = _col_to_name
     mod.utility = _util
 
-    sys.modules['xlsxwriter'] = mod
-    for _sub in ('workbook', 'worksheet', 'format', 'exceptions', 'utility'):
-        sys.modules['xlsxwriter.' + _sub] = getattr(mod, _sub)
+    sys.modules["xlsxwriter"] = mod
+    for _sub in ("workbook", "worksheet", "format", "exceptions", "utility"):
+        sys.modules["xlsxwriter." + _sub] = getattr(mod, _sub)
     try:
         _bi.xlsxwriter = mod
     except Exception:
         pass
+
 
 __vis_install_xlsxwriter__()
 del __vis_install_xlsxwriter__

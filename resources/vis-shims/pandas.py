@@ -5,6 +5,7 @@
 # shim when present). Series = labelled 1-D column; DataFrame = ordered dict of
 # columns. A deliberate correctness-focused SUBSET, not C-speed pandas.
 
+
 def __vis_install_pandas__():
     import sys, types, math, builtins as _bi
     import datetime as _dt
@@ -15,14 +16,16 @@ def __vis_install_pandas__():
     _SQ = chr(39)
 
     def _is_seq(x):
-        return isinstance(x, (list, tuple)) or (hasattr(x, '__iter__') and not isinstance(x, (str, bytes, dict)))
+        return isinstance(x, (list, tuple)) or (
+            hasattr(x, "__iter__") and not isinstance(x, (str, bytes, dict))
+        )
 
     def _to_list(x):
         if isinstance(x, list):
             return list(x)
         if isinstance(x, tuple):
             return list(x)
-        if hasattr(x, 'tolist'):
+        if hasattr(x, "tolist"):
             try:
                 return list(x.tolist())
             except Exception:
@@ -31,7 +34,7 @@ def __vis_install_pandas__():
             return [v for v in x]
         return [x]
 
-    _NA = float('nan')
+    _NA = float("nan")
 
     def _isna(v):
         if v is None:
@@ -44,7 +47,7 @@ def __vis_install_pandas__():
     def _jsonable(v):
         if _isna(v):
             return None
-        if hasattr(v, 'item'):
+        if hasattr(v, "item"):
             try:
                 return v.item()
             except Exception:
@@ -53,7 +56,7 @@ def __vis_install_pandas__():
 
     def _fmt(v):
         if _isna(v):
-            return 'NaN'
+            return "NaN"
         if isinstance(v, float):
             if v == int(v) and abs(v) < 1e16:
                 return str(v)
@@ -66,22 +69,22 @@ def __vis_install_pandas__():
             if _isna(v):
                 continue
             if isinstance(v, bool):
-                seen.add('bool')
+                seen.add("bool")
             elif isinstance(v, int):
-                seen.add('int')
+                seen.add("int")
             elif isinstance(v, float):
-                seen.add('float')
+                seen.add("float")
             else:
-                seen.add('obj')
+                seen.add("obj")
         if not seen:
-            return 'float64'
-        if seen == {'bool'}:
-            return 'bool'
-        if seen == {'int'}:
-            return 'int64'
-        if seen <= {'int', 'float'}:
-            return 'float64'
-        return 'object'
+            return "float64"
+        if seen == {"bool"}:
+            return "bool"
+        if seen == {"int"}:
+            return "int64"
+        if seen <= {"int", "float"}:
+            return "float64"
+        return "object"
 
     def _norm_num(vals):
         vals = list(vals)
@@ -93,8 +96,13 @@ def __vis_install_pandas__():
         if not has_na:
             return vals
         non_na = [v for v in vals if not _isna(v)]
-        if non_na and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in non_na):
-            return [_NA if v is None else (float(v) if isinstance(v, int) else v) for v in vals]
+        if non_na and all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) for v in non_na
+        ):
+            return [
+                _NA if v is None else (float(v) if isinstance(v, int) else v)
+                for v in vals
+            ]
         return vals
 
     # ----- Series -----
@@ -126,6 +134,7 @@ def __vis_install_pandas__():
         def values(self):
             try:
                 import numpy as _np
+
                 return _np.array(self._v)
             except Exception:
                 return list(self._v)
@@ -207,30 +216,73 @@ def __vis_install_pandas__():
         def _binop(self, other, fn):
             if isinstance(other, Series):
                 ov = other._v
-                return Series([fn(a, b) for a, b in zip(self._v, ov)], self._i, self.name)
+                return Series(
+                    [fn(a, b) for a, b in zip(self._v, ov)], self._i, self.name
+                )
             return Series([fn(a, other) for a in self._v], self._i, self.name)
 
-        def __add__(self, o): return self._binop(o, lambda a, b: a + b)
-        def __radd__(self, o): return self._binop(o, lambda a, b: b + a)
-        def __sub__(self, o): return self._binop(o, lambda a, b: a - b)
-        def __rsub__(self, o): return self._binop(o, lambda a, b: b - a)
-        def __mul__(self, o): return self._binop(o, lambda a, b: a * b)
-        def __rmul__(self, o): return self._binop(o, lambda a, b: b * a)
-        def __truediv__(self, o): return self._binop(o, lambda a, b: a / b)
-        def __rtruediv__(self, o): return self._binop(o, lambda a, b: b / a)
-        def __floordiv__(self, o): return self._binop(o, lambda a, b: a // b)
-        def __mod__(self, o): return self._binop(o, lambda a, b: a % b)
-        def __pow__(self, o): return self._binop(o, lambda a, b: a ** b)
-        def __neg__(self): return Series([-a for a in self._v], self._i, self.name)
-        def __gt__(self, o): return self._binop(o, lambda a, b: a > b)
-        def __ge__(self, o): return self._binop(o, lambda a, b: a >= b)
-        def __lt__(self, o): return self._binop(o, lambda a, b: a < b)
-        def __le__(self, o): return self._binop(o, lambda a, b: a <= b)
-        def __eq__(self, o): return self._binop(o, lambda a, b: a == b)
-        def __ne__(self, o): return self._binop(o, lambda a, b: a != b)
-        def __and__(self, o): return self._binop(o, lambda a, b: bool(a) and bool(b))
-        def __or__(self, o): return self._binop(o, lambda a, b: bool(a) or bool(b))
-        def __invert__(self): return Series([not bool(a) for a in self._v], self._i, self.name)
+        def __add__(self, o):
+            return self._binop(o, lambda a, b: a + b)
+
+        def __radd__(self, o):
+            return self._binop(o, lambda a, b: b + a)
+
+        def __sub__(self, o):
+            return self._binop(o, lambda a, b: a - b)
+
+        def __rsub__(self, o):
+            return self._binop(o, lambda a, b: b - a)
+
+        def __mul__(self, o):
+            return self._binop(o, lambda a, b: a * b)
+
+        def __rmul__(self, o):
+            return self._binop(o, lambda a, b: b * a)
+
+        def __truediv__(self, o):
+            return self._binop(o, lambda a, b: a / b)
+
+        def __rtruediv__(self, o):
+            return self._binop(o, lambda a, b: b / a)
+
+        def __floordiv__(self, o):
+            return self._binop(o, lambda a, b: a // b)
+
+        def __mod__(self, o):
+            return self._binop(o, lambda a, b: a % b)
+
+        def __pow__(self, o):
+            return self._binop(o, lambda a, b: a**b)
+
+        def __neg__(self):
+            return Series([-a for a in self._v], self._i, self.name)
+
+        def __gt__(self, o):
+            return self._binop(o, lambda a, b: a > b)
+
+        def __ge__(self, o):
+            return self._binop(o, lambda a, b: a >= b)
+
+        def __lt__(self, o):
+            return self._binop(o, lambda a, b: a < b)
+
+        def __le__(self, o):
+            return self._binop(o, lambda a, b: a <= b)
+
+        def __eq__(self, o):
+            return self._binop(o, lambda a, b: a == b)
+
+        def __ne__(self, o):
+            return self._binop(o, lambda a, b: a != b)
+
+        def __and__(self, o):
+            return self._binop(o, lambda a, b: bool(a) and bool(b))
+
+        def __or__(self, o):
+            return self._binop(o, lambda a, b: bool(a) or bool(b))
+
+        def __invert__(self):
+            return Series([not bool(a) for a in self._v], self._i, self.name)
 
         @property
         def dt(self):
@@ -242,11 +294,13 @@ def __vis_install_pandas__():
         def expanding(self, min_periods=1):
             return _Rolling(self, len(self._v) if self._v else 1, min_periods)
 
-        def quantile(self, q=0.5, interpolation='linear'):
+        def quantile(self, q=0.5, interpolation="linear"):
             sn = sorted(self._num())
             if _is_seq(q):
                 qs = _to_list(q)
-                return Series([_quant(sn, x) for x in qs], index=list(qs), name=self.name)
+                return Series(
+                    [_quant(sn, x) for x in qs], index=list(qs), name=self.name
+                )
             return _quant(sn, q)
 
         def prod(self):
@@ -272,19 +326,34 @@ def __vis_install_pandas__():
             return Series(vals, name=self.name)
 
         def to_frame(self, name=None):
-            nm = name if name is not None else (self.name if self.name is not None else 0)
+            nm = (
+                name
+                if name is not None
+                else (self.name if self.name is not None else 0)
+            )
             return DataFrame({nm: list(self._v)}, columns=[nm], index=list(self._i))
 
         def reset_index(self, drop=False, name=None):
             if drop:
                 return Series(list(self._v), name=self.name)
-            nm = name if name is not None else (self.name if self.name is not None else 0)
-            return DataFrame({'index': list(self._i), nm: list(self._v)},
-                             columns=['index', nm])
+            nm = (
+                name
+                if name is not None
+                else (self.name if self.name is not None else 0)
+            )
+            return DataFrame(
+                {"index": list(self._i), nm: list(self._v)}, columns=["index", nm]
+            )
 
         def sort_index(self, ascending=True):
-            order = sorted(range(len(self._v)), key=lambda k: self._i[k], reverse=not ascending)
-            return Series([self._v[k] for k in order], index=[self._i[k] for k in order], name=self.name)
+            order = sorted(
+                range(len(self._v)), key=lambda k: self._i[k], reverse=not ascending
+            )
+            return Series(
+                [self._v[k] for k in order],
+                index=[self._i[k] for k in order],
+                name=self.name,
+            )
 
         def shift(self, periods=1, fill_value=None):
             fill = _NA if fill_value is None else fill_value
@@ -297,13 +366,18 @@ def __vis_install_pandas__():
 
         def diff(self, periods=1):
             prev = self.shift(periods)
-            out = [(_NA if (_isna(a) or _isna(b)) else a - b) for a, b in zip(self._v, prev._v)]
+            out = [
+                (_NA if (_isna(a) or _isna(b)) else a - b)
+                for a, b in zip(self._v, prev._v)
+            ]
             return Series(out, index=list(self._i), name=self.name)
 
         def pct_change(self, periods=1):
             prev = self.shift(periods)
-            out = [(_NA if (_isna(a) or _isna(b) or b == 0) else (a - b) / b)
-                   for a, b in zip(self._v, prev._v)]
+            out = [
+                (_NA if (_isna(a) or _isna(b) or b == 0) else (a - b) / b)
+                for a, b in zip(self._v, prev._v)
+            ]
             return Series(out, index=list(self._i), name=self.name)
 
         def clip(self, lower=None, upper=None):
@@ -315,18 +389,20 @@ def __vis_install_pandas__():
                 if upper is not None and v > upper:
                     return upper
                 return v
+
             return Series([_c(v) for v in self._v], index=list(self._i), name=self.name)
 
-        def between(self, left, right, inclusive='both'):
+        def between(self, left, right, inclusive="both"):
             def _b(v):
                 if _isna(v):
                     return False
-                lo = v >= left if inclusive in ('both', 'left') else v > left
-                hi = v <= right if inclusive in ('both', 'right') else v < right
+                lo = v >= left if inclusive in ("both", "left") else v > left
+                hi = v <= right if inclusive in ("both", "right") else v < right
                 return bool(lo and hi)
+
             return Series([_b(v) for v in self._v], index=list(self._i), name=self.name)
 
-        def rank(self, method='average', ascending=True):
+        def rank(self, method="average", ascending=True):
             pairs = [(i, v) for i, v in enumerate(self._v) if not _isna(v)]
             order = sorted(pairs, key=lambda p: p[1], reverse=not ascending)
             out = [_NA] * len(self._v)
@@ -335,18 +411,18 @@ def __vis_install_pandas__():
                 j = k
                 while j + 1 < len(order) and order[j + 1][1] == order[k][1]:
                     j = j + 1
-                if method == 'min':
+                if method == "min":
                     r = float(k + 1)
-                elif method == 'max':
+                elif method == "max":
                     r = float(j + 1)
-                elif method == 'dense':
+                elif method == "dense":
                     r = None
                 else:
                     r = (k + 1 + j + 1) / 2.0
                 for m in range(k, j + 1):
-                    out[order[m][0]] = float(m + 1) if method == 'first' else r
+                    out[order[m][0]] = float(m + 1) if method == "first" else r
                 k = j + 1
-            if method == 'dense':
+            if method == "dense":
                 seen = []
                 for _i9, v in order:
                     if not seen or seen[-1] != v:
@@ -382,10 +458,13 @@ def __vis_install_pandas__():
                 out.append(_NA if acc is None else acc)
             return Series(out, index=list(self._i), name=self.name)
 
-        def corr(self, other, method='pearson'):
+        def corr(self, other, method="pearson"):
             b = other._v if isinstance(other, Series) else _to_list(other)
-            pairs = [(float(x), float(y)) for x, y in zip(self._v, b)
-                     if not _isna(x) and not _isna(y)]
+            pairs = [
+                (float(x), float(y))
+                for x, y in zip(self._v, b)
+                if not _isna(x) and not _isna(y)
+            ]
             if len(pairs) < 2:
                 return _NA
             mx = _bi.sum(p[0] for p in pairs) / len(pairs)
@@ -399,13 +478,18 @@ def __vis_install_pandas__():
 
         def cov(self, other, ddof=1):
             b = other._v if isinstance(other, Series) else _to_list(other)
-            pairs = [(float(x), float(y)) for x, y in zip(self._v, b)
-                     if not _isna(x) and not _isna(y)]
+            pairs = [
+                (float(x), float(y))
+                for x, y in zip(self._v, b)
+                if not _isna(x) and not _isna(y)
+            ]
             if len(pairs) - ddof <= 0:
                 return _NA
             mx = _bi.sum(p[0] for p in pairs) / len(pairs)
             my = _bi.sum(p[1] for p in pairs) / len(pairs)
-            return _bi.sum((p[0] - mx) * (p[1] - my) for p in pairs) / (len(pairs) - ddof)
+            return _bi.sum((p[0] - mx) * (p[1] - my) for p in pairs) / (
+                len(pairs) - ddof
+            )
 
         def nlargest(self, n=5):
             return self.sort_values(ascending=False).head(n)
@@ -421,7 +505,7 @@ def __vis_install_pandas__():
 
         def item(self):
             if len(self._v) != 1:
-                raise ValueError('can only convert an array of size 1 to a scalar')
+                raise ValueError("can only convert an array of size 1 to a scalar")
             return self._v[0]
 
         def agg(self, func):
@@ -429,9 +513,14 @@ def __vis_install_pandas__():
 
         def aggregate(self, func):
             if isinstance(func, list):
-                return Series([self.aggregate(f) for f in func],
-                              index=[f if isinstance(f, str) else getattr(f, '__name__', 'fn') for f in func],
-                              name=self.name)
+                return Series(
+                    [self.aggregate(f) for f in func],
+                    index=[
+                        f if isinstance(f, str) else getattr(f, "__name__", "fn")
+                        for f in func
+                    ],
+                    name=self.name,
+                )
             if isinstance(func, str):
                 return getattr(self, func)()
             return func(self)
@@ -479,7 +568,11 @@ def __vis_install_pandas__():
             return Series([abs(x) for x in self._v], self._i, self.name)
 
         def round(self, n=0):
-            return Series([round(x, n) if not _isna(x) else x for x in self._v], self._i, self.name)
+            return Series(
+                [round(x, n) if not _isna(x) else x for x in self._v],
+                self._i,
+                self.name,
+            )
 
         def cumsum(self):
             out = []
@@ -499,6 +592,7 @@ def __vis_install_pandas__():
                     seen.append(x)
             try:
                 import numpy as _np
+
                 return _np.array(seen)
             except Exception:
                 return seen
@@ -556,8 +650,12 @@ def __vis_install_pandas__():
                 return Series([m.get(x, x) for x in self._v], self._i, self.name)
             if isinstance(to_replace, (list, tuple)):
                 rs = list(to_replace)
-                return Series([value if x in rs else x for x in self._v], self._i, self.name)
-            return Series([value if x == to_replace else x for x in self._v], self._i, self.name)
+                return Series(
+                    [value if x in rs else x for x in self._v], self._i, self.name
+                )
+            return Series(
+                [value if x == to_replace else x for x in self._v], self._i, self.name
+            )
 
         def idxmax(self):
             best = None
@@ -569,7 +667,7 @@ def __vis_install_pandas__():
                     best = x
                     bl = lab
             if bl is None:
-                raise ValueError('attempt to get argmax of an empty sequence')
+                raise ValueError("attempt to get argmax of an empty sequence")
             return bl
 
         def idxmin(self):
@@ -582,7 +680,7 @@ def __vis_install_pandas__():
                     best = x
                     bl = lab
             if bl is None:
-                raise ValueError('attempt to get argmin of an empty sequence')
+                raise ValueError("attempt to get argmin of an empty sequence")
             return bl
 
         def unique(self):
@@ -592,7 +690,7 @@ def __vis_install_pandas__():
                     seen.append(x)
             return seen
 
-        def drop_duplicates(self, keep='first'):
+        def drop_duplicates(self, keep="first"):
             seen = set()
             v = []
             i = []
@@ -603,7 +701,7 @@ def __vis_install_pandas__():
                     i.append(lab)
             return Series(v, i, self.name)
 
-        def duplicated(self, keep='first'):
+        def duplicated(self, keep="first"):
             seen = set()
             out = []
             for x in self._v:
@@ -611,24 +709,26 @@ def __vis_install_pandas__():
                 seen.add(x)
             return Series(out, self._i, self.name)
 
-        def to_json(self, orient='index'):
+        def to_json(self, orient="index"):
             return _json.dumps({str(k): _jsonable(v) for k, v in zip(self._i, self._v)})
 
         def astype(self, t):
-            if t in (int, 'int', 'int64'):
+            if t in (int, "int", "int64"):
                 f = lambda x: int(x)
-            elif t in (float, 'float', 'float64'):
+            elif t in (float, "float", "float64"):
                 f = lambda x: float(x)
-            elif t in (str, 'str', 'object'):
+            elif t in (str, "str", "object"):
                 f = lambda x: str(x)
-            elif t in (bool, 'bool'):
+            elif t in (bool, "bool"):
                 f = lambda x: bool(x)
             else:
                 f = lambda x: x
             return Series([f(x) for x in self._v], self._i, self.name)
 
         def fillna(self, value):
-            return Series([value if _isna(x) else x for x in self._v], self._i, self.name)
+            return Series(
+                [value if _isna(x) else x for x in self._v], self._i, self.name
+            )
 
         def dropna(self):
             v = []
@@ -649,7 +749,9 @@ def __vis_install_pandas__():
             return Series([not _isna(x) for x in self._v], self._i, self.name)
 
         def sort_values(self, ascending=True):
-            pairs = sorted(zip(self._v, self._i), key=lambda p: p[0], reverse=not ascending)
+            pairs = sorted(
+                zip(self._v, self._i), key=lambda p: p[0], reverse=not ascending
+            )
             return Series([p[0] for p in pairs], [p[1] for p in pairs], self.name)
 
         def head(self, n=5):
@@ -663,8 +765,13 @@ def __vis_install_pandas__():
 
         def describe(self):
             n = self._num()
-            data = {'count': len(n), 'mean': self.mean(), 'std': self.std(),
-                    'min': self.min(), 'max': self.max()}
+            data = {
+                "count": len(n),
+                "mean": self.mean(),
+                "std": self.std(),
+                "min": self.min(),
+                "max": self.max(),
+            }
             return Series(list(data.values()), list(data.keys()), self.name)
 
         def __repr__(self):
@@ -674,29 +781,57 @@ def __vis_install_pandas__():
             vw = max([len(x) for x in vals] + [0])
             lines = []
             for lab, v in zip(labs, vals):
-                lines.append(lab.ljust(lw) + '    ' + v.rjust(vw))
-            tail = 'Name: ' + str(self.name) + _COMMA + ' ' if self.name is not None else ''
-            lines.append(tail + 'dtype: ' + self.dtype)
+                lines.append(lab.ljust(lw) + "    " + v.rjust(vw))
+            tail = (
+                "Name: " + str(self.name) + _COMMA + " "
+                if self.name is not None
+                else ""
+            )
+            lines.append(tail + "dtype: " + self.dtype)
             return _NL.join(lines)
 
     class _StrAccessor:
         def __init__(self, s):
             self._s = s
+
         def _ap(self, fn):
-            return Series([fn(x) if isinstance(x, str) else _NA for x in self._s._v], self._s._i, self._s.name)
-        def lower(self): return self._ap(lambda x: x.lower())
-        def upper(self): return self._ap(lambda x: x.upper())
-        def strip(self): return self._ap(lambda x: x.strip())
-        def len(self): return self._ap(lambda x: len(x))
-        def contains(self, pat): return self._ap(lambda x: pat in x)
-        def startswith(self, p): return self._ap(lambda x: x.startswith(p))
-        def endswith(self, p): return self._ap(lambda x: x.endswith(p))
-        def replace(self, a, b): return self._ap(lambda x: x.replace(a, b))
-        def split(self, sep=None): return self._ap(lambda x: x.split(sep))
+            return Series(
+                [fn(x) if isinstance(x, str) else _NA for x in self._s._v],
+                self._s._i,
+                self._s.name,
+            )
+
+        def lower(self):
+            return self._ap(lambda x: x.lower())
+
+        def upper(self):
+            return self._ap(lambda x: x.upper())
+
+        def strip(self):
+            return self._ap(lambda x: x.strip())
+
+        def len(self):
+            return self._ap(lambda x: len(x))
+
+        def contains(self, pat):
+            return self._ap(lambda x: pat in x)
+
+        def startswith(self, p):
+            return self._ap(lambda x: x.startswith(p))
+
+        def endswith(self, p):
+            return self._ap(lambda x: x.endswith(p))
+
+        def replace(self, a, b):
+            return self._ap(lambda x: x.replace(a, b))
+
+        def split(self, sep=None):
+            return self._ap(lambda x: x.split(sep))
 
     class _ILoc:
         def __init__(self, s):
             self._s = s
+
         def __getitem__(self, k):
             s = self._s
             if isinstance(k, slice):
@@ -708,9 +843,9 @@ def __vis_install_pandas__():
     class _SLoc:
         def __init__(self, s):
             self._s = s
+
         def __getitem__(self, k):
             return self._s[k]
-
 
     # ----- DataFrame -----
     def _med(w):
@@ -718,7 +853,11 @@ def __vis_install_pandas__():
         k = len(n)
         if not k:
             return _NA
-        return float(n[k // 2]) if k % 2 else (float(n[k // 2 - 1]) + float(n[k // 2])) / 2.0
+        return (
+            float(n[k // 2])
+            if k % 2
+            else (float(n[k // 2 - 1]) + float(n[k // 2])) / 2.0
+        )
 
     def _var(w, ddof=1):
         n = [float(x) for x in w]
@@ -740,22 +879,24 @@ def __vis_install_pandas__():
         hi = int(math.ceil(pos))
         if lo == hi:
             return float(sorted_vals[lo])
-        return float(sorted_vals[lo]) + (float(sorted_vals[hi]) - float(sorted_vals[lo])) * (pos - lo)
+        return float(sorted_vals[lo]) + (
+            float(sorted_vals[hi]) - float(sorted_vals[lo])
+        ) * (pos - lo)
 
     _AGGF = {
-        'mean': lambda s: s.mean(),
-        'sum': lambda s: s.sum(),
-        'min': lambda s: s.min(),
-        'max': lambda s: s.max(),
-        'count': lambda s: s.count(),
-        'size': lambda s: len(s),
-        'median': lambda s: s.median(),
-        'std': lambda s: s.std(),
-        'var': lambda s: s.var(),
-        'prod': lambda s: s.prod(),
-        'nunique': lambda s: s.nunique(),
-        'first': lambda s: s._v[0] if len(s._v) else _NA,
-        'last': lambda s: s._v[-1] if len(s._v) else _NA,
+        "mean": lambda s: s.mean(),
+        "sum": lambda s: s.sum(),
+        "min": lambda s: s.min(),
+        "max": lambda s: s.max(),
+        "count": lambda s: s.count(),
+        "size": lambda s: len(s),
+        "median": lambda s: s.median(),
+        "std": lambda s: s.std(),
+        "var": lambda s: s.var(),
+        "prod": lambda s: s.prod(),
+        "nunique": lambda s: s.nunique(),
+        "first": lambda s: s._v[0] if len(s._v) else _NA,
+        "last": lambda s: s._v[-1] if len(s._v) else _NA,
     }
 
     class _Rolling:
@@ -771,7 +912,7 @@ def __vis_install_pandas__():
                 lo = i - self._w + 1
                 if lo < 0:
                     lo = 0
-                win = [x for x in v[lo:i + 1] if not _isna(x)]
+                win = [x for x in v[lo : i + 1] if not _isna(x)]
                 out.append(_NA if len(win) < self._mp else fn(win))
             return Series(out, index=list(self._s._i), name=self._s.name)
 
@@ -807,8 +948,11 @@ def __vis_install_pandas__():
             self._s = s
 
         def _map(self, fn, name=None):
-            return Series([_NA if _isna(v) else fn(v) for v in self._s._v],
-                          index=list(self._s._i), name=name or self._s.name)
+            return Series(
+                [_NA if _isna(v) else fn(v) for v in self._s._v],
+                index=list(self._s._i),
+                name=name or self._s.name,
+            )
 
         @property
         def year(self):
@@ -860,9 +1004,12 @@ def __vis_install_pandas__():
                 if index is None:
                     index = list(data._i)
                 data = {data.name if data.name is not None else 0: list(data._v)}
-            elif (data is not None
-                  and not isinstance(data, (DataFrame, dict, list, tuple))
-                  and hasattr(data, 'tolist') and hasattr(data, 'shape')):
+            elif (
+                data is not None
+                and not isinstance(data, (DataFrame, dict, list, tuple))
+                and hasattr(data, "tolist")
+                and hasattr(data, "shape")
+            ):
                 # numpy-style ndarray (incl. the vis numpy shim): materialise rows
                 data = data.tolist()
                 if len(data) and not _is_seq(data[0]):
@@ -942,6 +1089,7 @@ def __vis_install_pandas__():
             rows = [[self._d[c][r] for c in self._c] for r in range(self.shape[0])]
             try:
                 import numpy as _np
+
                 return _np.array(rows)
             except Exception:
                 return rows
@@ -967,7 +1115,9 @@ def __vis_install_pandas__():
                 idxs = [r for r in range(self.shape[0]) if mask[r]]
                 return self._take(idxs)
             if isinstance(key, list):
-                return DataFrame({c: self._d[c] for c in key}, columns=key, index=self._i)
+                return DataFrame(
+                    {c: self._d[c] for c in key}, columns=key, index=self._i
+                )
             if isinstance(key, slice):
                 idxs = list(range(self.shape[0]))[key]
                 return self._take(idxs)
@@ -986,11 +1136,13 @@ def __vis_install_pandas__():
 
         def _take(self, idxs):
             data = {c: [self._d[c][r] for r in idxs] for c in self._c}
-            return DataFrame(data, columns=list(self._c), index=[self._i[r] for r in idxs])
+            return DataFrame(
+                data, columns=list(self._c), index=[self._i[r] for r in idxs]
+            )
 
         def __getattr__(self, name):
-            d = object.__getattribute__(self, '__dict__')
-            if '_d' in d and name in d['_d']:
+            d = object.__getattribute__(self, "__dict__")
+            if "_d" in d and name in d["_d"]:
                 return self._col(name)
             raise AttributeError(name)
 
@@ -1010,10 +1162,14 @@ def __vis_install_pandas__():
             return self._take(list(range(max(0, m - n), m)))
 
         def copy(self):
-            return DataFrame({c: list(self._d[c]) for c in self._c}, columns=list(self._c), index=list(self._i))
+            return DataFrame(
+                {c: list(self._d[c]) for c in self._c},
+                columns=list(self._c),
+                index=list(self._i),
+            )
 
         def rename(self, columns=None, **kw):
-            columns = columns or kw.get('columns') or {}
+            columns = columns or kw.get("columns") or {}
             newc = [columns.get(c, c) for c in self._c]
             data = {columns.get(c, c): self._d[c] for c in self._c}
             return DataFrame(data, columns=newc, index=self._i)
@@ -1026,7 +1182,9 @@ def __vis_install_pandas__():
                 labels = [labels]
             if axis == 1:
                 keep = [c for c in self._c if c not in labels]
-                return DataFrame({c: self._d[c] for c in keep}, columns=keep, index=self._i)
+                return DataFrame(
+                    {c: self._d[c] for c in keep}, columns=keep, index=self._i
+                )
             idxs = [r for r in range(self.shape[0]) if self._i[r] not in labels]
             return self._take(idxs)
 
@@ -1041,16 +1199,18 @@ def __vis_install_pandas__():
         def reset_index(self, drop=False):
             out = self.copy()
             if not drop:
-                out._d = {'index': list(self._i)}
+                out._d = {"index": list(self._i)}
                 out._d.update({c: list(self._d[c]) for c in self._c})
-                out._c = ['index'] + list(self._c)
+                out._c = ["index"] + list(self._c)
             out._i = list(range(self.shape[0]))
             return out
 
         def set_index(self, col):
-            out = DataFrame({c: list(self._d[c]) for c in self._c if c != col},
-                            columns=[c for c in self._c if c != col],
-                            index=list(self._d[col]))
+            out = DataFrame(
+                {c: list(self._d[c]) for c in self._c if c != col},
+                columns=[c for c in self._c if c != col],
+                index=list(self._d[col]),
+            )
             return out
 
         def fillna(self, value):
@@ -1058,7 +1218,11 @@ def __vis_install_pandas__():
             return DataFrame(data, columns=list(self._c), index=self._i)
 
         def dropna(self):
-            idxs = [r for r in range(self.shape[0]) if not any(_isna(self._d[c][r]) for c in self._c)]
+            idxs = [
+                r
+                for r in range(self.shape[0])
+                if not any(_isna(self._d[c][r]) for c in self._c)
+            ]
             return self._take(idxs)
 
         def isna(self):
@@ -1090,11 +1254,20 @@ def __vis_install_pandas__():
             data = {c: [fn(x, other) for x in self._d[c]] for c in self._c}
             return DataFrame(data, columns=list(self._c), index=self._i)
 
-        def __add__(self, o): return self._binop(o, lambda a, b: a + b)
-        def __radd__(self, o): return self._binop(o, lambda a, b: b + a)
-        def __sub__(self, o): return self._binop(o, lambda a, b: a - b)
-        def __mul__(self, o): return self._binop(o, lambda a, b: a * b)
-        def __truediv__(self, o): return self._binop(o, lambda a, b: a / b)
+        def __add__(self, o):
+            return self._binop(o, lambda a, b: a + b)
+
+        def __radd__(self, o):
+            return self._binop(o, lambda a, b: b + a)
+
+        def __sub__(self, o):
+            return self._binop(o, lambda a, b: a - b)
+
+        def __mul__(self, o):
+            return self._binop(o, lambda a, b: a * b)
+
+        def __truediv__(self, o):
+            return self._binop(o, lambda a, b: a / b)
 
         @property
         def at(self):
@@ -1117,10 +1290,12 @@ def __vis_install_pandas__():
             return DataFrame(data, columns=list(self._c), index=self._i)
 
         def replace(self, to_replace, value=None):
-            data = {c: list(self._col(c).replace(to_replace, value)._v) for c in self._c}
+            data = {
+                c: list(self._col(c).replace(to_replace, value)._v) for c in self._c
+            }
             return DataFrame(data, columns=list(self._c), index=self._i)
 
-        def duplicated(self, subset=None, keep='first'):
+        def duplicated(self, subset=None, keep="first"):
             cols = subset if subset is not None else list(self._c)
             if not isinstance(cols, list):
                 cols = [cols]
@@ -1140,14 +1315,20 @@ def __vis_install_pandas__():
             cols = self._numeric_cols()
             return Series([self._col(c).idxmin() for c in cols], cols)
 
-        def melt(self, id_vars=None, value_vars=None, var_name=None, value_name='value'):
+        def melt(
+            self, id_vars=None, value_vars=None, var_name=None, value_name="value"
+        ):
             id_vars = id_vars or []
             if not isinstance(id_vars, list):
                 id_vars = [id_vars]
-            value_vars = value_vars if value_vars is not None else [c for c in self._c if c not in id_vars]
+            value_vars = (
+                value_vars
+                if value_vars is not None
+                else [c for c in self._c if c not in id_vars]
+            )
             if not isinstance(value_vars, list):
                 value_vars = [value_vars]
-            var_name = var_name or 'variable'
+            var_name = var_name or "variable"
             data = {c: [] for c in id_vars}
             data[var_name] = []
             data[value_name] = []
@@ -1160,7 +1341,11 @@ def __vis_install_pandas__():
             return DataFrame(data, columns=id_vars + [var_name, value_name])
 
         def _numeric_cols(self):
-            return [c for c in self._c if _infer_dtype(self._d[c]) in ('int64', 'float64', 'bool')]
+            return [
+                c
+                for c in self._c
+                if _infer_dtype(self._d[c]) in ("int64", "float64", "bool")
+            ]
 
         def sum(self, axis=0):
             cols = self._numeric_cols()
@@ -1180,11 +1365,12 @@ def __vis_install_pandas__():
 
         def describe(self):
             cols = self._numeric_cols()
-            stats = ['count', 'mean', 'std', 'min', '25%', '50%', '75%', 'max']
+            stats = ["count", "mean", "std", "min", "25%", "50%", "75%", "max"]
             data = {}
             for c in cols:
                 s = self._col(c)
                 sn = sorted(s._num())
+
                 def q(p):
                     if not sn:
                         return _NA
@@ -1194,7 +1380,17 @@ def __vis_install_pandas__():
                     if lo == hi:
                         return sn[lo]
                     return sn[lo] + (sn[hi] - sn[lo]) * (k - lo)
-                data[c] = [s.count(), s.mean(), s.std(), s.min(), q(0.25), q(0.5), q(0.75), s.max()]
+
+                data[c] = [
+                    s.count(),
+                    s.mean(),
+                    s.std(),
+                    s.min(),
+                    q(0.25),
+                    q(0.5),
+                    q(0.75),
+                    s.max(),
+                ]
             return DataFrame(data, columns=cols, index=stats)
 
         def count(self):
@@ -1230,26 +1426,41 @@ def __vis_install_pandas__():
         def round(self, decimals=0):
             out = self.copy()
             for c in out._c:
-                out._d[c] = [(v if _isna(v) or not isinstance(v, (int, float)) or isinstance(v, bool)
-                              else _bi.round(v, decimals)) for v in out._d[c]]
+                out._d[c] = [
+                    (
+                        v
+                        if _isna(v)
+                        or not isinstance(v, (int, float))
+                        or isinstance(v, bool)
+                        else _bi.round(v, decimals)
+                    )
+                    for v in out._d[c]
+                ]
             return out
 
-        def corr(self, method='pearson', numeric_only=True):
+        def corr(self, method="pearson", numeric_only=True):
             cols = self._numeric_cols()
-            data = {c: [(1.0 if c == o else self._col(c).corr(self._col(o))) for o in cols] for c in cols}
+            data = {
+                c: [(1.0 if c == o else self._col(c).corr(self._col(o))) for o in cols]
+                for c in cols
+            }
             return DataFrame(data, columns=cols, index=list(cols))
 
         def cov(self, ddof=1, numeric_only=True):
             cols = self._numeric_cols()
-            data = {c: [self._col(c).cov(self._col(o), ddof) for o in cols] for c in cols}
+            data = {
+                c: [self._col(c).cov(self._col(o), ddof) for o in cols] for c in cols
+            }
             return DataFrame(data, columns=cols, index=list(cols))
 
         def sort_index(self, ascending=True):
-            order = sorted(range(self.shape[0]), key=lambda r: self._i[r], reverse=not ascending)
+            order = sorted(
+                range(self.shape[0]), key=lambda r: self._i[r], reverse=not ascending
+            )
             return self._take(order)
 
         def query(self, expr, **kwargs):
-            expr = expr.replace(chr(64), '')
+            expr = expr.replace(chr(64), "")
             env0 = dict(kwargs)
             keep = []
             for r in range(self.shape[0]):
@@ -1257,8 +1468,8 @@ def __vis_install_pandas__():
                 for c in self._c:
                     if isinstance(c, str):
                         env[c] = self._d[c][r]
-                env['index'] = self._i[r]
-                if eval(expr, {'__builtins__': _bi}, env):
+                env["index"] = self._i[r]
+                if eval(expr, {"__builtins__": _bi}, env):
                     keep.append(r)
             return self._take(keep)
 
@@ -1269,20 +1480,39 @@ def __vis_install_pandas__():
                 for c in self._c:
                     if isinstance(c, str):
                         env[c] = self._d[c][r]
-                out.append(eval(expr.replace(chr(64), ''), {'__builtins__': _bi}, env))
+                out.append(eval(expr.replace(chr(64), ""), {"__builtins__": _bi}, env))
             return Series(out, index=list(self._i))
 
         def pivot(self, index=None, columns=None, values=None):
-            return self.pivot_table(values=values, index=index, columns=columns, aggfunc='first')
+            return self.pivot_table(
+                values=values, index=index, columns=columns, aggfunc="first"
+            )
 
-        def pivot_table(self, values=None, index=None, columns=None, aggfunc='mean',
-                        fill_value=None, dropna=True):
-            idxc = index if isinstance(index, list) else ([] if index is None else [index])
-            colc = columns if isinstance(columns, list) else ([] if columns is None else [columns])
+        def pivot_table(
+            self,
+            values=None,
+            index=None,
+            columns=None,
+            aggfunc="mean",
+            fill_value=None,
+            dropna=True,
+        ):
+            idxc = (
+                index if isinstance(index, list) else ([] if index is None else [index])
+            )
+            colc = (
+                columns
+                if isinstance(columns, list)
+                else ([] if columns is None else [columns])
+            )
             if values is None:
-                vals = [c for c in self._c
-                        if c not in idxc and c not in colc
-                        and _infer_dtype(self._d[c]) in ('int64', 'float64', 'bool')]
+                vals = [
+                    c
+                    for c in self._c
+                    if c not in idxc
+                    and c not in colc
+                    and _infer_dtype(self._d[c]) in ("int64", "float64", "bool")
+                ]
             else:
                 vals = values if isinstance(values, list) else [values]
             fn = _AGGF[aggfunc] if isinstance(aggfunc, str) else aggfunc
@@ -1290,7 +1520,7 @@ def __vis_install_pandas__():
             colkeys = []
             cells = {}
             for r in range(self.shape[0]):
-                rk = tuple(self._d[c][r] for c in idxc) if idxc else ('',)
+                rk = tuple(self._d[c][r] for c in idxc) if idxc else ("",)
                 ck = tuple(self._d[c][r] for c in colc) if colc else None
                 if rk not in cells:
                     cells[rk] = {}
@@ -1314,6 +1544,7 @@ def __vis_install_pandas__():
                     return v
                 lab = ck[0] if len(ck) == 1 else ck
                 return lab if len(vals) == 1 else (v, lab)
+
             outcols = []
             data = {}
             for key in colkeys:
@@ -1330,16 +1561,17 @@ def __vis_install_pandas__():
             idx = [rk[0] if len(rk) == 1 else rk for rk in rowkeys]
             return DataFrame(data, columns=outcols, index=idx)
 
-        def to_markdown(self, index=True, tablefmt='pipe'):
+        def to_markdown(self, index=True, tablefmt="pipe"):
             bar = chr(124)
 
             def _cell(v):
                 if _isna(v):
-                    return ''
+                    return ""
                 if isinstance(v, float):
                     return _fmt(v)
                 return str(v)
-            head = ([''] if index else []) + [str(c) for c in self._c]
+
+            head = ([""] if index else []) + [str(c) for c in self._c]
             rows = []
             for r in range(self.shape[0]):
                 cells = [_cell(self._d[c][r]) for c in self._c]
@@ -1351,9 +1583,19 @@ def __vis_install_pandas__():
                         widths[j] = len(cell)
 
             def _line(cells):
-                return bar + bar.join(' ' + cells[j].ljust(widths[j]) + ' '
-                                      for j in range(len(cells))) + bar
-            sep = bar + bar.join(':' + ('-' * (widths[j] + 1)) for j in range(len(head))) + bar
+                return (
+                    bar
+                    + bar.join(
+                        " " + cells[j].ljust(widths[j]) + " " for j in range(len(cells))
+                    )
+                    + bar
+                )
+
+            sep = (
+                bar
+                + bar.join(":" + ("-" * (widths[j] + 1)) for j in range(len(head)))
+                + bar
+            )
             return _NL.join([_line(head), sep] + [_line(row) for row in rows])
 
         def groupby(self, by):
@@ -1365,35 +1607,49 @@ def __vis_install_pandas__():
                 out[k] = v(out) if callable(v) else v
             return out
 
-        def drop_duplicates(self, subset=None, keep='first'):
+        def drop_duplicates(self, subset=None, keep="first"):
             cols = subset if subset is not None else list(self._c)
             if not isinstance(cols, list):
                 cols = [cols]
             seen = set()
             keeprows = []
             rng = list(range(self.shape[0]))
-            if keep == 'last':
+            if keep == "last":
                 rng = list(reversed(rng))
             for r in rng:
                 key = tuple(self._d[c][r] for c in cols)
                 if key not in seen:
                     seen.add(key)
                     keeprows.append(r)
-            if keep == 'last':
+            if keep == "last":
                 keeprows = list(reversed(keeprows))
             return self._take(keeprows)
 
         def nlargest(self, n, columns):
             by = columns if isinstance(columns, list) else [columns]
-            idxs = sorted(range(self.shape[0]), key=lambda r: tuple(self._d[c][r] for c in by), reverse=True)
+            idxs = sorted(
+                range(self.shape[0]),
+                key=lambda r: tuple(self._d[c][r] for c in by),
+                reverse=True,
+            )
             return self._take(idxs[:n])
 
         def nsmallest(self, n, columns):
             by = columns if isinstance(columns, list) else [columns]
-            idxs = sorted(range(self.shape[0]), key=lambda r: tuple(self._d[c][r] for c in by))
+            idxs = sorted(
+                range(self.shape[0]), key=lambda r: tuple(self._d[c][r] for c in by)
+            )
             return self._take(idxs[:n])
 
-        def merge(self, right, on=None, how='inner', left_on=None, right_on=None, suffixes=('_x', '_y')):
+        def merge(
+            self,
+            right,
+            on=None,
+            how="inner",
+            left_on=None,
+            right_on=None,
+            suffixes=("_x", "_y"),
+        ):
             lon = left_on or on
             ron = right_on or on
             if lon is None:
@@ -1415,7 +1671,7 @@ def __vis_install_pandas__():
             for lr in range(self.shape[0]):
                 k = tuple(self._d[c][lr] for c in lon)
                 rs = rindex.get(k, [])
-                if not rs and how in ('left', 'outer'):
+                if not rs and how in ("left", "outer"):
                     for c in lkeys:
                         data[c].append(self._d[c][lr])
                     for c in rkeys:
@@ -1425,23 +1681,32 @@ def __vis_install_pandas__():
                     for c in lkeys:
                         data[c].append(self._d[c][lr])
                     for c in rkeys:
-                        data[c + suffixes[1] if c in lkeys else c].append(right._d[c][rr])
-            if how in ('right', 'outer'):
+                        data[c + suffixes[1] if c in lkeys else c].append(
+                            right._d[c][rr]
+                        )
+            if how in ("right", "outer"):
                 for rr in range(right.shape[0]):
                     if rr in matched_r:
                         continue
                     for c in lkeys:
                         if c in ron:
-                            data[c].append(right._d[ron[lon.index(c)]][rr] if c in lon else _NA)
+                            data[c].append(
+                                right._d[ron[lon.index(c)]][rr] if c in lon else _NA
+                            )
                         else:
                             data[c].append(_NA)
                     for c in rkeys:
-                        data[c + suffixes[1] if c in lkeys else c].append(right._d[c][rr])
+                        data[c + suffixes[1] if c in lkeys else c].append(
+                            right._d[c][rr]
+                        )
             return DataFrame(data, columns=out_cols)
 
         def iterrows(self):
             for r in range(self.shape[0]):
-                yield self._i[r], Series([self._d[c][r] for c in self._c], list(self._c))
+                yield (
+                    self._i[r],
+                    Series([self._d[c][r] for c in self._c], list(self._c)),
+                )
 
         def itertuples(self, index=True):
             for r in range(self.shape[0]):
@@ -1450,33 +1715,52 @@ def __vis_install_pandas__():
                     vals = [self._i[r]] + vals
                 yield tuple(vals)
 
-        def to_dict(self, orient='dict'):
-            if orient == 'records':
-                return [{c: self._d[c][r] for c in self._c} for r in range(self.shape[0])]
-            if orient == 'list':
+        def to_dict(self, orient="dict"):
+            if orient == "records":
+                return [
+                    {c: self._d[c][r] for c in self._c} for r in range(self.shape[0])
+                ]
+            if orient == "list":
                 return {c: list(self._d[c]) for c in self._c}
-            return {c: {self._i[r]: self._d[c][r] for r in range(self.shape[0])} for c in self._c}
+            return {
+                c: {self._i[r]: self._d[c][r] for r in range(self.shape[0])}
+                for c in self._c
+            }
 
         def to_csv(self, path=None, index=True, sep=None):
             sep = sep if sep is not None else _COMMA
             buf = _io.StringIO()
             w = _csv.writer(buf, delimiter=sep, lineterminator=_NL)
-            header = (['' ] if index else []) + [str(c) for c in self._c]
+            header = ([""] if index else []) + [str(c) for c in self._c]
             w.writerow(header)
             for r in range(self.shape[0]):
                 row = ([self._i[r]] if index else []) + [self._d[c][r] for c in self._c]
                 w.writerow(row)
             s = buf.getvalue()
             if path is not None:
-                raise NotImplementedError('to_csv to a path is disabled in the sandbox; call to_csv() to get a string')
+                raise NotImplementedError(
+                    "to_csv to a path is disabled in the sandbox; call to_csv() to get a string"
+                )
             return s
 
-        def to_json(self, orient='records'):
-            if orient in ('list', 'columns'):
-                return _json.dumps({str(c): [_jsonable(x) for x in self._d[c]] for c in self._c})
-            if orient == 'index':
-                return _json.dumps({str(self._i[r]): {str(c): _jsonable(self._d[c][r]) for c in self._c} for r in range(self.shape[0])})
-            recs = [{str(c): _jsonable(self._d[c][r]) for c in self._c} for r in range(self.shape[0])]
+        def to_json(self, orient="records"):
+            if orient in ("list", "columns"):
+                return _json.dumps(
+                    {str(c): [_jsonable(x) for x in self._d[c]] for c in self._c}
+                )
+            if orient == "index":
+                return _json.dumps(
+                    {
+                        str(self._i[r]): {
+                            str(c): _jsonable(self._d[c][r]) for c in self._c
+                        }
+                        for r in range(self.shape[0])
+                    }
+                )
+            recs = [
+                {str(c): _jsonable(self._d[c][r]) for c in self._c}
+                for r in range(self.shape[0])
+            ]
             return _json.dumps(recs)
 
         def to_string(self):
@@ -1493,18 +1777,25 @@ def __vis_install_pandas__():
                 w = max([len(c)] + [len(x) for x in cell] + [0])
                 widths.append(w)
                 colcells.append(cell)
-            head = ' ' * idxw + '  ' + '  '.join(cols[j].rjust(widths[j]) for j in range(len(cols)))
+            head = (
+                " " * idxw
+                + "  "
+                + "  ".join(cols[j].rjust(widths[j]) for j in range(len(cols)))
+            )
             lines = [head]
             for r in range(n):
-                cells = '  '.join(colcells[j][r].rjust(widths[j]) for j in range(len(cols)))
-                lines.append(str(self._i[r]).rjust(idxw) + '  ' + cells)
+                cells = "  ".join(
+                    colcells[j][r].rjust(widths[j]) for j in range(len(cols))
+                )
+                lines.append(str(self._i[r]).rjust(idxw) + "  " + cells)
             if n == 0:
-                lines.append('Empty DataFrame')
+                lines.append("Empty DataFrame")
             return _NL.join(lines)
 
     class _DFILoc:
         def __init__(self, df):
             self._df = df
+
         def __getitem__(self, key):
             df = self._df
             if isinstance(key, tuple):
@@ -1514,7 +1805,9 @@ def __vis_install_pandas__():
             if isinstance(rk, slice):
                 rows = list(range(df.shape[0]))[rk]
                 sub = df._take(rows)
-                return sub if ck is None else sub[df._c[ck] if isinstance(ck, int) else ck]
+                return (
+                    sub if ck is None else sub[df._c[ck] if isinstance(ck, int) else ck]
+                )
             if isinstance(rk, (list, tuple)):
                 return df._take(list(rk))
             row = Series([df._d[c][rk] for c in df._c], list(df._c), name=df._i[rk])
@@ -1527,8 +1820,10 @@ def __vis_install_pandas__():
     class _DFLoc:
         def __init__(self, df):
             self._df = df
+
         def _rowpos(self, lab):
             return self._df._i.index(lab)
+
         def __getitem__(self, key):
             df = self._df
             if isinstance(key, tuple):
@@ -1552,10 +1847,12 @@ def __vis_install_pandas__():
     class _DFAt:
         def __init__(self, df):
             self._df = df
+
         def __getitem__(self, key):
             rk, ck = key
             df = self._df
             return df._d[ck][df._i.index(rk)]
+
         def __setitem__(self, key, value):
             rk, ck = key
             df = self._df
@@ -1564,10 +1861,12 @@ def __vis_install_pandas__():
     class _DFIat:
         def __init__(self, df):
             self._df = df
+
         def __getitem__(self, key):
             r, c = key
             df = self._df
             return df._d[df._c[c]][r]
+
         def __setitem__(self, key, value):
             r, c = key
             df = self._df
@@ -1588,6 +1887,7 @@ def __vis_install_pandas__():
                 groups[k].append(r)
             self._groups = groups
             self._order = order
+
         def __getitem__(self, key):
             g = _GroupBy.__new__(_GroupBy)
             g._df = self._df
@@ -1596,16 +1896,23 @@ def __vis_install_pandas__():
             g._order = self._order
             g._sel = key
             return g
+
         def _labels(self):
             return [k[0] if len(self._by) == 1 else k for k in self._order]
+
         def _valcols(self, numeric_only=True):
             df = self._df
             if self._sel is not None:
                 return self._sel if isinstance(self._sel, list) else [self._sel]
             vcols = [c for c in df._c if c not in self._by]
             if numeric_only:
-                vcols = [c for c in vcols if _infer_dtype(df._d[c]) in ('int64', 'float64', 'bool')]
+                vcols = [
+                    c
+                    for c in vcols
+                    if _infer_dtype(df._d[c]) in ("int64", "float64", "bool")
+                ]
             return vcols
+
         def _agg(self, fn, numeric_only=True):
             df = self._df
             vcols = self._valcols(numeric_only)
@@ -1625,20 +1932,49 @@ def __vis_install_pandas__():
                     data[c].append(fn(s))
             idx = [k[0] if len(self._by) == 1 else k for k in self._order]
             return DataFrame(data, columns=vcols, index=idx)
-        def sum(self): return self._agg(lambda s: s.sum())
-        def mean(self): return self._agg(lambda s: s.mean())
-        def min(self): return self._agg(lambda s: s.min())
-        def max(self): return self._agg(lambda s: s.max())
-        def std(self): return self._agg(lambda s: s.std())
-        def var(self): return self._agg(lambda s: s.var())
-        def median(self): return self._agg(lambda s: s.median())
-        def nunique(self): return self._agg(lambda s: s.nunique(), numeric_only=False)
-        def first(self): return self._agg(lambda s: (s._v[0] if len(s._v) else _NA), numeric_only=False)
-        def last(self): return self._agg(lambda s: (s._v[-1] if len(s._v) else _NA), numeric_only=False)
+
+        def sum(self):
+            return self._agg(lambda s: s.sum())
+
+        def mean(self):
+            return self._agg(lambda s: s.mean())
+
+        def min(self):
+            return self._agg(lambda s: s.min())
+
+        def max(self):
+            return self._agg(lambda s: s.max())
+
+        def std(self):
+            return self._agg(lambda s: s.std())
+
+        def var(self):
+            return self._agg(lambda s: s.var())
+
+        def median(self):
+            return self._agg(lambda s: s.median())
+
+        def nunique(self):
+            return self._agg(lambda s: s.nunique(), numeric_only=False)
+
+        def first(self):
+            return self._agg(
+                lambda s: s._v[0] if len(s._v) else _NA, numeric_only=False
+            )
+
+        def last(self):
+            return self._agg(
+                lambda s: s._v[-1] if len(s._v) else _NA, numeric_only=False
+            )
+
         def count(self):
-            return self._agg(lambda s: len([x for x in s._v if not _isna(x)]), numeric_only=False)
+            return self._agg(
+                lambda s: len([x for x in s._v if not _isna(x)]), numeric_only=False
+            )
+
         def size(self):
             return Series([len(self._groups[k]) for k in self._order], self._labels())
+
         def transform(self, func):
             df = self._df
             n = df.shape[0]
@@ -1684,6 +2020,7 @@ def __vis_install_pandas__():
 
         def _apply_one(self, s, f):
             return getattr(s, f)() if isinstance(f, str) else f(s)
+
         def agg(self, fn=None, **kwargs):
             if isinstance(fn, dict):
                 specs = list(fn.items())
@@ -1701,8 +2038,10 @@ def __vis_install_pandas__():
             if fn is not None:
                 return self._agg(lambda s: fn(s))
             return self
+
         def apply(self, fn):
             return self._agg(lambda s: fn(s), numeric_only=False)
+
         def __iter__(self):
             df = self._df
             for k in self._order:
@@ -1710,14 +2049,18 @@ def __vis_install_pandas__():
                 yield key, df._take(self._groups[k])
 
     # ----- module funcs -----
-    def read_csv(path_or_buf, sep=None, header='infer'):
+    def read_csv(path_or_buf, sep=None, header="infer"):
         sep = sep if sep is not None else _COMMA
-        if hasattr(path_or_buf, 'read'):
+        if hasattr(path_or_buf, "read"):
             text = path_or_buf.read()
-        elif isinstance(path_or_buf, str) and (_NL in path_or_buf or _COMMA in path_or_buf) and not path_or_buf.strip().endswith('.csv'):
+        elif (
+            isinstance(path_or_buf, str)
+            and (_NL in path_or_buf or _COMMA in path_or_buf)
+            and not path_or_buf.strip().endswith(".csv")
+        ):
             text = path_or_buf
         else:
-            f = open(path_or_buf, 'r')
+            f = open(path_or_buf, "r")
             text = f.read()
             f.close()
         rows = list(_csv.reader(_io.StringIO(text), delimiter=sep))
@@ -1733,7 +2076,7 @@ def __vis_install_pandas__():
         return DataFrame(data, columns=cols)
 
     def _coerce(x):
-        if x is None or x == '':
+        if x is None or x == "":
             return _NA
         try:
             i = int(x)
@@ -1745,7 +2088,7 @@ def __vis_install_pandas__():
         except Exception:
             return x
 
-    def read_json(s, orient='records'):
+    def read_json(s, orient="records"):
         obj = _json.loads(s) if isinstance(s, str) else s
         return DataFrame(obj)
 
@@ -1800,23 +2143,33 @@ def __vis_install_pandas__():
     def unique(vals):
         return Series(_to_list(vals)).unique()
 
-    def to_numeric(s, errors='raise'):
+    def to_numeric(s, errors="raise"):
         if isinstance(s, Series):
+
             def cv(x):
                 try:
                     return float(x)
                 except Exception:
-                    if errors == 'coerce':
+                    if errors == "coerce":
                         return _NA
                     raise
+
             return s.apply(cv)
         return float(s)
 
     Timestamp = _dt.datetime
     Timedelta = _dt.timedelta
 
-    _DT_FORMATS = ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M',
-                   '%Y-%m-%d', '%Y/%m/%d', '%d/%m/%Y', '%m/%d/%Y', '%Y%m%d')
+    _DT_FORMATS = (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%Y%m%d",
+    )
 
     def _parse_dt(v, fmt=None):
         if v is None or _isna(v):
@@ -1828,9 +2181,9 @@ def __vis_install_pandas__():
         if isinstance(v, (int, float)) and not isinstance(v, bool):
             return _dt.datetime.utcfromtimestamp(float(v))
         s = str(v).strip()
-        if s.endswith('Z'):
+        if s.endswith("Z"):
             s = s[:-1]
-        for f in ((fmt,) if fmt else _DT_FORMATS):
+        for f in (fmt,) if fmt else _DT_FORMATS:
             try:
                 return _dt.datetime.strptime(s, f)
             except Exception:
@@ -1838,16 +2191,17 @@ def __vis_install_pandas__():
         try:
             return _dt.datetime.fromisoformat(s)
         except Exception:
-            raise ValueError('could not parse date: ' + str(v))
+            raise ValueError("could not parse date: " + str(v))
 
-    def to_datetime(arg, format=None, errors='raise'):
+    def to_datetime(arg, format=None, errors="raise"):
         def _one(v):
             try:
                 return _parse_dt(v, format)
             except Exception:
-                if errors == 'coerce':
+                if errors == "coerce":
                     return _NA
                 raise
+
         if isinstance(arg, Series):
             return Series([_one(v) for v in arg._v], index=list(arg._i), name=arg.name)
         if isinstance(arg, DataFrame):
@@ -1859,26 +2213,26 @@ def __vis_install_pandas__():
 
     def _freq_step(freq):
         f = str(freq).upper()
-        num = ''
+        num = ""
         while f and f[0].isdigit():
             num = num + f[0]
             f = f[1:]
         mult = int(num) if num else 1
-        if f in ('D', 'DAY', 'DAYS'):
-            return ('delta', _dt.timedelta(days=mult))
-        if f in ('W', 'W-SUN', 'WEEK'):
-            return ('delta', _dt.timedelta(weeks=mult))
-        if f in ('H', 'HOUR', 'HOURS'):
-            return ('delta', _dt.timedelta(hours=mult))
-        if f in ('T', 'MIN', 'MINUTE', 'MINUTES'):
-            return ('delta', _dt.timedelta(minutes=mult))
-        if f in ('S', 'SEC', 'SECOND', 'SECONDS'):
-            return ('delta', _dt.timedelta(seconds=mult))
-        if f in ('MS', 'M', 'MONTH', 'ME'):
-            return ('month', mult if f != 'ME' and f != 'M' else -mult)
-        if f in ('Y', 'YS', 'A', 'YEAR', 'YE'):
-            return ('year', mult if f in ('Y', 'YS', 'A', 'YEAR') else -mult)
-        raise ValueError('unsupported freq: ' + str(freq))
+        if f in ("D", "DAY", "DAYS"):
+            return ("delta", _dt.timedelta(days=mult))
+        if f in ("W", "W-SUN", "WEEK"):
+            return ("delta", _dt.timedelta(weeks=mult))
+        if f in ("H", "HOUR", "HOURS"):
+            return ("delta", _dt.timedelta(hours=mult))
+        if f in ("T", "MIN", "MINUTE", "MINUTES"):
+            return ("delta", _dt.timedelta(minutes=mult))
+        if f in ("S", "SEC", "SECOND", "SECONDS"):
+            return ("delta", _dt.timedelta(seconds=mult))
+        if f in ("MS", "M", "MONTH", "ME"):
+            return ("month", mult if f != "ME" and f != "M" else -mult)
+        if f in ("Y", "YS", "A", "YEAR", "YE"):
+            return ("year", mult if f in ("Y", "YS", "A", "YEAR") else -mult)
+        raise ValueError("unsupported freq: " + str(freq))
 
     def _add_months(d, k):
         m = d.month - 1 + k
@@ -1895,32 +2249,35 @@ def __vis_install_pandas__():
         nxt = _add_months(_dt.datetime(d.year, d.month, 1), 1)
         return nxt - _dt.timedelta(days=1)
 
-    def date_range(start=None, end=None, periods=None, freq='D'):
+    def date_range(start=None, end=None, periods=None, freq="D"):
         kind, step = _freq_step(freq)
         st = _parse_dt(start) if start is not None else None
         en = _parse_dt(end) if end is not None else None
 
         def _next(d):
-            if kind == 'delta':
+            if kind == "delta":
                 return d + step
-            if kind == 'month':
+            if kind == "month":
                 k = abs(step)
                 return _month_end(_add_months(d, k)) if step < 0 else _add_months(d, k)
             k = abs(step)
             nd = _add_months(d, 12 * k)
             return _month_end(nd) if step < 0 else nd
+
         if st is None:
             if en is None or periods is None:
-                raise ValueError('date_range needs start, or end plus periods')
+                raise ValueError("date_range needs start, or end plus periods")
             out = [en]
             for _k in range(periods - 1):
                 d = out[0]
-                if kind == 'delta':
+                if kind == "delta":
                     out.insert(0, d - step)
                 else:
-                    out.insert(0, _add_months(d, -abs(step) * (12 if kind == 'year' else 1)))
+                    out.insert(
+                        0, _add_months(d, -abs(step) * (12 if kind == "year" else 1))
+                    )
             return out
-        if kind == 'month' and step < 0:
+        if kind == "month" and step < 0:
             st = _month_end(st)
         out = [st]
         if periods is not None:
@@ -1928,7 +2285,7 @@ def __vis_install_pandas__():
                 out.append(_next(out[-1]))
             return out
         if en is None:
-            raise ValueError('date_range needs end or periods')
+            raise ValueError("date_range needs end or periods")
         while True:
             nxt = _next(out[-1])
             if nxt > en:
@@ -1936,20 +2293,29 @@ def __vis_install_pandas__():
             out.append(nxt)
         return out
 
-    def pivot_table(data, values=None, index=None, columns=None, aggfunc='mean', fill_value=None):
-        return data.pivot_table(values=values, index=index, columns=columns,
-                                aggfunc=aggfunc, fill_value=fill_value)
+    def pivot_table(
+        data, values=None, index=None, columns=None, aggfunc="mean", fill_value=None
+    ):
+        return data.pivot_table(
+            values=values,
+            index=index,
+            columns=columns,
+            aggfunc=aggfunc,
+            fill_value=fill_value,
+        )
 
     def crosstab(rows, cols):
         a = rows._v if isinstance(rows, Series) else _to_list(rows)
         b = cols._v if isinstance(cols, Series) else _to_list(cols)
-        df = DataFrame({'r': list(a), 'c': list(b), 'n': [1] * len(a)})
-        return df.pivot_table(values='n', index='r', columns='c', aggfunc='sum', fill_value=0)
+        df = DataFrame({"r": list(a), "c": list(b), "n": [1] * len(a)})
+        return df.pivot_table(
+            values="n", index="r", columns="c", aggfunc="sum", fill_value=0
+        )
 
     NA = _NA
     NaN = _NA
 
-    mod = types.ModuleType('pandas')
+    mod = types.ModuleType("pandas")
     mod.DataFrame = DataFrame
     mod.Series = Series
     mod.read_csv = read_csv
@@ -1970,12 +2336,13 @@ def __vis_install_pandas__():
     mod.Timedelta = Timedelta
     mod.NA = _NA
     mod.NaN = _NA
-    mod.__version__ = '2.0.0-vis-shim'
-    sys.modules['pandas'] = mod
+    mod.__version__ = "2.0.0-vis-shim"
+    sys.modules["pandas"] = mod
     try:
         _bi.pandas = mod
     except Exception:
         pass
+
 
 __vis_install_pandas__()
 del __vis_install_pandas__

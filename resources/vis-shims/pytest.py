@@ -9,6 +9,7 @@
 # mode). Published into sys.modules so `import pytest` works, and stapled onto
 # builtins so pytest.raises(...) needs no import (mirrors json/os/requests).
 
+
 def __vis_install_pytest_compat__():
     import sys
     import types
@@ -22,13 +23,13 @@ def __vis_install_pytest_compat__():
 
     _NL = chr(10)
     _NOTSET = object()
-    _PROG = '<prog>'
-    _FIXTURE_ATTR = '__vis_pytest_fixture__'
-    _MARKS_ATTR = '__vis_pytest_marks__'
+    _PROG = "<prog>"
+    _FIXTURE_ATTR = "__vis_pytest_fixture__"
+    _MARKS_ATTR = "__vis_pytest_marks__"
 
     # ---- outcome exceptions -------------------------------------------------
     class OutcomeException(Exception):
-        def __init__(self, msg=''):
+        def __init__(self, msg=""):
             super().__init__(msg)
             self.msg = msg
 
@@ -42,7 +43,7 @@ def __vis_install_pytest_compat__():
         pass
 
     class Exit(Exception):
-        def __init__(self, msg='', returncode=None):
+        def __init__(self, msg="", returncode=None):
             super().__init__(msg)
             self.msg = msg
             self.returncode = returncode
@@ -50,23 +51,23 @@ def __vis_install_pytest_compat__():
     class UsageError(Exception):
         pass
 
-    def fail(reason='', pytrace=True):
+    def fail(reason="", pytrace=True):
         raise Failed(reason)
 
-    def skip(reason='', allow_module_level=False):
+    def skip(reason="", allow_module_level=False):
         raise Skipped(reason)
 
-    def xfail(reason=''):
+    def xfail(reason=""):
         raise XFailed(reason)
 
-    def exit(reason='', returncode=None):
+    def exit(reason="", returncode=None):
         raise Exit(reason, returncode)
 
     def importorskip(modname, minversion=None, reason=None):
         try:
             return __import__(modname)
         except ImportError:
-            raise Skipped(reason or ('could not import ' + str(modname)))
+            raise Skipped(reason or ("could not import " + str(modname)))
 
     # ---- approx -------------------------------------------------------------
     class approx:
@@ -118,7 +119,7 @@ def __vis_install_pytest_compat__():
             return not self.__eq__(actual)
 
         def __repr__(self):
-            return 'approx(' + repr(self.expected) + ')'
+            return "approx(" + repr(self.expected) + ")"
 
     builtins_abs = abs
 
@@ -142,17 +143,20 @@ def __vis_install_pytest_compat__():
         @property
         def typename(self):
             t = self._tup[0]
-            return getattr(t, '__name__', str(t))
+            return getattr(t, "__name__", str(t))
 
         def match(self, regexp):
             import re as _re
+
             s = str(self.value)
             if _re.search(regexp, s) is None:
-                raise AssertionError('regex ' + repr(regexp) + ' does not match ' + repr(s))
+                raise AssertionError(
+                    "regex " + repr(regexp) + " does not match " + repr(s)
+                )
             return True
 
         def __repr__(self):
-            return '<ExceptionInfo ' + repr(self.value) + '>'
+            return "<ExceptionInfo " + repr(self.value) + ">"
 
     class RaisesContext:
         def __init__(self, expected, match=None):
@@ -166,7 +170,7 @@ def __vis_install_pytest_compat__():
 
         def __exit__(self, exc_type, exc_val, exc_tb):
             if exc_type is None:
-                raise Failed('DID NOT RAISE ' + _name_of(self.expected))
+                raise Failed("DID NOT RAISE " + _name_of(self.expected))
             if not issubclass(exc_type, self.expected):
                 return False
             self.excinfo._tup = (exc_type, exc_val, exc_tb)
@@ -175,7 +179,7 @@ def __vis_install_pytest_compat__():
             return True
 
     def raises(expected_exception, *args, **kwargs):
-        match = kwargs.pop('match', None)
+        match = kwargs.pop("match", None)
         if not args:
             return RaisesContext(expected_exception, match=match)
         func = args[0]
@@ -186,7 +190,7 @@ def __vis_install_pytest_compat__():
             if match is not None:
                 info.match(match)
             return info
-        raise Failed('DID NOT RAISE ' + _name_of(expected_exception))
+        raise Failed("DID NOT RAISE " + _name_of(expected_exception))
 
     class WarningsChecker:
         def __init__(self, expected):
@@ -197,7 +201,7 @@ def __vis_install_pytest_compat__():
         def __enter__(self):
             self._cm = _warnings.catch_warnings(record=True)
             self.caught = self._cm.__enter__()
-            _warnings.simplefilter('always')
+            _warnings.simplefilter("always")
             return self.caught
 
         def __exit__(self, exc_type, exc_val, exc_tb):
@@ -207,7 +211,7 @@ def __vis_install_pytest_compat__():
             if self.expected is not None:
                 ok = any(issubclass(w.category, self.expected) for w in self.caught)
                 if not ok:
-                    raise Failed('DID NOT WARN ' + _name_of(self.expected))
+                    raise Failed("DID NOT WARN " + _name_of(self.expected))
             return False
 
     def warns(expected_warning=Warning, *args, **kwargs):
@@ -218,11 +222,19 @@ def __vis_install_pytest_compat__():
             return func(*args[1:], **kwargs)
 
     def _name_of(x):
-        return getattr(x, '__name__', str(x))
+        return getattr(x, "__name__", str(x))
 
     # ---- fixtures -----------------------------------------------------------
     class FixtureInfo:
-        def __init__(self, func, scope='function', params=None, autouse=False, name=None, ids=None):
+        def __init__(
+            self,
+            func,
+            scope="function",
+            params=None,
+            autouse=False,
+            name=None,
+            ids=None,
+        ):
             self.func = func
             self.scope = scope
             self.params = params
@@ -230,10 +242,15 @@ def __vis_install_pytest_compat__():
             self.name = name or func.__name__
             self.ids = ids
 
-    def fixture(func=None, scope='function', params=None, autouse=False, name=None, ids=None):
+    def fixture(
+        func=None, scope="function", params=None, autouse=False, name=None, ids=None
+    ):
         def wrap(f):
-            f.__dict__[_FIXTURE_ATTR] = FixtureInfo(f, scope=scope, params=params, autouse=autouse, name=name, ids=ids)
+            f.__dict__[_FIXTURE_ATTR] = FixtureInfo(
+                f, scope=scope, params=params, autouse=autouse, name=name, ids=ids
+            )
             return f
+
         if func is not None and callable(func):
             return wrap(func)
         return wrap
@@ -250,7 +267,7 @@ def __vis_install_pytest_compat__():
             self.module = module
             self.instance = None
             self.fixturename = None
-            self.scope = 'function'
+            self.scope = "function"
 
         def getfixturevalue(self, name):
             return self._manager.resolve(name, self)
@@ -305,9 +322,10 @@ def __vis_install_pytest_compat__():
 
         def _resolve_target(self, dotted):
             import importlib
-            parts = dotted.split('.')
+
+            parts = dotted.split(".")
             for i in range(len(parts) - 1, 0, -1):
-                modname = '.'.join(parts[:i])
+                modname = ".".join(parts[:i])
                 try:
                     obj = importlib.import_module(modname)
                 except Exception:
@@ -315,7 +333,7 @@ def __vis_install_pytest_compat__():
                 for p in parts[i:-1]:
                     obj = getattr(obj, p)
                 return obj, parts[-1]
-            raise Failed('could not resolve monkeypatch target ' + repr(dotted))
+            raise Failed("could not resolve monkeypatch target " + repr(dotted))
 
         def setattr(self, target, name, value=_NOTSET, raising=True):
             if isinstance(target, str):
@@ -324,7 +342,7 @@ def __vis_install_pytest_compat__():
             old = getattr(target, name, _NOTSET)
             if raising and old is _NOTSET and not hasattr(target, name):
                 raise AttributeError(name)
-            self._undo.append(('attr', target, name, old))
+            self._undo.append(("attr", target, name, old))
             setattr(target, name, value)
 
         def delattr(self, target, name=_NOTSET, raising=True):
@@ -335,12 +353,12 @@ def __vis_install_pytest_compat__():
                 if raising:
                     raise AttributeError(name)
                 return
-            self._undo.append(('attr', target, name, old))
+            self._undo.append(("attr", target, name, old))
             delattr(target, name)
 
         def setitem(self, dic, name, value):
             old = dic[name] if name in dic else _NOTSET
-            self._undo.append(('item', dic, name, old))
+            self._undo.append(("item", dic, name, old))
             dic[name] = value
 
         def delitem(self, dic, name, raising=True):
@@ -348,13 +366,14 @@ def __vis_install_pytest_compat__():
                 if raising:
                     raise KeyError(name)
                 return
-            self._undo.append(('item', dic, name, dic[name]))
+            self._undo.append(("item", dic, name, dic[name]))
             del dic[name]
 
         def setenv(self, name, value, prepend=None):
             import os
+
             old = os.environ[name] if name in os.environ else _NOTSET
-            self._undo.append(('env', name, old))
+            self._undo.append(("env", name, old))
             v = str(value)
             if prepend and name in os.environ:
                 v = v + prepend + os.environ[name]
@@ -362,53 +381,57 @@ def __vis_install_pytest_compat__():
 
         def delenv(self, name, raising=True):
             import os
+
             if name not in os.environ:
                 if raising:
                     raise KeyError(name)
                 return
-            self._undo.append(('env', name, os.environ[name]))
+            self._undo.append(("env", name, os.environ[name]))
             del os.environ[name]
 
         def syspath_prepend(self, path):
-            self._undo.append(('syspath', None, None, None))
+            self._undo.append(("syspath", None, None, None))
             sys.path.insert(0, str(path))
 
         def chdir(self, path):
             import os
-            self._undo.append(('cwd', os.getcwd(), None, None))
+
+            self._undo.append(("cwd", os.getcwd(), None, None))
             os.chdir(str(path))
 
         def undo(self):
             for entry in reversed(self._undo):
                 kind = entry[0]
                 try:
-                    if kind == 'attr':
+                    if kind == "attr":
                         _, tgt, nm, old = entry
                         if old is _NOTSET:
                             delattr(tgt, nm)
                         else:
                             setattr(tgt, nm, old)
-                    elif kind == 'item':
+                    elif kind == "item":
                         _, dic, nm, old = entry
                         if old is _NOTSET:
                             if nm in dic:
                                 del dic[nm]
                         else:
                             dic[nm] = old
-                    elif kind == 'env':
+                    elif kind == "env":
                         import os
+
                         _, nm, old = entry
                         if old is _NOTSET:
                             os.environ.pop(nm, None)
                         else:
                             os.environ[nm] = old
-                    elif kind == 'syspath':
+                    elif kind == "syspath":
                         try:
                             sys.path.pop(0)
                         except Exception:
                             pass
-                    elif kind == 'cwd':
+                    elif kind == "cwd":
                         import os
+
                         os.chdir(entry[1])
                 except Exception:
                     pass
@@ -430,28 +453,34 @@ def __vis_install_pytest_compat__():
         cap = CaptureFixture(fd=True)
         cap._start()
         return cap, cap._stop
+
     def _bi_tmp_path(request):
         # Real temp dir via tempfile. In the pure-compute model sandbox the FS
         # is locked down and mkdtemp raises — caught by resolve()/the runner so
         # only tests that ASK for tmp_path fail there; under the project test
         # runner (`vis python <tests>`) the FS is real and this works.
         import tempfile as _tf, shutil as _sh, pathlib as _pl
-        d = _tf.mkdtemp(prefix='vis-pytest-')
+
+        d = _tf.mkdtemp(prefix="vis-pytest-")
+
         def _td():
             try:
                 _sh.rmtree(d, ignore_errors=True)
             except Exception:
                 pass
+
         return _pl.Path(d), _td
 
     class TmpPathFactory:
         def __init__(self):
             import tempfile as _tf, pathlib as _pl
-            self._base = _pl.Path(_tf.mkdtemp(prefix='vis-pytest-factory-'))
+
+            self._base = _pl.Path(_tf.mkdtemp(prefix="vis-pytest-factory-"))
             self._n = 0
 
         def mktemp(self, basename, numbered=True):
             import pathlib as _pl
+
             name = str(basename)
             if numbered:
                 p = self._base / (name + str(self._n))
@@ -466,6 +495,7 @@ def __vis_install_pytest_compat__():
 
         def _cleanup(self):
             import shutil as _sh
+
             try:
                 _sh.rmtree(self._base, ignore_errors=True)
             except Exception:
@@ -492,7 +522,9 @@ def __vis_install_pytest_compat__():
 
         def _start(self):
             import logging
+
             fixture = self
+
             class _H(logging.Handler):
                 def emit(self, record):
                     try:
@@ -500,6 +532,7 @@ def __vis_install_pytest_compat__():
                     except Exception:
                         record.message = record.msg
                     fixture.records.append(record)
+
             self._handler = _H()
             self._root = logging.getLogger()
             self._old_level = self._root.level
@@ -509,6 +542,7 @@ def __vis_install_pytest_compat__():
 
         def _stop(self):
             import logging
+
             if self._handler is not None:
                 logging.getLogger().removeHandler(self._handler)
             if self._old_level is not None:
@@ -516,6 +550,7 @@ def __vis_install_pytest_compat__():
 
         def set_level(self, level, logger=None):
             import logging
+
             logging.getLogger(logger).setLevel(level)
             self._root.setLevel(level)
 
@@ -525,7 +560,7 @@ def __vis_install_pytest_compat__():
 
         @property
         def text(self):
-            return '\n'.join(r.getMessage() for r in self.records)
+            return "\n".join(r.getMessage() for r in self.records)
 
         @property
         def record_tuples(self):
@@ -536,21 +571,29 @@ def __vis_install_pytest_compat__():
 
         def at_level(self, level, logger=None):
             import logging
+
             fixture = self
             target = logging.getLogger(logger)
+
             class _Ctx:
                 def __enter__(self):
                     self._old = target.level
-                    self._oldroot = fixture._root.level if fixture._root is not None else logging.WARNING
+                    self._oldroot = (
+                        fixture._root.level
+                        if fixture._root is not None
+                        else logging.WARNING
+                    )
                     target.setLevel(level)
                     if fixture._root is not None:
                         fixture._root.setLevel(level)
                     return fixture
+
                 def __exit__(self, *a):
                     target.setLevel(self._old)
                     if fixture._root is not None:
                         fixture._root.setLevel(self._oldroot)
                     return False
+
             return _Ctx()
 
     def _bi_caplog(request):
@@ -561,34 +604,49 @@ def __vis_install_pytest_compat__():
     def _bi_recwarn(request):
         cm = _warnings.catch_warnings(record=True)
         rec = cm.__enter__()
-        _warnings.simplefilter('always')
+        _warnings.simplefilter("always")
+
         class _RecWarn:
-            def __iter__(self): return iter(rec)
-            def __len__(self): return len(rec)
-            def __getitem__(self, i): return rec[i]
+            def __iter__(self):
+                return iter(rec)
+
+            def __len__(self):
+                return len(rec)
+
+            def __getitem__(self, i):
+                return rec[i]
+
             def pop(self, cls=Warning):
                 for i, w in enumerate(rec):
                     if issubclass(w.category, cls):
                         return rec.pop(i)
-                raise AssertionError('no warning of type ' + _name_of(cls))
+                raise AssertionError("no warning of type " + _name_of(cls))
+
             @property
-            def list(self): return rec
-            def clear(self): rec.clear()
+            def list(self):
+                return rec
+
+            def clear(self):
+                rec.clear()
+
         def _td():
             try:
                 cm.__exit__(None, None, None)
             except Exception:
                 pass
-        return _RecWarn(), _td
 
+        return _RecWarn(), _td
 
     class LineMatcher:
         def __init__(self, lines):
             self.lines = list(lines)
+
         def __str__(self):
             return _NL.join(self.lines)
+
         def str(self):
             return _NL.join(self.lines)
+
         def _match(self, patterns, matchfn, label):
             if isinstance(patterns, str):
                 patterns = patterns.split(_NL)
@@ -602,35 +660,67 @@ def __vis_install_pytest_compat__():
                         break
                     i += 1
                 if hit < 0:
-                    raise AssertionError(label + ': pattern not found: ' + repr(pat) + _NL + 'in output:' + _NL + _NL.join(self.lines))
+                    raise AssertionError(
+                        label
+                        + ": pattern not found: "
+                        + repr(pat)
+                        + _NL
+                        + "in output:"
+                        + _NL
+                        + _NL.join(self.lines)
+                    )
                 start = hit + 1
+
         def fnmatch_lines(self, patterns):
             import fnmatch as _fn
-            self._match(patterns, lambda l, p: _fn.fnmatch(l, p), 'fnmatch_lines')
+
+            self._match(patterns, lambda l, p: _fn.fnmatch(l, p), "fnmatch_lines")
+
         def re_match_lines(self, patterns):
             import re as _re
-            self._match(patterns, lambda l, p: _re.match(p, l) is not None, 're_match_lines')
+
+            self._match(
+                patterns, lambda l, p: _re.match(p, l) is not None, "re_match_lines"
+            )
+
         def fnmatch_lines_random(self, patterns):
             import fnmatch as _fn
+
             if isinstance(patterns, str):
                 patterns = [patterns]
             for pat in patterns:
                 if not any(_fn.fnmatch(l, pat) for l in self.lines):
-                    raise AssertionError('fnmatch_lines_random: not found: ' + repr(pat))
+                    raise AssertionError(
+                        "fnmatch_lines_random: not found: " + repr(pat)
+                    )
+
         def no_fnmatch_line(self, pat):
             import fnmatch as _fn
+
             for l in self.lines:
                 if _fn.fnmatch(l, pat):
-                    raise AssertionError('no_fnmatch_line: unexpectedly matched: ' + repr(pat))
+                    raise AssertionError(
+                        "no_fnmatch_line: unexpectedly matched: " + repr(pat)
+                    )
+
         def get_lines_after(self, pat):
             import fnmatch as _fn
+
             for i, l in enumerate(self.lines):
                 if _fn.fnmatch(l, pat):
-                    return self.lines[i + 1:]
-            raise AssertionError('get_lines_after: not found: ' + repr(pat))
+                    return self.lines[i + 1 :]
+            raise AssertionError("get_lines_after: not found: " + repr(pat))
 
     class RunResult:
-        _OUTMAP = {'passed': 'passed', 'failed': 'failed', 'error': 'errors', 'skipped': 'skipped', 'xfailed': 'xfailed', 'xpassed': 'xpassed'}
+        _OUTMAP = {
+            "passed": "passed",
+            "failed": "failed",
+            "error": "errors",
+            "skipped": "skipped",
+            "xfailed": "xfailed",
+            "xpassed": "xpassed",
+        }
+
         def __init__(self, ret, out, err, rep, deselected=0):
             self.ret = ret
             self.returncode = ret
@@ -640,41 +730,77 @@ def __vis_install_pytest_compat__():
             self.stderr = LineMatcher(self.errlines)
             self._rep = list(rep)
             self._deselected = deselected
+
         def parseoutcomes(self):
             d = {}
             for item in self._rep:
                 k = self._OUTMAP.get(item[1], item[1])
                 d[k] = d.get(k, 0) + 1
-            if getattr(self, '_deselected', 0):
-                d['deselected'] = self._deselected
+            if getattr(self, "_deselected", 0):
+                d["deselected"] = self._deselected
             return d
+
         def count_outcomes(self):
             return self.parseoutcomes()
-        def assert_outcomes(self, passed=0, skipped=0, failed=0, errors=0, xpassed=0, xfailed=0, warnings=None, deselected=None):
+
+        def assert_outcomes(
+            self,
+            passed=0,
+            skipped=0,
+            failed=0,
+            errors=0,
+            xpassed=0,
+            xfailed=0,
+            warnings=None,
+            deselected=None,
+        ):
             d = self.parseoutcomes()
-            got = {'passed': d.get('passed', 0), 'skipped': d.get('skipped', 0), 'failed': d.get('failed', 0), 'errors': d.get('errors', 0), 'xpassed': d.get('xpassed', 0), 'xfailed': d.get('xfailed', 0)}
-            exp = {'passed': passed, 'skipped': skipped, 'failed': failed, 'errors': errors, 'xpassed': xpassed, 'xfailed': xfailed}
+            got = {
+                "passed": d.get("passed", 0),
+                "skipped": d.get("skipped", 0),
+                "failed": d.get("failed", 0),
+                "errors": d.get("errors", 0),
+                "xpassed": d.get("xpassed", 0),
+                "xfailed": d.get("xfailed", 0),
+            }
+            exp = {
+                "passed": passed,
+                "skipped": skipped,
+                "failed": failed,
+                "errors": errors,
+                "xpassed": xpassed,
+                "xfailed": xfailed,
+            }
             if deselected is not None:
-                got['deselected'] = d.get('deselected', 0)
-                exp['deselected'] = deselected
+                got["deselected"] = d.get("deselected", 0)
+                exp["deselected"] = deselected
             if got != exp:
-                raise AssertionError('assert_outcomes mismatch: got ' + repr(got) + ' expected ' + repr(exp))
+                raise AssertionError(
+                    "assert_outcomes mismatch: got "
+                    + repr(got)
+                    + " expected "
+                    + repr(exp)
+                )
 
     class Pytester:
         def __init__(self, request):
             import tempfile as _tf, pathlib as _pl
-            self._base = _pl.Path(_tf.mkdtemp(prefix='vis-pytester-'))
+
+            self._base = _pl.Path(_tf.mkdtemp(prefix="vis-pytester-"))
             self.path = self._base
             self._request = request
-            fn = getattr(request, 'function', None)
-            nm = getattr(fn, '__name__', None) or 'test_file'
+            fn = getattr(request, "function", None)
+            nm = getattr(fn, "__name__", None) or "test_file"
             self._basename = nm
             self._extrapath = []
+
         @property
         def tmpdir(self):
             return self.path
+
         def _write(self, name, content, ext):
             import textwrap as _tw
+
             fn = name
             if ext and not fn.endswith(ext):
                 fn = fn + ext
@@ -684,15 +810,16 @@ def __vis_install_pytest_compat__():
             if isinstance(text, str):
                 text = _tw.dedent(text)
                 while text.startswith(_NL):
-                    text = text[len(_NL):]
+                    text = text[len(_NL) :]
             p.write_text(text)
             return p
+
         def _makefiles(self, ext, args, kwargs):
             ret = None
             if args:
                 base = self._basename
-                if ext == '.py' and not base.startswith('test'):
-                    base = 'test_' + base
+                if ext == ".py" and not base.startswith("test"):
+                    base = "test_" + base
                 content = _NL.join(str(a) for a in args)
                 ret = self._write(base, content, ext)
             for name in kwargs:
@@ -700,49 +827,61 @@ def __vis_install_pytest_compat__():
                 if ret is None:
                     ret = p
             return ret
+
         def makepyfile(self, *args, **kwargs):
-            return self._makefiles('.py', args, kwargs)
+            return self._makefiles(".py", args, kwargs)
+
         def makefile(self, ext, *args, **kwargs):
             return self._makefiles(ext, args, kwargs)
+
         def makeconftest(self, source):
-            return self._write('conftest', source, '.py')
+            return self._write("conftest", source, ".py")
+
         def maketxtfile(self, *args, **kwargs):
-            return self._makefiles('.txt', args, kwargs)
+            return self._makefiles(".txt", args, kwargs)
+
         def mkdir(self, name):
             p = self.path / name
             p.mkdir(parents=True, exist_ok=True)
             return p
+
         def mkpydir(self, name):
             p = self.mkdir(name)
-            (p / '__init__.py').write_text('')
+            (p / "__init__.py").write_text("")
             return p
+
         def syspathinsert(self, path=None):
             import sys as _sys
+
             p = str(path if path is not None else self.path)
             _sys.path.insert(0, p)
             self._extrapath.append(p)
+
         def chdir(self):
             import os as _os
+
             _os.chdir(str(self.path))
+
         def runpytest(self, *args):
             import io as _io, sys as _sys
+
             callargs = []
             has_path = False
             _args = [str(a) for a in args]
             _j = 0
             while _j < len(_args):
                 a = _args[_j]
-                if a in ('-v', '-vv', '-vvv', '--verbose', '-x', '--exitfirst'):
+                if a in ("-v", "-vv", "-vvv", "--verbose", "-x", "--exitfirst"):
                     callargs.append(a)
-                elif a in ('-k', '--maxfail'):
+                elif a in ("-k", "--maxfail"):
                     callargs.append(a)
                     if _j + 1 < len(_args):
                         _j += 1
                         callargs.append(_args[_j])
-                elif a.startswith('-k') or a.startswith('--maxfail='):
+                elif a.startswith("-k") or a.startswith("--maxfail="):
                     callargs.append(a)
-                elif not a.startswith('-'):
-                    base = a.split('::')[0]
+                elif not a.startswith("-"):
+                    base = a.split("::")[0]
                     cand = self.path / base
                     if cand.exists():
                         callargs.append(str(cand))
@@ -757,13 +896,23 @@ def __vis_install_pytest_compat__():
                 ret = main(callargs)
             finally:
                 _sys.stdout = old_out
-            return RunResult(ret, buf.getvalue(), '', list(getattr(mod, '_vis_last_report', [])), getattr(mod, '_vis_last_deselected', 0))
+            return RunResult(
+                ret,
+                buf.getvalue(),
+                "",
+                list(getattr(mod, "_vis_last_report", [])),
+                getattr(mod, "_vis_last_deselected", 0),
+            )
+
         runpytest_inprocess = runpytest
         runpytest_subprocess = runpytest
+
         def inline_run(self, *args):
             return self.runpytest(*args)
+
         def _cleanup(self):
             import shutil as _sh, sys as _sys
+
             for p in self._extrapath:
                 try:
                     _sys.path.remove(p)
@@ -782,48 +931,54 @@ def __vis_install_pytest_compat__():
         return _bi_pytester(request)
 
     _BUILTIN_FIXTURES = {
-        'pytester': _bi_pytester,
-        'testdir': _bi_testdir,
-        'monkeypatch': _bi_monkeypatch,
-        'capsys': _bi_capsys,
-        'tmp_path': _bi_tmp_path,
-        'tmp_path_factory': _bi_tmp_path_factory,
-        'tmpdir': _bi_tmpdir,
-        'tmpdir_factory': _bi_tmpdir_factory,
-        'capfd': _bi_capfd,
-        'caplog': _bi_caplog,
-        'recwarn': _bi_recwarn,
+        "pytester": _bi_pytester,
+        "testdir": _bi_testdir,
+        "monkeypatch": _bi_monkeypatch,
+        "capsys": _bi_capsys,
+        "tmp_path": _bi_tmp_path,
+        "tmp_path_factory": _bi_tmp_path_factory,
+        "tmpdir": _bi_tmpdir,
+        "tmpdir_factory": _bi_tmpdir_factory,
+        "capfd": _bi_capfd,
+        "caplog": _bi_caplog,
+        "recwarn": _bi_recwarn,
     }
 
     class FixtureManager:
         def __init__(self, fixtures):
             self.fixtures = fixtures
             self.cache = {}
-            self.active = {'function': [], 'module': [], 'session': []}
+            self.active = {"function": [], "module": [], "session": []}
             self._per_test = {}
 
         def begin_test(self):
             self._per_test = {}
 
         def has(self, name):
-            return name == 'request' or name in self.fixtures or name in _BUILTIN_FIXTURES
+            return (
+                name == "request" or name in self.fixtures or name in _BUILTIN_FIXTURES
+            )
 
         def resolve(self, name, request):
-            if name == 'request':
+            if name == "request":
                 return request
             if name in self._per_test:
                 return self._per_test[name]
             if name in _BUILTIN_FIXTURES:
                 val, td = _BUILTIN_FIXTURES[name](request)
                 self._per_test[name] = val
-                self.active['function'].append(('fn', td))
+                self.active["function"].append(("fn", td))
                 return val
             info = self.fixtures.get(name)
             if info is None:
-                raise Failed('fixture ' + repr(name) + ' not found')
-            scope = info.scope if info.scope in ('function', 'module', 'session') else 'function'
+                raise Failed("fixture " + repr(name) + " not found")
+            scope = (
+                info.scope
+                if info.scope in ("function", "module", "session")
+                else "function"
+            )
             key = (scope, name)
-            if scope in ('module', 'session') and key in self.cache:
+            if scope in ("module", "session") and key in self.cache:
                 return self.cache[key]
             kwargs = {}
             for pname in inspect.signature(info.func).parameters:
@@ -832,22 +987,22 @@ def __vis_install_pytest_compat__():
             _prev = (request.param, request.fixturename, request.scope)
             request.fixturename = name
             request.scope = scope
-            if name in getattr(request, '_fixparams', {}):
+            if name in getattr(request, "_fixparams", {}):
                 request.param = request._fixparams[name]
             try:
                 result = info.func(**kwargs)
                 if inspect.isgenerator(result):
                     gen = result
                     val = next(gen)
-                    self.active[scope].append(('gen', gen))
-                    if scope in ('module', 'session'):
+                    self.active[scope].append(("gen", gen))
+                    if scope in ("module", "session"):
                         self.cache[key] = val
-                    if scope == 'function':
+                    if scope == "function":
                         self._per_test[name] = val
                     return val
-                if scope in ('module', 'session'):
+                if scope in ("module", "session"):
                     self.cache[key] = result
-                if scope == 'function':
+                if scope == "function":
                     self._per_test[name] = result
                 return result
             finally:
@@ -858,7 +1013,7 @@ def __vis_install_pytest_compat__():
             while items:
                 kind, obj = items.pop()
                 try:
-                    if kind == 'gen':
+                    if kind == "gen":
                         next(obj)
                     else:
                         obj()
@@ -869,7 +1024,7 @@ def __vis_install_pytest_compat__():
             for k in list(self.cache):
                 if k[0] == scope:
                     del self.cache[k]
-            if scope == 'function':
+            if scope == "function":
                 self._per_test = {}
 
     # ---- marks --------------------------------------------------------------
@@ -890,11 +1045,17 @@ def __vis_install_pytest_compat__():
             return f
 
         def __call__(self, *args, **kwargs):
-            if len(args) == 1 and callable(args[0]) and not kwargs and not isinstance(args[0], MarkDecorator):
+            if (
+                len(args) == 1
+                and callable(args[0])
+                and not kwargs
+                and not isinstance(args[0], MarkDecorator)
+            ):
                 return self._attach(args[0], Mark(self.name, (), {}))
 
             def deco(f):
                 return self._attach(f, Mark(self.name, args, kwargs))
+
             return deco
 
     class MarkGenerator:
@@ -912,15 +1073,15 @@ def __vis_install_pytest_compat__():
             self.id = id
 
     def param(*values, **kwargs):
-        return ParamSet(values, marks=kwargs.get('marks', ()), id=kwargs.get('id'))
+        return ParamSet(values, marks=kwargs.get("marks", ()), id=kwargs.get("id"))
 
     def _param_id(v):
         if isinstance(v, bool):
-            return 'True' if v else 'False'
+            return "True" if v else "False"
         if isinstance(v, (int, float, str)):
             return str(v)
         if v is None:
-            return 'None'
+            return "None"
         return type(v).__name__
 
     def _mark_to_case(m):
@@ -935,21 +1096,21 @@ def __vis_install_pytest_compat__():
         psets = None
         indirect_names = set()
         for m in marks:
-            if m.name != 'parametrize':
+            if m.name != "parametrize":
                 continue
             argnames = m.args[0]
             argvalues = list(m.args[1])
             if isinstance(argnames, str):
-                names = [a.strip() for a in argnames.split(',') if a.strip()]
+                names = [a.strip() for a in argnames.split(",") if a.strip()]
             else:
                 names = list(argnames)
-            ind = m.kwargs.get('indirect', False)
+            ind = m.kwargs.get("indirect", False)
             if ind is True:
                 indirect_names.update(names)
             elif ind:
                 for _n in ind:
                     indirect_names.add(_n)
-            ids = m.kwargs.get('ids')
+            ids = m.kwargs.get("ids")
             ids_fn = ids if callable(ids) else None
             cur = []
             for i, val in enumerate(argvalues):
@@ -964,10 +1125,18 @@ def __vis_install_pytest_compat__():
                     val = val.values if len(names) > 1 else val.values[0]
                 if len(names) == 1:
                     kw = {names[0]: val}
-                    idpart = caseid or (str(ids_fn(val)) if ids_fn else (ids[i] if ids else _param_id(val)))
+                    idpart = caseid or (
+                        str(ids_fn(val))
+                        if ids_fn
+                        else (ids[i] if ids else _param_id(val))
+                    )
                 else:
                     kw = dict(zip(names, val))
-                    idpart = caseid or (('-'.join(str(ids_fn(x)) for x in val)) if ids_fn else (ids[i] if ids else '-'.join(_param_id(x) for x in val)))
+                    idpart = caseid or (
+                        ("-".join(str(ids_fn(x)) for x in val))
+                        if ids_fn
+                        else (ids[i] if ids else "-".join(_param_id(x) for x in val))
+                    )
                 cur.append((idpart, kw, casemarks))
             if psets is None:
                 psets = cur
@@ -977,10 +1146,10 @@ def __vis_install_pytest_compat__():
                     for id2, kw2, mk2 in cur:
                         merged = dict(kw1)
                         merged.update(kw2)
-                        combined.append((id2 + '-' + id1, merged, mk1 + mk2))
+                        combined.append((id2 + "-" + id1, merged, mk1 + mk2))
                 psets = combined
         if psets is None:
-            return [('', {}, [], {})]
+            return [("", {}, [], {})]
         out = []
         for _pid, _kw, _cm in psets:
             _dir = {k: v for k, v in _kw.items() if k not in indirect_names}
@@ -990,46 +1159,53 @@ def __vis_install_pytest_compat__():
 
     def _kexpr_match(expr, nodeid):
         hay = nodeid.lower()
-        toks = expr.replace('(', ' ( ').replace(')', ' ) ').split()
+        toks = expr.replace("(", " ( ").replace(")", " ) ").split()
         if not toks:
             return True
         pos = [0]
+
         def _peek():
             return toks[pos[0]] if pos[0] < len(toks) else None
+
         def _next():
             t = toks[pos[0]]
             pos[0] += 1
             return t
+
         def _p_or():
             v = _p_and()
-            while _peek() == 'or':
+            while _peek() == "or":
                 _next()
                 v = _p_and() or v
             return v
+
         def _p_and():
             v = _p_not()
-            while _peek() == 'and':
+            while _peek() == "and":
                 _next()
                 r = _p_not()
                 v = v and r
             return v
+
         def _p_not():
-            if _peek() == 'not':
+            if _peek() == "not":
                 _next()
                 return not _p_not()
             return _p_atom()
+
         def _p_atom():
             t = _peek()
-            if t == '(':
+            if t == "(":
                 _next()
                 v = _p_or()
-                if _peek() == ')':
+                if _peek() == ")":
                     _next()
                 return v
             if t is None:
                 return True
             _next()
             return t.lower() in hay
+
         try:
             return bool(_p_or())
         except Exception:
@@ -1044,7 +1220,7 @@ def __vis_install_pytest_compat__():
 
     def _safe_eval(node, local, glob):
         try:
-            code = compile(ast.Expression(node), '<assert>', 'eval')
+            code = compile(ast.Expression(node), "<assert>", "eval")
             return True, eval(code, glob, local)
         except Exception as e:
             return False, e
@@ -1052,40 +1228,40 @@ def __vis_install_pytest_compat__():
     def _seg(node, src):
         try:
             s = ast.get_source_segment(src, node)
-            return s if s is not None else '<expr>'
+            return s if s is not None else "<expr>"
         except Exception:
-            return '<expr>'
+            return "<expr>"
 
     def _render_assert(node, local, glob, src):
         test = node.test
-        lines = ['assert ' + _seg(test, src)]
+        lines = ["assert " + _seg(test, src)]
         if isinstance(test, ast.Compare) and len(test.ops) == 1:
             left = test.left
             right = test.comparators[0]
             okl, lv = _safe_eval(left, local, glob)
             okr, rv = _safe_eval(right, local, glob)
             if okl and not isinstance(left, ast.Constant):
-                lines.append('  where ' + repr(lv) + ' = ' + _seg(left, src))
+                lines.append("  where " + repr(lv) + " = " + _seg(left, src))
             if okr and not isinstance(right, ast.Constant):
-                lines.append('  and   ' + repr(rv) + ' = ' + _seg(right, src))
+                lines.append("  and   " + repr(rv) + " = " + _seg(right, src))
         elif isinstance(test, ast.BoolOp):
             for v in test.values:
                 ok, val = _safe_eval(v, local, glob)
                 if ok and not isinstance(v, ast.Constant):
-                    lines.append('  where ' + repr(val) + ' = ' + _seg(v, src))
+                    lines.append("  where " + repr(val) + " = " + _seg(v, src))
         elif isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
             ok, val = _safe_eval(test.operand, local, glob)
             if ok and not isinstance(test.operand, ast.Constant):
-                lines.append('  where ' + repr(val) + ' = ' + _seg(test.operand, src))
+                lines.append("  where " + repr(val) + " = " + _seg(test.operand, src))
         elif isinstance(test, ast.Call):
             for a in test.args:
                 ok, val = _safe_eval(a, local, glob)
                 if ok and not isinstance(a, ast.Constant):
-                    lines.append('  where ' + repr(val) + ' = ' + _seg(a, src))
+                    lines.append("  where " + repr(val) + " = " + _seg(a, src))
         else:
             ok, val = _safe_eval(test, local, glob)
             if ok and not isinstance(test, ast.Constant):
-                lines.append('  where ' + repr(val) + ' = ' + _seg(test, src))
+                lines.append("  where " + repr(val) + " = " + _seg(test, src))
         return _NL.join(lines)
 
     def _explain_from_tb(tb, src):
@@ -1101,7 +1277,7 @@ def __vis_install_pytest_compat__():
         if target is None:
             return None
         fn = target.tb_frame.f_code.co_filename
-        usrc = src if fn == _PROG else ''.join(linecache.getlines(fn))
+        usrc = src if fn == _PROG else "".join(linecache.getlines(fn))
         if not usrc:
             return None
         lineno = target.tb_lineno
@@ -1115,7 +1291,7 @@ def __vis_install_pytest_compat__():
         for n in ast.walk(tree):
             if isinstance(n, ast.Assert):
                 s = n.lineno
-                e = getattr(n, 'end_lineno', n.lineno)
+                e = getattr(n, "end_lineno", n.lineno)
                 if s <= lineno <= e:
                     node = n
                     break
@@ -1134,21 +1310,23 @@ def __vis_install_pytest_compat__():
         out = []
         entries = _tb.extract_tb(tb) if tb is not None else []
         for fr in entries:
-            out.append('  ' + str(fr.filename) + ':' + str(fr.lineno) + ' in ' + str(fr.name))
+            out.append(
+                "  " + str(fr.filename) + ":" + str(fr.lineno) + " in " + str(fr.name)
+            )
             if fr.line:
-                out.append('      ' + fr.line)
+                out.append("      " + fr.line)
         if isinstance(exc, AssertionError):
             expl = _explain_from_tb(tb, src)
             if expl:
                 for ln in expl.split(_NL):
-                    out.append('E   ' + ln)
+                    out.append("E   " + ln)
             else:
                 msg = str(exc)
-                out.append('E   AssertionError' + ((': ' + msg) if msg else ''))
+                out.append("E   AssertionError" + ((": " + msg) if msg else ""))
         elif isinstance(exc, Failed):
-            out.append('E   Failed: ' + str(exc.msg))
+            out.append("E   Failed: " + str(exc.msg))
         else:
-            out.append('E   ' + type(exc).__name__ + ': ' + str(exc))
+            out.append("E   " + type(exc).__name__ + ": " + str(exc))
         return _NL.join(out)
 
     # ---- collection ---------------------------------------------------------
@@ -1174,16 +1352,20 @@ def __vis_install_pytest_compat__():
             if allow is not None and name not in allow:
                 continue
             obj = ns.get(name)
-            if name.startswith('test') and inspect.isfunction(obj):
-                items.append(('func', name, obj, None, obj.__code__.co_firstlineno))
-            elif name.startswith('Test') and inspect.isclass(obj) and getattr(obj, '__test__', True):
+            if name.startswith("test") and inspect.isfunction(obj):
+                items.append(("func", name, obj, None, obj.__code__.co_firstlineno))
+            elif (
+                name.startswith("Test")
+                and inspect.isclass(obj)
+                and getattr(obj, "__test__", True)
+            ):
                 methods = []
                 for mname, meth in vars(obj).items():
-                    if mname.startswith('test') and inspect.isfunction(meth):
+                    if mname.startswith("test") and inspect.isfunction(meth):
                         methods.append((mname, meth, meth.__code__.co_firstlineno))
                 methods.sort(key=lambda t: t[2])
                 for mname, meth, lno in methods:
-                    items.append(('method', name + '::' + mname, meth, obj, lno))
+                    items.append(("method", name + "::" + mname, meth, obj, lno))
         items.sort(key=lambda t: t[4])
         return items
 
@@ -1191,45 +1373,59 @@ def __vis_install_pytest_compat__():
     class _Result:
         def __init__(self, nodeid):
             self.nodeid = nodeid
-            self.outcome = 'passed'
-            self.longrepr = ''
+            self.outcome = "passed"
+            self.longrepr = ""
             self.duration = 0.0
 
-    _CHAR = {'passed': '.', 'failed': 'F', 'error': 'E', 'skipped': 's', 'xfailed': 'x', 'xpassed': 'X'}
-    _VERB = {'passed': 'PASSED', 'failed': 'FAILED', 'error': 'ERROR', 'skipped': 'SKIPPED', 'xfailed': 'XFAIL', 'xpassed': 'XPASS'}
+    _CHAR = {
+        "passed": ".",
+        "failed": "F",
+        "error": "E",
+        "skipped": "s",
+        "xfailed": "x",
+        "xpassed": "X",
+    }
+    _VERB = {
+        "passed": "PASSED",
+        "failed": "FAILED",
+        "error": "ERROR",
+        "skipped": "SKIPPED",
+        "xfailed": "XFAIL",
+        "xpassed": "XPASS",
+    }
     _W = 80
 
     def _sep(ch, title=None):
         # pytest's terminal separator: a title centred in a full-width rule.
         if not title:
             return ch * _W
-        text = ' ' + title + ' '
+        text = " " + title + " "
         if len(text) >= _W:
             return text
         left = (_W - len(text)) // 2
         return ch * left + text + ch * (_W - len(text) - left)
 
     def _progress_tail(ctl):
-        return '[%3d%%]' % ctl.get('pct', 100)
+        return "[%3d%%]" % ctl.get("pct", 100)
 
     def _flush_progress(write, ctl):
         # Close the in-flight progress line with its right-aligned [ nn%].
-        if ctl.get('col'):
+        if ctl.get("col"):
             tail = _progress_tail(ctl)
-            write(' ' * max(1, _W - ctl['col'] - len(tail)) + tail + _NL)
-            ctl['col'] = 0
+            write(" " * max(1, _W - ctl["col"] - len(tail)) + tail + _NL)
+            ctl["col"] = 0
 
     def _reason_of(r):
         # The one-line reason pytest puts after the nodeid in the short summary.
-        txt = (r.longrepr or '').strip()
+        txt = (r.longrepr or "").strip()
         if not txt:
-            return ''
+            return ""
         lines = [ln for ln in txt.splitlines() if ln.strip()]
-        elines = [ln for ln in lines if ln.lstrip().startswith('E ')]
+        elines = [ln for ln in lines if ln.lstrip().startswith("E ")]
         pick = (elines[0] if elines else lines[-1]).strip()
-        if pick.startswith('E '):
+        if pick.startswith("E "):
             pick = pick[2:].strip()
-        return (' - ' + pick) if pick else ''
+        return (" - " + pick) if pick else ""
 
     def _run_one(nodeid, func, cls, pkwargs, marks, fm, src, fixparams=None):
         r = _Result(nodeid)
@@ -1237,20 +1433,24 @@ def __vis_install_pytest_compat__():
         xfail_mark = None
         usefix = []
         for m in marks:
-            if m.name == 'skip':
-                skip_reason = m.kwargs.get('reason', '') or (m.args[0] if m.args else '')
-            elif m.name == 'skipif':
-                cond = m.args[0] if m.args else m.kwargs.get('condition', False)
+            if m.name == "skip":
+                skip_reason = m.kwargs.get("reason", "") or (
+                    m.args[0] if m.args else ""
+                )
+            elif m.name == "skipif":
+                cond = m.args[0] if m.args else m.kwargs.get("condition", False)
                 if cond:
-                    skip_reason = m.kwargs.get('reason', 'condition true')
-            elif m.name == 'xfail':
+                    skip_reason = m.kwargs.get("reason", "condition true")
+            elif m.name == "xfail":
                 xfail_mark = m
-            elif m.name == 'usefixtures':
+            elif m.name == "usefixtures":
                 for _uf in m.args:
                     usefix.append(_uf)
         if skip_reason is not _NOTSET:
-            r.outcome = 'skipped'
-            r.longrepr = 'SKIPPED ' + nodeid + ((': ' + str(skip_reason)) if skip_reason else '')
+            r.outcome = "skipped"
+            r.longrepr = (
+                "SKIPPED " + nodeid + ((": " + str(skip_reason)) if skip_reason else "")
+            )
             return r
         fm.begin_test()
         request = FixtureRequest(fm, nodeid, func, cls, None)
@@ -1265,14 +1465,14 @@ def __vis_install_pytest_compat__():
                 if fm.has(_uf):
                     fm.resolve(_uf, request)
             for pname in inspect.signature(func).parameters:
-                if pname in callargs or pname == 'self':
+                if pname in callargs or pname == "self":
                     continue
                 if fm.has(pname):
                     callargs[pname] = fm.resolve(pname, request)
             t0 = time.time()
             if cls is not None:
                 inst = cls()
-                if hasattr(inst, 'setup_method'):
+                if hasattr(inst, "setup_method"):
                     try:
                         inst.setup_method(func)
                     except TypeError:
@@ -1280,7 +1480,7 @@ def __vis_install_pytest_compat__():
                 try:
                     func(inst, **callargs)
                 finally:
-                    if hasattr(inst, 'teardown_method'):
+                    if hasattr(inst, "teardown_method"):
                         try:
                             try:
                                 inst.teardown_method(func)
@@ -1297,35 +1497,40 @@ def __vis_install_pytest_compat__():
                 except Exception:
                     pass
             if xfail_mark is not None:
-                if xfail_mark.kwargs.get('strict'):
-                    r.outcome = 'failed'
-                    r.longrepr = '[XPASS(strict)] ' + nodeid + ' ' + str(xfail_mark.kwargs.get('reason', ''))
+                if xfail_mark.kwargs.get("strict"):
+                    r.outcome = "failed"
+                    r.longrepr = (
+                        "[XPASS(strict)] "
+                        + nodeid
+                        + " "
+                        + str(xfail_mark.kwargs.get("reason", ""))
+                    )
                 else:
-                    r.outcome = 'xpassed'
+                    r.outcome = "xpassed"
             else:
-                r.outcome = 'passed'
+                r.outcome = "passed"
         except Skipped as e:
-            r.outcome = 'skipped'
-            r.longrepr = 'SKIPPED ' + nodeid + ((': ' + str(e.msg)) if e.msg else '')
+            r.outcome = "skipped"
+            r.longrepr = "SKIPPED " + nodeid + ((": " + str(e.msg)) if e.msg else "")
         except XFailed as e:
-            r.outcome = 'xfailed'
-            r.longrepr = 'XFAIL ' + nodeid + ((': ' + str(e.msg)) if e.msg else '')
+            r.outcome = "xfailed"
+            r.longrepr = "XFAIL " + nodeid + ((": " + str(e.msg)) if e.msg else "")
         except (AssertionError, Failed) as e:
             if xfail_mark is not None:
-                r.outcome = 'xfailed'
-                r.longrepr = 'XFAIL ' + nodeid
+                r.outcome = "xfailed"
+                r.longrepr = "XFAIL " + nodeid
             else:
-                r.outcome = 'failed'
+                r.outcome = "failed"
                 r.longrepr = _render_failure(e, src)
         except Exception as e:
             if xfail_mark is not None:
-                r.outcome = 'xfailed'
-                r.longrepr = 'XFAIL ' + nodeid
+                r.outcome = "xfailed"
+                r.longrepr = "XFAIL " + nodeid
             else:
-                r.outcome = 'error'
+                r.outcome = "error"
                 r.longrepr = _render_failure(e, src)
         finally:
-            fm.teardown('function')
+            fm.teardown("function")
         return r
 
     def _summary(results, write, elapsed, deselected=0, ctl=None):
@@ -1334,49 +1539,69 @@ def __vis_install_pytest_compat__():
         counts = {}
         for r in results:
             counts[r.outcome] = counts.get(r.outcome, 0) + 1
-        fails = [r for r in results if r.outcome in ('failed', 'error')]
+        fails = [r for r in results if r.outcome in ("failed", "error")]
         if fails:
-            write(_NL + _sep('=', 'FAILURES') + _NL)
+            write(_NL + _sep("=", "FAILURES") + _NL)
             for r in fails:
-                write(_sep('_', r.nodeid) + _NL)
+                write(_sep("_", r.nodeid) + _NL)
                 write(r.longrepr + _NL)
         short = []
         for r in fails:
-            short.append(('ERROR' if r.outcome == 'error' else 'FAILED') + ' ' + r.nodeid + _reason_of(r))
+            short.append(
+                ("ERROR" if r.outcome == "error" else "FAILED")
+                + " "
+                + r.nodeid
+                + _reason_of(r)
+            )
         for r in results:
-            if r.outcome == 'skipped' and r.longrepr:
+            if r.outcome == "skipped" and r.longrepr:
                 skiptxt = r.longrepr.strip()
-                if skiptxt.startswith('SKIPPED'):
+                if skiptxt.startswith("SKIPPED"):
                     short.append(skiptxt.splitlines()[0].strip())
                 else:
-                    short.append('SKIPPED ' + r.nodeid + _reason_of(r))
+                    short.append("SKIPPED " + r.nodeid + _reason_of(r))
         if short:
-            write(_NL + _sep('=', 'short test summary info') + _NL)
+            write(_NL + _sep("=", "short test summary info") + _NL)
             for s in short:
                 write(s + _NL)
-        order = ['failed', 'error', 'passed', 'skipped', 'xfailed', 'xpassed']
-        label = {'failed': 'failed', 'error': 'errors', 'passed': 'passed', 'skipped': 'skipped', 'xfailed': 'xfailed', 'xpassed': 'xpassed'}
+        order = ["failed", "error", "passed", "skipped", "xfailed", "xpassed"]
+        label = {
+            "failed": "failed",
+            "error": "errors",
+            "passed": "passed",
+            "skipped": "skipped",
+            "xfailed": "xfailed",
+            "xpassed": "xpassed",
+        }
         parts = []
         for k in order:
             if counts.get(k):
-                parts.append(str(counts[k]) + ' ' + label[k])
+                parts.append(str(counts[k]) + " " + label[k])
         if deselected:
-            parts.append(str(deselected) + ' deselected')
-        tail = (', '.join(parts) if parts else 'no tests ran') + ' in ' + ('%.2f' % elapsed) + 's'
-        write(_NL + _sep('=', tail) + _NL)
-        return 1 if (counts.get('failed', 0) + counts.get('error', 0)) else 0
+            parts.append(str(deselected) + " deselected")
+        tail = (
+            (", ".join(parts) if parts else "no tests ran")
+            + " in "
+            + ("%.2f" % elapsed)
+            + "s"
+        )
+        write(_NL + _sep("=", tail) + _NL)
+        return 1 if (counts.get("failed", 0) + counts.get("error", 0)) else 0
 
     def _discover_paths(paths):
         # Walk each path arg: a dir yields its test_*.py / *_test.py files
         # (recursively, deterministic order); a file is taken verbatim.
         import os
+
         found = []
         for p in paths:
             if os.path.isdir(p):
                 for root, dnames, fnames in os.walk(p):
                     dnames.sort()
                     for fn in sorted(fnames):
-                        if fn.endswith('.py') and (fn.startswith('test_') or fn.endswith('_test.py')):
+                        if fn.endswith(".py") and (
+                            fn.startswith("test_") or fn.endswith("_test.py")
+                        ):
                             found.append(os.path.join(root, fn))
             elif os.path.isfile(p):
                 found.append(p)
@@ -1385,11 +1610,11 @@ def __vis_install_pytest_compat__():
     def _load_file(path):
         # Exec a test file into a FRESH module namespace; register its source in
         # linecache under the real path so assert introspection reads from disk.
-        with io.open(path, 'r', encoding='utf-8') as _f:
+        with io.open(path, "r", encoding="utf-8") as _f:
             source = _f.read()
         linecache.cache[path] = (len(source), None, source.splitlines(True), path)
-        g = {'__name__': '__vis_test__', '__file__': path, '__vis_src__': source}
-        exec(compile(source, path, 'exec'), g)
+        g = {"__name__": "__vis_test__", "__file__": path, "__vis_src__": source}
+        exec(compile(source, path, "exec"), g)
         return g, source
 
     _CONFTEST_CACHE = {}
@@ -1401,6 +1626,7 @@ def __vis_install_pytest_compat__():
         # conftest is exec'd once (cached by abspath) into its own namespace and
         # its fixtures merged. Returns the merged {name: FixtureInfo} dict.
         import os
+
         start = os.path.dirname(os.path.abspath(path))
         dirs = []
         d = start
@@ -1412,7 +1638,7 @@ def __vis_install_pytest_compat__():
             d = parent
         merged = {}
         for d in reversed(dirs):  # outermost (root) first
-            cf = os.path.join(d, 'conftest.py')
+            cf = os.path.join(d, "conftest.py")
             if not os.path.isfile(cf):
                 continue
             cf = os.path.abspath(cf)
@@ -1429,7 +1655,9 @@ def __vis_install_pytest_compat__():
         fixtures = {}
         for nm, obj in list(ns.items()):
             info = getattr(obj, _FIXTURE_ATTR, None)
-            if info is not None and (allow is None or nm in allow or info.name in (allow or [])):
+            if info is not None and (
+                allow is None or nm in allow or info.name in (allow or [])
+            ):
                 fixtures[info.name] = info
         return fixtures
 
@@ -1440,13 +1668,16 @@ def __vis_install_pytest_compat__():
         merged = dict(_conftest_chain(path))
         merged.update(_fixtures_of(g, None))
         fm = FixtureManager(merged)
-        items = [(kind, path + '::' + nodeid, func, cls, ln)
-                 for (kind, nodeid, func, cls, ln) in _collect(g, None)]
+        items = [
+            (kind, path + "::" + nodeid, func, cls, ln)
+            for (kind, nodeid, func, cls, ln) in _collect(g, None)
+        ]
         return (items, fm, source)
 
     def _fixture_param_cases(func, fm):
         seen = {}
         order = []
+
         def visit(fname):
             if fname in seen:
                 return
@@ -1455,16 +1686,17 @@ def __vis_install_pytest_compat__():
                 return
             seen[fname] = True
             for pname in inspect.signature(info.func).parameters:
-                if pname != 'request' and pname in fm.fixtures:
+                if pname != "request" and pname in fm.fixtures:
                     visit(pname)
             if info.params is not None:
                 order.append(info)
+
         for pname in inspect.signature(func).parameters:
-            if pname == 'self':
+            if pname == "self":
                 continue
             if pname in fm.fixtures:
                 visit(pname)
-        cases = [('', {})]
+        cases = [("", {})]
         for info in order:
             newcases = []
             plist = list(info.params)
@@ -1477,7 +1709,7 @@ def __vis_install_pytest_compat__():
                 for cid, cmap in cases:
                     m2 = dict(cmap)
                     m2[info.name] = pv
-                    nid = (cid + '-' + thisid) if cid else thisid
+                    nid = (cid + "-" + thisid) if cid else thisid
                     newcases.append((nid, m2))
             cases = newcases
         return cases
@@ -1485,48 +1717,68 @@ def __vis_install_pytest_compat__():
     def _run_group(tests, fm, src, results, write, verbose, ctl):
         try:
             for kind, nodeid, func, cls, _ln in tests:
-                if ctl['stop']:
+                if ctl["stop"]:
                     break
                 base_marks = list(getattr(func, _MARKS_ATTR, []))
                 fcases = _fixture_param_cases(func, fm)
                 for fid, fmap in fcases:
-                    if ctl['stop']:
+                    if ctl["stop"]:
                         break
                     for pid, pkwargs, casemarks, indkw in _expand_params(base_marks):
-                        combo = '-'.join(x for x in (fid, pid) if x)
-                        full_id = nodeid + (('[' + combo + ']') if combo else '')
-                        if ctl['kexpr'] is not None and not _kexpr_match(ctl['kexpr'], full_id):
-                            ctl['deselected'] += 1
+                        combo = "-".join(x for x in (fid, pid) if x)
+                        full_id = nodeid + (("[" + combo + "]") if combo else "")
+                        if ctl["kexpr"] is not None and not _kexpr_match(
+                            ctl["kexpr"], full_id
+                        ):
+                            ctl["deselected"] += 1
                             continue
-                        r = _run_one(full_id, func, cls, pkwargs, base_marks + casemarks, fm, src, dict(fmap, **indkw))
+                        r = _run_one(
+                            full_id,
+                            func,
+                            cls,
+                            pkwargs,
+                            base_marks + casemarks,
+                            fm,
+                            src,
+                            dict(fmap, **indkw),
+                        )
                         results.append(r)
-                        ctl['done'] = ctl.get('done', 0) + 1
-                        _tot = ctl.get('total') or ctl['done']
-                        ctl['pct'] = int(ctl['done'] * 100.0 / _tot)
+                        ctl["done"] = ctl.get("done", 0) + 1
+                        _tot = ctl.get("total") or ctl["done"]
+                        ctl["pct"] = int(ctl["done"] * 100.0 / _tot)
                         if verbose:
                             _flush_progress(write, ctl)
-                            _left = full_id + ' ' + _VERB.get(r.outcome, r.outcome.upper())
+                            _left = (
+                                full_id + " " + _VERB.get(r.outcome, r.outcome.upper())
+                            )
                             _tail = _progress_tail(ctl)
-                            write(_left + ' ' * max(1, _W - len(_left) - len(_tail)) + _tail + _NL)
+                            write(
+                                _left
+                                + " " * max(1, _W - len(_left) - len(_tail))
+                                + _tail
+                                + _NL
+                            )
                         else:
-                            _pref = full_id.split('::')[0] if '::' in full_id else '<block>'
-                            if _pref != ctl.get('prefix'):
+                            _pref = (
+                                full_id.split("::")[0] if "::" in full_id else "<block>"
+                            )
+                            if _pref != ctl.get("prefix"):
                                 _flush_progress(write, ctl)
-                                ctl['prefix'] = _pref
-                                write(_pref + ' ')
-                                ctl['col'] = len(_pref) + 1
-                            elif ctl.get('col', 0) >= _W - 8:
+                                ctl["prefix"] = _pref
+                                write(_pref + " ")
+                                ctl["col"] = len(_pref) + 1
+                            elif ctl.get("col", 0) >= _W - 8:
                                 _flush_progress(write, ctl)
-                            write(_CHAR.get(r.outcome, '?'))
-                            ctl['col'] = ctl.get('col', 0) + 1
-                        if r.outcome in ('failed', 'error'):
-                            ctl['nfail'] += 1
-                            if ctl['maxfail'] and ctl['nfail'] >= ctl['maxfail']:
-                                ctl['stop'] = True
+                            write(_CHAR.get(r.outcome, "?"))
+                            ctl["col"] = ctl.get("col", 0) + 1
+                        if r.outcome in ("failed", "error"):
+                            ctl["nfail"] += 1
+                            if ctl["maxfail"] and ctl["nfail"] >= ctl["maxfail"]:
+                                ctl["stop"] = True
                                 break
         finally:
-            fm.teardown('module')
-            fm.teardown('session')
+            fm.teardown("module")
+            fm.teardown("session")
 
     def main(args=None, ns=None):
         verbose = False
@@ -1540,29 +1792,29 @@ def __vis_install_pytest_compat__():
             _i = 0
             while _i < len(args):
                 a = args[_i]
-                if a in ('-v', '--verbose', '-vv', '-vvv'):
+                if a in ("-v", "--verbose", "-vv", "-vvv"):
                     verbose = True
-                elif a in ('-x', '--exitfirst'):
+                elif a in ("-x", "--exitfirst"):
                     maxfail = 1
-                elif a == '-k':
+                elif a == "-k":
                     _i += 1
                     if _i < len(args):
                         kexpr = args[_i]
-                elif a.startswith('-k'):
-                    kexpr = a[2:].lstrip('=')
-                elif a == '--maxfail':
+                elif a.startswith("-k"):
+                    kexpr = a[2:].lstrip("=")
+                elif a == "--maxfail":
                     _i += 1
                     if _i < len(args):
                         try:
                             maxfail = int(args[_i])
                         except ValueError:
                             pass
-                elif a.startswith('--maxfail='):
+                elif a.startswith("--maxfail="):
                     try:
-                        maxfail = int(a.split('=', 1)[1])
+                        maxfail = int(a.split("=", 1)[1])
                     except ValueError:
                         pass
-                elif not a.startswith('-'):
+                elif not a.startswith("-"):
                     paths.append(a)
                 _i += 1
         if ns is None:
@@ -1578,7 +1830,7 @@ def __vis_install_pytest_compat__():
                     load_errors.append((fpath, _e))
         else:
             # Inline mode: collect from the caller's block globals.
-            src = ns.get('__vis_src__')
+            src = ns.get("__vis_src__")
             fm = FixtureManager(_fixtures_of(ns, _current_block_names(src)))
             groups.append((_collect(ns, src), fm, src))
         # pytest counts COLLECTED CASES: every parametrize / parametrized-fixture
@@ -1588,15 +1840,25 @@ def __vis_install_pytest_compat__():
             for _t in _tests:
                 _func = _t[2]
                 try:
-                    _n = (len(_fixture_param_cases(_func, _fm))
-                          * len(_expand_params(list(getattr(_func, _MARKS_ATTR, [])))))
+                    _n = len(_fixture_param_cases(_func, _fm)) * len(
+                        _expand_params(list(getattr(_func, _MARKS_ATTR, [])))
+                    )
                 except Exception:
                     _n = 1
                 total += max(1, _n)
         _buf = []
         write = _buf.append
-        write(_NL + _sep('=', 'test session starts') + _NL)
-        write('platform ' + sys.platform + ' -- Python ' + ('%d.%d.%d' % sys.version_info[:3]) + ', pytest-' + mod.__version__ + ', pluggy-1.5.0' + _NL)
+        write(_NL + _sep("=", "test session starts") + _NL)
+        write(
+            "platform "
+            + sys.platform
+            + " -- Python "
+            + ("%d.%d.%d" % sys.version_info[:3])
+            + ", pytest-"
+            + mod.__version__
+            + ", pluggy-1.5.0"
+            + _NL
+        )
         # `rootdir` is a DISK-mode notion. `os.getcwd()` raises a HOST
         # SecurityException in an IO-NONE sandbox context - a Java throwable that
         # is NOT a Python exception, so `except` cannot catch it and it would
@@ -1607,37 +1869,56 @@ def __vis_install_pytest_compat__():
             if _root and not os.path.isdir(_root):
                 _root = os.path.dirname(_root)
             if _root:
-                write('rootdir: ' + _root + _NL)
-        write('collected ' + str(total) + ' item' + ('' if total == 1 else 's') + _NL + _NL)
+                write("rootdir: " + _root + _NL)
+        write(
+            "collected "
+            + str(total)
+            + " item"
+            + ("" if total == 1 else "s")
+            + _NL
+            + _NL
+        )
         results = []
         t_start = time.time()
-        ctl = {'kexpr': kexpr, 'maxfail': maxfail, 'nfail': 0, 'deselected': 0, 'stop': False,
-               'total': total, 'done': 0, 'pct': 0, 'col': 0, 'prefix': None}
+        ctl = {
+            "kexpr": kexpr,
+            "maxfail": maxfail,
+            "nfail": 0,
+            "deselected": 0,
+            "stop": False,
+            "total": total,
+            "done": 0,
+            "pct": 0,
+            "col": 0,
+            "prefix": None,
+        }
         for tests, fm, src in groups:
-            if ctl['stop']:
+            if ctl["stop"]:
                 break
             _run_group(tests, fm, src, results, write, verbose, ctl)
         for fpath, _e in load_errors:
             r = _Result(fpath)
-            r.outcome = 'error'
-            r.longrepr = 'ERROR collecting ' + fpath + _NL + _render_failure(_e, None)
+            r.outcome = "error"
+            r.longrepr = "ERROR collecting " + fpath + _NL + _render_failure(_e, None)
             results.append(r)
             _flush_progress(write, ctl)
         elapsed = time.time() - t_start
-        rc = _summary(results, write, elapsed, ctl['deselected'], ctl)
-        mod._vis_last_deselected = ctl['deselected']
-        sys.stdout.write(''.join(_buf))
+        rc = _summary(results, write, elapsed, ctl["deselected"], ctl)
+        mod._vis_last_deselected = ctl["deselected"]
+        sys.stdout.write("".join(_buf))
         sys.stdout.flush()
         # Publish the PER-TEST records (nodeid, outcome, longrepr) as the ONE
         # source of truth. The host derives counts from THIS list, so a bad
         # internal tally can never disagree with what actually ran.
-        mod._vis_last_report = [(_r.nodeid, _r.outcome, (_r.longrepr or '')) for _r in results]
+        mod._vis_last_report = [
+            (_r.nodeid, _r.outcome, (_r.longrepr or "")) for _r in results
+        ]
         return rc
 
     # ---- publish module -----------------------------------------------------
-    mod = types.ModuleType('pytest')
-    mod.__doc__ = 'vis pytest-compatible shim (pure Python stdlib; no plugins/import-rewrite, minimal -k/-x/--maxfail CLI, conftest.py in disk mode).'
-    mod.__version__ = '8.0-vis'
+    mod = types.ModuleType("pytest")
+    mod.__doc__ = "vis pytest-compatible shim (pure Python stdlib; no plugins/import-rewrite, minimal -k/-x/--maxfail CLI, conftest.py in disk mode)."
+    mod.__version__ = "8.0-vis"
     mod.raises = raises
     mod.warns = warns
     mod.approx = approx
@@ -1665,17 +1946,32 @@ def __vis_install_pytest_compat__():
     mod.Pytester = Pytester
     mod.RunResult = RunResult
     mod.LineMatcher = LineMatcher
-    mod.__all__ = ['raises', 'warns', 'approx', 'fixture', 'mark', 'param', 'fail', 'skip', 'xfail', 'exit', 'importorskip', 'main']
+    mod.__all__ = [
+        "raises",
+        "warns",
+        "approx",
+        "fixture",
+        "mark",
+        "param",
+        "fail",
+        "skip",
+        "xfail",
+        "exit",
+        "importorskip",
+        "main",
+    ]
 
-    sys.modules['pytest'] = mod
+    sys.modules["pytest"] = mod
 
     # Autoload: staple onto builtins so pytest.raises(...) works in every
     # run_python block WITHOUT an explicit `import pytest` (mirrors json/os).
     try:
         import builtins as _b
+
         _b.pytest = mod
     except Exception:
         pass
+
 
 __vis_install_pytest_compat__()
 del __vis_install_pytest_compat__

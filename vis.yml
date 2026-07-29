@@ -30,6 +30,9 @@ workspace:
     - id: clj-fff
       path: ~/clj-fff
       description: Blockether Clojure bindings for FFF.
+    - id: clj-ruff
+      path: ~/clj-ruff
+      description: Blockether Clojure bindings for ruff — bump ruff + release there, then move the com.blockether/ruff pin in deps.edn.
     - id: tree-sitter
       path: ~/tree-sitter-language-pack
       description: Sibling repo — tree-sitter grammars powering structural tools.

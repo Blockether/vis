@@ -1,6 +1,7 @@
 def __vis_install_paramiko__():
     import sys, types, base64, hashlib, os
-    _bi = sys.modules['builtins']
+
+    _bi = sys.modules["builtins"]
     _connect = __vis_ssh_connect__
     _exec = __vis_ssh_exec__
     _active = __vis_ssh_active__
@@ -26,11 +27,11 @@ def __vis_install_paramiko__():
 
     def _b64d(s):
         if s is None:
-            return b''
+            return b""
         return base64.b64decode(s)
 
     def _b64e(b):
-        return base64.b64encode(bytes(b)).decode('ascii')
+        return base64.b64encode(bytes(b)).decode("ascii")
 
     class SSHException(Exception):
         pass
@@ -42,19 +43,21 @@ def __vis_install_paramiko__():
         pass
 
     class BadAuthenticationType(AuthenticationException):
-        def __init__(self, explanation='', types=None):
+        def __init__(self, explanation="", types=None):
             super().__init__(explanation)
             self.allowed_types = types or []
 
     class BadHostKeyException(SSHException):
         def __init__(self, hostname=None, got_key=None, expected_key=None):
-            super().__init__('Host key for server ' + str(hostname) + ' does not match.')
+            super().__init__(
+                "Host key for server " + str(hostname) + " does not match."
+            )
             self.hostname = hostname
             self.key = got_key
             self.expected_key = expected_key
 
     class ChannelException(SSHException):
-        def __init__(self, code=0, text=''):
+        def __init__(self, code=0, text=""):
             super().__init__(text)
             self.code = code
 
@@ -67,19 +70,26 @@ def __vis_install_paramiko__():
     class NoValidConnectionsError(SSHException):
         def __init__(self, errors=None):
             if isinstance(errors, dict):
-                super().__init__('Unable to connect to port')
+                super().__init__("Unable to connect to port")
                 self.errors = errors
             else:
                 super().__init__(str(errors))
                 self.errors = {}
 
     def _raise(msg):
-        low = (msg or '').lower()
-        if 'auth' in low or 'password' in low or 'publickey' in low:
+        low = (msg or "").lower()
+        if "auth" in low or "password" in low or "publickey" in low:
             raise AuthenticationException(msg)
-        if ('refused' in low or 'unknownhost' in low or 'unknown host' in low
-                or 'timed out' in low or 'timeout' in low or 'unable to connect' in low
-                or 'no route' in low or 'connection' in low):
+        if (
+            "refused" in low
+            or "unknownhost" in low
+            or "unknown host" in low
+            or "timed out" in low
+            or "timeout" in low
+            or "unable to connect" in low
+            or "no route" in low
+            or "connection" in low
+        ):
             raise NoValidConnectionsError(msg)
         raise SSHException(msg)
 
@@ -93,7 +103,7 @@ def __vis_install_paramiko__():
 
     class MissingHostKeyPolicy(object):
         def missing_host_key(self, client, hostname, key):
-            raise SSHException('Unknown server ' + str(hostname))
+            raise SSHException("Unknown server " + str(hostname))
 
     class AutoAddPolicy(MissingHostKeyPolicy):
         def missing_host_key(self, client, hostname, key):
@@ -105,29 +115,29 @@ def __vis_install_paramiko__():
 
     class RejectPolicy(MissingHostKeyPolicy):
         def missing_host_key(self, client, hostname, key):
-            raise SSHException('Server ' + str(hostname) + ' not found in known_hosts')
+            raise SSHException("Server " + str(hostname) + " not found in known_hosts")
 
     class PKey(object):
-        _key_kind = 'rsa'
+        _key_kind = "rsa"
         _default_bits = 0
 
         def __init__(self, path=None, password=None, _data=None):
             self._path = path
             self._password = password
-            self._name = 'ssh-key'
+            self._name = "ssh-key"
             self._bits = 0
-            self._public_blob = b''
+            self._public_blob = b""
             self._private_b64 = None
             self._fingerprint = None
             if _data:
                 self._apply_key_data(_data)
 
         def _apply_key_data(self, data):
-            self._name = data.get('name') or self._name
-            self._bits = int(data.get('bits') or self._bits or 0)
-            self._public_blob = _b64d(data.get('public'))
-            self._private_b64 = data.get('private')
-            self._fingerprint = data.get('fingerprint')
+            self._name = data.get("name") or self._name
+            self._bits = int(data.get("bits") or self._bits or 0)
+            self._public_blob = _b64d(data.get("public"))
+            self._private_b64 = data.get("private")
+            self._fingerprint = data.get("fingerprint")
             return self
 
         @classmethod
@@ -138,7 +148,7 @@ def __vis_install_paramiko__():
         @classmethod
         def from_private_key_file(cls, filename, password=None):
             if os.path.exists(filename):
-                with open(filename, 'rb') as f:
+                with open(filename, "rb") as f:
                     return cls.from_private_key(f, password=password)
             return cls(path=filename, password=password)
 
@@ -146,14 +156,18 @@ def __vis_install_paramiko__():
         def from_private_key(cls, file_obj, password=None):
             data = file_obj.read()
             if isinstance(data, str):
-                data = data.encode('utf-8')
-            return cls._from_key_data(_call(_key_load, _b64e(data), password), password=password)
+                data = data.encode("utf-8")
+            return cls._from_key_data(
+                _call(_key_load, _b64e(data), password), password=password
+            )
 
         @classmethod
         def generate(cls, bits=None, progress_func=None, **kw):
-            password = kw.get('password') or kw.get('passphrase')
+            password = kw.get("password") or kw.get("passphrase")
             size = bits if bits is not None else cls._default_bits
-            return cls._from_key_data(_call(_key_generate, cls._key_kind, size, password), password=password)
+            return cls._from_key_data(
+                _call(_key_generate, cls._key_kind, size, password), password=password
+            )
 
         def get_name(self):
             return self._name
@@ -164,65 +178,65 @@ def __vis_install_paramiko__():
         def get_fingerprint(self):
             if self._fingerprint:
                 try:
-                    return bytes(int(p, 16) for p in self._fingerprint.split(':') if p)
+                    return bytes(int(p, 16) for p in self._fingerprint.split(":") if p)
                 except Exception:
                     pass
-            return hashlib.md5(self.asbytes()).digest() if self.asbytes() else b''
+            return hashlib.md5(self.asbytes()).digest() if self.asbytes() else b""
 
         def asbytes(self):
-            return bytes(self._public_blob or b'')
+            return bytes(self._public_blob or b"")
 
         def get_base64(self):
             return _b64e(self.asbytes())
 
         def write_private_key(self, file_obj, password=None):
             if self._private_b64 is None:
-                raise SSHException('private key material is not available')
-            data = _b64d(self._private_b64).decode('utf-8')
+                raise SSHException("private key material is not available")
+            data = _b64d(self._private_b64).decode("utf-8")
             file_obj.write(data)
 
         def write_private_key_file(self, filename, password=None):
-            with open(filename, 'w') as f:
+            with open(filename, "w") as f:
                 self.write_private_key(f, password=password)
 
         def __str__(self):
             return self.get_base64()
 
     class RSAKey(PKey):
-        _key_kind = 'rsa'
+        _key_kind = "rsa"
         _default_bits = 2048
 
         def __init__(self, path=None, password=None, _data=None):
             super().__init__(path, password, _data=_data)
             if not _data:
-                self._name = 'ssh-rsa'
+                self._name = "ssh-rsa"
 
     class DSSKey(PKey):
-        _key_kind = 'dss'
+        _key_kind = "dss"
         _default_bits = 1024
 
         def __init__(self, path=None, password=None, _data=None):
             super().__init__(path, password, _data=_data)
             if not _data:
-                self._name = 'ssh-dss'
+                self._name = "ssh-dss"
 
     class ECDSAKey(PKey):
-        _key_kind = 'ecdsa'
+        _key_kind = "ecdsa"
         _default_bits = 256
 
         def __init__(self, path=None, password=None, _data=None):
             super().__init__(path, password, _data=_data)
             if not _data:
-                self._name = 'ecdsa-sha2-nistp256'
+                self._name = "ecdsa-sha2-nistp256"
 
     class Ed25519Key(PKey):
-        _key_kind = 'ed25519'
+        _key_kind = "ed25519"
         _default_bits = 0
 
         def __init__(self, path=None, password=None, _data=None, **kw):
             super().__init__(path, password, _data=_data)
             if not _data:
-                self._name = 'ssh-ed25519'
+                self._name = "ssh-ed25519"
 
     class HostKeys(object):
         def __init__(self, filename=None):
@@ -276,20 +290,20 @@ def __vis_install_paramiko__():
 
         def read(self, size=None):
             if size is None or size < 0:
-                r = self._buf[self._pos:]
+                r = self._buf[self._pos :]
                 self._pos = len(self._buf)
                 return r
-            r = self._buf[self._pos:self._pos + size]
+            r = self._buf[self._pos : self._pos + size]
             self._pos += len(r)
             return r
 
         def readline(self, size=-1):
             idx = self._buf.find(_NLB, self._pos)
             if idx == -1:
-                r = self._buf[self._pos:]
+                r = self._buf[self._pos :]
                 self._pos = len(self._buf)
                 return r
-            r = self._buf[self._pos:idx + 1]
+            r = self._buf[self._pos : idx + 1]
             self._pos = idx + 1
             return r
 
@@ -360,54 +374,60 @@ def __vis_install_paramiko__():
         @classmethod
         def _from(cls, m):
             a = cls()
-            a.st_size = m.get('st_size')
-            a.st_uid = m.get('st_uid')
-            a.st_gid = m.get('st_gid')
-            a.st_mode = m.get('st_mode')
-            a.st_atime = m.get('st_atime')
-            a.st_mtime = m.get('st_mtime')
-            a.filename = m.get('filename')
-            a.longname = m.get('longname')
+            a.st_size = m.get("st_size")
+            a.st_uid = m.get("st_uid")
+            a.st_gid = m.get("st_gid")
+            a.st_mode = m.get("st_mode")
+            a.st_atime = m.get("st_atime")
+            a.st_mtime = m.get("st_mtime")
+            a.filename = m.get("filename")
+            a.longname = m.get("longname")
             return a
 
         def __repr__(self):
-            return '<SFTPAttributes: size=' + str(self.st_size) + ' mode=' + str(self.st_mode) + '>'
+            return (
+                "<SFTPAttributes: size="
+                + str(self.st_size)
+                + " mode="
+                + str(self.st_mode)
+                + ">"
+            )
 
     class SFTPFile(object):
-        def __init__(self, sftp, path, mode='r'):
+        def __init__(self, sftp, path, mode="r"):
             self._sftp = sftp
             self._path = path
             self._mode = mode
-            self._binary = 'b' in mode
-            self._writable = any(c in mode for c in ('w', 'a', '+'))
+            self._binary = "b" in mode
+            self._writable = any(c in mode for c in ("w", "a", "+"))
             self._closed = False
-            data = b''
-            if 'w' not in mode:
+            data = b""
+            if "w" not in mode:
                 try:
                     data = sftp._get_bytes(path)
                 except Exception:
-                    if 'r' in mode and 'a' not in mode and '+' not in mode:
+                    if "r" in mode and "a" not in mode and "+" not in mode:
                         raise
-                    data = b''
+                    data = b""
             self._data = bytearray(data)
-            self._pos = len(self._data) if 'a' in mode else 0
+            self._pos = len(self._data) if "a" in mode else 0
 
         def read(self, size=None):
             if size is None or size < 0:
-                r = bytes(self._data[self._pos:])
+                r = bytes(self._data[self._pos :])
                 self._pos = len(self._data)
             else:
-                r = bytes(self._data[self._pos:self._pos + size])
+                r = bytes(self._data[self._pos : self._pos + size])
                 self._pos += len(r)
             return r
 
         def readline(self, size=-1):
             idx = self._data.find(_NLB, self._pos)
             if idx == -1:
-                r = bytes(self._data[self._pos:])
+                r = bytes(self._data[self._pos :])
                 self._pos = len(self._data)
             else:
-                r = bytes(self._data[self._pos:idx + 1])
+                r = bytes(self._data[self._pos : idx + 1])
                 self._pos = idx + 1
             return r
 
@@ -431,13 +451,13 @@ def __vis_install_paramiko__():
 
         def write(self, data):
             if isinstance(data, str):
-                data = data.encode('utf-8')
+                data = data.encode("utf-8")
             else:
                 data = bytes(data)
             end = self._pos + len(data)
             if end > len(self._data):
                 self._data.extend(bytes(end - len(self._data)))
-            self._data[self._pos:end] = data
+            self._data[self._pos : end] = data
             self._pos = end
             return len(data)
 
@@ -488,11 +508,11 @@ def __vis_install_paramiko__():
 
         def _adjust(self, path):
             path = str(path)
-            if self._cwd is None or path.startswith('/'):
+            if self._cwd is None or path.startswith("/"):
                 return path
             base = self._cwd
-            if not base.endswith('/'):
-                base = base + '/'
+            if not base.endswith("/"):
+                base = base + "/"
             return base + path
 
         def _get_bytes(self, path):
@@ -501,30 +521,37 @@ def __vis_install_paramiko__():
         def _put_bytes(self, path, data):
             return _call(_sftp_put, self._h, self._adjust(path), _b64e(data))
 
-        def listdir(self, path='.'):
+        def listdir(self, path="."):
             return list(_call(_sftp_list, self._h, self._adjust(path), False))
 
-        def listdir_attr(self, path='.'):
-            return [SFTPAttributes._from(m) for m in _call(_sftp_list, self._h, self._adjust(path), True)]
+        def listdir_attr(self, path="."):
+            return [
+                SFTPAttributes._from(m)
+                for m in _call(_sftp_list, self._h, self._adjust(path), True)
+            ]
 
-        def listdir_iter(self, path='.', read_aheads=50):
+        def listdir_iter(self, path=".", read_aheads=50):
             return iter(self.listdir_attr(path))
 
         def stat(self, path):
-            return SFTPAttributes._from(_call(_sftp_stat, self._h, self._adjust(path), True))
+            return SFTPAttributes._from(
+                _call(_sftp_stat, self._h, self._adjust(path), True)
+            )
 
         def lstat(self, path):
-            return SFTPAttributes._from(_call(_sftp_stat, self._h, self._adjust(path), False))
+            return SFTPAttributes._from(
+                _call(_sftp_stat, self._h, self._adjust(path), False)
+            )
 
-        def open(self, filename, mode='r', bufsize=-1):
+        def open(self, filename, mode="r", bufsize=-1):
             return SFTPFile(self, self._adjust(filename), mode)
 
-        def file(self, filename, mode='r', bufsize=-1):
+        def file(self, filename, mode="r", bufsize=-1):
             return self.open(filename, mode, bufsize)
 
         def get(self, remotepath, localpath, callback=None, prefetch=True):
             data = self._get_bytes(remotepath)
-            with open(localpath, 'wb') as f:
+            with open(localpath, "wb") as f:
                 f.write(data)
             if callback:
                 callback(len(data), len(data))
@@ -537,7 +564,7 @@ def __vis_install_paramiko__():
             return len(data)
 
         def put(self, localpath, remotepath, callback=None, confirm=True):
-            with open(localpath, 'rb') as f:
+            with open(localpath, "rb") as f:
                 data = f.read()
             m = self._put_bytes(remotepath, data)
             if callback:
@@ -547,7 +574,7 @@ def __vis_install_paramiko__():
         def putfo(self, fl, remotepath, file_size=0, callback=None, confirm=True):
             data = fl.read()
             if isinstance(data, str):
-                data = data.encode('utf-8')
+                data = data.encode("utf-8")
             m = self._put_bytes(remotepath, data)
             if callback:
                 callback(len(data), len(data))
@@ -566,10 +593,22 @@ def __vis_install_paramiko__():
             self.remove(path)
 
         def rename(self, oldpath, newpath):
-            _call(_sftp_rename, self._h, self._adjust(oldpath), self._adjust(newpath), False)
+            _call(
+                _sftp_rename,
+                self._h,
+                self._adjust(oldpath),
+                self._adjust(newpath),
+                False,
+            )
 
         def posix_rename(self, oldpath, newpath):
-            _call(_sftp_rename, self._h, self._adjust(oldpath), self._adjust(newpath), True)
+            _call(
+                _sftp_rename,
+                self._h,
+                self._adjust(oldpath),
+                self._adjust(newpath),
+                True,
+            )
 
         def chmod(self, path, mode):
             _call(_sftp_chmod, self._h, self._adjust(path), mode)
@@ -626,15 +665,17 @@ def __vis_install_paramiko__():
                 return False
 
         def open_session(self, *a, **k):
-            raise SSHException('paramiko shim: Transport.open_session is unsupported; use SSHClient.exec_command')
+            raise SSHException(
+                "paramiko shim: Transport.open_session is unsupported; use SSHClient.exec_command"
+            )
 
         def open_sftp_client(self):
             if self._sess is None:
-                raise SSHException('SSH session is not active')
+                raise SSHException("SSH session is not active")
             return SFTPClient(_call(_sftp_open, self._sess))
 
         def getpeername(self):
-            if self._sock is not None and hasattr(self._sock, 'getpeername'):
+            if self._sock is not None and hasattr(self._sock, "getpeername"):
                 try:
                     return self._sock.getpeername()
                 except Exception:
@@ -645,22 +686,28 @@ def __vis_install_paramiko__():
             self._server = server if server is not None else ServerInterface()
             srv = self._server
             sock = self._sock
-            if sock is not None and hasattr(sock, 'recv') and hasattr(sock, 'sendall'):
+            if sock is not None and hasattr(sock, "recv") and hasattr(sock, "sendall"):
                 import socket as _socketmod, threading as _threadingmod
+
                 def _auth_pw(u, p):
                     try:
                         return srv.check_auth_password(u, p)
                     except Exception:
                         return AUTH_FAILED
+
                 def _forward(addr, port):
                     try:
                         return bool(srv.check_port_forward_request(addr, port))
                     except Exception:
                         return False
+
                 info = _call(_server_start, _auth_pw, _forward)
-                self._server_handle = info.get('handle')
-                relay = _socketmod.create_connection(('127.0.0.1', int(info.get('port'))))
+                self._server_handle = info.get("handle")
+                relay = _socketmod.create_connection(
+                    ("127.0.0.1", int(info.get("port")))
+                )
                 self._relay = relay
+
                 def _pump(a, b):
                     try:
                         while True:
@@ -674,10 +721,16 @@ def __vis_install_paramiko__():
                         b.shutdown(_socketmod.SHUT_WR)
                     except Exception:
                         pass
-                _t_up = _threadingmod.Thread(target=_pump, args=(sock, relay), daemon=True)
-                _t_dn = _threadingmod.Thread(target=_pump, args=(relay, sock), daemon=True)
+
+                _t_up = _threadingmod.Thread(
+                    target=_pump, args=(sock, relay), daemon=True
+                )
+                _t_dn = _threadingmod.Thread(
+                    target=_pump, args=(relay, sock), daemon=True
+                )
                 _t_up.start()
                 _t_dn.start()
+
                 def _reap(up=_t_up, dn=_t_dn, relay=relay):
                     # Tie the MINA server's lifetime to this ONE relayed
                     # connection: once both pump directions end (the client
@@ -688,7 +741,7 @@ def __vis_install_paramiko__():
                         dn.join()
                     except Exception:
                         pass
-                    h = getattr(self, '_server_handle', None)
+                    h = getattr(self, "_server_handle", None)
                     if h is not None:
                         try:
                             _call(_server_stop, h)
@@ -699,14 +752,15 @@ def __vis_install_paramiko__():
                         relay.close()
                     except Exception:
                         pass
+
                 _threadingmod.Thread(target=_reap, daemon=True).start()
             self._server_started = True
-            if event is not None and hasattr(event, 'set'):
+            if event is not None and hasattr(event, "set"):
                 event.set()
             return None
 
         def start_client(self, event=None, timeout=None):
-            if event is not None and hasattr(event, 'set'):
+            if event is not None and hasattr(event, "set"):
                 event.set()
             return None
 
@@ -726,13 +780,13 @@ def __vis_install_paramiko__():
 
         def close(self):
             self._server_started = False
-            if getattr(self, '_server_handle', None) is not None:
+            if getattr(self, "_server_handle", None) is not None:
                 try:
                     _call(_server_stop, self._server_handle)
                 except Exception:
                     pass
                 self._server_handle = None
-            if getattr(self, '_relay', None) is not None:
+            if getattr(self, "_relay", None) is not None:
                 try:
                     self._relay.close()
                 except Exception:
@@ -743,7 +797,7 @@ def __vis_install_paramiko__():
                     _call(_close, self._sess)
                 except Exception:
                     pass
-            if self._sock is not None and hasattr(self._sock, 'close'):
+            if self._sock is not None and hasattr(self._sock, "close"):
                 try:
                     self._sock.close()
                 except Exception:
@@ -773,52 +827,80 @@ def __vis_install_paramiko__():
         def set_log_channel(self, name):
             return None
 
-        def connect(self, hostname, port=22, username=None, password=None, pkey=None,
-                    key_filename=None, timeout=None, allow_agent=True, look_for_keys=True,
-                    compress=False, sock=None, gss_auth=False, gss_kex=False,
-                    gss_deleg_creds=True, gss_host=None, banner_timeout=None,
-                    auth_timeout=None, channel_timeout=None, passphrase=None,
-                    disabled_algorithms=None, **kw):
+        def connect(
+            self,
+            hostname,
+            port=22,
+            username=None,
+            password=None,
+            pkey=None,
+            key_filename=None,
+            timeout=None,
+            allow_agent=True,
+            look_for_keys=True,
+            compress=False,
+            sock=None,
+            gss_auth=False,
+            gss_kex=False,
+            gss_deleg_creds=True,
+            gss_host=None,
+            banner_timeout=None,
+            auth_timeout=None,
+            channel_timeout=None,
+            passphrase=None,
+            disabled_algorithms=None,
+            **kw,
+        ):
             kf = key_filename
             if isinstance(kf, (list, tuple)):
                 kf = kf[0] if kf else None
             pf = passphrase
             if pkey is not None:
-                if getattr(pkey, '_path', None):
+                if getattr(pkey, "_path", None):
                     kf = pkey._path
                 if pf is None:
-                    pf = getattr(pkey, '_password', None)
-            pol = 'add' if type(self._policy).__name__ in ('AutoAddPolicy', 'WarningPolicy') else 'reject'
+                    pf = getattr(pkey, "_password", None)
+            pol = (
+                "add"
+                if type(self._policy).__name__ in ("AutoAddPolicy", "WarningPolicy")
+                else "reject"
+            )
             opts = {
-                'hostname': str(hostname),
-                'port': int(port),
-                'username': username or '',
-                'password': password or '',
-                'key_filename': kf or '',
-                'passphrase': pf or '',
-                'policy': pol,
-                'timeout_ms': int(timeout * 1000) if timeout else 0,
-                'look_for_keys': bool(look_for_keys),
-                'compress': bool(compress),
+                "hostname": str(hostname),
+                "port": int(port),
+                "username": username or "",
+                "password": password or "",
+                "key_filename": kf or "",
+                "passphrase": pf or "",
+                "policy": pol,
+                "timeout_ms": int(timeout * 1000) if timeout else 0,
+                "look_for_keys": bool(look_for_keys),
+                "compress": bool(compress),
             }
             self._sess = _call(_connect, opts)
 
-        def exec_command(self, command, bufsize=-1, timeout=None, get_pty=False, environment=None):
+        def exec_command(
+            self, command, bufsize=-1, timeout=None, get_pty=False, environment=None
+        ):
             if self._sess is None:
-                raise SSHException('SSH session is not active')
+                raise SSHException("SSH session is not active")
             tmo = int(timeout * 1000) if timeout else 0
-            res = _call(_exec, self._sess, command, tmo, '')
-            out = _b64d(res.get('stdout'))
-            err = _b64d(res.get('stderr'))
-            code = res.get('exit_status')
+            res = _call(_exec, self._sess, command, tmo, "")
+            out = _b64d(res.get("stdout"))
+            err = _b64d(res.get("stderr"))
+            code = res.get("exit_status")
             if code is None:
                 code = -1
             chan = _Channel(int(code))
-            return (_ChannelStdinFile(), _ChannelFile(out, chan), _ChannelFile(err, chan))
+            return (
+                _ChannelStdinFile(),
+                _ChannelFile(out, chan),
+                _ChannelFile(err, chan),
+            )
 
         def open_sftp(self):
             if self._sess is None:
-                raise SSHException('SSH session is not active')
+                raise SSHException("SSH session is not active")
             return SFTPClient(_call(_sftp_open, self._sess))
 
         def get_transport(self):
@@ -827,7 +909,9 @@ def __vis_install_paramiko__():
             return Transport(sess=self._sess)
 
         def invoke_shell(self, *a, **k):
-            raise SSHException('paramiko shim: interactive invoke_shell is unsupported; use exec_command')
+            raise SSHException(
+                "paramiko shim: interactive invoke_shell is unsupported; use exec_command"
+            )
 
         def close(self):
             if self._sess is not None:
@@ -869,7 +953,7 @@ def __vis_install_paramiko__():
     SFTP_FLAG_EXCL = 32
 
     class InteractiveQuery(object):
-        def __init__(self, name='', instructions='', *prompts):
+        def __init__(self, name="", instructions="", *prompts):
             self.name = name
             self.instructions = instructions
             self.prompts = []
@@ -887,7 +971,7 @@ def __vis_install_paramiko__():
             return OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
 
         def get_allowed_auths(self, username):
-            return 'password'
+            return "password"
 
         def check_auth_none(self, username):
             return AUTH_FAILED
@@ -904,10 +988,14 @@ def __vis_install_paramiko__():
         def check_auth_interactive_response(self, responses):
             return AUTH_FAILED
 
-        def check_auth_gssapi_with_mic(self, username, gss_authenticated=AUTH_FAILED, cc_file=None):
+        def check_auth_gssapi_with_mic(
+            self, username, gss_authenticated=AUTH_FAILED, cc_file=None
+        ):
             return AUTH_FAILED
 
-        def check_auth_gssapi_keyex(self, username, gss_authenticated=AUTH_FAILED, cc_file=None):
+        def check_auth_gssapi_keyex(
+            self, username, gss_authenticated=AUTH_FAILED, cc_file=None
+        ):
             return AUTH_FAILED
 
         def enable_auth_gssapi(self):
@@ -922,7 +1010,9 @@ def __vis_install_paramiko__():
         def check_global_request(self, kind, msg):
             return False
 
-        def check_channel_pty_request(self, channel, term, width, height, pixelwidth, pixelheight, modes):
+        def check_channel_pty_request(
+            self, channel, term, width, height, pixelwidth, pixelheight, modes
+        ):
             return False
 
         def check_channel_shell_request(self, channel):
@@ -934,10 +1024,14 @@ def __vis_install_paramiko__():
         def check_channel_subsystem_request(self, channel, name):
             return False
 
-        def check_channel_window_change_request(self, channel, width, height, pixelwidth, pixelheight):
+        def check_channel_window_change_request(
+            self, channel, width, height, pixelwidth, pixelheight
+        ):
             return False
 
-        def check_channel_x11_request(self, channel, single_connection, auth_protocol, auth_cookie, screen_number):
+        def check_channel_x11_request(
+            self, channel, single_connection, auth_protocol, auth_cookie, screen_number
+        ):
             return False
 
         def check_channel_forward_agent_request(self, channel):
@@ -1012,9 +1106,10 @@ def __vis_install_paramiko__():
 
         def canonicalize(self, path):
             import posixpath
+
             if posixpath.isabs(path):
                 return posixpath.normpath(path)
-            return posixpath.normpath('/' + path)
+            return posixpath.normpath("/" + path)
 
     class SFTPHandle(object):
         def __init__(self, flags=0):
@@ -1053,6 +1148,7 @@ def __vis_install_paramiko__():
         @staticmethod
         def convert_errno(e):
             import errno
+
             if e == errno.EACCES:
                 return SFTP_PERMISSION_DENIED
             if e in (errno.ENOENT, errno.ENOTDIR):
@@ -1062,7 +1158,8 @@ def __vis_install_paramiko__():
         @staticmethod
         def set_file_attr(filename, attr):
             import os
-            flags = getattr(attr, '_flags', 0)
+
+            flags = getattr(attr, "_flags", 0)
             if flags & SFTPAttributes.FLAG_PERMISSIONS and attr.st_mode is not None:
                 os.chmod(filename, attr.st_mode)
             if flags & SFTPAttributes.FLAG_UIDGID:
@@ -1070,7 +1167,7 @@ def __vis_install_paramiko__():
             if flags & SFTPAttributes.FLAG_AMTIME:
                 os.utime(filename, (attr.st_atime, attr.st_mtime))
             if flags & SFTPAttributes.FLAG_SIZE:
-                with open(filename, 'r+') as f:
+                with open(filename, "r+") as f:
                     f.truncate(attr.st_size)
 
     import struct as _struct, io as _io, fnmatch as _fnmatch, shlex as _shlex
@@ -1079,7 +1176,7 @@ def __vis_install_paramiko__():
     _one_byte = bytes([1])
     _max_byte = bytes([255])
 
-    def _u(s, encoding='utf8'):
+    def _u(s, encoding="utf8"):
         if isinstance(s, bytes):
             return s.decode(encoding)
         return s
@@ -1088,10 +1185,10 @@ def __vis_install_paramiko__():
         if isinstance(s, bytes):
             return s
         if isinstance(s, str):
-            return s.encode('utf-8')
-        if hasattr(s, 'asbytes'):
+            return s.encode("utf-8")
+        if hasattr(s, "asbytes"):
             return s.asbytes()
-        raise Exception('Unknown type for ' + repr(s))
+        raise Exception("Unknown type for " + repr(s))
 
     def _inflate_long(s, always_positive=False):
         out = 0
@@ -1104,16 +1201,16 @@ def __vis_install_paramiko__():
                 filler = _max_byte
             s = filler * (4 - len(s) % 4) + s
         for i in range(0, len(s), 4):
-            out = (out << 32) + _struct.unpack('>I', s[i:i + 4])[0]
+            out = (out << 32) + _struct.unpack(">I", s[i : i + 4])[0]
         if negative:
-            out -= (1 << (8 * len(s)))
+            out -= 1 << (8 * len(s))
         return out
 
     def _deflate_long(n, add_sign_padding=True):
         s = bytes()
         n = int(n)
         while (n != 0) and (n != -1):
-            s = _struct.pack('>I', n & 0xffffffff) + s
+            s = _struct.pack(">I", n & 0xFFFFFFFF) + s
             n >>= 32
         for i in enumerate(s):
             if (n == 0) and (i[1] != 0):
@@ -1126,7 +1223,7 @@ def __vis_install_paramiko__():
                 s = _zero_byte
             else:
                 s = _max_byte
-        s = s[i[0]:]
+        s = s[i[0] :]
         if add_sign_padding:
             if (n == 0) and (len(s) and s[0] >= 0x80):
                 s = _zero_byte + s
@@ -1135,96 +1232,124 @@ def __vis_install_paramiko__():
         return s
 
     class Message(object):
-        big_int = 0xff000000
+        big_int = 0xFF000000
+
         def __init__(self, content=None):
             if content is not None:
                 self.packet = _io.BytesIO(bytes(content))
             else:
                 self.packet = _io.BytesIO()
+
         def __bytes__(self):
             return self.asbytes()
+
         def __repr__(self):
-            return 'paramiko.Message(' + repr(self.packet.getvalue()) + ')'
+            return "paramiko.Message(" + repr(self.packet.getvalue()) + ")"
+
         def asbytes(self):
             return self.packet.getvalue()
+
         def rewind(self):
             self.packet.seek(0)
+
         def get_remainder(self):
             position = self.packet.tell()
             remainder = self.packet.read()
             self.packet.seek(position)
             return remainder
+
         def get_so_far(self):
             position = self.packet.tell()
             self.rewind()
             return self.packet.read(position)
+
         def get_bytes(self, n):
             b = self.packet.read(n)
             max_pad_size = 1 << 20
             if len(b) < n < max_pad_size:
                 return b + _zero_byte * (n - len(b))
             return b
+
         def get_byte(self):
             return self.get_bytes(1)
+
         def get_boolean(self):
             b = self.get_bytes(1)
             return b != _zero_byte
+
         def get_adaptive_int(self):
             byte = self.get_bytes(1)
             if byte == _max_byte:
                 return _inflate_long(self.get_binary())
             byte += self.get_bytes(3)
-            return _struct.unpack('>I', byte)[0]
+            return _struct.unpack(">I", byte)[0]
+
         def get_int(self):
-            return _struct.unpack('>I', self.get_bytes(4))[0]
+            return _struct.unpack(">I", self.get_bytes(4))[0]
+
         def get_int64(self):
-            return _struct.unpack('>Q', self.get_bytes(8))[0]
+            return _struct.unpack(">Q", self.get_bytes(8))[0]
+
         def get_mpint(self):
             return _inflate_long(self.get_binary())
+
         def get_string(self):
             return self.get_bytes(self.get_int())
+
         def get_text(self):
             return _u(self.get_string())
+
         def get_binary(self):
             return self.get_bytes(self.get_int())
+
         def get_list(self):
-            return self.get_text().split(',')
+            return self.get_text().split(",")
+
         def add_bytes(self, b):
             self.packet.write(b)
             return self
+
         def add_byte(self, b):
             self.packet.write(b)
             return self
+
         def add_boolean(self, b):
             if b:
                 self.packet.write(_one_byte)
             else:
                 self.packet.write(_zero_byte)
             return self
+
         def add_int(self, n):
-            self.packet.write(_struct.pack('>I', n))
+            self.packet.write(_struct.pack(">I", n))
             return self
+
         def add_adaptive_int(self, n):
             if n >= Message.big_int:
                 self.packet.write(_max_byte)
                 self.add_string(_deflate_long(n))
             else:
-                self.packet.write(_struct.pack('>I', n))
+                self.packet.write(_struct.pack(">I", n))
             return self
+
         def add_int64(self, n):
-            self.packet.write(_struct.pack('>Q', n))
+            self.packet.write(_struct.pack(">Q", n))
             return self
+
         def add_mpint(self, z):
             self.add_string(_deflate_long(z))
             return self
+
         def add_string(self, s):
             s = _asbytes(s)
             self.add_int(len(s))
             self.packet.write(s)
             return self
+
         def add_list(self, l):
-            self.add_string(','.join(l))
+            self.add_string(",".join(l))
             return self
+
         def _add(self, i):
             if type(i) is bool:
                 return self.add_boolean(i)
@@ -1234,6 +1359,7 @@ def __vis_install_paramiko__():
                 return self.add_list(i)
             else:
                 return self.add_string(i)
+
         def add(self, *seq):
             for item in seq:
                 self._add(item)
@@ -1254,12 +1380,16 @@ def __vis_install_paramiko__():
         SEEK_SET = 0
         SEEK_CUR = 1
         SEEK_END = 2
+
         def __init__(self):
             self._closed = False
+
         def close(self):
             self._closed = True
+
         def __enter__(self):
             return self
+
         def __exit__(self, *a):
             self.close()
             return False
@@ -1278,7 +1408,7 @@ def __vis_install_paramiko__():
 
     class UnknownKeyType(Exception):
         def __init__(self, key_type=None, key_bytes=None):
-            super().__init__('Unknown key type ' + str(key_type))
+            super().__init__("Unknown key type " + str(key_type))
             self.key_type = key_type
             self.key_bytes = key_bytes
 
@@ -1287,28 +1417,35 @@ def __vis_install_paramiko__():
             self.key_type = type_
             self.key_blob = bytes(blob)
             self.comment = comment
+
         @classmethod
         def from_string(cls, s):
             fields = s.split(None, 2)
             if len(fields) < 2:
-                raise ValueError('Not enough fields for public blob: ' + repr(s))
+                raise ValueError("Not enough fields for public blob: " + repr(s))
             kind = fields[0]
             blob = base64.b64decode(fields[1])
             comment = fields[2].strip() if len(fields) > 2 else None
             return cls(kind, blob, comment)
+
         @classmethod
         def from_file(cls, filename):
             with open(filename) as f:
                 return cls.from_string(f.read())
+
         def __str__(self):
-            ret = self.key_type + ' ' + _b64e(self.key_blob)
+            ret = self.key_type + " " + _b64e(self.key_blob)
             if self.comment:
-                ret += ' ' + self.comment
+                ret += " " + self.comment
             return ret
+
         def __eq__(self, other):
-            return (isinstance(other, PublicBlob)
-                    and self.key_type == other.key_type
-                    and self.key_blob == other.key_blob)
+            return (
+                isinstance(other, PublicBlob)
+                and self.key_type == other.key_type
+                and self.key_blob == other.key_blob
+            )
+
         def __hash__(self):
             return hash((self.key_type, self.key_blob))
 
@@ -1320,38 +1457,57 @@ def __vis_install_paramiko__():
             self._kex = ()
             self._key_types = ()
             self._compression = ()
+
         def __repr__(self):
-            return '<paramiko.SecurityOptions for vis shim>'
+            return "<paramiko.SecurityOptions for vis shim>"
+
         def _set(self, name, value):
-            setattr(self, '_' + name, tuple(value))
-        ciphers = property(lambda self: self._ciphers, lambda self, v: self._set('ciphers', v))
-        digests = property(lambda self: self._digests, lambda self, v: self._set('digests', v))
-        kex = property(lambda self: self._kex, lambda self, v: self._set('kex', v))
-        key_types = property(lambda self: self._key_types, lambda self, v: self._set('key_types', v))
-        compression = property(lambda self: self._compression, lambda self, v: self._set('compression', v))
+            setattr(self, "_" + name, tuple(value))
+
+        ciphers = property(
+            lambda self: self._ciphers, lambda self, v: self._set("ciphers", v)
+        )
+        digests = property(
+            lambda self: self._digests, lambda self, v: self._set("digests", v)
+        )
+        kex = property(lambda self: self._kex, lambda self, v: self._set("kex", v))
+        key_types = property(
+            lambda self: self._key_types, lambda self, v: self._set("key_types", v)
+        )
+        compression = property(
+            lambda self: self._compression, lambda self, v: self._set("compression", v)
+        )
 
     class AgentKey(PKey):
-        def __init__(self, agent=None, blob=b'', comment='', **kw):
+        def __init__(self, agent=None, blob=b"", comment="", **kw):
             super().__init__()
             self.agent = agent
             self.blob = bytes(blob)
             self.public_blob = None
             self.comment = comment
-            self._name = 'ssh-agent-key'
+            self._name = "ssh-agent-key"
+
         def asbytes(self):
             return self.blob
+
         def get_name(self):
             return self._name
+
         def sign_ssh_data(self, data, algorithm=None):
-            raise SSHException('paramiko shim: SSH agent signing is unsupported in the sandbox')
+            raise SSHException(
+                "paramiko shim: SSH agent signing is unsupported in the sandbox"
+            )
 
     class Agent(object):
         def __init__(self):
             self._keys = ()
+
         def get_keys(self):
             return self._keys
+
         def keys(self):
             return self._keys
+
         def close(self):
             return None
 
@@ -1360,12 +1516,20 @@ def __vis_install_paramiko__():
             self.cmd = command_line
             self.timeout = None
             self.closed = False
+
         def send(self, content):
-            raise ProxyCommandFailure(self.cmd, 'ProxyCommand is unsupported in the vis sandbox')
+            raise ProxyCommandFailure(
+                self.cmd, "ProxyCommand is unsupported in the vis sandbox"
+            )
+
         def recv(self, size):
-            raise ProxyCommandFailure(self.cmd, 'ProxyCommand is unsupported in the vis sandbox')
+            raise ProxyCommandFailure(
+                self.cmd, "ProxyCommand is unsupported in the vis sandbox"
+            )
+
         def close(self):
             self.closed = True
+
         def settimeout(self, timeout):
             self.timeout = timeout
 
@@ -1378,117 +1542,135 @@ def __vis_install_paramiko__():
                 return False
             if isinstance(val, bool):
                 return val
-            return str(val).lower() in ('1', 'true', 'yes')
+            return str(val).lower() in ("1", "true", "yes")
+
         def as_int(self, key):
             return int(self.get(key))
 
     class SSHConfig(object):
         def __init__(self):
             self._config = []
+
         @classmethod
         def from_text(cls, text):
             obj = cls()
             obj.parse(_io.StringIO(text))
             return obj
+
         @classmethod
         def from_path(cls, path):
             with open(path) as fl:
                 return cls.from_file(fl)
+
         @classmethod
         def from_file(cls, flo):
             obj = cls()
             obj.parse(flo)
             return obj
+
         def parse(self, file_obj):
-            cur = {'host': ['*'], 'config': {}}
+            cur = {"host": ["*"], "config": {}}
             self._config = [cur]
             for raw in file_obj:
                 line = raw.strip()
-                if not line or line.startswith('#'):
+                if not line or line.startswith("#"):
                     continue
-                if '=' in line and (' ' not in line.split('=', 1)[0].strip()):
-                    key, value = line.split('=', 1)
+                if "=" in line and (" " not in line.split("=", 1)[0].strip()):
+                    key, value = line.split("=", 1)
                 else:
                     parts = line.split(None, 1)
                     key = parts[0]
-                    value = parts[1] if len(parts) > 1 else ''
+                    value = parts[1] if len(parts) > 1 else ""
                 key = key.strip().lower()
                 value = value.strip()
                 for q in (chr(34), chr(39)):
                     if len(value) >= 2 and value.startswith(q) and value.endswith(q):
                         value = value[1:-1]
                         break
-                if key == 'host':
-                    cur = {'host': self._get_hosts(value), 'config': {}}
+                if key == "host":
+                    cur = {"host": self._get_hosts(value), "config": {}}
                     self._config.append(cur)
-                elif key == 'match':
-                    cur = {'match': value, 'config': {}}
+                elif key == "match":
+                    cur = {"match": value, "config": {}}
                     self._config.append(cur)
                 else:
-                    if key in ('identityfile', 'localforward', 'remoteforward',
-                               'dynamicforward', 'certificatefile'):
-                        cur['config'].setdefault(key, []).append(value)
-                    elif key not in cur['config']:
-                        cur['config'][key] = value
+                    if key in (
+                        "identityfile",
+                        "localforward",
+                        "remoteforward",
+                        "dynamicforward",
+                        "certificatefile",
+                    ):
+                        cur["config"].setdefault(key, []).append(value)
+                    elif key not in cur["config"]:
+                        cur["config"][key] = value
             return self._config
+
         def lookup(self, hostname):
             options = SSHConfigDict()
             for entry in self._config:
-                if 'host' not in entry:
+                if "host" not in entry:
                     continue
-                if not self._pattern_matches(entry['host'], hostname):
+                if not self._pattern_matches(entry["host"], hostname):
                     continue
-                for key, value in entry['config'].items():
-                    if key in ('identityfile', 'certificatefile'):
+                for key, value in entry["config"].items():
+                    if key in ("identityfile", "certificatefile"):
                         vals = value if isinstance(value, list) else [value]
                         options.setdefault(key, []).extend(vals)
                     elif key not in options:
                         options[key] = list(value) if isinstance(value, list) else value
             return self._expand_variables(options, hostname)
+
         def _pattern_matches(self, patterns, target):
             if isinstance(patterns, str):
                 patterns = [patterns]
             match = False
             for pattern in patterns:
-                neg = pattern.startswith('!')
+                neg = pattern.startswith("!")
                 pat = pattern[1:] if neg else pattern
                 if _fnmatch.fnmatch(target, pat):
                     if neg:
                         return False
                     match = True
             return match
+
         def _get_hosts(self, host):
             try:
                 return _shlex.split(host)
             except ValueError:
-                raise ConfigParseError('Unparsable host ' + host)
+                raise ConfigParseError("Unparsable host " + host)
+
         def _safe_user(self):
             try:
                 import getpass
+
                 return getpass.getuser()
             except Exception:
-                return os.environ.get('USER') or ''
+                return os.environ.get("USER") or ""
+
         def _safe_host(self):
             try:
                 import socket as _s
+
                 return _s.gethostname()
             except Exception:
-                return ''
+                return ""
+
         def _expand_variables(self, config, hostname):
-            if 'hostname' in config:
-                config['hostname'] = config['hostname'].replace('%h', hostname)
+            if "hostname" in config:
+                config["hostname"] = config["hostname"].replace("%h", hostname)
             else:
-                config['hostname'] = hostname
-            port = config['port'] if 'port' in config else str(SSH_PORT)
+                config["hostname"] = hostname
+            port = config["port"] if "port" in config else str(SSH_PORT)
             user = self._safe_user()
             fqdn = self._safe_host()
             repl = {
-                '%h': config.get('hostname', hostname),
-                '%p': str(port),
-                '%r': config.get('user', user),
-                '%l': fqdn.split('.')[0] if fqdn else '',
-                '%u': user,
-                '%%': '%',
+                "%h": config.get("hostname", hostname),
+                "%p": str(port),
+                "%r": config.get("user", user),
+                "%l": fqdn.split(".")[0] if fqdn else "",
+                "%u": user,
+                "%%": "%",
             }
             for key in list(config.keys()):
                 val = config[key]
@@ -1497,23 +1679,27 @@ def __vis_install_paramiko__():
                 elif isinstance(val, str):
                     config[key] = self._sub_tokens(val, repl)
             return config
+
         def _sub_tokens(self, s, repl):
             for k, v in repl.items():
                 s = s.replace(k, v)
             return s
+
         def get_hostnames(self):
             hosts = set()
             for entry in self._config:
-                if 'host' in entry:
-                    hosts.update(entry['host'])
+                if "host" in entry:
+                    hosts.update(entry["host"])
             return hosts
 
     def util_log_to_file(*a, **k):
         return None
 
-    mod = types.ModuleType('paramiko')
-    mod.__doc__ = 'vis sandbox paramiko-compat shim (pure-Java SSH2 via the mwiede JSch fork).'
-    mod.__version__ = '3.5.0-vis'
+    mod = types.ModuleType("paramiko")
+    mod.__doc__ = (
+        "vis sandbox paramiko-compat shim (pure-Java SSH2 via the mwiede JSch fork)."
+    )
+    mod.__version__ = "3.5.0-vis"
     mod.__path__ = []
     mod.SSHClient = SSHClient
     mod.SSHConfig = SSHConfig
@@ -1538,8 +1724,8 @@ def __vis_install_paramiko__():
     mod.io_sleep = 0.01
     mod.key_classes = [DSSKey, RSAKey, Ed25519Key, ECDSAKey]
     mod.__version_info__ = (3, 5, 0)
-    mod.__author__ = 'Jeff Forcier <jeff@bitprophet.org>'
-    mod.__license__ = 'GNU Lesser General Public License (LGPL)'
+    mod.__author__ = "Jeff Forcier <jeff@bitprophet.org>"
+    mod.__license__ = "GNU Lesser General Public License (LGPL)"
     mod.Transport = Transport
     mod.SFTPClient = SFTPClient
     mod.SFTPFile = SFTPFile
@@ -1573,7 +1759,9 @@ def __vis_install_paramiko__():
     mod.AUTH_PARTIALLY_SUCCESSFUL = AUTH_PARTIALLY_SUCCESSFUL
     mod.AUTH_FAILED = AUTH_FAILED
     mod.OPEN_SUCCEEDED = OPEN_SUCCEEDED
-    mod.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED = OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+    mod.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED = (
+        OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+    )
     mod.OPEN_FAILED_CONNECT_FAILED = OPEN_FAILED_CONNECT_FAILED
     mod.OPEN_FAILED_UNKNOWN_CHANNEL_TYPE = OPEN_FAILED_UNKNOWN_CHANNEL_TYPE
     mod.OPEN_FAILED_RESOURCE_SHORTAGE = OPEN_FAILED_RESOURCE_SHORTAGE
@@ -1593,19 +1781,29 @@ def __vis_install_paramiko__():
     mod.SFTP_FLAG_TRUNC = SFTP_FLAG_TRUNC
     mod.SFTP_FLAG_EXCL = SFTP_FLAG_EXCL
 
-    _util = types.ModuleType('paramiko.util')
+    _util = types.ModuleType("paramiko.util")
     _util.log_to_file = util_log_to_file
     mod.util = _util
 
-    _exc = types.ModuleType('paramiko.ssh_exception')
-    for _n in ('SSHException', 'AuthenticationException', 'PasswordRequiredException',
-               'BadAuthenticationType', 'BadHostKeyException', 'ChannelException',
-               'ProxyCommandFailure', 'ConfigParseError', 'NoValidConnectionsError',
-               'CouldNotCanonicalize', 'IncompatiblePeer', 'MessageOrderError'):
+    _exc = types.ModuleType("paramiko.ssh_exception")
+    for _n in (
+        "SSHException",
+        "AuthenticationException",
+        "PasswordRequiredException",
+        "BadAuthenticationType",
+        "BadHostKeyException",
+        "ChannelException",
+        "ProxyCommandFailure",
+        "ConfigParseError",
+        "NoValidConnectionsError",
+        "CouldNotCanonicalize",
+        "IncompatiblePeer",
+        "MessageOrderError",
+    ):
         setattr(_exc, _n, getattr(mod, _n))
     mod.ssh_exception = _exc
 
-    _client = types.ModuleType('paramiko.client')
+    _client = types.ModuleType("paramiko.client")
     _client.SSHClient = SSHClient
     _client.MissingHostKeyPolicy = MissingHostKeyPolicy
     _client.AutoAddPolicy = AutoAddPolicy
@@ -1613,111 +1811,151 @@ def __vis_install_paramiko__():
     _client.WarningPolicy = WarningPolicy
     mod.client = _client
 
-    _sftp = types.ModuleType('paramiko.sftp_client')
+    _sftp = types.ModuleType("paramiko.sftp_client")
     _sftp.SFTPClient = SFTPClient
     mod.sftp_client = _sftp
 
-    _sftpf = types.ModuleType('paramiko.sftp_file')
+    _sftpf = types.ModuleType("paramiko.sftp_file")
     _sftpf.SFTPFile = SFTPFile
     mod.sftp_file = _sftpf
 
-    _sftpa = types.ModuleType('paramiko.sftp_attr')
+    _sftpa = types.ModuleType("paramiko.sftp_attr")
     _sftpa.SFTPAttributes = SFTPAttributes
     mod.sftp_attr = _sftpa
 
-    _trans = types.ModuleType('paramiko.transport')
+    _trans = types.ModuleType("paramiko.transport")
     _trans.Transport = Transport
     _trans.SecurityOptions = SecurityOptions
     mod.transport = _trans
 
-    _pkey = types.ModuleType('paramiko.pkey')
+    _pkey = types.ModuleType("paramiko.pkey")
     _pkey.PKey = PKey
     _pkey.PublicBlob = PublicBlob
     _pkey.UnknownKeyType = UnknownKeyType
     mod.pkey = _pkey
 
-    _rsa = types.ModuleType('paramiko.rsakey')
+    _rsa = types.ModuleType("paramiko.rsakey")
     _rsa.RSAKey = RSAKey
     mod.rsakey = _rsa
 
-    _ed = types.ModuleType('paramiko.ed25519key')
+    _ed = types.ModuleType("paramiko.ed25519key")
     _ed.Ed25519Key = Ed25519Key
     mod.ed25519key = _ed
 
-    _ec = types.ModuleType('paramiko.ecdsakey')
+    _ec = types.ModuleType("paramiko.ecdsakey")
     _ec.ECDSAKey = ECDSAKey
     mod.ecdsakey = _ec
 
-    _server = types.ModuleType('paramiko.server')
+    _server = types.ModuleType("paramiko.server")
     _server.ServerInterface = ServerInterface
     _server.InteractiveQuery = InteractiveQuery
     _server.SubsystemHandler = SubsystemHandler
     mod.server = _server
 
-    _common = types.ModuleType('paramiko.common')
-    for _cn in ('AUTH_SUCCESSFUL', 'AUTH_PARTIALLY_SUCCESSFUL', 'AUTH_FAILED',
-                'OPEN_SUCCEEDED', 'OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED',
-                'OPEN_FAILED_CONNECT_FAILED', 'OPEN_FAILED_UNKNOWN_CHANNEL_TYPE',
-                'OPEN_FAILED_RESOURCE_SHORTAGE'):
+    _common = types.ModuleType("paramiko.common")
+    for _cn in (
+        "AUTH_SUCCESSFUL",
+        "AUTH_PARTIALLY_SUCCESSFUL",
+        "AUTH_FAILED",
+        "OPEN_SUCCEEDED",
+        "OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED",
+        "OPEN_FAILED_CONNECT_FAILED",
+        "OPEN_FAILED_UNKNOWN_CHANNEL_TYPE",
+        "OPEN_FAILED_RESOURCE_SHORTAGE",
+    ):
         setattr(_common, _cn, getattr(mod, _cn))
     mod.common = _common
 
-    _sftpm = types.ModuleType('paramiko.sftp')
-    for _cn in ('SFTP_OK', 'SFTP_EOF', 'SFTP_NO_SUCH_FILE', 'SFTP_PERMISSION_DENIED',
-                'SFTP_FAILURE', 'SFTP_BAD_MESSAGE', 'SFTP_NO_CONNECTION',
-                'SFTP_CONNECTION_LOST', 'SFTP_OP_UNSUPPORTED', 'SFTP_FLAG_READ',
-                'SFTP_FLAG_WRITE', 'SFTP_FLAG_APPEND', 'SFTP_FLAG_CREATE',
-                'SFTP_FLAG_TRUNC', 'SFTP_FLAG_EXCL'):
+    _sftpm = types.ModuleType("paramiko.sftp")
+    for _cn in (
+        "SFTP_OK",
+        "SFTP_EOF",
+        "SFTP_NO_SUCH_FILE",
+        "SFTP_PERMISSION_DENIED",
+        "SFTP_FAILURE",
+        "SFTP_BAD_MESSAGE",
+        "SFTP_NO_CONNECTION",
+        "SFTP_CONNECTION_LOST",
+        "SFTP_OP_UNSUPPORTED",
+        "SFTP_FLAG_READ",
+        "SFTP_FLAG_WRITE",
+        "SFTP_FLAG_APPEND",
+        "SFTP_FLAG_CREATE",
+        "SFTP_FLAG_TRUNC",
+        "SFTP_FLAG_EXCL",
+    ):
         setattr(_sftpm, _cn, getattr(mod, _cn))
     mod.sftp = _sftpm
     _sftpm.SFTPError = SFTPError
 
-    _sftpsrv = types.ModuleType('paramiko.sftp_server')
+    _sftpsrv = types.ModuleType("paramiko.sftp_server")
     _sftpsrv.SFTPServer = SFTPServer
     mod.sftp_server = _sftpsrv
 
-    _sftpsi = types.ModuleType('paramiko.sftp_si')
+    _sftpsi = types.ModuleType("paramiko.sftp_si")
     _sftpsi.SFTPServerInterface = SFTPServerInterface
     mod.sftp_si = _sftpsi
 
-    _sftph = types.ModuleType('paramiko.sftp_handle')
+    _sftph = types.ModuleType("paramiko.sftp_handle")
     _sftph.SFTPHandle = SFTPHandle
     mod.sftp_handle = _sftph
 
-    _channelmod = types.ModuleType('paramiko.channel')
+    _channelmod = types.ModuleType("paramiko.channel")
     _channelmod.Channel = Channel
     _channelmod.ChannelFile = ChannelFile
     _channelmod.ChannelStderrFile = ChannelStderrFile
     _channelmod.ChannelStdinFile = ChannelStdinFile
     mod.channel = _channelmod
-    _msgmod = types.ModuleType('paramiko.message')
+    _msgmod = types.ModuleType("paramiko.message")
     _msgmod.Message = Message
     mod.message = _msgmod
-    _configmod = types.ModuleType('paramiko.config')
+    _configmod = types.ModuleType("paramiko.config")
     _configmod.SSHConfig = SSHConfig
     _configmod.SSHConfigDict = SSHConfigDict
     mod.config = _configmod
-    _agentmod = types.ModuleType('paramiko.agent')
+    _agentmod = types.ModuleType("paramiko.agent")
     _agentmod.Agent = Agent
     _agentmod.AgentKey = AgentKey
     mod.agent = _agentmod
-    _filemod = types.ModuleType('paramiko.file')
+    _filemod = types.ModuleType("paramiko.file")
     _filemod.BufferedFile = BufferedFile
     mod.file = _filemod
-    _proxymod = types.ModuleType('paramiko.proxy')
+    _proxymod = types.ModuleType("paramiko.proxy")
     _proxymod.ProxyCommand = ProxyCommand
     mod.proxy = _proxymod
-    sys.modules['paramiko'] = mod
-    for _sub in ('util', 'ssh_exception', 'client', 'sftp_client', 'sftp_file',
-                 'sftp_attr', 'transport', 'pkey', 'rsakey', 'ed25519key', 'ecdsakey',
-                 'server', 'common', 'sftp', 'sftp_server', 'sftp_si', 'sftp_handle',
-                 'channel', 'message', 'config', 'agent', 'file', 'proxy'):
-        sys.modules['paramiko.' + _sub] = getattr(mod, _sub)
+    sys.modules["paramiko"] = mod
+    for _sub in (
+        "util",
+        "ssh_exception",
+        "client",
+        "sftp_client",
+        "sftp_file",
+        "sftp_attr",
+        "transport",
+        "pkey",
+        "rsakey",
+        "ed25519key",
+        "ecdsakey",
+        "server",
+        "common",
+        "sftp",
+        "sftp_server",
+        "sftp_si",
+        "sftp_handle",
+        "channel",
+        "message",
+        "config",
+        "agent",
+        "file",
+        "proxy",
+    ):
+        sys.modules["paramiko." + _sub] = getattr(mod, _sub)
 
     try:
         _bi.paramiko = mod
     except Exception:
         pass
+
 
 __vis_install_paramiko__()
 del __vis_install_paramiko__
