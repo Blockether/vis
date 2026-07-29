@@ -4750,7 +4750,30 @@
     (it "still feeds a correctable model/code failure back for self-correction"
         (expect (not (fatal? (ex-info "Syntax error in generated code" {:type :vis/code-error})))))
     (it "still feeds a plain internal bug back for self-correction"
-        (expect (not (fatal? (ex-info "assert failed" {})))))))
+        (expect (not (fatal? (ex-info "assert failed" {}))))))
+  (it "fails once when a wrapped rate-limit error reaches the gateway"
+      ;; Reproduces the HTTP/client wrapper seen by the gateway: the outer
+      ;; exception is untyped, while its cause carries the 429 provider data.
+      ;; It must be terminal, otherwise iteration-loop adds synthetic user
+      ;; feedback and asks the same rate-limited provider again.
+      (let
+        [result (lp/handle-iteration-exception!
+                  (ex-info "HTTP client request failed"
+                           {}
+                           (ex-info "provider rate limited this request"
+                                    {:status 429
+                                     :provider :anthropic-coding-plan
+                                     :body "{\"error\":{\"type\":\"rate_limit_error\"}}"}))
+                  {:iteration 2 :messages [{:role "user" :content "hi"}]})]
+        (expect (true? (::lp/fatal-iteration-error result)))))
+  (it "fails once when a wrapped invalid-key error reaches the gateway"
+      (let
+        [result (lp/handle-iteration-exception!
+                  (ex-info "HTTP client request failed"
+                           {}
+                           (ex-info "invalid API key" {:status 401 :provider :openai-codex}))
+                  {:iteration 2 :messages [{:role "user" :content "hi"}]})]
+        (expect (true? (::lp/fatal-iteration-error result))))))
 
 (defdescribe
   user-configuration-error-test
@@ -4798,6 +4821,26 @@
           (expect (= 1 (count blocks)))
           (expect (= "error" (get block "type")))
           (expect (= "config_error" (get block "code")))
-          (expect (str/includes? (get block "message") "RBI_GENAI_API_KEY is not set"))))
+          (expect (str/includes? (get block "message") "RBI_GENAI_API_KEY is not set"))
+          (expect (false? (get block "retryable")))))
     (it "leaves every other failure to the provider-card path"
         (expect (nil? (user-error-content {:message "boom" :data {:type :vis/code-error}}))))))
+
+(defdescribe billing-error-is-terminal-test
+             (it "ends a 402 turn once and preserves an actionable billing card"
+                 (let
+                   [result
+                    (lp/handle-iteration-exception!
+                      (ex-info "Exceptional status code: 402"
+                               {:status 402
+                                :provider :anthropic-coding-plan
+                                :body
+                                "{\"error\":{\"message\":\"Payment required: add credits\"}}"})
+                      {:iteration 1 :messages [{:role "user" :content "hi"}]})
+
+                    block
+                    (first (perr/provider-error-content (::lp/iteration-error result)))]
+
+                   (expect (true? (::lp/fatal-iteration-error result)))
+                   (expect (= "provider_billing" (get block "code")))
+                   (expect (str/includes? (get block "message") "billing and available credits")))))

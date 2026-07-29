@@ -99,7 +99,9 @@ def extension(name=None, description=None, version=None, kind=None, alias=None,
         'network_filters': list(network_filters or []),
     }
 
-def symbol(fn, name=None, tag='observation', is_hidden=False):
+def symbol(fn, name=None, tag='observation', is_hidden=False, schema=None,
+           description=None, result=None, is_native_tool=False, render=None,
+           color_role=None):
     if not callable(fn):
         raise ValueError('vis.symbol(fn, ...) requires a callable')
     if tag not in ('observation', 'mutation'):
@@ -115,8 +117,38 @@ def symbol(fn, name=None, tag='observation', is_hidden=False):
         elif p.kind in (inspect.Parameter.POSITIONAL_ONLY,
                         inspect.Parameter.POSITIONAL_OR_KEYWORD):
             params.append(p.name)
+    label = name or getattr(fn, '__name__', '?')
+    is_native = bool(is_native_tool) or schema is not None
+    if is_native:
+        if not isinstance(schema, dict):
+            raise ValueError('vis.symbol: native tool %s requires schema=<JSON Schema dict>'
+                             % (label,))
+        if schema.get('type') != 'object':
+            raise ValueError('vis.symbol: native tool %s schema root must be type object'
+                             % (label,))
+        for union in ('oneOf', 'anyOf', 'allOf'):
+            if union in schema:
+                raise ValueError('vis.symbol: native tool %s schema root must not use %s; '
+                                 'nested property unions are allowed' % (label, union))
+        for slot, text in (('description', description), ('result', result)):
+            if not text or not isinstance(text, str) or not text.strip():
+                raise ValueError('vis.symbol: native tool %s requires %s=<non-empty string>'
+                                 % (label, slot))
+            if 'Raw result:' in text:
+                raise ValueError('vis.symbol: %s= must not carry the reserved label '
+                                 'Raw result: - put the bare contract in result=' % (slot,))
+    elif description is not None or result is not None:
+        raise ValueError('vis.symbol: description=/result= describe a NATIVE tool; '
+                         'pass schema= as well (%s)' % (label,))
+    if render is not None and not callable(render):
+        raise ValueError('vis.symbol render= must be a callable (result) -> dict with '
+                         'summary and optional body')
+    if color_role is not None and not isinstance(color_role, str):
+        raise ValueError('vis.symbol color_role= must be a string, e.g. search')
     return {'marker': 'symbol', 'fn': fn, 'name': name or fn.__name__, 'tag': tag,
-            'hidden': bool(is_hidden),
+            'hidden': bool(is_hidden), 'is_native_tool': is_native,
+            'schema': schema, 'description': description, 'result': result,
+            'render': render, 'color_role': color_role,
             'doc': doc, 'params': params, 'varargs': varargs}
 
 def slash(name, run, doc=None, usage=None):
@@ -417,6 +449,30 @@ def __vis_registration__():
     (:session/id sctx)
     (assoc :session-id (:session/id sctx))))
 
+(defn- stringify-deep
+  "Deep-convert host data to the strings-only shape the `->py` boundary
+   accepts, so a map carrying keyword keys AND keyword values (a svar
+   provider, a config, a selection event, a tool result) can cross INTO a
+   Python callback. Keyword/symbol keys and values become their name string
+   (leading `:` stripped, namespace kept); scalars pass through. `->py` forbids
+   keywords outright, so without this an enrich-models / on-selected / render
+   arg would throw a boundary violation before the Python fn ever runs."
+  [x]
+  (letfn [(k->s [k]
+            (cond (keyword? k) (subs (str k) 1)
+                  (symbol? k) (str k)
+                  (string? k) k
+                  :else (str k)))]
+    (cond (map? x) (into {}
+                         (map (fn [[k v]]
+                                [(k->s k) (stringify-deep v)]))
+                         x)
+          (sequential? x) (mapv stringify-deep x)
+          (set? x) (mapv stringify-deep x)
+          (keyword? x) (subs (str x) 1)
+          (symbol? x) (str x)
+          :else x)))
+
 (defn- tool-adapter
   "Observed-tool fn for one Python-backed symbol. Return value = success
    payload; a raised Python exception = failure envelope (message + trace
@@ -601,8 +657,95 @@ def __vis_registration__():
 ;; the registry stores the internal tag keyword. Bounded map — no minting.
 (def ^:private symbol-tags {"observation" :observation "mutation" :mutation})
 
+;; JSON Schema vocabulary the host reads with KEYWORD keys (see
+;; `extension/schema->param-doc`). A Python author writes a plain dict, so the
+;; keys arrive as strings: only these vocabulary words become keywords, while
+;; author-chosen PROPERTY NAMES stay strings — exactly the shape a
+;; Clojure-authored native tool schema has
+;; (`{:type "object" :properties {"path" {:type "string"}}}`).
+(def ^:private json-schema-words
+  #{"type" "properties" "required" "description" "items" "prefixItems" "enum"
+    "const" "default" "examples" "format" "pattern" "title" "not" "oneOf"
+    "anyOf" "allOf" "additionalProperties" "patternProperties" "minimum"
+    "maximum" "exclusiveMinimum" "exclusiveMaximum" "multipleOf" "minLength"
+    "maxLength" "minItems" "maxItems" "uniqueItems" "minProperties"
+    "maxProperties" "nullable" "$ref" "$defs" "definitions"})
+
+;; Vocabulary words whose VALUE is a map keyed by author-chosen names rather
+;; than by schema words — those keys must survive as strings.
+(def ^:private json-schema-name-maps
+  #{"properties" "patternProperties" "$defs" "definitions"})
+
+(defn- py-schema
+  "Python JSON Schema dict -> the host schema shape (keyword vocabulary keys,
+   string property names). Without it a Python-declared schema would still be
+   sent to the provider but read as EMPTY by every host projection
+   (`doc(name)` params, wire docs), which reads `:properties` / `:required`."
+  [x]
+  (cond
+    (map? x)
+    (into {}
+          (map (fn [[k v]]
+                 (let [ks (str k)]
+                   (if (contains? json-schema-words ks)
+                     [(keyword ks)
+                      (if (and (map? v) (contains? json-schema-name-maps ks))
+                        (into {}
+                              (map (fn [[pk pv]]
+                                     [(str pk) (py-schema pv)]))
+                              v)
+                        (py-schema v))]
+                     [ks (py-schema v)]))))
+          x)
+
+    (sequential? x)
+    (mapv py-schema x)
+
+    :else x))
+
+(defn- ->color-role
+  "Op-card badge colour role for a Python `color_role='search'`, or the fully
+   qualified `'tool-color/search'`. The host vocabulary is namespaced under
+   `tool-color`."
+  [s]
+  (if (str/includes? s "/")
+    (keyword s)
+    (keyword "tool-color" s)))
+
+(defn- render-adapter
+  "`:ext.symbol/render` for one Python-backed symbol. The Python callable gets
+   the tool result as plain string-keyed data and returns `{'summary': str,
+   'body': str}` (a bare string counts as the summary). A failing or unusable
+   renderer yields nil, so a bad op card never breaks the tool itself."
+  [ext-name ^Context ctx ^Value pyfn]
+  (fn [result]
+    (try
+      (let [r (call-py-ext ext-name nil ctx pyfn [(stringify-deep result)])]
+        (cond
+          (string? r)
+          {:summary r}
+
+          (map? r)
+          (cond-> {}
+            (some? (get r "summary"))
+            (assoc :summary (str (get r "summary")))
+
+            (string? (get r "body"))
+            (assoc :body (get r "body")))
+
+          :else nil))
+      (catch Throwable t
+        (tel/log! {:level :warn
+                   :id ::render-failed
+                   :data {:extension ext-name :error (ex-message t)}})
+        nil))))
+
 (defn- ->symbol-entry
-  "`spec` is a Python registration dict — STRING keys (strings-only boundary)."
+  "`spec` is a Python registration dict — STRING keys (strings-only boundary).
+   Native-tool metadata (`schema`, `description`, `result`, `render`,
+   `color_role`) rides through `extension/symbol-entry`, so a Python-declared
+   tool is validated, advertised, documented and rendered exactly like a
+   Clojure one."
   [ext-name alias-sym ^Context ctx spec]
   (let
     [sym
@@ -615,16 +758,36 @@ def __vis_registration__():
      (cond-> (mapv clojure.core/symbol (get spec "params"))
        (get spec "varargs")
        (-> (conj '&)
-           (conj 'args)))]
+           (conj 'args)))
 
-    (cond->
-      #:ext.symbol{:symbol sym
-                   :fn (tool-adapter ext-name sym ctx pyfn)
-                   :doc (str (get spec "doc"))
-                   :arglists [argv]
-                   :tag (get symbol-tags (str (get spec "tag")) :observation)}
-      (get spec "hidden")
-      (assoc :ext.symbol/hidden? true))))
+     render
+     (get spec "render")
+
+     color-role
+     (get spec "color_role")
+
+     opts
+     (cond-> {:tag (get symbol-tags (str (get spec "tag")) :observation)}
+       (get spec "hidden")
+       (assoc :hidden? true)
+
+       (get spec "is_native_tool")
+       (assoc :native-tool? true
+              :schema (py-schema (get spec "schema"))
+              :description (str (get spec "description"))
+              :result (str (get spec "result")))
+
+       render
+       (assoc :render (render-adapter ext-name ctx render))
+
+       (and (string? color-role) (not (str/blank? color-role)))
+       (assoc :color-role (->color-role color-role)))]
+
+    (extension/symbol-entry {:symbol sym
+                             :fn (tool-adapter ext-name sym ctx pyfn)
+                             :doc (str (get spec "doc"))
+                             :arglists [argv]}
+                            opts)))
 
 (defn- ->slash-spec
   [ext-name ^Context ctx spec]
@@ -833,30 +996,6 @@ def __vis_registration__():
                       :id ::provider-fn-failed
                       :data {:extension ext-name :error (ex-message t)}})
            nil))))
-
-(defn- stringify-deep
-  "Deep-convert host data to the strings-only shape the `->py` boundary
-   accepts, so a map carrying keyword keys AND keyword values (a svar
-   provider, a config, a selection event) can cross INTO a Python provider
-   hook. Keyword/symbol keys and values become their name string (leading
-   `:` stripped, namespace kept); scalars pass through. `->py` forbids
-   keywords outright, so without this an enrich-models / on-selected arg
-   would throw a boundary violation before the Python fn ever runs."
-  [x]
-  (letfn [(k->s [k]
-            (cond (keyword? k) (subs (str k) 1)
-                  (symbol? k) (str k)
-                  (string? k) k
-                  :else (str k)))]
-    (cond (map? x) (into {}
-                         (map (fn [[k v]]
-                                [(k->s k) (stringify-deep v)]))
-                         x)
-          (sequential? x) (mapv stringify-deep x)
-          (set? x) (mapv stringify-deep x)
-          (keyword? x) (subs (str x) 1)
-          (symbol? x) (str x)
-          :else x)))
 
 (defn- enrich-models-fn-adapter
   "Wrap a Python `enrich_models(provider, router_opts)` callable as

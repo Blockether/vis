@@ -111,7 +111,7 @@
   "Compile config-supplied `patterns` (the same `.gitignore` pattern vocabulary
    `compile-rule` parses: `dir/`, `**`, `?`, char classes, `!` negation) into a
    matcher for `ignored?`, or nil when nothing compiles. This is how the
-   `:search` config overlay reuses the battle-tested gitignore semantics for
+   `:grep` config overlay reuses the battle-tested gitignore semantics for
    its `:include-gitignored-paths` / `:always-exclude` lists instead of
    inventing a second glob dialect."
   [patterns]

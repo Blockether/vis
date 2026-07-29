@@ -240,7 +240,7 @@
 ;; Remaining top-level blocks --------------------------------------------------
 
 (def prompt-keys #{"text" "is_replace"})
-(def search-keys #{"include_gitignored_paths" "always_exclude"})
+(def grep-keys #{"include_gitignored_paths" "always_exclude"})
 (def db-keys #{"backend" "path"})
 (def tui-keys #{"theme_name" "contributors_disabled"})
 (def mcp-keys #{"servers"})
@@ -252,7 +252,7 @@
   #{"breaker_threshold" "retry_backoff_ms" "halfopen_probe_ms" "retry_after_cap_ms"})
 (def config-keys
   #{"providers" "default_provider" "default_model" "router" "system_prompt" "workspace" "jail"
-    "environment" "db_spec" "search" "toggles" "tui_settings" "mcp" "python" "message_queue"})
+    "environment" "db_spec" "grep" "toggles" "tui_settings" "mcp" "python" "message_queue"})
 
 (def prompt-schema {"text" string? "is_replace" boolean?})
 (s/def ::prompt-map #(closed-map? prompt-schema #{"text"} %))
@@ -260,8 +260,8 @@
   (s/or :text string?
         :map ::prompt-map))
 
-(def search-schema {"include_gitignored_paths" string-list? "always_exclude" string-list?})
-(s/def ::search #(closed-map? search-schema %))
+(def grep-schema {"include_gitignored_paths" string-list? "always_exclude" string-list?})
+(s/def ::grep #(closed-map? grep-schema %))
 
 (def db-schema {"backend" non-blank-string? "path" non-blank-string?})
 (s/def ::db-spec #(closed-map? db-schema #{"backend"} %))
@@ -332,7 +332,7 @@
    "jail" (spec-pred ::jail)
    "environment" string-map?
    "db_spec" (spec-pred ::db-spec)
-   "search" (spec-pred ::search)
+   "grep" (spec-pred ::grep)
    "toggles" named-scalar-map?
    "tui_settings" (spec-pred ::tui-settings)
    "mcp" (spec-pred ::mcp)
@@ -356,7 +356,7 @@
                   "workspace" [workspace-schema #{} :map]
                   "jail" [jail-schema #{} :map]
                   "db_spec" [db-schema #{"backend"} :map]
-                  "search" [search-schema #{} :map]
+                  "grep" [grep-schema #{} :map]
                   "tui_settings" [tui-schema #{} :map]
                   "mcp" [mcp-schema #{} :map]
                   "python" [python-schema #{} :map]

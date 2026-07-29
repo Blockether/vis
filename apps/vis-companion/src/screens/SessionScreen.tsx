@@ -11,7 +11,11 @@ import {
 import { AssistantMessage, transcriptEnterClass, UserMessage } from '../components/ChatContent';
 import { Banner } from '../components/ui';
 import { ProviderRouterDialog } from './RouterScreen';
-import { attachmentsFromFiles, type PendingAttachment } from '../lib/attachments';
+import {
+  attachmentsFromFiles,
+  pickImageAttachments,
+  type PendingAttachment,
+} from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';
 import { mergeQueueBacklog, queuedTurnFromWire, type QueueDelta } from '../lib/gateway';
 import { exactCost, formatCost, formatTokens, sessionUsage } from '../lib/usage';
@@ -43,6 +47,7 @@ import type {
   Session,
   SlashCommand,
   SseEvent,
+  SubmittedTurn,
   TranscriptForm,
   TranscriptIteration,
   TranscriptTurn,
@@ -128,6 +133,21 @@ const LOADING_VEIL_MAX_MS = 12_000;
 // gateway/state.clj). Neither carries the answer, so neither may ever stand in
 // for the live bubble the user is watching.
 const IN_FLIGHT_ROW_STATUSES = new Set(['running', 'streaming', 'queued', 'pending']);
+
+/**
+ * Did the gateway QUEUE this submission behind a running turn instead of starting
+ * it? `POST /v1/sessions/:sid/turns` answers with the turn record itself
+ * (`submit-turn!` in gateway/state.clj): an enqueued one carries `status:
+ * "queued"` and a `queued_at` stamp, a started one `status: "running"` and
+ * `started_at`. THAT answer — never the local `running` flag, which can lag the
+ * gateway in both directions — decides who owns the message: the live rail or the
+ * queue tray.
+ */
+function isQueuedSubmission(turn: SubmittedTurn): boolean {
+  const status = String(turn.status ?? '');
+  if (status) return status === 'queued';
+  return turn.queued_at != null && turn.started_at == null;
+}
 
 function isRunningRow(turn: TranscriptTurn): boolean {
   const status = String(turn.status ?? '');
@@ -753,6 +773,7 @@ export function SessionScreen({
   onBack,
   onOpenSession,
   onManageProviders,
+  shellStyle,
   fresh = false,
 }: {
   client: GatewayClient;
@@ -762,6 +783,8 @@ export function SessionScreen({
   onOpenSession: (sid: string, fresh?: boolean) => void;
   /** Open this gateway's settings, where provider accounts and OAuth live. */
   onManageProviders?: () => void;
+  /** The app shell's visual-viewport pin, shared with fixed overlays. */
+  shellStyle?: ReturnType<typeof useVisualViewportShell>;
   fresh?: boolean;
 }) {
   // The device rotates freely here. A flip is survived rather than forbidden:
@@ -906,8 +929,8 @@ export function SessionScreen({
   // That editor is a `fixed` overlay, so it resolves against the LAYOUT viewport — the
   // one iOS does NOT shrink for the keyboard. Unpinned, the sheet keeps its full box
   // under the keyboard and only the couple of lines above it stay usable. The app shell
-  // already solves this; the overlay borrows the very same pin.
-  const pasteEditorStyle = useVisualViewportShell();
+  // already solves this; the overlay reuses the app shell's pin without mounting
+  // a second global viewport listener.
   const [composerNotice, setComposerNotice] = useState<string | null>(null);
   // Seeded from the same cached capabilities as the composer above, so the mic
   // button is there on the first frame instead of arriving a round-trip late.
@@ -928,6 +951,7 @@ export function SessionScreen({
   const resizeScrollFrameRef = useRef<number | null>(null);
   const disclosureScrollFrameRef = useRef<number | null>(null);
   const prependScrollHeightRef = useRef<number | null>(null);
+  const scrollMetricsFrameRef = useRef<number | null>(null);
   // Last measured height of the scroller itself, so a box that shrinks under a
   // parked reader can hand the lost pixels back (see the ResizeObserver below).
   const viewportHeightRef = useRef<number | null>(null);
@@ -1862,10 +1886,9 @@ export function SessionScreen({
     };
 
     // Liveness watchdog — the transport-independent twin of the TUI's
-    // `:turn-liveness-tick`. It never invents an ending: it replays the
-    // registry's verdict through the SAME `settle` the real frame uses, so a
-    // late duplicate frame is a harmless no-op (settle ignores a bubble that is
-    // no longer `running`).
+    // `:turn-liveness-tick`. A terminal registry verdict uses the SAME `settle`
+    // path as a real frame. If the turn is still live, the stream has probably
+    // been frozen (notably by WKWebView), so reconnect and replay it instead.
     let lastEventAt = Date.now();
     let probing = false;
     const livenessTimer = window.setInterval(() => {
@@ -1877,9 +1900,13 @@ export function SessionScreen({
       void client
         .turnStatus(sid, live.id)
         .then((status) => {
-          if (!status) return;
           const current = liveTurnRef.current;
           if (!current || current.status !== 'running' || current.id !== live.id) return;
+          if (!status) {
+            lastEventAt = Date.now();
+            subscriptions.resync();
+            return;
+          }
           const type = status === 'failed'
             ? 'turn.failed'
             : status === 'cancelled' ? 'turn.cancelled' : 'turn.completed';
@@ -2056,6 +2083,10 @@ export function SessionScreen({
         window.cancelAnimationFrame(disclosureScrollFrameRef.current);
         disclosureScrollFrameRef.current = null;
       }
+      if (scrollMetricsFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollMetricsFrameRef.current);
+        scrollMetricsFrameRef.current = null;
+      }
       settleTimersRef.current.forEach((id) => window.clearTimeout(id));
       settleTimersRef.current = [];
     };
@@ -2139,17 +2170,34 @@ export function SessionScreen({
     });
   }, [draftMessageReady, draftMessageId, prompt, pastes]);
 
-  function addAttachments() {
+  async function addAttachments() {
     const limits = capabilities?.features.attachments;
     const maximum = limits?.max_files ?? 8;
-    if (maximum - attachments.length <= 0) {
+    const remaining = maximum - attachments.length;
+    if (remaining <= 0) {
       setComposerNotice(`You can attach up to ${maximum} images`);
       return;
     }
-    // A persistent hidden <input type="file"> is the one attachment path that
-    // works identically on the web and inside the iOS/Android WKWebView (it
-    // shows the native Photos/Files sheet) — no Capacitor plugin required.
-    fileInputRef.current?.click();
+
+    // iOS/Android's file input hands freshly captured photos to JS as HEIC or
+    // with no MIME type. The native picker transcodes them before this boundary,
+    // so the gateway receives one of its supported image formats.
+    if (!Capacitor.isNativePlatform()) {
+      fileInputRef.current?.click();
+      return;
+    }
+
+    try {
+      const result = await pickImageAttachments({
+        maxFiles: remaining,
+        maxFileBytes: limits?.max_file_bytes ?? 5 * 1024 * 1024,
+        mediaTypes: limits?.media_types,
+      });
+      setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
+      setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
+    } catch (cause) {
+      setComposerNotice((cause as Error).message);
+    }
   }
 
   async function onFilesPicked(fileList: FileList | null) {
@@ -2404,7 +2452,15 @@ export function SessionScreen({
 
     // A turn is already running: the gateway enqueues this behind it and mirrors
     // it back as `turn.queued`, which fills the tray. Keep the composer live.
-    if (running || queued.length) {
+    //
+    // `liveTurn` is part of the test, not just `running`: a turn whose stream we
+    // joined late (started from the TUI, adopted on wake, replayed without a
+    // `turn.started` frame) streams into the live bubble with `running` still
+    // false. Testing only `running` then took the FRESH-submit path — it painted
+    // an optimistic bubble OVER the answer the user was watching (the live view
+    // "reset") while the gateway queued that very message, so the same text also
+    // appeared in the tray.
+    if (running || liveTurn || queued.length) {
       const pendingAttachments = attachments;
       const pendingPastes = pastes;
       setPrompt('');
@@ -2431,6 +2487,24 @@ export function SessionScreen({
           attachments: pendingAttachments,
           pastes: pendingPastes,
         });
+        // The gateway was IDLE after all: a lingering bubble (kept on purpose when
+        // a finished answer has not reached the transcript yet) made this look
+        // busy, and the turn STARTED instead of queueing. Paint the live rail now
+        // instead of waiting for `turn.started` to come back around.
+        if (!isQueuedSubmission(submitted)) {
+          setRunning(true);
+          setLiveTurn({
+            id: queuedId,
+            request: displayRequest,
+            answer: '',
+            iterations: [],
+            startedAt: Date.now(),
+            status: 'running',
+            attachments: sent.length ? sent : undefined,
+          });
+          followingRef.current = true;
+          requestAnimationFrame(() => scrollToEnd());
+        }
       } catch (cause) {
         setPrompt(authoredRequest);
         setPastes(pendingPastes);
@@ -2443,6 +2517,10 @@ export function SessionScreen({
 
     const pendingAttachments = attachments;
     const pendingPastes = pastes;
+    // The rail as it stood BEFORE the optimistic bubble. If the gateway answers
+    // "queued", this submission never owned the rail and whatever was streaming
+    // must come back rather than stay overwritten.
+    const previousLive = liveTurn;
     setPrompt('');
     setAttachments([]);
     setPastes(new Map());
@@ -2471,7 +2549,28 @@ export function SessionScreen({
       });
       const submittedId = submitted.turn_id ?? submitted.id;
       rememberSent(submittedId, sent);
-      setLiveTurn((turn) => turn ? { ...turn, id: submittedId } : turn);
+      if (isQueuedSubmission(submitted)) {
+        // The gateway QUEUED us: a turn started between our liveness read and this
+        // POST (another channel, or a queued row draining). A queued message is
+        // the tray's alone, so the optimistic bubble goes — left up it showed the
+        // message as SENT while the same text sat in the tray, on top of a rail it
+        // had already taken from the turn actually running.
+        rememberQueued(submittedId, {
+          request: authoredRequest,
+          attachments: pendingAttachments,
+          pastes: pendingPastes,
+        });
+        setLiveTurn((turn) => {
+          // Only OUR optimistic bubble is reverted — it is the one with no id. A
+          // `turn.started` that landed while the POST was in flight has already
+          // replaced it and owns the rail.
+          const next = turn && !turn.id ? previousLive : turn;
+          liveTurnRef.current = next;
+          return next;
+        });
+      } else {
+        setLiveTurn((turn) => turn ? { ...turn, id: submittedId } : turn);
+      }
     } catch (cause) {
       setRunning(false);
       setLiveTurn(null);
@@ -2571,29 +2670,35 @@ export function SessionScreen({
   }
 
   function handleScroll() {
-    const viewport = scrollRef.current;
-    if (!viewport) return;
-    // Inside the settle window the only scrolls are the ones we issued; a stale
-    // event delivered after the transcript grew must not cancel following.
-    if (Date.now() <= settleUntilRef.current) {
-      followingRef.current = true;
-      if (showJumpRef.current) {
-        showJumpRef.current = false;
-        setShowJump(false);
+    // Scroll fires faster than the screen can paint. Batch its geometry reads and
+    // anchor scan into one frame to avoid forcing repeated transcript layouts.
+    if (scrollMetricsFrameRef.current !== null) return;
+    scrollMetricsFrameRef.current = window.requestAnimationFrame(() => {
+      scrollMetricsFrameRef.current = null;
+      const viewport = scrollRef.current;
+      if (!viewport) return;
+      // Inside the settle window the only scrolls are the ones we issued; a stale
+      // event delivered after the transcript grew must not cancel following.
+      if (Date.now() <= settleUntilRef.current) {
+        followingRef.current = true;
+        if (showJumpRef.current) {
+          showJumpRef.current = false;
+          setShowJump(false);
+        }
+        return;
       }
-      return;
-    }
-    const distance = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-    const following = distance < 64;
-    followingRef.current = following;
-    if (showJumpRef.current !== !following) {
-      showJumpRef.current = !following;
-      setShowJump(!following);
-    }
-    // Keep the rotation anchor fresh: iOS can deliver the orientation signal
-    // AFTER the reflow, and by then the top-most turn is already unreadable.
-    // Scrolls during a rotation are the reflow's own, never the reader's.
-    if (!isViewportRotating()) captureScrollAnchor();
+      const distance = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+      const following = distance < 64;
+      followingRef.current = following;
+      if (showJumpRef.current !== !following) {
+        showJumpRef.current = !following;
+        setShowJump(!following);
+      }
+      // Keep the rotation anchor fresh: iOS can deliver the orientation signal
+      // AFTER the reflow, and by then the top-most turn is already unreadable.
+      // Scrolls during a rotation are the reflow's own, never the reader's.
+      if (!isViewportRotating()) captureScrollAnchor();
+    });
   }
 
   useEffect(() => {
@@ -2883,7 +2988,7 @@ export function SessionScreen({
       {editingPaste && (
         <div
           className="fixed inset-x-0 top-0 z-50 flex h-dvh items-stretch justify-center bg-ink/85 p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:p-5"
-          style={pasteEditorStyle}
+          style={shellStyle}
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) closePasteEditor();
           }}

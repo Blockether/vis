@@ -3204,10 +3204,9 @@
    interpreter with its shims.
 
    Unlike the agent sandbox this is a HUMAN-run interpreter, so it gets
-   real-`python` niceties: `argv` is bound to `sys.argv` and `env` (the
-   caller's environment by default) is merged into `os.environ` -- see
-   `env/seed-cli-runtime!`. The process stdin is wired to the guest
-   `sys.stdin`, so `sys.stdin.read()` works alongside `-c`/FILE."
+   real-`python` niceties: `argv` is bound to `sys.argv`; `env` is merged
+   into `os.environ`; and `PYTHONPATH` is prepended to `sys.path`. The process
+   stdin is wired to guest `sys.stdin`, so it works alongside `-c`/FILE."
   [{:keys [network? argv env]}]
   (let
     [cwd
@@ -3225,6 +3224,22 @@
     ;; Forward script argv + (by default) the caller's env — real-python CLI
     ;; semantics, distinct from the scrubbed agent sandbox.
     (env/seed-cli-runtime! python-context {:argv argv :env env})
+    ;; GraalPy receives the environment after interpreter startup, so PYTHONPATH
+    ;; needs the same explicit sys.path setup a process launch would perform.
+    (when-let [pythonpath (not-empty (get env "PYTHONPATH"))]
+      (let
+        [^org.graalvm.polyglot.Value bindings
+         (.getBindings ^org.graalvm.polyglot.Context python-context "python")
+         binding-name "__vis_cli_pythonpath__"]
+
+        (.putMember bindings binding-name pythonpath)
+        (try (.eval ^org.graalvm.polyglot.Context python-context
+                    "python"
+                    (str "import os, sys\n"
+                         "sys.path[:0] = [p for p in globals()["
+                         (pr-str binding-name)
+                         "].split(os.pathsep) if p]\n"))
+             (finally (.removeMember bindings binding-name)))))
     python-context))
 
 (defn- run-python-source!
@@ -3376,12 +3391,28 @@ def __vis_run_module__(name):
   (if (str/blank? module)
     (do (stdout! "vis python -m requires a MODULE argument.") 2)
     (let
-      [{:keys [stdout result error]}
-       (env/run-python-block
-         ctx
-         (str python-module-runner-src "\n__vis_run_module__(" (pr-str module) ")\n"))]
+      [exit-name
+       "__vis_cli_exit_code__"
+
+       {:keys [stdout result error]}
+       (env/run-python-block ctx
+                             (str python-module-runner-src
+                                  "\nglobals()["
+                                  (pr-str exit-name)
+                                  "] = __vis_run_module__("
+                                  (pr-str module)
+                                  ")\n"))
+
+       ^org.graalvm.polyglot.Value bindings
+       (.getBindings ^org.graalvm.polyglot.Context ctx "python")
+
+       exit-code
+       (try (env/->clj (.getMember bindings exit-name))
+            (finally (.removeMember bindings exit-name)))]
+
       (when (seq stdout) (write-stdout! stdout))
       (cond error (do (stdout! (or (:message error) (pr-str error))) 1)
+            (integer? exit-code) (int exit-code)
             (integer? result) (int result)
             :else 0))))
 
@@ -3493,6 +3524,7 @@ def __vis_run_module__(name):
      :cmd/usage "vis python [OPTS] [-c CODE | -m MODULE | FILE.py | -] [ARG...]"
      :cmd/examples ["vis python -c \"import requests; print(requests.__version__)\""
                     "vis python -m pytest tests/ -q   # module run as __main__"
+                    "PYTHONPATH=src vis python -m pytest tests/   # src-layout project"
                     "vis python script.py --flag foo   # ARGs land in sys.argv"
                     "vis python -c \"import os; print(os.environ['HOME'])\"   # env inherited"
                     "vis python --no-env -c \"import os; print(dict(os.environ))\"   # scrubbed"

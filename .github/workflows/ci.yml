@@ -77,10 +77,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y bubblewrap passt
       - name: Run test suite
         env:
-          # macOS must execute fresh Seatbelt/socket E2E. Linux always runs the
-          # policy/compiler assertions and runs real bubblewrap E2E when its
-          # runner kernel permits the required unprivileged namespaces.
+          # These are hard CI contracts, not best-effort coverage: macOS must
+          # execute fresh Seatbelt/socket E2E; Linux must execute real bwrap +
+          # pasta enforcement. The test namespace fails if either runner cannot.
           VIS_REQUIRE_MACOS_SANDBOX_E2E: ${{ runner.os == 'macOS' && '1' || '0' }}
+          VIS_REQUIRE_LINUX_SANDBOX_E2E: ${{ runner.os == 'Linux' && '1' || '0' }}
           # macos-26-arm64 has a smaller default JVM heap than the full Truffle
           # suite needs; retain headroom for native allocations and subprocesses.
           JAVA_TOOL_OPTIONS: ${{ runner.os == 'macOS' && '-Xmx5g' || '' }}

@@ -854,21 +854,26 @@ await patch({'path': css})" "t1/i1")]
    it reached for importlib.exec_module / open() on a project file."
   (let
     [mk (fn []
-          (:python-context (ep/create-python-context {})))]
-    (it "open() denial → hint points at cat(path) + repl_eval"
-        (let
-          [m (get-in (ep/run-python-block (mk) "open('/etc/hosts').read()" "t1/i1")
-                     [:error :message])]
+          (:python-context (ep/create-python-context {} (constantly []))))]
+    (it "open() policy denial names the exact blocked operation and safe remedy"
+        (let [m (get-in (ep/run-python-block (mk) "open('/etc/hosts').read()" "t1/i1")
+                        [:error :message])]
           (expect (some? m))
+          (expect (clojure.string/includes? (str m) "Sandbox policy denied file-read"))
+          (expect (clojure.string/includes? (str m) "outside approved filesystem roots"))
           (expect (clojure.string/includes? (str m) "cat(path)"))
           (expect (clojure.string/includes? (str m) "repl_eval"))))
+    (it "write denial names file-write rather than collapsing it into a read"
+        (let [m (get-in (ep/run-python-block (mk) "open('/etc/vis-nope', 'w')" "t1/i1")
+                        [:error :message])]
+          (expect (clojure.string/includes? (str m) "Sandbox policy denied file-write"))))
     (it "importlib exec_module on a project file → the same steer"
         (let
           [m (get-in (ep/run-python-block
                        (mk)
                        (str
                          "import importlib.util\n"
-                         "spec = importlib.util.spec_from_file_location('x', '/tmp/zz_nope.py')\n"
+                         "spec = importlib.util.spec_from_file_location('x', '/etc/zz_nope.py')\n"
                          "mod = importlib.util.module_from_spec(spec)\n"
                          "spec.loader.exec_module(mod)")
                        "t1/i1")

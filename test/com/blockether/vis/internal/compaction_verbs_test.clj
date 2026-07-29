@@ -1120,38 +1120,23 @@
                  'session-fold)]
         (expect (= "folded t1/i1 · recover ntr[\"toolu_A\"]; ntr[\"toolu_B\"] → g"
                    (sf ["t1/i1"] "g")))))
-  (it "every shown accessor says WHAT it holds, and the overflow points at ntr.describe()"
-      ;; An id alone can't be decided about — the clause exists so the model picks
-      ;; WHICH handle is worth one fetch. Card summaries carry their own markdown
-      ;; and ` · ` separators, so a label is flattened and capped: the fold card
-      ;; splits its body bullets on exactly that separator.
-      (let
-        [entry (fn [i tool gist]
-                 (cond-> {"id" i "tool" tool} gist (assoc "gist" gist)))
-
-         sf (get (compaction-verbs
-                   (atom {"session_turn" 2
-                          "engine_iter_universe" ["t1/i1"]
-                          "engine_iter_ntr"
-                          {"t1/i1" [(entry "toolu_A" "grep" "`session_fold` · 6 file names")
-                                    (entry "toolu_B" "cat" nil)
-                                    (entry "toolu_C" "run_tests" "94 pass")
-                                    (entry "toolu_D" "shell" nil)
-                                    (entry "toolu_E" "lint_code" nil)
-                                    (entry "toolu_F" "write" nil)
-                                    (entry "toolu_G"
-                                           "repl_eval"
-                                           (apply str (repeat 12 "long ")))]}}))
-                 'session-fold)
-
-         out (sf ["t1/i1"] "g")]
-
-        (expect (str/includes? out "recover ntr[\"toolu_A\"] grep: session_fold, 6 file names; "))
-        ;; No summary → the tool name alone still beats a bare id.
-        (expect (str/includes? out "ntr[\"toolu_B\"] cat;"))
-        ;; Capped list, and the overflow browses the store the same labelled way.
-        (expect (str/includes? out " · IMPORTANT 2 more folded results stay recoverable"))
-        (expect (not (str/includes? out "toolu_G")))))
+  (it "a fold advertises only its 24 newest labelled recovery accessors"
+      ;; Older results stay available through ntr.describe(); the breadcrumb must
+      ;; favor the newest work and never grow without bound.
+      (let [entries (mapv (fn [i] {"id" (str "toolu_" i) "tool" "cat"}) (range 26))
+            sf (get (compaction-verbs
+                      (atom {"session_turn" 2
+                             "engine_iter_universe" ["t1/i1"]
+                             "engine_iter_ntr" {"t1/i1" entries}}))
+                    'session-fold)
+            out (sf ["t1/i1"] "g")]
+        ;; The two oldest entries are deliberately omitted; the next (24th-from-end)
+        ;; and newest entries remain labelled and selectable.
+        (expect (not (str/includes? out "ntr[\"toolu_0\"]")))
+        (expect (not (str/includes? out "ntr[\"toolu_1\"]")))
+        (expect (str/includes? out "ntr[\"toolu_2\"] cat;"))
+        (expect (str/includes? out "ntr[\"toolu_25\"] cat"))
+        (expect (str/includes? out " · IMPORTANT 2 more folded results stay recoverable"))))
   (it "a long label is truncated instead of drowning the breadcrumb"
       (let
         [sf (get (compaction-verbs

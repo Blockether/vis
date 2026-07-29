@@ -17,7 +17,7 @@ in a live session):
 | `github_issues.py` | Real-world integration: **HTTP from the trusted context**, config via slash + state, secrets via env vars |
 | `provider_acme.py` | **LLM provider** (`vis.provider`) — a router-callable provider from a `preset` + `get_token_fn`, credentials via env vars |
 
-The full authoring guide is the `python-extensions` page of Vis's own docs
+The full authoring guide is the `extending` page of Vis's own docs
 (`vis docs` site, or ask Vis: *"how do I write a Python extension?"* — it
 looks the page up via its `vis_docs` tool).
 

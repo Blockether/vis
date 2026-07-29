@@ -67,6 +67,12 @@ workspace:
       description: Node/Vite/Capacitor cache for the apps/vis-companion universal build.
       search: false
 
+# ── Feature toggles ──────────────────────────────────────────────────────────
+# Built-in extension toggles. Omit a key to use its default.
+# toggles:
+#   # Default true. Set false to remove the Exa/arXiv live-research extension.
+#   web_search: false
+
 
 # ── Jail ─────────────────────────────────────────────────────────────────────
 # The single confinement switch. When `enabled: true`, Vis enforces BOTH axes

@@ -1283,14 +1283,21 @@
    fallback) has ALREADY run by the time an exception escapes to the loop, so an
    error of these kinds is terminal by construction: fail the turn once, with the
    styled provider card, and let the user retry or switch provider."
-  #{:rate-limit :auth :anthropic-extra-usage})
+  #{:rate-limit :auth :billing :anthropic-extra-usage})
 
 (defn- non-correctable-provider-error?
-  "True for a provider failure whose kind is in `NON_CORRECTABLE_PROVIDER_KINDS`."
-  [e]
-  (boolean (and e
-                (perr/provider-failure? e)
-                (contains? NON_CORRECTABLE_PROVIDER_KINDS (perr/provider-error-kind e)))))
+  "True when this provider failure, or a bounded cause, has a kind in
+   `NON_CORRECTABLE_PROVIDER_KINDS`. HTTP clients commonly wrap the typed
+   provider exception; classifying only the outer exception would re-prompt a
+   provider that has already rejected the request."
+  [^Throwable e]
+  (boolean (some (fn [^Throwable cause]
+                   (and (perr/provider-failure? cause)
+                        (contains? NON_CORRECTABLE_PROVIDER_KINDS
+                                   (perr/provider-error-kind cause))))
+                 (->> (iterate #(.getCause ^Throwable %) e)
+                      (take-while some?)
+                      (take 8)))))
 
 (defn- user-error-data?
   "True when an ex-data / iteration-error `:data` map marks a user-fixable failure."
@@ -1333,7 +1340,7 @@
              not-empty)]
 
     (when (and msg (or (user-error-data? d) (user-error-data? iteration-error-data)))
-      [(content/error "config_error" msg true)])))
+      [(content/error "config_error" msg false)])))
 
 (def ^:private CONTEXT_OVERFLOW_HOPELESS_FACTOR
   "A preflight `:svar.tokens/context-overflow` whose measured input exceeds
@@ -3189,10 +3196,15 @@
                ntr
                (get ctx "engine_iter_ntr")
 
+               ;; The newest calls are the most useful recovery candidates. Preserve
+               ;; trailer (chronological) order so the tail below really means "last",
+               ;; rather than the lexicographically-last scope id (where t99 > t100).
                scopes
-               (sort (into #{}
-                           (mapcat #(get % "scopes"))
-                           (ctx-engine/expand-through [base] (or universe []))))]
+               (let
+                 [selected (into #{}
+                                 (mapcat #(get % "scopes"))
+                                 (ctx-engine/expand-through [base] (or universe [])))]
+                 (filterv selected (or universe [])))]
 
               (ntr-recover-hint (into [] (comp (mapcat #(get ntr %)) (distinct)) scopes)))
             (catch Throwable _ nil)))]
@@ -3306,7 +3318,7 @@
                 "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
                 "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}"))))}))
 
-(def ^:private MAX_FOLD_NTR_HINTS 5)
+(def ^:private MAX_FOLD_NTR_HINTS 24)
 
 (def ^:private MAX_FOLD_NTR_GIST_CHARS 44)
 
@@ -3405,11 +3417,11 @@
 
    Every shown accessor is LABELLED with what it holds (`ntr[\"toolu_…\"] cat:
    loop.clj lines 3300-3370`): the point of the clause is deciding WHICH handle to
-   spend a fetch on, and an id alone can't be decided about. The list is capped
-   and the overflow points at `ntr.describe()`, which browses the whole store the
-   same labelled way — not at bare `ntr.keys()`. Accepts labelled entry maps and
-   legacy bare id strings. Returns a leading-` · ` fragment, or nil when the fold
-   covered no result-bearing calls (a pure python_execution fold stores nothing)."
+   spend a fetch on, and an id alone can't be decided about. Advertise only the 24
+   NEWEST entries; recover older results through `ntr.describe()`, which browses the
+   whole store the same labelled way — not bare `ntr.keys()`. Accepts labelled entry
+   maps and legacy bare id strings. Returns a leading-` · ` fragment, or nil when the
+   fold covered no result-bearing calls (a pure python_execution fold stores nothing)."
   [ids]
   (let
     [ids (into []
@@ -3419,7 +3431,7 @@
                     ids))]
     (when (seq ids)
       (let
-        [shown (vec (take MAX_FOLD_NTR_HINTS ids))
+        [shown (vec (take-last MAX_FOLD_NTR_HINTS ids))
          extra (- (count ids) (count shown))]
 
         (str " · recover "
@@ -8159,18 +8171,19 @@
                                (:cost-usd tc)))))]
 
                       (ctx-loop/set-turn-state! environment :iteration-id err-iteration-id)
-                      ;; Live error chunk - `:phase :iteration-error`
-                      ;; signals the iteration aborted before any
-                      ;; block could run. No block chunks fired
-                      ;; this iteration, so the channel sees a clean
-                      ;; reasoning -> error transition.
-                      (emit-hook! on-chunk
-                                  {:phase :iteration-error
-                                   :iteration (inc (long iteration))
-                                   :thinking err-reasoning
-                                   :error iteration-error-data
-                                   :done? true}
-                                  "on-chunk (iteration error)")
+                      ;; A recoverable iteration error remains useful live feedback.
+                      ;; Terminal failures instead produce exactly one canonical provider
+                      ;; card below; emitting this raw chunk first made the TUI show an
+                      ;; unformatted error followed by the formatted terminal card.
+                      (when-not (or (::fatal-iteration-error iteration-result)
+                                    provider-breaker-tripped?)
+                        (emit-hook! on-chunk
+                                    {:phase :iteration-error
+                                     :iteration (inc (long iteration))
+                                     :thinking err-reasoning
+                                     :error iteration-error-data
+                                     :done? true}
+                                    "on-chunk (iteration error)"))
                       (if (or (::fatal-iteration-error iteration-result)
                               ;; Circuit breaker: N consecutive provider-generate
                               ;; failures - feeding the same request back cannot

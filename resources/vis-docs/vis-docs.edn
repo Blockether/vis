@@ -28,7 +28,5 @@
           :blurb "Isolated workspaces for speculative changes: create, apply, park, resume, abandon, and gateway semantics."}
          {:file "gateway.md" :title "Gateway & pairing" :section "Using Vis" :order 65
           :blurb "The gateway server and device pairing for remote sessions."}
-         {:file "python-extensions.md" :title "Python extensions" :section "Extensions" :order 70
-          :blurb "Drop-in .py extensions that add tools, slash commands, and hooks."}
-         {:file "extending.md" :title "Clojure extensions" :section "Extensions" :order 80
-          :blurb "Writing Clojure extensions: custom tools, prompts, and doc pages."}]}
+         {:file "extending.md" :title "Extending Vis" :section "Extensions" :order 70
+          :blurb "One guide to extending Vis: drop-in Python extensions and full-surface Clojure extensions."}]}

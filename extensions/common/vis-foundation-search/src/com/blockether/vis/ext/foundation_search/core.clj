@@ -1416,15 +1416,27 @@
 ;; `:tag :observation` carried INLINE on each `vis/symbol` opts map
 ;; above; register-extension! auto-populates the op registry.
 
+(vis/register-toggle!
+  {:id "web_search"
+   :label "Web search"
+   :description
+   "Expose the live research tools backed by Exa MCP and arXiv. When OFF, the search extension is not bound."
+   :default true
+   :owner :vis
+   :persist? true
+   :group :extensions})
+
 (def vis-extension
   (vis/extension
     {:ext/name "foundation-search"
      :ext/description
-     "Live research bindings: ONE native `search` tool (kind = web | code | papers) over Exa MCP + arxiv; search_web / search_code / search_papers remain sandbox verbs."
+     "Live research bindings: ONE native `search` tool (kind = web | code | papers) over Exa MCP + arxiv; search_web / search_code / search_papers remain sandbox verbs. Bound when the `web_search` toggle is ON (default)."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
      :ext/license "Apache-2.0"
+     :ext/activation-fn (fn [_env]
+                          (vis/toggle-enabled? "web_search"))
      :ext/engine {:ext.engine/builtin? true :ext.engine/symbols search-symbols}
      :ext/kind "search"}))
 

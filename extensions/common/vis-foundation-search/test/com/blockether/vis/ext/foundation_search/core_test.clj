@@ -416,6 +416,22 @@ const total = add(1, 2);")
                 (let [scopes (set (map :ext.symbol/engine-scope search/search-symbols))]
                   (expect (= #{nil} scopes))))))
 
+(describe "the web_search toggle"
+          (it "is persisted, enabled by default, and gates the extension"
+              (let
+                [spec
+                 (vis/toggle-spec "web_search")
+
+                 active?
+                 (:ext/activation-fn search/vis-extension)]
+
+                (expect (= "Web search" (:label spec)))
+                (expect (true? (:default spec)))
+                (expect (true? (:persist? spec)))
+                (expect (true? (active? nil)))
+                (with-redefs [vis/toggle-enabled? (constantly false)]
+                  (expect (false? (active? nil)))))))
+
 (defn- routed
   "Run `search` with the three per-kind fns stubbed so the assertion sees ONLY
    the dispatch decision. Redefs live INSIDE the call (lazytest defers `it`

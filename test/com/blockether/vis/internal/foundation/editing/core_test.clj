@@ -2710,39 +2710,42 @@
 
 (defdescribe
   multi-root-safe-path-test
-  (it "accepts paths under a LIVE filesystem root (trunk==clone), rejects paths outside every root"
-      (let
-        [safe-path
-         (private-fn "safe-path")
+  (it
+    "accepts paths under a LIVE filesystem root (trunk==clone), rejects paths outside every root"
+    (let
+      [safe-path
+       (private-fn "safe-path")
 
+       primary
+       (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))
+
+       ctx-root
+       (mk-tmp-dir "vis-ctxroot")]
+
+      (binding
+        [workspace/*workspace-root*
          primary
-         (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))
 
-         ctx-root
-         (mk-tmp-dir "vis-ctxroot")]
+         workspace/*filesystem-roots*
+         [{:trunk ctx-root :clone ctx-root}]]
 
-        (binding
-          [workspace/*workspace-root*
-           primary
-
-           workspace/*filesystem-roots*
-           [{:trunk ctx-root :clone ctx-root}]]
-
-          (expect (string/starts-with? (.getPath ^java.io.File (safe-path "deps.edn")) primary))
-          (expect (string/starts-with? (.getPath ^java.io.File
-                                                 (safe-path (str ctx-root "/sub/file.clj")))
-                                       ctx-root))
+        (expect (string/starts-with? (.getPath ^java.io.File (safe-path "deps.edn")) primary))
+        (expect (string/starts-with? (.getPath ^java.io.File
+                                               (safe-path (str ctx-root "/sub/file.clj")))
+                                     ctx-root))
+        (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))
+        (expect (throws? clojure.lang.ExceptionInfo
+                         #(safe-path (str ctx-root "/../../../../etc/hosts"))))
+        ;; /tmp (and $TMPDIR) are ALWAYS reachable, independent of the bound
+        ;; roots — scratch under the system temp dir just works.
+        (binding [workspace/*filesystem-roots* nil]
+          (expect (some? (safe-path "/tmp/vis-safe-path-probe.txt")))
+          (expect (some? (safe-path (str (System/getProperty "java.io.tmpdir")
+                                         "/vis-safe-path-probe.txt"))))
+          ;; ...but a NON-temp path outside every root is still rejected.
           (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))
-          (expect (throws? clojure.lang.ExceptionInfo
-                           #(safe-path (str ctx-root "/../../../../etc/hosts"))))
-          ;; /tmp (and $TMPDIR) are ALWAYS reachable, independent of the bound
-          ;; roots — scratch under the system temp dir just works.
-          (binding [workspace/*filesystem-roots* nil]
-            (expect (some? (safe-path "/tmp/vis-safe-path-probe.txt")))
-            (expect (some? (safe-path (str (System/getProperty "java.io.tmpdir")
-                                           "/vis-safe-path-probe.txt"))))
-            ;; ...but a NON-temp path outside every root is still rejected.
-            (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))))))
+          ;; Vis's own config home is available without a /fs grant.
+          (expect (some? (safe-path (str (System/getProperty "user.home") "/.vis/config.yml"))))))))
   (it
     "expands a leading ~ / ~/ so a home-relative path resolves to the real file (regression: was treated as a literal ~ segment under cwd)"
     (let
@@ -2840,6 +2843,9 @@
         (let [out (coerce [{"path" "p.txt" "from_anchor" "12:abc" "replace" "new"}])]
           (expect (= 1 (count out)))
           (expect (= "12:abc" (get (first out) "from_anchor")))))
+    (it "treats a serializer-default empty to_anchor as omission"
+        (let [out (coerce [{"path" "p.txt" "from_anchor" "12:abc" "to_anchor" "" "replace" "new"}])]
+          (expect (= {"path" "p.txt" "from_anchor" "12:abc" "replace" "new"} (first out)))))
     (it "accepts only a non-empty vector of edit maps"
         (expect (throws? clojure.lang.ExceptionInfo #(coerce [])))
         (expect (throws? clojure.lang.ExceptionInfo
@@ -4644,8 +4650,8 @@
           (expect (not (has? (find-paths path) "vendor/corp/secret.txt")))))))
 
 (defdescribe
-  search-overlay-config-test
-  ;; Issue #23: a `:search {:include-gitignored-paths [...]}` config overlay
+  grep-overlay-config-test
+  ;; Issue #23: a `:grep {:include-gitignored-paths [...]}` config overlay
   ;; re-includes chosen gitignored subtrees for rg AND find_files with
   ;; is_respect_gitignore left at its DEFAULT — the walker descends the
   ;; excluded dir (which a `.gitignore` `!` negation can never do: git never
@@ -4676,15 +4682,15 @@
      overlay!
      (fn [search-block f]
        (with-redefs
-         ;; `config/search-overlay` reads the RAW, string-keyed config block.
+         ;; `config/search-overlay` reads the raw `grep` config block.
          [config/load-config-raw
           (fn []
-            {"search" (cond-> {}
-                        (seq (:include-gitignored-paths search-block))
-                        (assoc "include_gitignored_paths" (:include-gitignored-paths search-block))
+            {"grep" (cond-> {}
+                      (seq (:include-gitignored-paths search-block))
+                      (assoc "include_gitignored_paths" (:include-gitignored-paths search-block))
 
-                        (seq (:always-exclude search-block))
-                        (assoc "always_exclude" (:always-exclude search-block)))})]
+                      (seq (:always-exclude search-block))
+                      (assoc "always_exclude" (:always-exclude search-block)))})]
          (f)))
 
      fixture!

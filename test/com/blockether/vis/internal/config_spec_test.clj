@@ -66,7 +66,7 @@
                                 "allow" [{"method" "POST" "path" "/v1/**"}]}]}}
    "environment" {"ANTHROPIC_API_KEY" "secret"}
    "db_spec" {"backend" "sqlite" "path" "/tmp/vis.db"}
-   "search" {"include_gitignored_paths" ["repositories/"] "always_exclude" ["target/"]}
+   "grep" {"include_gitignored_paths" ["repositories/"] "always_exclude" ["target/"]}
    "toggles" {"reasoning_level" "deep"}
    "python" {"resource_cache" "~/.vis/cache/graal-resources"}
    "tui_settings" {"theme_name" "dark" "contributors_disabled" ["voice"]}
@@ -98,6 +98,8 @@
     "rejects keyword keys, aliases, unknown keys, and invalid security values"
     (expect (not (config-spec/valid? {:filesystem {}})))
     (expect (not (config-spec/valid? {"filesystem" {}})))
+    ;; `search` is a retired top-level config block; only `grep` configures grep.
+    (expect (not (config-spec/valid? {"search" {"include_gitignored_paths" ["repositories/"]}})))
     ;; #50: snake_case is the ONLY accepted spelling — kebab-case keys are rejected.
     (expect (not (config-spec/valid? (assoc-in full-config ["providers" 0 "api-key"] "k"))))
     (expect (not (config-spec/valid?
@@ -267,8 +269,8 @@
         [spec-name [:config :model-map :model :models :provider :providers :rate-limit
                     :router-network :budget :tokens :router :workspace-entry :workspace-entries
                     :workspace :jail-filesystem :jail :network-rule-allow :network-rule-allows
-                    :network-rule :network-rules :network :prompt-map :system-prompt :search
-                    :db-spec :tui-settings :mcp-server :mcp-servers :mcp]]
+                    :network-rule :network-rules :network :prompt-map :system-prompt :grep :db-spec
+                    :tui-settings :mcp-server :mcp-servers :mcp]]
         (expect (s/get-spec (keyword "com.blockether.vis.internal.config-spec" (name spec-name))))))
   (it
     "keeps every declared key set, schema, and exhaustive fixture in sync"
@@ -330,7 +332,7 @@
         [config-spec/network-keys config-spec/network-schema (set (keys network))]
         [config-spec/prompt-keys config-spec/prompt-schema
          (set (keys (get full-config "system_prompt")))]
-        [config-spec/search-keys config-spec/search-schema (set (keys (get full-config "search")))]
+        [config-spec/grep-keys config-spec/grep-schema (set (keys (get full-config "grep")))]
         [config-spec/db-keys config-spec/db-schema (set (keys (get full-config "db_spec")))]
         [config-spec/tui-keys config-spec/tui-schema (set (keys (get full-config "tui_settings")))]
         [config-spec/mcp-keys config-spec/mcp-schema (set (keys mcp))]
@@ -369,9 +371,9 @@
       (expect (= ["jail: value rejected by the jail contract"]
                  (config-spec/explain-problems {"jail" 5}))))
   (it "explain-problems pinpoints the nested field path, with a did-you-mean"
-      (expect (= [(str "search.include-gitignored-paths: unknown key (config is closed)"
-                       " — did you mean \"search.include_gitignored_paths\"?")]
-                 (config-spec/explain-problems {"search" {"include-gitignored-paths" ["a"]}})))
+      (expect (= [(str "grep.include-gitignored-paths: unknown key (config is closed)"
+                       " — did you mean \"grep.include_gitignored_paths\"?")]
+                 (config-spec/explain-problems {"grep" {"include-gitignored-paths" ["a"]}})))
       (expect (= ["jail.filesystem.allow_reed: unknown key (config is closed)"]
                  (config-spec/explain-problems {"jail" {"filesystem" {"allow_reed" ["x"]}}})))
       (expect (= ["providers[0].models[0].context: value rejected by the context contract"]
@@ -384,10 +386,10 @@
                                                                           "command" "x"}}}}))))
   (it "assert-config! names the offending fields in the thrown message"
       (let
-        [e (try (config-spec/assert-config! {"search" {"include-gitignored-paths" ["a"]}} "vis.yml")
+        [e (try (config-spec/assert-config! {"grep" {"include-gitignored-paths" ["a"]}} "vis.yml")
                 nil
                 (catch clojure.lang.ExceptionInfo e e))]
-        (expect (.contains (ex-message e) "search.include-gitignored-paths"))
+        (expect (.contains (ex-message e) "grep.include-gitignored-paths"))
         (expect (.contains (ex-message e) "did you mean"))
         (expect (= ["vis.yml"] [(:source (ex-data e))]))
         (expect (seq (:fields (ex-data e))))
@@ -397,4 +399,4 @@
         (let [panel (:vis/panel (ex-data e))]
           (expect (every? string? panel))
           (expect (some #(.contains ^String % "Invalid Vis configuration in vis.yml") panel))
-          (expect (some #(.contains ^String % "search.include-gitignored-paths") panel))))))
+          (expect (some #(.contains ^String % "grep.include-gitignored-paths") panel))))))

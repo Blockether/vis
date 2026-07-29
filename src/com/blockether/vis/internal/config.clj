@@ -625,7 +625,7 @@
   (merge (into {}
                (map (juxt (comp #(str/replace % "-" "_") name) identity))
                #{:providers :default-provider :default-model :router :system-prompt :workspace
-                 :enabled :filesystem :jail :network :environment :db-spec :search :toggles
+                 :enabled :filesystem :jail :network :environment :db-spec :grep :toggles
                  :tui-settings :mcp :name :context :output-limit :id :api-key :models :base-url
                  :api-style :compatibility :responses-path :llm-headers :extra-body :rate-limit
                  :budget :tokens :same-provider-delays-ms :fallback-after-ms :timeout-ms
@@ -1019,7 +1019,7 @@
   (config-spec/explain-problems (load-config-raw)))
 
 (def default-search-always-exclude
-  "Default `:search :always-exclude` patterns (`.gitignore` syntax) guarding
+  "Default `:grep :always-exclude` patterns (`.gitignore` syntax) guarding
    the subtrees an `:include-gitignored-paths` overlay re-includes:
    machine-generated dirs nobody wants surfaced even inside a rescued vendored
    repo. Setting `:always-exclude` in config REPLACES this list (vectors
@@ -1028,18 +1028,18 @@
    ".next/" "out/"])
 
 (defn search-overlay
-  "Return the search overlay as an internal keyword-keyed map, or nil when unset.
+  "Return the grep overlay as an internal keyword-keyed map, or nil when unset.
    The source configuration remains string-keyed and spec-validated."
   []
   (let
-    [search
-     (get (load-config-raw) "search")
+    [grep
+     (get (load-config-raw) "grep")
 
      include-gitignored-paths
-     (get search "include_gitignored_paths")
+     (get grep "include_gitignored_paths")
 
      always-exclude
-     (get search "always_exclude")]
+     (get grep "always_exclude")]
 
     (when (or (seq include-gitignored-paths) (seq always-exclude))
       {:include-gitignored-paths (mapv str include-gitignored-paths)

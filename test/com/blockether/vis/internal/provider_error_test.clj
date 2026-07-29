@@ -302,3 +302,17 @@
                        :provider-message "Extra inputs are not permitted"}}]
           (expect (= :generic (perr/provider-error-kind err)))
           (expect (not= "Context window exceeded" (perr/provider-error-title err)))))))
+
+(defdescribe
+  billing-required-error-test
+  (let
+    [err {:message "Exceptional status code: 402"
+          :data {:status 402 :body "{\"error\":{\"message\":\"Payment required: add credits\"}}"}}]
+    (it "turns HTTP 402 into a clear, non-retryable billing card"
+        (expect (= :billing (perr/provider-error-kind err)))
+        (expect (= "Provider billing required" (perr/provider-error-title err)))
+        (expect (str/includes? (perr/provider-error-explanation err) "requires payment"))
+        (expect (str/includes? (perr/provider-error-next-step err) "billing and available credits"))
+        (let [block (first (perr/provider-error-content err))]
+          (expect (= "provider_billing" (get block "code")))
+          (expect (false? (get block "retryable")))))))

@@ -190,14 +190,14 @@
         (try (.mkdirs dir)
              (spit yml
                    (str "system_prompt: Prefer RST.\n"
-                        "search:\n  include_gitignored_paths:\n    - repositories/\n"))
+                        "grep:\n  include_gitignored_paths:\n    - repositories/\n"))
              (expect (= {"system_prompt" "Prefer RST."
-                         "search" {"include_gitignored_paths" ["repositories/"]}}
+                         "grep" {"include_gitignored_paths" ["repositories/"]}}
                         (read-yaml (.getPath yml))))
              (spit yml "{{{{: not yaml")
              (expect (nil? (read-yaml (.getPath yml))))
              (finally (rm-rf! dir)))))
-  (it "search-overlay adapts the validated string block"
+  (it "search-overlay adapts the validated grep config block"
       (expect (nil? (with-redefs
                       [config/load-config-raw (fn []
                                                 {})]
@@ -205,15 +205,15 @@
       (let
         [overlay (with-redefs
                    [config/load-config-raw (fn []
-                                             {"search" {"include_gitignored_paths"
-                                                        ["repositories/"]}})]
+                                             {"grep" {"include_gitignored_paths"
+                                                      ["repositories/"]}})]
                    (config/search-overlay))]
         (expect (= ["repositories/"] (:include-gitignored-paths overlay)))
         (expect (= config/default-search-always-exclude (:always-exclude overlay))))
       (expect (= ["*.log"]
                  (:always-exclude (with-redefs
                                     [config/load-config-raw (fn []
-                                                              {"search"
+                                                              {"grep"
                                                                {"include_gitignored_paths" ["r/"]
                                                                 "always_exclude" ["*.log"]}})]
                                     (config/search-overlay)))))))
@@ -300,7 +300,7 @@
            (spit gstate "providers:\n  - id: prov-a\n")
            (spit root-yml
                  (str "system_prompt: FROM-ROOT\n"
-                      "search:\n  include_gitignored_paths:\n    - repositories/\n"))
+                      "grep:\n  include_gitignored_paths:\n    - repositories/\n"))
            (spit nested-yml "system_prompt: FROM-NESTED\n")
            (with-redefs
              [config/state-path
@@ -322,7 +322,7 @@
                ;; the nested overlay wins the conflicting key
                (expect (= "FROM-NESTED" (get cfg "system_prompt")))
                ;; disjoint keys from every tier survive the merge
-               (expect (= ["repositories/"] (get-in cfg ["search" "include_gitignored_paths"])))
+               (expect (= ["repositories/"] (get-in cfg ["grep" "include_gitignored_paths"])))
                (expect (= ["prov-a"] (mapv #(get % "id") (get cfg "providers"))))
                (expect (= 1.0 (get-in cfg ["router" "budget" "max_cost"]))))
              ;; drop the nested overlay entirely -> root wins
@@ -351,7 +351,7 @@
       (try (.mkdirs dir)
            (spit gyml
                  (str "system_prompt: FROM-YAML\n"
-                      "search:\n  include_gitignored_paths:\n    - repositories/\n"))
+                      "grep:\n  include_gitignored_paths:\n    - repositories/\n"))
            (spit gstate "system_prompt: FROM-STATE\n")
            (with-redefs
              [config/state-path
@@ -371,7 +371,7 @@
                ;; conflicting key: the machine-written state.yml wins
                (expect (= "FROM-STATE" (get cfg "system_prompt")))
                ;; YAML-only keys still land (merged, not ignored)
-               (expect (= ["repositories/"] (get-in cfg ["search" "include_gitignored_paths"])))))
+               (expect (= ["repositories/"] (get-in cfg ["grep" "include_gitignored_paths"])))))
            ;; ~/.vis accepts vis.yml / vis.yaml spellings as fallbacks
            (expect (= ["config.yml" "config.yaml" "vis.yml" "vis.yaml"]
                       (mapv #(.getName (io/file ^String %)) (@#'config/global-config-yaml-paths))))

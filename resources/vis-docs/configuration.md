@@ -354,6 +354,18 @@ environment:
 
 Config wins over the real environment; removing the entry reveals the process value again.
 
+## Feature toggles
+
+Built-in extensions can expose a boolean toggle under `toggles:`. Toggle values merge with the rest of the config and take effect after `/reload` (or the next environment build):
+
+```yaml
+toggles:
+  # Default: true. Set false to remove the Exa/arXiv live-research extension.
+  web_search: false
+```
+
+When `web_search` is false, Vis does not bind `search`, `search_web`, `search_code`, or `search_papers`; no request can be sent to Exa through that extension.
+
 ## Database
 
 Sessions, turns, and durable agent state live in SQLite. Resolution order: explicit `--db` flag → `VIS_DB_PATH` env var → `db_spec` in config → the default `~/.vis/vis.mdb`. Use `--db :memory` for a throwaway session.
@@ -364,9 +376,9 @@ db_spec:
   path: /somewhere/else/vis.db
 ```
 
-## Search
+## Grep
 
-The `search` block tunes what `grep` may see. By default
+The `grep` block tunes what `grep` may see. By default
 both honor `.gitignore`; `include_gitignored_paths` re-includes chosen
 gitignored subtrees — the walker descends them as if
 `is_respect_gitignore=False` were passed **for those subtrees only**,
@@ -379,7 +391,7 @@ tool-side overlay can.
 
 ```yaml
 # vis.yml
-search:
+grep:
   include_gitignored_paths:
     - repositories/
   # pruned even inside re-included subtrees; setting it REPLACES the default list:
@@ -399,7 +411,7 @@ search:
 
 ```yaml
 # vis.yml
-search:
+grep:
   include_gitignored_paths: [repositories/]
   always_exclude: [.git/, node_modules/, target/]
 ```

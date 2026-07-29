@@ -430,7 +430,7 @@ through `wrap-argv`, so they are never `sandbox-exec`-wrapped. A reviewed
 extension can therefore shell out to the same denied binary and expose it as a
 narrow, audited tool. The whole thing is one file dropped into
 `~/.vis/extensions/` (global) or `<project>/.vis/extensions/` (project-local) —
-no rebuild, `/reload`-live. See [Python extensions](python-extensions.md) for
+no rebuild, `/reload`-live. See [Extending Vis](extending.md#python-extensions) for
 the full authoring surface; here is a complete, buildable proxy:
 
 ```python
@@ -536,10 +536,24 @@ paths.
 Pure compiler/policy tests run on every OS. Socket and Seatbelt enforcement tests
 run only in an unconfined test JVM: a managed JVM that already has
 `VIS_SEATBELT_ACTIVE=1` cannot apply a second profile or bind arbitrary fixture
-ports, so those cases report a conditional skip. CI runs both the macOS job (real
-Seatbelt, `VIS_REQUIRE_MACOS_SANDBOX_E2E=1`) and the Linux job (real bubblewrap,
-`VIS_REQUIRE_LINUX_SANDBOX_E2E=1`), so the OS boundary is executed — not vacuously
-skipped — on both platforms.
+ports, so those local cases report a conditional skip.
+
+The repository CI is deliberately stricter. Its Ubuntu job installs `bubblewrap`
+and `passt`, sets `VIS_REQUIRE_LINUX_SANDBOX_E2E=1`, and fails before the suite
+continues unless `bwrap` can actually create its required namespace and `pasta`
+is executable. The macOS job similarly sets `VIS_REQUIRE_MACOS_SANDBOX_E2E=1`.
+Therefore real OS enforcement is mandatory in CI, not best-effort coverage hidden
+behind a conditional test.
+
+For self-hosted Linux runners, provision the same prerequisites before invoking
+the suite:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y bubblewrap passt
+sudo sysctl -w kernel.unprivileged_userns_clone=1  # only where the distro disables it
+VIS_REQUIRE_LINUX_SANDBOX_E2E=1 clojure -M:test
+```
 
 The focused suites cover:
 
@@ -550,9 +564,9 @@ The focused suites cover:
 - PTY/background input and attach bridge behavior;
 - managed process launch, fail-closed session lookup, CA/truststore injection;
 - config validation and `jail.enabled: true` opt-in / omitted-or-`false` as the off default;
-- Linux bubblewrap argv compilation (every OS), WSL1/WSL2 detection, and real bwrap filesystem containment + `deny_exec` exec-block + pasta filtered egress (only the proxy port reachable; control-plane and internet blocked) on Linux CI;
+- Linux bubblewrap argv compilation (every OS), WSL1/WSL2 detection, and real bwrap filesystem containment + `deny_exec` exec-block + pasta filtered egress (only the proxy port reachable; control-plane and internet blocked) on required Linux CI;
 - fail-loud passthrough + reason when a jail is requested on a host that cannot enforce it.
 
-Run the relevant namespaces through the Clojure language pack or the full macOS
-CI job. A test JVM already started by a sandboxed session validates its inherited
-profile but cannot substitute for the unconfined CI enforcement run.
+Run the relevant namespaces through the Clojure language pack or the full CI job.
+A test JVM already started by a sandboxed session validates its inherited profile
+but cannot substitute for the unconfined enforcement run.

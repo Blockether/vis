@@ -1075,3 +1075,130 @@ vis.extension(
     (it "reports a parse error for a blank target"
         (let [s (report nil "   ")]
           (expect (re-find #"\"error\"" s))))))
+
+;; =============================================================================
+;; Native tools declared FROM Python (schema + renderer)
+;; =============================================================================
+
+(def ^:private weather-py
+  "\"\"\"Native-tool fixture: a Python-declared native tool.\"\"\"
+import vis
+
+
+def weather_lookup(input):
+    \"\"\"Implementation docstring - never the model-facing native surface.\"\"\"
+    return {\"city\": input[\"city\"], \"temp_c\": 21}
+
+
+def _render(result):
+    return {\"summary\": result[\"city\"] + \" \" + str(result[\"temp_c\"]) + \"C\",
+            \"body\": \"rendered in python\"}
+
+
+vis.extension(
+    name=\"weather\",
+    description=\"Weather fixture extension.\",
+    version=\"0.1.0\",
+    kind=\"integration\",
+    alias=\"weather\",
+    symbols=[
+        vis.symbol(
+            weather_lookup,
+            tag=\"observation\",
+            description=\"Look up the weather for ONE city.\",
+            result=\"Object with string `city` and number `temp_c`.\",
+            schema={\"type\": \"object\",
+                    \"properties\": {\"city\": {\"type\": \"string\",
+                                            \"description\": \"City name.\"}},
+                    \"required\": [\"city\"],
+                    \"additionalProperties\": False},
+            render=_render,
+            color_role=\"search\",
+        ),
+    ],
+)
+")
+
+(def ^:private broken-native-py
+  "\"\"\"A native tool missing its result contract must FAIL to load.\"\"\"
+import vis
+
+
+def broken_thing(input):
+    \"\"\"Docstring.\"\"\"
+    return {}
+
+
+vis.extension(
+    name=\"broken\",
+    description=\"Broken fixture extension.\",
+    kind=\"integration\",
+    alias=\"broken\",
+    symbols=[
+        vis.symbol(broken_thing,
+                   description=\"Missing its result contract.\",
+                   schema={\"type\": \"object\", \"properties\": {}}),
+    ],
+)
+")
+
+(defn- symbol-entry-of
+  [ext sym]
+  (some #(when (= sym (:ext.symbol/symbol %)) %)
+        (get-in ext [:ext/engine :ext.engine/symbols])))
+
+(defdescribe
+  python-native-tool-test
+  (it "a Python symbol carrying schema= is a first-class native tool"
+      (with-loaded {"weather.py" weather-py}
+                   (fn [_ _]
+                     (let
+                       [ext
+                        (registered "weather")
+
+                        entry
+                        (symbol-entry-of ext 'lookup)]
+
+                       (expect (true? (:ext.symbol/native-tool? entry)))
+                       (expect (= "Look up the weather for ONE city."
+                                  (:ext.symbol/description entry)))
+                       (expect (= "Object with string `city` and number `temp_c`."
+                                  (:ext.symbol/result entry)))
+                       ;; schema vocabulary is KEYWORDIZED, property names stay strings
+                       (expect (= {:type "object"
+                                   :properties {"city" {:type "string"
+                                                        :description "City name."}}
+                                   :required ["city"]
+                                   :additionalProperties false}
+                                  (:ext.symbol/schema entry)))
+                       (expect (= :tool-color/search (:ext.symbol/color-role entry)))
+                       ;; and it shows up in the ONE native-tool walk
+                       (let [tools (extension/native-tools-for [ext])]
+                         (expect (= ["lookup"] (mapv :name tools)))
+                         (expect (fn? (:render (first tools)))))))))
+  (it "the model-facing doc is the description + result + generated params"
+      (with-loaded {"weather.py" weather-py}
+                   (fn [_ _]
+                     (let [text (extension/symbol-doc-text
+                                  (symbol-entry-of (registered "weather") 'lookup))]
+                       (expect (str/includes? text "Look up the weather for ONE city."))
+                       (expect (str/includes? text "Raw result:"))
+                       (expect (str/includes? text "`city` (string, required)"))
+                       ;; the implementation docstring never reaches the model
+                       (expect (not (str/includes? text "Implementation docstring")))))))
+  (it "render= becomes the symbol's op-card renderer"
+      (with-loaded {"weather.py" weather-py}
+                   (fn [_ _]
+                     (let
+                       [render
+                        (:ext.symbol/render (symbol-entry-of (registered "weather") 'lookup))
+
+                        card
+                        (render {"city" "Kraków" "temp_c" 21})]
+
+                       (expect (= {:summary "Kraków 21C" :body "rendered in python"} card))))))
+  (it "an incomplete native tool fails the load instead of registering"
+      (with-loaded {"broken.py" broken-native-py}
+                   (fn [result _]
+                     (expect (= 1 (:failed result)))
+                     (expect (nil? (registered "broken")))))))

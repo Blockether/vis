@@ -592,9 +592,15 @@
       (is (false? (#'pj/wsl1?))))))
 
 (deftest linux-e2e-runner-contract
+  ;; Local/foreign hosts may legitimately skip kernel E2E. The Linux CI job opts
+  ;; into this contract, so its conditional E2E cases can NEVER become vacuous.
   (when (= "1" (System/getenv "VIS_REQUIRE_LINUX_SANDBOX_E2E"))
-    (is (and (linux?) (pj/supported?))
-        "required Linux E2E runner must be Linux with bubblewrap installed")))
+    (is (linux?) "required Linux E2E runner must be Linux")
+    (is (pj/supported?) "required Linux E2E runner must have bubblewrap installed")
+    (is (sandbox-applicable?) "required Linux E2E runner must permit a real bubblewrap namespace")
+    (is (some #(.canExecute (io/file ^String %))
+              ["/usr/bin/pasta" "/bin/pasta" "/usr/local/bin/pasta"])
+        "required Linux E2E runner must provide pasta from the passt package")))
 
 (deftest linux-real-containment
   ;; Real bubblewrap enforcement — runs ONLY on a Linux host with bwrap (i.e. the

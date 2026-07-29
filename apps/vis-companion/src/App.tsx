@@ -64,6 +64,9 @@ export function App() {
   // holds a message there is nothing to navigate, so the shell shows Machines
   // only — no Sessions tab, no session list shaped like an error page.
   const [offline, setOffline] = useState<string | null>(null);
+  // A Wi-Fi → mobile handoff keeps `navigator.onLine` true, so it does not emit
+  // the browser's `online` event. A failed request therefore explicitly kicks
+  // address recovery instead of waiting for the next wake event.
   const [compat, setCompat] = useState<Compat | null>(null);
   const [compatChecking, setCompatChecking] = useState(false);
   const [compatNonce, setCompatNonce] = useState(0);
@@ -97,6 +100,12 @@ export function App() {
   const refresh = useCallback(async () => {
     setConns(await loadConnections());
     setActive(await getActiveConnection());
+  }, []);
+
+  const [recoveryNonce, setRecoveryNonce] = useState(0);
+  const handleUnreachable = useCallback((message: string | null) => {
+    setOffline(message);
+    if (message) setRecoveryNonce((nonce) => nonce + 1);
   }, []);
 
   const addConnection = useCallback(
@@ -364,7 +373,7 @@ export function App() {
   //      advertises them), so an app paired on the LAN can still learn the
   //      tailnet address without re-scanning a QR, and
   //   2. moves itself onto a more durable address as soon as that one answers.
-  // A hand-picked address (`pinned`) is never overridden, and loopback is never
+  // A hand-picked address is never changed while it works, and loopback is never
   // left behind — see `lib/endpoints.ts`.
   const activeUrl = active?.url ?? '';
   const activeToken = active?.token;
@@ -382,10 +391,13 @@ export function App() {
       const signal = ctrl.signal;
       const creds = { url: activeUrl, token: activeToken };
       let advertised: string[] = [];
+      let activeResponded = false;
       try {
         advertised = (await new GatewayClient(creds).capabilities(signal)).addresses ?? [];
+        activeResponded = true;
       } catch {
-        // Older gateway, or simply offline: what pairing gave us still stands.
+        // An address can disappear while the device remains online (for example,
+        // during Wi-Fi → mobile handoff). Probe the stored alternatives below.
       }
       if (cancelled) return;
       // What the gateway advertises is authoritative when it answers at all:
@@ -400,12 +412,16 @@ export function App() {
         if (cancelled) return;
         setConns(await loadConnections());
       }
-      if (activePinned) return;
-      const better = known.filter((url) => isUpgrade(url, activeUrl));
-      if (!better.length) return;
+      // A pinned address stays preferred while it works, but it must not turn a
+      // temporary network change into a permanent dead connection.
+      if (activePinned && activeResponded) return;
+      const candidates = activeResponded
+        ? known.filter((url) => isUpgrade(url, activeUrl))
+        : known;
+      if (!candidates.length) return;
       const reachable = (
         await Promise.all(
-          better.map(async (url) => {
+          candidates.map(async (url) => {
             try {
               return (await new GatewayClient({ ...creds, url }).ping(signal)) ? url : null;
             } catch {
@@ -416,11 +432,18 @@ export function App() {
       ).filter((url): url is string => url !== null);
       const chosen = bestAddress(reachable);
       if (cancelled || !chosen) return;
+      // The capabilities request failed but its follow-up ping won: the original
+      // address recovered before failover completed, so simply restore the UI.
+      if (chosen === activeUrl) {
+        setOffline(null);
+        return;
+      }
       // A machine the user renamed keeps its name across an address switch; an
       // auto-derived host label follows the address it describes.
       const named = Boolean(activeLabel) && activeLabel !== hostOf(activeUrl);
       await switchConnectionUrl(activeUrl, chosen, named ? {} : { label: hostOf(chosen) });
       if (cancelled) return;
+      setOffline(null);
       await refresh();
     };
 
@@ -434,7 +457,7 @@ export function App() {
       ctrl.abort();
       off();
     };
-  }, [activeUrl, activeToken, activePinned, activeLabel, knownAltsKey, refresh]);
+  }, [activeUrl, activeToken, activePinned, activeLabel, knownAltsKey, recoveryNonce, refresh]);
 
 
   // Native push: keep this device's token fresh with the active gateway, and
@@ -579,6 +602,7 @@ export function App() {
             onBack={leaveSession}
             onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
             onManageProviders={() => openSettings(openTarget.conn)}
+            shellStyle={shellStyle}
           />
         ) : (
           <SessionsScreen
@@ -586,7 +610,7 @@ export function App() {
             client={client}
             subscriptions={subscriptions}
             subscribedIds={watchedIds}
-            onUnreachable={setOffline}
+            onUnreachable={handleUnreachable}
             onOpen={openGatewaySession}
           />
         )}

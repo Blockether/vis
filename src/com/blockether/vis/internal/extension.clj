@@ -1488,6 +1488,18 @@
          {:type :extension/symbol-not-a-fn :var v}))
      (build-symbol-entry {:symbol sym :fn f :doc doc :arglists arglists :source source} opts))))
 
+(defn symbol-entry
+  "Build a symbol entry from ALREADY-RESOLVED parts instead of a Clojure var.
+
+   The constructor for hosts that have no var to point at — the Python
+   extension bridge, where `:fn`, `:doc` and `:arglists` are derived from a
+   Python function. `parts` is `{:symbol :fn :doc :arglists}` (plus optional
+   `:source`) and `opts` is EXACTLY the `symbol` opts map, native-tool keys
+   included, so a Python-declared native tool runs the SAME validation and can
+   never skip the `:schema` / `:description` / `:result` contract."
+  [parts opts]
+  (build-symbol-entry parts opts))
+
 (defn helper
   "Build a raw callable helper entry FROM A CLOJURE VAR.
 

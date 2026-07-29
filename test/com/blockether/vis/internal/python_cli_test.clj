@@ -185,3 +185,96 @@
                (expect (nil? error))
                (expect (re-find #"stdin piped-payload" (str stdout))))
              (finally (.close ^org.graalvm.polyglot.Context python-context))))))
+
+(defdescribe
+  python-module-exit-test
+  (it "preserves a bundled pytest collection failure's non-zero exit status"
+      (let
+        [dir
+         (java.nio.file.Files/createTempDirectory "vis-python-module-exit-"
+                                                  (make-array java.nio.file.attribute.FileAttribute
+                                                              0))
+
+         test-file
+         (.toFile (.resolve dir "test_import.py"))
+
+         _
+         (spit test-file "from missing_package import value\n")
+
+         ctx
+         (python-cli-context {:network? false :argv ["pytest" (.getAbsolutePath test-file)]})]
+
+        (try (let
+               [baos
+                (java.io.ByteArrayOutputStream.)
+
+                ps
+                (java.io.PrintStream. baos true "UTF-8")
+
+                exit
+                (with-redefs [config/original-stdout ps]
+                  ((var-get #'com.blockether.vis.internal.main/run-python-module!) ctx "pytest"))]
+
+               (expect (= 1 exit))
+               (expect (re-find #"ERROR collecting" (.toString baos "UTF-8"))))
+             (finally (.close ^org.graalvm.polyglot.Context ctx)
+                      (.delete test-file)
+                      (.delete (.toFile dir)))))))
+
+(defdescribe
+  python-module-pythonpath-test
+  (it
+    "uses PYTHONPATH for pytest collection, like a src-layout project"
+    (let
+      [dir
+       (java.nio.file.Files/createTempDirectory "vis-python-pythonpath-"
+                                                (make-array java.nio.file.attribute.FileAttribute
+                                                            0))
+
+       src
+       (.resolve dir "src")
+
+       package
+       (.resolve src "sample_project")
+
+       _
+       (java.nio.file.Files/createDirectories package
+                                              (make-array java.nio.file.attribute.FileAttribute 0))
+
+       init-file
+       (.toFile (.resolve package "__init__.py"))
+
+       test-file
+       (.toFile (.resolve dir "test_sample_project.py"))
+
+       _
+       (spit init-file "VALUE = 42\n")
+
+       _
+       (spit test-file
+             "from sample_project import VALUE\n\ndef test_value():\n    assert VALUE == 42\n")
+
+       ctx
+       (python-cli-context {:network? false
+                            :argv ["pytest" (.getAbsolutePath test-file)]
+                            :env {"PYTHONPATH" (.toString src)}})]
+
+      (try (let
+             [baos
+              (java.io.ByteArrayOutputStream.)
+
+              ps
+              (java.io.PrintStream. baos true "UTF-8")
+
+              exit
+              (with-redefs [config/original-stdout ps]
+                ((var-get #'com.blockether.vis.internal.main/run-python-module!) ctx "pytest"))]
+
+             (expect (= 0 exit))
+             (expect (re-find #"1 passed" (.toString baos "UTF-8"))))
+           (finally (.close ^org.graalvm.polyglot.Context ctx)
+                    (.delete test-file)
+                    (.delete init-file)
+                    (.delete (.toFile package))
+                    (.delete (.toFile src))
+                    (.delete (.toFile dir)))))))

@@ -269,15 +269,11 @@
               vec)))
 
 (def ^:private vis-always-roots
-  "Dirs under `~/.vis` the file tools may ALWAYS reach, independent of the
-   workspace roots: the Python-extension dir `~/.vis/extensions` (author/debug an
-   extension in any project) and the log dir `~/.vis/logs` (read vis's own
-   diagnostics). Canonical (symlinks resolved), computed once on first use;
+  "The `~/.vis` directory tree that file tools may ALWAYS reach, independent of
+   workspace roots. Canonical (symlinks resolved), computed once on first use;
    dropped when `user.home` is unset. Kept SEPARATE from `temp-roots`: a write
-   here is NOT captured as a session attachment (only temp writes are), and the
-   secret-bearing rest of `~/.vis` — `config.edn`, the session DB, `gateway/`
-   tokens — stays OUT of reach."
-  (delay (->> [".vis/extensions" ".vis/logs"]
+   here is NOT captured as a session attachment (only temp writes are)."
+  (delay (->> [".vis"]
               (keep (fn [^String sub]
                       (some-> (System/getProperty "user.home")
                               (java.io.File. sub))))
@@ -359,9 +355,8 @@
                    (when (and (not= tp cp) (.startsWith canonical tp))
                      (.resolve cp (.relativize tp canonical)))))
                mappings)
-         ;; system temp dirs (/tmp, $TMPDIR) + the always-on vis dirs
-         ;; (~/.vis/extensions, ~/.vis/logs) are ALWAYS reachable, independent of the
-         ;; workspace roots — /tmp scratch and extension authoring just work.
+         ;; system temp dirs (/tmp, $TMPDIR) + Vis's own ~/.vis tree are ALWAYS
+         ;; reachable, independent of workspace roots — config and diagnostics work.
          ;; LAST so an isolated draft's trunk↔clone remap still wins first.
          (some (fn [^java.nio.file.Path tr]
                  (when (.startsWith canonical tr) canonical))
@@ -1032,12 +1027,12 @@
    - `:custom-ignore-filenames [\".rgignore\"]` — the ONE ignore filename
      ripgrep's `ignore` crate does not register on its own (`.gitignore`,
      `.ignore`, `.git/info/exclude` and the global gitignore are native).
-   - `:unignore-globs` — the `:search :include-gitignored-paths` config
+   - `:unignore-globs` — the `:grep :include-gitignored-paths` config
      (issue #23): subtrees re-included although `.gitignore` excludes them.
      A gitignored DIRECTORY is never descended by any gitignore-honoring
      walker, which is why a `!` negation cannot do this and fff reopens those
      static prefixes in a second, ignore-free pass.
-   - `:exclude-globs` — the `:search :always-exclude` config guarding what
+   - `:exclude-globs` — the `:grep :always-exclude` config guarding what
      those re-includes would otherwise drag in.
 
    The config half is active only on the DEFAULT gitignore-respecting path: an
@@ -1791,7 +1786,7 @@
 
    Directory roots ALWAYS go through fff (fast, frecency-ranked) — including
    when the caller opted OUT of gitignore (`is_respect_gitignore` is passed
-   THROUGH to fff's native walker) and including `.rgignore` / `:search`
+   THROUGH to fff's native walker) and including `.rgignore` / `:grep`
    overlay projects, which fff honors natively via `overlay`. vis walks no
    tree here."
   [roots query is_hidden is_respect_gitignore candidate-page overlay]
@@ -1919,7 +1914,7 @@
      candidate-page
      (max (long limit) 300)
 
-     ;; `.rgignore` + the `:search` config overlay (issue #23), handed to fff
+     ;; `.rgignore` + the `:grep` config overlay (issue #23), handed to fff
      ;; itself — see `fff-ignore-overlay`.
      search-overlay
      (fff-ignore-overlay is_respect_gitignore is_gitignore_explicit)
@@ -2667,7 +2662,7 @@
      matches?
      (make-line-matcher needles)
 
-     ;; `.rgignore` + the `:search` config overlay (issue #23) — handed to fff
+     ;; `.rgignore` + the `:grep` config overlay (issue #23) — handed to fff
      ;; itself, see `fff-ignore-overlay`.
      search-overlay
      (fff-ignore-overlay is_respect_gitignore is_gitignore_explicit)
@@ -2675,7 +2670,7 @@
      ;; fff-first, ALWAYS: fff OWNS discovery. It enumerates the correct universe (nested
      ;; `.gitignore`-aware — NEVER descends node_modules/target/…) and needle-narrows via
      ;; native grep, ~280× faster than a raw walk. `is_respect_gitignore` is passed THROUGH
-     ;; to fff's walker, and `.rgignore` / the `:search` overlay ride along as fff's own
+     ;; to fff's walker, and `.rgignore` / the `:grep` overlay ride along as fff's own
      ;; ignore overlay — so there is no raw-walk fallback left (that bypass cost 120s on
      ;; this workspace). fff surfaces dotfiles a walk hid by descent, so re-apply the
      ;; include globs + hidden-below-root guard here.
@@ -2830,36 +2825,41 @@
   (when (empty? edits)
     (throw (ex-info "patch expects at least one edit"
                     {:type :ext.foundation.editing/invalid-patch-edits :got edits})))
-  (mapv (fn [edit]
-          (when-not (map? edit)
-            (throw (ex-info "patch edit must be a map"
-                            {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
-          (let
-            [missing
-             (seq (remove #(contains? edit %) patch-required-keys))
+  (mapv
+    (fn [edit]
+      (when-not (map? edit)
+        (throw (ex-info "patch edit must be a map"
+                        {:type :ext.foundation.editing/invalid-patch-edit :edit edit})))
+      (let
+        [missing
+         (seq (remove #(contains? edit %) patch-required-keys))
 
-             unknown
-             (seq (remove patch-allowed-keys (keys edit)))]
+         unknown
+         (seq (remove patch-allowed-keys (keys edit)))]
 
-            (when missing
-              (throw (ex-info (str "patch edit missing required keys: "
-                                   (str/join ", " (map #(str "'" % "'") missing))
-                                   ". Use a fresh lineno:hash from cat as from_anchor.")
-                              {:type :ext.foundation.editing/invalid-patch-edit
-                               :missing (vec missing)
-                               :edit edit})))
-            (when unknown
-              (throw (ex-info (str "patch edit has unknown keys: "
-                                   (str/join ", " (map #(str "'" % "'") unknown))
-                                   ". Allowed: "
-                                   (str/join ", " (sort patch-allowed-keys))
-                                   ".")
-                              {:type :ext.foundation.editing/invalid-patch-edit
-                               :unknown (vec unknown)
-                               :allowed (vec patch-allowed-keys)
-                               :edit edit}))))
-          (update edit "path" str))
-        edits))
+        (when missing
+          (throw (ex-info (str "patch edit missing required keys: "
+                               (str/join ", " (map #(str "'" % "'") missing))
+                               ". Use a fresh lineno:hash from cat as from_anchor.")
+                          {:type :ext.foundation.editing/invalid-patch-edit
+                           :missing (vec missing)
+                           :edit edit})))
+        (when unknown
+          (throw (ex-info (str "patch edit has unknown keys: "
+                               (str/join ", " (map #(str "'" % "'") unknown))
+                               ". Allowed: "
+                               (str/join ", " (sort patch-allowed-keys))
+                               ".")
+                          {:type :ext.foundation.editing/invalid-patch-edit
+                           :unknown (vec unknown)
+                           :allowed (vec patch-allowed-keys)
+                           :edit edit}))))
+      ;; Generated callers can serialize an omitted optional anchor as "".
+      ;; That is equivalent to omitting the single-line range endpoint.
+      (cond-> (update edit "path" str)
+        (= "" (get edit "to_anchor"))
+        (dissoc "to_anchor")))
+    edits))
 
 ;; -----------------------------------------------------------------------------
 ;; Per-path consecutive-failure tracker (Roo-style loop detector)

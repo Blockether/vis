@@ -52,7 +52,7 @@ That second gear is where context utilization drops on advanced tasks: the raw
 tool output lives in Python vars, never in the window, and the model decides
 what surfaces.
 
-Native contracts have one source: tool descriptions own routing and semantics; JSON Schemas own exact inputs. The agent discovers the live surface with `apropos` → `doc`, then follows `struct_index` → `struct_node` → `struct_patch` for supported code. See [Token optimization](token-optimization.md) and [Clojure extensions](extending.md#native-tool-contracts).
+Native contracts have one source: tool descriptions own routing and semantics; JSON Schemas own exact inputs. The agent discovers the live surface with `apropos` → `doc`, then follows `struct_index` → `struct_node` → `struct_patch` for supported code. See [Token optimization](token-optimization.md) and [Extending Vis](extending.md#native-tool-contracts).
 
 ```text
         NATIVE TOOL                    PYTHON SANDBOX
@@ -146,8 +146,7 @@ Vis runs in two builds. The launcher picks the best one it can find; you rarely 
 - **[JVM & native-image](jvm-native-image.md)**: how the Clojure core becomes a standalone binary.
 - **[Custom distributions](distributions.md)**: per-platform native artifacts and how they're built.
 - **[Configuration](configuration.md)**: providers and models, system_prompt overrides, router tuning, the database.
-- **[Python extensions](python-extensions.md)**: drop a `.py` file into `.vis/extensions/` — project-local tools, prompts, slash commands and guards, no rebuild, `/reload`able. Vis can write these for itself mid-session.
-- **[Clojure extensions](extending.md)**: the full-surface path — new tools, channels, providers, slash commands and doc pages, compiled into the binary.
+- **[Extending Vis](extending.md)**: one guide to both flavors — drop-in [Python extensions](extending.md#python-extensions) (`.py` in `.vis/extensions/`, no rebuild, `/reload`able, Vis can write them for itself mid-session) and [Clojure extensions](extending.md#clojure-extensions) (the full-surface path: tools, channels, providers, slash commands, doc pages, compiled into the binary).
 - **[Content-block protocol](content-blocks.md)**: the canonical role-labelled message, typed block, persistence, and streaming contract.
 
 Vis can also answer these questions itself: ask a running `vis` how to configure or extend it and it reads these same pages through its `vis_docs` tool.

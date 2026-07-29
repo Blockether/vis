@@ -3740,10 +3740,17 @@ def network_probe(method='GET', url=None, headers=None, body=None):
      (when (and (not host?) (not syntax?) base)
        (second (re-find #"name '([^']+)' is not defined" (str base))))
 
-     ;; Sandbox capability DENIAL — the model reached for the real filesystem /
-     ;; native / OS (importlib.exec_module on a project file, open(), socket,
-     ;; subprocess). GraalVM raises an OPAQUE `SecurityException: Operation is
-     ;; not allowed for:` / `… was excluded`. Steer it to the tools that DO work.
+     ;; Sandbox denial markers are produced by Vis's policy layer. Unlike a raw
+     ;; EACCES/EPERM from Seatbelt or bubblewrap, they are deterministic and safe
+     ;; to report because they contain neither the denied path nor approved roots.
+     sandbox-denial-operation
+     (some->> base
+              str
+              (re-find #"\[vis:sandbox_denied\] operation=([^ ]+) reason=outside_approved_filesystem_roots")
+              second)
+
+     ;; Generic sandbox capability denial — opaque runtime errors which cannot be
+     ;; distinguished reliably from a host-level permission failure.
      sandbox-denied?
      (boolean
        (and
@@ -3835,6 +3842,11 @@ def network_probe(method='GET', url=None, headers=None, body=None):
                           "different arguments, or read the inputs first); if it keeps "
                           "happening, tell the USER — it likely needs a fix in vis itself. "
                           "Original error: ")
+           sandbox-denial-operation
+           (str "Sandbox policy denied " sandbox-denial-operation
+                ": the resource is outside approved filesystem roots. "
+                "Use cat(path) to read, patch(path) to edit, repl_eval(language, code) for project code, "
+                "or ask the USER to grant access with `/fs add`. Original error: ")
            sandbox-denied?
            (str "Your sandbox has NO real filesystem / native / process access — "
                 "importlib + exec_module on a project file, open(), subprocess, and sockets "

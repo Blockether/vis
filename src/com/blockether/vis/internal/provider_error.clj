@@ -91,6 +91,12 @@
           #"(?i)(authentication|unauthorized|forbidden|credential|api[ -]?key|access[ -]?token|expired token|invalid token)"
           text)))))
 
+(defn- billing-required-error?
+  "True for an HTTP 402 payment/credits gate. This is terminal like auth: no
+   unchanged retry or model self-correction can make the provider accept it."
+  [status]
+  (= 402 status))
+
 (defn- anthropic-extra-usage-error?
   "True for Anthropic's 'third-party apps now draw from your extra usage' 400 —
    a quota/billing gate that svar retries transiently but that persists when the
@@ -296,6 +302,9 @@
       (auth-provider-error? status provider-message message)
       (str "WHAT HAPPENED: the provider rejected your credentials."
            (when (seq provider-message) (str " " provider-message)))
+      (billing-required-error? status)
+      (str "WHAT HAPPENED: the provider requires payment or has no usable credits."
+           (when (seq provider-message) (str " " provider-message)))
       (anthropic-extra-usage-error? status provider-message message)
       (str "WHAT HAPPENED: your Claude extra-usage allowance is exhausted — third-party "
            "apps draw from extra usage, not your plan. "
@@ -348,6 +357,9 @@
       :auth
       "Provider authentication failed"
 
+      :billing
+      "Provider billing required"
+
       :anthropic-extra-usage
       "Claude subscription quota exhausted"
 
@@ -395,6 +407,9 @@
 
       :auth
       (auth-provider-next-step data)
+
+      :billing
+      "NEXT STEP: check the provider's billing and available credits, then retry."
 
       :anthropic-extra-usage
       "NEXT STEP: add extra-usage credits at https://claude.ai/settings/usage, then retry."
@@ -464,6 +479,7 @@
           (invalid-thinking-signature-message? provider-message) :invalid-thinking-signature
           schema-rejection? :tool-schema
           (auth-provider-error? status provider-message message) :auth
+          (billing-required-error? status) :billing
           (anthropic-extra-usage-error? status provider-message message) :anthropic-extra-usage
           (rate-limit-error? status provider-message message) :rate-limit
           (transport-error? status provider-message message) :transport

@@ -26,6 +26,7 @@
    Empty/zero roots ⇒ DENY everything (fail closed)."
   (:require [clojure.string :as str])
   (:import [org.graalvm.polyglot.io FileSystem]
+           [java.io IOException]
            [java.nio.channels SeekableByteChannel]
            [java.nio.file Path Paths Files LinkOption StandardOpenOption]))
 
@@ -73,24 +74,16 @@
         :else (recur (.getParent anc) (cons (str (.getFileName anc)) tail))))))
 
 (def ^:private vis-always-roots
-  "Dirs under `~/.vis` the sandbox may ALWAYS read/write, independent of the
-   user's `/fs` roots: the Python-extension dir `~/.vis/extensions` (author or
-   debug an extension in any project) and the log dir `~/.vis/logs` (grep vis's
-   own diagnostics — `vis.log`, JFR dumps). Each canonicalized
-   ONCE via `real-path` (resolves the real path of `~/.vis`, then re-appends the
-   leaf, so it matches even before the dir exists). Held in a delay so the
-   syscall happens on first use. Kept SEPARATE from `temp-roots`: a write here is
-   NOT tapped to the OUTBOX (only temp writes are), and the secret-bearing rest
-   of `~/.vis` (config.edn, the session DB, gateway tokens) stays OUT of reach."
+  "The `~/.vis` directory tree that the sandbox may ALWAYS read/write,
+   independent of the user's `/fs` roots. Canonicalized ONCE via `real-path`
+   (which resolves the real path of `~/.vis`, even before a child exists). Held
+   in a delay so the syscall happens on first use. Kept SEPARATE from
+   `temp-roots`: a write here is NOT tapped to the OUTBOX (only temp writes are)."
   (delay (let [home (System/getProperty "user.home")]
-           (->> [["extensions"] ["logs"]]
-                (keep (fn [tail]
-                        (when-not (str/blank? (str home))
-                          (try (real-path (Paths/get (str home)
-                                                     (into-array String (cons ".vis" tail))))
-                               (catch Throwable _ nil)))))
-                distinct
-                vec))))
+           (if (str/blank? (str home))
+             []
+             (try [(real-path (Paths/get (str home) (into-array String [".vis"])))]
+                  (catch Throwable _ []))))))
 
 (defn- current-real-roots
   "Canonical (real) Paths of the CURRENT filesystem roots. Reads the root STRINGS
@@ -116,29 +109,28 @@
        vec))
 
 (defn- confine!
-  "Throw a clear SecurityException unless `p` resolves under a current root OR one
+  "Throw a clear IOException unless `p` resolves under a current root OR one
    of the always-allowed `extra-roots` (the engine outbox dir, the system temp
-   dirs `/tmp`/`$TMPDIR`, and the always-on vis dirs `~/.vis/extensions` + `~/.vis/logs`). Returns `p` (a Path) on
-   success. `cache` memoizes root canonicalization."
-  ^Path [roots-fn cache extra-roots p]
-  (let
-    [^Path pp
-     (if (instance? Path p) p (Paths/get (str p) (make-array String 0)))
+   dirs `/tmp`/`$TMPDIR`, and Vis's own `~/.vis` tree). Returns `p` (a Path) on
+   success. `cache` memoizes root canonicalization.
 
-     real
-     (real-path pp)
-
-     roots
-     (into (vec extra-roots) (current-real-roots roots-fn cache))]
-
-    (when-not (some (fn [^Path root]
-                      (.startsWith real root))
-                    roots)
-      (throw (SecurityException.
-               (str "vis sandbox: '" pp
-                    "' is outside the filesystem roots — read/write "
-                    "files via the file tools (cat/rg/patch), or add the dir with `/fs add`."))))
-    pp))
+   The four-argument form preserves already-created filesystem closures across a
+   hot reload; those closures predate operation-specific diagnostics."
+  (^Path [roots-fn cache extra-roots p]
+   (confine! roots-fn cache extra-roots "file-read" p))
+  (^Path [roots-fn cache extra-roots operation p]
+   (let [^Path pp (if (instance? Path p) p (Paths/get (str p) (make-array String 0)))
+         real (real-path pp)
+         roots (into (vec extra-roots) (current-real-roots roots-fn cache))]
+     (when-not (some (fn [^Path root] (.startsWith real root)) roots)
+       ;; This is a policy decision made by Vis, not an ambiguous OS EACCES/EPERM.
+       ;; IOException is intentional: GraalPy preserves its message in the guest
+       ;; error, whereas it replaces SecurityException with generic PermissionError.
+       ;; Keep paths and roots out of the guest-visible message: they may be secret.
+       (throw (IOException.
+                (str "[vis:sandbox_denied] operation=" operation
+                     " reason=outside_approved_filesystem_roots"))))
+     pp)))
 
 (defn- write-opts?
   "True when the open options request a WRITE/APPEND (⇒ the sandbox is producing
@@ -200,8 +192,8 @@
       (into (into (if outbox-real [outbox-real] []) @temp-roots) @vis-always-roots)
 
       c
-      (fn [p]
-        (confine! roots-fn root-cache extra-roots p))
+      (fn [operation p]
+        (confine! roots-fn root-cache extra-roots operation p))
 
       confined
       (proxy [FileSystem] []
@@ -214,13 +206,13 @@
         (getSeparator [] (.getSeparator d))
         (getPathSeparator [] (.getPathSeparator d))
         ;; confine the path, then delegate the real op
-        (toRealPath [p opts] (.toRealPath d (c p) opts))
-        (checkAccess [p modes opts] (.checkAccess d (c p) modes opts))
-        (readAttributes [p attrs opts] (.readAttributes d (c p) attrs opts))
+        (toRealPath [p opts] (.toRealPath d (c "file-read" p) opts))
+        (checkAccess [p modes opts] (.checkAccess d (c "file-read" p) modes opts))
+        (readAttributes [p attrs opts] (.readAttributes d (c "file-read" p) attrs opts))
         (newByteChannel [p opts attrs]
           (let
             [^Path cp
-             (c p)
+             (c (if (write-opts? opts) "file-write" "file-read") p)
 
              ch
              (.newByteChannel d cp opts attrs)
@@ -240,27 +232,27 @@
                               @temp-roots))))]
 
             (if tap? (tap-write-channel ch cp on-close) ch)))
-        (newDirectoryStream [dir filt] (.newDirectoryStream d (c dir) filt))
-        (createDirectory [dir attrs] (.createDirectory d (c dir) attrs))
-        (delete [p] (.delete d (c p)))
-        (copy [src dst opts] (.copy d (c src) (c dst) opts))
-        (move [src dst opts] (.move d (c src) (c dst) opts))
-        (createLink [link existing] (.createLink d (c link) (c existing)))
-        (createSymbolicLink [link target attrs] (.createSymbolicLink d (c link) (c target) attrs))
-        (readSymbolicLink [link] (.readSymbolicLink d (c link)))
-        (setAttribute [p attr value opts] (.setAttribute d (c p) attr value opts))
+        (newDirectoryStream [dir filt] (.newDirectoryStream d (c "file-read" dir) filt))
+        (createDirectory [dir attrs] (.createDirectory d (c "file-write" dir) attrs))
+        (delete [p] (.delete d (c "file-write" p)))
+        (copy [src dst opts] (.copy d (c "file-read" src) (c "file-write" dst) opts))
+        (move [src dst opts] (.move d (c "file-write" src) (c "file-write" dst) opts))
+        (createLink [link existing] (.createLink d (c "file-write" link) (c "file-read" existing)))
+        (createSymbolicLink [link target attrs] (.createSymbolicLink d (c "file-write" link) (c "file-read" target) attrs))
+        (readSymbolicLink [link] (.readSymbolicLink d (c "file-read" link)))
+        (setAttribute [p attr value opts] (.setAttribute d (c "file-write" p) attr value opts))
         ;; default interface methods — proxy does NOT inherit them, so delegate
         ;; explicitly. Pure metadata delegates raw; file-touching ones confine.
         (getMimeType [p] (.getMimeType d ^Path p))
         (getEncoding [p] (.getEncoding d ^Path p))
         (getTempDirectory [] (.getTempDirectory d))
-        (isSameFile [p1 p2 opts] (.isSameFile d (c p1) (c p2) opts))
-        (setCurrentWorkingDirectory [p] (.setCurrentWorkingDirectory d (c p)))
-        (getFileStoreBlockSize [p] (.getFileStoreBlockSize d (c p)))
-        (getFileStoreTotalSpace [p] (.getFileStoreTotalSpace d (c p)))
-        (getFileStoreUnallocatedSpace [p] (.getFileStoreUnallocatedSpace d (c p)))
-        (getFileStoreUsableSpace [p] (.getFileStoreUsableSpace d (c p)))
-        (isFileStoreReadOnly [p] (.isFileStoreReadOnly d (c p))))]
+        (isSameFile [p1 p2 opts] (.isSameFile d (c "file-read" p1) (c "file-read" p2) opts))
+        (setCurrentWorkingDirectory [p] (.setCurrentWorkingDirectory d (c "file-read" p)))
+        (getFileStoreBlockSize [p] (.getFileStoreBlockSize d (c "file-read" p)))
+        (getFileStoreTotalSpace [p] (.getFileStoreTotalSpace d (c "file-read" p)))
+        (getFileStoreUnallocatedSpace [p] (.getFileStoreUnallocatedSpace d (c "file-read" p)))
+        (getFileStoreUsableSpace [p] (.getFileStoreUsableSpace d (c "file-read" p)))
+        (isFileStoreReadOnly [p] (.isFileStoreReadOnly d (c "file-read" p))))]
 
      ;; Layer GraalPy's language-home + internal-resource read access ON TOP so
      ;; importing the stdlib still works while user paths stay confined.

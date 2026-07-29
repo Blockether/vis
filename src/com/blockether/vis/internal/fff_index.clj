@@ -122,7 +122,7 @@
                             ;; ignore overlay — fff honors it in BOTH the scan
                             ;; walk and the live watcher, which is why vis no
                             ;; longer walks trees in Clojure for `.rgignore` or
-                            ;; the `:search` config overlay.
+                            ;; the `:grep` config overlay.
                             :custom-ignore-filenames (:custom-ignore-filenames overlay)
                             :exclude-globs (:exclude-globs overlay)
                             :unignore-globs (:unignore-globs overlay)})

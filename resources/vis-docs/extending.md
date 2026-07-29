@@ -1,18 +1,502 @@
-# Clojure extensions
+# Extending Vis
 
-Vis is a small core plus **extensions**. There are two flavors: dynamic [Python extensions](python-extensions.md) you drop into `.vis/extensions/`, and **Clojure extensions** — this page — that compile into the binary and reach every surface Vis has.
+Vis is a small core plus **extensions**. Everything beyond the engine loop ships
+that way: the git surface, the TUI, the web channel, the Clojure and Python
+language packs are all extensions. Your own follow the same recipes.
 
-Clojure extensions are libraries that register tools, providers, channels, language packs, and slash commands. Everything beyond the engine loop ships this way: the git surface, the TUI, the web channel, the Clojure and Python language packs are all extensions living on the classpath. Writing your own follows the same recipe they do.
+There are two flavors, and this page is the whole story for both:
 
-> Looking for something lighter? [Python extensions](python-extensions.md) are single `.py` files in `.vis/extensions/` — project-local tools, prompt fragments, slash commands and op-hook guards with no rebuild and in-place `/reload`. Clojure extensions (this page) are the full-surface path: channels, providers, persistence backends, TUI, CLI.
+| | **[Python extensions](#python-extensions)** (`.vis/extensions/*.py`) | **[Clojure extensions](#clojure-extensions)** (classpath) |
+| --- | --- | --- |
+| Ship | drop a file | build into the binary |
+| Reload | `/reload`, in place | rebuild + restart (native) |
+| Scope | per project or per user | every install of the distribution |
+| Can contribute | tools (incl. native tools with JSON Schema), prompts, slash commands, op hooks, network filters, session context, durable state, LLM providers | everything (channels, persistence backends, TUI, CLI, themes, sandbox shims, …) |
 
-An extension does three things:
+Reach for Python for project-specific tools and guards — Vis can write those for
+itself mid-session. Graduate to Clojure when you need deeper surfaces or want to
+ship to others as part of a
+[distribution](distributions.md).
 
-1. **Declares itself** in a spec map built with `vis/extension` and registered at namespace load with `vis/register-extension!`.
-2. **Exposes tools** — ordinary Clojure functions that can surface as Python functions, provider-native tools, or both.
-3. **Publishes one contract per surface** — native description + JSON Schema for native tools; docstrings for Python-only symbols; prompt fragments only for dynamic routing or catalogs.
+Both flavors converge on the same contracts:
 
-## How extensions load
+1. **Declare the extension** — one spec per file/namespace.
+2. **Expose tools** — plain functions that surface as sandbox Python functions,
+   provider-native tools, or both.
+3. **Publish one contract per surface** — description + JSON Schema for native
+   tools; docstrings for Python-only symbols; prompt fragments only for dynamic
+   routing or catalogs.
+
+---
+
+## Python extensions
+
+Single `.py` files you drop into a directory, loaded at startup and reloadable in
+place with `/reload` — no rebuild, identical behavior on the JVM and in the
+native binary.
+
+```
+~/.vis/extensions/           global — loads in every project
+<project>/.vis/extensions/   project-local — loads for that project only
+```
+
+A project file registering the same extension **name** as a global one wins
+(same layering as configuration). A file that fails to load becomes a
+warning in `vis doctor` — it never crashes Vis.
+
+A Python extension can contribute:
+
+- **tools** — functions the model calls in its sandbox (`todo_add("x")`)
+- **native tools** — the same functions promoted to first-class provider tools
+  with their own JSON Schema
+- **prompt fragments** — constant or recomputed every turn
+- **slash commands** — `/todos`, `/gh-repo …` for the user
+- **op hooks** — guards that can block file operations
+- **durable state** — a key/value store that survives restarts
+- **session context** — data folded into the model's `session` bag every turn
+- **LLM providers** — register an API-key provider the router can call
+
+Channels, persistence backends, sandbox shims and TUI rendering stay
+Clojure-side.
+
+### Hello, extension
+
+```python
+# ~/.vis/extensions/greeter.py
+"""Greeter — smallest possible tool extension."""
+import vis
+
+
+def greeter_hello(name):
+    """await greeter_hello(name) -> {"greeting"} — greet someone."""
+    return {"greeting": f"hello {name}"}
+
+
+vis.extension(
+    name="greeter",
+    description="Greets people.",
+    kind="integration",
+    alias="greeter",
+    symbols=[vis.symbol(greeter_hello, tag="observation")],
+    prompt="greeter_ surface active: greeter_hello(name).",
+)
+```
+
+Start Vis (or `/reload`) and the model can call `await greeter_hello("vis")`.
+Ready-to-copy examples — a todo list, a protected-paths guard, a dynamic
+prompt toggle, a GitHub issues integration — live in the repo under
+`resources/examples/python-extensions/`.
+
+### `vis.extension(...)`
+
+Exactly one call per file. Keyword arguments:
+
+| Argument | Type | What it does |
+| --- | --- | --- |
+| `name` | str, required | Unique extension name. Project file with the same name overrides a global one. |
+| `description` | str, required | One-liner for `vis extension list` and the model's extensions snapshot. |
+| `kind` | str | Section label (`"integration"`, `"guard"`, …). Defaults to `"python"`. |
+| `version` | str | Plain metadata. |
+| `alias` | str | Python-name prefix for tools. Required when `symbols=` is declared. |
+| `symbols` | list of `vis.symbol(...)` | Model-facing tools. |
+| `prompt` | str or callable | Model-facing fragment. A callable receives the env dict every turn and returns a string or `None` (no fragment that turn). |
+| `activation` | callable | `(env) -> bool`, evaluated per turn; gates the whole extension. Default: always on. |
+| `slash_commands` | list of `vis.slash(...)` | User-facing commands. |
+| `op_hooks` | list of `vis.op_hook(...)` | Guards/observers over file ops. |
+| `network_filters` | list of `vis.network_filter(...)` | Request/response policy at the gateway's decrypted HTTP boundary. |
+| `providers` | list of `vis.provider(...)` | LLM providers the router can select. |
+| `ctx` | callable | `(env) -> dict`, evaluated per turn; the returned dict is deep-merged into the model's `session` bag. See [Session context](#session-context). |
+
+The **env dict** passed to `prompt`/`activation` callables is deliberately
+small: `{"cwd", "session_id", "channel"}`.
+
+### Session context
+
+The model sees a live `session` bag every turn — turn/iteration counters,
+workspace facts, per-language REPL state, and so on. A `ctx=` callable lets an
+extension **write its own slice** into that bag:
+
+```python
+def _ctx(env):
+    # STRING keys all the way down — the bag crosses into Python as the
+    # model's `session` dict, which rejects non-string keys.
+    return {"session_env": {"todo": {"open": len(vis.state.get("todos", []))}}}
+
+vis.extension(
+    name="todo",
+    description="Todo list.",
+    ctx=_ctx,
+)
+```
+
+- Runs **once per turn** during context render, so the slice is always current.
+- The return **must be a string-keyed dict** (Python dict keys already are).
+  Slices from every extension are deep-merged, so nest under a unique key to
+  avoid clobbering another extension — `"session_env"` is the common home for
+  live environment facts.
+- A non-dict return or a raised exception degrades to an empty contribution —
+  bad optional context never blocks a turn.
+- The `env` dict is the same small `{"cwd", "session_id", "channel"}` handed to
+  `prompt`/`activation`.
+
+### Tools
+
+```python
+vis.symbol(fn, name=None, tag="observation", is_hidden=False,
+           schema=None, description=None, result=None,
+           is_native_tool=False, render=None, color_role=None)
+```
+
+- `tag` declares what the tool does: `"observation"` (reads state) or `"mutation"`
+  (changes state) — same contract as Clojure tools.
+- The sandbox name is `f"{alias}_{name}"`; `name` defaults to `fn.__name__`
+  with a leading `"{alias}_"` stripped, so a module can use readable full
+  names (`todo_add` under alias `todo`) without double-prefixing.
+- **The docstring is mandatory** — it becomes the model's `doc()` text.
+  House style: `await name(args) -> shape` on the first line.
+- Parameter names are read from the real signature and shown to the model.
+- `is_hidden=True` hides the tool from the model-facing listing (still callable).
+  This follows the bridge-wide convention: a Python boolean spelled `is_<name>`
+  maps to the Clojure `:<name>?` predicate key (Python identifiers can't carry a
+  trailing `?`), so `is_hidden` → `:hidden?`, `is_authenticated` → `:is-authenticated`.
+
+**Envelope semantics — Python authors never construct envelopes:**
+
+- the **return value** (dict/list/str/number) *is* the success payload;
+- **raising is the failure path** — the exception message surfaces to the
+  model as a normal tool failure it can route around:
+
+```python
+def todo_toggle(id):
+    """await todo_toggle(id) -> {"id", "done"} — flip one todo."""
+    for t in vis.state.get("todos", []):
+        if t["id"] == id:
+            ...
+    raise ValueError(f"no todo with id {id}; call todo_list() to see ids")
+```
+
+Dict keys pass through as written — use snake_case.
+
+### Native tools from Python
+
+A Python symbol is promoted to a **first-class native tool** — its own JSON
+Schema, its own model-facing doc, its own op card — the moment it carries a
+`schema`. Nothing has to move to Clojure; the
+[native tool contract](#native-tool-contracts) below is identical.
+
+```python
+def weather_lookup(input):
+    """Implementation note — never shown to the model."""
+    return {"city": input["city"], "temp_c": 21}
+
+
+def _render(result):
+    return {"summary": f"{result['city']} {result['temp_c']}C"}
+
+
+vis.symbol(
+    weather_lookup,
+    description="Look up the weather for ONE city.",
+    result="Object with string `city` and number `temp_c`.",
+    schema={"type": "object",
+            "properties": {"city": {"type": "string", "description": "City name."}},
+            "required": ["city"],
+            "additionalProperties": False},
+    render=_render,
+    color_role="search",
+)
+```
+
+| Argument | Meaning |
+| --- | --- |
+| `schema` | Plain-dict JSON Schema for the tool input. Supplying it implies `is_native_tool=True`. |
+| `description` | **Required** with a schema: the model-facing first line. The docstring stays an implementation note. |
+| `result` | **Required** with a schema: the raw-result contract, rendered as `Raw result: …`. |
+| `is_native_tool` | Explicit opt-in; redundant when `schema` is present. |
+| `render` | `fn(result) -> dict` building the op card (e.g. `{"summary", "body"}`). |
+| `color_role` | Bare role name (`"search"`) or a full `"tool-color/search"`. |
+
+- JSON-Schema vocabulary keys (`type`, `properties`, `required`,
+  `additionalProperties`, `items`, `enum`, …) are keywordized on the Clojure
+  side; **your property names stay verbatim strings**, so a property called
+  `type` or `items` is safe.
+- The model-facing doc is generated: `description`, the `Raw result:` contract,
+  and a parameter list derived from the schema. The Python docstring is never
+  part of it.
+- Validation is strict and happens **at load time**: a schema without a
+  `description` or a `result` fails the whole extension load rather than
+  registering a half-declared tool.
+
+### Slash commands
+
+```python
+vis.slash(name, run, doc=None, usage=None)
+```
+
+`run(ctx)` receives `{"channel", "args", "raw", "session_id"}` and returns:
+
+```python
+vis.ok(title, body=None, data=None)    # body: Markdown string
+vis.err(title, body=None, data=None)
+```
+
+(or a plain string, treated as an ok title).
+
+### Op hooks
+
+```python
+vis.op_hook(ops, fn, phase="before")
+```
+
+- `ops` — sandbox tool names to hook: `"write"`, `"patch"`,
+  `"struct_patch"`, `"move"`, `"copy"`, `"delete"`, …
+- `phase="before"` — `fn(call)` receives `{"op", "args"}` **before** the op
+  runs. Return `vis.block(reason)` to refuse it (the model sees the reason
+  as a tool failure) or `None` to allow. A hook error fails open.
+- `phase="after"` — `fn(call)` receives `{"op", "args", "result"}` after the
+  op; observe-only (the return value is ignored).
+
+`vis.strings_of(value)` collects every string leaf of a nested structure —
+handy for scanning op args for paths.
+
+### Durable state
+
+`vis.state` is a dict-like store persisted to the database (the same
+`vis.db` sessions live in, under the `extension_aggregate` table) — no files
+on disk. It survives `/reload` and process restarts, and is owned by the
+extension **name** (a project-local override of a global extension shares its
+state; two different extensions never do).
+
+```python
+vis.state["repo"] = "acme/widgets"      # write-through
+vis.state.get("repo")                   # read, None when missing
+vis.state.get("count", 0)               # read with default
+"repo" in vis.state                     # membership
+del vis.state["repo"]                   # delete
+```
+
+Values must be plain data (dicts, lists, strings, numbers, booleans).
+
+### Logging and notifications
+
+```python
+vis.log("info", "loaded 3 rules")       # levels: trace debug info warn error
+vis.notify("Rules reloaded", "success") # user-facing toast: info success warn error
+```
+
+`vis.log` writes to `~/.vis/vis.log`; `vis.notify` shows in whatever channel
+is active (TUI banner, web toast, …).
+
+### LLM providers
+
+`vis.provider(...)` registers a first-class provider the model can actually
+route to — the same descriptor a Clojure provider extension builds, minus the
+Clojure. Hand it an `id`, a `label`, a `preset` (base URL / API style / default
+models), and any of the credential callables:
+
+```python
+import os, vis
+
+def _token():
+    key = os.environ.get("ACME_API_KEY")
+    if not key:
+        raise ValueError("set ACME_API_KEY")
+    return {"token": key, "api_url": "https://api.acme.ai/v1"}
+
+def _status():
+    ok = bool(os.environ.get("ACME_API_KEY"))
+    return {"is_authenticated": ok, "source": "env-var", "provider_id": "acme"}
+
+vis.extension(
+    name="provider-acme",
+    description="Acme AI (OpenAI-compatible) provider.",
+    providers=[
+        vis.provider(
+            id="acme",
+            label="Acme AI",
+            preset={"base_url": "https://api.acme.ai/v1",
+                    "api_style": "openai",
+                    "default_models": ["acme-large", "acme-small"]},
+            get_token_fn=_token,
+            status_fn=_status,
+        ),
+    ],
+)
+```
+
+The `preset` flows into the router the same way a built-in provider's does, so
+adding `acme` to `~/.vis/config.yml`'s `providers` (or the TUI *Add Provider*
+picker, which lists any labelled provider) makes the model call it. Callable
+slots — `get_token_fn`, `detect_fn`, `status_fn`, `logout_fn`, `limits_fn`,
+`refresh_token_fn`, `auth_fn`, `auth_prompt_fn`, `enrich_models_fn`,
+`on_selected_fn` — are all optional (every function-valued slot carries the
+`_fn` suffix); a static-key provider usually just
+needs `get_token_fn` + a `preset`. Dict keys may be snake_case or kebab (`api_url` ≡
+`:api-url`), `api_style` becomes a keyword, and a Python boolean-predicate key
+written `is_<name>` maps to the `:<name>?` the host reads — so a `status_fn` result
+returns `is_authenticated` (Python can't spell the trailing `?`), which the
+runtime consumes as `:is-authenticated`. `vis providers auth/status/limits
+<id>` work against it like any other provider.
+
+For an interactive login, give `auth_fn=` a `def login(printer): ...` — the runtime
+hands it a `printer(line)` callback to emit instructions, and its return signals
+the outcome (`"ok"` / `"already-authenticated"` = silent success; anything else
+surfaces the printed lines so the user knows what to do next). `auth_prompt_fn=`
+is a `() -> [line, ...]` for the static guidance shown in the API-key dialog.
+
+Two more optional hooks mirror their Clojure counterparts. `enrich_models_fn=` is a
+`def enrich(provider, router_opts): ...` called once at router-build to resolve
+each model's real context window — return `[{"name": ..., "context": N,
+"is_tool_call": True}, ...]` (the host reads `context` and the `is_tool_call`
+predicate as `:tool-call?`), as LM Studio's
+built-in provider does. `on_selected_fn=` is a `def on_selected(event): ...`
+side-effect hook fired after this provider becomes the active one and config is
+persisted; the `event` carries `previous_provider` / `provider` / `config` /
+`source`. Both fail soft — a throw is logged and never blocks router build or
+selection.
+
+### Execution model and trust
+
+Extension files run in **trusted GraalPy contexts** — one per file, separate
+from the model's sandbox:
+
+|  | Model sandbox | Extension context |
+| --- | --- | --- |
+| Who writes the code | the model | **you** |
+| Filesystem | confined to workspace roots | **real, unrestricted** |
+| Network / env vars / subprocess | gateway policy / restricted | **real, inherited, unrestricted** |
+| Lifetime | per session | process (rebuilt on `/reload`) |
+
+This is an intentional trust decision, not a missing sandbox feature. Extension
+contexts allow full IO, process creation, threads, sockets, and inherited
+environment variables because they are user-installed plugins. They still deny
+arbitrary host-class, native, and polyglot interop; host access is limited to the
+bound `vis` API. The model can call an exported tool but cannot evaluate code in
+the extension context. See [Process sandbox and gateway egress](sandbox.md).
+
+Treat `.py` files in a project's `.vis/extensions/` like you treat its
+`deps.edn`: they execute with your user's permissions when Vis starts in
+that checkout — review before running Vis in untrusted repositories.
+
+Calls into an extension are **serialized** (one at a time per file). Keep
+per-turn callables (`prompt`, `activation`) fast; tools may take their time.
+
+### Reloading
+
+- `/reload` — tears down every Python extension (contexts closed) and loads
+  the current files fresh. State survives (it lives in the database).
+- Changes propagate to LIVE sessions immediately: new/changed slash
+  commands dispatch right away and reloaded tools rebind into the sandbox
+  — no restart, no new session.
+- Startup is fingerprint-checked: unchanged files are a no-op; changed files
+  reload automatically on the next Vis start.
+- `vis doctor` lists every loaded file and every load failure with its
+  Python error.
+
+### Multiple files and packages
+
+A single `.py` file is the simplest extension. For anything larger, drop a
+**package directory** whose `extension.py` is the entry point:
+
+```
+~/.vis/extensions/
+  my_ext/
+    extension.py      # the entry — calls vis.extension(...)
+    mypkg/
+      __init__.py
+      core.py
+    test_core.py      # tests (see below)
+```
+
+- The directory is prepended to `sys.path` before `extension.py` runs, so
+  `import mypkg` / `from mypkg.core import add` just work — no manual
+  `sys.path.insert(...)`.
+- Only `extension.py` is an entry point; the package's other modules are
+  imported by it, never scanned as separate extensions.
+- A plain top-level `.py` file gets the same sugar for a sibling module or
+  package placed next to it.
+
+So an ordinary Python project becomes a Vis extension by adding one
+`extension.py` on top that imports it.
+
+### Testing your Python extension
+
+Ship real Python tests next to the code and run them with Vis's built-in
+`pytest`-compatible runner — no pip, no wheels, pure stdlib.
+
+- Test files are `test_*.py` or `*_test.py`, at any depth under an extension
+  directory. They are **never loaded as extensions** (excluded from the scan).
+- Each test file runs in its own trusted GraalPy context and imports the
+  extension's package through the same `sys.path` sugar the entry file gets.
+
+```python
+# ~/.vis/extensions/my_ext/test_core.py
+from mypkg.core import add
+
+def test_add():
+    assert add(2, 3) == 5
+```
+
+Run them:
+
+```
+/test            # in a session — inline pass/fail report
+vis extension test     # from the shell — prints a report, exits non-zero on failure
+```
+
+The report is **per test**: each `test_*` shows ✓/✗ with the failing
+assertion's detail, grouped by file, under a one-line summary
+(`✓ N file(s): P passed, F failed, …`). Counts are derived from the actual
+per-test outcomes — never a separate tally, never scraped from output. `vis extension
+test` exits non-zero when anything fails (it signals failure to the CLI, it
+does not kill the process), so it drops straight into CI.
+
+The runner supports the pytest surface the shim implements: plain `assert` with
+real introspection, `pytest.raises` / `warns` / `approx`, `@pytest.fixture`
+(including `params=`, `ids=`, `request`, `getfixturevalue` and indirect
+parametrize), `@pytest.mark` parametrize / skip / xfail / usefixtures, the
+built-in `monkeypatch` / `capsys` / `tmp_path` / `tmp_path_factory` / `caplog` /
+`recwarn` / `pytester` fixtures, `conftest.py` in disk mode, and the `-k` / `-x`
+/ `--maxfail` selection flags. It is a stdlib reimplementation of a subset — not
+upstream pytest (no plugins, no assertion-rewriting import hook).
+
+### Batteries in the model's sandbox
+
+The model's sandbox ships pure-Python, stdlib-only module shims so common
+imports work without pip. Each one is a real `.py` file under
+`resources/vis-shims/`, published into every sandbox context (main session and
+every `sub_loop` fork) and loaded lazily on first import:
+
+- Data / formats — `numpy`, `pandas`, `yaml`, `toml`, `tabulate`, `sqlite3`,
+  `brotli`.
+- HTTP / web — `requests`, `httpx`, `urllib3`, `bs4`.
+- Documents / media — `PIL`, `matplotlib`, `pptx`, `xlsxwriter`, `fontTools`.
+- Time — `zoneinfo` (604+ zones from `java.time`), `dateutil`.
+- Ops / testing — `paramiko`, `pytest` (the same shim the test runner installs).
+- Globals, no import needed — `vis_attach` / `vis_attachments` /
+  `vis_read_attachment` and `nippy_encode` / `nippy_decode`.
+
+`matplotlib` renders through a Java2D PNG backend: `plt.show()` paints the
+figure inline in a graphics-capable terminal (Kitty/iTerm2, e.g. Ghostty) and
+falls back to an ASCII plot on text-only terminals; `savefig` writes a PNG (or
+`*.txt`/`*.asc`/`format='txt'` ASCII, honoring `width`/`height`/`color`).
+`subprocess`, `os.system` and `os.popen` are bridged onto the `shell` tool.
+
+These are compatibility subsets, not the full PyPI packages — enough for
+scripting and tests, not a substitute for the real library's every corner. Each
+shim's `:shim/description` names what it does NOT support, and the authoring
+contract lives in [Sandbox shims and autoloads](#sandbox-shims-and-autoloads)
+below — a Clojure-extension capability, since a shim needs host callables.
+
+---
+
+## Clojure extensions
+
+Libraries on the classpath that register tools, providers, channels, language
+packs, sandbox shims and slash commands. They compile into the binary and reach
+every surface Vis has.
+
+### How extensions load
 
 Discovery is classpath-wide and manifest-driven. Each extension jar ships **one resource**:
 
@@ -31,7 +515,7 @@ Getting on the classpath:
 - **JVM / source runs** — add the extension to `deps.edn` like any Clojure dep (the first-party extensions use `:local/root` entries in Vis's own `deps.edn`).
 - **Native binary** — extensions compile into the image. Add the dep, rebuild with `vis native` (see [Custom distributions](distributions.md)), and mind the [native-image rules](#native-image-rules) below.
 
-## Anatomy
+### Anatomy
 
 ```
 my-extension/
@@ -52,7 +536,7 @@ my-extension/
  :deps  {com.blockether/vis {:local/root "../vis"}}}   ; or a released coordinate
 ```
 
-## The extension spec
+### The extension spec
 
 `vis/extension` validates the map and fills defaults; `vis/register-extension!` puts it in the registry.
 
@@ -73,7 +557,7 @@ my-extension/
 
 Channels, providers, persistence backends, and workspace backends register through their own keys (`:ext/channels`, `:ext/providers`, `:ext/persistance`, `:ext/workspace-backends`) — read a first-party extension of the matching kind as the reference implementation.
 
-## Tools: symbols
+### Tools: symbols
 
 A tool is a Clojure `defn` wrapped with `vis/symbol` and listed under `:ext.engine/symbols`:
 
@@ -99,9 +583,9 @@ The rules:
 
 Useful `vis/symbol` opts beyond `:symbol` and `:tag`: `:before-fn` (e.g. inject the turn's `env` as the first argument), `:render` + `:color-role` (custom TUI result card), `:hidden?` (bind but don't advertise).
 
-## Native tool contracts
+### Native tool contracts
 
-Prefer `:native-tool? true` for operations the agent should call directly. Native tools are discoverable and validated from the provider tool specification, so CORE and extension prompts can stay lean. Keep a symbol Python-only when it is primarily a composable helper or data-preparation primitive for `python_execution`, rather than a direct agent action.
+Prefer `:native-tool? true` for operations the agent should call directly. Native tools are discoverable and validated from the provider tool specification, so CORE and extension prompts can stay lean. Keep a symbol Python-only when it is primarily a composable helper or data-preparation primitive for `python_execution`, rather than a direct agent action. (The Python spelling of this same contract is [Native tools from Python](#native-tools-from-python).)
 
 Every symbol still passes a Var whose function has a non-blank docstring and concrete arglists. For a native tool, that docstring documents the implementation for developers; the model-facing contract lives only in `:description` and `:schema`. Keep each fact in one place:
 
@@ -135,7 +619,7 @@ Both `:description` and `:schema` are mandatory. Close the top-level schema with
 
 For a tool with a large replay-only argument, declare the policy on its symbol: `:replay {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"allow_dirty" true}}`. Vis keeps the original call for execution and forensics, but replaces a successful or approved-retry oversized call with a hashed textual receipt. A matching failed call can be retried by id without resending its arguments. svar remains a faithful provider codec and never elides arguments itself.
 
-## Sandbox shims and autoloads
+### Sandbox shims and autoloads
 
 The agent writes **Python**, but its sandbox ships only the pure-stdlib — no
 pip, no native wheels. A **shim** lets your extension publish a *host-backed*
@@ -183,8 +667,7 @@ so a session that never imports it pays nothing. Because the source is a real
 file, it is lintable, diffable, testable with the built-in `pytest` shim, and
 free of Clojure escaping hazards.
 
-
-## The prompt fragment
+### The prompt fragment
 
 `:ext/prompt-fn` rides in a labeled `;; -- EXTENSION <alias> --` block only while the extension is active. Use it only for facts unavailable from native descriptions and schemas—for example, a dynamic capability matrix or a catalog that changes per turn.
 
@@ -194,7 +677,7 @@ Weather service configured for this workspace; live lookups are available.
 
 Fixed native extensions usually need no prompt fragment. Do not repeat signatures, fields, defaults, or return contracts here.
 
-## Activation
+### Activation
 
 `:ext/activation-fn` gates the whole extension per turn. Use it to hide tools that can't work in the current workspace — foundation-git activates only when the workspace root sits inside a git repository:
 
@@ -205,7 +688,7 @@ Fixed native extensions usually need no prompt fragment. Do not repeat signature
 
 An inactive extension costs zero prompt tokens.
 
-## Slash commands
+### Slash commands (Clojure)
 
 User-facing `/commands` (TUI and web) are data too:
 
@@ -222,7 +705,7 @@ User-facing `/commands` (TUI and web) are data too:
 
 Return `{:slash/status :ok | :error, :slash/title "…"}` plus optional `:slash/data`.
 
-## Shipping doc pages
+### Shipping doc pages
 
 Any extension can add pages to Vis's embedded docs — the same corpus the `/docs` site renders and the model reads through its `vis_docs` tool. Drop markdown under `resources/vis-docs/` with a manifest:
 
@@ -233,7 +716,7 @@ Any extension can add pages to Vis's embedded docs — the same corpus the `/doc
 
 Every `vis-docs/vis-docs.edn` on the classpath is discovered — no central registry to edit. Ask a running Vis about your extension and it reads the page you shipped.
 
-## Complete minimal example
+### Complete minimal example
 
 `src/com/acme/ext/weather/core.clj`:
 
@@ -284,7 +767,7 @@ Every `vis-docs/vis-docs.edn` on the classpath is discovered — no central regi
 
 Add the dep, restart Vis, and the model can call `weather_lookup("Oslo")`.
 
-## Native image rules
+### Native image rules
 
 The native binary compiles extensions ahead of time, which brings a few hard constraints (see [JVM & native-image](jvm-native-image.md) for the background):
 
@@ -293,7 +776,7 @@ The native binary compiles extensions ahead of time, which brings a few hard con
 - **Generate it with the tracing agent**, not by hand: run your code paths under `java -agentlib:native-image-agent=config-merge-dir=<your-artifact-dir> …`, then strip Clojure-internal noise.
 - Resources your extension reads at runtime via `io/resource` (templates, assets) need a resource glob in that metadata — the agent only captures what the trace actually touched.
 
-## Testing and verification
+### Testing and verification
 
 Vis uses [lazytest](https://github.com/NoahTheDuke/lazytest); test tool functions directly against the envelope contract:
 
