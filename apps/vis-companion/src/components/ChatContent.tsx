@@ -1099,7 +1099,8 @@ const AttachmentTile = memo(function AttachmentTile({
     };
   }, [client, sid, iterationId, index, isImage, attempt]);
 
-  // A non-image artifact (csv/json/pdf/wav) has nothing to paint: name it.
+  // A non-image artifact reaching a tile is the failure path only — the rail
+  // below routes files into the collapsed recorded-files row.
   if (!isImage || failed || !iterationId) {
     return (
       <div className="mt-2 min-w-0 truncate font-mono text-chip text-footer-muted">
@@ -1131,6 +1132,112 @@ const AttachmentTile = memo(function AttachmentTile({
       )}
       <figcaption className="mt-1 truncate font-mono text-chip text-footer-muted">{name}</figcaption>
     </figure>
+  );
+});
+
+// Non-image artifacts (a scratch .py, a csv, a pdf) are RECORDED, not painted:
+// the capture tap writes them to the session DB and they NEVER enter the
+// provider conversation — only images replay, see `loop.clj`'s
+// `attachment->image-block`. One naked line per file buried the transcript, so
+// they collapse to a single disclosure row ("↗ name +N more") that opens into
+// the full recorded list with media type and size.
+type RecordedFile = {
+  key: string;
+  name: string;
+  media: string;
+  size?: number;
+  count: number;
+};
+
+function attachmentBytes(bytes?: number): string {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return '';
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
+
+// Same file written by three attempts of the same block is ONE recorded thing
+// with a count, not three identical rows.
+function recordedFiles(attachments: IterationAttachment[]): RecordedFile[] {
+  const byIdentity = new Map<string, RecordedFile>();
+  attachments.forEach((attachment) => {
+    const name = attachment.filename || 'attachment';
+    const key = `${name}:${attachment.size ?? 0}`;
+    const seen = byIdentity.get(key);
+    if (seen) seen.count += 1;
+    else {
+      byIdentity.set(key, {
+        key,
+        name,
+        media: attachment.media_type ?? '',
+        size: attachment.size,
+        count: 1,
+      });
+    }
+  });
+  return [...byIdentity.values()];
+}
+
+export const AttachmentRail = memo(function AttachmentRail({
+  client,
+  sid,
+  attachments,
+}: {
+  client: GatewayClient;
+  sid: string;
+  attachments: IterationAttachment[];
+}) {
+  const [open, setOpen] = useState(false);
+  const images = attachments.filter(attachmentIsImage);
+  const files = recordedFiles(attachments.filter((entry) => !attachmentIsImage(entry)));
+  const total = files.reduce((sum, file) => sum + file.count, 0);
+  const head = files[0];
+  const rest = head ? total - head.count : 0;
+
+  return (
+    <>
+      {images.map((attachment) => (
+        <AttachmentTile
+          key={`${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
+          client={client}
+          sid={sid}
+          attachment={attachment}
+        />
+      ))}
+      {head && (
+        <div className="mt-2 min-w-0">
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => setOpen((current) => !current)}
+            className="flex min-h-8 w-full min-w-0 items-center gap-1.5 text-left font-mono text-chip text-footer-muted"
+          >
+            <span aria-hidden="true" className="shrink-0 opacity-70">{open ? '▾' : '▸'}</span>
+            <span className="min-w-0 truncate">
+              ↗ {head.name}
+              {head.count > 1 ? ` ×${head.count}` : ''}
+            </span>
+            {rest > 0 && <span className="shrink-0 opacity-70">+{rest} more</span>}
+          </button>
+          {open && (
+            <ul className="grid min-w-0 gap-0.5 pl-4">
+              {files.map((file) => (
+                <li
+                  key={file.key}
+                  className="min-w-0 truncate font-mono text-chip text-footer-muted"
+                >
+                  {[
+                    file.count > 1 ? `${file.name} ×${file.count}` : file.name,
+                    file.media,
+                    attachmentBytes(file.size),
+                  ].filter(Boolean).join(' · ')}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </>
   );
 });
 
@@ -1231,15 +1338,13 @@ export const IterationTrace = memo(function IterationTrace({
                   : <CardGrid key={chunk.key} cards={chunk.cards} live={live} />))}
               </div>
             )}
-            {client && sid
-              && segment.items.flatMap((entry) => entry.attachments.map((attachment) => (
-                <AttachmentTile
-                  key={`${attachment.iteration_id ?? entry.iteration.id ?? entry.index}-${attachment.index}`}
-                  client={client}
-                  sid={sid}
-                  attachment={attachment}
-                />
-              )))}
+            {client && sid && (
+              <AttachmentRail
+                client={client}
+                sid={sid}
+                attachments={segment.items.flatMap((entry) => entry.attachments)}
+              />
+            )}
           </section>
         );
       })}
