@@ -3644,8 +3644,7 @@
   "Read a text-file window. `await cat(path)` reads the whole file (≤2000 lines)
    — slice only for bigger files or a middle/tail section. Options = a dict,
    snake_case keys:
-     await cat(path, {\"range\": [start, end]})   # inclusive 1-based line range
-     await cat(path, {\"ranges\": [[s, e], ...]})  # several windows in one call
+     await cat(path, {\"ranges\": [[start, end], ...]})  # inclusive 1-based line window(s)
      await cat(path, {\"anchor\": \"325:0e3\"})      # one line by its lineno:hash anchor
      await cat(path, {\"anchor\": [\"H1\", \"H2\"]})   # inclusive anchor range H1..H2
      await cat(path, {\"tail\": 200})              # last N lines (omit N → 2000)
@@ -3659,10 +3658,10 @@
    opts {\"depth\": N} recurses (default 1), {\"is_hidden\": true} adds dotfiles, {\"is_respect_gitignore\": false} adds ignored."
   ([path]
    (if (map? path)
-     ;; All-kwargs form: `cat(path="p", ranges=rs)` collapses at the Python
-     ;; boundary to ONE spec map `{"path" "p", ...opts}` (see __vis_exec_call__).
-     ;; Pull the path out and delegate to the opts-map arity so range/ranges/
-     ;; anchor/tail keep working — mirrors rg's lone-spec-map contract.
+     ;; All-kwargs form: `cat(path=\"p\", ranges=rs)` collapses at the Python
+     ;; boundary to ONE spec map `{\"path\" \"p\", ...opts}` (see __vis_exec_call__).
+     ;; Pull the path out and delegate to the opts-map arity so ranges/anchor/tail
+     ;; keep working — mirrors rg's lone-spec-map contract.
      (cat-tool (get path "path") (dissoc path "path"))
      (let [f (safe-path path)]
        (if (.isDirectory f)
@@ -3677,44 +3676,45 @@
   ([path arg]
    (cond
      ;; Python-native form: a single options dict, e.g.
-     ;;   cat("p", {"range": [5, 10]})       cat("p", {"ranges": [[1,5],[20,25]]})
-     ;;   cat("p", {"anchor": A})            cat("p", {"anchor": [A1, A2]})
-     ;;   cat("p", {"tail": 100})            cat("p", {})  -> whole file
+     ;;   cat(\"p\", {\"ranges\": [[1,5],[20,25]]})  # one or several windows
+     ;;   cat(\"p\", {\"anchor\": A})                 cat(\"p\", {\"anchor\": [A1, A2]})
+     ;;   cat(\"p\", {\"tail\": 100})                cat(\"p\", {})  -> whole file
      ;; Delegated to the keyword arities below so internal Clojure callers
      ;; (which pass bare keyword args) keep working unchanged.
-     (map? arg) (let [f (safe-path path)]
-                  (if (.isDirectory f)
-                    (dir-listing-success path
-                                         (list-dir f
-                                                   {:depth (or (get arg "depth") 1)
-                                                    :is_hidden (boolean (get arg "is_hidden"))
-                                                    :is_respect_gitignore
-                                                    (if (contains? arg "is_respect_gitignore")
-                                                      (boolean (get arg "is_respect_gitignore"))
-                                                      true)}))
-                    (let
-                      [rng (get arg "range")
-                       ranges (get arg "ranges")
-                       anc (normalize-cat-anchor-option (get arg "anchor"))
-                       tail (get arg "tail")]
+     (map? arg)
+     (let [f (safe-path path)]
+       (if (.isDirectory f)
+         (dir-listing-success path
+                              (list-dir f
+                                        {:depth (or (get arg "depth") 1)
+                                         :is_hidden (boolean (get arg "is_hidden"))
+                                         :is_respect_gitignore
+                                         (if (contains? arg "is_respect_gitignore")
+                                           (boolean (get arg "is_respect_gitignore"))
+                                           true)}))
+         (let
+           [raw-ranges (get arg "ranges")
+            ;; Empty JSON arrays are a common optional-argument serialization
+            ;; artifact. Treat them as absent so `cat(path, {\"ranges\": []})`
+            ;; retains the safe default whole-file read rather than failing.
+            ranges (when-not (and (sequential? raw-ranges) (empty? raw-ranges)) raw-ranges)
+            anc (normalize-cat-anchor-option (get arg "anchor"))
+            tail (get arg "tail")]
 
-                      (cond rng (let
-                                  ;; A NON-pair `range` (a bare 70, a map, true) used to reach
-                                  ;; the destructure and die with a raw `nth not supported on
-                                  ;; this type: Long`. Always route it through the pair error.
-                                  [[s e] (or (normalize-cat-pair rng) (cat-pair-error! rng))]
-                                  (cat-tool path :range s e))
-                            ranges (cat-tool path :ranges ranges)
-                            ;; A mis-passed line-number `anchor` (`9357`, `"9357"`,
-                            ;; `[9357, 9412]`, or `"9357, 9412"`) reads as a line
-                            ;; RANGE; real `lineno:hash` anchors fall through below.
-                            (cat-anchor->line-range anc) (let [[s e] (cat-anchor->line-range anc)]
-                                                           (cat-tool path :range s e))
-                            (vector? anc) (cat-tool path :anchor (first anc) (second anc))
-                            (some? anc) (cat-tool path :anchor anc)
-                            (integer? tail) (cat-tool path :tail tail)
-                            (some? tail) (cat-tool path :tail)
-                            :else (cat-tool path)))))
+           (when (contains? arg "range")
+             (throw (ex-info "cat accepts `ranges` only; use {\"ranges\": [[start, end]]}"
+                             {:type :ext.foundation.editing/invalid-cat-args :got arg})))
+           (cond ranges (cat-tool path :ranges ranges)
+                 ;; A mis-passed line-number `anchor` (`9357`, `"9357"`,
+                 ;; `[9357, 9412]`, or `"9357, 9412"`) reads as a line
+                 ;; RANGE; real `lineno:hash` anchors fall through below.
+                 (cat-anchor->line-range anc) (let [[s e] (cat-anchor->line-range anc)]
+                                                (cat-tool path :range s e))
+                 (vector? anc) (cat-tool path :anchor (first anc) (second anc))
+                 (some? anc) (cat-tool path :anchor anc)
+                 (integer? tail) (cat-tool path :tail tail)
+                 (some? tail) (cat-tool path :tail)
+                 :else (cat-tool path)))))
      (= arg :tail) (let [out (tail-file path default-cat-limit)]
                      (tool-success {:op :cat
                                     :path path
@@ -3723,8 +3723,9 @@
                                     :metadata {:next-offset (:next-offset out)
                                                :truncated? (:truncated? out)
                                                :tail? true}}))
-     :else (throw (ex-info "cat options must be a dict, e.g. cat(path, {\"range\": [start, end]})"
-                           {:type :ext.foundation.editing/invalid-cat-args :got arg}))))
+     :else (throw (ex-info
+                    "cat options must be a dict, e.g. cat(path, {\"ranges\": [[start, end]]})"
+                    {:type :ext.foundation.editing/invalid-cat-args :got arg}))))
   ([path arg n]
    (case arg
      :tail
@@ -3757,10 +3758,9 @@
                                  :truncated? (:truncated? out)
                                  :range (:range out)}}))
 
-     (throw
-       (ex-info
-         "cat options must use {\"tail\": N}, {\"ranges\": [[s, e], ...]}, or {\"anchor\": A}; for one range use {\"range\": [start, end]}"
-         {:type :ext.foundation.editing/invalid-cat-args :got arg}))))
+     (throw (ex-info
+              "cat options must use {\"tail\": N}, {\"ranges\": [[s, e], ...]}, or {\"anchor\": A}"
+              {:type :ext.foundation.editing/invalid-cat-args :got arg}))))
   ([path mode start end]
    (case mode
      ;; (cat path :range start end) — INCLUSIVE start..end (both 1-based).
@@ -4413,28 +4413,26 @@
            (map? a) (get a "path")
            :else a)
 
-     ;; Optional 1-based inclusive line window(s): `range` a single [start end],
-     ;; `ranges` a list of them [[s e] …]. Each narrows the index to imports + top-
-     ;; level defs whose span intersects ANY window (children kept). Coerced to
-     ;; longs; a malformed value is dropped (full-file index) rather than fatal.
+     ;; Optional 1-based inclusive line windows: `ranges` is a list of [start end]
+     ;; pairs. Each narrows the index to imports + top-level definitions whose span
+     ;; intersects ANY window (children kept). Coerced to longs; a malformed value
+     ;; is dropped (full-file index) rather than fatal.
      coerce-pair
      (fn [p]
        (when (and (sequential? p) (= 2 (count p)))
          (let [ns (map #(if (number? %) (long %) (parse-long (str %))) p)]
            (when (every? some? ns) (vec ns)))))
 
-     range
-     (coerce-pair (when (map? a) (get a "range")))
-
      ranges
-     (let [rs (when (map? a) (get a "ranges"))]
-       (when (sequential? rs) (not-empty (vec (keep coerce-pair rs)))))
+     (do (when (and (map? a) (contains? a "range"))
+           (throw (ex-info "struct_index accepts `ranges` only; use {\"ranges\": [[start, end]]}"
+                           {:type :ext.foundation.editing/invalid-index-args :got a})))
+         (let [rs (when (map? a) (get a "ranges"))]
+           (when (sequential? rs) (not-empty (vec (keep coerce-pair rs))))))
 
      ;; What file-index sees: a collection of [lo hi] windows (or nil).
      windows
-     (cond ranges ranges
-           range [range]
-           :else nil)
+     ranges
 
      ;; Resolve through safe-path (workspace-cwd confinement) like every other file
      ;; tool — file-index's internal (slurp path) must NOT see a raw relative
@@ -4465,7 +4463,6 @@
                         "language" nil
                         "line_count" nil
                         "path" path
-                        "range" (when (nil? ranges) range)
                         "ranges" ranges
                         "note" nil}]
                  (cond idx (assoc base
@@ -5014,20 +5011,11 @@
      n
      (count defs)
 
-     ;; When the caller narrowed with `range`/`ranges`, surface the window(s) in
-     ;; the headline so the card shows the index was SCOPED, not whole-file.
+     ;; When the caller narrowed with `ranges`, surface the window count in the
+     ;; headline so the card shows the index was SCOPED, not whole-file.
      win
-     (let
-       [rng
-        (get r "range")
-
-        rngs
-        (get r "ranges")]
-
-       (cond (and (sequential? rng) (= 2 (count rng))) (str " · lines " (first rng)
-                                                            "–" (second rng))
-             (seq rngs) (str " · " (count rngs) " window" (when (not= 1 (count rngs)) "s"))
-             :else nil))]
+     (let [rngs (get r "ranges")]
+       (when (seq rngs) (str " · " (count rngs) " window" (when (not= 1 (count rngs)) "s"))))]
 
     (if (seq defs)
       {:summary (str (or loc "struct_index")
@@ -5276,7 +5264,7 @@
     {:symbol 'struct_index
      :native-tool? true
      :result
-     "Object with string keys `op`, `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, `range`, and `ranges`. No rendered source-text field."
+     "Object with string keys `op`, `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, and `ranges`. No rendered source-text field."
      :active-fn structural-supported?
      :description
      (str
@@ -5293,24 +5281,14 @@
        {:type "string"
         :description
         "Exact physical source-file path. Copy a path returned by grep/cat/struct_index unchanged; if unknown, grep first—never reconstruct it from a namespace."}
-       "range" {:type "array"
-                :items {:type "integer"}
-                :minItems 2
-                :maxItems 2
-                :description
-                (str
-                  "Optional [start, end] 1-based inclusive line range. Narrows the index to the "
-                  "imports and top-level definitions whose span intersects it (each kept def keeps "
-                  "its own children); line_count still reports the whole file. Prefer `ranges` for "
-                  "several disjoint windows.")}
-       "ranges" {:type "array"
-                 :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
-                 :minItems 1
-                 :description
-                 (str
-                   "Optional several [[start, end], …] 1-based inclusive line windows in one call. "
-                   "A definition is kept when its span intersects ANY window; line_count still "
-                   "reports the whole file. Supersedes `range` when both are given.")}}
+       "ranges"
+       {:type "array"
+        :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
+        :minItems 1
+        :description
+        (str
+          "Optional [[start, end], …] 1-based inclusive line windows in one call. A definition "
+          "is kept when its span intersects ANY window; line_count still reports the whole file.")}}
       :required ["path"]
       :additionalProperties false}
      :before-fn (path-protected-before-fn :struct_index :file :read first-arg-paths)
@@ -5346,15 +5324,11 @@
        {:type "string"
         :description
         "Exact physical file/directory path (relative to a filesystem root or absolute under one); copy discovered paths from grep/struct_index unchanged."}
-       "range" {:type "array"
-                :items {:type "integer" :minimum 1}
-                :minItems 2
-                :maxItems 2
-                :description "Optional [start,end] line range (1-based, inclusive)."}
        "ranges" {:type "array"
                  :items {:type "array" :items {:type "integer" :minimum 1} :minItems 2 :maxItems 2}
                  :minItems 1
-                 :description "Optional several [[s,e],…] windows in one call."}
+                 :description
+                 "Optional [[start,end],…] windows (one or more, 1-based and inclusive)."}
        "anchor"
        {:oneOf [{:type "string"} {:type "array" :items {:type "string"} :minItems 2 :maxItems 2}]
         :description

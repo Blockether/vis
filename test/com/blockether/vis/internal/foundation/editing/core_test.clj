@@ -1357,36 +1357,46 @@
         (expect (= [[2 "L2"] [3 "L3"] [4 "L4"]]
                    (patch/anchor-map->tuples (get (first (get out "ranges")) "anchors"))))
         (expect (nil? (get out "next_offset")))))
-  (it "(cat {\"path\" p, ...}) accepts the collapsed all-kwargs spec map"
-      (let
-        [body
-         (string/join "\n" (map #(str "L" %) (range 1 21)))
-
-         path
-         (write-temp! "range/spec-map.txt" (str body "\n"))
-
-         cat-tool
-         (private-fn "cat-tool")
-
-         ;; `cat(path=p, ranges=[[2 4]])` collapses to ONE spec map at
-         ;; the Python boundary; it must equal the positional form.
-         spec
-         (-> (cat-tool {"path" path "ranges" [[2 4]]})
-             :result)
-
-         positional
-         (-> (cat-tool path {"ranges" [[2 4]]})
-             :result)]
-
-        (expect (= [[2 "L2"] [3 "L3"] [4 "L4"]] (patch/anchor-map->tuples (get spec "anchors"))))
-        (expect (= spec positional))
-        ;; a path-only spec map == whole-file read
-        (expect (= (-> (cat-tool {"path" path})
-                       :result)
-                   (-> (cat-tool path)
-                       :result)))))
   (it
-    "cat coerces stringy/flat range + ranges shapes models mis-pass"
+    "(cat {\"path\" p, ...}) accepts the collapsed all-kwargs spec map"
+    (let
+      [body
+       (string/join "\n" (map #(str "L" %) (range 1 21)))
+
+       path
+       (write-temp! "range/spec-map.txt" (str body "\n"))
+
+       cat-tool
+       (private-fn "cat-tool")
+
+       ;; `cat(path=p, ranges=[[2 4]])` collapses to ONE spec map at
+       ;; the Python boundary; it must equal the positional form.
+       spec
+       (-> (cat-tool {"path" path "ranges" [[2 4]]})
+           :result)
+
+       positional
+       (-> (cat-tool path {"ranges" [[2 4]]})
+           :result)]
+
+      (expect (= [[2 "L2"] [3 "L3"] [4 "L4"]] (patch/anchor-map->tuples (get spec "anchors"))))
+      (expect (= spec positional))
+      ;; A path-only spec map == whole-file read. An empty JSON ranges array is an
+      ;; optional-argument serialization artifact, so it normalizes to that default.
+      (let
+        [whole (-> (cat-tool path)
+                   :result)]
+        (expect (= whole
+                   (-> (cat-tool path {"ranges" []})
+                       :result)))
+        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path {"range" [2 4]})))
+        (expect (= [[2 4]]
+                   (mapv #(get % "range")
+                         (get (-> (cat-tool path {"ranges" [[2 4]]})
+                                  :result)
+                              "ranges")))))))
+  (it
+    "cat coerces stringy/flat `ranges` shapes models mis-pass"
     (let
       [body
        (string/join "\n" (map #(str "L" %) (range 1 21)))
@@ -1411,15 +1421,6 @@
                      :result)))
       (expect (= canonical
                  (-> (cat-tool path {"ranges" "2, 4"})
-                     :result)))
-      ;; `range` with numeric strings / comma string coerce too
-      (expect (= (-> (cat-tool path {"range" [2 4]})
-                     :result)
-                 (-> (cat-tool path {"range" ["2" "4"]})
-                     :result)))
-      (expect (= (-> (cat-tool path {"range" [2 4]})
-                     :result)
-                 (-> (cat-tool path {"range" "2, 4"})
                      :result)))
       ;; a WHOLE stringified nested list (the reported failure shape) parses its
       ;; digit runs into windows, tolerating extra/mismatched brackets
@@ -1447,7 +1448,7 @@
                        (get (-> (cat-tool path {"ranges" [["2" "4"] ["6" "8"]]})
                                 :result)
                             "ranges"))))))
-  (it "cat names the non-numeric component when a range/ranges value is not a line number"
+  (it "cat names the non-numeric component when a `ranges` value is not a line number"
       (let
         [path
          (write-temp! "range/explain.txt" "L1\nL2\nL3\n")
@@ -1464,15 +1465,11 @@
         (expect (string/includes? (msg {"ranges" "1, x"}) "\"x\""))
         (expect (string/includes? (msg {"ranges" ["1" "x"]}) "\"x\""))
         (expect (string/includes? (msg {"ranges" [[10 "foo"]]}) "\"foo\""))
-        (expect (string/includes? (msg {"range" "1, x"}) "non-numeric"))
-        (expect (string/includes? (msg {"range" ["1" "x"]}) "\"x\""))
-        ;; wrong arity is called out distinctly
+        ;; Wrong arity and non-pair values are called out distinctly.
         (expect (string/includes? (msg {"ranges" [[1 2 3]]}) "exactly 2 components"))
-        ;; REGRESSION: a NON-pair `range` (bare int, map, bool) reached the [s e]
-        ;; destructure and leaked a raw `nth not supported on this type: Long`.
         (doseq [bad [70 true {"start" 1 "end" 70}]]
-          (expect (string/includes? (msg {"range" bad}) "[start, end] pairs"))
-          (expect (not (string/includes? (msg {"range" bad}) "nth not supported"))))))
+          (expect (string/includes? (msg {"ranges" bad}) "expects [[start, end], ...]"))
+          (expect (not (string/includes? (msg {"ranges" bad}) "nth not supported"))))))
   (it
     "path/src/edits tools unwrap the collapsed all-kwargs spec map, never stringify it"
     (let
@@ -2996,8 +2993,9 @@
                    (expect (string/includes? cat-path-description "grep/struct_index unchanged"))
                    (expect (string/includes? (:ext.symbol/description editing/cat-symbol)
                                              "never reconstruct a path from a language namespace"))
-                   (expect (= 2 (get-in cat-schema [:properties "range" :minItems])))
-                   (expect (= 2 (get-in cat-schema [:properties "range" :maxItems])))))
+                   (expect (not (contains? (:properties cat-schema) "range")))
+                   (expect (= 2 (get-in cat-schema [:properties "ranges" :items :minItems])))
+                   (expect (= 2 (get-in cat-schema [:properties "ranges" :items :maxItems])))))
              (it "uses one portable patch shape with a path on every edit"
                  (let [schema (:ext.symbol/schema editing/patch-symbol)]
                    (expect (= "object" (:type schema)))
@@ -3345,7 +3343,7 @@
      (fn [r]
        (mapv #(get % "name") (get-in r [:result "definitions"])))]
 
-    (it "range keeps defs in the single window; ranges unions disjoint windows"
+    (it "ranges handles one or several windows and is echoed consistently"
         (let
           [_
            (temp-dir-path "idxrange")
@@ -3359,36 +3357,21 @@
              (index {"path" f})
 
              one
-             (index {"path" f "range" [2 2]})
+             (index {"path" f "ranges" [[2 2]]})
 
              multi
              (index {"path" f "ranges" [[1 1] [3 3]]})]
 
             (expect (= ["a" "b" "c"] (names whole)))
-            ;; single range: only the def on line 2
             (expect (= ["b"] (names one)))
-            (expect (= [2 2] (get-in one [:result "range"])))
-            (expect (nil? (get-in one [:result "ranges"])))
-            ;; two windows: a and c, not b
+            (expect (= [[2 2]] (get-in one [:result "ranges"])))
+            (expect (not (contains? (:result one) "range")))
             (expect (= ["a" "c"] (names multi)))
             (expect (= [[1 1] [3 3]] (get-in multi [:result "ranges"])))
-            (expect (nil? (get-in multi [:result "range"])))
-            ;; line_count always the WHOLE file, never the window
+            (expect (not (contains? (:result multi) "range")))
             (expect (= 3 (get-in whole [:result "line_count"])))
-            (expect (= 3 (get-in multi [:result "line_count"]))))))
-    (it "ranges supersedes range and coerces numeric strings"
-        (let
-          [_
-           (temp-dir-path "idxrange2")
-
-           f
-           (str (temp-root) "/idxrange2/m.clj")]
-
-          (spit (fs/file f) "(defn a [] 1)\n(defn b [] 2)\n(defn c [] 3)\n")
-          (let [r (index {"path" f "range" [1 3] "ranges" [["2" "2"]]})]
-            (expect (= ["b"] (names r)))
-            (expect (= [[2 2]] (get-in r [:result "ranges"])))
-            (expect (nil? (get-in r [:result "range"]))))))
+            (expect (= 3 (get-in multi [:result "line_count"])))
+            (expect (throws? clojure.lang.ExceptionInfo #(index {"path" f "range" [2 2]}))))))
     (it "the render summary surfaces the narrowing window(s)"
         (let
           [render
@@ -3408,10 +3391,9 @@
           ;; whole-file index: no window suffix
           (expect (not (clojure.string/includes? (:summary (render base)) "window")))
           (expect (not (clojure.string/includes? (:summary (render base)) "lines ")))
-          ;; single range → "lines A–B"
-          (expect (clojure.string/includes? (:summary (render (assoc base "range" [2 2])))
-                                            "lines 2–2"))
-          ;; several windows → "N windows"
+          ;; One or several windows always use the same `ranges` response shape.
+          (expect (clojure.string/includes? (:summary (render (assoc base "ranges" [[2 2]])))
+                                            "1 window"))
           (expect (clojure.string/includes? (:summary (render (assoc base "ranges" [[1 1] [3 3]])))
                                             "2 windows"))))))
 
