@@ -636,24 +636,24 @@
 (def ^:private runtime-keywords
   "Finite YAML key vocabulary used by internal keyword-keyed domain maps.
    Unknown/user-owned keys remain strings; no YAML key is passed to `keyword`."
-  (merge (into
-           {}
-           (map (juxt (comp #(str/replace % "-" "_") name) identity))
-           #{:providers :default-provider :default-model :router :system-prompt :workspace :enabled
-             :filesystem :jail :network :environment :db-spec :grep :toggles :tui-settings :mcp
-             :name :context :output-limit :id :api-key :models :base-url :api-style :compatibility
-             :responses-path :llm-headers :extra-body :rate-limit :budget :tokens
-             :same-provider-delays-ms :fallback-after-ms :timeout-ms :ttft-timeout-ms
-             :idle-timeout-ms :semantic-timeout-ms :max-retries :initial-delay-ms :max-delay-ms
-             :multiplier :max-tokens :max-cost :pricing :context-limits :output-reserve
-             :failure-threshold :recovery-ms :transient-status-codes :window-ms :cooldown-ms
-             :max-wait-ms :allow-read-write :allow-read :allow-write :deny-read :deny-write :path
-             :access :description :inbound-ports :deny-exec :allowed-domains :denied-domains
-             :exclude-domains :allow-private :rules :host :methods :allow :method :text :is-replace
-             :include-gitignored-paths :always-exclude :backend :theme-name :contributors-disabled
-             :servers :transport :command :args :cwd :env :url :headers :python :resource-cache
-             :source-paths :message-queue :breaker-threshold :retry-backoff-ms :halfopen-probe-ms
-             :retry-after-cap-ms :titling :mode :scheduling :provider})
+  (merge (into {}
+               (map (juxt (comp #(str/replace % "-" "_") name) identity))
+               #{:providers :default-provider :default-model :router :system-prompt :workspace
+                 :enabled :filesystem :jail :network :environment :db-spec :grep :toggles
+                 :tui-settings :mcp :name :context :output-limit :id :api-key :models :base-url
+                 :api-style :compatibility :responses-path :llm-headers :extra-body :rate-limit
+                 :budget :tokens :same-provider-delays-ms :fallback-after-ms :timeout-ms
+                 :ttft-timeout-ms :idle-timeout-ms :semantic-timeout-ms :max-retries
+                 :initial-delay-ms :max-delay-ms :multiplier :max-tokens :max-cost :pricing
+                 :context-limits :output-reserve :failure-threshold :recovery-ms
+                 :transient-status-codes :window-ms :cooldown-ms :max-wait-ms :allow-read-write
+                 :allow-read :allow-write :deny-read :deny-write :path :access :description
+                 :inbound-ports :deny-exec :allowed-domains :denied-domains :exclude-domains
+                 :allow-private :rules :host :methods :allow :method :text :is-replace
+                 :include-gitignored-paths :always-exclude :backend :theme-name
+                 :contributors-disabled :servers :transport :command :args :cwd :env :url :headers
+                 :python :resource-cache :source-paths :message-queue :breaker-threshold
+                 :retry-backoff-ms :halfopen-probe-ms :retry-after-cap-ms :titling :mode :provider})
          svar-yaml->runtime))
 
 (defn runtime-config

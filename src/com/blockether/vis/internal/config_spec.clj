@@ -256,7 +256,7 @@
 (def python-keys #{"resource_cache" "source_paths"})
 (def message-queue-keys
   #{"breaker_threshold" "retry_backoff_ms" "halfopen_probe_ms" "retry_after_cap_ms"})
-(def titling-keys #{"mode" "provider" "model" "scheduling"})
+(def titling-keys #{"mode" "provider" "model"})
 (def config-keys
   #{"providers" "default_provider" "default_model" "router" "system_prompt" "workspace" "jail"
     "environment" "db_spec" "grep" "toggles" "tui_settings" "mcp" "python" "message_queue"
@@ -340,17 +340,7 @@
    two derive the title locally from the request itself, and `disabled` leaves
    the session unnamed (Blockether/vis#71)."
   #{"llm" "first_sentence" "first_words" "disabled"})
-(def titling-schedules
-  "When the `llm` mode is allowed to call. `after_turn` (the default, `idle` is
-   its alias) waits for the foreground turn to finish so auto-titling can never
-   compete with the user's own request for a rate-limited gateway's slot;
-   `immediate` restores the old concurrent behaviour."
-  #{"after_turn" "idle" "immediate"})
-(def titling-schema
-  {"mode" titling-modes
-   "provider" non-blank-string?
-   "model" non-blank-string?
-   "scheduling" titling-schedules})
+(def titling-schema {"mode" titling-modes "provider" non-blank-string? "model" non-blank-string?})
 (s/def ::titling #(closed-map? titling-schema %))
 
 (def config-schema

@@ -284,8 +284,6 @@
 
 (def ^:private DEFAULT_TITLING_MODE "llm")
 
-(def ^:private DEFAULT_TITLING_SCHEDULING "after_turn")
-
 (defn- titling-config
   "The `titling:` block of the merged config, string-keyed. Never throws: a
    broken config must not cost the session its name."
@@ -309,13 +307,6 @@
 
 (defn- llm-titling? [cfg] (= "llm" (titling-mode cfg)))
 
-(defn- deferred-llm-title?
-  "True unless the operator explicitly asked for the old concurrent behaviour.
-   `idle` is an alias of `after_turn`: both mean \"not while the user's turn is
-   in flight\"."
-  [cfg]
-  (not= "immediate" (cfg-word cfg "scheduling" DEFAULT_TITLING_SCHEDULING)))
-
 (defn- first-sentence-title
   "The request's first sentence, sanitized/clipped like any other title. Purely
    local — no provider call, no quota."
@@ -332,13 +323,16 @@
     (sanitize-auto-title sentence)))
 
 (defn- local-auto-title
-  "The deterministic title for the configured mode. Always available, always
-   instant; `first_sentence` falls back to first-words when the sentence yields
-   nothing usable."
+  "The deterministic title, and the ONLY title the session actually depends on:
+   it is written before any provider is contacted and it is what stays put
+   whenever the LLM upgrade is rate-limited, slow, or switched off. The
+   request's FIRST SENTENCE is the default shape; `first_words` opts into the
+   older word-clip. Either falls back to the other, so a request with no
+   sentence still yields a name."
   [cfg user-request]
-  (if (= "first_sentence" (titling-mode cfg))
-    (or (first-sentence-title user-request) (fallback-auto-title user-request))
-    (fallback-auto-title user-request)))
+  (if (= "first_words" (titling-mode cfg))
+    (or (fallback-auto-title user-request) (first-sentence-title user-request))
+    (or (first-sentence-title user-request) (fallback-auto-title user-request))))
 
 (defn- auto-title-routing
   "Routing for the title side-channel. An explicit `titling.provider` (plus an
@@ -359,20 +353,43 @@
       (assoc :model (str/trim (str (get cfg "model")))))
     {:prefer-providers AUTO_TITLE_PROVIDER_ORDER :optimize [:cost :speed]}))
 
+(def ^:private TITLE_RATE_LIMIT_POLICY
+  "Rate limiting is the FOREGROUND turn's business, not the title's. A titling
+   call that sleeps through `Retry-After`, walks the same-provider delay
+   schedule and then fails over to another plan spends exactly the quota the
+   user's request needs — for a cosmetic string we already have a local answer
+   for. So the title `ask!` runs on a router whose 429 phase is EMPTY: no wait,
+   no same-provider retry, no cross-provider failover. The first refusal
+   returns immediately and the local title (already written) stays."
+  {:same-provider-delays-ms []
+   :fallback-after-ms 0
+   :respect-retry-after? false
+   :fallback-provider? false})
+
+(defn- title-router
+  "`router` carrying the titling call's own failure policy: no rate-limit
+   waiting (`TITLE_RATE_LIMIT_POLICY`) and a single HTTP attempt, so a busy
+   gateway costs the title one refused request instead of a minute of backoff."
+  [router]
+  (-> router
+      (assoc :rate-limit TITLE_RATE_LIMIT_POLICY)
+      (update :network merge {:max-retries 1})))
+
 (defn- model-auto-title!
   "Generate a session title off the model's visible surface. A single `ask!`
    declares the preferred plan order via `:prefer-providers`; svar walks it
    natively (cheapest+fastest model per plan, falling through on
    model-unsupported / transient failure) so there is no host-side provider
-   loop. The whole call is wrapped in a HARD wall-clock deadline
+   loop. It runs on `title-router`, so a 429 is never waited out. The whole
+   call is additionally wrapped in a HARD wall-clock deadline
    (`AUTO_TITLE_HARD_DEADLINE_MS`) because svar's soft timeouts have been seen
    to miss some transport hangs. Returns nil (loudly — at `:warn`, so failures
    are visible, not a silent `:debug`) when the chain fails or the deadline
-   trips; the caller then keeps the deterministic fallback."
+   trips; the caller then keeps the deterministic local title."
   [{:keys [router]} previous-title user-request]
   (let
     [fut
-     (future (try {:ok (svar/ask! router
+     (future (try {:ok (svar/ask! (title-router router)
                                   (rt/with-default-ask-code-idle-timeout
                                     {:messages (auto-title-prompt previous-title user-request)
                                      :spec auto-title-spec
@@ -486,47 +503,33 @@
     (and db-info session-id (:router env) (title-needs-generation? session-id session-title-atom))))
 
 (defn maybe-auto-title!
-  "Title the session at the START of a normal LLM turn. Two-phase so a slow or
-   hung provider can never leave the tab untitled:
+  "Title the session at the START of a normal LLM turn — LOCALLY, always.
 
-   1. FALLBACK-FIRST — write a deterministic local title up front (it cannot
-      hang and spends no provider quota), marked PROVISIONAL, so the tab is
-      titled instantly.
-   2. LLM UPGRADE — a hard-deadline-bounded `ask!` (`model-auto-title!`) that
-      OVERWRITES the fallback with a real title and freezes it. On failure the
-      provisional fallback stays and a LATER turn retries the upgrade.
+   `local-auto-title` (the request's first sentence) is written up front and
+   marked PROVISIONAL: it cannot hang, spends no quota and contacts no
+   provider, so the user's own request is the FIRST thing that reaches the
+   gateway. The optional LLM upgrade is handed to `after-turn-auto-title!` once
+   that request is done (Blockether/vis#71).
 
-   Phase 2 runs here ONLY under `titling.scheduling: immediate`. By default it
-   is handed to `after-turn-auto-title!` instead, so the title call never
-   competes with the user's own request for a constrained gateway's slot
-   (Blockether/vis#71); with `titling.mode` other than `llm` it never runs at
-   all. A real (non-provisional) LLM title is generated once and never
-   regenerated. Titles are host-owned; there is no model-facing override.
-   Returns a future or nil; callers intentionally do not wait."
-  [env user-request]
-  (let
-    [user-request
-     (strip-leading-slash-command user-request)
-
-     cfg
-     (titling-config)]
-
-    (when (and (not (titling-disabled? cfg)) (titleable? env))
-      (if (and (llm-titling? cfg) (not (deferred-llm-title? cfg)))
-        (future (auto-title-pass! env cfg user-request true))
-        ;; Local-only: cheap and synchronous, no future, no provider slot.
-        (do (auto-title-pass! env cfg user-request false) nil)))))
-
-(defn after-turn-auto-title!
-  "The DEFERRED LLM title upgrade, run once the foreground turn has finished
-   (`titling.scheduling: after_turn`, the default). Auto-title quality is
-   cosmetic while foreground responsiveness is core, so on a rate-limited
-   gateway the title call waits its turn instead of racing the user's request
-   for the same slot (Blockether/vis#71). Skipped entirely when the mode is not
-   `llm`, when the session already has a frozen LLM title, or when the operator
-   asked for `immediate` (that call already happened up front). Returns a future
-   or nil; callers intentionally do not wait."
+   Returns nil — there is nothing to wait for. Titles are host-owned; there is
+   no model-facing override."
   [env user-request]
   (let [cfg (titling-config)]
-    (when (and (llm-titling? cfg) (deferred-llm-title? cfg) (titleable? env))
+    (when (and (not (titling-disabled? cfg)) (titleable? env))
+      (auto-title-pass! env cfg (strip-leading-slash-command user-request) false)
+      nil)))
+
+(defn after-turn-auto-title!
+  "The LLM title upgrade, run once the foreground turn has finished. Auto-title
+   quality is cosmetic while foreground responsiveness is core, so the title
+   call ALWAYS goes after the user's request instead of racing it for the same
+   gateway slot (Blockether/vis#71), and it never waits out a rate limit
+   (`title-router`): a refused title simply leaves the local title in place and
+   a later turn retries the upgrade. It OVERWRITES the provisional local title
+   and freezes it, so a real LLM title is generated once and never regenerated.
+   Skipped entirely when `titling.mode` is not `llm` or the session already has
+   a frozen title. Returns a future or nil; callers intentionally do not wait."
+  [env user-request]
+  (let [cfg (titling-config)]
+    (when (and (llm-titling? cfg) (titleable? env))
       (future (auto-title-pass! env cfg (strip-leading-slash-command user-request) true)))))

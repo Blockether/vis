@@ -12,13 +12,15 @@
   (with-redefs-fn {#'titling/titling-config (constantly cfg)} f))
 
 (defn- maybe-auto-title!
-  "The classic single-shot behaviour (`titling.scheduling: immediate`): both the
-   deterministic phase and the LLM upgrade run from this one call. Waits for the
-   returned future so the redef stays in force for the whole pass."
+  "One full titling round the way the loop drives it: the LOCAL turn-start pass
+   first (all `titling/maybe-auto-title!` does now), then the deferred LLM
+   upgrade. Waits for the returned future so the redefs stay in force for the
+   whole pass."
   [env user-request]
-  (with-titling-cfg {"scheduling" "immediate"}
+  (with-titling-cfg {}
                     (fn []
-                      (let [f (titling/maybe-auto-title! env user-request)]
+                      (titling/maybe-auto-title! env user-request)
+                      (let [f (titling/after-turn-auto-title! env user-request)]
                         (when f @f)
                         f))))
 
@@ -58,7 +60,8 @@
 
           @(maybe-auto-title! (env* sid title*) "I want to discuss the current approach to REPLs")
           ;; fallback landed BEFORE the model title — the tab is never untitled
-          (expect (= ["I want to discuss the current approach" "REPL Architecture Deep Dive"]
+          (expect (= ["I want to discuss the current approach to REPLs"
+                      "REPL Architecture Deep Dive"]
                      @writes))
           (expect (= "REPL Architecture Deep Dive" @title*))
           ;; a real LLM title is NOT provisional
@@ -86,7 +89,7 @@
              (throw (ex-info "429 rate limited" {})))]
 
           @(maybe-auto-title! (env* sid title*) "let us go over the ownership model now")
-          (expect (= "let us go over the ownership model" @title*))
+          (expect (= "let us go over the ownership model now" @title*))
           (expect (true? (provisional-title? sid))))
         ;; turn 2 — providers recovered → the guard ALLOWS a retry and upgrades
         (with-redefs
@@ -219,9 +222,10 @@
 
 (defdescribe
   titling-config-test
-  (it "DEFAULT scheduling defers the LLM call past the foreground turn (Blockether/vis#71)"
+  (it "the LLM call ALWAYS lands past the foreground turn (Blockether/vis#71)"
       ;; The title `ask!` used to race the user's own request for the same
-      ;; rate-limited gateway slot. Now the turn-start pass is LOCAL ONLY.
+      ;; rate-limited gateway slot. Now the turn-start pass is LOCAL ONLY and
+      ;; there is no config that puts it back in front of the user's request.
       (let
         [sid
          (fresh-sid)
@@ -330,13 +334,10 @@
              (reset! seen opts)
              {:result {:title "Pinned Title Route"}})]
 
-          (with-titling-cfg {"mode" "llm"
-                             "scheduling" "immediate"
-                             "provider" "rbi_genai"
-                             "model" "gpt-5.4-mini"}
-                            (fn []
-                              @(titling/maybe-auto-title! (env* sid title*)
-                                                          "pin the titling route to one endpoint")
-                              (expect (= {:provider :rbi_genai :model "gpt-5.4-mini"}
-                                         (:routing @seen)))
-                              (expect (= "Pinned Title Route" @title*))))))))
+          (with-titling-cfg
+            {"mode" "llm" "provider" "rbi_genai" "model" "gpt-5.4-mini"}
+            (fn []
+              @(titling/after-turn-auto-title! (env* sid title*)
+                                               "pin the titling route to one endpoint")
+              (expect (= {:provider :rbi_genai :model "gpt-5.4-mini"} (:routing @seen)))
+              (expect (= "Pinned Title Route" @title*))))))))

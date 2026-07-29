@@ -2091,7 +2091,7 @@
             @f
             (expect (= [:zai-coding-plan :openai-codex]
                        (take 2 (get-in @seen [:routing :prefer-providers]))))
-            (expect (= "can you check why TUI title is" @(:session-title-atom env)))))
+            (expect (= "can you check why TUI title is missing?" @(:session-title-atom env)))))
         (finally (lp/dispose-environment! env)))))
   (it "set_session_title is NOT a tool — the title is host-generated"
       (let [env (lp/create-environment ::router {:db :memory})]

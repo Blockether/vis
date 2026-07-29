@@ -89,10 +89,7 @@
                     "retry_backoff_ms" [2000 8000 30000]
                     "halfopen_probe_ms" 60000
                     "retry_after_cap_ms" 120000}
-   "titling" {"mode" "llm"
-              "provider" "rbi_genai"
-              "model" "gpt-5.4-mini"
-              "scheduling" "after_turn"}})
+   "titling" {"mode" "llm" "provider" "rbi_genai" "model" "gpt-5.4-mini"}})
 
 (defdescribe
   config-contract-test
@@ -172,11 +169,11 @@
     (expect (not (config-spec/valid?
                    (assoc-in full-config ["message_queue" "retry_backoff_ms"] ["2s"]))))
     (expect (not (config-spec/valid? (assoc-in full-config ["message_queue" "unknown"] 1))))
-    ;; Titling: a closed block with two enums (Blockether/vis#71).
+    ;; Titling: a closed block with one enum (Blockether/vis#71). There is no
+    ;; `scheduling` key any more — the LLM upgrade is ALWAYS after the turn.
     (expect (config-spec/valid? (assoc-in full-config ["titling" "mode"] "first_sentence")))
-    (expect (config-spec/valid? (assoc-in full-config ["titling" "scheduling"] "idle")))
     (expect (not (config-spec/valid? (assoc-in full-config ["titling" "mode"] "clever"))))
-    (expect (not (config-spec/valid? (assoc-in full-config ["titling" "scheduling"] "whenever"))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["titling" "scheduling"] "idle"))))
     (expect (not (config-spec/valid? (assoc-in full-config ["titling" "provider"] ""))))
     (expect (not (config-spec/valid? (assoc-in full-config ["titling" "unknown"] 1)))))
   (it "derives process-jail and network maps from the same string contract"

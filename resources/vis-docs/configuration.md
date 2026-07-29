@@ -411,30 +411,29 @@ When `web_search` is false, Vis does not bind `search`, `search_web`, `search_co
 ## Session titling
 
 Vis names a session from its first request. The name is written locally and
-instantly (a deterministic fallback title), then — by default — **upgraded once**
-by a short LLM call. That upgrade is cosmetic, so it must never compete with your
-own turn for a rate-limited gateway's slot: it runs *after* the foreground turn
-finishes, not alongside it. The `titling:` block controls all of it:
+instantly — the request's first sentence — before anything is sent to a
+provider, and it is what the session keeps unless a short LLM call later
+improves it. That upgrade is cosmetic, so it never competes with your own turn:
+it runs *after* the foreground request has finished, and it never waits out a
+rate limit (no `Retry-After` sleep, no retry, no provider failover — a refused
+title just leaves the local one in place until a later turn tries again). The
+`titling:` block controls all of it:
 
 ```yaml
 titling:
   # llm (default) | first_sentence | first_words | disabled
   mode: llm
-  # after_turn (default) | idle (alias) | immediate
-  scheduling: after_turn
   # optional: pin the title call instead of walking the provider fleet
   provider: zai-coding-plan
   model: glm-4.7
 ```
 
-- `mode: llm` — local fallback first, then one LLM upgrade; generated once and
-  never regenerated.
+- `mode: llm` — local title first, then one LLM upgrade after the turn;
+  generated once and never regenerated.
 - `mode: first_sentence` / `first_words` — purely local titles. No provider call,
-  no quota, no 429 on a trivial first message.
+  no quota, no 429 on a trivial first message. `first_sentence` is also the
+  shape of the local title used by `llm` mode.
 - `mode: disabled` — no auto-title at all.
-- `scheduling: after_turn` (default, `idle` is an alias) — the LLM call is
-  deferred past the user's turn. `immediate` restores the old concurrent
-  behaviour.
 - `provider` / `model` — pin the title call to one cheap endpoint. Without them
   Vis walks its own cheap-first provider order.
 
