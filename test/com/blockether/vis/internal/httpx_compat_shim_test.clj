@@ -51,7 +51,15 @@ _rq.request = _fake
               "sys.modules['httpx'] is httpx and httpx.get('http://svc/a').status_code == 200"))))))
   (it "reports a vis version marker"
       (with-python-context (expect (true? (ev python-context
-                                              (str fake "httpx.__version__.endswith('-vis')")))))))
+                                              (str fake "httpx.__version__.endswith('-vis')"))))))
+  (it
+    "loads the requests shim when httpx reaches its deferred dependency"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            "import sys\nassert 'httpx' not in sys.modules and 'requests' not in sys.modules\nimport httpx\nassert 'httpx' in sys.modules and 'requests' not in sys.modules\ntry:\n    httpx.get('notaurl')\nexcept httpx.RequestError:\n    pass\n'requests' in sys.modules"))))))
 
 (defdescribe
   httpx-request-test
