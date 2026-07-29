@@ -529,6 +529,12 @@
      explicit-responses
      (:responses-path provider)
 
+     ;; `is_stateless: true` — this endpoint cannot resolve item ids minted by
+     ;; another backend (LiteLLM/Azure multi-resource), so svar must not replay
+     ;; server-minted Responses item ids to it.
+     explicit-stateless
+     (:stateless-items? provider)
+
      ;; Provider-default request-body params (e.g. LM Studio sampler
      ;; defaults from the preset). svar merges these as the lowest
      ;; precedence layer, so an explicit per-provider config override
@@ -568,6 +574,9 @@
           merged-response
           (assoc :responses-path merged-response)
 
+          (some? explicit-stateless)
+          (assoc :stateless-items? (boolean explicit-stateless))
+
           merged-headers
           (assoc :llm-headers merged-headers)
 
@@ -585,6 +594,9 @@
 
         explicit-responses
         (assoc :responses-path explicit-responses)
+
+        (some? explicit-stateless)
+        (assoc :stateless-items? (boolean explicit-stateless))
 
         explicit-headers
         (assoc :llm-headers explicit-headers)
@@ -610,14 +622,16 @@
   {"is_tool_call" :tool-call?
    "is_check_context" :check-context?
    "is_respect_retry_after" :respect-retry-after?
-   "is_fallback_provider" :fallback-provider?})
+   "is_fallback_provider" :fallback-provider?
+   "is_stateless" :stateless-items?})
 
 (def ^:private runtime->svar-yaml
   "Write-path inverse of `svar-yaml->runtime`."
   {:tool-call? "is_tool_call"
    :check-context? "is_check_context"
    :respect-retry-after? "is_respect_retry_after"
-   :fallback-provider? "is_fallback_provider"})
+   :fallback-provider? "is_fallback_provider"
+   :stateless-items? "is_stateless"})
 
 (def ^:private runtime-keywords
   "Finite YAML key vocabulary used by internal keyword-keyed domain maps.
@@ -639,8 +653,7 @@
                  :include-gitignored-paths :always-exclude :backend :theme-name
                  :contributors-disabled :servers :transport :command :args :cwd :env :url :headers
                  :python :resource-cache :source-paths :message-queue :breaker-threshold
-                 :retry-backoff-ms
-                 :halfopen-probe-ms :retry-after-cap-ms})
+                 :retry-backoff-ms :halfopen-probe-ms :retry-after-cap-ms})
          svar-yaml->runtime))
 
 (defn runtime-config

@@ -83,7 +83,7 @@
 (def model-keys #{"name" "context" "output_limit" "is_tool_call"})
 (def provider-keys
   #{"id" "api_key" "models" "base_url" "compatibility" "api_style" "responses_path" "llm_headers"
-    "extra_body"})
+    "extra_body" "is_stateless"})
 
 (def compatibility-values
   "The wire dialects a provider may declare. `api_style` remains the raw svar
@@ -111,7 +111,12 @@
    "api_style" non-blank-string?
    "responses_path" non-blank-string?
    "llm_headers" string-map?
-   "extra_body" yaml-map?})
+   "extra_body" yaml-map?
+   ;; Gateways that load-balance across several Azure OpenAI resources cannot
+   ;; resolve an item id minted by another replica; replaying one is a hard
+   ;; HTTP 400. `is_stateless: true` stops sending server-minted item ids
+   ;; (reasoning id + encrypted_content, function_call id) for this provider.
+   "is_stateless" boolean?})
 
 (s/def ::provider #(closed-map? provider-schema #{"id"} %))
 (s/def ::providers (s/coll-of ::provider :kind vector?))
@@ -281,8 +286,7 @@
   ;; on top of what the project's own packaging metadata declares -- the escape
   ;; hatch for a layout vis cannot infer. Relative to the working directory; `~`
   ;; expands.
-  {"resource_cache" non-blank-string?
-   "source_paths" string-list?})
+  {"resource_cache" non-blank-string? "source_paths" string-list?})
 (s/def ::python #(closed-map? python-schema %))
 
 (def message-queue-schema

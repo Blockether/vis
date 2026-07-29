@@ -550,4 +550,16 @@
                                                    :models [{:name "m"
                                                              :context 262144
                                                              :output-limit 32768
-                                                             :tool-call? true}]}))))))
+                                                             :tool-call? true}]})))))
+  (it "carries `is_stateless` through to svar as :stateless-items?"
+      ;; A gateway load-balancing several Azure OpenAI resources 400s on any
+      ;; replayed server-minted item id (Blockether/vis#59); this flag is how a
+      ;; user turns that replay off for one provider.
+      (expect (true? (:stateless-items?
+                       (config/->svar-provider
+                         {:id :gw :api-key "k" :models [{:name "m"}] :stateless-items? true}))))
+      (expect (true? (:stateless-items?
+                       (first (:providers (config/runtime-config
+                                            {"providers" [{"id" "gw" "is_stateless" true}]}))))))
+      (expect (not (contains? (config/->svar-provider {:id :gw :api-key "k" :models [{:name "m"}]})
+                              :stateless-items?)))))
