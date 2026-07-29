@@ -649,6 +649,8 @@
                    (expect (str/includes? d "THE one shell tool"))
                    (expect (str/includes? d "PREFER background"))
                    (expect (str/includes? d "Reserve run for short commands"))
+                   ;; The native grep/cat/fs tools must win over shell one-liners.
+                   (expect (str/includes? d "leave filesystem work to native"))
                    (expect (str/includes? d "stop what you started"))
                    ;; Native JSON carries `cmd`; the model-facing description must
                    ;; distinguish its Python positional from the map-only id.

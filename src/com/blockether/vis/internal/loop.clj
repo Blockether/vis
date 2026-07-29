@@ -3318,7 +3318,7 @@
                 "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
                 "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}"))))}))
 
-(def ^:private MAX_FOLD_NTR_HINTS 24)
+(def ^:private MAX_FOLD_NTR_HINTS 5)
 
 (def ^:private MAX_FOLD_NTR_GIST_CHARS 44)
 
@@ -3417,7 +3417,7 @@
 
    Every shown accessor is LABELLED with what it holds (`ntr[\"toolu_…\"] cat:
    loop.clj lines 3300-3370`): the point of the clause is deciding WHICH handle to
-   spend a fetch on, and an id alone can't be decided about. Advertise only the 24
+   spend a fetch on, and an id alone can't be decided about. Advertise only the 5
    NEWEST entries; recover older results through `ntr.describe()`, which browses the
    whole store the same labelled way — not bare `ntr.keys()`. Accepts labelled entry
    maps and legacy bare id strings. Returns a leading-` · ` fragment, or nil when the

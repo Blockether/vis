@@ -1128,7 +1128,7 @@
                  'session-fold)]
         (expect (= "folded t1/i1 · recover ntr[\"toolu_A\"]; ntr[\"toolu_B\"] → g"
                    (sf ["t1/i1"] "g")))))
-  (it "a fold advertises only its 24 newest labelled recovery accessors"
+  (it "a fold advertises only its 5 newest labelled recovery accessors"
       ;; Older results stay available through ntr.describe(); the breadcrumb must
       ;; favor the newest work and never grow without bound.
       (let
@@ -1146,13 +1146,13 @@
          out
          (sf ["t1/i1"] "g")]
 
-        ;; The two oldest entries are deliberately omitted; the next (24th-from-end)
+        ;; Everything older than the 5 newest is deliberately omitted; the 5th-from-end
         ;; and newest entries remain labelled and selectable.
         (expect (not (str/includes? out "ntr[\"toolu_0\"]")))
-        (expect (not (str/includes? out "ntr[\"toolu_1\"]")))
-        (expect (str/includes? out "ntr[\"toolu_2\"] cat;"))
+        (expect (not (str/includes? out "ntr[\"toolu_20\"]")))
+        (expect (str/includes? out "ntr[\"toolu_21\"] cat;"))
         (expect (str/includes? out "ntr[\"toolu_25\"] cat"))
-        (expect (str/includes? out " · IMPORTANT 2 more folded results stay recoverable"))))
+        (expect (str/includes? out " · IMPORTANT 21 more folded results stay recoverable"))))
   (it "a long label is truncated instead of drowning the breadcrumb"
       (let
         [sf

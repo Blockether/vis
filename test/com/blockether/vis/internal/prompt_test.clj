@@ -32,27 +32,27 @@
                    (expect (str/includes? text "Extension line\n\n  Nested extension line"))
                    (expect (not (str/includes? text "\n\n\n"))))))
 
-(defdescribe cli-autonomous-override-test
-             (it "drops the candidate approval STOP for the non-interactive :cli channel only"
-                 (let
-                   [text-for
-                    (fn [ch]
-                      (-> (prompt/assemble-stable-prompt-messages {:channel ch}
-                                                                  {:active-extensions []})
-                          prompt/stable-prompt-text))
+(defdescribe
+  cli-autonomous-override-test
+  (it "drops the candidate approval STOP for the non-interactive :cli channel only"
+      (let
+        [text-for
+         (fn [ch]
+           (-> (prompt/assemble-stable-prompt-messages {:channel ch} {:active-extensions []})
+               prompt/stable-prompt-text))
 
-                    marker
-                    "NON-INTERACTIVE ONE-SHOT RUN"]
+         marker
+         "NON-INTERACTIVE ONE-SHOT RUN"]
 
-                   ;; :cli (headless one-shot — no approver) gets the override
-                   (expect (str/includes? (text-for :cli) marker))
-                   (expect (str/includes? (text-for :cli) "NEVER stop to wait for approval"))
-                   (expect (str/includes? (text-for :cli) "MUST NOT perform destructive"))
-                   (expect (not (str/includes? (text-for :cli) "big, risky")))
-                   ;; interactive / card-bearing channels keep the approval flow
-                   (expect (not (str/includes? (text-for :tui) marker)))
-                   (expect (not (str/includes? (text-for :web) marker)))
-                   (expect (not (str/includes? (text-for nil) marker))))))
+        ;; :cli (headless one-shot — no approver) gets the override
+        (expect (str/includes? (text-for :cli) marker))
+        (expect (str/includes? (text-for :cli) "Keep working to a finished prose answer"))
+        (expect (str/includes? (text-for :cli) "Leave destructive or irreversible work"))
+        (expect (not (str/includes? (text-for :cli) "big, risky")))
+        ;; interactive / card-bearing channels keep the approval flow
+        (expect (not (str/includes? (text-for :tui) marker)))
+        (expect (not (str/includes? (text-for :web) marker)))
+        (expect (not (str/includes? (text-for nil) marker))))))
 
 (defdescribe
   prompt-core-test
@@ -76,10 +76,11 @@
       ;; Session introspection (gateway event journals, session_state) is toggle-
       ;; gated and lives in the `foundation-introspection` extension prompt, NOT core.
       (expect (not (str/includes? text "`~/.vis/gateway/events/<id>.ndjson`")))
-      (expect (str/includes? text "never grep `.`"))
-      (expect (str/includes? text "never open with it"))
+      (expect (str/includes? text "scoped to real paths"))
+      (expect (str/includes? text "only for product questions"))
       (expect (str/includes? text "the first move, before docs"))
-      (expect (str/includes? text "Use `cat` on a directory for an ls-style listing"))
+      (expect (str/includes? text "**Filesystem work goes through native tools**"))
+      (expect (str/includes? text "keep `shell` for running programs"))
       (expect (< (str/index-of text "`grep` FIRST") (str/index-of text "`vis_docs()`")))
       (doseq
         [heading ["## 1. Identity + Epistemic stance" "## 2. Execution surfaces" "## 3. Inspect"
@@ -91,34 +92,33 @@
       (doseq
         [required
          ["Host project default" "`vis_docs()`" "runtime > source > docs > assumption"
-          "Native descriptions and JSON Schemas are authoritative" "never guess contracts"
+          "Native descriptions and JSON Schemas are authoritative" "follow the documented contract"
           "hard preconditions" "`python_execution`" "`await gather(...)` only for independent calls"
           "Direct native tools: single operations" "simple edits" "small fixed call sets"
           "default for most Python/data work" "YAML/JSON/TOML/CSV" "over shell."
-          "Call advertised native tools directly" "never preflight a visible native tool"
-          "read-only `session`" "raw data, not rendered text" "never infer fields"
-          "After one shape/type error" "inspect keys/types" "never guess again"
-          "never use `ctx` or `context`" "reproduce before editing"
-          "rerun the same check after the fix" "batch independent reads" "Create no unrequested"
-          "Python extensions" "`run_tests(\"python\")`" "native"
-          "CLI: `vis python -m pytest <paths>`" "without asking permission or offering optional"
-          "Never expose or log secrets" "commit, push, publish" "Treat context as a budget"
-          "do not wait for provider failure" "approaches `auto_compress_above`"
+          "Call advertised native tools directly" "for unadvertised sandbox" "read-only `session`"
+          "raw data, not rendered text" "Use documented keys" "After one shape/type error"
+          "inspect keys/types" "adapt to what you saw" "read it by that name"
+          "reproduce before editing" "rerun the same check after the fix" "batch independent reads"
+          "Write only files the task asked" "Python extensions" "`run_tests(\"python\")`" "native"
+          "CLI: `vis python -m pytest <paths>`" "on your own and report what you did"
+          "Keep secrets out of answers" "Commit, push, publish" "Treat context as a budget"
+          "act before the provider fails" "approaches `auto_compress_above`"
           "immediately when its `hint` asks" "one broad `through`/range fold"
           "Fold settled search sweeps" "superseded reads" "Preserve decisions, findings"
-          "exact physical paths" "never abbreviate" "breadcrumb lacks a needed path"
-          "`grep` before any path-taking tool" "Never fold the live iteration"
-          "last completed scope" "confirm meaningful reduction" "saved nothing"
+          "exact physical paths" "verbatim" "breadcrumb lacks a needed path"
+          "`grep` before any path-taking tool" "Fold only settled steps" "last completed scope"
+          "confirm meaningful reduction" "saved nothing"
           ;; REPL lifecycle: the agent must reuse managed REPLs and STOP the ones
           ;; it started, or every session leaks a JVM/interpreter child.
           "Before `repl_eval` or any REPL lifecycle change"
           "`session[\"resources\"][\"repls\"][language][dir]`" "Reuse managed REPLs across turns"
-          "stop the ones you" "External REPLs are user-owned" "detach, never kill"
+          "stop the ones you" "External REPLs are user-owned" "detach them"
           ;; Anchor staleness: avoid chains on anchors invalidated by an earlier write,
           ;; without forcing wasteful re-reads of untouched files.
           "successful write invalidates pre-write anchors for THAT file only"
           "anchors for other\n  files remain valid" "ONE atomic `patch`/`struct_patch` call"
-          "re-read only that file" "never reuse its\n  pre-write anchor"
+          "re-read only that file" "use its fresh\n  anchors"
           "Lead with the answer. Be terse; depth only when earned."
           ;; End-of-turn teardown: without this the session leaks every REPL and
           ;; background shell the agent spawned.
