@@ -30,8 +30,13 @@ def __vis_install_posix_compat__():
     )
 
     def _shell():
-        # ONE tool for every stage (run / background / logs / send / stop); op is an argument.
+        # Extension contexts expose a `vis.jailed_shell` callback instead of
+        # native process access. Agent sandboxes keep their ordinary `shell`
+        # tool. Both paths use the same `(cmd, opts)` lifecycle grammar.
         fn = globals().get("shell")
+        if fn is None:
+            vis = sys.modules.get("vis")
+            fn = getattr(vis, "jailed_shell", None) if vis is not None else None
         if fn is None:
             raise RuntimeError(_SHELL_DISABLED)
         # Tools are async-DEFERRED (return a thunk); this internal bridge calls
@@ -188,7 +193,7 @@ def __vis_install_posix_compat__():
 
         def _logs(self):
             sl = _shell()
-            return sl({"op": "logs", "id": self._id})
+            return sl(None, {"op": "logs", "id": self._id})
 
         def poll(self):
             r = self._logs()
@@ -212,7 +217,7 @@ def __vis_install_posix_compat__():
 
         def terminate(self):
             ss = _shell()
-            ss({"op": "stop", "id": self._id})
+            ss(None, {"op": "stop", "id": self._id})
             self.returncode = self.returncode if self.returncode is not None else -15
 
         kill = terminate

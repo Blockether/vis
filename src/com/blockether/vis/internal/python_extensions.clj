@@ -348,11 +348,16 @@ def __vis_registration__():
 ;; Trusted extension context
 ;; =============================================================================
 
+(def ^:private extension-posix-python
+  ;; Keep the Python compatibility layer in its resource file, never as a
+  ;; Clojure string. The native build embeds `vis-shims/.*`.
+  (slurp (io/resource "vis-shims/posix.py")))
+
 (defn ^:no-doc build-context
-  "Build one Python extension context. It has filesystem, network, environment,
-   and thread access, but cannot create native processes: extensions must use
-   `vis.jailed_shell`, which applies the invoking session's OS jail. Host
-   interop remains restricted to the explicitly bound `vis` callbacks."
+  "Build one Python extension context. Native process creation stays disabled;
+   the POSIX compatibility layer routes `subprocess` and `os.system` through
+   `vis.jailed_shell`, where the invoking session's `wrap-argv` policy applies.
+   Host interop remains restricted to the explicitly bound `vis` callbacks."
   ^Context []
   (-> (Context/newBuilder (into-array String ["python"]))
       (.engine ^Engine @env/shared-engine)
@@ -1294,6 +1299,8 @@ def __vis_registration__():
     (try (bind-host! ctx (.getName f))
          (locking ctx
            (.eval ctx "python" ^String bootstrap-python)
+           ;; Normal Python process APIs are virtualized through the session
+           ;; shell dispatcher instead of receiving native process access.
            ;; Prepend the extension file's own dir to sys.path so sibling
            ;; packages/modules import cleanly. Path crosses as a bound
            ;; member (no string-escaping into a Python snippet).
@@ -1304,6 +1311,7 @@ def __vis_registration__():
                     (str "import sys as __vis_pathsys__\n"
                          "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
                          "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n")))
+           (.eval ctx "python" ^String extension-posix-python)
            (.eval ctx (.build (Source/newBuilder "python" ^String source (.getName f)))))
          (let
            [g

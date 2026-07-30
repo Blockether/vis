@@ -1002,32 +1002,28 @@ vis.extension(
 (defdescribe
   python-extension-process-boundary-test
   (it
-    "blocks native subprocesses and exposes vis.jailed_shell with the live session env"
-    (with-open [ctx (pyx/build-context)]
-      (expect (try (.eval ctx "python" "__import__('subprocess').run(['true'])")
-                   false
-                   (catch Throwable _ true))))
+    "routes subprocess and vis.jailed_shell through the live session jail"
     (with-loaded
       {"jail.py"
-       "import vis\ndef run():\n    \"Run through the session jail.\"\n    return vis.jailed_shell('echo jailed')\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+       "import subprocess\nimport vis\ndef run():\n    \"Run through the session jail.\"\n    return [subprocess.run(['echo', 'jailed']).stdout, vis.jailed_shell('echo direct')['stdout']]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
       (fn [_ _]
         (let
           [run
            (symbol-fn (registered "jail") 'run)
 
            seen
-           (atom nil)
+           (atom [])
 
            env
            {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
 
           (with-redefs
             [shell/jailed-shell (fn [actual-env command opts]
-                                  (reset! seen [actual-env command opts])
-                                  {"stdout" "jailed"})]
+                                  (swap! seen conj [actual-env command opts])
+                                  {"stdout" (str command)})]
             (binding [extension/*current-environment* env]
-              (expect (= {"stdout" "jailed"} (:result (run))))
-              (expect (= [env "echo jailed" nil] @seen)))))))))
+              (expect (= ["echo jailed" "echo direct"] (:result (run))))
+              (expect (= [[env "echo jailed" nil] [env "echo direct" nil]] @seen)))))))))
 
 (defdescribe
   net-probe-report-test
