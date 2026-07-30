@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.14 (2817) — 2026-07-30
+<!-- commit: edcac200a917a05e9f724ecc8a3706b122d60a37 -->
+
+- Newline-faithful structural edits and comment docs across 28 languages
+- Record the 0.1.14 (2815) release notes
+
 ## 0.1.14 (2815) — 2026-07-30
 <!-- commit: 060fe81dfe16d410e4ef6efd2b03cd7d8bc70572 -->
 
