@@ -182,13 +182,13 @@
               (true? (get body "secret_match"))))
        (catch Throwable _ false)))
 
-(defn- recover-loopback-entry!
-  "Repair a missing registry for the standard managed loopback gateway.
+(defn- retire-loopback-orphan!
+  "Stop a registry-less standard loopback gateway before replacing it.
 
-   The daemon token is stable in `~/.vis/gateway.token`, and `/healthz` is open
-   specifically so a local client can prove `secret_match`, PID, and DB identity.
-   This lets a new JVM recover a still-listening daemon whose registry vanished
-   instead of spawning a guaranteed bind loser onto the occupied port."
+   The stable token and `/healthz` prove that this is Vis and that it owns `db`,
+   but a missing registry means the daemon's launch environment is unknown. Never
+   reattach to it: shut it down, wait for its port to close, then let discovery
+   launch this process's gateway."
   [db host port]
   (when (= DEFAULT_HOST host)
     (try
@@ -224,7 +224,19 @@
                    (discovery/pid-alive? pid)
                    daemon-db
                    (= (discovery/registry-key db) (discovery/registry-key daemon-db)))
-          (discovery/write-registry! db (assoc candidate :pid pid))))
+          (let
+            [stop-response
+             (gw-send! (assoc candidate :pid pid) "POST" "/v1/admin/stop" {})
+
+             deadline
+             (+ (System/currentTimeMillis) 3000)]
+
+            (when (<= 200 (long (:status stop-response)) 299)
+              (loop []
+
+                (cond (port-free? host port) true
+                      (>= (System/currentTimeMillis) deadline) false
+                      :else (do (Thread/sleep 50) (recur))))))))
       (catch Throwable _ nil))))
 
 (def ^:private spinner-frames ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
@@ -306,18 +318,19 @@
            (catch Throwable _ nil)))))
 
 (defn- discover-or-recover!
-  "Attach, repair, or start the managed gateway without ever spawning onto a
-   port that is already occupied.
+  "Attach or start the managed gateway without ever spawning onto an occupied port.
 
    A listener can appear a few milliseconds before its registry move becomes
-   visible, so an occupied port gets one short registry wait. If neither the
-   authenticated loopback health check nor that wait identifies a daemon, the
-   listener is an unresponsive orphan (or an unrelated process). Starting
-   another JVM could only lose the bind race and waste the full startup timeout,
-   so surface the real problem immediately and leave the unknown process alone."
+   visible, so an occupied port gets one short registry wait. A registry-less
+   authenticated loopback gateway is an orphan: retire it and start a fresh daemon
+   from this process rather than inheriting its stale launch environment. Any other
+   listener is left alone and reported to the user."
   [db target-host target-port]
-  (if-let [recovered (recover-loopback-entry! db target-host target-port)]
-    {:mode :recovered :entry recovered}
+  (if (retire-loopback-orphan! db target-host target-port)
+    (discovery/discover-or-start! {:db db :port target-port :host target-host}
+                                  :probe probe-entry?
+                                  :on-event (progress-reporter)
+                                  :timeout-ms (if (discovery/native-image?) 15000 60000))
     (if (port-free? target-host target-port)
       (discovery/discover-or-start! {:db db :port target-port :host target-host}
                                     :probe probe-entry?

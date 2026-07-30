@@ -62,34 +62,37 @@
              (is (= 1 @calls))))
          (finally (reset! client-id-atom previous)))))
 
-(deftest recover-loopback-entry-repairs-a-missing-registry
+(deftest authenticated-loopback-orphan-is-stopped-and-replaced
   (let
     [token-file
      (java.io.File/createTempFile "vis-gateway-token-" ".txt")
 
-     written
-     (atom nil)]
+     calls
+     (atom [])]
 
     (try (spit token-file "stable-secret\n")
          (with-redefs-fn {#'discovery/default-token-file (fn []
                                                            token-file)
                           #'discovery/pid-alive? (constantly true)
-                          #'discovery/write-registry! (fn [db entry]
-                                                        (reset! written [db entry])
-                                                        entry)
-                          (rv 'gw-send!)
-                          (fn [entry method path opts]
-                            (is (= {:host "127.0.0.1" :port 7890 :secret "stable-secret"} entry))
-                            (is (= "GET" method))
-                            (is (= "/healthz" path))
-                            (is (= 1500 (:timeout-ms opts)))
-                            {:status 200
-                             :body (str "{\"status\":\"ok\",\"secret_match\":true,"
-                                        "\"pid\":9154,\"db\":\"/tmp/recover/vis.db\"}")})}
+                          (rv 'port-free?) (constantly true)
+                          (rv 'gw-send!) (fn [entry method path opts]
+                                           (swap! calls conj [entry method path opts])
+                                           (case path
+                                             "/healthz"
+                                             {:status 200
+                                              :body
+                                              (str "{\"status\":\"ok\",\"secret_match\":true,"
+                                                   "\"pid\":9154,\"db\":\"/tmp/recover/vis.db\"}")}
+
+                                             "/v1/admin/stop"
+                                             {:status 200}))}
            (fn []
-             (let [entry ((rv 'recover-loopback-entry!) "/tmp/recover/vis.db" "127.0.0.1" 7890)]
-               (is (= {:host "127.0.0.1" :port 7890 :secret "stable-secret" :pid 9154} entry))
-               (is (= ["/tmp/recover/vis.db" entry] @written)))))
+             (is (true? ((rv 'retire-loopback-orphan!) "/tmp/recover/vis.db" "127.0.0.1" 7890)))
+             (is (= [[{:host "127.0.0.1" :port 7890 :secret "stable-secret"} "GET" "/healthz"
+                      {:timeout-ms 1500}]
+                     [{:host "127.0.0.1" :port 7890 :secret "stable-secret" :pid 9154} "POST"
+                      "/v1/admin/stop" {}]]
+                    @calls))))
          (finally (.delete token-file)))))
 
 (deftest occupied-orphan-port-never-spawns-a-bind-loser
@@ -98,7 +101,7 @@
      (atom 0)
 
      ex
-     (with-redefs-fn {(rv 'recover-loopback-entry!) (constantly nil)
+     (with-redefs-fn {(rv 'retire-loopback-orphan!) (constantly nil)
                       (rv 'port-free?) (constantly false)
                       #'discovery/await-registry! (fn [_db _probe opts]
                                                     (is (= 3000 (:timeout-ms opts)))
@@ -120,7 +123,7 @@
 
 (deftest occupied-port-allows-a-registering-daemon-to-win-the-race
   (let [spawns (atom 0)]
-    (with-redefs-fn {(rv 'recover-loopback-entry!) (constantly nil)
+    (with-redefs-fn {(rv 'retire-loopback-orphan!) (constantly nil)
                      (rv 'port-free?) (constantly false)
                      #'discovery/await-registry! (fn [_db _probe _opts]
                                                    fake-entry)
@@ -133,20 +136,26 @@
         (is (zero? @spawns))))))
 
 (deftest stale-registry-stop-does-not-report-a-listening-gateway-as-stopped
-  (let [server (java.net.ServerSocket. 0)
-        port (.getLocalPort server)]
-    (try
-      (let [result
-            (with-redefs-fn {(rv 'db-target) (constantly "/tmp/orphan/vis.db")
-                             #'discovery/read-registry (constantly (assoc fake-entry :port port))
-                             #'discovery/registry-fresh? (constantly false)}
-              (fn [] (client/stop-daemon!)))]
-        (is (not= "stopped" (:status result))
-            "a listening configured endpoint must not be reported as stopped")
-        (is (= :gateway/orphaned-daemon (:type result)))
-        (is (= "127.0.0.1" (:host result)))
-        (is (= port (:port result))))
-      (finally (.close server)))))
+  (let
+    [server
+     (java.net.ServerSocket. 0)
+
+     port
+     (.getLocalPort server)]
+
+    (try (let
+           [result (with-redefs-fn {(rv 'db-target) (constantly "/tmp/orphan/vis.db")
+                                    #'discovery/read-registry (constantly (assoc fake-entry
+                                                                            :port port))
+                                    #'discovery/registry-fresh? (constantly false)}
+                     (fn []
+                       (client/stop-daemon!)))]
+           (is (not= "stopped" (:status result))
+               "a listening configured endpoint must not be reported as stopped")
+           (is (= :gateway/orphaned-daemon (:type result)))
+           (is (= "127.0.0.1" (:host result)))
+           (is (= port (:port result))))
+         (finally (.close server)))))
 
 (deftest provider-limits-restores-engine-shape-from-gateway-wire
   (let [request (atom nil)]
