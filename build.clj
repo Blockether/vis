@@ -19,7 +19,8 @@
      clojure -T:build deploy  :package vis-channel-tui
 
    The `:package` selector matches `:lib` short name (after the slash)."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.tools.build.api :as b]
             [deps-deploy.deps-deploy :as dd]))
@@ -364,26 +365,29 @@
   CI gate so `clojure -T:build native` can never build on a drifted pin."
   []
   (when-let [{:strs [GRAAL_VERSION]} @graal-pin]
-    (let [bad (into []
-                    (comp (filter #(str/includes? (str %) "org.graalvm."))
-                          (keep (fn [form]
-                                  (let [sym (first form)
-                                        v   (-> form second :mvn/version)]
-                                    (when (and v (not= v GRAAL_VERSION))
-                                      [sym v])))))
-                    (->> (edn/read-string (slurp (io/file "deps.edn")))
-                         :deps))]
+    (let
+      [bad (into []
+                 (comp (filter #(str/includes? (str %) "org.graalvm."))
+                       (keep (fn [form]
+                               (let
+                                 [sym (first form)
+                                  v (-> form
+                                        second
+                                        :mvn/version)]
+
+                                 (when (and v (not= v GRAAL_VERSION)) [sym v])))))
+                 (->> (edn/read-string (slurp (io/file "deps.edn")))
+                      :deps))]
       (when (seq bad)
-        (throw
-          (ex-info
-            (str "deps.edn org.graalvm.* pins do not match .graalvm-version "
-                 GRAAL_VERSION ".\n"
-                 (str/join "\n" (map (fn [[sym v]]
-                                       (str "  " sym " " v " ≠ " GRAAL_VERSION))
-                                     bad))
-                 "\n  .graalvm-version is the single source of truth — "
-                 "bump it and every pin together.")
-            {:expected GRAAL_VERSION :mismatched bad}))))))
+        (throw (ex-info (str "deps.edn org.graalvm.* pins do not match .graalvm-version "
+                             GRAAL_VERSION
+                             ".\n" (str/join "\n"
+                                             (map (fn [[sym v]]
+                                                    (str "  " sym " " v " ≠ " GRAAL_VERSION))
+                                                  bad))
+                             "\n  .graalvm-version is the single source of truth — "
+                             "bump it and every pin together.")
+                        {:expected GRAAL_VERSION :mismatched bad}))))))
 
 (def ^:private graalvm-script
   "The one resolver/installer — the same file CI, the Dockerfile and humans use.
@@ -465,6 +469,7 @@
    re-exec under it; installation declined (`:auto-install-graalvm false` /
    VIS_AUTO_INSTALL_GRAALVM=0) or failed → the hard refusal."
   [task opts]
+  (assert-graal-pins!)
   (when-let
     [{want "GRAAL_VENDOR_VERSION" edition "GRAAL_EDITION" version "GRAAL_VERSION"} @graal-pin]
     (let [got (or (System/getProperty "java.vendor.version") "unknown JDK")]

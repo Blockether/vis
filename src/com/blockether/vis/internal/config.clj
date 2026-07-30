@@ -1366,8 +1366,8 @@
 
 (defn extension-env-status
   "Return source and value metadata for an extension-declared variable.
-   The process environment wins over the working directory's `.env`; Vis config
-   is deliberately never consulted. `:source` is `:env`, `:dotenv`, or `:unset`."
+   The process environment wins over the working directory's `.env`, then `.env.local`;
+   Vis config is deliberately never consulted. `:source` is `:env`, `:dotenv`, or `:unset`."
   [name]
   (let [name' (str name)]
     (if-let [from-env (not-empty (str/trim (or (System/getenv name') "")))]

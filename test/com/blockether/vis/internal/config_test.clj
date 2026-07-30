@@ -569,7 +569,7 @@
   (it "uses .env only when the process environment has no value"
       (let
         [path (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" (System/nanoTime))]
-        (try (spit path "# comment\\nexport VIS_TEST_EXTENSION_TOKEN = quoted\\nVIS_TEST_EMPTY=\\n")
+        (try (spit path "# comment\nexport VIS_TEST_EXTENSION_TOKEN = quoted\nVIS_TEST_EMPTY=\n")
              (binding
                [config/*extension-dotenv-path* path
                 config/*extension-dotenv-local-path* nil]
@@ -582,8 +582,8 @@
       (let
         [path (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" (System/nanoTime))]
         (try (spit path
-                   (str "VIS_TEST_OVERRIDE=first\\nVIS_TEST_OVERRIDE=second\\n"
-                        "VIS_TEST_BLANK=first\\nVIS_TEST_BLANK=\\n"))
+                   (str "VIS_TEST_OVERRIDE=first\nVIS_TEST_OVERRIDE=second\n"
+                        "VIS_TEST_BLANK=first\nVIS_TEST_BLANK=\n"))
              (binding
                [config/*extension-dotenv-path* path
                 config/*extension-dotenv-local-path* nil]
@@ -604,11 +604,11 @@
          local-path
          (str env-path ".local")]
 
-        (try (spit env-path (str "VIS_TEST_ENV_PRIORITY=from-env\\n" "VIS_TEST_ENV_BLANK=\\n"))
+        (try (spit env-path (str "VIS_TEST_ENV_PRIORITY=from-env\n" "VIS_TEST_ENV_BLANK=\n"))
              (spit local-path
-                   (str "VIS_TEST_ENV_PRIORITY=from-local\\n"
-                        "VIS_TEST_ENV_BLANK=from-local\\n"
-                        "VIS_TEST_LOCAL_ONLY=from-local\\n"))
+                   (str "VIS_TEST_ENV_PRIORITY=from-local\n"
+                        "VIS_TEST_ENV_BLANK=from-local\n"
+                        "VIS_TEST_LOCAL_ONLY=from-local\n"))
              (binding
                [config/*extension-dotenv-path*
                 env-path
@@ -626,7 +626,7 @@
   (it "the process environment overrides both dotenv files"
       (let
         [path (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" (System/nanoTime))]
-        (try (spit path "PATH=from-dotenv\\n")
+        (try (spit path "PATH=from-dotenv\n")
              (binding
                [config/*extension-dotenv-path* path
                 config/*extension-dotenv-local-path* nil]
