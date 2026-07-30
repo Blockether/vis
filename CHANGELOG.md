@@ -7,6 +7,155 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.14] - 2026-07-30
+
+### Changed
+- fix(editing): newline-faithful structural edits and comment docs across 28 languages
+- Record the 0.1.14 (2815) release notes
+- Cover turn attachments with tests and note 0.1.14 in the changelog
+- Bump tree-sitter-language-pack to 1.12.3-blockether.32
+- Serve a turn's inline attachments and hide the footer mid-turn
+- Bump tree-sitter-language-pack to 1.12.3-blockether.31
+- Name every working directory `cwd` across the tool surface
+- Cache the live turn bubble so re-entry paints it instantly
+- docs(companion): release notes for 0.1.14 (2808)
+- Let the companion app change the reasoning mode
+- Adopt already-running turns in the companion session screen
+- Add PRIVACY.md for the companion app (Play store policy URL)
+- Guarantee turn terminals and bound Python GC
+- Allow block-local shadowing of bound tool names in vis Python
+- docs(companion): release notes for 0.1.14 (2802)
+- Unify tool input carriers and refresh companion diff view
+- Fix gateway, Python, Git, and TUI regressions (#61, #73, #74, #75)
+- Fix failed turn error cards after watchdog recovery
+- Guard orphan retirement against registered gateways
+- Retire orphaned loopback gateways before restart
+- Route extension subprocess APIs through jailed shell
+- Improve dotenv environment handling
+- Activate Git tool for nested repositories
+- feat(git): gate commits through verification hooks
+- docs(bridge): Prefer JSON in Bridge extension docs
+- fix: enforce GraalVM pin consistency
+- chore: update GraalVM and extension runtime
+- Smooth terminal result scrolling
+- Improve extension configuration and tools
+- Refresh shell bindings after settings changes
+- Respect disabled shell toggle in sub-agents
+- Restore transcript layout stabilization
+- Limit NTR browsing to latest turn
+- Simplify companion reconnect and transcript behavior
+- Improve compaction guidance and retry diagnostics
+- feat(build): install the pinned GraalVM CE automatically when it is missing
+- fix(companion): stabilize transcript rotation
+- refactor(prompt,fold): say what to do, and advertise only the 5 newest ntr entries
+- fix(provider-error): blame the gateway, not a Vis schema, for injected tool fields
+- feat(titling): the LLM title always runs after the turn, on its own route
+- test(loop): the deferred title upgrade is after-turn-auto-title! (#71)
+- feat(titling): configurable session titling, deferred past the foreground turn (#71)
+- test(loop): widen the observation-batch concurrency margin for loaded runners
+- test(tui): de-flake the live-progress layout budget on shared runners
+- chore(audit): regenerate audit/README.md for svar 0.7.88
+- fix(cli): describe vis as a coding agent, not a "Recursive Language Model"
+- feat(config): per-provider `is_stateless` for gateways that reject replayed item ids
+- release: update version files for v0.1.13, bump to next dev version
+- chore(audit): regenerate the dependency inventory (ruff 0.3.2, svar 0.7.86)
+
+### Package changes
+
+#### com.blockether/vis
+- fix(editing): newline-faithful structural edits and comment docs across 28 languages (edcac200a)
+- Record the 0.1.14 (2815) release notes (e50c94af9)
+- Cover turn attachments with tests and note 0.1.14 in the changelog (060fe81df)
+- Bump tree-sitter-language-pack to 1.12.3-blockether.32 (e3b729f13)
+- Serve a turn's inline attachments and hide the footer mid-turn (29a05339a)
+- Bump tree-sitter-language-pack to 1.12.3-blockether.31 (f6881c9dd)
+- Name every working directory `cwd` across the tool surface (4df25f19e)
+- Cache the live turn bubble so re-entry paints it instantly (ece994fa2)
+- docs(companion): release notes for 0.1.14 (2808) (96563d153)
+- Let the companion app change the reasoning mode (f567648ee)
+- Adopt already-running turns in the companion session screen (2dd3ad3ba)
+- Add PRIVACY.md for the companion app (Play store policy URL) (4ea71f8a3)
+- Guarantee turn terminals and bound Python GC (5bb959dd7)
+- Allow block-local shadowing of bound tool names in vis Python (88bbea7eb)
+- docs(companion): release notes for 0.1.14 (2802) (971591d06)
+- Unify tool input carriers and refresh companion diff view (7e3b8a2c2)
+- Fix gateway, Python, Git, and TUI regressions (#61, #73, #74, #75) (571e761d4)
+- Fix failed turn error cards after watchdog recovery (c9b84ab7e)
+- Guard orphan retirement against registered gateways (21cb13822)
+- Retire orphaned loopback gateways before restart (bc49a4636)
+- Route extension subprocess APIs through jailed shell (17808cf25)
+- Improve dotenv environment handling (f9202278d)
+- Activate Git tool for nested repositories (028fcce96)
+- feat(git): gate commits through verification hooks (826c528c5)
+- fix: enforce GraalVM pin consistency (dfece5942)
+- chore: update GraalVM and extension runtime (fe6d2949a)
+- Smooth terminal result scrolling (56568baa0)
+- Improve extension configuration and tools (31a974b4b)
+- Refresh shell bindings after settings changes (eef369280)
+- Respect disabled shell toggle in sub-agents (a3ff72111)
+- Restore transcript layout stabilization (66da8bf72)
+- Limit NTR browsing to latest turn (ce8f20afa)
+- Simplify companion reconnect and transcript behavior (bf8988086)
+- Improve compaction guidance and retry diagnostics (c39edc0b8)
+- feat(build): install the pinned GraalVM CE automatically when it is missing (956cb66aa)
+- fix(companion): stabilize transcript rotation (636ea5af0)
+- refactor(prompt,fold): say what to do, and advertise only the 5 newest ntr entries (df93fefef)
+- fix(provider-error): blame the gateway, not a Vis schema, for injected tool fields (7abfd121a)
+- feat(titling): the LLM title always runs after the turn, on its own route (a696d8d2d)
+- test(loop): the deferred title upgrade is after-turn-auto-title! (#71) (ec1c01f38)
+- feat(titling): configurable session titling, deferred past the foreground turn (#71) (eb0b6a793)
+- test(loop): widen the observation-batch concurrency margin for loaded runners (3f1fe723c)
+- chore(audit): regenerate audit/README.md for svar 0.7.88 (dbe920b6b)
+- fix(cli): describe vis as a coding agent, not a "Recursive Language Model" (0e737768d)
+- feat(config): per-provider `is_stateless` for gateways that reject replayed item ids (41f87ea34)
+- release: update version files for v0.1.13, bump to next dev version (2a35e648b)
+- chore(audit): regenerate the dependency inventory (ruff 0.3.2, svar 0.7.86) (af62949a3)
+
+#### com.blockether/vis-channel-tui
+- Cache the live turn bubble so re-entry paints it instantly (ece994fa2)
+- Allow block-local shadowing of bound tool names in vis Python (88bbea7eb)
+- Unify tool input carriers and refresh companion diff view (7e3b8a2c2)
+- Fix gateway, Python, Git, and TUI regressions (#61, #73, #74, #75) (571e761d4)
+- Fix failed turn error cards after watchdog recovery (c9b84ab7e)
+- feat(git): gate commits through verification hooks (826c528c5)
+- chore: update GraalVM and extension runtime (fe6d2949a)
+- Smooth terminal result scrolling (56568baa0)
+- Improve extension configuration and tools (31a974b4b)
+- Improve compaction guidance and retry diagnostics (c39edc0b8)
+- test(tui): de-flake the live-progress layout budget on shared runners (ca49b15e0)
+
+#### com.blockether/vis-foundation-bridge
+- feat(git): gate commits through verification hooks (826c528c5)
+- docs(bridge): Prefer JSON in Bridge extension docs (f8e973098)
+
+#### com.blockether/vis-foundation-search
+- Cache the live turn bubble so re-entry paints it instantly (ece994fa2)
+- Improve extension configuration and tools (31a974b4b)
+
+#### com.blockether/vis-foundation-voice
+- Cache the live turn bubble so re-entry paints it instantly (ece994fa2)
+
+#### com.blockether/vis-language-clojure
+- Name every working directory `cwd` across the tool surface (4df25f19e)
+- Cache the live turn bubble so re-entry paints it instantly (ece994fa2)
+- Unify tool input carriers and refresh companion diff view (7e3b8a2c2)
+
+#### com.blockether/vis-language-python
+- Name every working directory `cwd` across the tool surface (4df25f19e)
+- Cache the live turn bubble so re-entry paints it instantly (ece994fa2)
+- Unify tool input carriers and refresh companion diff view (7e3b8a2c2)
+
+#### com.blockether/vis-language-typescript-bun
+- Name every working directory `cwd` across the tool surface (4df25f19e)
+- Cache the live turn bubble so re-entry paints it instantly (ece994fa2)
+
+#### com.blockether/vis-persistance-sqlite
+- Unify tool input carriers and refresh companion diff view (7e3b8a2c2)
+- chore: update GraalVM and extension runtime (fe6d2949a)
+- Limit NTR browsing to latest turn (ce8f20afa)
+
+
+
 ### Added
 
 - Bridge exact-candidate options in `br/check` and `br/run-evidence`.
@@ -1795,7 +1944,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.13...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.14...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -1809,3 +1958,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.11]: https://github.com/Blockether/vis/releases/tag/v0.1.11
 [v0.1.12]: https://github.com/Blockether/vis/releases/tag/v0.1.12
 [v0.1.13]: https://github.com/Blockether/vis/releases/tag/v0.1.13
+[v0.1.14]: https://github.com/Blockether/vis/releases/tag/v0.1.14
