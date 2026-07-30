@@ -190,7 +190,7 @@
    reattach to it: shut it down, wait for its port to close, then let discovery
    launch this process's gateway."
   [db host port]
-  (when (= DEFAULT_HOST host)
+  (when (and (= DEFAULT_HOST host) (nil? (discovery/read-registry db)))
     (try
       (let
         [token-file
@@ -218,7 +218,8 @@
          daemon-db
          (get body "db")]
 
-        (when (and (= "ok" (get body "status"))
+        (when (and (nil? (discovery/read-registry db))
+                   (= "ok" (get body "status"))
                    (true? (get body "secret_match"))
                    pid
                    (discovery/pid-alive? pid)

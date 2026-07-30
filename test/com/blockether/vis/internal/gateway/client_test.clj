@@ -74,6 +74,7 @@
          (with-redefs-fn {#'discovery/default-token-file (fn []
                                                            token-file)
                           #'discovery/pid-alive? (constantly true)
+                          #'discovery/read-registry (constantly nil)
                           (rv 'port-free?) (constantly true)
                           (rv 'gw-send!) (fn [entry method path opts]
                                            (swap! calls conj [entry method path opts])
@@ -94,6 +95,15 @@
                       "/v1/admin/stop" {}]]
                     @calls))))
          (finally (.delete token-file)))))
+
+(deftest registered-loopback-gateway-is-never-retired
+  (let [calls (atom [])]
+    (with-redefs-fn {#'discovery/read-registry (constantly fake-entry)
+                     (rv 'gw-send!) (fn [& args]
+                                      (swap! calls conj args))}
+      (fn []
+        (is (nil? ((rv 'retire-loopback-orphan!) "/tmp/registered/vis.db" "127.0.0.1" 7890)))
+        (is (empty? @calls))))))
 
 (deftest occupied-orphan-port-never-spawns-a-bind-loser
   (let
