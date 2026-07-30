@@ -2061,6 +2061,10 @@
   "Sandbox symbol currently executing, when a symbol callback is active."
   nil)
 
+(def ^:dynamic *current-environment*
+  "Live session environment for the extension callback currently executing."
+  nil)
+
 (defn current-extension [] *current-extension*)
 
 (defn current-extension-id
@@ -2076,6 +2080,9 @@
 
      *current-symbol*
      nil
+
+     *current-environment*
+     environment
 
      workspace/*workspace-root*
      (workspace/workspace-root environment)
@@ -2402,7 +2409,10 @@
      ext
 
      *current-symbol*
-     (:ext.symbol/symbol sym-entry)]
+     (:ext.symbol/symbol sym-entry)
+
+     *current-environment*
+     env]
 
     (let
       [sym

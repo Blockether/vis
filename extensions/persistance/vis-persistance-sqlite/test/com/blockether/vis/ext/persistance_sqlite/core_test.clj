@@ -511,13 +511,21 @@
   "(require '[com.blockether.vis.core :as vis])
    (require '[com.blockether.vis.ext.persistance-sqlite.test-helpers :as h])
    (try
-     (let [dir    (System/getProperty \"vis.test.db-dir\")
-           marker (some-> (System/getProperty \"vis.test.marker\") not-empty)
-           title  (or (System/getProperty \"vis.test.title\") \"child\")
-           s      (vis/db-create-connection! dir)]
+     (let [dir     (System/getProperty \"vis.test.db-dir\")
+           marker  (System/getProperty \"vis.test.marker\")
+           release (System/getProperty \"vis.test.release\")
+           title   (System/getProperty \"vis.test.title\")
+           s       (vis/db-create-connection! dir)]
        (try
-         (when marker (spit marker \"ready\"))
-         (Thread/sleep 250)
+         ;; Both children must finish opening before either writes. This makes one
+         ;; concise test cover concurrent first-open migrations and cross-JVM writes.
+         (spit marker \"ready\")
+         (let [deadline (+ (System/currentTimeMillis) 45000)]
+           (while (and (not (.exists (java.io.File. release)))
+                       (< (System/currentTimeMillis) deadline))
+             (Thread/sleep 25)))
+         (when-not (.exists (java.io.File. release))
+           (throw (ex-info \"timed out waiting for parent release\" {})))
          (h/store-session! s {:channel :child :title title})
          (println \"CHILD-DONE\" title)
          (finally
@@ -534,72 +542,66 @@
 (defn- java-command [] (str (fs/file (System/getProperty "java.home") "bin" "java")))
 
 (defn- start-multiprocess-writer!
-  (^Process [dir marker] (start-multiprocess-writer! dir marker "child"))
-  (^Process [dir marker title]
-   (let
-     [norm
-      (fn [s]
-        (.replace (str s) "\\" "/"))
+  ^Process [dir marker release title]
+  (let
+    [norm
+     (fn [s]
+       (.replace (str s) "\\" "/"))
 
-      ;; Run the child program from a temp .clj FILE, not `-e <code>`:
-      ;; passing the program inline puts its double-quotes on the command
-      ;; line, where a host's arg quoting can strip them, so `clojure.main` reads
-      ;; `(System/getProperty vis.test.db-dir)` as a bare symbol →
-      ;; ClassNotFoundException before the child ever opens the store.
-      script
-      (fs/file (fs/create-temp-dir {:prefix "vis-mp-child-"}) "child.clj")
+     script
+     (fs/file (fs/create-temp-dir {:prefix "vis-mp-child-"}) "child.clj")
 
-      _
-      (spit script multiprocess-child-code)
+     _
+     (spit script multiprocess-child-code)
 
-      ^java.util.List cmd
-      [(java-command) (str "-Dvis.test.db-dir=" (norm dir))
-       (str "-Dvis.test.marker=" (norm (or marker ""))) (str "-Dvis.test.title=" title)
-       "clojure.main" (norm (str script))]
+     ^java.util.List cmd
+     [(java-command) (str "-Dvis.test.db-dir=" (norm dir)) (str "-Dvis.test.marker=" (norm marker))
+      (str "-Dvis.test.release=" (norm release)) (str "-Dvis.test.title=" title) "clojure.main"
+      (norm (str script))]
 
-      pb
-      (ProcessBuilder. cmd)]
+     pb
+     (ProcessBuilder. cmd)]
 
-     ;; Classpath via the CLASSPATH env, NOT `-cp` on the command line: keeps
-     ;; the child argv small and immune to command-line length limits.
-     (.put (.environment pb) "CLASSPATH" (System/getProperty "java.class.path"))
-     (.redirectErrorStream pb true)
-     (let [child (.start pb)]
-       (swap! child-output-futures assoc child (future (slurp (.getInputStream child))))
-       child))))
+    ;; Classpath via the environment keeps the child argv small and portable.
+    (.put (.environment pb) "CLASSPATH" (System/getProperty "java.class.path"))
+    (.redirectErrorStream pb true)
+    (let [child (.start pb)]
+      (swap! child-output-futures assoc child (future (slurp (.getInputStream child))))
+      child)))
 
-(defn- wait-for-file
-  [path timeout-ms]
+(defn- wait-for-files
+  [paths children timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []
 
-      (cond (fs/exists? path) true
+      (cond (every? fs/exists? paths) true
+            (some (complement #(.isAlive ^Process %)) children) false
             (>= (System/currentTimeMillis) deadline) false
             :else (do (Thread/sleep 25) (recur))))))
 
-;; Multiprocess child JVMs cold-boot Clojure + Flyway + sqlite-jdbc on every
-;; spawn. On a warm machine that's ~6–7 s; under the full test suite (JIT
-;; contention with the rest of the run), 10–20 s, with occasional slower
-;; cold-starts on loaded CI/developer machines. This is correctness-only —
-;; these tests guard cross-JVM DB semantics, NOT startup speed — so the timeout
-;; is deliberately generous: a saturated box (other JVMs hogging cores) can push
-;; a single cold-boot past a minute, and a false timeout here is pure noise.
-(def ^:private MULTIPROCESS_CHILD_TIMEOUT_S 150)
+;; Child JVMs cold-boot Clojure, Flyway, and sqlite-jdbc. The timeout bounds a
+;; broken child without letting one stalled process hold the full suite hostage.
+(def ^:private MULTIPROCESS_CHILD_TIMEOUT_S 60)
+
+(defn- child-output
+  [^Process child]
+  (some-> (get @child-output-futures child)
+          (deref 1000 "")))
 
 (defn- expect-child-success!
   [^Process child]
-  (expect (true? (.waitFor child MULTIPROCESS_CHILD_TIMEOUT_S TimeUnit/SECONDS)))
   (let
-    [output-future
-     (get @child-output-futures child)
+    [finished?
+     (.waitFor child MULTIPROCESS_CHILD_TIMEOUT_S TimeUnit/SECONDS)
 
      output
-     (when output-future (deref output-future 1000 ""))]
+     (child-output child)]
 
     (swap! child-output-futures dissoc child)
-    ;; Surface the child's merged stdout+stderr (it `.printStackTrace`s on a
-    ;; failed open) so a child crash is diagnosable from CI logs.
-    (when-not (and (= 0 (.exitValue child)) (str/includes? (str output) "CHILD-DONE"))
+    (when-not finished?
+      (.destroyForcibly child)
+      (throw (ex-info "multiprocess child timed out" {:output output})))
+    (when-not (and (zero? (.exitValue child)) (str/includes? (str output) "CHILD-DONE"))
       (println "=== multiprocess child output (exit" (.exitValue child) ") ===")
       (println output)
       (println "=== end child output ==="))
@@ -608,49 +610,40 @@
 
 (defdescribe
   sqlite-multiprocess-write-test
-  (it "allows two JVMs to open the same persistent store and write while both are alive"
-      (let
-        [dir
-         (fs/create-temp-dir {:prefix "vis-db-multiprocess-"})
+  (it
+    "serializes concurrent first-open migrations and writes across two JVMs"
+    (let
+      [dir
+       (fs/create-temp-dir {:prefix "vis-db-multiprocess-"})
 
-         marker
-         (fs/file dir "child-opened")]
+       release
+       (fs/file dir "release")
 
-        (try (let
-               [parent
-                (vis/db-create-connection! (str dir))
+       markers
+       [(fs/file dir "child-a-opened") (fs/file dir "child-b-opened")]]
 
-                child
-                (start-multiprocess-writer! (str dir) (str marker))]
-
-               (try (expect (true? (wait-for-file marker (* 1000 MULTIPROCESS_CHILD_TIMEOUT_S))))
-                    (h/store-session! parent {:channel :parent :title "parent"})
-                    (expect-child-success! child)
-                    (expect (= #{"child" "parent"}
-                               (set (map :title
-                                         (raw-query parent
-                                                    {:select [:title] :from [:session_state]})))))
-                    (finally (when (.isAlive child) (.destroyForcibly child))
-                             (vis/db-dispose-connection! parent))))
-             (finally (fs/delete-tree dir)))))
-  (it "serializes first-open migrations across JVMs"
-      (let [dir (fs/create-temp-dir {:prefix "vis-db-multiprocess-migrate-"})]
-        (try (let
-               [child-a (start-multiprocess-writer! (str dir) nil "child-a")
-                child-b (start-multiprocess-writer! (str dir) nil "child-b")]
-
-               (try (expect-child-success! child-a)
-                    (expect-child-success! child-b)
-                    (let [s (vis/db-create-connection! (str dir))]
-                      (try (expect (= #{"child-a" "child-b"}
-                                      (set (map :title
-                                                (raw-query s
-                                                           {:select [:title]
-                                                            :from [:session_state]})))))
-                           (finally (vis/db-dispose-connection! s))))
-                    (finally (doseq [^Process child [child-a child-b]]
-                               (when (.isAlive child) (.destroyForcibly child))))))
-             (finally (fs/delete-tree dir))))))
+      (try
+        (let
+          [children
+           [(start-multiprocess-writer! (str dir) (str (first markers)) (str release) "child-a")
+            (start-multiprocess-writer! (str dir) (str (second markers)) (str release) "child-b")]]
+          (try (when-not (wait-for-files markers children (* 1000 MULTIPROCESS_CHILD_TIMEOUT_S))
+                 (doseq [^Process child children]
+                   (when (.isAlive child) (.destroyForcibly child)))
+                 (throw (ex-info "multiprocess children did not both open the store"
+                                 {:output (mapv child-output children)})))
+               (spit release "go")
+               (doseq [^Process child children]
+                 (expect-child-success! child))
+               (let [s (vis/db-create-connection! (str dir))]
+                 (try (expect (= #{"child-a" "child-b"}
+                                 (set (map :title
+                                           (raw-query s
+                                                      {:select [:title] :from [:session_state]})))))
+                      (finally (vis/db-dispose-connection! s))))
+               (finally (doseq [^Process child children]
+                          (when (.isAlive child) (.destroyForcibly child))))))
+        (finally (fs/delete-tree dir))))))
 
 (defdescribe
   sqlite-same-jvm-migration-lock-test

@@ -107,7 +107,7 @@
   com.blockether/vis-language-typescript-bun {:local/root
                                               "extensions/languages/vis-language-typescript-bun"}
   com.blockether/vis-workspace-rift {:local/root "extensions/workspaces/vis-workspace-rift"}
-  com.blockether/svar {:mvn/version "0.7.89"}
+  com.blockether/svar {:mvn/version "0.7.91"}
   com.blockether/anomaly {:mvn/version "1.0.1"}
   org.clojure/tools.deps {:mvn/version "0.31.1638"}
   org.commonmark/commonmark {:mvn/version "0.29.0"}
@@ -134,10 +134,10 @@
   metosin/malli {:mvn/version "0.20.1"}
   ;; GraalPy/Truffle/SVM refuse mismatched versions — bump these four together
   ;; with the setup-graalvm-25 action's pinned version.
-  org.graalvm.polyglot/polyglot {:mvn/version "25.1.3"}
-  org.graalvm.python/python-language {:mvn/version "25.1.3"}
-  org.graalvm.python/python-resources {:mvn/version "25.1.3"}
-  org.graalvm.truffle/truffle-runtime {:mvn/version "25.1.3"}
+  org.graalvm.polyglot/polyglot {:mvn/version "25.2.4"}
+  org.graalvm.python/python-language {:mvn/version "25.2.4"}
+  org.graalvm.python/python-resources {:mvn/version "25.2.4"}
+  org.graalvm.truffle/truffle-runtime {:mvn/version "25.2.4"}
   com.cnuernber/charred {:mvn/version "1.041"}
   org.flatland/ordered {:mvn/version "1.15.12"}
   org.yamlstar/yamlstar {:mvn/version "0.1.17"}

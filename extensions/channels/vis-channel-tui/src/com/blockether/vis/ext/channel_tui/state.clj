@@ -1068,15 +1068,12 @@
    dimensions match the tab being left; after a resize, discard the target layout
    so the first frame recomputes against the new geometry.
 
-   The eased `:pos` is ALWAYS dropped. A tab switch is a DISCRETE jump, not
-   motion inside one view: the incoming transcript was never on screen, so there
-   is nothing to ease FROM. A snapshot's `:pos` is a stale absolute row — FOLLOW
-   pins it at the bottom of the `total-h` the tab had when it was last painted,
-   and that grows while the tab is hidden (a background turn appends messages,
-   and estimate→real height corrections land on the next visit's warm). Keeping
-   it made the first frame paint the OLD row and the render loop then visibly
-   scroll DOWN to the real bottom on every switch. Dropping it snaps: FOLLOW
-   locks to the exact bottom, `:at` to its parked row."
+   Switching tabs is deliberately a **latest-events jump**, not a restoration of a
+   prior reading position. The incoming transcript was not on screen, and its
+   background turn may have grown while hidden; retaining either a parked offset
+   or eased `:pos` produces stale history followed by an unwanted scroll. Resetting
+   to FOLLOW makes the first frame show the current tail, including for live turns.
+   The target layout remains reusable when terminal dimensions match."
   [db workspace-id]
   (let
     [entry
@@ -1105,9 +1102,10 @@
 
      db'
      (-> (merge db locals)
-         (update :scroll
-                 (fn [sc]
-                   (if (map? sc) (dissoc sc :pos) sc)))
+         ;; A workspace switch always enters at the live tail. Per-tab scroll
+         ;; snapshots still matter while a tab stays focused, but never across a
+         ;; switch: a background/live tab should not reopen above its newest event.
+         (assoc :scroll scroll/follow)
          (cond->
            (not compatible-layout?)
            (dissoc :layout)))]

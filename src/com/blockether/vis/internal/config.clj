@@ -1322,33 +1322,47 @@
 
 (def ^:dynamic *extension-dotenv-path*
   "Project `.env` consulted for extension-declared variables after the process environment.
-   Bind in tests; production defaults to the process working directory."
+   It takes precedence over `.env.local`. Bind in tests; production defaults to the
+   process working directory."
   (str (System/getProperty "user.dir") "/.env"))
 
-(defn- dotenv-value
-  [name]
-  (when-let [path *extension-dotenv-path*]
+(def ^:dynamic *extension-dotenv-local-path*
+  "Project `.env.local` consulted after `.env` and before an unset result.
+   Bind in tests; production defaults to the process working directory."
+  (str (System/getProperty "user.dir") "/.env.local"))
+
+(defn- dotenv-assignment
+  "Return the final assignment for `name` in `path`, including a blank value."
+  [path name]
+  (when path
     (try (with-open [reader (io/reader path)]
+           ;; `.env` follows shell assignment semantics: a later declaration wins.
+           ;; Preserve an explicitly blank final assignment so it masks lower-precedence files.
            (some (fn [line]
                    (let
-                     [line (str/trim line)
-                      line (str/replace-first line #"^export\s+" "")]
-
+                     [line (-> line
+                               str/trim
+                               (str/replace-first #"^export\s+" ""))]
                      (when-let
                        [[_ key value] (re-matches #"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)" line)]
                        (when (= key name)
-                         (let
-                           [value (str/trim value)
-                            value (if (and (<= 2 (count value))
-                                           (#{\' \"} (first value))
-                                           (= (first value) (last value)))
-                                    (subs value 1 (dec (count value)))
-                                    value)]
-
-                           (not-empty value))))))
-                 (line-seq reader)))
+                         {:value (let [value (str/trim value)]
+                                   (if (and (<= 2 (count value))
+                                            (#{(char 39) (char 34)} (first value))
+                                            (= (first value) (last value)))
+                                     (subs value 1 (dec (count value)))
+                                     value))}))))
+                 (reverse (vec (line-seq reader)))))
          (catch java.io.FileNotFoundException _ nil)
          (catch java.io.IOException _ nil))))
+
+(defn- dotenv-value
+  [name]
+  ;; `.env` deliberately takes precedence over `.env.local`; an explicit blank
+  ;; assignment in `.env` masks a value from `.env.local`.
+  (some-> (some #(dotenv-assignment % name) [*extension-dotenv-path* *extension-dotenv-local-path*])
+          :value
+          not-empty))
 
 (defn extension-env-status
   "Return source and value metadata for an extension-declared variable.

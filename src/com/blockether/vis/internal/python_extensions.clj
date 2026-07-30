@@ -246,6 +246,9 @@ def log(level, msg):
 
 def notify(text, level='info'):
     _host['notify'](str(text), str(level))
+
+def jailed_shell(cmd, opts=None):
+    return _host['jailed_shell'](str(cmd), opts)
 '''
 
 _vis_mod = _vis_types.ModuleType('vis')
@@ -254,7 +257,8 @@ _vis_mod.__dict__['_host'] = {
     'state_put': __vis_host_state_put__,
     'state_del': __vis_host_state_del__,
     'log': __vis_host_log__,
-    'notify': __vis_host_notify__,
+'notify': __vis_host_notify__,
+    'jailed_shell': __vis_host_jailed_shell__,
 }
 exec(compile(_vis_body, '<vis-bootstrap>', 'exec'), _vis_mod.__dict__)
 _vis_sys.modules['vis'] = _vis_mod
@@ -345,17 +349,17 @@ def __vis_registration__():
 ;; =============================================================================
 
 (defn ^:no-doc build-context
-  "Build one TRUSTED extension context on the shared Engine. Permissive
-   about the world (real filesystem, sockets, subprocesses, env vars,
-   threads) but strict about the host: no host interop beyond the
-   explicitly bound `vis` API callbacks."
+  "Build one Python extension context. It has filesystem, network, environment,
+   and thread access, but cannot create native processes: extensions must use
+   `vis.jailed_shell`, which applies the invoking session's OS jail. Host
+   interop remains restricted to the explicitly bound `vis` callbacks."
   ^Context []
   (-> (Context/newBuilder (into-array String ["python"]))
       (.engine ^Engine @env/shared-engine)
       (.allowAllAccess false)
       (.allowIO IOAccess/ALL)
       (.allowCreateThread true)
-      (.allowCreateProcess true)
+      (.allowCreateProcess false)
       (.allowNativeAccess false)
       (.allowPolyglotAccess PolyglotAccess/NONE)
       (.allowEnvironmentAccess EnvironmentAccess/INHERIT)
@@ -400,7 +404,15 @@ def __vis_registration__():
                 (->executable
                   (fn [text level]
                     (notifications/notify! (str text) :level (get notify-levels (str level) :info))
-                    nil)))))
+                    nil)))
+    (.putMember g
+                "__vis_host_jailed_shell__"
+                (->executable (fn [command opts]
+                                ((requiring-resolve
+                                   'com.blockether.vis.internal.foundation.shell/jailed-shell)
+                                  extension/*current-environment*
+                                  command
+                                  opts))))))
 
 ;; =============================================================================
 ;; Adapters — Python callables wrapped as the Clojure fns the extension

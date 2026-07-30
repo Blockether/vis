@@ -2,7 +2,7 @@
 
 Keep only non-obvious project contracts here; inspect nearby source and tests for detail.
 
-## The JDK: GraalVM CE 25.1.3, always
+## The JDK: GraalVM CE 25.2.4, always
 
 - `.graalvm-version` is the SINGLE source of truth (edition, version, release tag, asset digests, expected `java.vendor.version`). `.github/actions/setup-graalvm-25`, the `Dockerfile`, `build.clj` and `bin/require-graalvm` all read it — never hardcode a version anywhere else. Bump it together with the `org.graalvm.*` pins in `deps.edn`.
 - **Community Edition, not Oracle GraalVM**: CE is GPLv2 + Classpath Exception, which is the only reason the shipped binary can be redistributed as FOSS (`audit/README.md` §4.1). Oracle GraalVM builds fine and is still wrong.

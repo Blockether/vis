@@ -354,6 +354,37 @@
                              [k (str/trim v)])))
                    (str/split-lines (slurp f)))))))
 
+(defn- assert-graal-pins!
+  "The OTHER half of the `.graalvm-version` contract, enforced on the JVM side.
+  A correct JDK is only half the story: deps.edn's org.graalvm.* jars must name
+  the same version as `.graalvm-version`, or Truffle refuses a runtime whose
+  built-in version differs from the polyglot jars — minutes into the image
+  build, with an opaque NoClassDefFoundError. The Dockerfile's `check-graal-pins`
+  and `bin/require-graalvm`'s `check_pins` are the same gate; this is the host /
+  CI gate so `clojure -T:build native` can never build on a drifted pin."
+  []
+  (when-let [{:strs [GRAAL_VERSION]} @graal-pin]
+    (let [bad (into []
+                    (comp (filter #(str/includes? (str %) "org.graalvm."))
+                          (keep (fn [form]
+                                  (let [sym (first form)
+                                        v   (-> form second :mvn/version)]
+                                    (when (and v (not= v GRAAL_VERSION))
+                                      [sym v])))))
+                    (->> (edn/read-string (slurp (io/file "deps.edn")))
+                         :deps))]
+      (when (seq bad)
+        (throw
+          (ex-info
+            (str "deps.edn org.graalvm.* pins do not match .graalvm-version "
+                 GRAAL_VERSION ".\n"
+                 (str/join "\n" (map (fn [[sym v]]
+                                       (str "  " sym " " v " ≠ " GRAAL_VERSION))
+                                     bad))
+                 "\n  .graalvm-version is the single source of truth — "
+                 "bump it and every pin together.")
+            {:expected GRAAL_VERSION :mismatched bad}))))))
+
 (def ^:private graalvm-script
   "The one resolver/installer — the same file CI, the Dockerfile and humans use.
    Printing a home on stdout means success; every diagnostic goes to stderr."
@@ -427,7 +458,7 @@
    usually minutes into the image build.
 
    `java.vendor.version` is the one property that separates all three
-   (\"GraalVM CE 25.1.3+9.1\" vs \"Oracle GraalVM 25.1.3+9.1\" vs \"Temurin-25…\").
+   (\"GraalVM CE 25.2.4+7.1\" vs \"Oracle GraalVM 25.2.4+7.1\" vs \"Temurin-25…\").
 
    Wrong JVM, in order: already installed → re-exec the task under it;
    not installed → install the pin with `bin/require-graalvm --install`, then

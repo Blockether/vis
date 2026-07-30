@@ -97,10 +97,10 @@ license on the distributed binary**.
 
 | Layer | What it is | Coordinates / tool | License | Redistribution *for a fee* |
 |---|---|---|---|---|
-| **Embedded runtime** | GraalPy + Truffle/Polyglot, baked into the binary as the agent's sandboxed Python substrate | `org.graalvm.python/*`, `org.graalvm.polyglot/polyglot`, `org.graalvm.truffle/truffle-runtime` `25.1.3` (Maven Central) | **UPL-1.0** (+ MIT + PSF for the bundled CPython stdlib) | **Permitted** — UPL is a permissive, BSD-style license |
-| **Build tool** | The `native-image` compiler that AOT-compiles vis into the standalone binary (`clojure -T:build native`) | **GraalVM Community Edition (CE) for JDK 25.1.3**, installed from the pinned `graalvm-ce-builds` asset via `.github/actions/setup-graalvm-25` (every CI + native-release workflow) | **GPL-2.0 with Classpath Exception** | **Permitted** — the Classpath Exception frees the output binary |
+| **Embedded runtime** | GraalPy + Truffle/Polyglot, baked into the binary as the agent's sandboxed Python substrate | `org.graalvm.python/*`, `org.graalvm.polyglot/polyglot`, `org.graalvm.truffle/truffle-runtime` `25.2.4` (Maven Central) | **UPL-1.0** (+ MIT + PSF for the bundled CPython stdlib) | **Permitted** — UPL is a permissive, BSD-style license |
+| **Build tool** | The `native-image` compiler that AOT-compiles vis into the standalone binary (`clojure -T:build native`) | **GraalVM Community Edition (CE) for JDK 25.2.4**, installed from the pinned `graalvm-ce-builds` asset via `.github/actions/setup-graalvm-25` (every CI + native-release workflow) | **GPL-2.0 with Classpath Exception** | **Permitted** — the Classpath Exception frees the output binary |
 
-**Which GraalVM we support.** The release build uses **GraalVM CE 25.1.3**
+**Which GraalVM we support.** The release build uses **GraalVM CE 25.2.4**
 only (the pinned `graalvm-ce-builds` asset). Oracle GraalVM is **not** used in
 any build. The `native-image` compiler is **GPL-2.0 with the Classpath
 Exception** (the OpenJDK license): the Exception exempts the tool's *output* —
@@ -213,10 +213,10 @@ _Shipped binary runtime — the `vis` CLI, agent loop, HTTP gateway, sandbox._
 | `org.eclipse.jetty.ee9/jetty-ee9-servlet` | `12.1.11` | EPL-2.0 | 143 KB | 3rd-party |
 | `org.eclipse.jetty/jetty-server` | `12.1.11` | EPL-2.0 | 689 KB | 3rd-party |
 | `org.flatland/ordered` | `1.15.12` | EPL-1.0 | 14 KB | 3rd-party |
-| `org.graalvm.polyglot/polyglot` | `25.1.3` | UPL-1.0 | 502 KB | 3rd-party |
-| `org.graalvm.python/python-language` | `25.1.3` | UPL-1.0 + MIT + PSF | 90.7 MB | 3rd-party |
-| `org.graalvm.python/python-resources` | `25.1.3` | UPL-1.0 + MIT + PSF | 13.8 MB | 3rd-party |
-| `org.graalvm.truffle/truffle-runtime` | `25.1.3` | UPL-1.0 | 913 KB | 3rd-party |
+| `org.graalvm.polyglot/polyglot` | `25.2.4` | UPL-1.0 | 502 KB | 3rd-party |
+| `org.graalvm.python/python-language` | `25.2.4` | UPL-1.0 + MIT + PSF | 90.7 MB | 3rd-party |
+| `org.graalvm.python/python-resources` | `25.2.4` | UPL-1.0 + MIT + PSF | 13.8 MB | 3rd-party |
+| `org.graalvm.truffle/truffle-runtime` | `25.2.4` | UPL-1.0 | 913 KB | 3rd-party |
 | `org.yamlstar/yamlstar` | `0.1.17` | MIT | 15 KB | 3rd-party |
 | `ring/ring-core` | `1.15.5` | MIT | 34 KB | 3rd-party |
 | `ring/ring-jetty-adapter` | `1.15.5` | MIT | 7 KB | 3rd-party |
@@ -395,9 +395,9 @@ Heaviest direct artifacts (>= 1 MB):
 
 | Dependency | Version | Jar size |
 |---|---|---|
-| `org.graalvm.python/python-language` | `25.1.3` | 90.7 MB |
+| `org.graalvm.python/python-language` | `25.2.4` | 90.7 MB |
 | `com.microsoft.onnxruntime/onnxruntime` | `1.28.0` | 41.0 MB |
-| `org.graalvm.python/python-resources` | `25.1.3` | 13.8 MB |
+| `org.graalvm.python/python-resources` | `25.2.4` | 13.8 MB |
 | `org.xerial/sqlite-jdbc` | `3.53.2.1` | 11.4 MB |
 | `org.bouncycastle/bcprov-jdk18on` | `1.85` | 9.8 MB |
 | `com.litongjava/sherpa-onnx-java-api` | `1.0.1` | 7.7 MB |

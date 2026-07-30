@@ -1000,26 +1000,34 @@ vis.extension(
             (expect (= {"source" "tui" "provider_id" "acme"} (get-in (seen) [:result])))))))))
 
 (defdescribe
-  trusted-extension-boundary-test
+  python-extension-process-boundary-test
   (it
-    "intentionally permits real filesystem and subprocess access in an unconfined gateway"
-    (if (= "1" (System/getenv "VIS_SEATBELT_ACTIVE"))
-      (expect true)
-      (with-open [ctx (pyx/build-context)]
+    "blocks native subprocesses and exposes vis.jailed_shell with the live session env"
+    (with-open [ctx (pyx/build-context)]
+      (expect (try (.eval ctx "python" "__import__('subprocess').run(['true'])")
+                   false
+                   (catch Throwable _ true))))
+    (with-loaded
+      {"jail.py"
+       "import vis\ndef run():\n    \"Run through the session jail.\"\n    return vis.jailed_shell('echo jailed')\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+      (fn [_ _]
         (let
-          [ok
-           (.asBoolean
-             (.eval
-               ctx
-               "python"
-               (str
-                 "import os, subprocess, tempfile\n"
-                 "p = os.path.join(os.path.expanduser('~'), '.vis-extension-trust-test')\n" "try:\n"
-                 "    with open(p, 'w') as f: f.write('trusted')\n"
-                 "    _ok = open(p).read() == 'trusted' and subprocess.run(['/usr/bin/true']).returncode == 0\n"
-                 "finally:\n" "    try: os.unlink(p)\n"
-                 "    except FileNotFoundError: pass\n" "_ok")))]
-          (expect ok))))))
+          [run
+           (symbol-fn (registered "jail") 'run)
+
+           seen
+           (atom nil)
+
+           env
+           {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
+
+          (with-redefs
+            [shell/jailed-shell (fn [actual-env command opts]
+                                  (reset! seen [actual-env command opts])
+                                  {"stdout" "jailed"})]
+            (binding [extension/*current-environment* env]
+              (expect (= {"stdout" "jailed"} (:result (run))))
+              (expect (= [env "echo jailed" nil] @seen)))))))))
 
 (defdescribe
   net-probe-report-test

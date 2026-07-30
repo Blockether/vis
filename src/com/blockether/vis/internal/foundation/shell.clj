@@ -1000,7 +1000,7 @@
                         :metadata
                         {:id id :started-at-ms t :finished-at-ms (now-ms) :duration-ms 0}})))
 
-(defn- shell-dispatch
+(defn shell-dispatch
   "One shell lifecycle grammar with no field aliases.
 
    `cmd` is positional only and is used only by run/background. `id` lives only in
@@ -1102,6 +1102,15 @@
                      (pr-str op)
                      " — use \"run\" (default), \"background\", \"logs\", \"send\" or \"stop\".")
                 {:type ::unknown-op :op op}))))))
+(defn jailed-shell
+  "Run a Python extension command through the invoking session's jailed shell.
+   Uses the same lifecycle grammar and process-jail policy as `shell`."
+  [env command opts]
+  (when-not (:session-id env)
+    (throw (ex-info "jailed_shell is available only while handling a session"
+                    {:type ::no-session})))
+  (shell-dispatch env command opts))
+
 
 ;; =============================================================================
 ;; Env injection — the before-fn hands the impl its env as first arg

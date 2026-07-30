@@ -22,7 +22,7 @@ Then confirm:
 vis help
 ```
 
-Prereqs: `git`, `java` 25+, and the [Clojure CLI](https://clojure.org/guides/install_clojure) 1.12+ — the installer checks for them and tells you what's missing. **Building** the native binary needs **GraalVM Community Edition 25.1.3** — exactly that edition and version, pinned in [`.graalvm-version`](.graalvm-version) — plus at least 16 GB RAM. Get it with `bin/require-graalvm --install`, then `sdk env` (the repo ships a `.sdkmanrc`). Oracle GraalVM and stock JDKs are rejected by the build, on purpose: CE's Classpath Exception is what keeps the shipped binary FOSS, and Truffle hard-refuses any other version against the `org.graalvm.*` pins in `deps.edn`.
+Prereqs: `git`, `java` 25+, and the [Clojure CLI](https://clojure.org/guides/install_clojure) 1.12+ — the installer checks for them and tells you what's missing. **Building** the native binary needs **GraalVM Community Edition 25.2.4** — exactly that edition and version, pinned in [`.graalvm-version`](.graalvm-version) — plus at least 16 GB RAM. Get it with `bin/require-graalvm --install`, then `sdk env` (the repo ships a `.sdkmanrc`). Oracle GraalVM and stock JDKs are rejected by the build, on purpose: CE's Classpath Exception is what keeps the shipped binary FOSS, and Truffle hard-refuses any other version against the `org.graalvm.*` pins in `deps.edn`.
 
 ## What `vis` runs
 
@@ -33,7 +33,7 @@ Prereqs: `git`, `java` 25+, and the [Clojure CLI](https://clojure.org/guides/ins
 3. repo JVM uberjar (`target/vis.jar`)
 4. live source (`clojure -M:vis`)
 
-Use `vis --jvm ...` to skip native and force the JVM path. The JVM path needs a **stock JDK 25** (e.g. `sdk install java 25.0.3-tem`) or a GraalVM matching the pinned Truffle line (`graal-25.1.3`); a mismatched GraalVM (e.g. CE 25.0.2) is rejected at startup with a clear message.
+Use `vis --jvm ...` to skip native and force the JVM path. The JVM path needs a **stock JDK 25** (e.g. `sdk install java 25.0.3-tem`) or a GraalVM matching the pinned Truffle line (`graal-25.2.4`); a mismatched GraalVM (e.g. CE 25.0.2) is rejected at startup with a clear message.
 
 ## Build / develop
 

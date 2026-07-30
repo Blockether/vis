@@ -16,7 +16,7 @@
 
    The `:python-context` slot holds the GraalPy `Context`; the Python top scope is
    `context.getBindings(\"python\")`. GraalPy ships in the default deps (runs on
-   GraalVM CE 25.1.3 → Truffle gets the Graal JIT; see .graalvm-version)."
+   GraalVM CE 25.2.4 → Truffle gets the Graal JIT; see .graalvm-version)."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.set :as set]
@@ -3419,7 +3419,7 @@ def network_probe(method='GET', url=None, headers=None, body=None):
 
 (defn- graalvm-version-major-minor
   "Extract the leading `MAJOR.MINOR` from a version-bearing string (e.g.
-   \"25.1.3\" or \"GraalVM CE 25.0.2+10.1\" -> \"25.1\" / \"25.0\"). nil when no
+   \"25.2.4\" or \"GraalVM CE 25.0.2+10.1\" -> \"25.2\" / \"25.0\"). nil when no
    `\\d+.\\d+` is present."
   [s]
   (when s
@@ -3464,7 +3464,7 @@ def network_probe(method='GET', url=None, headers=None, body=None):
                               "Fix: run vis on a GraalVM matching "
                               want
                               ".x (the "
-                              "graalvm-community-jdk-25i1 / graal-"
+                              "graalvm-community-jdk-25i2 / graal-"
                               pinned
                               " build), "
                               "OR run --jvm on a stock (non-GraalVM) JDK 25 "

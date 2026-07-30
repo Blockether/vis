@@ -9,13 +9,14 @@
 #   * Oracle GraalVM: builds fine but relicenses the shipped binary under GFTC —
 #     the exact thing audit/README.md §4.1 says we do not do;
 #   * a NEAR version (CE 25.0.2, CE 25.1.1): Truffle/SVM hard-refuse the
-#     org.graalvm.* 25.1.3 jars pinned in deps.edn, mid-build or mid-boot.
+#     org.graalvm.* 25.2.4 jars pinned in deps.edn, mid-build or mid-boot.
 # So: one pinned edition+version, one check, one installer, used by CI, the
 # Dockerfile, build.clj and humans.
 #
 # Usage:
 #   bin/require-graalvm              # print the resolved GraalVM CE home (or fail)
 #   bin/require-graalvm --check      # verify only the ACTIVE java; no search
+#   bin/require-graalvm --check-pins # verify deps.edn/.sdkmanrc against the pin only
 #   bin/require-graalvm --install    # download + checksum + install, then print home
 #   bin/require-graalvm --native-image   # additionally require bin/native-image
 #   eval "$(bin/require-graalvm --export)"   # export JAVA_HOME/GRAALVM_HOME/PATH
@@ -29,19 +30,58 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 . "${repo_root}/.graalvm-version"
 
-want_install=0 want_export=0 want_ni=0 check_only=0
+want_install=0 want_export=0 want_ni=0 check_only=0 pins_only=0
 for arg in "$@"; do
   case "$arg" in
     --install) want_install=1 ;;
     --export) want_export=1 ;;
     --native-image) want_ni=1 ;;
     --check) check_only=1 ;;
+    --check-pins) pins_only=1 ;;
     -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "require-graalvm: unknown flag $arg" >&2; exit 2 ;;
   esac
 done
 
 say() { echo "$*" >&2; }
+
+# ── The OTHER half of the pin ────────────────────────────────────────────────
+# A correct JDK is only half the contract. deps.edn's org.graalvm.* jars and
+# .sdkmanrc's candidate must name the SAME version as .graalvm-version, or the
+# failure is late and opaque: Truffle refuses a runtime whose built-in version
+# differs from the polyglot jars, minutes into the image build. Until now only
+# the Dockerfile checked it (`check-graal-pins`), so a host build could drift
+# silently — this script is the one gate CI, build.clj, the Dockerfile and
+# humans all pass through, so it enforces the whole pin, everywhere.
+check_pins() {
+  local bad=0 v
+  if [ -f "${repo_root}/deps.edn" ]; then
+    while read -r v; do
+      [ "$v" = "$GRAAL_VERSION" ] || {
+        say "  ✗ deps.edn pins org.graalvm.* ${v}, .graalvm-version says ${GRAAL_VERSION}"
+        bad=1
+      }
+    done < <(sed -n 's|.*org\.graalvm\.[^ ]* *{:mvn/version *"\([^"]*\)".*|\1|p' \
+                    "${repo_root}/deps.edn")
+  fi
+  if [ -f "${repo_root}/.sdkmanrc" ]; then
+    v="$(sed -n 's/^java=//p' "${repo_root}/.sdkmanrc" | head -n1)"
+    [ -z "$v" ] || [ "$v" = "$GRAAL_SDKMAN_CANDIDATE" ] || {
+      say "  ✗ .sdkmanrc pins java=${v}, .graalvm-version says ${GRAAL_SDKMAN_CANDIDATE}"
+      bad=1
+    }
+  fi
+  [ "$bad" = 0 ] || {
+    say "    .graalvm-version is the single source of truth — bump it and every pin together."
+    exit 1
+  }
+}
+check_pins
+# `[ … ] && { … }` would trip `set -e` on the false branch — use a plain if.
+if [ "$pins_only" = 1 ]; then
+  say "✓ pins agree with .graalvm-version (${GRAAL_EDITION} ${GRAAL_VERSION})"
+  exit 0
+fi
 
 # A home is correct iff the JVM reports exactly the pinned vendor version. That
 # single property distinguishes CE from Oracle GraalVM AND from every stock JDK,

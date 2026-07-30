@@ -569,9 +569,68 @@
   (it "uses .env only when the process environment has no value"
       (let
         [path (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" (System/nanoTime))]
-        (try (spit path "# comment\nexport VIS_TEST_EXTENSION_TOKEN = quoted\nVIS_TEST_EMPTY=\n")
-             (binding [config/*extension-dotenv-path* path]
+        (try (spit path "# comment\\nexport VIS_TEST_EXTENSION_TOKEN = quoted\\nVIS_TEST_EMPTY=\\n")
+             (binding
+               [config/*extension-dotenv-path* path
+                config/*extension-dotenv-local-path* nil]
+
                (expect (= {:name "VIS_TEST_EXTENSION_TOKEN" :source :dotenv :value "quoted"}
                           (config/extension-env-status "VIS_TEST_EXTENSION_TOKEN")))
                (expect (nil? (config/extension-env-value "VIS_TEST_EMPTY"))))
+             (finally (.delete (io/file path))))))
+  (it "uses the final .env assignment, including an explicit blank override"
+      (let
+        [path (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" (System/nanoTime))]
+        (try (spit path
+                   (str "VIS_TEST_OVERRIDE=first\\nVIS_TEST_OVERRIDE=second\\n"
+                        "VIS_TEST_BLANK=first\\nVIS_TEST_BLANK=\\n"))
+             (binding
+               [config/*extension-dotenv-path* path
+                config/*extension-dotenv-local-path* nil]
+
+               (expect (= {:name "VIS_TEST_OVERRIDE" :source :dotenv :value "second"}
+                          (config/extension-env-status "VIS_TEST_OVERRIDE")))
+               (expect (= {:name "VIS_TEST_BLANK" :source :unset :value nil}
+                          (config/extension-env-status "VIS_TEST_BLANK"))))
+             (finally (.delete (io/file path))))))
+  (it ".env overrides .env.local, including with an explicit blank value"
+      (let
+        [suffix
+         (System/nanoTime)
+
+         env-path
+         (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" suffix)
+
+         local-path
+         (str env-path ".local")]
+
+        (try (spit env-path (str "VIS_TEST_ENV_PRIORITY=from-env\\n" "VIS_TEST_ENV_BLANK=\\n"))
+             (spit local-path
+                   (str "VIS_TEST_ENV_PRIORITY=from-local\\n"
+                        "VIS_TEST_ENV_BLANK=from-local\\n"
+                        "VIS_TEST_LOCAL_ONLY=from-local\\n"))
+             (binding
+               [config/*extension-dotenv-path*
+                env-path
+
+                config/*extension-dotenv-local-path*
+                local-path]
+
+               (expect (= {:name "VIS_TEST_ENV_PRIORITY" :source :dotenv :value "from-env"}
+                          (config/extension-env-status "VIS_TEST_ENV_PRIORITY")))
+               (expect (= {:name "VIS_TEST_ENV_BLANK" :source :unset :value nil}
+                          (config/extension-env-status "VIS_TEST_ENV_BLANK")))
+               (expect (= {:name "VIS_TEST_LOCAL_ONLY" :source :dotenv :value "from-local"}
+                          (config/extension-env-status "VIS_TEST_LOCAL_ONLY"))))
+             (finally (.delete (io/file env-path)) (.delete (io/file local-path))))))
+  (it "the process environment overrides both dotenv files"
+      (let
+        [path (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" (System/nanoTime))]
+        (try (spit path "PATH=from-dotenv\\n")
+             (binding
+               [config/*extension-dotenv-path* path
+                config/*extension-dotenv-local-path* nil]
+
+               (expect (= :env (:source (config/extension-env-status "PATH"))))
+               (expect (= (System/getenv "PATH") (config/extension-env-value "PATH"))))
              (finally (.delete (io/file path)))))))

@@ -338,7 +338,7 @@
       (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
       (expect (= "tab draft" (input/input->text (:input @state/app-db))))
       (expect (= ["tab prompt"] (:input-history @state/app-db))))
-  (it "restores a tab's cached layout and SNAPS its scroll intent when geometry matches"
+  (it "restores a tab's cached layout but always enters at its latest event"
       (let
         [main-layout
          {:cols 120 :rows 40 :total-h 5000 :inner-h 30 :offsets [0 100 900]}
@@ -360,13 +360,12 @@
                               :render-version 0})
         (state/dispatch [:select-tab-index 1])
         (expect (= tab-layout (:layout @state/app-db)))
-        ;; The eased `:pos` NEVER survives a switch: the tab was off screen, so
-        ;; there is nothing to animate FROM. Its intent (`:at` row 5) is restored
-        ;; snapped, so the first frame paints exactly there.
-        (expect (= {:mode :at :offset 5} (:scroll @state/app-db)))
+        ;; A tab switch is a latest-events jump, not a restoration of where this
+        ;; transcript was previously read. This applies equally to a live tab.
+        (expect (= scroll/follow (:scroll @state/app-db)))
         (state/dispatch [:select-tab-index 0])
         (expect (= main-layout (:layout @state/app-db)))
-        (expect (= {:mode :at :offset 40} (:scroll @state/app-db)))))
+        (expect (= scroll/follow (:scroll @state/app-db)))))
   (it "snaps a FOLLOWing tab to the live bottom instead of easing down to it"
       ;; The regression: a hidden FOLLOW tab keeps `:pos` pinned at the bottom of
       ;; the `total-h` it had when last painted, and that grows while it is hidden
@@ -397,7 +396,7 @@
                             :render-version 0})
       (state/dispatch [:select-tab-index 1])
       (expect (nil? (:layout @state/app-db)))
-      (expect (= {:mode :at :offset 5} (:scroll @state/app-db))))
+      (expect (= scroll/follow (:scroll @state/app-db))))
   (it "never leaks the leaving tab's live turn identity onto the incoming tab"
       ;; The regression: `tab-state-keys` omitted the turn identity, so the
       ;; snapshot dropped it AND `restore-tab` (a MERGE over the db root) left
@@ -986,17 +985,17 @@
                {:scroll {:mode :at :offset 1840 :pos 1849}}
                [:reanchor-scroll 1399 -450])]
           (expect (= {:mode :at :offset 1390 :pos 1399} (:scroll r)))))
-    (it "message-received re-pins to a CLEAN FOLLOW (no dangling ease target)"
-        ;; Regression (/workspace list "flash to top then bottom"): a result
-        ;; lands atomically while an ease was in flight. Replacing the whole
-        ;; `:scroll` with FOLLOW means nothing can dangle, so the view snaps
-        ;; cleanly to the bottom instead of animating up from row 0 first.
+    (it "message-received holds the painted row before easing a final result"
+        ;; Regression (/workspace list "teleports to the new tail"): a result
+        ;; lands atomically while an ease was in flight. Keep that painted row
+        ;; for the first layout, then let FOLLOW ease from it to the new tail.
         (let
           [message-received-fn (ev :message-received)
            pending-id "turn-1"
            db {:active-tab-id :main
                :session {:id "c1"}
                :loading? true
+               :layout {:total-h 120 :inner-h 20}
                :messages [{:role :user :text "/workspace list" :client-turn-id pending-id}
                           {:role :assistant :pending? true :client-turn-id pending-id}]
                :progress {:iterations []}
@@ -1007,7 +1006,7 @@
                                            [:ast {} [:p {} [:span {} "a big table"]]]
                                            {:client-turn-id pending-id}])]
 
-          (expect (= scroll/follow (:scroll db')))))
+          (expect (= {:mode :follow :pos 80 :reveal-from 100} (:scroll db')))))
     (it "send-message re-pins to a CLEAN FOLLOW"
         (let
           [send-message-fn (ev :send-message)
