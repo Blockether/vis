@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.14 (2802) — 2026-07-30
+<!-- commit: 7e3b8a2c2788faca62f436ad6fda377531a79824 -->
+
+- Unify tool input carriers and refresh companion diff view
+- Fix gateway, Python, Git, and TUI regressions (#61, #73, #74, #75)
+
 ## 0.1.14 (2800) — 2026-07-30
 <!-- commit: c9b84ab7ed0ca15062d65d199aa3d951eb2b6886 -->
 
