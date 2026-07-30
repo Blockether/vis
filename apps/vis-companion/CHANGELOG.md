@@ -2,6 +2,14 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.14 (2814) — 2026-07-30
+<!-- commit: e3b729f13299640d797fef528bf655c7fc1f6f56 -->
+
+- Serve a turn's inline attachments and hide the footer mid-turn
+- Name every working directory `cwd` across the tool surface
+- Cache the live turn bubble so re-entry paints it instantly
+- Release notes for 0.1.14 (2808)
+
 ## 0.1.14 (2808) — 2026-07-30
 <!-- commit: f567648ee4a861d6110c4475d7b75e95da3482da -->
 

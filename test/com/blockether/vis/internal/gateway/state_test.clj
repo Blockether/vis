@@ -544,6 +544,69 @@
              (finally (reset! registry saved))))))
 
 (defdescribe
+  turn-attachments-test
+  "The bytes of a user's images must be reachable from the GATEWAY, not only from
+   the device that sent them: an app restart (or a second device) mid-turn has no
+   other source, because the live rail ships byte-free chips and the persisted
+   row does not exist until the turn lands."
+  (it
+    "serves an in-flight turn's inline attachments in the canonical wire shape"
+    (let
+      [sid
+       (str (java.util.UUID/randomUUID))
+
+       registry
+       @#'state/registry
+
+       saved
+       @registry]
+
+      (try (reset! registry
+                   {sid {:next-seq 0
+                         :turn-order ["t1"]
+                         :turns {"t1" {:turn_id "t1"
+                                       :session_id sid
+                                       :status "running"
+                                       :request "look at this"
+                                       :attachments [{:filename "shot.png"
+                                                      :media-type "image/png"
+                                                      :base64 "QUJD"
+                                                      :size 3}]}}}})
+           (let [rows (state/turn-attachments sid "t1")]
+             (expect (= 1 (count rows)))
+             (expect (= "shot.png" (get (first rows) "filename")))
+             (expect (= "image/png" (get (first rows) "media_type")))
+             (expect (= "QUJD" (get (first rows) "base64"))))
+           (finally (reset! registry saved)))))
+  (it
+    "falls back to the attachment store for a turn that has already landed"
+    (let
+      [sid
+       (str (java.util.UUID/randomUUID))
+
+       registry
+       @#'state/registry
+
+       saved
+       @registry]
+
+      (try (reset! registry {sid {:next-seq 0 :turns {}}})
+           (with-redefs
+             [persistance/db-list-turns-attachments
+              (fn [_ ids]
+                {(str (first ids)) [{:filename "landed.png"
+                                     :media-type "image/png"
+                                     :base64 "REVG"}]})]
+             (let [rows (state/turn-attachments sid "t9")]
+               (expect (= 1 (count rows)))
+               (expect (= "landed.png" (get (first rows) "filename")))
+               (expect (= "REVG" (get (first rows) "base64")))))
+           (finally (reset! registry saved)))))
+  (it
+    "is nil for an unknown turn"
+    (expect (nil? (state/turn-attachments (str (java.util.UUID/randomUUID)) "nope")))))
+
+(defdescribe
   transcript-page-test
   "The transcript window exists so a client never pays for history it will not
    paint: a long session is tens of megabytes and nearly all of that cost is
