@@ -1955,18 +1955,24 @@ export function SessionScreen({
       probing = true;
       void client
         .turnStatus(sid, live.id)
-        .then((status) => {
+        .then((turn) => {
           const current = liveTurnRef.current;
           if (!current || current.status !== 'running' || current.id !== live.id) return;
-          if (!status) {
+          if (!turn) {
             lastEventAt = Date.now();
             subscriptions.resync();
             return;
           }
-          const type = status === 'failed'
+          const type = turn.status === 'failed'
             ? 'turn.failed'
-            : status === 'cancelled' ? 'turn.cancelled' : 'turn.completed';
-          return settle({ type, turn_id: live.id } as unknown as SseEvent);
+            : turn.status === 'cancelled' ? 'turn.cancelled' : 'turn.completed';
+          // A lost terminal SSE frame must settle with the registry's canonical
+          // error card, not the partial streamed body that preceded the failure.
+          return settle({
+            type,
+            turn_id: live.id,
+            ...(type === 'turn.failed' && turn.content?.length ? { content: turn.content } : {}),
+          } as unknown as SseEvent);
         })
         .catch(() => undefined)
         .finally(() => {

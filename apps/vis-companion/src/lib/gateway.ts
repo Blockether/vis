@@ -1444,7 +1444,11 @@ export class GatewayClient {
    * then the bubble streams forever for a turn the gateway finished minutes
    * ago. Asking the registry costs one cheap listing and never lies.
    */
-  async turnStatus(sid: string, tid: string, signal?: AbortSignal): Promise<string | null> {
+  async turnStatus(
+    sid: string,
+    tid: string,
+    signal?: AbortSignal,
+  ): Promise<Pick<TranscriptTurn, 'status' | 'content'> | null> {
     const response = await this.request<{ turns?: Record<string, unknown>[] }>(
       'GET',
       `/v1/sessions/${encodeURIComponent(sid)}/turns`,
@@ -1456,7 +1460,11 @@ export class GatewayClient {
     );
     if (!row) return null;
     const status = String(row.status ?? '');
-    return status === '' || status === 'running' || status === 'queued' ? null : status;
+    if (status === '' || status === 'running' || status === 'queued') return null;
+    return {
+      status,
+      content: Array.isArray(row.content) ? row.content as TranscriptTurn['content'] : undefined,
+    };
   }
 
 

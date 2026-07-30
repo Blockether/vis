@@ -5224,7 +5224,12 @@
                                    {:phase :turn-terminal
                                     :turn-id (or (get row "turn_id") tid)
                                     :client-id (or (get row "idempotency_key") client-id)
-                                    :status status}]))))))))))
+                                    :status status
+                                    ;; The watchdog gets a FULL turn row, unlike the lean
+                                    ;; terminal SSE event. Preserve a failed turn's canonical
+                                    ;; error blocks so its fallback paints the same provider
+                                    ;; card as live delivery and reload.
+                                    :content (vec (or (get row "content") []))}]))))))))))
 
 (reg-fx :gateway-cancel-turn
         ;; Fire-and-forget cancel of the exact RUNNING gateway turn whose correlated

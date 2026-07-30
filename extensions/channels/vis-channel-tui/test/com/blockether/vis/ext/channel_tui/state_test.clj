@@ -3585,47 +3585,58 @@
                                                nil)}
     #(state/dispatch [:turn-liveness-tick now-ms])))
 
-(defdescribe turn-liveness-tick-test
-             (it "leaves a fresh in-flight turn alone"
-                 (reset! state/app-db (terminal-test-db {:turn-start-ms 10}))
-                 (liveness-tick! [{"turn_id" "t1" "status" "completed"}] 100)
-                 (expect (true? (:loading? @state/app-db)))
-                 (expect (nil? (:liveness-probed-at-ms @state/app-db))))
-             (it "settles a turn the gateway registry already finished"
-                 ;; The terminal event never landed (SSE gap / wedged worker), so the bubble
-                 ;; would stream forever. The registry says otherwise — and the watchdog
-                 ;; replays that verdict through the ordinary terminal writer.
-                 (reset! state/app-db (terminal-test-db))
-                 (liveness-tick! [{"turn_id" "t1" "status" "completed" "idempotency_key" "c1"}]
-                                 100000)
-                 (let [db @state/app-db]
-                   (expect (false? (:loading? db)))
-                   (expect (nil? (:gateway-turn-id db)))
-                   (expect (= :completed (get-in db [:messages 1 :terminal-pending :status])))))
-             (it "keeps a still-running turn live"
-                 (reset! state/app-db (terminal-test-db))
-                 (liveness-tick! [{"turn_id" "t1" "status" "running"}] 100000)
-                 (expect (true? (:loading? @state/app-db)))
-                 (expect (= 100000 (:liveness-probed-at-ms @state/app-db))))
-             (it "throttles repeat probes to one per interval"
-                 (reset! state/app-db (terminal-test-db))
-                 (let [calls (atom 0)]
-                   (with-redefs-fn {#'vis/gateway-list-turns (fn [_sid]
-                                                               (swap! calls inc)
-                                                               [])
-                                    #'vis/worker-future (fn [_ _]
-                                                          (future nil))
-                                    #'state/gateway-queue-io! (fn [f]
-                                                                (f)
-                                                                nil)}
-                     #(do (state/dispatch [:turn-liveness-tick 100000])
-                          (state/dispatch [:turn-liveness-tick 101000])
-                          (state/dispatch [:turn-liveness-tick 106000])))
-                   (expect (= 2 @calls))))
-             (it "defers to the cancel self-heal while a cancel is pending"
-                 (reset! state/app-db (terminal-test-db {:cancelling? true :cancelling-at-ms 10}))
-                 (liveness-tick! [{"turn_id" "t1" "status" "completed"}] 100000)
-                 (expect (true? (:loading? @state/app-db)))))
+(defdescribe
+  turn-liveness-tick-test
+  (it "leaves a fresh in-flight turn alone"
+      (reset! state/app-db (terminal-test-db {:turn-start-ms 10}))
+      (liveness-tick! [{"turn_id" "t1" "status" "completed"}] 100)
+      (expect (true? (:loading? @state/app-db)))
+      (expect (nil? (:liveness-probed-at-ms @state/app-db))))
+  (it "settles a turn the gateway registry already finished"
+      ;; The terminal event never landed (SSE gap / wedged worker), so the bubble
+      ;; would stream forever. The registry says otherwise — and the watchdog
+      ;; replays that verdict through the ordinary terminal writer.
+      (reset! state/app-db (terminal-test-db))
+      (liveness-tick! [{"turn_id" "t1" "status" "completed" "idempotency_key" "c1"}] 100000)
+      (let [db @state/app-db]
+        (expect (false? (:loading? db)))
+        (expect (nil? (:gateway-turn-id db)))
+        (expect (= :completed (get-in db [:messages 1 :terminal-pending :status])))))
+  (it "replays failed turn content from the liveness registry probe"
+      (let
+        [content [{"type" "error"
+                   "code" "provider_unavailable"
+                   "message" "Provider unavailable."
+                   "is_retryable" true}]]
+        (reset! state/app-db (terminal-test-db))
+        (liveness-tick!
+          [{"turn_id" "t1" "status" "failed" "idempotency_key" "c1" "content" content}]
+          100000)
+        (expect (= content (get-in @state/app-db [:messages 1 :terminal-pending :content])))))
+  (it "keeps a still-running turn live"
+      (reset! state/app-db (terminal-test-db))
+      (liveness-tick! [{"turn_id" "t1" "status" "running"}] 100000)
+      (expect (true? (:loading? @state/app-db)))
+      (expect (= 100000 (:liveness-probed-at-ms @state/app-db))))
+  (it "throttles repeat probes to one per interval"
+      (reset! state/app-db (terminal-test-db))
+      (let [calls (atom 0)]
+        (with-redefs-fn {#'vis/gateway-list-turns (fn [_sid]
+                                                    (swap! calls inc)
+                                                    [])
+                         #'vis/worker-future (fn [_ _]
+                                               (future nil))
+                         #'state/gateway-queue-io! (fn [f]
+                                                     (f)
+                                                     nil)}
+          #(do (state/dispatch [:turn-liveness-tick 100000])
+               (state/dispatch [:turn-liveness-tick 101000])
+               (state/dispatch [:turn-liveness-tick 106000])))
+        (expect (= 2 @calls))))
+  (it "defers to the cancel self-heal while a cancel is pending"
+      (reset! state/app-db (terminal-test-db {:cancelling? true :cancelling-at-ms 10}))
+      (liveness-tick! [{"turn_id" "t1" "status" "completed"}] 100000)
+      (expect (true? (:loading? @state/app-db)))))
 
 (defdescribe restore-pending-ownership-test
              ;; A cancel pulls back ONLY the rows this tab submitted (`:mine?`, from the
