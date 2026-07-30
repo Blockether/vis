@@ -1,6 +1,6 @@
 # vis — Security & Dependency Audit
 
-> Generated 2026-07-29.
+> Generated 2026-07-30.
 
 `vis` is a coding agent that writes Python into a sandboxed GraalPy runtime,
 keeps durable state outside the model context window, and inspects and changes
@@ -42,7 +42,7 @@ vulnerable, and what does it do with data.*
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
 - **Direct dependency coordinates:** 71 unique, across 14 `deps.edn` modules (root + extensions).
-- **Declared jar footprint (direct coords):** ~197 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
+- **Declared jar footprint (direct coords):** ~195 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
 
@@ -179,8 +179,8 @@ _Shipped binary runtime — the `vis` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
 | `com.blockether/fff` | `0.12.0` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.3.2` | MIT | 11 KB | Blockether (in-house) |
-| `com.blockether/svar` | `0.7.89` | Apache-2.0 | 500 KB | Blockether (in-house) |
-| `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.25` | MIT | 164 KB | Blockether (in-house) |
+| `com.blockether/svar` | `0.7.91` | Apache-2.0 | 499 KB | Blockether (in-house) |
+| `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.34` | MIT | 167 KB | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
 | `com.github.liquidz/antq` | `RELEASE` | (floating) | — | 3rd-party |
@@ -214,9 +214,9 @@ _Shipped binary runtime — the `vis` CLI, agent loop, HTTP gateway, sandbox._
 | `org.eclipse.jetty/jetty-server` | `12.1.11` | EPL-2.0 | 689 KB | 3rd-party |
 | `org.flatland/ordered` | `1.15.12` | EPL-1.0 | 14 KB | 3rd-party |
 | `org.graalvm.polyglot/polyglot` | `25.2.4` | UPL-1.0 | 502 KB | 3rd-party |
-| `org.graalvm.python/python-language` | `25.2.4` | UPL-1.0 + MIT + PSF | 90.7 MB | 3rd-party |
+| `org.graalvm.python/python-language` | `25.2.4` | UPL-1.0 + MIT + PSF | 88.7 MB | 3rd-party |
 | `org.graalvm.python/python-resources` | `25.2.4` | UPL-1.0 + MIT + PSF | 13.8 MB | 3rd-party |
-| `org.graalvm.truffle/truffle-runtime` | `25.2.4` | UPL-1.0 | 913 KB | 3rd-party |
+| `org.graalvm.truffle/truffle-runtime` | `25.2.4` | UPL-1.0 | 914 KB | 3rd-party |
 | `org.yamlstar/yamlstar` | `0.1.17` | MIT | 15 KB | 3rd-party |
 | `ring/ring-core` | `1.15.5` | MIT | 34 KB | 3rd-party |
 | `ring/ring-jetty-adapter` | `1.15.5` | MIT | 7 KB | 3rd-party |
@@ -239,7 +239,7 @@ _Bridge verification tool surface._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `com.blockether/bridge` | `0.2.1` | Apache-2.0 | 74 KB | Blockether (in-house) |
+| `com.blockether/bridge` | `0.2.2` | Apache-2.0 | 77 KB | Blockether (in-house) |
 
 ### `vis-foundation-voice` extension
 
@@ -395,7 +395,7 @@ Heaviest direct artifacts (>= 1 MB):
 
 | Dependency | Version | Jar size |
 |---|---|---|
-| `org.graalvm.python/python-language` | `25.2.4` | 90.7 MB |
+| `org.graalvm.python/python-language` | `25.2.4` | 88.7 MB |
 | `com.microsoft.onnxruntime/onnxruntime` | `1.28.0` | 41.0 MB |
 | `org.graalvm.python/python-resources` | `25.2.4` | 13.8 MB |
 | `org.xerial/sqlite-jdbc` | `3.53.2.1` | 11.4 MB |
