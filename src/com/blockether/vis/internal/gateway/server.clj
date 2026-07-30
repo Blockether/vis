@@ -1847,6 +1847,22 @@
                         :index idx)))
     (session-404 (get-in request [:path-params :sid]))))
 
+(defn- turn-attachments-handler
+  "GET /v1/sessions/:sid/turns/:tid/attachments — the inline images a USER sent
+   with one turn: `{\"attachments\": [{filename, media_type, base64}, …]}`.
+
+   The live rail deliberately ships byte-free chips, and a turn's persisted row
+   only exists once it lands, so before this endpoint the only copy of a
+   still-running turn's pictures was the sending client's own memory — an app
+   restart, or a second device, painted the message with its images missing.
+   The gateway has held them the whole time (registry entry while in flight,
+   attachment store afterwards); this hands them back on demand, which is why it
+   is a SEPARATE endpoint and not a fatter turn row."
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response {:attachments (vec (state/turn-attachments sid (path-tid request)))})
+    (session-404 (get-in request [:path-params :sid]))))
+
 (defn- session-model-handler
   [request]
   (if-let [sid (path-sid request)]
@@ -2533,6 +2549,7 @@
           :patch update-queued-turn-handler
           :delete delete-queued-turn-handler}]
         [(sid-route "/turns/:tid/trace") {:get turn-trace-handler}]
+        [(sid-route "/turns/:tid/attachments") {:get turn-attachments-handler}]
         [(sid-route "/turns/:tid/cancel") {:post cancel-turn-handler}]
         [(sid-route "/cancel-current") {:post cancel-current-turn-handler}]
         [(sid-route "/drain-queue") {:post drain-idle-handler}]

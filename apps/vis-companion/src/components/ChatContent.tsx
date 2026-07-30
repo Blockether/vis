@@ -632,6 +632,10 @@ function formatDuration(value?: number): string | null {
 }
 
 const META_SEPARATOR = ' · ';
+// Wire statuses a transcript row carries while its turn has NOT finished (the
+// engine persists the row at submit; the gateway overlay renames `running` to
+// `streaming`). Mirrors `IN_FLIGHT_ROW_STATUSES` in `SessionScreen`.
+const IN_FLIGHT_STATUSES = new Set(['running', 'streaming', 'queued', 'pending']);
 
 function modelPair(value?: { provider?: string; model?: string }): string | null {
   const provider = value?.provider?.replace(/^:/, '').trim();
@@ -1525,7 +1529,12 @@ export const AssistantMessage = memo(function AssistantMessage({
   const blocks = turn.content ?? [];
   const fallback = blocks.length ? '' : fallbackAnswer(turn);
   const cancelled = turn.status === 'cancelled' || turn.prior_outcome === 'cancelled';
-  const meta = !commandTurn(turn) && (!cancelled || assistantUsage(turn))
+  // A row still IN FLIGHT has no footer to show. Usage, cost and duration only
+  // exist once the turn ends, so mid-turn the summary degrades to a bare
+  // `provider/model` (the gateway stamps it from the last completed iteration's
+  // routing) — a finished-looking meta line under a turn that is still working.
+  const inFlight = streaming || IN_FLIGHT_STATUSES.has(String(turn.status ?? ''));
+  const meta = !inFlight && !commandTurn(turn) && (!cancelled || assistantUsage(turn))
     ? turnMetaSummary(turn)
     : null;
   const fallbackNote = meta && !cancelled ? turnFallbackNote(turn) : null;

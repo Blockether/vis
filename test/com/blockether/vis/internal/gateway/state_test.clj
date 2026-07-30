@@ -89,6 +89,39 @@
                      (expect (= "↳ from anthropic/claude-opus — 429, retried 1×"
                                 (get turn "meta_fallback_note")))))))
 
+(defdescribe transcript-in-flight-footer-test
+             ;; The engine persists the row at SUBMIT and stamps routing from the
+             ;; last completed iteration, so a turn that is still working already
+             ;; has `:llm-actual`. Shipping the footer then painted a
+             ;; "provider/model" meta line — with no tokens, cost or duration —
+             ;; under a turn the user is still watching stream.
+             (it "withholds the footer while the turn is still running"
+                 (with-redefs
+                   [persistance/db-list-session-turns
+                    (fn [_ sid]
+                      [{:id sid :status :running}])
+
+                    persistance/db-list-session-turn-iterations
+                    (fn [_ _]
+                      [{:llm-actual {:provider :anthropic :model "claude/opus-5"}}])]
+
+                   (let [turn (first (state/transcript :session-1))]
+                     (expect (nil? (get turn "meta_summary")))
+                     (expect (nil? (get turn "meta_fallback_note"))))))
+
+             (it "ships the footer for a settled turn with the same routing"
+                 (with-redefs
+                   [persistance/db-list-session-turns
+                    (fn [_ sid]
+                      [{:id sid :status :success :duration-ms 2300}])
+
+                    persistance/db-list-session-turn-iterations
+                    (fn [_ _]
+                      [{:llm-actual {:provider :anthropic :model "claude/opus-5"}}])]
+
+                   (let [turn (first (state/transcript :session-1))]
+                     (expect (some? (get turn "meta_summary")))))))
+
 (defdescribe
   form-result-error-wire-test
   ;; Op cards are gone, so there is no op-dedup: a form error ALWAYS surfaces

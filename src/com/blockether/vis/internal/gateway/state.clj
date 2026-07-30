@@ -1213,6 +1213,28 @@
   (some-> (wire-turn (get-in @registry [sid :turns tid]))
           wire/canonical))
 
+(defn turn-attachments
+  "The FULL inline attachments (filename / media_type / base64) of ONE turn.
+
+   The live rail and the queue mirror ship byte-free `:attachment_previews`, and
+   a turn's persisted row only exists once it LANDS — so between submit and
+   landing the SENDER's own in-memory copy was the only thing that could paint
+   the user bubble's images. Restart the app (or open the session on a second
+   device) mid-turn and they were gone for good.
+
+   The gateway holds those bytes the whole time: `:attachments` on the registry
+   entry of a running/queued turn, the attachment store once the turn lands. This
+   serves them, in the SAME shape a transcript row carries, so a channel can
+   lazily fetch what it does not have. nil when the turn is unknown or carried no
+   images."
+  [sid tid]
+  (when (and sid tid)
+    (or (seq (wire/canonical (vec (get-in @registry [sid :turns tid :attachments]))))
+        (try (seq (wire/canonical
+                   (vec (get (persistance/db-list-turns-attachments (lp/db-info) [tid])
+                             (str tid)))))
+             (catch Throwable _ nil)))))
+
 (def ^:private persisted-status->wire
   "Durable engine turn status -> wire status. A map lookup rather than `case`:
    the constants collide on hash, so `case` degrades to a linear scan anyway."
@@ -1372,6 +1394,12 @@
     (seq (:forms iteration))
     (update :forms #(mapv form/with-display-code %))))
 
+(def ^:private in-flight-turn-statuses
+  "Persisted turn statuses that mean the turn has NOT finished. The engine writes
+   the row at submit and patches it at the terminal frame, so everything else —
+   `:success`, `:error`, `:cancelled`, … — is a settled turn."
+  #{"running" "streaming" "queued" "pending"})
+
 (defn- transcript-turn
   "Hydrate one persisted turn and attach the canonical TUI/CLI bubble-footer
    strings. Remote channels consume these verbatim; older clients can still use
@@ -1465,11 +1493,22 @@
        (seq (:llm-routing-trace last-it))
        (assoc :llm-routing-trace (:llm-routing-trace last-it)))
 
+     ;; The footer summarises a FINISHED turn. A row that is still RUNNING
+     ;; already carries the last completed iteration's `:llm-actual`, so
+     ;; hydrating one mid-turn shipped a bare "provider/model" line — no
+     ;; tokens, no cost, no duration — and every channel painted a
+     ;; settled-looking footer under work that is still in flight.
+     ;; The engine's terminal status is an OPEN set (`:success`, `:error`, …),
+     ;; so ask the negative question: only a row the engine still has in flight
+     ;; is withheld.
+     in-flight?
+     (contains? in-flight-turn-statuses (some-> (:status turn) name))
+
      meta-summary
-     (fmt/meta-summary-line meta-source)
+     (when-not in-flight? (fmt/meta-summary-line meta-source))
 
      fallback-note
-     (fmt/meta-fallback-note meta-source)]
+     (when-not in-flight? (fmt/meta-fallback-note meta-source))]
 
     (cond-> (assoc turn :iterations iterations)
       (seq (get att-by-soul (str (:id turn))))

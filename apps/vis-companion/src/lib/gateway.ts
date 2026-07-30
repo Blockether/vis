@@ -977,6 +977,92 @@ export class GatewayClient {
   }
 
   /**
+   * The image bytes THIS device sent with one turn, by turn id.
+   *
+   * The live rail and the queue mirror ship attachment DESCRIPTORS, never pixels
+   * (`attachment_previews`), so until the turn is persisted and refetched the
+   * sender's own copy is the only thing that can paint the picture. It lives on
+   * the CLIENT rather than in screen state because leaving the session unmounts
+   * the screen: that is why images sent to a still-running turn came back empty
+   * after stepping out of the session and back in.
+   *
+   * Memory only and bounded, like the live bubble: base64 pixels have no
+   * business in `localStorage`, and a turn this far back is settled anyway —
+   * from then on the persisted row owns its images.
+   */
+  private readonly sentAttachments = new Map<string, GatewayAttachment[]>();
+  private static readonly SENT_ATTACHMENT_CACHE = 8;
+
+  rememberSentAttachments(
+    sid: string,
+    tid: string | undefined,
+    sent: GatewayAttachment[],
+  ): void {
+    if (!tid || !sent.length) return;
+    const key = `${sid}\u0000${tid}`;
+    // Re-insert so the newest turn is always last in iteration order.
+    this.sentAttachments.delete(key);
+    this.sentAttachments.set(key, sent);
+    while (this.sentAttachments.size > GatewayClient.SENT_ATTACHMENT_CACHE) {
+      const oldest = this.sentAttachments.keys().next();
+      if (oldest.done) break;
+      this.sentAttachments.delete(oldest.value);
+    }
+  }
+
+  cachedSentAttachments(sid: string, tid: string | undefined): GatewayAttachment[] | undefined {
+    if (!tid) return undefined;
+    return this.sentAttachments.get(`${sid}\u0000${tid}`);
+  }
+
+  /**
+   * The same bytes, from the GATEWAY — `GET /v1/sessions/:sid/turns/:tid/attachments`.
+   *
+   * `rememberSentAttachments` only ever covers the device that did the sending,
+   * and only until that process dies. Restart the app (or open the session on
+   * another device) while the turn is still running and the user bubble painted
+   * its text with the pictures missing, because the live rail ships byte-free
+   * chips and the persisted row does not exist yet. The gateway has held the
+   * bytes the whole time, so ask it, and fold the answer into the same cache the
+   * sender's own copy lives in.
+   *
+   * In-flight requests are shared, and the entry is dropped once settled: a turn
+   * mid-hand-off can legitimately answer empty, and the next mount must be free
+   * to ask again.
+   */
+  async fetchTurnAttachments(
+    sid: string,
+    tid: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<GatewayAttachment[]> {
+    if (!tid) return [];
+    const cached = this.cachedSentAttachments(sid, tid);
+    if (cached?.length) return cached;
+    const key = `${sid}\u0000${tid}`;
+    const inflight = this.attachmentFetches.get(key);
+    if (inflight) return inflight;
+    const pending = (async () => {
+      const res = await this.request<{ attachments?: GatewayAttachment[] }>(
+        'GET',
+        `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/attachments`,
+        undefined,
+        signal,
+      );
+      const rows = (res.attachments ?? []).filter((row) => !!row?.base64);
+      this.rememberSentAttachments(sid, tid, rows);
+      return rows;
+    })();
+    this.attachmentFetches.set(key, pending);
+    void pending.then(
+      () => this.attachmentFetches.delete(key),
+      () => this.attachmentFetches.delete(key),
+    );
+    return pending;
+  }
+
+  private readonly attachmentFetches = new Map<string, Promise<GatewayAttachment[]>>();
+
+  /**
    * Drop ONE row from the cached backlog.
    *
    * A row leaves the queue on `turn.queued.drained` / `.deleted`, and the gateway
@@ -999,6 +1085,12 @@ export class GatewayClient {
     snapshots.delete(this.snapshotKey('transcript', sid));
     snapshots.delete(this.snapshotKey('queued', sid));
     snapshots.delete(this.snapshotKey('live', sid));
+    for (const key of Array.from(this.sentAttachments.keys())) {
+      if (key.startsWith(`${sid}\u0000`)) this.sentAttachments.delete(key);
+    }
+    for (const key of Array.from(this.attachmentFetches.keys())) {
+      if (key.startsWith(`${sid}\u0000`)) this.attachmentFetches.delete(key);
+    }
     transcriptStamps.delete(this.snapshotKey('transcript', sid));
     transcriptWindows.delete(this.snapshotKey('transcript', sid));
     scheduleSnapshotFlush(snapshotStores);

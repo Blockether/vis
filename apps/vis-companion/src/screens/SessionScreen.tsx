@@ -1045,10 +1045,6 @@ export function SessionScreen({
   // The sid whose bubble the cache effect last wrote, so a session switch never
   // stores the outgoing bubble under the incoming id.
   const liveSidRef = useRef(sid);
-  // turn id -> the image bytes this device sent with it. A queued message drains
-  // into a live turn minutes later, and the SSE rail never replays attachments,
-  // so the sender keeps them until the persisted transcript row takes over.
-  const sentAttachmentsRef = useRef<Map<string, GatewayAttachment[]>>(new Map());
   // turn id -> what THIS device authored for a message it queued behind the running
   // turn. A user cancel drops the whole pre-cancel backlog server-side
   // (`drop-cancelled-backlog!`), so without a local copy the text, its pastes and its
@@ -1115,16 +1111,11 @@ export function SessionScreen({
       });
     }
   }, []);
+  // The bytes are kept on the CLIENT, not in this screen: leaving the session
+  // unmounts `SessionScreen`, and a live turn whose images lived only in screen
+  // state came back text-only until the persisted row landed on top.
   const rememberSent = (turnId: string | undefined, sent: GatewayAttachment[]) => {
-    if (!turnId || !sent.length) return;
-    const map = sentAttachmentsRef.current;
-    map.set(turnId, sent);
-    // Bounded: these are base64 pixels and only the newest turns can still be live.
-    while (map.size > 8) {
-      const oldest = map.keys().next();
-      if (oldest.done) break;
-      map.delete(oldest.value);
-    }
+    client.rememberSentAttachments(sid, turnId, sent);
   };
   const runningRef = useRef(false);
   const turnsRef = useRef<TranscriptTurn[]>([]);
@@ -1201,7 +1192,6 @@ export function SessionScreen({
     const seed = seedLiveTurn(client, subscriptions, sid);
     setLiveTurn(seed?.turn ?? null);
     setRunning(seed !== null);
-    sentAttachmentsRef.current.clear();
     setQueued(client.cachedQueuedTurns(sid) ?? []);
     setQueueBusy(new Set());
     setQueuePaused(null);
@@ -1457,6 +1447,12 @@ export function SessionScreen({
       const gatewayLive = row.live !== undefined ? row.live : row.status === 'running';
       const tid = row.current_turn_id ?? '';
       if (!gatewayLive || tid === '') return;
+      // The gateway's own answer, and it needs no round trip: a turn IS running.
+      // Claiming it here rather than after `turnTrace` matters — until `running`
+      // is set, `turnsSettled` treats the persisted `running` placeholder as a
+      // finished row, so opening a streaming session painted that row with no
+      // "Vis is running …" ticker for the whole length of the trace fetch.
+      setRunning(true);
       // A bubble that is still streaming OWNS the turn: it holds deltas newer
       // than any persisted trace, so replacing it would visibly rewind it. Only
       // a missing (or already settled) bubble is adopted into.
@@ -3218,13 +3214,39 @@ export function SessionScreen({
       }),
     [visibleTurns, turnsSettled, hasLiveBubble, client, sid],
   );
+  // The sender's own copy of the pictures dies with the process. Ask the gateway
+  // for the bytes of a live turn that has none in hand — a restarted app, or a
+  // second device, has no other source until the turn lands and is refetched.
+  const [fetchedLiveAttachments, setFetchedLiveAttachments] = useState<{
+    id: string;
+    rows: GatewayAttachment[];
+  } | null>(null);
+  const liveTurnAttachments = liveTurn?.attachments;
+  useEffect(() => {
+    if (!liveTurnId || liveTurnAttachments?.length) return;
+    if (client.cachedSentAttachments(sid, liveTurnId)?.length) return;
+    const controller = new AbortController();
+    let cancelled = false;
+    void client
+      .fetchTurnAttachments(sid, liveTurnId, controller.signal)
+      .then((rows) => {
+        if (!cancelled && rows.length) setFetchedLiveAttachments({ id: liveTurnId, rows });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [client, sid, liveTurnId, liveTurnAttachments]);
+
   const liveRow = useMemo(
     () => {
       if (!liveTurn) return null;
       // A screenshot just sent lives only in this device's memory until the turn
       // is persisted: the live rail and the queue tray ship no attachment bytes.
       const liveAttachments = liveTurn.attachments
-        ?? (liveTurn.id ? sentAttachmentsRef.current.get(liveTurn.id) : undefined);
+        ?? client.cachedSentAttachments(sid, liveTurn.id)
+        ?? (fetchedLiveAttachments?.id === liveTurn.id ? fetchedLiveAttachments?.rows : undefined);
       return (
         <div
           className={`${turns.length ? 'mt-10 ' : ''}${transcriptEnterClass}`}
@@ -3253,7 +3275,7 @@ export function SessionScreen({
         </div>
       );
     },
-    [liveTurn, turns.length, client, sid, connected],
+    [liveTurn, turns.length, client, sid, connected, fetchedLiveAttachments],
   );
   // Pin the viewport to the content it is already showing, so rows added ABOVE
   // do not shove it. The layout effect reads this height on the next paint.
