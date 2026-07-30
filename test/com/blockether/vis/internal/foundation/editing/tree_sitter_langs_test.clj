@@ -773,3 +773,76 @@
 
                       [path (:name row) (pr-str res)])]
                    (expect (= [] (vec findings))))))
+
+(def doc-bank
+  "Definitions that carry NO doc yet, with the comment syntax their language docs with.
+   Svelte's function lives inside a `<script>` body the host grammar keeps as one opaque
+   raw-text node, so it has no comment NODE above it — the case that broke last."
+  {"A.java" ["public class Alpha {\n  void a() {}\n}\n" "/** New doc. */"]
+   "a.go" ["func Alpha() int {\n\treturn 1\n}\n" "// New doc."]
+   "a.rs" ["pub fn alpha() -> i32 {\n    1\n}\n" "/// New doc."]
+   "a.ts" ["export function alpha(): number {\n  return 1;\n}\n" "/** New doc. */"]
+   "a.zig" ["pub fn alpha() i32 {\n    return 1;\n}\n" "/// New doc."]
+   "a.svelte" ["<script>\nexport function alpha() {\n  return 1;\n}\n</script>\n\n<p>hi</p>\n"
+               "/** New doc. */"]})
+
+(defn- doc-target
+  "The deepest definition named like the sample's subject."
+  [path src]
+  (let [rows (ix/definitions src (ix/detect-language path))]
+    (:name (or (first (filter #(#{"Alpha" "alpha"} (:name %)) rows)) (first rows)))))
+
+(defn- try-edit
+  "The edited source, or a map carrying the refusal message — never a bare string for failure."
+  [path src m]
+  (try (st/edit-source path src m) (catch Exception e {:error (.getMessage e)})))
+
+(defdescribe
+  doc-comment-test
+  (it "add_doc adds a comment doc once, then refuses a second one"
+      ;; A comment doc is not a docstring NODE, so the doc ops used to ignore it:
+      ;; add_doc stacked a second comment and replace_doc claimed there was none.
+      (let
+        [findings (for
+                    [[path [src doc]] (sort doc-bank)
+                     :let [target (doc-target path src)
+                           added (try-edit path src {:op :add-doc :target target :code doc})
+                           again (when (string? added)
+                                   (try-edit path added {:op :add-doc :target target :code doc}))]
+                     :when (or (not (string? added))
+                               (not (str/includes? added doc))
+                               (not (str/ends-with? added "\n"))
+                               (str/includes? (str again) (str doc "\n" doc)))]
+
+                    [path target (pr-str added) (pr-str again)])]
+        (expect (= [] (vec findings)))))
+  (it "replace_doc rewrites the comment doc in place"
+      (let
+        [findings
+         (for
+           [[path [src doc]] (sort doc-bank)
+            :let [target (doc-target path src)
+                  added (try-edit path src {:op :add-doc :target target :code doc})
+                  second-doc (str/replace doc "New" "Second")
+                  res (when (string? added)
+                        (try-edit path added {:op :replace-doc :target target :code second-doc}))]
+            :when (or (not (string? res))
+                      (not (str/includes? res second-doc))
+                      (str/includes? res doc)
+                      (not= (count (str/split-lines added)) (count (str/split-lines res))))]
+
+           [path target (pr-str res)])]
+        (expect (= [] (vec findings)))))
+  (it "an existing doc comment is never counted twice or lost"
+      (let
+        [findings (for
+                    [[path [src doc]] (sort doc-bank)
+                     :let [target (doc-target path src)
+                           documented (try-edit path src {:op :add-doc :target target :code doc})
+                           refused
+                           (when (string? documented)
+                             (try-edit path documented {:op :add-doc :target target :code doc}))]
+                     :when (string? refused)]
+
+                    [path target (pr-str refused)])]
+        (expect (= [] (vec findings))))))

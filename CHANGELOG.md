@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - `vis-foundation-bridge` now targets the Bridge 0.2.2
   candidate-verification API.
+- tree-sitter-language-pack 1.12.3-blockether.34: structural editing keeps a
+  file's final newline and CRLF endings across every splice, replaces a node by
+  its non-whitespace core, and understands comment docs — so `add_doc` /
+  `replace_doc` work for the 26 languages whose docs are comments, not strings.
+
+### Fixed
+
+- `struct_patch` moves no longer drop the file's trailing newline (or `\r`):
+  the structural editor now splits lines without collapsing the final empty
+  line, and only collapses a seam when there is one.
 
 ## [v0.1.13] - 2026-07-29
 
