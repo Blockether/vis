@@ -17,6 +17,16 @@ const TURN_TERMINAL_EVENTS = new Set(['turn.completed', 'turn.failed', 'turn.can
 // reconnects against the gateway in one tick; one is enough.
 const RESYNC_MIN_INTERVAL_MS = 1_000;
 
+// A DELIBERATE reconnect (wake, watchdog) replaces a working-enough socket with
+// a fresh one and is normally open again in well under a second. Announcing
+// `connected = false` for that gap makes the whole app flinch — the header flips
+// to "Reconnecting", the "Vis is running: …" ticker is replaced, composer
+// affordances change — a visible reflow for something that was never an outage.
+// So a graceful restart keeps the last known state and only downgrades if the
+// replacement stream has still not opened after this long, i.e. when it really
+// IS an outage. Involuntary drops (onError/onClosed) still report immediately.
+const RECONNECT_GRACE_MS = 4_000;
+
 // The stream's supervisor tick. `streamSessionEvents` retries on its own, but it
 // can still END (the caller aborted, or it gave up); nothing else in the app
 // notices, and while you stay inside one session NO wake event ever fires to
@@ -44,6 +54,7 @@ export class SessionSubscriptionHub {
   private connected = false;
   private disposed = false;
   private lastResyncAt = 0;
+  private graceTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly stopWake: () => void;
   private supervisor: ReturnType<typeof setInterval> | null = null;
 
@@ -129,7 +140,8 @@ export class SessionSubscriptionHub {
     const now = Date.now();
     if (now - this.lastResyncAt < RESYNC_MIN_INTERVAL_MS) return;
     this.lastResyncAt = now;
-    this.restart();
+    // Graceful: this is a precaution, not an observed failure — do not paint one.
+    this.restart({ graceful: true });
   }
 
   dispose(): void {
@@ -157,11 +169,19 @@ export class SessionSubscriptionHub {
     this.restart();
   }
 
-  private restart(): void {
+  private restart({ graceful = false }: { graceful?: boolean } = {}): void {
     if (this.disposed) return;
     this.stopStream?.();
     this.stopStream = null;
-    this.setConnected(false);
+    this.clearGrace();
+    if (graceful && this.connected) {
+      this.graceTimer = setTimeout(() => {
+        this.graceTimer = null;
+        this.setConnected(false);
+      }, RECONNECT_GRACE_MS);
+    } else {
+      this.setConnected(false);
+    }
     if (this.cursors.size === 0) return;
     const stop = this.client.streamSessionEvents(
       this.cursors,
@@ -204,7 +224,16 @@ export class SessionSubscriptionHub {
     } else if (!this.ended.has(sid)) {
       const buffered = [...(this.buffers.get(sid) ?? []), event];
       if (buffered.length > MAX_BUFFERED_EVENTS) {
-        buffered.splice(0, buffered.length - MAX_BUFFERED_EVENTS);
+        // Trim from the front, but NEVER evict the head `turn.started`: that is
+        // the frame which RESETS a replaying screen's live bubble. Drop it and a
+        // reconnect replays this turn's deltas onto content the screen already
+        // rendered, i.e. the same answer twice.
+        const head = buffered[0];
+        const isHeadStart = head?.type === 'turn.started';
+        buffered.splice(
+          isHeadStart ? 1 : 0,
+          buffered.length - MAX_BUFFERED_EVENTS,
+        );
       }
       this.buffers.set(sid, buffered);
     }
@@ -213,7 +242,14 @@ export class SessionSubscriptionHub {
     for (const listener of this.fleetListeners) listener(event);
   }
 
+  private clearGrace(): void {
+    if (this.graceTimer) clearTimeout(this.graceTimer);
+    this.graceTimer = null;
+  }
+
   private setConnected(next: boolean): void {
+    // Any definitive verdict settles the pending downgrade, in both directions.
+    this.clearGrace();
     if (this.connected === next) return;
     this.connected = next;
     for (const listener of this.connectionListeners) listener(next);

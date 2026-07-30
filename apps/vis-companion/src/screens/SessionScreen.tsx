@@ -109,6 +109,26 @@ const LIVE_BODY_THROTTLE_MS = 150;
 // directly. Long enough that a healthy terminal frame always wins the race.
 const TURN_LIVENESS_IDLE_MS = 10000;
 const TURN_LIVENESS_PROBE_INTERVAL_MS = 5000;
+// A working turn can be SILENT for a very long time: one `shell` or
+// `python_execution` call blocks its iteration until the command returns, and
+// nothing is emitted meanwhile. Quiet is therefore NOT evidence of a broken
+// stream while the registry still confirms the turn — reconnecting on every
+// quiet tick tore the multiplexed SSE connection down every 10s for the whole
+// length of a long command, which flapped the header to "Reconnecting" and
+// replaced the "Vis is running: …" ticker with a reconnect notice. Only silence
+// past this bound is treated as a frozen transport. 30s sits just under the
+// gateway's own 15s heartbeat doubled, so a genuinely frozen socket is caught
+// within two missed beats instead of four, and then at most one reconnect per
+// window.
+const TURN_STREAM_STALL_MS = 30_000;
+// …and never on a SINGLE verdict. One probe can be wrong in both directions (a
+// heartbeat racing the read, a registry row not yet visible), and every wrong
+// verdict costs a stream teardown the user sees. So a suspicious answer only
+// arms the watchdog: it must be RE-CHECKED on the next probe and agree with
+// itself before anything is torn down. Two agreeing probes 5s apart cost one
+// extra tick of latency and remove every single-sample false positive.
+const TURN_STALL_CONFIRMATIONS = 2;
+const TURN_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const INITIAL_VISIBLE_TURNS = 8;
 // Assistant turns can contain thousands of syntax-highlighted nodes. Twenty-four
 // such turns is still enough DOM to make keyboard resize and momentum scrolling
@@ -1087,7 +1107,18 @@ export function SessionScreen({
     // No live bubble ⇒ whatever is on screen IS the baseline. Once one appears
     // this stops updating, so the snapshot describes the transcript as it was
     // when the turn started.
-    if (!liveTurnRef.current) preLiveTurnIdsRef.current = new Set(turns.map(rowId));
+    //
+    // STILL-RUNNING rows are excluded on purpose. The gateway persists a
+    // `running` placeholder for a turn the moment it is accepted, so a refetch
+    // that lands between the POST and `turn.started` puts THIS turn's row into
+    // the baseline. `liveTurnSettledInto` then rejects that very row as "already
+    // there" once it settles, the live bubble is never retired, and the answer
+    // renders twice — settled row plus bubble — until the screen is remounted.
+    if (!liveTurnRef.current) {
+      preLiveTurnIdsRef.current = new Set(
+        turns.filter((turn) => !isRunningRow(turn)).map(rowId),
+      );
+    }
     cancelRef.current = () => void cancel();
   });
 
@@ -1946,23 +1977,61 @@ export function SessionScreen({
     // path as a real frame. If the turn is still live, the stream has probably
     // been frozen (notably by WKWebView), so reconnect and replay it instead.
     let lastEventAt = Date.now();
+    let lastStallResyncAt = 0;
+    // Consecutive probes that agreed on a suspicious verdict. Reset by ANY
+    // reassuring answer, so only a persistent fault ever reaches a reconnect.
+    let stallStrikes = 0;
+    let unknownStrikes = 0;
     let probing = false;
     const livenessTimer = window.setInterval(() => {
       const live = liveTurnRef.current;
       if (probing || !live || live.status !== 'running' || !live.id) return;
       const quietSince = Math.max(lastEventAt, live.startedAt ?? 0);
-      if (Date.now() - quietSince < TURN_LIVENESS_IDLE_MS) return;
+      const silentFor = Date.now() - quietSince;
+      if (silentFor < TURN_LIVENESS_IDLE_MS) {
+        // Frames are flowing: whatever the last probe suspected is disproved.
+        stallStrikes = 0;
+        unknownStrikes = 0;
+        return;
+      }
       probing = true;
       void client
         .turnStatus(sid, live.id)
         .then((turn) => {
           const current = liveTurnRef.current;
           if (!current || current.status !== 'running' || current.id !== live.id) return;
+          if (turn && !TURN_TERMINAL_STATUSES.has(String(turn.status ?? ''))) {
+            // The gateway CONFIRMS the turn is still working, so the transport is
+            // not the suspect: a long tool call is simply quiet. Leave the stream
+            // alone until the silence outlasts the stall bound — and even then,
+            // only once a SECOND probe has re-checked and still sees no frames.
+            unknownStrikes = 0;
+            if (silentFor < TURN_STREAM_STALL_MS) {
+              stallStrikes = 0;
+              return;
+            }
+            stallStrikes += 1;
+            if (stallStrikes < TURN_STALL_CONFIRMATIONS) return;
+            if (Date.now() - lastStallResyncAt < TURN_STREAM_STALL_MS) return;
+            lastStallResyncAt = Date.now();
+            stallStrikes = 0;
+            subscriptions.resync();
+            return;
+          }
           if (!turn) {
+            // "No such turn" is the one answer that cannot be trusted on sight:
+            // a row can be momentarily unreadable (a restarting gateway, a proxy
+            // hiccup) while the turn is perfectly alive. Re-check before acting.
+            stallStrikes = 0;
+            unknownStrikes += 1;
+            if (unknownStrikes < TURN_STALL_CONFIRMATIONS) return;
+            unknownStrikes = 0;
             lastEventAt = Date.now();
             subscriptions.resync();
             return;
           }
+          stallStrikes = 0;
+          unknownStrikes = 0;
           const type = turn.status === 'failed'
             ? 'turn.failed'
             : turn.status === 'cancelled' ? 'turn.cancelled' : 'turn.completed';
@@ -2162,6 +2231,15 @@ export function SessionScreen({
     if (!textarea) return;
     const shrunk = prompt.length < promptLengthRef.current;
     promptLengthRef.current = prompt.length;
+    // Sending clears the composer outright. Measuring `scrollHeight` on that
+    // commit forces a synchronous layout of the whole footer → section →
+    // transcript chain in the very frame that mounts the optimistic bubble —
+    // the hitch you feel on send. An empty box has exactly one height, the
+    // class's own, so drop the inline override and measure nothing.
+    if (!prompt) {
+      if (textarea.style.height) textarea.style.height = '';
+      return;
+    }
     const needed = Math.min(textarea.scrollHeight, 112);
     if (needed > textarea.clientHeight + 1) {
       // Content wrapped past the current box — grow (one cheap targeted write).
@@ -3451,6 +3529,7 @@ export function SessionScreen({
                   </span>
                   <button
                     type="button"
+                    onMouseDown={keepKeyboard}
                     className="absolute inset-y-0 right-0 grid w-6 place-items-center text-body text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err"
                     onClick={() => removeAttachment(attachment.id)}
                     aria-label={`Remove ${attachment.filename}`}
@@ -3491,6 +3570,7 @@ export function SessionScreen({
 
             <button
               type="button"
+              onMouseDown={keepKeyboard}
               className="grid h-8 w-7 shrink-0 place-items-center text-dialog-hint transition-[background-color,color,transform,translate,scale,rotate] duration-150 hover:bg-hover hover:text-dialog-hint-key active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:h-7 sm:w-6"
               onClick={() => void addAttachments()}
               disabled={attachments.length >= (capabilities?.features.attachments.max_files ?? 8)}
@@ -3505,6 +3585,7 @@ export function SessionScreen({
             {voiceSupported && (
               <button
                 type="button"
+                onMouseDown={keepKeyboard}
                 className={`grid h-8 w-7 shrink-0 place-items-center transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:h-7 sm:w-6 ${
                   voicePhase === 'recording'
                     ? 'animate-pulse bg-warn-surface text-err motion-reduce:animate-none'
@@ -3617,6 +3698,7 @@ export function SessionScreen({
               {activeWork && !liveTurn?.cancelling && (
                 <button
                   type="button"
+                  onMouseDown={keepKeyboard}
                   className="grid size-full place-items-center border border-err bg-cancelled transition-[background-color,opacity,transform,translate,scale,rotate] duration-150 hover:bg-warn-surface active:scale-[0.94] starting:scale-90 starting:opacity-0 motion-reduce:transition-none"
                   onClick={cancel}
                   aria-label="Stop response"
@@ -3627,6 +3709,7 @@ export function SessionScreen({
             </div>
             <button
               type="button"
+              onMouseDown={keepKeyboard}
               className="grid size-8 shrink-0 place-items-center border border-dialog-edge bg-dialog-title text-ui font-bold text-dialog-title-foreground transition-[background-color,color,transform,translate,scale,rotate] duration-150 hover:bg-accent-2 active:scale-[0.94] disabled:scale-100 disabled:bg-button disabled:text-dialog-hint motion-reduce:transition-none sm:size-7"
               onClick={send}
               disabled={(!prompt.trim() && !attachments.length) || voicePhase !== 'idle'}

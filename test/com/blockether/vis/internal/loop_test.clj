@@ -3597,19 +3597,20 @@
                  {"path" "a.clj" "op" "replace" "target" "f" "code" "(defn f []\n  \"d\"\n  1)"}})]
         (expect (not (.contains ^String prog "\n")))
         (expect (.startsWith ^String prog "struct_patch("))))
-    (it "positional + optional-rest-dict shapes (struct_node/copy/shell)"
-        ;; `cat` is plural-only, so it rides the generic whole-dict form.
-        (expect (= "cat({\"paths\": [\"a.clj\"]})"
-                   (synth {:name "cat" :input {"paths" ["a.clj"]}})))
-        (expect (= "cat({\"paths\": [\"a.clj\"], \"ranges\": [[1, 2]]})"
-                   (synth {:name "cat" :input {"paths" ["a.clj"] "ranges" [[1 2]]}})))
-        (expect (= "struct_node(\"a.clj\", {\"nav\": [\"down\"]})"
-                   (synth {:name "struct_node" :input {"path" "a.clj" "nav" ["down"]}})))
-        (expect (= "copy(\"a\", \"b\")" (synth {:name "copy" :input {"src" "a" "dest" "b"}})))
-        (expect (= "copy(\"a\", \"b\", {\"is_overwrite\": True})"
-                   (synth {:name "copy" :input {"src" "a" "dest" "b" "is_overwrite" true}})))
-        (expect (= "shell(\"ls\", {\"timeout_secs\": 30})"
-                   (synth {:name "shell" :input {"cmd" "ls" "timeout_secs" 30}}))))
+    (it
+      "positional + optional-rest-dict shapes (copy/shell) and plural-only dicts"
+      ;; `cat` is plural-only, so it rides the generic whole-dict form.
+      (expect (= "cat({\"paths\": [\"a.clj\"]})" (synth {:name "cat" :input {"paths" ["a.clj"]}})))
+      (expect (= "cat({\"paths\": [\"a.clj\"], \"ranges\": [[1, 2]]})"
+                 (synth {:name "cat" :input {"paths" ["a.clj"] "ranges" [[1 2]]}})))
+      ;; `struct_nodes` is plural-only too: `nodes` rides the generic whole-dict form.
+      (expect (= "struct_nodes({\"nodes\": [{\"path\": \"a.clj\", \"nav\": [\"down\"]}]})"
+                 (synth {:name "struct_nodes" :input {"nodes" [{"path" "a.clj" "nav" ["down"]}]}})))
+      (expect (= "copy(\"a\", \"b\")" (synth {:name "copy" :input {"src" "a" "dest" "b"}})))
+      (expect (= "copy(\"a\", \"b\", {\"is_overwrite\": True})"
+                 (synth {:name "copy" :input {"src" "a" "dest" "b" "is_overwrite" true}})))
+      (expect (= "shell(\"ls\", {\"timeout_secs\": 30})"
+                 (synth {:name "shell" :input {"cmd" "ls" "timeout_secs" 30}}))))
     (it "all-positional + optional-trailing-positional shapes"
         (expect (= "move(\"a\", \"b\")" (synth {:name "move" :input {"src" "a" "dest" "b"}})))
         (expect (= "delete(\"p\")" (synth {:name "delete" :input {"path" "p"}})))
@@ -3696,7 +3697,7 @@
       "struct_index" :observation
       "struct_occurrences" :observation
       "file_exists" :observation
-      "struct_node" :observation
+      "struct_nodes" :observation
       "patch" :mutation
       "write" :mutation
       "struct_patch" :mutation}

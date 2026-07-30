@@ -1292,6 +1292,32 @@
          source
          (assoc :source source))))))
 
+(def ^:private native-prose-budget
+  "Max model-facing prose chars a single native tool may spend (see
+   `native-prose-chars`). Shared by the registration guard and its test so the
+   number lives in exactly one place."
+  2000)
+
+(defn- schema-prose-chars
+  "Total characters of every `:description` (or `\"description\"`) nested anywhere
+   in a JSON-Schema value — the part of a schema that is prose rather than
+   machine-enforced structure."
+  [x]
+  (cond (map? x) (apply +
+                   (count (str (or (:description x) (get x "description"))))
+                   (map schema-prose-chars (vals (dissoc x :description "description"))))
+        (coll? x) (transduce (map schema-prose-chars) + 0 x)
+        :else 0))
+
+(defn- native-prose-chars
+  "Model-facing prose cost of a native tool symbol entry: `:description` plus
+   `:result` plus every schema parameter description. This whole surface is
+   re-sent on EVERY request, so it is budgeted at registration time."
+  [entry]
+  (+ (count (str (:ext.symbol/description entry)))
+     (count (str (:ext.symbol/result entry)))
+     (long (schema-prose-chars (:ext.symbol/schema entry)))))
+
 (defn- build-symbol-entry
   "Shared core that turns `{:symbol :fn :doc :arglists :source}` plus opts into
    a validated `::fn-symbol-entry`. Observed tools keep their symbol-specific
@@ -1424,6 +1450,26 @@
       (anomaly/incorrect!
         (str "Native tool " sym " includes the reserved `Raw result:` label in :result.")
         {:type :extension/native-tool-result-has-label :symbol sym}))
+    (when (:ext.symbol/native-tool? entry)
+      (let
+        [budget
+         (long native-prose-budget)
+
+         spent
+         (long (native-prose-chars entry))]
+
+        (when (< budget spent)
+          (anomaly/incorrect!
+            (str "Native tool "
+                 sym
+                 " spends "
+                 spent
+                 " chars of prose (:description + "
+                 ":result + every schema :description); the budget is " budget
+                 ". Every " "native description is re-sent on EVERY request, so state each fact "
+                 "exactly once: never restate the CORE prompt, and never narrate what the "
+                 "JSON Schema already enforces (types, required, enums, defaults).")
+            {:type :extension/native-tool-over-budget :symbol sym :chars spent :budget budget}))))
     (validate-symbol-entry! entry)))
 
 (defn symbol

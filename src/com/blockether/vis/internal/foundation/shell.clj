@@ -856,7 +856,20 @@
                     :started-at-ms (:started-at live)
                     :finished-at-ms (now-ms)
                     :duration-ms 0}})
-      (shell-bg-spawn! env id cmd opts))))
+      (if-let
+        [cmd (some-> cmd
+                     str
+                     str/trim
+                     not-empty)]
+        (shell-bg-spawn! env id cmd opts)
+        (throw (ex-info (str "No background shell '"
+                             id
+                             "' is running, so it must be STARTED:"
+                             " pass the command as the FIRST argument \u2014 await shell(cmd,"
+                             " {\"op\": \"background\", \"id\": \""
+                             id
+                             "\"}).")
+                        {:type ::missing-command :op "background" :id id}))))))
 
 (defn- shell-logs-impl
   ([env id] (shell-logs-impl env id default-log-tail))
@@ -1082,12 +1095,14 @@
       _
       (doseq [k ["cmd" "commands" "text"]]
         (when (or (contains? opts k) (contains? opts (keyword k)))
-          (throw (ex-info
-                   (str "shell takes what it feeds a shell as the FIRST POSITIONAL argument, never a \"" k
-                        "\" option: await shell(\"ls\") for one command, "
-                        "await shell([\"a\", \"b\"]) for a strictly ordered batch, "
-                        "await shell(\"y\", {\"op\": \"send\", \"id\": id}) to type into a live shell.")
-                   {:type ::mapped-command :option k}))))
+          (throw
+            (ex-info
+              (str "shell takes what it feeds a shell as the FIRST POSITIONAL argument, never a \""
+                   k
+                   "\" option: await shell(\"ls\") for one command, "
+                   "await shell([\"a\", \"b\"]) for a strictly ordered batch, "
+                   "await shell(\"y\", {\"op\": \"send\", \"id\": id}) to type into a live shell.")
+              {:type ::mapped-command :option k}))))
 
       ;; A collection positional is the batch. Java collections cross the Python
       ;; boundary too, and a SET is caught here — an unordered collection cannot
@@ -1101,9 +1116,11 @@
       ;; The `send` payload is the RAW positional. Keystrokes are routinely
       ;; whitespace or control characters (a bare Enter, C-c, Esc), so the
       ;; trimming that turns a schema-filled empty string into "no command" must
-      ;; touch what gets typed into a live pty.
+      ;; NOT touch what gets typed into a live pty.
       raw-command
-      (when-not batch? (some-> command str))
+      (when-not batch?
+        (some-> command
+                str))
 
       ;; Blank is absent for the single positional too, so a schema-filled empty
       ;; is simply no command rather than a mysterious conflict.
@@ -1134,7 +1151,7 @@
 
       ;; A batch is a sequence of bounded runs: only what a run reads (cwd,
       ;; timeout_secs) applies. Reject the options that would mean a DIFFERENT
-      ;; lifecycle stage; ignore the ones a plain run ignores too (n, text, enter).
+      ;; lifecycle stage; ignore the ones a plain run ignores too (n, enter).
       _
       (when batch?
         (cond id (throw
@@ -1161,17 +1178,27 @@
               {:type ::missing-command :op op}))))
 
       ;; `send` carries its keystrokes in the SAME one place as every other op:
-      ;; the first positional. Untrimmed, so a control character (C-c, Esc) or a
-      ;; survives; only a genuinely absent payload is an error.
+      ;; the first positional, UNTRIMMED — a control character (C-c, Esc), a
+      ;; leading space or a bare newline is exactly what an interactive program
+      ;; waits for. With `enter` on (the default) an EMPTY payload is legitimate
+      ;; too: it is the commonest keystroke of all, a bare Enter. Only "nothing to
+      ;; type at all" — empty payload with enter explicitly false — is an error.
+      enter?
+      (let [e (opt opts :enter)]
+        (if (nil? e) true (boolean e)))
+
       need-payload
       (fn []
-        (or
-          (not-empty (or raw-command ""))
-          (throw
-            (ex-info
-              (str "shell op \"send\" needs the keystrokes as its first argument: "
-                   "await shell(\"y\", {\"op\": \"send\", \"id\": \"" (or id "…") "\"}).")
-              {:type ::missing-command :op op}))))
+        (let [payload (or raw-command "")]
+          (if (and (not enter?) (empty? payload))
+            (throw
+              (ex-info
+                (str "shell op \"send\" with {\"enter\": false} types nothing: pass the keystrokes "
+                     "as the first argument \u2014 await shell(\"y\", {\"op\": \"send\", \"id\": \""
+                     (or id "\u2026")
+                     "\"}).")
+                {:type ::missing-command :op op}))
+            payload)))
 
       need-id
       (fn []
@@ -1189,9 +1216,12 @@
         (when command
           (throw (ex-info (str "shell op \""
                                op
-                               "\" does not take a positional id — put {\"id\": \""
+                               "\" reads nothing from the first argument \u2014 it acts on"
+                               " the background shell named by {\"id\": \"\u2026\"}. Drop \""
                                command
-                               "\"} in the options map.")
+                               "\", or pass it as {\"id\": \""
+                               command
+                               "\"} if that is the id.")
                           {:type ::positional-id :op op :id command}))))]
 
      (if batch?
@@ -1201,7 +1231,7 @@
          (shell-run-impl env (need-command) opts)
 
          "background"
-         (shell-bg-impl env (need-id) (need-command) opts)
+         (shell-bg-impl env (need-id) command opts)
 
          "logs"
          (do (reject-command) (shell-logs-impl env (need-id) (opt opts :n)))
@@ -1677,7 +1707,7 @@ Gotcha: logs returns \"lines\" as plain STRINGS and NOTHING else carries that ta
           (map-indexed
             (fn [idx {:keys [summary body]}]
               (str "### " (inc (long idx)) ". " summary (when (seq body) (str "\n\n" body)))))
-          (str/join "\n\n────────────────────────────────────────\n\n"))]
+          (str/join "\n\n────────────\n\n"))]
 
     {:summary (str "$ "
                    (count commands)
@@ -1728,12 +1758,11 @@ Gotcha: logs returns \"lines\" as plain STRINGS and NOTHING else carries that ta
      :description
      (str
        "THE one shell tool — bounded run, strictly ordered batch, background, logs, send, stop. `op` defaults to \"run\", or \"background\" with an `id`. "
-       "ONE carrier for everything you feed a shell: `cmd`, Python's first positional argument. A STRING is one command; a LIST of strings runs them strictly in input order — each bounded run completes before the next starts, every input position gets a result with `started`, and failures do not stop later commands; under `op` \"send\" the string is the keystrokes typed into the live shell. "
-       "PREFER background for builds, tests, servers, watchers, or interactive work; poll with \"logs\". Reserve run for short commands; reserve a list for short serial work. "
-       "\"send\" types `cmd` into its pty; \"stop\" kills it — stop what you started. "
-       "In `python_execution`, await `shell`; `cmd` is positional for run/background/send and `id` stays in the options map for background/logs/send/stop. "
+       "PREFER background for builds, tests, servers, watchers, or interactive work; poll with \"logs\". Reserve run for short commands, a list for short serial work. "
+       "\"send\" types into a live shell's pty; \"stop\" kills it. \"background\" on a LIVE id returns that same shell (`already_running`) and needs no `cmd`. "
        "Live ids are in `session[\"resources\"]`. Huge run output is truncated MID-stream — check `stdout_truncated` before parsing it. "
-       "`logs` hands back the tail ONCE as `lines` (plain strings).")
+       "`logs` hands back the tail ONCE as `lines` (plain strings). In "
+       "`python_execution` await `shell`.")
      ;; Python's shell call shape keeps cmd positional, while native JSON necessarily carries `cmd` as
      ;; a property. The call shape converts that transport field to the positional;
      ;; every remaining property, including `id`, stays in the options map.
@@ -1744,17 +1773,17 @@ Gotcha: logs returns \"lines\" as plain STRINGS and NOTHING else carries that ta
      {:type "object"
       :properties
       {"cmd"
-       {:oneOf [{:type "string" :minLength 1}
-                {:type "array" :minItems 1 :items {:type "string" :minLength 1}}]
+       {:oneOf [{:type "string"} {:type "array" :minItems 1 :items {:type "string" :minLength 1}}]
         :description
-        "The ONLY place a command or a keystroke may appear: a STRING for one command line (bash -lc, workspace root), an ARRAY of strings for a strictly ordered batch of bounded runs, or — with `op` \"send\" — the exact text typed into that background shell's stdin (never trimmed, so control characters survive). In Python this is the first positional argument. There is no `commands` key and no `text` key; never spell the payload twice. A batch keeps the default `run` op and no `id`; `cwd` and `timeout_secs` apply to every command. Resource ids never use `cmd`."}
+        "The ONLY place a command or a keystroke may appear — in Python the first positional argument; there is no `commands` key and no `text` key. A STRING is one command line (bash -lc, workspace root); an ARRAY is a strictly ordered batch of bounded runs, each completing before the next, keeping the default `run` op and no `id`, with `cwd` and `timeout_secs` applied to every command. Under `op` \"send\" it is the exact text typed into that background shell's stdin — never trimmed, so control characters survive and an EMPTY string is a bare Enter. Omit it for `logs`/`stop`, and for `background` on an id that is already running."}
        "op" {:type "string"
              :enum ["run" "background" "logs" "send" "stop"]
              :description "Operation (default \"run\", or \"background\" when an `id` is given)."}
        "id" {:type "string"
              :minLength 1
              :description
-             "Background shell resource id — the SAME id for background / logs / send / stop."}
+             (str "Background shell resource id — the SAME id for background / logs / send / "
+                  "stop. In Python it stays in the options map, never positional.")}
        "timeout_secs" {:type "integer"
                        :minimum 1
                        :maximum 600

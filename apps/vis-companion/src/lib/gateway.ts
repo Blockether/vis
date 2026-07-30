@@ -1435,14 +1435,21 @@ export class GatewayClient {
   }
 
   /**
-   * Terminal status of ONE turn as the gateway REGISTRY knows it — `null` while
-   * it is still running (or unknown to this session).
+   * Status of ONE turn as the gateway REGISTRY knows it — `null` only when this
+   * session has no such turn at all.
    *
    * This is the transport-independent liveness probe: the live bubble normally
    * settles on the terminal SSE frame, but a reconnect gap (or a backgrounded
    * tab whose stream was torn down mid-turn) can swallow that one frame, and
    * then the bubble streams forever for a turn the gateway finished minutes
    * ago. Asking the registry costs one cheap listing and never lies.
+   *
+   * A still-`running`/`queued` turn is REPORTED, never flattened to `null`: a
+   * caller that cannot tell "still working" from "never heard of it" has to
+   * assume the worst about every quiet moment. One `shell` or `python_execution`
+   * call blocks its iteration for as long as the command runs and emits no
+   * frame at all until it returns, so that assumption tore the SSE stream down
+   * every few seconds for the whole length of a long tool call.
    */
   async turnStatus(
     sid: string,
@@ -1460,7 +1467,7 @@ export class GatewayClient {
     );
     if (!row) return null;
     const status = String(row.status ?? '');
-    if (status === '' || status === 'running' || status === 'queued') return null;
+    if (status === '') return null;
     return {
       status,
       content: Array.isArray(row.content) ? row.content as TranscriptTurn['content'] : undefined,

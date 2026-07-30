@@ -1370,7 +1370,7 @@ export const IterationTrace = memo(function IterationTrace({
           >
             {segment.head.thinking && <ThinkingBand>{segment.head.thinking}</ThinkingBand>}
             {segment.head.prose && (
-              <div className="my-2.5 text-body text-vis-message">
+              <div className="my-2.5 text-ui text-vis-message">
                 <Markdown>{segment.head.prose}</Markdown>
               </div>
             )}
@@ -1526,7 +1526,11 @@ export const AssistantMessage = memo(function AssistantMessage({
       <div className={`mb-1 font-mono text-meta font-bold ${cancelled ? 'text-dialog-hint' : 'text-vis-role'}`}>Vis</div>
       <div className="min-w-0">
         <IterationTrace iterations={turn.iterations ?? []} live={streaming} client={client} sid={sid} />
-        <div className={`bg-answer text-body ${cancelled ? 'italic text-cancelled-foreground' : 'text-answer-foreground'}`}>
+        {/* Message prose sits on the SAME canonical step as the trace it grows out of:
+            tool results, thinking bands and code cards are all `text-ui` (11px), so an
+            answer at `text-body` (12px) was one px of drift, not a hierarchy. The role
+            label (`text-meta`) and the meta footer (`text-chip`) still step down from it. */}
+        <div className={`bg-answer text-ui ${cancelled ? 'italic text-cancelled-foreground' : 'text-answer-foreground'}`}>
           {blocks.map((block) => <ContentBlockView key={block.id} block={block} />)}
           {fallback && <Markdown>{fallback}</Markdown>}
           {!streaming && !blocks.length && !fallback && turn.status !== 'completed' && turn.status !== 'running' && (
@@ -1575,7 +1579,7 @@ export const UserMessage = memo(function UserMessage(
   return (
     <article className="mt-4 w-full [contain:layout_style]">
       <div className="mb-1 font-mono text-meta font-bold text-you-role">You</div>
-      <div className={`inline-block max-w-full whitespace-pre-wrap break-words hyphens-auto [hyphenate-limit-chars:6_3_3] border-l-2 border-you-role bg-code px-3 py-2 text-body text-pretty text-you-message-foreground ${isJustifiable ? 'text-justify' : 'text-left'}`}>
+      <div className={`block w-full whitespace-pre-wrap break-words hyphens-auto [hyphenate-limit-chars:6_3_3] border-l-2 border-you-role bg-code px-3 py-2 text-ui text-pretty text-you-message-foreground ${isJustifiable ? 'text-justify' : 'text-left'}`}>
         {parts.map((part) => part.type === 'text' ? (
           <span key={part.key}>{part.text}</span>
         ) : part.type === 'image' ? (

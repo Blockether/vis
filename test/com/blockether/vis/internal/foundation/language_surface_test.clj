@@ -115,8 +115,8 @@
 
         (expect (str/includes? start "[language][dir]"))
         (expect (str/includes? start "absent/down/failed"))
-        (expect (str/includes? start "op` \"stop\" stops a managed REPL"))
-        (expect (str/includes? start "requested directory's pack lifecycle state"))
+        (expect (str/includes? start "\"stop\" ends a managed REPL"))
+        (expect (str/includes? start "\"status\" reports that directory's lifecycle state"))
         (expect (str/includes? result "never a `{resources: [...]}` list"))
         (expect (str/includes? result "stamped with `op`"))
         (expect (str/includes? (:ext.symbol/result language-surface/repl-eval-symbol)

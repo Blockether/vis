@@ -345,7 +345,7 @@ vis_do_update() {
   # Otherwise a release version (or explicit 'latest', or the --native fall-through
   # above) → download a native binary from a GitHub release.
   command -v curl >/dev/null || { echo "vis update needs curl on PATH" >&2; exit 1; }
-  local asset api dl
+  local asset api dl json candidate
   asset="$(vis_platform_asset)" || exit 1
   if [[ -z "$target" || "$target" == latest ]]; then
     api="https://api.github.com/repos/$vis_repo_slug/releases/latest"
@@ -353,8 +353,24 @@ vis_do_update() {
     api="https://api.github.com/repos/$vis_repo_slug/releases/tags/$target"
   fi
   echo "vis: resolving $asset from $api"
-  dl="$(curl -fsSL "$api" | grep -o "https://[^\"]*/${asset}" | head -1)" || true
-  [[ -n "$dl" ]] || { echo "vis update: release has no asset '$asset'" >&2; exit 1; }
+  json="$(curl -fsSL "$api")" || true
+  # Assets are published as vis-<os>-<arch>-community (native-release.yml);
+  # older releases used the bare basename. Match the FULL basename up to the
+  # closing quote — a prefix match silently drops '-community' and 404s.
+  dl=""
+  for candidate in "${asset}-community" "$asset"; do
+    dl="$(printf '%s' "$json" | grep -o "https://[^\"]*/${candidate}\"" | head -1)"
+    dl="${dl%\"}"
+    [[ -n "$dl" ]] && break
+  done
+  if [[ -z "$dl" ]]; then
+    echo "vis update: this release ships no native binary for '$asset'." >&2
+    echo "  Releases currently carry linux-x64 and linux-arm64 only, and not every" >&2
+    echo "  tag carries both - try an explicit tag, e.g. 'vis update v0.1.12'." >&2
+    echo "  On macOS build it once from a source checkout: 'vis native'" >&2
+    echo "  (needs GraalVM CE from .graalvm-version and ~16 GB RAM)." >&2
+    exit 1
+  fi
   echo "vis: downloading $dl"
   curl -fSL "$dl" -o "$vis_install_dir/native.tmp" || exit 1
   chmod +x "$vis_install_dir/native.tmp"

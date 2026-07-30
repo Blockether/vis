@@ -325,7 +325,7 @@
                   (map-indexed (fn [^long idx {:keys [summary body]}]
                                  (str "### " (inc idx) ". " summary
                                       (when (seq body) (str "\n\n" body)))))
-                  (str/join "\n\n────────────────────────────────────────\n\n"))]
+                  (str/join "\n\n────────────\n\n"))]
     {:summary (str "⎇ " (count commands) " git commands — " outcome)
      :body (when (seq body) body)}))
 
@@ -363,7 +363,6 @@ Gotcha: a non-zero `exit` is DATA to read, not a tool failure; remaining command
      :description
      (str
        "Run SERIAL host-Git commands only when `session[\"workspace\"]` lacks needed VCS facts or to act. "
-       "Call with `commands`: non-empty literal argv lists, e.g. `[[\"status\", \"--short\"]]` (omit `git`). "
        "Each keeps stdout/stderr; non-zero exits are data and later commands run.")
      :call {:pos ["commands"]}
      :render render-git-batch-result
@@ -376,7 +375,7 @@ Gotcha: a non-zero `exit` is DATA to read, not a tool failure; remaining command
                {:type "array"
                 :minItems 1
                 :description
-                "Git commands in serial request order; each command is a list of literal tokens."
+                "Git commands in serial request order; each a list of literal argv tokens with `git` omitted, e.g. `[[\"status\", \"--short\"]]`."
                 :items {:type "array" :minItems 1 :items {:type "string"}}}}
               :required ["commands"]
               :additionalProperties false}}))

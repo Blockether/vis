@@ -182,11 +182,69 @@
   (let [t (str/trim (str/replace (str s) #"\s+" " "))]
     (if (> (count t) n) (str (subs t 0 n) "…") t)))
 
+(defn- clip-line
+  "`s` truncated to `n` chars, keeping leading whitespace so a caret still lines up."
+  [s ^long n]
+  (let [s (str s)]
+    (if (> (count s) n) (str (subs s 0 n) " …") s)))
+
+(def ^:private sexpr-langs
+  "Languages whose delimiters all look alike, where the classic fault is closing
+   a `[` with a `)` rather than losing count of a single delimiter type."
+  #{"clojure" "clojurescript" "edn" "scheme" "lisp" "commonlisp" "elisp" "fennel" "janet" "racket"})
+
+(defn- syntax-fault-hint
+  "The likeliest CAUSE for `lang`, phrased as something to look AT. Language-aware:
+   paren advice on a TSX file is noise, not help."
+  [lang]
+  (if (contains? sexpr-langs (str lang))
+    "a `[`/`{` closed with `)` or vice-versa, or a mis-nest — check delimiter TYPES, not the count"
+    "an unclosed `{`, `(`, `[`, string/template literal or JSX tag OPENED before this point"))
+
+(defn- source-excerpt
+  "Lines `line`-2 .. `(max line last)`+1 (1-based) with a `^` under `col`,
+   gutter-numbered — so the break can be SEEN instead of counted to in a file
+   that was never written. `last` extends the window to cover a second marker
+   (the expected-delimiter position) when it sits nearby."
+  [^String source ^long line ^long col ^long last]
+  (let
+    [lines
+     (str/split-lines (str source))
+
+     total
+     (count lines)]
+
+    (when (<= 1 line total)
+      (let
+        [from
+         (max 1 (- line 2))
+
+         to
+         (min total (inc (max line last)))
+
+         width
+         (count (str to))
+
+         gutter
+         (fn [label]
+           (str "  " (format (str "%" width "s") (str label)) " │ "))]
+
+        (str/join
+          "\n"
+          (mapcat (fn [^long i]
+                    (let [text (clip-line (nth lines (dec i)) 100)]
+                      (if (= i line)
+                        [(str (gutter i) text)
+                         (str (gutter "") (apply str (repeat (min col (count text)) " ")) "^")]
+                        [(str (gutter i) text)])))
+                  (range from (inc to))))))))
+
 (defn describe-syntax-errors
-  "One-line, model-actionable summary of the ERROR/MISSING nodes in `source`
-   (parsed as `lang`), or nil when it parses clean. Names WHERE the parser broke
-   and, when tree-sitter knows it, WHICH delimiter it expected — so a rejected
-   edit stops the model from blind paren-counting."
+  "Model-actionable, MULTI-LINE report of the ERROR/MISSING nodes in `source`
+   (parsed as `lang`), or nil when it parses clean. Names WHERE the parser broke,
+   SHOWS those lines with a caret, names WHICH delimiter tree-sitter expected when
+   it knows, and closes with a language-appropriate cause — so a rejected edit
+   never degenerates into blind paren-counting."
   [lang ^String source]
   (let
     [errs
@@ -207,34 +265,49 @@
          (first broken)
 
          m
-         (first missing)]
+         (first missing)
 
-        (str n
-             " tree-sitter parse-error node"
-             (when (> n 1) "s")
-             (when (> n 1)
-               (str " (a parse CASCADE from usually ONE fault, not " n " separate mistakes)"))
-             (when u
-               (str "; first unexpected token at line "
-                    (:line u)
-                    " col "
-                    (:col u)
-                    " → `"
-                    (one-line (:text u) 40)
-                    "`"))
-             (when m
-               (str "; parser expected a `"
-                    (:kind m)
-                    "` at line "
-                    (:line m)
-                    " col "
-                    (:col m)
-                    " (a delimiter/token is missing or mismatched there)"))
-             (when (> n 1)
-               (str ". Count >1 usually means a bracket-TYPE mismatch (a `[`/`{`"
-                    " closed with `)`, or vice-versa) or a mis-nest — NOT a trailing-paren"
-                    " miscount, so stop counting parens and check delimiter TYPES"))
-             ".")))))
+         focus
+         (or u m)
+
+         ;; One window when both markers are close, two when they are far apart:
+         ;; never quote a screen of untouched code between them.
+         near?
+         (boolean (and u m (<= (abs (- (long (:line m)) (long (:line u)))) 4)))]
+
+        (->> [(if (> n 1)
+                (str n
+                     " parse errors — ONE fault usually CASCADES into the rest,"
+                     " so fix the FIRST, not all "
+                     n
+                     ".")
+                "1 parse error.")
+              (when u
+                (str "  break     line "
+                     (:line u)
+                     " col "
+                     (:col u)
+                     " → `"
+                     (one-line (:text u) 40)
+                     "`"))
+              (when m
+                (str "  expected  a `"
+                     (:kind m)
+                     "` at line "
+                     (:line m)
+                     " col "
+                     (:col m)
+                     " — missing or mismatched there"))
+              (when focus
+                (source-excerpt source
+                                (long (:line focus))
+                                (long (:col focus))
+                                (if near? (long (:line m)) (long (:line focus)))))
+              (when (and u m (not near?))
+                (source-excerpt source (long (:line m)) (long (:col m)) (long (:line m))))
+              (str "  likely    " (syntax-fault-hint lang))]
+             (remove nil?)
+             (str/join "\n"))))))
 
 (defn- node-data
   "Plain-data view of `n` (+ its immediate named children when `children?`).
@@ -407,7 +480,7 @@
                                        " at " (vec at)
                                        " would introduce a syntax error"
                                        (when-let [d (describe-syntax-errors lang new-source)]
-                                         (str " — " d)))}}
+                                         (str "\n" d)))}}
                 {:ok? true :new-source new-source}))))))))
 
 ;; ── ZIPPER CURSOR — relative navigation (clojure.zip / rewrite-clj vocabulary) ──
@@ -718,13 +791,12 @@
                    (try (if-let [p (named-path-at-line root line [])]
                           {:ok? true :path p :line line}
                           {:error {:reason :anchor-no-node
-                                   :message (str
-                                              "no structural node begins at line "
-                                              line
-                                              " (anchor "
-                                              (pr-str anchor)
-                                              ") — the anchor "
-                                              "points INSIDE a form, not at its start; use "
-                                              "struct_node(path) and nav to the node instead.")}})
+                                   :message (str "no structural node begins at line "
+                                                 line
+                                                 " (anchor "
+                                                 (pr-str anchor)
+                                                 ") — the anchor "
+                                                 "points INSIDE a form, not at its start; use "
+                                                 "struct_nodes and nav to the node instead.")}})
                         (finally (.close root))))
                  (finally (.close tree)))))))))

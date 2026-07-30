@@ -1143,7 +1143,8 @@ def __vis_strip_protected_imports__(src):
     #     `allowHostSocketAccess`, which raises a clean UnsupportedOperation.
     #   • `import select` / `selectors` / `ssl` ...      ->  dropped (no shim; a
     #     later use is a clean NameError, not a native crash).
-    #   • imports binding a protected builtin           ->  dropped (would shadow).
+    #   • an import binding a tool name (`import doc`)  ->  KEPT; it just shadows
+    #     that name for THIS block (the wrapper never declares it `global`).
     # Everything else (json, re, ...) is untouched; the ORIGINAL src is returned
     # when nothing changed (line numbers / formatting preserved).
     prot = set(globals().get('__vis_protected_names__') or [])
@@ -1163,7 +1164,7 @@ def __vis_strip_protected_imports__(src):
                 base = a.name.split('.')[0]; bound = (a.asname or a.name).split('.')[0]
                 if base == 'asyncio':
                     newbody.append(bind(a.asname or 'asyncio', None)); changed = True
-                elif base in drop or bound in prot:
+                elif base in drop:
                     changed = True
                 else:
                     keep.append(a)
@@ -1180,13 +1181,7 @@ def __vis_strip_protected_imports__(src):
             elif base in drop:
                 changed = True
             else:
-                kept = [a for a in node.names if (a.asname or a.name).split('.')[0] not in prot]
-                if len(kept) != len(node.names):
-                    changed = True
-                    if kept:
-                        node.names = kept; newbody.append(node)
-                else:
-                    newbody.append(node)
+                newbody.append(node)
         else:
             newbody.append(node)
     if not changed:
@@ -1228,6 +1223,16 @@ def __vis_run_async__(src):
         if __vis_scan_ids__:
             ntr.__vis_prime__(__vis_scan_ids__)
     assigned = __vis_assigned_names__(tree.body)
+    # SHADOWING a bound tool / sandbox name is ALLOWED — but only for THIS block.
+    # A protected name assigned here is LEFT OUT of the `global` list, so it
+    # becomes a plain `__vis_main__` local (exactly like a `for`/`with` target):
+    # `search = re.search(...)` reads naturally inside the block and the
+    # persistent callable is still there for the next one. Each shadowed name is
+    # pre-seeded from globals, so a READ that precedes the shadowing assignment
+    # still sees the tool instead of raising UnboundLocalError.
+    __vis_prot__ = set(g.get('__vis_protected_names__') or [])
+    __vis_shadow__ = [n for n in assigned if n in __vis_prot__ and n in g]
+    assigned = [n for n in assigned if n not in __vis_shadow__]
     body = list(tree.body)
     # AUTO-SETTLE inline, exactly like the sync per-form path: wrap the value of
     # every TOP-LEVEL assignment / bare expression in `__vis_settle__(...)` so a
@@ -1250,7 +1255,9 @@ def __vis_run_async__(src):
 
     if body and isinstance(body[-1], __vis_ast__.Expr):
         body[-1] = __vis_ast__.Return(value=body[-1].value)
-    inner = ([__vis_ast__.Global(names=assigned)] if assigned else []) + body
+    seed = [__vis_ast__.parse(n + ' = globals()[' + repr(n) + ']').body[0]
+            for n in __vis_shadow__]
+    inner = ([__vis_ast__.Global(names=assigned)] if assigned else []) + seed + body
     fn = __vis_ast__.AsyncFunctionDef(
         name='__vis_main__',
         args=__vis_ast__.arguments(posonlyargs=[], args=[], vararg=None,
@@ -4231,14 +4238,12 @@ def network_probe(method='GET', url=None, headers=None, body=None):
               (assoc :attachments attachments))))
         (finally (log-block-eval!))))))
 
-(declare protected-rebind-error)
-
 (defn- strip-protected-imports
-  "AST-strip imports of protected sandbox builtins (e.g. `from asyncio import
-   gather`) from `code` via the `__vis_strip_protected_imports__` preamble
-   helper, so a redundant import of a builtin becomes a no-op instead of a
-   protected-rebind error (and never shadows the builtin). Returns the original
-   code unchanged when nothing is stripped or on any failure."
+  "AST-normalize imports of protected sandbox builtins (e.g. `from asyncio import
+   gather`) in `code` via the `__vis_strip_protected_imports__` preamble helper,
+   so a redundant import of a builtin becomes a no-op instead of shadowing it.
+   Returns the original code unchanged when nothing is rewritten or on any
+   failure."
   [^Context ctx ^Value g code]
   (try (.putMember g "__vis_src__" (str code))
        (let [v (.eval ctx "python" "__vis_strip_protected_imports__(__vis_src__)")]
@@ -4271,8 +4276,9 @@ def network_probe(method='GET', url=None, headers=None, body=None):
    bare top-level tool call (so `cat(x)` without `await` still runs), drives it
    as a single coroutine, and maps any raised exception against the WHOLE source.
    The program runs exactly as the model wrote it — Python's own
-   halt-on-exception decides what ran. A pre-eval protected-rebind violation
-   short-circuits to an `:error` instead."
+   halt-on-exception decides what ran. Assigning a bound tool name is allowed:
+   `__vis_run_async__` keeps that binding BLOCK-LOCAL, so the shadow works here
+   and the callable survives for the next block."
   [python-context code & [_opts]]
   (let
     [ctx
@@ -4281,13 +4287,13 @@ def network_probe(method='GET', url=None, headers=None, body=None):
      g
      (.getBindings ctx "python")
 
-     ;; Strip redundant imports of protected builtins (e.g. `from asyncio
-     ;; import gather`) at the AST level BEFORE the protected-rebind check and
-     ;; before running — so they're a silent no-op, not an error.
+     ;; Normalize redundant imports of protected builtins (e.g. `from asyncio
+     ;; import gather`) at the AST level before running — so they're a silent
+     ;; no-op instead of hiding the builtin.
      code
      (strip-protected-imports ctx g code)]
 
-    (if-let [err (or (empty-block-error ctx code) (protected-rebind-error ctx g code))]
+    (if-let [err (empty-block-error ctx code)]
       {:result nil :forms [{:source code :error err}] :error err}
       ;; ONE whole-block path. `__vis_run_async__` AST-wraps the program in an
       ;; `async def`, AUTO-SETTLES every bare top-level tool call (so `cat(x)`
@@ -4295,36 +4301,6 @@ def network_probe(method='GET', url=None, headers=None, body=None):
       ;; any error against the WHOLE source. The block runs as the model wrote it,
       ;; so its outcome is the flat `{:stdout}` | `{:result}` | `{:error}` sum.
       (run-async-program ctx g code))))
-
-(defn- assigned-names-in-code
-  "Top-level names a Python block DURABLY binds (assign/import/def targets).
-   Transient `for`/`with` loop targets are excluded (they stay function-local).
-   Empty on parse failure; the normal evaluator reports the syntax error."
-  [^Context ctx ^Value g code]
-  (try (.putMember g "__vis_src__" (str code))
-       (let
-         [v
-          (.eval ctx "python" "__vis_assigned_names__(__import__('ast').parse(__vis_src__).body)")]
-         (set (map str (or (->clj v) []))))
-       (catch PolyglotException _ #{})
-       (catch Throwable _ #{})))
-
-(defn- protected-rebind-error
-  [^Context ctx ^Value g code]
-  (let
-    [protected
-     (set (map str (or (->clj (.getMember g "__vis_protected_names__")) [])))
-
-     hits
-     (vec (sort (set/intersection protected (assigned-names-in-code ctx g code))))]
-
-    (when (seq hits)
-      {:message (str "Block tries to rebind protected sandbox/tool name(s): "
-                     (str/join ", " hits)
-                     ". Tool names are read-only in run_python; choose a different variable name. "
-                     "This prevents shadowing a callable (e.g. patch) with data and later seeing "
-                     "'str' object is not callable.")
-       :data {:phase :python/protected-name :protected-name? true :names hits}})))
 
 ;; =============================================================================
 ;; Engine-owned sandbox names + restore (NOOP)

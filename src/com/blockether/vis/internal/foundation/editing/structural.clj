@@ -176,18 +176,17 @@
            hint
            (when (and synx? (string? code) (not (str/blank? code)))
              (try
-               (or
-                 (zipper/describe-syntax-errors language code)
-                 ;; `code` parses clean alone → the fault is at the seam.
-                 (str
-                   "the replacement parses fine in isolation, so the fault is at the INSERTION SEAM"
-                   " — an enclosing delimiter was consumed/duplicated or the indentation disagrees"
-                   " with the parens; check the code's OUTER balance against the surrounding form."))
+               (or (zipper/describe-syntax-errors language code)
+                   ;; `code` parses clean alone → the fault is at the seam.
+                   (str
+                     "the replacement parses fine on its own, so the fault is at the INSERTION SEAM"
+                     " — an enclosing delimiter was consumed or duplicated; check the replacement's"
+                     " OUTER balance against the node it replaces, not its inside."))
                (catch Throwable _ nil)))]
 
           (throw (ex-info (cond-> raw
                             hint
-                            (str "  " hint))
+                            (str "\n" hint))
                           {:type :ext.foundation.editing/struct-edit-failed
                            :op op
                            :target target

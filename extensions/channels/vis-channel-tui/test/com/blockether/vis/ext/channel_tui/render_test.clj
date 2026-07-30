@@ -3726,10 +3726,10 @@
             :color-role :tool-color/shell
             :summary "$ 2 shell commands — 2 succeeded, 0 failed"
             :body
-            "### 1. $ first\n\n**STATUS**\n\nstatus: success\n\n────────────────────────────────────────\n\n### 2. $ second\n\n**STATUS**\n\nstatus: success"}
+            "### 1. $ first\n\n**STATUS**\n\nstatus: success\n\n────────────\n\n### 2. $ second\n\n**STATUS**\n\nstatus: success"}
            {:fill-w 76 :session-id nil :detail-expansions {}}))]
       (expect (= ["  ▍ 1. $ first" "" "  STATUS" "  status: success" ""
-                  "  ────────────────────────────────────────" "" "  ▍ 2. $ second"]
+                  "  ────────────" "" "  ▍ 2. $ second"]
                  (vec (take 8 (drop 2 texts))))))))
 
 (defdescribe tool-card-image-reservation-test

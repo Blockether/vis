@@ -76,37 +76,40 @@
 
 (defdescribe
   sexpr-verbs-test
-  (it "sexpr navigates + struct_patch splices the SAME path (unified surface)"
+  (it
+    "sexpr navigates + struct_patch splices the SAME path (unified surface)"
+    (let
+      [sexpr
+       @#'editing/nodes-tool
+
+       struct-patch
+       @#'editing/struct-patch-tool
+
+       path
+       (write-temp! "zip.clj" "(ns z)\n(defn g [x] (+ x 1))\n")
+
+       root
+       (first (get (:result (sexpr path)) "results"))]
+
+      (expect (>= (get root "named_child_count") 2))
       (let
-        [sexpr
-         @#'editing/sexpr-tool
-
-         struct-patch
-         @#'editing/struct-patch-tool
-
-         path
-         (write-temp! "zip.clj" "(ns z)\n(defn g [x] (+ x 1))\n")
-
-         root
-         (:result (sexpr path))]
-
-        (expect (>= (get root "named_child_count") 2))
-        (let
-          [i (some (fn [c]
-                     (when (str/includes? (str (get c "head")) "defn") (get c "idx")))
-                   (get root "children"))]
-          (expect (some? i))
-          (expect (str/includes? (get (:result (sexpr path {"at" [i]})) "text") "defn g"))
-          ;; relative move sugar: at=[i], nav=["down"] resolves to [i 0]
-          (expect (:success? (sexpr path {"at" [i] "nav" ["down"]})))
-          ;; struct_patch takes the zipper PATH (sexpr_edit folded into it)
-          (let [ed (struct-patch "path" path "at" [i] "op" "replace" "code" "(defn g [x] (* x 9))")]
-            (expect (:success? ed))
-            (expect (str/includes? (slurp (fs/file path)) "(* x 9)")))
-          ;; syntax-breaking edit refused
-          (expect (try (struct-patch "path" path "at" [i] "op" "replace" "code" "(defn g [x]")
-                       false
-                       (catch clojure.lang.ExceptionInfo _ true)))))))
+        [i (some (fn [c]
+                   (when (str/includes? (str (get c "head")) "defn") (get c "idx")))
+                 (get root "children"))]
+        (expect (some? i))
+        (expect (str/includes? (get (first (get (:result (sexpr path {"at" [i]})) "results"))
+                                    "source")
+                               "defn g"))
+        ;; relative move sugar: at=[i], nav=["down"] resolves to [i 0]
+        (expect (:success? (sexpr path {"at" [i] "nav" ["down"]})))
+        ;; struct_patch takes the zipper PATH (sexpr_edit folded into it)
+        (let [ed (struct-patch "path" path "at" [i] "op" "replace" "code" "(defn g [x] (* x 9))")]
+          (expect (:success? ed))
+          (expect (str/includes? (slurp (fs/file path)) "(* x 9)")))
+        ;; syntax-breaking edit refused
+        (expect (try (struct-patch "path" path "at" [i] "op" "replace" "code" "(defn g [x]")
+                     false
+                     (catch clojure.lang.ExceptionInfo _ true)))))))
 
 (defdescribe op-keyword-regression-test
              (it "every structural op emits an op-keyword that resolves its registered tag"
@@ -114,7 +117,7 @@
                  ;; DASH op (:struct-patch) while the registry key derived from the underscore
                  ;; symbol (:struct_patch), so op-tag threw on every real invocation. Guard it.
                  (doseq
-                   [op [:struct_node :struct_patch :struct_occurrences :create-dirs :delete :patch
+                   [op [:struct_nodes :struct_patch :struct_occurrences :create-dirs :delete :patch
                         :write]]
                    (expect (#{:observation :mutation} (ext/op-tag op))))))
 
@@ -136,8 +139,11 @@
                  (let [d (zip/describe-syntax-errors "clojure" "(defn f [x)\n  (+ x 1))\n")]
                    (expect (string? d))
                    (expect (str/includes? d "line"))
-                   (expect (str/includes? d "expected a `]`"))
-                   (expect (str/includes? d "bracket-TYPE mismatch")))
+                   (expect (str/includes? d "a `]` at line"))
+                   (expect (str/includes? d "delimiter TYPES"))
+                   ;; the broken lines are SHOWN with a caret, not just numbered
+                   (expect (str/includes? d "│"))
+                   (expect (str/includes? d "^")))
                  ;; nil when the source parses clean
                  (expect (nil? (zip/describe-syntax-errors "clojure" "(defn f [x] (+ x 1))"))))
              (it "a refused edit carries the located diagnostic in its message"
@@ -151,4 +157,4 @@
                    (expect (= :syntax-broken (get-in r [:error :reason])))
                    ;; the message now includes a real line/col + the expected delimiter,
                    ;; not just a bare "would introduce a syntax error"
-                   (expect (str/includes? (get-in r [:error :message]) "expected a `]`")))))
+                   (expect (str/includes? (get-in r [:error :message]) "a `]` at line")))))

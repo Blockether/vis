@@ -159,9 +159,9 @@ done
 if [[ ${#missing[@]} -gt 0 ]]; then
   echo "vis install: missing required command(s): ${missing[*]}" >&2
   echo "" >&2
-  echo "Install Java 21+, the Clojure CLI, git, and gh when using --fork; then rerun this script." >&2
+  echo "Install Java 25+, the Clojure CLI, git, and gh when using --fork; then rerun this script." >&2
   echo "macOS/Homebrew example:" >&2
-  echo "  brew install zulu clojure/tools/clojure git gh" >&2
+  echo "  brew install openjdk@25 clojure/tools/clojure git gh" >&2
   echo "" >&2
   echo "Linux packages vary by distro; verify with:" >&2
   echo "  java -version" >&2

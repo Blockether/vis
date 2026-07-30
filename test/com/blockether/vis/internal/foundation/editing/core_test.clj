@@ -322,20 +322,12 @@
               (expect (some? err2))
               (expect (= :ext.foundation.editing/path-escape (:type (ex-data err1))))
               (expect (= :ext.foundation.editing/path-escape (:type (ex-data err2))))))))
-    (it "delete refuses paths outside cwd, present or absent"
-        (let
-          [del (private-fn "delete-path!")
-           del-if (private-fn "delete-if-exists-safe")]
-
+    (it "delete refuses paths outside cwd"
+        (let [del (private-fn "delete-if-exists-safe")]
           (doseq [p escape-paths]
-            (let
-              [err1 (try (del p) nil (catch clojure.lang.ExceptionInfo e e))
-               err2 (try (del-if p) nil (catch clojure.lang.ExceptionInfo e e))]
-
-              (expect (some? err1))
-              (expect (some? err2))
-              (expect (= :ext.foundation.editing/path-escape (:type (ex-data err1))))
-              (expect (= :ext.foundation.editing/path-escape (:type (ex-data err2))))))))
+            (let [err (try (del p) nil (catch clojure.lang.ExceptionInfo e e))]
+              (expect (some? err))
+              (expect (= :ext.foundation.editing/path-escape (:type (ex-data err))))))))
     (it "cat (read) ALSO refuses paths outside cwd"
         ;; Defense in depth: even reads can't leak through path traversal.
         (let [cat (private-fn "read-file")]
@@ -1354,8 +1346,11 @@
         (expect (= [[2 "L2"] [3 "L3"] [4 "L4"] [10 "L10"] [11 "L11"] [12 "L12"]]
                    (patch/anchor-map->tuples (get out "anchors"))))
         (expect (= [[2 4] [10 12]] (mapv #(get % "range") (get out "ranges"))))
-        (expect (= [[2 "L2"] [3 "L3"] [4 "L4"]]
-                   (patch/anchor-map->tuples (get (first (get out "ranges")) "anchors"))))
+        ;; Window maps are METADATA only — top-level `anchors` already holds every
+        ;; window's lines, and re-emitting them per window doubled every ranged read.
+        (expect (every? #(not (contains? % "anchors")) (get out "ranges")))
+        (expect (= [#{"range" "eof" "next_offset" "truncated"}]
+                   (distinct (mapv #(set (keys %)) (get out "ranges")))))
         (expect (nil? (get out "next_offset")))))
   (it "cat accepts the plural paths spec map"
       (let
@@ -1489,7 +1484,7 @@
        (private-fn "move-tool")
 
        sexpr
-       (private-fn "sexpr-tool")
+       (private-fn "nodes-tool")
 
        patch-tool
        (private-fn "patch-tool")]
@@ -1510,7 +1505,7 @@
       (expect (= txt (get (:result (copy {"src" txt "dest" (str txt ".bak")})) "src")))
       (expect (= (str txt ".bak")
                  (get (:result (move {"src" (str txt ".bak") "dest" (str txt ".bak2")})) "src")))
-      ;; `struct_node(path=p)` previously threw a map→String ClassCastException.
+      ;; `struct_nodes(path=p)` previously threw a map→String ClassCastException.
       (expect (map? (sexpr {"path" clj})))
       ;; `patch(edits=[…])` unwraps to the edits vector — empty is a CLEAN rejection,
       ;; not a map cast error.
@@ -2277,53 +2272,119 @@
         (expect (not (contains? s "lines_after")))
         (expect (not (contains? s "delta_lines"))))))
 
-(defdescribe patch-diff-text-test
-             (it "patch diff stays compact for large files"
-                 (let
-                   [diff-fn
-                    (private-fn "unified-diff-text")
+(defdescribe
+  patch-diff-text-test
+  (it "patch diff stays compact for large files"
+      (let
+        [diff-fn
+         (private-fn "unified-diff-text")
 
-                    before
-                    (string/join "\n" (map #(str "line-" %) (range 1500)))
+         before
+         (string/join "\n" (map #(str "line-" %) (range 1500)))
 
-                    after
-                    (string/replace before "line-750" "LINE-750")
+         after
+         (string/replace before "line-750" "LINE-750")
 
-                    out
-                    (diff-fn before after)
+         out
+         (diff-fn before after)
 
-                    lines
-                    (string/split-lines out)]
+         lines
+         (string/split-lines out)]
 
-                   (expect (< (count lines) 50))
-                   (expect (string/includes? out "@@"))
-                   (expect (string/includes? out "-line-750"))
-                   (expect (string/includes? out "+LINE-750"))))
-             (it "patch diff handles insert, delete, and all-different cases as bounded previews"
-                 (let
-                   [diff-fn
-                    (private-fn "unified-diff-text")
+        (expect (< (count lines) 50))
+        (expect (string/includes? out "@@"))
+        (expect (string/includes? out "-line-750"))
+        (expect (string/includes? out "+LINE-750"))))
+  (it "patch diff keeps real hunks for a huge file with scattered edits"
+      (let
+        [diff-fn
+         (private-fn "unified-diff-text")
 
-                    inserted
-                    (diff-fn "a\nb\nc" "a\nX\nb\nc")
+         base
+         (mapv #(str "line-" %) (range 8000))
 
-                    deleted
-                    (diff-fn "a\nb\nc" "a\nb")
+         after
+         (-> base
+             (assoc 100 "CHANGED-100")
+             (assoc 4000 "CHANGED-4000")
+             (assoc 7900 "CHANGED-7900"))
 
-                    before
-                    (string/join "\n" (map #(str "line-" %) (range 300)))
+         out
+         (diff-fn (string/join "\n" base) (string/join "\n" after))
 
-                    after
-                    (string/join "\n" (map #(str "other-" %) (range 300)))
+         lines
+         (string/split-lines out)]
 
-                    changed
-                    (diff-fn before after)]
+        ;; A file past the old flat line cap used to render as one
+        ;; delete-block plus one add-block spanning line 100..7900 —
+        ;; hundreds of `-` lines of untouched code. Now: three real
+        ;; hunks, numbered at real file lines.
+        (expect (= 3 (count (filter #(string/starts-with? % "@@") lines))))
+        (expect (< (count lines) 40))
+        (expect (string/includes? out "@@ -3998,7 +3998,7 @@"))
+        (expect (string/includes? out "+CHANGED-7900"))
+        (expect (not (string/includes? out "unchanged line(s) before")))))
+  (it "patch diff bounds a many-hunk edit hunk-wise, never mid-hunk"
+      (let
+        [diff-fn
+         (private-fn "unified-diff-text")
 
-                   (expect (string/includes? inserted "+X"))
-                   (expect (not (string/includes? inserted "-a")))
-                   (expect (string/includes? deleted "-c"))
-                   (expect (< (count (string/split-lines changed)) 260))
-                   (expect (string/includes? changed "diff truncated")))))
+         base
+         (mapv #(str "line-" %) (range 8000))
+
+         after
+         (reduce (fn [v i]
+                   (assoc v (* i 120) (str "CHANGED-" i)))
+                 base
+                 (range 60))
+
+         lines
+         (string/split-lines (diff-fn (string/join "\n" base) (string/join "\n" after)))]
+
+        (expect (<= (count lines) 245))
+        ;; Every rendered hunk is whole, and the remainder is a count.
+        (expect (< 10 (count (filter #(string/starts-with? % "@@") lines)) 60))
+        (expect (string/includes? (last lines) "more hunk(s) omitted"))))
+  (it
+    "patch diff handles insert, delete, and all-different cases as bounded previews"
+    (let
+      [diff-fn
+       (private-fn "unified-diff-text")
+
+       inserted
+       (diff-fn "a\nb\nc" "a\nX\nb\nc")
+
+       deleted
+       (diff-fn "a\nb\nc" "a\nb")
+
+       before
+       (string/join "\n" (map #(str "line-" %) (range 300)))
+
+       after
+       (string/join "\n" (map #(str "other-" %) (range 300)))
+
+       changed
+       (diff-fn before after)
+
+       huge-before
+       (string/join "\n" (map #(str "line-" %) (range 8000)))
+
+       huge-after
+       (string/join "\n" (map #(str "other-" %) (range 8000)))
+
+       rewritten
+       (diff-fn huge-before huge-after)]
+
+      (expect (string/includes? inserted "+X"))
+      (expect (not (string/includes? inserted "-a")))
+      (expect (string/includes? deleted "-c"))
+      ;; One oversized hunk is capped INSIDE the hunk, so its head
+      ;; and tail still describe one connected region.
+      (expect (< (count (string/split-lines changed)) 260))
+      (expect (string/includes? changed "line(s) omitted in this hunk"))
+      ;; A full rewrite too expensive for Myers keeps the linear preview.
+      (expect (< (count (string/split-lines rewritten)) 260))
+      (expect (not (string/includes? rewritten "@@"))))))
 
 (defdescribe
   tool-envelope-test
@@ -2886,15 +2947,39 @@
      (:ext.symbol/result editing/cat-symbol)]
 
     (it "scopes anchor invalidation to files actually written"
-        (expect (string/includes? patch-description "fresh anchors"))
+        (expect (string/includes? patch-description "pre-write anchors"))
         (expect (string/includes? patch-description "changed file only"))
         (expect (string/includes? patch-description "anchors for other files remain valid"))
         (expect (string/includes? cat-description "for that file, not other files")))
+    ;; The Clojure pack's :around hooks REPAIR unbalanced delimiters instead of
+    ;; refusing, so "a syntax break is refused" alone was a lie; both editors say
+    ;; what actually happens and `patch`'s result contract carries the flag.
+    (it "describes parse refusal AND delimiter auto-repair, and documents `repaired`"
+        (let
+          [struct-description
+           (:ext.symbol/description editing/struct-patch-symbol)
+
+           patch-result
+           (:ext.symbol/result editing/patch-symbol)]
+
+          (expect (string/includes? patch-description "will not parse is refused"))
+          (expect (string/includes? patch-description "auto-repaired (`repaired`)"))
+          (expect (string/includes? struct-description "will not parse is REFUSED"))
+          (expect (string/includes? struct-description "delimiters auto-repaired"))
+          ;; "applies in order, never rolled back" is a property of the BATCH, so it
+          ;; lives once on the `edits` parameter rather than in the tool description.
+          (expect (string/includes? (get-in editing/struct-patch-symbol
+                                            [:ext.symbol/schema :properties "edits" :description])
+                                    "never rolled back"))
+          (expect (string/includes? patch-result "`repaired` true"))
+          (expect (string/includes? patch-result "`note`"))))
     (it "documents cat's Python result shape instead of relying on rendered output"
-        (expect (string/includes? cat-result "only content field"))
+        (expect (string/includes? cat-result "ONLY content field"))
         (expect (string/includes? cat-result "no `content`/`lines`"))
-        (expect (string/includes? cat-result "`result[\"anchors\"].items()`"))
-        (expect (string/includes? cat-result "rendered source-like lines are presentation")))
+        ;; The window maps must be documented as metadata-only so the contract cannot
+        ;; drift back to shipping every anchor twice.
+        (expect (string/includes? cat-result "never repeat the text"))
+        (expect (string/includes? cat-result "carry metadata")))
     (it "keeps exact patch fields only in the JSON Schema"
         (expect (not (string/includes? patch-description "from_anchor")))
         (expect (contains? (get-in patch-schema [:properties "edits" :items :properties])
@@ -2945,8 +3030,8 @@
                    (expect (string/includes? (:description paths) "nearest existing directory"))
                    (expect (string/includes? (:description paths) "missing_paths"))
                    (expect (string/includes? (:description paths) "exact physical paths"))
-                   (expect (string/includes? (:ext.symbol/description editing/grep-symbol)
-                                             "never rebuild from a language namespace"))
+                   (expect (string/includes? (:description paths)
+                                             "never rebuilt from a language namespace"))
                    (expect (= "integer" (:type context)))
                    (expect (= 0 (:minimum context)))))
              (it "requires plural exact discovered paths for struct_index and cat"
@@ -3020,7 +3105,7 @@
    sexpr can enter at it, and struct_patch can edit the corresponding node."
   (let
     [sexpr-tool
-     (private-fn "sexpr-tool")
+     (private-fn "nodes-tool")
 
      struct-patch
      (private-fn "struct-patch-tool")]
@@ -3035,11 +3120,16 @@
            (patch/line-anchor 6 "(defn bar [y]")
 
            r
-           (sexpr-tool path {"anchor" anchor})]
+           (sexpr-tool path {"anchor" anchor})
+
+           node
+           (first (get-in r [:result "results"]))]
 
           (expect (:success? r))
-          (expect (= [2] (get-in r [:result "path"])))
-          (expect (clojure.string/includes? (get-in r [:result "text"]) "defn bar"))))
+          ;; `at` is the zipper cursor, `source` the node's verbatim SOURCE CODE.
+          (expect (= [2] (get node "at")))
+          (expect (= path (get node "path")))
+          (expect (clojure.string/includes? (get node "source") "defn bar"))))
     (it "struct_patch edits the node addressed by a lineno:hash anchor"
         (let
           [path
@@ -3857,36 +3947,41 @@
    prose/markup that parses WITH error nodes under its grammar (`.txt` → tree-sitter
    `vimdoc`) is never blocked."
   (let [patch (private-fn "patch-safe")]
-    (it "an edit that breaks Clojure syntax is refused — nothing written"
-        (let
-          [p (write-temp! "guard/ok.clj" "(defn add [a b] (+ a b))\n")
-           r (patch [{"path" p
-                      "from_anchor" (patch/line-anchor 1 "(defn add [a b] (+ a b))")
-                      "replace" "(defn add [a b] (+ a b"}])]
+    (it
+      "an edit that breaks Clojure syntax is refused — nothing written"
+      (let
+        [p (write-temp! "guard/ok.clj" "(defn add [a b] (+ a b))\n")
+         r (patch [{"path" p
+                    "from_anchor" (patch/line-anchor 1 "(defn add [a b] (+ a b))")
+                    "replace" "(defn add [a b] (+ a b"}])]
 
-          ;; unbalanced → broken
-          (expect (false? (:success? r)))
-          (expect (= :syntax-error (:reason (first (:failures r)))))
-          ;; The syntax-error failure carries a precomputed :message — the surfaced
-          ;; summary must SHOW it, not flatten it to the generic "edit N in P failed."
-          ;; (explain-failure used to drop :message because :syntax-error is not one
-          ;; of the anchor-resolution `reason`s it case-matches on).
-          ;; The message now also LOCATES the fault (tree-sitter line/col), so it is
-          ;; asserted by its stable head and tail rather than verbatim.
-          (expect (string/starts-with? (:message r)
-                                       (str "No changes (atomic): edit 0 would break syntax in "
-                                            p)))
-          (expect (string/ends-with? (:message r) ". Fix the replacement or use struct_patch."))
-          (expect (string/includes? (:message r) "parse-error node"))
-          (expect (not (string/includes? (:message r) "failed.")))
-          ;; The refusal carries the WHOLE-BATCH candidates so a language
-          ;; pack's :around op-hook (e.g. the Clojure pack's parinfer rescue)
-          ;; can whole-source-repair the broken files and commit the batch —
-          ;; fragment repair can't fix contextual imbalance.
-          (expect (= [p] (:broken-paths r)))
-          (expect (= 1 (count (:candidate-plans r))))
-          (expect (string/includes? (:after (first (:candidate-plans r))) "(+ a b"))
-          (expect (= "(defn add [a b] (+ a b))\n" (slurp p))))) ;; untouched
+        ;; unbalanced → broken
+        (expect (false? (:success? r)))
+        (expect (= :syntax-error (:reason (first (:failures r)))))
+        ;; The syntax-error failure carries a precomputed :message — the surfaced
+        ;; summary must SHOW it, not flatten it to the generic "edit N in P failed."
+        ;; (explain-failure used to drop :message because :syntax-error is not one
+        ;; of the anchor-resolution `reason`s it case-matches on).
+        ;; The message now also LOCATES the fault (tree-sitter line/col), so it is
+        ;; asserted by its stable head and tail rather than verbatim.
+        (expect (string/starts-with? (:message r)
+                                     (str "No changes (atomic): edit 0 would break syntax in " p)))
+        (expect (string/ends-with? (:message r)
+                                   "or use struct_patch (edits by structure, never by text)."))
+        (expect (string/includes? (:message r) "parse error"))
+        ;; the broken lines are SHOWN with a caret, never just numbered at
+        ;; coordinates in a file that was never written
+        (expect (string/includes? (:message r) "│"))
+        (expect (string/includes? (:message r) "^"))
+        (expect (not (string/includes? (:message r) "failed.")))
+        ;; The refusal carries the WHOLE-BATCH candidates so a language
+        ;; pack's :around op-hook (e.g. the Clojure pack's parinfer rescue)
+        ;; can whole-source-repair the broken files and commit the batch —
+        ;; fragment repair can't fix contextual imbalance.
+        (expect (= [p] (:broken-paths r)))
+        (expect (= 1 (count (:candidate-plans r))))
+        (expect (string/includes? (:after (first (:candidate-plans r))) "(+ a b"))
+        (expect (= "(defn add [a b] (+ a b))\n" (slurp p))))) ;; untouched
     (it "a valid Clojure edit still applies"
         (let
           [p (write-temp! "guard/ok2.clj" "(defn add [a b] (+ a b))\n")
@@ -4475,7 +4570,7 @@
 
      struct-syms
      [editing/struct-patch-symbol editing/index-symbol editing/occurrences-symbol
-      editing/symbol-rename-symbol editing/sexpr-symbol]]
+      editing/symbol-rename-symbol editing/nodes-symbol]]
 
     (it "a Clojure project advertises every structural editor"
         (doseq [s struct-syms]
@@ -4491,7 +4586,7 @@
                                                            {:language "text"}]}})]
           (let [prompt (editing/available-editing-prompt)]
             (doseq
-              [name ["struct_index" "struct_patch" "struct_node" "struct_occurrences"
+              [name ["struct_index" "struct_patch" "struct_nodes" "struct_occurrences"
                      "struct_rename"]]
               (expect (not (string/includes? prompt name)))))))
     (it "a mixed repo with ANY supported language keeps them (markdown + json)"
@@ -5273,7 +5368,8 @@
 
           (expect (false? (:success? r)))
           (expect (= :syntax-error (:reason (first (:failures r)))))
-          (expect (string/includes? msg "parse-error node"))
+          (expect (string/includes? msg "parse error"))
+          (expect (string/includes? msg "│"))
           (expect (string/includes? msg "line 2"))
           ;; the located detail must not leave a doubled sentence stop
           (expect (not (string/includes? msg "..")))))))

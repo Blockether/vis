@@ -324,35 +324,44 @@
                                   (expect (some? res))
                                   (expect (= "failed" (get res "status"))))
                                 (finally (resources/stop-all! sid))))))))
-  (it "returns the SAME live shell (already_running) instead of failing on a duplicate id"
-      (with-shell-on
-        (fn []
-          (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let
-              [sid "shell-ext-dup"
-               env {:session-id sid}]
+  (it
+    "returns the SAME live shell (already_running) instead of failing on a duplicate id"
+    (with-shell-on
+      (fn []
+        (binding [workspace/*workspace-root* (workspace/trunk-root)]
+          (let
+            [sid "shell-ext-dup"
+             env {:session-id sid}]
 
-              (try (let
-                     [first-run (:result (shell-bg* env "dup" "sleep 60"))
-                      again (:result (shell-bg* env "dup" "sleep 60"))]
+            (try (let
+                   [first-run (:result (shell-bg* env "dup" "sleep 60"))
+                    again (:result (shell-bg* env "dup" "sleep 60"))
+                    ;; Re-attaching to a LIVE id needs no command at all: the
+                    ;; positional is the thing to START, and it is already
+                    ;; started. Demanding it back was a pure dead end.
+                    bare (:result (shell* env {"op" "background" "id" "dup"}))]
 
-                     ;; No second process, no thrown failure: the
-                     ;; model gets the running shell back with the
-                     ;; flag + the logs-op hint, so "start it"
-                     ;; cannot dead-end into a retry loop.
-                     ;; Both branches return the SAME total shape.
-                     (expect (false? (get first-run "already_running")))
-                     (expect (= (get first-run "pid") (get again "pid")))
-                     (expect (true? (get again "already_running")))
-                     (expect (= "running" (get again "status")))
-                     (expect (str/includes? (get again "note")
-                                            "await shell({\"op\": \"logs\", \"id\": \"dup\"})"))
-                     ;; the shared identity core rides EVERY stage
-                     (expect (= "background" (get again "stage")))
-                     (expect (contains? again "attach"))
-                     (expect (contains? again "socket"))
-                     (expect (nil? (get first-run "note"))))
-                   (finally (resources/stop-all! sid))))))))
+                   ;; No second process, no thrown failure: the
+                   ;; model gets the running shell back with the
+                   ;; flag + the logs-op hint, so "start it"
+                   ;; cannot dead-end into a retry loop.
+                   ;; Both branches return the SAME total shape.
+                   (expect (false? (get first-run "already_running")))
+                   (expect (= (get first-run "pid") (get again "pid")))
+                   (expect (true? (get again "already_running")))
+                   (expect (= "running" (get again "status")))
+                   (expect (str/includes? (get again "note")
+                                          "await shell({\"op\": \"logs\", \"id\": \"dup\"})"))
+                   ;; the shared identity core rides EVERY stage
+                   (expect (= "background" (get again "stage")))
+                   (expect (contains? again "attach"))
+                   (expect (contains? again "socket"))
+                   (expect (nil? (get first-run "note")))
+                   (expect (true? (get bare "already_running")))
+                   (expect (= (get first-run "pid") (get bare "pid")))
+                   ;; …but a command IS required when nothing is running yet.
+                   (expect (threw? #(shell* env {"op" "background" "id" "never-started"}))))
+                 (finally (resources/stop-all! sid))))))))
   (it "carries uptime_ms and the shared TOTAL identity core in the logs payload"
       (with-shell-on
         (fn []
@@ -482,6 +491,13 @@
                  ;; there is no `text` option to say the payload a second way.
                  (let [sent (:result (shell* env "hello" {"op" "send" "id" "ops"}))]
                    (expect (= 6 (get sent "sent"))))
+                 ;; An EMPTY payload is the commonest keystroke of all - a bare
+                 ;; Enter - not a missing argument.
+                 (let [nl (:result (shell* env "" {"op" "send" "id" "ops"}))]
+                   (expect (= 1 (get nl "sent")))
+                   (expect (= "\n" (get nl "text"))))
+                 ;; Only "type nothing at all" is an error.
+                 (expect (threw? #(shell* env "" {"op" "send" "id" "ops" "enter" false})))
                  ;; The retired second carrier is unrepresentable, not merely
                  ;; discouraged: a `text` option is refused outright.
                  (expect (threw? #(shell* env {"op" "send" "id" "ops" "text" "y"})))
@@ -710,53 +726,56 @@
       (expect (threw? #(shell* {} [])))
       (expect (threw? #(shell* {} #{"printf first" "printf second"})))))
 
-(defdescribe shell-native-contract-test
-             (it "advertises exactly ONE native shell tool covering the whole lifecycle"
-                 ;; Four names (shell_run / shell_bg / shell_logs / shell_send) for ONE
-                 ;; subsystem meant four call shapes, four result shapes and four
-                 ;; description budgets for what is a single process lifecycle. The op
-                 ;; grammar tells that story once, under one name.
-                 (expect (= ["shell"]
-                            (->> shell/shell-symbols
-                                 (filter :ext.symbol/native-tool?)
-                                 (mapv :ext.symbol/name))))
-                 (expect (= 1 (count shell/shell-symbols))))
-             (it "tells the whole lifecycle in ONE compact native description"
-                 (let [d (:ext.symbol/description shell/shell-symbol)]
-                   (expect (str/includes? d "THE one shell tool"))
-                   (expect (str/includes? d "PREFER background"))
-                   (expect (str/includes? d "Reserve run for short commands"))
-                   (expect (str/includes? d "strictly in input order"))
-                   (expect (str/includes? d "stop what you started"))
-                   ;; Native JSON carries `cmd`; the model-facing description must
-                   ;; distinguish its Python positional from the map-only id.
-                   (expect (str/includes? d "`cmd` is positional"))
-                   (expect (str/includes? d "`id` stays in the options map"))
-                   (expect (str/includes? d "session[\"resources\"]"))
-                   ;; the truncation warning is the exact gap that let a truncated
-                   ;; stdout reach json.loads and read as a tool bug
-                   (expect (str/includes? d "stdout_truncated"))
-                   ;; one description for five ops still costs less than the four it
-                   ;; replaces — but it must not sprawl
-                   (expect (< (count d) 1200))))
-             (it "puts every op in the schema, where the model cannot miss it"
-                 (let [props (get-in shell/shell-symbol [:ext.symbol/schema :properties])]
-                   (expect (= ["run" "background" "logs" "send" "stop"]
-                              (get-in props ["op" :enum])))
-                   (expect (every? #(contains? props %)
-                                   ["cmd" "op" "id" "timeout_secs" "cwd" "n" "enter"]))
-                   ;; ONE carrier for everything fed to a shell: neither a `commands`
-                   ;; nor a `text` property may contradict the one `cmd` positional
-                   (expect (not (contains? props "commands")))
-                   (expect (not (contains? props "text")))
-                   ;; the common bounded run keeps its bare one-positional shape
-                   (expect (= {:opt-pos ["cmd"] :rest :opt} (:ext.symbol/call shell/shell-symbol)))
-                   ;; that one positional carries either one command or an ordered batch
-                   (expect (= ["string" "array"] (mapv :type (get-in props ["cmd" :oneOf]))))
-                   (expect (= 1 (get-in props ["cmd" :oneOf 1 :minItems])))))
-             (it "closes every native shell input schema"
-                 (doseq [s shell/shell-symbols]
-                   (expect (false? (get-in s [:ext.symbol/schema :additionalProperties]))))))
+(defdescribe
+  shell-native-contract-test
+  (it "advertises exactly ONE native shell tool covering the whole lifecycle"
+      ;; Four names (shell_run / shell_bg / shell_logs / shell_send) for ONE
+      ;; subsystem meant four call shapes, four result shapes and four
+      ;; description budgets for what is a single process lifecycle. The op
+      ;; grammar tells that story once, under one name.
+      (expect (= ["shell"]
+                 (->> shell/shell-symbols
+                      (filter :ext.symbol/native-tool?)
+                      (mapv :ext.symbol/name))))
+      (expect (= 1 (count shell/shell-symbols))))
+  (it "tells the whole lifecycle in ONE compact native description"
+      (let [d (:ext.symbol/description shell/shell-symbol)]
+        (expect (str/includes? d "THE one shell tool"))
+        (expect (str/includes? d "PREFER background"))
+        (expect (str/includes? d "Reserve run for short commands"))
+        (expect (str/includes? d "strictly ordered batch"))
+        (expect (str/includes? d "\"stop\" kills it"))
+        ;; Native JSON carries `cmd`; the Python positional-vs-options-map
+        ;; distinction belongs on the parameters it actually governs.
+        (expect (str/includes? (get-in shell/shell-symbol
+                                       [:ext.symbol/schema :properties "cmd" :description])
+                               "first positional argument"))
+        (expect (str/includes? (get-in shell/shell-symbol
+                                       [:ext.symbol/schema :properties "id" :description])
+                               "options map"))
+        (expect (str/includes? d "session[\"resources\"]"))
+        ;; the truncation warning is the exact gap that let a truncated
+        ;; stdout reach json.loads and read as a tool bug
+        (expect (str/includes? d "stdout_truncated"))
+        ;; one description for five ops still costs less than the four it
+        ;; replaces — but it must not sprawl
+        (expect (< (count d) 1200))))
+  (it "puts every op in the schema, where the model cannot miss it"
+      (let [props (get-in shell/shell-symbol [:ext.symbol/schema :properties])]
+        (expect (= ["run" "background" "logs" "send" "stop"] (get-in props ["op" :enum])))
+        (expect (every? #(contains? props %) ["cmd" "op" "id" "timeout_secs" "cwd" "n" "enter"]))
+        ;; ONE carrier for everything fed to a shell: neither a `commands`
+        ;; nor a `text` property may contradict the one `cmd` positional
+        (expect (not (contains? props "commands")))
+        (expect (not (contains? props "text")))
+        ;; the common bounded run keeps its bare one-positional shape
+        (expect (= {:opt-pos ["cmd"] :rest :opt} (:ext.symbol/call shell/shell-symbol)))
+        ;; that one positional carries either one command or an ordered batch
+        (expect (= ["string" "array"] (mapv :type (get-in props ["cmd" :oneOf]))))
+        (expect (= 1 (get-in props ["cmd" :oneOf 1 :minItems])))))
+  (it "closes every native shell input schema"
+      (doseq [s shell/shell-symbols]
+        (expect (false? (get-in s [:ext.symbol/schema :additionalProperties]))))))
 
 (defdescribe shell-extension-shape-test
              (it "is a registered builtin extension exposing the ONE bare `shell` symbol"
@@ -863,8 +882,8 @@
         (expect (not (str/includes? source-doc "shell({\"cmd\"")))
         (expect (not (str/includes? source-doc "\"op\": \"bg\"")))
         (expect (str/includes? source-doc "PREFER it for commands that may take a while"))
-        (expect (str/includes? d "`cmd` is positional"))
-        (expect (str/includes? d "`id` stays in the options map"))
+        (expect (str/includes? d "first positional argument"))
+        (expect (str/includes? d "stays in the options map"))
         (expect (str/includes? d "PREFER background"))
         (expect (str/includes? d "await `shell`"))))
   (it "runs a command through the bare `shell` global and answers the TOTAL map"

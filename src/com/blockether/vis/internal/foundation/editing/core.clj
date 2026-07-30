@@ -617,6 +617,31 @@
 
 (defn- first-arg-paths [args] (when (seq args) [(first args)]))
 
+(defn- nodes-arg-paths
+  "Every file a `struct_nodes` call reads: the shared `path` plus the `path` of each
+   `nodes` BATCH entry (a plain string entry IS its path)."
+  [args]
+  (let
+    [a
+     (first args)
+
+     entry-path
+     (fn [e]
+       (cond (string? e) e
+             (map? e) (get e "path")
+             :else nil))]
+
+    (cond (map? a) (let
+                     [ns
+                      (get a "nodes")
+
+                      froms
+                      (when (sequential? ns) (keep entry-path ns))]
+
+                     (vec (distinct (remove nil? (cons (get a "path") froms)))))
+          (some? a) [a]
+          :else [])))
+
 (defn- first-two-arg-paths [args] (take 2 args))
 
 (defn- patch-arg-paths
@@ -2903,8 +2928,8 @@
   (when (>= n (long patch-fail-loop-threshold))
     (str "Patch failed " n
          " times on " path
-         ". Stop retrying: re-read the target, verify the intended structure, then use"
-         " fresh anchors or the correct structural operation.")))
+         ". Stop retrying: re-read the target once, then switch to struct_patch — it locates the"
+         " definition by NAME (`target`), so no anchor can go stale.")))
 
 ;; -----------------------------------------------------------------------------
 ;; Anchor-based patch analysis
@@ -3260,10 +3285,12 @@
                              (:edit-index culprit)
                              " would break syntax in "
                              path
-                             ;; Trim the detail's own sentence stop so the fix advice
-                             ;; below reads as one sentence, not "…`..".
-                             (when detail (str ": " (str/replace detail #"\.+$" "")))
-                             ". Fix the replacement or use struct_patch.")}))))
+                             ;; The report is multi-line on purpose: a run-on sentence of
+                             ;; line/col numbers into a file that was never written is
+                             ;; unreadable, on a phone most of all.
+                             (when detail (str "\n" detail))
+                             "\n  fix       the replacement's delimiters, or use struct_patch"
+                             " (edits by structure, never by text).")}))))
       plans)))
 
 (defn- commit-patch-plans!
@@ -3562,14 +3589,6 @@
      (fff-index/note-fs-write!)
      (rel-path dest-file))))
 
-(defn- delete-path!
-  "Delete a file or directory tree after `safe-path` has confined it to the workspace."
-  [path]
-  (let [f (safe-path path)]
-    (if (fs/directory? f) (fs/delete-tree f) (fs/delete f))
-    (fff-index/note-fs-write!)
-    true))
-
 (defn- delete-if-exists-safe
   [path]
   (let [f (safe-path path)]
@@ -3588,10 +3607,11 @@
    `:lines` (a vec of `[ln text]` tuples) becomes the model's `:anchors` — an
    ordered `{anchor {\"text\" text}}` map (`patch/lines->anchor-map`, a line-ordered
    LinkedHashMap, the key IS the `patch :from_anchor`). The internal `:lines`
-   tuple vector and the read-file `{ln anchor}` `:anchors` are both dropped;
-   every `:ranges` window converts the same way. The internal read pipeline
-   keeps working on tuples — this is the single boundary where the model
-   payload is built."
+   tuple vector and the read-file `{ln anchor}` `:anchors` are both dropped.
+   Top-level `anchors` is the ONE content field and already holds the union of
+   every window's lines, so `ranges` window maps carry METADATA only — never a
+   second copy of the text. The internal read pipeline keeps working on tuples;
+   this is the single boundary where the model payload is built."
   [out]
   ;; The internal read pipeline works on keyword-keyed maps (`:lines` tuples);
   ;; this is the single boundary where the string-keyed MODEL payload is built.
@@ -3622,8 +3642,12 @@
          (contains? m :range)
          (assoc "range" (:range m))))]
     ;; TOTAL: `ranges` ships on every read — nil for a single window, a vector of
-    ;; window maps for a multi-window read — so the caller never key-probes.
-    (assoc (->win out) "ranges" (when (seq (:ranges out)) (mapv ->win (:ranges out))))))
+    ;; window maps for a multi-window read — so the caller never key-probes. Their
+    ;; `anchors` are DROPPED: they duplicated the top-level union verbatim and thus
+    ;; doubled the payload of every ranged read. Window membership stays derivable
+    ;; from `range` plus the line number in each anchor key.
+    (assoc (->win out)
+      "ranges" (when (seq (:ranges out)) (mapv #(dissoc (->win %) "anchors") (:ranges out))))))
 
 (defn- normalize-cat-anchor-option
   "Accept the documented anchor shapes plus the common model mistakes: a
@@ -3879,15 +3903,119 @@
 
 (def ^:private ^:const patch-diff-max-render-lines 240)
 
-(def ^:private ^:const patch-java-diff-max-lines 5000)
+(def ^:private ^:const patch-java-diff-max-work 20000000)
+
+(defn- estimated-diff-size
+  "Cheap O(n) LOWER BOUND on the Myers edit-script length: the size of the
+   symmetric multiset difference of the two line bags. Sparse edits in a huge
+   file score tiny; a full rewrite scores about n+m."
+  [a b]
+  (let
+    [counts (reduce (fn [m line]
+                      (update m line (fnil dec 0)))
+                    (frequencies a)
+                    b)]
+    (long (reduce + 0 (map #(abs (long %)) (vals counts))))))
+
+(defn- java-diff-affordable?
+  "Whether `java-diff-utils` may diff this pair. Myers costs about O(n*d), so a
+   flat line-count cap punished a huge file with a one-line edit (the cheapest
+   case) while waving through an expensive full rewrite just under the cap.
+   Budget the actual work instead."
+  [a b]
+  (let
+    [size
+     (long (max (count a) (count b)))
+
+     edits
+     (max 1 (long (estimated-diff-size a b)))]
+
+    (<= (* size edits) (long patch-java-diff-max-work))))
+
+(def ^:private ^:const patch-diff-min-hunk-lines 14)
+
+(defn- head-tail-cap
+  "Bound a line vector to `limit`, keeping a HEAD and a TAIL window rather than a
+   plain head-cut. A pure head-cut let a deletion-heavy preview fill the whole
+   visible budget with `-` lines and bury the `+` replacement below the cut, so a
+   correct edit read as a catastrophic deletion."
+  [lines ^long limit]
+  (let
+    [lines
+     (vec lines)
+
+     n
+     (long (count lines))]
+
+    (if (<= n limit)
+      lines
+      (let
+        [tail-n
+         (quot limit 4)
+
+         head-n
+         (- limit tail-n)
+
+         omitted
+         (- n head-n tail-n)]
+
+        (vec (concat (subvec lines 0 head-n)
+                     [(str "... diff truncated; " omitted " line(s) omitted")]
+                     (subvec lines (- n tail-n))))))))
+
+(defn- hunk-header? [line] (str/starts-with? (str line) "@@"))
+
+(defn- split-diff-hunks
+  "Split a unified diff into `[preamble hunks]`, each hunk a vector whose first
+   element is its own `@@` header. A diff with no `@@` (pure add/delete preview)
+   yields no hunks."
+  [lines]
+  (let
+    [lines
+     (vec lines)
+
+     start
+     (or (first (keep-indexed (fn [idx line]
+                                (when (hunk-header? line) idx))
+                              lines))
+         (count lines))]
+
+    [(subvec lines 0 start)
+     (reduce (fn [hunks line]
+               (if (hunk-header? line)
+                 (conj hunks [line])
+                 (cond-> hunks
+                   (seq hunks)
+                   (update (dec (count hunks)) conj line))))
+             []
+             (subvec lines start))]))
+
+(defn- cap-hunk-lines
+  "Bound ONE hunk to `budget` lines, ALWAYS keeping its `@@` header plus a head
+   and a tail of its own body, so the hunk still reads as one connected region
+   instead of two unrelated fragments."
+  [hunk ^long budget]
+  (let [n (long (count hunk))]
+    (if (<= n budget)
+      (vec hunk)
+      (let
+        [body (max 2 (dec budget))
+         tail-n (max 1 (quot body 3))
+         head-n (max 1 (- body tail-n))
+         omitted (- n 1 head-n tail-n)]
+
+        (if (pos? omitted)
+          (vec (concat (subvec hunk 0 (inc head-n))
+                       [(str "... " omitted " line(s) omitted in this hunk")]
+                       (subvec hunk (- n tail-n))))
+          (vec hunk))))))
 
 (defn- cap-diff-lines
-  "Bound a rendered diff to `patch-diff-max-render-lines`, keeping a HEAD and a
-   TAIL window rather than a plain head-cut. A pure head-cut let a
-   deletion-heavy hunk fill the whole visible budget with `-` lines and bury
-   the `+` replacement / trailing context below the cut, so a correct edit read
-   as a catastrophic deletion. Head+tail keeps the additions and closing
-   context visible."
+  "Bound a rendered diff to `patch-diff-max-render-lines` HUNK-WISE. Cutting the
+   diff as one flat line list sliced through the middle of a hunk, so on a narrow
+   screen the surviving head and tail looked like edits to two unrelated places.
+   Each hunk keeps its own header, head and tail; whole hunks past the budget are
+   dropped with an explicit count rather than half-shown."
   [lines]
   (let
     [lines
@@ -3898,19 +4026,35 @@
 
     (if (<= n patch-diff-max-render-lines)
       lines
-      (let
-        [tail-n
-         (quot patch-diff-max-render-lines 4)
+      (let [[preamble hunks] (split-diff-hunks lines)]
+        (if (empty? hunks)
+          (head-tail-cap lines patch-diff-max-render-lines)
+          (let
+            [budget (max patch-diff-min-hunk-lines
+                         (- patch-diff-max-render-lines (count preamble) 1))
+             ;; Fill the budget hunk by hunk: a hunk is shown whole when it
+             ;; fits, capped in place when a usable remainder is left, and the
+             ;; rest are reported as a count instead of being half-rendered.
+             [kept dropped]
+             (loop
+               [pending hunks
+                used 0
+                kept []]
 
-         head-n
-         (- patch-diff-max-render-lines tail-n)
+               (if-let [hunk (first pending)]
+                 (let [remaining (- budget used)]
+                   (cond (<= (count hunk) remaining)
+                         (recur (next pending) (+ used (count hunk)) (into kept hunk))
+                         (>= remaining patch-diff-min-hunk-lines)
+                         (let [capped (cap-hunk-lines hunk remaining)]
+                           (recur (next pending) (+ used (count capped)) (into kept capped)))
+                         :else [kept (count pending)]))
+                 [kept 0]))]
 
-         omitted
-         (- n head-n tail-n)]
-
-        (vec (concat (subvec lines 0 head-n)
-                     [(str "... diff truncated; " omitted " line(s) omitted")]
-                     (subvec lines (- n tail-n))))))))
+            (vec (concat preamble
+                         kept
+                         (when (pos? (long dropped))
+                           [(str "... diff truncated; " dropped " more hunk(s) omitted")])))))))))
 
 (defn- common-prefix-count
   [a b]
@@ -4016,10 +4160,65 @@
   (let [patch (DiffUtils/diff a b)]
     (vec (UnifiedDiffUtils/generateUnifiedDiff "before" "after" a patch patch-diff-context-lines))))
 
+(def ^:private diff-hunk-header-re #"^@@ -(\d+)(,\d+)? \+(\d+)(,\d+)? @@(.*)$")
+
+(defn- shift-hunk-headers
+  "Renumber `@@` headers produced from a WINDOW of the file back to real file
+   line numbers."
+  [lines ^long offset]
+  (mapv (fn [line]
+          (if-let [[_ a a-len b b-len trailing] (re-matches diff-hunk-header-re (str line))]
+            (str "@@ -"
+                 (+ offset (long (parse-long a)))
+                 a-len
+                 " +"
+                 (+ offset (long (parse-long b)))
+                 b-len
+                 " @@"
+                 trailing)
+            line))
+        lines))
+
+(defn- windowed-unified-diff-lines
+  "REAL unified hunks, at real file line numbers, for ANY file size. A huge file
+   with a few small edits used to fall back to one flat delete-block plus one
+   add-block spanning everything between the first and the last change, so a
+   two-line edit rendered as hundreds of `-` lines of untouched code —
+   disconnected nonsense on a narrow screen. Trim the shared prefix/suffix (minus
+   context), diff only the changed window, and renumber the `@@` headers back to
+   file lines. nil when even that window is too expensive to diff."
+  [a b]
+  (let
+    [prefix-count
+     (long (common-prefix-count a b))
+
+     suffix-count
+     (long (common-suffix-count a b prefix-count))
+
+     start
+     (max 0 (- prefix-count patch-diff-context-lines))
+
+     a-end
+     (min (count a) (+ (- (count a) suffix-count) patch-diff-context-lines))
+
+     b-end
+     (min (count b) (+ (- (count b) suffix-count) patch-diff-context-lines))]
+
+    (when (and (<= start a-end) (<= start b-end))
+      (let
+        [a-win
+         (subvec a start a-end)
+
+         b-win
+         (subvec b start b-end)]
+
+        (when (java-diff-affordable? a-win b-win)
+          (shift-hunk-headers (java-unified-diff-lines a-win b-win) start))))))
+
 (defn- unified-diff-text
-  "Unified diff preview for two file blobs. Normal-sized files use
-   `java-diff-utils` for real hunks. Very large files use a linear bounded
-   fallback to keep `patch` result rendering from becoming the slow path."
+  "Unified diff preview for two file blobs: real `@@` hunks at real file line
+   numbers, bounded hunk-wise. Only a change too expensive to diff (a full
+   rewrite of a very large file) drops to the linear bounded preview."
   [before after]
   (cond (= before after) nil
         (nil? before) (str/join "\n" (prefixed-diff-lines "+" (str/split-lines (or after ""))))
@@ -4032,10 +4231,7 @@
                  (vec (str/split-lines after))
 
                  diff-lines
-                 (if (and (<= (count a) patch-java-diff-max-lines)
-                          (<= (count b) patch-java-diff-max-lines))
-                   (java-unified-diff-lines a b)
-                   (compact-diff-lines a b))]
+                 (or (windowed-unified-diff-lines a b) (compact-diff-lines a b))]
 
                 (str/join "\n" (cap-diff-lines diff-lines)))))
 
@@ -4443,9 +4639,11 @@
    So you get kind (function/constant/…), a `private` marker only when the def is
    private (public is the default and stays implicit), the exact name, the
    arglist, the doc/comment gist, and the full start..end span — WITHOUT reading
-   the body. To read ONE definition's SOURCE, `cat` exactly its span — pass the
-   row's anchors: cat(path, {\"anchor\": [<start-anchor>, <end-anchor>]}) — instead
-   of the whole file. The <name> is the VERBATIM `struct_patch` target: copy it
+   the body. To read ONE definition's SOURCE, use its anchors — never the whole
+   file: `struct_nodes({\"nodes\": [{\"path\": P, \"anchor\": <start-anchor>}]})` hands
+   back that node's verbatim `source` PLUS its zipper cursor (`at`/`children`/`can`),
+   and cat(path, {\"anchor\": [<start-anchor>, <end-anchor>]}) reads the same span as
+   anchored lines. The <name> is the VERBATIM `struct_patch` target: copy it
    as-is (it is already clean — no `^:private`/type-hint noise), and pair it with
    <kind> when two defs
    share a name.
@@ -5356,13 +5554,18 @@
                  (disp-path (kw->str (get r "path")))
                  "`")})
 
-(defn- render-sexpr-result
-  "struct_node → `{:summary :body}`: a `<kind> @line..end_line` headline + the node's
-   text as a code block. `r` is the zip shape `{:path :kind :line :end_line :text
-   :children :can}`."
+(defn- render-node-one
+  "ONE `struct_nodes` entry → a `path:line..end_line · kind · at […]` headline, the
+   node's SOURCE as a code block, and a compact line of the moves still available.
+   A failed entry renders as its error instead."
   [r]
   (let
-    [kind
+    [loc
+     (some-> (get r "path")
+             kw->str
+             disp-path)
+
+     kind
      (some-> (get r "kind")
              kw->str)
 
@@ -5372,12 +5575,53 @@
      eol
      (get r "end_line")
 
-     txt
-     (some-> (get r "text")
-             kw->str)]
+     at
+     (get r "at")
 
-    {:summary (str (or kind "node") (when line (str " @" line (when eol (str ".." eol)))))
-     :body (when (seq txt) (str "\n" (strutil/fenced txt)))}))
+     src
+     (some-> (get r "source")
+             kw->str)
+
+     err
+     (some-> (get r "error")
+             kw->str)
+
+     head
+     (str "**"
+          (or loc "node")
+          (when line (str ":" line (when eol (str ".." eol))))
+          "**"
+          (when kind (str " · " kind))
+          (when (seq at) (str " · at " (pr-str (vec at)))))
+
+     moves
+     (let [can (get r "can")]
+       (when (map? can)
+         (->> ["down" "up" "left" "right" "next" "prev"]
+              (filter #(true? (get can %)))
+              (str/join " "))))]
+
+    (if err
+      (str head " · ⚠ " err)
+      (str head
+           (when (seq moves) (str "\n" "moves: " moves))
+           (when (seq src) (str "\n" (strutil/fenced src)))))))
+
+(defn- render-nodes-result
+  "struct_nodes → `{:summary :body}`: `<paths> · N nodes`, then ONE source block per
+   requested node, in request order."
+  [r]
+  (let
+    [results
+     (vec (get r "results"))
+
+     n
+     (count results)]
+
+    {:summary (str (batch-paths-summary (keep #(get % "path") results))
+                   " · " n
+                   " node" (when (not= 1 n) "s"))
+     :body (when (seq results) (str "\n" (str/join "\n\n" (map render-node-one results))))}))
 
 ;; -----------------------------------------------------------------------------
 ;; Conditional advertising — the tree-sitter structural editors are only useful
@@ -5422,14 +5666,14 @@
     {:symbol 'struct_index
      :native-tool? true
      :result
-     "Object with string key `results`; each item has `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, and `ranges`. No rendered source-text field."
+     (str
+       "Object with string key `results`; each item has `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, and `ranges`. "
+       "No source text: a row's SOURCE comes from its `anchor` — `struct_nodes` for the node verbatim plus a zipper cursor, `cat` for its anchored lines.")
      :active-fn structural-supported?
      :description
      (str
        "Inspect supported source structurally before reading bodies: imports plus a nested definition "
-       "skeleton with signatures, doc gists, and fresh start/end anchors for `cat`/`struct_patch`. "
-       "BATCH every file you already need into ONE call — `paths: [\"a.clj\", {\"path\": \"b.clj\", \"ranges\": [[1, 80]]}]`. "
-       "Paths must be exact physical paths from grep/cat/struct_index; if unknown, grep first.")
+       "skeleton with signatures, doc gists, and fresh start/end anchors for `cat`/`struct_patch`.")
      :render render-index-result
      :color-role :tool-color/read
      :schema
@@ -5451,18 +5695,17 @@
                          :additionalProperties false}]}
         :minItems 1
         :description
-        (str "Exact physical source-file paths to index in ONE call — always batch the files you "
-             "already know you need. Copy paths returned by grep/cat/struct_index unchanged. "
-             "Shared `ranges` apply to every entry; pass `{\"path\": \"…\", \"ranges\": [[a, b]]}` "
-             "to scope a single file differently.")}
+        (str "Exact physical paths from grep/cat/struct_index, copied unchanged — batch every file "
+             "you need. Shared `ranges` apply to every entry; `{\"path\": \"…\", \"ranges\": [[a, b]]}` "
+             "scopes one file differently.")}
        "ranges"
        {:type "array"
         :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
         :minItems 1
         :description
         (str
-          "Optional [[start, end], …] 1-based inclusive line windows in one call. A definition "
-          "is kept when its span intersects ANY window; line_count still reports the whole file.")}}
+          "[[start, end], …] 1-based inclusive line windows. A definition is kept when its span "
+          "intersects ANY window; line_count still reports the whole file.")}}
       :required ["paths"]
       :additionalProperties false}
      :before-fn (path-protected-before-fn :struct_index :file :read read-arg-paths)
@@ -5477,16 +5720,14 @@
      :result
      (str
        "Batch result: object with string key `results`; each file item has `op`, `path`, `size`, `mtime`, `eof`, `truncated`, "
-       "`next_offset`, `ranges`, and `anchors`; `anchors` maps each `line:hash` to `{\"text\": line}` "
-       "and is the only content field (no `content`/`lines`). In Python iterate `result[\"anchors\"].items()` "
-       "for each item; rendered source-like lines are presentation, not raw fields. "
+       "`next_offset`, `ranges`, and `anchors`. `anchors` maps each `line:hash` to `{\"text\": line}` and is the ONLY "
+       "content field (no `content`/`lines`), already holding EVERY window's lines; `ranges` window maps carry metadata "
+       "only (`range`, `eof`, `next_offset`, `truncated`) and never repeat the text. "
        "Directory items have `op`, `path`, `type`, `depth`, and `entries`.")
      :description
      (str
        "Read EVERY region you already need, from EVERY requested path, as patch-ready `lineno:hash` anchored lines. "
-       "BATCH all known targets into ONE call — "
-       "`paths: [{\"path\": \"a.clj\", \"ranges\": [[1, 40]]}, \"b.tsx\"]`; a bare string uses the shared `ranges`/`tail`. "
-       "A DIRECTORY entry lists instead (`depth`/`is_hidden`). Pass paths exactly as grep/struct_index returned them. "
+       "A DIRECTORY entry lists instead (`depth`/`is_hidden`). "
        "Run `struct_index` first on code; a write invalidates pre-write anchors for that file, not other files.")
      :render render-cat-result
      :color-role :tool-color/read
@@ -5517,9 +5758,9 @@
         :minItems 1
         :description
         (str
-          "Exact physical file/directory paths to read in ONE call — always batch the regions "
-          "you already know you need. Every shared selector applies to each path; pass "
-          "`{\"path\": \"…\", \"ranges\": [[a, b]]}` entries to read a DIFFERENT region per file.")}
+          "Exact physical file/directory paths — batch every region you need into ONE call. A bare "
+          "string takes the shared selectors; `{\"path\": \"…\", \"ranges\": [[a, b]]}` overrides them "
+          "for that file.")}
        "ranges" {:type "array"
                  :items {:type "array" :items {:type "integer" :minimum 1} :minItems 2 :maxItems 2}
                  :minItems 1
@@ -5557,17 +5798,12 @@
        "`total_file_count`, `total_file_count_is_exact`, `limit`, `truncated_by`, and "
        "`hits_truncated_by`. Exact nested shape: `matches[path][\"line:hash\"] = "
        "{\"text\": string, \"before\": [{\"line\": integer, \"text\": string}], "
-       "\"after\": [{\"line\": integer, \"text\": string}]}`; `before` and `after` are "
-       "omitted only on a row when empty. In Python iterate "
-       "`for path, rows in result[\"matches\"].items():` then "
-       "`for anchor, row in rows.items():`. This is a mapping, never a list, and has no `content` field.")
+       "\"after\": [{\"line\": integer, \"text\": string}]}` — a mapping of mappings, never a "
+       "list; `before` and `after` are omitted only on a row when empty.")
      :description
      (str
        "Find code by CONTENT (literal, smart-case) and by fuzzy file name — the first move when location is "
-       "unknown; `query: \"\"` lists scoped files. BATCH: one call ORs SEVERAL needles across SEVERAL scopes — "
-       "`query: [\"foo\", \"bar\"], paths: [\"src\", \"apps/x/src\", \"test\"]`. Returns patch-ready `matches`, "
-       "ranked name hits in `paths`, `missing_paths`. Pass returned paths to cat/struct_index unchanged, "
-       "never rebuild from a language namespace; content is complete when `hits_truncated_by` is null.")
+       "unknown; `query: \"\"` lists scoped files. Content is complete when `hits_truncated_by` is null.")
      :render render-grep-result
      :color-role :tool-color/search
      :schema
@@ -5581,7 +5817,7 @@
        {:type "array"
         :items {:type "string" :minLength 1}
         :description
-        "Scopes (default: whole tree). An existing file scope is searched exactly and never widened on zero content hits; a missing scope falls back to its nearest existing directory and is echoed in missing_paths. Returned values are exact physical paths for direct handoff to cat/struct_index."}
+        "Scopes (default: whole tree). An existing file scope is searched exactly and never widened on zero content hits; a missing scope falls back to its nearest existing directory and is echoed in missing_paths. Returned `paths` are exact physical paths — hand them to cat/struct_index unchanged, never rebuilt from a language namespace."}
        "include" {:oneOf [{:type "array" :items {:type "string"}} {:type "string"}]
                   :description "Restrict content search to these globs, e.g. [\"**/*.clj\"]."}
        "context" {:type "integer"
@@ -5603,15 +5839,15 @@
     {:symbol 'patch
      :native-tool? true
      :result
-     "Array of result objects; each has `path`, `op`, `changed`, `diff`, and — when the rewritten region is small — `anchors` (`{\"lineno:hash\": {\"text\": line}}`) reusable as the next `from_anchor` with no re-read."
+     "Array of result objects; each has `path`, `op`, `changed`, `diff`, and — when the rewritten region is small — `anchors` (`{\"lineno:hash\": {\"text\": line}}`) reusable as the next `from_anchor` with no re-read. A file whose delimiters a language pack auto-balanced also carries `repaired` true and an explanatory `note`."
      :call (fn [input]
              {:args [(get input "edits")]})
      :description
-     (str "Surgically edit text or unsupported code using fresh anchors from `cat`, `grep`, or "
-          "`struct_index`. The batch is atomic. A successful write invalidates pre-write anchors "
-          "for each changed file only; anchors for other files remain valid. On failure, follow "
-          "its cause, refresh only the target and anchor, retry once, then reassess; prefer "
-          "`struct_patch` for supported code.")
+     (str
+       "Anchor-based TEXT editor: prose, config, unsupported languages, or a precise span inside "
+       "a definition. ATOMIC: one bad edit writes NOTHING; code that will not parse is refused, "
+       "but unbalanced Clojure delimiters are auto-repaired (`repaired`). A write invalidates "
+       "pre-write anchors for each changed file only, anchors for other files remain valid.")
      :render render-patch-result
      :color-role :tool-color/edit
      :schema
@@ -5648,8 +5884,7 @@
      "Array containing one result object with `path`, `op`, `changed`, `diff`, and — when the rewritten region is small — `anchors` (`{\"lineno:hash\": {\"text\": line}}`) reusable as the next `from_anchor` with no re-read."
      :description (str
                     "Create a new file or intentionally replace an entire clean file. Refuses "
-                    "uncommitted targets unless explicitly allowed; use `patch` or `struct_patch` "
-                    "for surgical changes.")
+                    "uncommitted targets unless `allow_dirty`.")
      :replay
      {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"allow_dirty" true}}
      :render render-patch-result
@@ -5765,11 +6000,11 @@
    ops (by PATH/`at`/node anchor): replace | replace_node (alias) | insert_before |
      insert_after | append_child | prepend_child (child ops insert inside the node,
      after last / before first child; delete = replace with \"\"). `at` is the
-     struct_node(path); `nav` adds relative moves — the full clojure.zip vocabulary:
+     struct_nodes entry's `at`; `nav` adds relative moves — the full clojure.zip vocabulary:
      down|d|b up|u|t left|l right|r first last next|n prev|p {child:i}
-     {find:\"text\"} {find_kind:\"if_statement\"}. Navigate with struct_node(...) first,
+     {find:\"text\"} {find_kind:\"if_statement\"}. Navigate with struct_nodes(...) first,
      then edit the same path here.
-   Locate targets with struct_index(path) / struct_node(path) / struct_occurrences(name).
+   Locate targets with struct_index(paths) / struct_nodes(nodes) / struct_occurrences(name).
    Returns the [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write."
   [args]
   (let
@@ -6004,12 +6239,10 @@
      "Array with ONE result object per edit, in request order: `path`, `op`, `changed`, `diff`, and — when the rewritten region is small — `anchors` (`{\"lineno:hash\": {\"text\": line}}`) reusable as the next `from_anchor` with no re-read."
      :active-fn structural-supported?
      :description
-     (str "Preferred syntax-safe editor for supported code: the file is re-parsed and any "
-          "syntax-breaking write is refused. BATCH — pass `edits`, an ORDERED array of edit "
-          "maps, to make EVERY structural change in ONE call (top-level keys are shared "
-          "defaults, so one `path` + many ops, or several files, need no repetition); "
-          "entries apply in order and are never rolled back. Locate targets with "
-          "`struct_index`/`struct_node` first — also in one call.")
+     (str "THE editor for supported code: address a definition by NAME (`target`) — no anchors to "
+          "go stale, no hand-balanced blob — or a node by `at`/`anchor`. Ops text cannot do: "
+          "rename, doc edits, moves, append_child. Re-parsed on write: code that will not parse "
+          "is REFUSED, unbalanced Clojure delimiters auto-repaired.")
      :render render-patch-result
      :color-role :tool-color/edit
      :schema
@@ -6022,7 +6255,7 @@
         :minItems 1
         :items {:type "object"}
         :description
-        "ORDERED BATCH: every structural change in ONE call. Each entry takes the same keys as a single edit; top-level keys are shared defaults (one `path`, many ops — or several files). Entries apply in request order against the file the previous entry left, with no rollback. OMIT for a single edit."}
+        "ORDERED BATCH: every structural change in ONE call — each entry takes the same keys as a single edit, and the top-level keys supply their defaults (one `path`, many ops — or several files). Entries apply in order against the file the previous left, never rolled back. OMIT for a single edit."}
        "op"
        {:type "string"
         :enum ["replace" "delete" "insert_before" "insert_after" "append" "add_doc" "replace_doc"
@@ -6047,7 +6280,7 @@
        {:type "array"
         :items {:type "integer" :minimum 0}
         :description
-        "Named-child index path from struct_node(path) (path-based ops). Or use `anchor` to enter by a lineno:hash row instead."}
+        "Named-child index path from a `struct_nodes` entry's `at` (path-based ops)."}
        "nav" {:type "array"
               :description "Relative zipper moves applied after `at` (strings or maps)."}}
       ;; Either a lone `path`+`op` edit or an `edits` batch — validated in the tool.
@@ -6072,44 +6305,47 @@
 
 (defn- zip-shape
   ;; `r` is zipper/inspect's internal (keyword) node data; this projects it onto
-  ;; the model-facing struct_node result — string keys, no keyword values.
+  ;; ONE model-facing struct_nodes entry — string keys, no keyword values. The
+  ;; node's SOURCE CODE is `source`; the zipper API is `at` + `children` + `can`.
   [r]
-  {"path" (:path r)
+  {"at" (vec (:path r))
    "kind" (:kind r)
    "line" (:start-line r)
    "end_line" (:end-line r)
    "named_child_count" (:named-child-count r)
    "has_error" (:has-error? r)
-   "text" (zip-clip (:text r) 2000)
+   "source" (zip-clip (:text r) 4000)
    "sexp" (zip-clip (:sexp r) 1200)
    "children" (mapv (fn [c]
                       {"idx" (:idx c) "kind" (:kind c) "head" (zip-clip (:head c) 120)})
                     (:children r))})
 
-(defn- sexpr-tool
-  "The tree-sitter ZIPPER cursor (clojure.zip / rewrite-clj vocabulary, any
-   language). A node's location is a PATH = list of NAMED-child indices from the
-   file root, so the cursor round-trips through async tool calls.
-     await struct_node(path)                                    # root + its named children
-     await struct_node(path, {\"at\": [2, 0]})                    # jump to an absolute path
-     await struct_node(path, {\"at\": [2], \"nav\": [\"down\", \"right\"]})  # cursor moves
-     await struct_node(path, {\"nav\": [{\"find\": \"my_fn\"}]})            # jump to a node by text
-   nav moves — the full clojure.zip / rewrite-clj vocabulary (single-letter
-   aliases): SIBLING/PARENT/CHILD down|d|b up|u|t left|l right|r leftmost|first
-   rightmost|last root|home {\"child\": i}; DEPTH-FIRST next|n prev|p; SEARCH
-   {\"find\": \"text\"} {\"find_kind\": \"if_statement\"}. Boundary / not-found moves
-   FAIL CLOSED instead of going nowhere.
-   Returns {\"path\", \"kind\", \"line\", \"end_line\", \"text\", \"sexp\",
-   \"children\": [{\"idx\",\"kind\",\"head\"}], \"can\": {\"down\",\"up\",\"left\",\"right\",
-   \"next\",\"prev\",\"index\",\"siblings\"}} — `can` shows which moves remain plus
-   the cursor's `index` among its `siblings` (lefts = index, rights =
-   siblings-1-index), so you navigate without probing. EDIT the node under the
-   cursor with struct_patch({\"path\": P, \"op\": ..., \"at\": path})."
-  [path & [opts]]
+(defn- node-miss
+  ;; A navigation miss on ONE entry is DATA, not a dead batch: that entry carries
+  ;; `error`/`reason` with the same key set nil-filled, and its siblings answer.
+  [path e]
+  {"path" path
+   "at" nil
+   "kind" nil
+   "line" nil
+   "end_line" nil
+   "source" nil
+   "sexp" nil
+   "named_child_count" nil
+   "has_error" nil
+   "children" []
+   "can" nil
+   "error" (get-in e [:error :message])
+   "reason" (some-> (get-in e [:error :reason])
+                    name)})
+
+(defn- node-one
+  ;; ONE cursor: resolve `path` + (`at` | `nav` | `anchor`) and answer with the
+  ;; node's SOURCE plus its zipper API.
+  [spec]
   (let
-    ;; All-kwargs `struct_node(path="p", at=[…])` collapses to ONE map; split it.
-    [[path opts]
-     (if (map? path) [(get path "path") (dissoc path "path")] [path opts])
+    [path
+     (get spec "path")
 
      lang
      (zipper/detect-language path)
@@ -6120,21 +6356,16 @@
      ;; anchor entry: a `lineno:hash` from a struct_index/struct_occurrences/cat row
      ;; resolves straight to the node's path, then `nav` composes on top.
      base
-     (when-let [a (get opts "anchor")]
+     (when-let [a (get spec "anchor")]
        (zipper/path-at-anchor lang source a))
 
      nav
      (if (and base (:error base))
        base
-       (zipper/navigate lang source (if base (:path base) (get opts "at")) (get opts "nav")))]
+       (zipper/navigate lang source (if base (:path base) (get spec "at")) (get spec "nav")))]
 
     (if (:error nav)
-      (extension/failure {:result nil
-                          :op :struct_node
-                          :metadata {:target {:requested (str path) :kind :file} :mode :struct_node}
-                          :error {:message (get-in nav [:error :message])
-                                  :reason (get-in nav [:error :reason])
-                                  :mode :struct_node}})
+      (node-miss path nav)
       (let
         [at
          (:path nav)
@@ -6143,58 +6374,146 @@
          (zipper/inspect lang source at)]
 
         (if (:error r)
-          (extension/failure {:result nil
-                              :op :struct_node
-                              :metadata {:target {:requested (str path) :kind :file}
-                                         :mode :struct_node}
-                              :error {:message (get-in r [:error :message])
-                                      :reason (get-in r [:error :reason])
-                                      :mode :struct_node}})
-          (tool-success {:op :struct_node
-                         :path path
-                         :kind :file
-                         :result (assoc (zip-shape r)
-                                   "can" (zipper/moves-available lang source at))}))))))
+          (node-miss path r)
+          (assoc (zip-shape r)
+            "path" path
+            "can" (zipper/moves-available lang source at)))))))
 
-(def sexpr-symbol
+(defn- nodes-tool
+  "The tree-sitter ZIPPER cursor (clojure.zip / rewrite-clj vocabulary, any
+   language) — MANY nodes in ONE call. `nodes` is ALWAYS a list; each entry is a
+   path string or `{\"path\", \"at\"|\"nav\"|\"anchor\"}`, and TOP-LEVEL keys are shared
+   defaults, so one `path` plus many cursors needs no repetition.
+     await struct_nodes({\"nodes\": [\"a.clj\", {\"path\": \"b.clj\", \"at\": [2, 0]}]})
+     await struct_nodes({\"path\": \"a.clj\"
+                         \"nodes\": [{\"nav\": [{\"find\": \"my_fn\"}]}, {\"anchor\": \"120:9f6\"}]})
+   EVERY entry answers with BOTH the node's SOURCE CODE (`source`, verbatim text)
+   AND the zipper API: `at` — the named-child index path `struct_patch` takes —
+   plus `children` [{idx,kind,head}] and `can` {down,up,left,right,next,prev,index,
+   siblings}, so you navigate and edit without probing or re-reading the file.
+   nav moves — the full clojure.zip / rewrite-clj vocabulary (single-letter
+   aliases): SIBLING/PARENT/CHILD down|d|b up|u|t left|l right|r leftmost|first
+   rightmost|last root|home {\"child\": i}; DEPTH-FIRST next|n prev|p; SEARCH
+   {\"find\": \"text\"} {\"find_kind\": \"if_statement\"}. Boundary / not-found moves
+   FAIL CLOSED: that ENTRY carries `error`/`reason` and its siblings still answer.
+   EDIT the node under a cursor with struct_patch({\"path\": P, \"op\": ..., \"at\":
+   <that entry's `at`>})."
+  [& args]
+  (let
+    [a
+     (first args)
+
+     ;; struct_nodes("p") / struct_nodes("p", {opts}) stay usable from Clojure; the
+     ;; native schema advertises only the plural `nodes` contract.
+     a
+     (cond (string? a) (merge {"path" a} (when (map? (second args)) (second args)))
+           (map? a) a
+           :else {"path" a})
+
+     shared
+     (dissoc a "nodes")
+
+     entries
+     (get a "nodes")
+
+     specs
+     (if (some? entries)
+       (do (when-not (and (sequential? entries) (seq entries))
+             (throw (ex-info "struct_nodes: `nodes` must be a NON-EMPTY list of node selectors"
+                             {:type :ext.foundation.editing/invalid-nodes-args :got a})))
+           (mapv
+             (fn [e]
+               (merge
+                 shared
+                 (cond
+                   (string? e) {"path" e}
+                   (map? e) e
+                   :else
+                   (throw
+                     (ex-info
+                       "struct_nodes: every `nodes` entry is a path string or an object with `path`"
+                       {:type :ext.foundation.editing/invalid-nodes-args :got e})))))
+             entries))
+       [a])]
+
+    (doseq [s specs]
+      (when-not (string? (get s "path"))
+        (throw (ex-info "struct_nodes: every node needs a `path`"
+                        {:type :ext.foundation.editing/invalid-nodes-args :got s}))))
+    (let [results (mapv node-one specs)]
+      ;; FAIL CLOSED when NOTHING resolved: a call whose every cursor missed is an
+      ;; error, not an empty success. A PARTIAL miss stays data, so the entries that
+      ;; did resolve still answer.
+      (if (every? #(get % "error") results)
+        (let [e (first results)]
+          (extension/failure {:result nil
+                              :op :struct_nodes
+                              :metadata {:target {:requested (str (get (first specs) "path"))
+                                                  :kind :file}
+                                         :mode :struct_nodes}
+                              :error {:message (get e "error")
+                                      :reason (some-> (get e "reason")
+                                                      keyword)
+                                      :mode :struct_nodes}}))
+        (tool-success {:op :struct_nodes :kind :file :result {"results" results}})))))
+
+(def nodes-symbol
   (vis/symbol
-    #'sexpr-tool
-    {:symbol 'struct_node
+    #'nodes-tool
+    {:symbol 'struct_nodes
      :native-tool? true
-     :result (str
-               "Object with string keys `op`, `path`, `kind`, `text`, `sexp`, `line`, `end_line`, "
-               "`named_child_count`, `children`, `can`, and `has_error`.")
-     ;; struct_node(path, {opts}) — path positional, the rest a Python options dict.
-     :call {:pos ["path"] :rest :opt}
+     :result
+     (str
+       "Object with string key `results` — ONE entry per requested node, in request order. Each entry has "
+       "`path`, `at` (the named-child index path `struct_patch` takes), `kind`, `line`, `end_line`, "
+       "`source` (the node's VERBATIM source code), `sexp`, `named_child_count`, `children`, `can`, and "
+       "`has_error`; an entry whose cursor missed carries `error`/`reason` with the rest nil.")
      :active-fn structural-supported?
      :description
-     (str "Inspect or navigate a nested tree-sitter node when a named definition is too coarse. "
-          "Returns the node, its children, available moves, and a path accepted by `struct_patch`.")
-     :render render-sexpr-result
+     "Read the SOURCE of nested tree-sitter nodes and navigate them when a named definition is too coarse."
+     :render render-nodes-result
      :color-role :tool-color/read
      :schema
      {:type "object"
       :properties
-      {"path" {:type "string" :description "Source file to navigate."}
+      {"nodes"
+       {:type "array"
+        :items {:oneOf [{:type "string" :minLength 1}
+                        {:type "object"
+                         :properties
+                         {"path" {:type "string" :minLength 1}
+                          "at" {:type "array"
+                                :items {:type "integer" :minimum 0}
+                                :description "Absolute named-child index path for THIS node."}
+                          "nav" {:type "array" :description "Relative cursor moves for THIS node."}
+                          "anchor" {:type "string"
+                                    :description "`lineno:hash` entry point for THIS node."}}
+                         :additionalProperties false}]}
+        :minItems 1
+        :description
+        (str
+          "Nodes to inspect in ONE call. An entry is a path string (that file's root) or an object "
+          "whose own `path`/`at`/`nav`/`anchor` override the shared top-level selectors.")}
+       "path" {:type "string" :description "Shared default source file for entries that omit one."}
        "at" {:type "array"
              :items {:type "integer" :minimum 0}
-             :description "Absolute named-child index path to jump to."}
+             :description "Shared default: absolute named-child index path to jump to."}
        "nav" {:type "array"
-              :description "Relative cursor moves (strings or {find/child/find_kind} maps)."}
+              :description
+              "Shared default: relative cursor moves (strings or {find/child/find_kind} maps)."}
        "anchor"
        {:type "string"
         :description
-        "A `lineno:hash` anchor (from struct_index/struct_occurrences/cat) to enter the zipper at the node starting on that line — one hop from a listed row to its cursor; `nav` composes on top. Alternative to `at`."}}
-      :required ["path"]
+        "Shared default: a `lineno:hash` anchor (from struct_index/struct_occurrences/cat) entering the zipper at the node starting on that line; alternative to `at`, and `nav` composes on top."}}
       :additionalProperties false}
-     :before-fn (path-protected-before-fn :struct_node :file :read first-arg-paths)
+     :before-fn (path-protected-before-fn :struct_nodes :file :read nodes-arg-paths)
      :tag :observation
-     :on-error-fn (tool-failure-on-error :struct_node :file nil)}))
+     :on-error-fn (tool-failure-on-error :struct_nodes :file nil)}))
 
 ;; sexpr_edit was FOLDED INTO struct_patch — which now takes a zipper `at`/`nav`
 ;; path as an alternative to a `target` name. ONE structural editor (locate by
 ;; name OR by path), so the model isn't choosing between two near-identical
-;; mutation verbs. `struct_node` stays as the read-only navigator that produces paths.
+;; mutation verbs. `struct_nodes` stays as the read-only navigator that produces paths.
 
 (defn- occurrence->wire
   "One `structural/occurrences` entry → snake_case wire map. Plain USE rows stay
@@ -6867,7 +7186,7 @@
                "where `paths` is one such entry per target, minus `action`, in request order. "
                "The top-level object also has string `op`; all keys are strings.")
      :description
-     "One confined filesystem tool: `op` picks the verb and which params it reads. copy/move take src+dest and refuse an existing dest unless is_overwrite. delete/create_dirs/exists take `paths` — ALWAYS a list, MANY targets in ONE call, processed in order, one result entry per path. delete is destructive and needs explicit user intent (an already-absent path is a no-op, reported as is_deleted false); create_dirs makes missing parents; exists checks without reading."
+     "One confined filesystem tool: `op` picks the verb and which params it reads. delete is destructive and needs explicit user intent (an already-absent path is a no-op, reported as is_deleted false); create_dirs makes missing parents; exists checks without reading."
      :render render-fs-result
      :color-role :tool-color/move
      :schema
@@ -6894,7 +7213,7 @@
 
 (defn available-editing-symbols
   []
-  [index-symbol cat-symbol grep-symbol patch-symbol write-symbol struct-patch-symbol sexpr-symbol
+  [index-symbol cat-symbol grep-symbol patch-symbol write-symbol struct-patch-symbol nodes-symbol
    occurrences-symbol symbol-rename-symbol fs-symbol create-dirs-symbol copy-symbol move-symbol
    delete-symbol file-exists-symbol])
 

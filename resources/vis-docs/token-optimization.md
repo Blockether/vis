@@ -50,17 +50,18 @@ await struct_patch({
 })
 ```
 
-When a definition is too coarse, enter it with a `struct_index` anchor, navigate with `struct_node`, then pass the returned `path` to `struct_patch` as `at`:
+When a definition is too coarse, enter it with a `struct_index` anchor, navigate with `struct_nodes` — which hands back each node's verbatim `source` PLUS its zipper cursor `at` — then pass that `at` to `struct_patch`. `nodes` is always a list, so many cursors (across many files) ride one call:
 
 ```python
-node = await struct_node("src/core.clj", {
-    "anchor": "42:abc",
-    "nav": [{"find": "(+ a b)"}],
+nodes = await struct_nodes({
+    "path": "src/core.clj",
+    "nodes": [{"anchor": "42:abc", "nav": [{"find": "(+ a b)"}]}],
 })
+node = nodes["results"][0]   # node["source"] is the code, node["at"] the cursor
 await struct_patch({
     "path": "src/core.clj",
     "op": "replace_node",
-    "at": node["path"],
+    "at": node["at"],
     "code": "(* a b)",
 })
 ```

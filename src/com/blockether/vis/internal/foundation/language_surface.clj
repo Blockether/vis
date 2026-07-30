@@ -970,7 +970,7 @@
        "`chars`, `path`, `formatter`, or `repaired`; batch results include `files`, `by-dir`, "
        "and `formatters`. It never returns formatted source text.")
      :description
-     "Format code or project files through the active language pack. In-place forms mutate files and return compact change summaries, not reconstructed source."
+     "Format code or project files through the active language pack."
      ;; NAME(language, {payload}) — optional leading `language`, the rest a
      ;; pure options dict (always emitted so the payload stays a map).
      :call {:lead-opt "language" :rest :always}
@@ -985,13 +985,13 @@
                    "Language pack (e.g. \"clojure\"); pass it first — inferred when omitted."}
        "code" {:type "string"
                :description
-               "Source to format (returns a lean changed? + char-delta ack, not the text)."}
+               "Source to format, returned as a changed? + char-delta ack."}
        "paths"
        {:type "array"
         :items {:type "string" :minLength 1}
         :minItems 1
         :description
-        "Format these paths IN PLACE — ALWAYS a list, even for ONE file (returns a per-file changed roll-up, not the text). A DIRECTORY is walked RECURSIVELY for source files. Mutually exclusive with code; OMIT both to format the workspace's default source paths recursively."}}
+        "Format these paths IN PLACE. A DIRECTORY is walked RECURSIVELY for source files. Mutually exclusive with `code`; OMIT both to format the workspace's default source paths recursively."}}
       :required []
       :additionalProperties false}
      :before-fn inject-env
@@ -1025,7 +1025,7 @@
         :items {:type "string" :minLength 1}
         :minItems 1
         :description
-        "Lint these files/dirs — ALWAYS a list, even for ONE file. OMIT to lint the workspace's default source paths."}}
+        "Lint these files/dirs; OMIT to lint the workspace's default source paths."}}
       :required []
       :additionalProperties false}
      :before-fn inject-env
@@ -1102,9 +1102,8 @@
        "`ex`, or `root_ex`; Python/Bun reports `code`, `ok`, `out`, `err`, `value`, `data`, `type`, "
        "and `exc`. Empty fields may be absent. There is no UI-rendered `transcript` or `content` field.")
      :description (str
-                    "Evaluate code in an `up` project REPL; prefer this for bug reproduction and "
-                    "verification. Inspect `session[\"resources\"][\"repls\"]` first and use "
-                    "`repl` for any required lifecycle change.")
+                    "Evaluate code in an `up` project REPL. Use `repl` for any lifecycle "
+                    "change.")
      :call {:lead-opt "language" :rest :always}
      ;; repl_eval's own `timeout_ms` can exceed the generic Python eval
      ;; watchdog (DEFAULT_EVAL_TIMEOUT_MS, 120s); dispatch it directly in
@@ -1151,10 +1150,10 @@
      (str
        "THE one REPL lifecycle tool. Read `session[\"resources\"][\"repls\"][language][dir]` "
        "(`.` is root) FIRST, then pick `op`: already `up` → reuse it, no call needed (`starting` → "
-       "recheck); \"start\" for absent/down/failed; \"restart\" for unresponsive; `op` \"stop\" stops a "
-       "managed REPL you started (by `id`, else `dir`'s); \"connect\" attaches an EXTERNAL running REPL "
-       "by `port` — never owned or killed, stopping it only detaches; \"status\" reports the requested "
-       "directory's pack lifecycle state. Keep the returned resource id and stop what you started.")
+       "recheck); \"start\" for absent/down/failed; \"restart\" for unresponsive; \"stop\" ends a "
+       "managed REPL you started (by `id`, else `dir`'s); \"connect\" attaches an EXTERNAL running "
+       "REPL by `port` — never owned or killed, so stopping it only detaches; \"status\" reports "
+       "that directory's lifecycle state.")
      :call {:lead-opt "language" :rest :always}
      :render render-repl-start-result
      :color-role :tool-color/shell

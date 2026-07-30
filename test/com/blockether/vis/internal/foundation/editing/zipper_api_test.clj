@@ -163,15 +163,15 @@
   (it "sexpr resolves a {find:...} move (navigate by content, not index)"
       (let
         [sexpr
-         @#'editing/sexpr-tool
+         @#'editing/nodes-tool
 
          path
          (write-temp! "apifind.clj" "(ns z)\n(defn target [x] (+ x 1))\n(defn other [] 9)\n")
 
          r
-         (:result (sexpr path {"nav" [{"find" "defn other"}]}))]
+         (first (get (:result (sexpr path {"nav" [{"find" "defn other"}]})) "results"))]
 
-        (expect (str/includes? (get r "text") "defn other"))
+        (expect (str/includes? (get r "source") "defn other"))
         ;; the `can` map now carries next/prev + index/siblings
         (expect (contains? (get r "can") "next"))
         (expect (contains? (get r "can") "siblings"))))

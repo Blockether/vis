@@ -995,7 +995,7 @@
 ;; All-observation concurrent batch
 ;;
 ;; When ONE iteration emits ≥2 native tool calls that are ALL read-only
-;; OBSERVATIONS (cat / grep / ls / struct_index / struct_occurrences / struct_node /
+;; OBSERVATIONS (cat / grep / ls / struct_index / struct_occurrences / struct_nodes /
 ;; file_exists — anything the extension declares `:tag :observation`), and NONE
 ;; is python_execution, a native handler, or carries a preflight error, we run
 ;; the whole batch CONCURRENTLY through the isolated bounded platform pool
@@ -6964,7 +6964,7 @@
       ["read"
        (+ (long (get counts "cat" 0))
           (long (get counts "struct_index" 0))
-          (long (get counts "struct_node" 0)))] ["test" (long (get counts "run_tests" 0))]
+          (long (get counts "struct_nodes" 0)))] ["test" (long (get counts "run_tests" 0))]
       ["tool call" (long (count names))]]]
 
     (->> categories

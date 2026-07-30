@@ -120,6 +120,41 @@
                     nil
                     (catch clojure.lang.ExceptionInfo e e))]
           (expect (= expected-type (:type (ex-data err)))))))
+  (it "budgets the whole model-facing prose surface, schema descriptions included"
+      (doseq
+        [[label opts]
+         [["a bloated :description"
+           {:description (apply str (repeat 2100 "x")) :result "A map." :schema {:type "object"}}]
+          ["bloated nested schema :description entries"
+           {:description "Compact."
+            :result "A map."
+            :schema {:type "object"
+                     :properties {"q" {:type "string"
+                                       :description (apply str (repeat 2100 "x"))}}}}]]]
+        (let
+          [err (try (extension/symbol
+                      #'flat-native-tool
+                      (merge {:tag :observation :native-tool? true :name "bloated_tool"} opts))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+          (expect (= :extension/native-tool-over-budget (:type (ex-data err))) label))))
+  (it "every registered builtin native tool stays inside the prose budget"
+      (let
+        [budget
+         @#'extension/native-prose-budget
+
+         tools
+         (->> (#'extension/registered-extensions)
+              (mapcat #(get-in % [:ext/engine :ext.engine/symbols]))
+              (filterv :ext.symbol/native-tool?))]
+
+        ;; never let this pass vacuously on an unloaded registry
+        (expect (< 10 (count tools)))
+        (doseq [sym tools]
+          (expect (<= (long (#'extension/native-prose-chars sym)) budget)
+                  (str (:ext.symbol/symbol sym)
+                       " spends " (#'extension/native-prose-chars sym)
+                       " of " budget)))))
   (it "doc text combines compact semantics with schema parameters exactly once"
       (let
         [sym
@@ -376,12 +411,11 @@
                                       :fn (fn [_ _ args nxt]
                                             (try (nxt args) (catch Throwable _ :recovered)))})
         (expect (= :recovered
-                   (extension/invoke-operation
-                     :ophtest5
-                     {}
-                     (fn [& _]
-                       (throw (ex-info "boom" {})))
-                     [:x]))))
+                   (extension/invoke-operation :ophtest5
+                                               {}
+                                               (fn [& _]
+                                                 (throw (ex-info "boom" {})))
+                                               [:x]))))
     (it "around middleware can RETRY with rewritten args (the don't-fail pattern)"
         (let [attempts (atom 0)]
           (extension/register-op-hook! {:op :ophtest6

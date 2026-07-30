@@ -249,22 +249,28 @@
     [mk (fn []
           (:python-context (ep/create-python-context {'patch (fn [& _]
                                                                "patched")})))]
-    (it "refuses to overwrite a bound tool name and keeps the callable usable"
+    (it "lets a block SHADOW a bound tool name and keeps the callable usable after"
         (let
           [ctx (mk)
-           r1 (ep/run-python-block ctx "patch = 'not callable'" "t1/i1")
+           r1 (ep/run-python-block ctx "patch = 'not callable'\nprint(patch)" "t1/i1")
            r2 (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
 
-          (expect (= :python/protected-name (get-in r1 [:error :data :phase])))
-          (expect (str/includes? (get-in r1 [:error :message]) "patch"))
+          (expect (nil? (:error r1)))
+          (expect (str/includes? (str (:stdout r1)) "not callable"))
           (expect (nil? (:error r2)))
           (expect (= "patched" (:result r2)))))
+    (it "a READ before the shadowing assignment still sees the tool"
+        (let [r (ep/run-python-block (mk)
+                                     "before = await patch({'path': 'x'})\npatch = 'shadow'\nprint(before, patch)"
+                                     "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (str/includes? (str (:stdout r)) "patched shadow"))))
     (it "allows ordinary variables while still awaiting protected tools"
         (let [r (ep/run-python-block (mk) "css = 'app.css'
 await patch({'path': css})" "t1/i1")]
           (expect (nil? (:error r)))
           (expect (= "patched" (:result r)))))
-    (it "also protects tools added after context creation"
+    (it "a tool added after context creation is shadowable and survives the block"
         (let [ctx (:python-context (ep/create-python-context {}))]
           (ep/set-python-binding! ctx
                                   'later_patch
@@ -274,22 +280,20 @@ await patch({'path': css})" "t1/i1")]
             [r1 (ep/run-python-block ctx "later_patch = 'oops'" "t1/i1")
              r2 (ep/run-python-block ctx "later_patch()" "t1/i2")]
 
-            (expect (= :python/protected-name (get-in r1 [:error :data :phase])))
+            (expect (nil? (:error r1)))
             (expect (nil? (:error r2)))
             (expect (= "late" (:result r2))))))
-    ;; The guard stays STRONG (rebinding ANY bound tool is rejected). The
-    ;; `test`-collision was fixed at the SOURCE: the language facade verbs were
-    ;; renamed off the commonest variable/builtin names (`test`→`run_tests`,
-    ;; `format`→`format_code`). So `run_tests` is still hard-protected, while
-    ;; `test` — no longer a tool — is a free variable the model may bind.
-    (it "still hard-protects the renamed facade verb run_tests"
+    ;; Shadowing is BLOCK-LOCAL, never durable: the facade verbs were also renamed
+    ;; off the commonest variable/builtin names (`test`→`run_tests`,
+    ;; `format`→`format_code`) so natural variables don't collide at all.
+    (it "a shadowed run_tests is still the tool in the NEXT block"
         (let
           [ctx (:python-context (ep/create-python-context {'run_tests (fn [& _]
                                                                         "ran")}))
            r1 (ep/run-python-block ctx "run_tests = 'oops'" "t1/i1")
            r2 (ep/run-python-block ctx "run_tests('go')" "t1/i2")]
 
-          (expect (= :python/protected-name (get-in r1 [:error :data :phase])))
+          (expect (nil? (:error r1)))
           (expect (nil? (:error r2)))
           (expect (= "ran" (:result r2)))))
     ;; A `for`/`with` loop TARGET is transient scratch — it stays function-local

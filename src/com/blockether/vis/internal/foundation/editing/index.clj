@@ -32,7 +32,7 @@
 (def ^:private extra-extension->language
   "Clojure-family file extensions the pack's grammar table does NOT map, but that
    the `clojure` grammar parses cleanly — EDN is a subset of the Clojure reader,
-   so `deps.edn` / `vis.edn` / config data get real structural editing (struct_node,
+   so `deps.edn` / `vis.edn` / config data get real structural editing (struct_nodes,
    node replace) instead of a refused-`patch` fallback. Consulted ONLY when the
    pack's own `detectLanguageFromPath` returns nil, so it never overrides the
    pack. Drop an entry here once the pack ships it on the `clojure` grammar."
@@ -74,8 +74,9 @@
    the STRICT structured-config formats (json/yaml/toml). This is the vetted subset
    the syntax guard runs on; extend it as vis takes on more languages."
   #{"clojure" "python" "rust" "javascript" "typescript" "tsx" "java" "kotlin" "go" "ruby" "c" "cpp"
-    "csharp" "php" "scala" "swift" "dart" "zig" "lua" "bash" "elixir" "haskell" "ocaml" "elm"
-    "julia" "r" "perl" "vim" "json" "yaml" "toml"})
+    "csharp" "php" "scala" "swift" "dart" "zig" "lua" "bash" "elixir" "haskell" "ocaml" "ocaml_interface"
+    "elm" "julia" "r" "perl" "vim" "groovy" "nix" "hcl" "terraform" "graphql" "svelte" "vue"
+    "json" "yaml" "toml"})
 
 (defn code-language
   "The tree-sitter language for `path` IFF it is a vetted CODE language

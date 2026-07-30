@@ -68,8 +68,9 @@
       (expect (< (count text) 4700))
       (let
         [steps (mapv #(str/index-of text %)
-                     ["use `grep` to locate unknown code" "known supported file" "`struct_index`"
-                      "`cat` only the" "needed bodies in ONE call" "`struct_patch`"])]
+                     ["`grep` locates unknown code" "`struct_index` every known file"
+                      "read bodies in ONE call" "`struct_nodes`" "`cat` `ranges`"
+                      "`struct_patch`"])]
         (expect (every? some? steps))
         (expect (apply < steps)))
       (expect (str/includes? text "`grep` FIRST"))
@@ -78,7 +79,7 @@
       (expect (not (str/includes? text "`~/.vis/gateway/events/<id>.ndjson`")))
       (expect (str/includes? text "scoped to real paths"))
       (expect (str/includes? text "only for product questions"))
-      (expect (str/includes? text "locate unknown code first"))
+      (expect (str/includes? text "locates unknown code"))
       (expect (str/includes? text "**Filesystem work goes through native tools**"))
       (expect (str/includes? text "keep `shell` for running programs"))
       (expect (< (str/index-of text "`grep` FIRST") (str/index-of text "`vis_docs()`")))
@@ -87,8 +88,11 @@
                   "## 4. Edit + verify" "## 5. Act autonomously" "## 6. Manage context"
                   "## 7. Style and finish"]]
         (expect (str/includes? text heading)))
-      (doseq [tool ["`struct_node`" "`struct_occurrences`" "`struct_rename`"]]
+      (doseq [tool ["`struct_occurrences`" "`struct_rename`"]]
         (expect (not (str/includes? text tool))))
+      ;; struct_nodes IS named in the core prompt: reading a definition's SOURCE is a
+      ;; first-class step of the code workflow, not a specialist tool.
+      (expect (str/includes? text "`struct_nodes`"))
       (doseq
         [required
          ["Host project default" "`vis_docs()`" "runtime > source > docs > assumption"
@@ -100,8 +104,8 @@
           "raw data, not rendered text" "Use documented keys" "never a `session_fold` receipt"
           "# saved:" "Before re-running or scanning transcript" "recover raw result" "saved id"
           "`ntr.describe()`" "labelled candidates" "not `ntr.keys()`/`items()` to discover results"
-          "shape before indexing" "inspect keys/types" "then adapt" "visible, do not print it"
-          "or call `repl` status merely to read it" "reproduce before editing"
+          "shape before indexing" "inspect keys/types" "then adapt"
+          "do not print it or call `repl` status merely to" "reproduce before editing"
           "rerun the same check after the fix" "reads, `shell`/`git` `commands`" "Batch independent"
           "plural args" "Write only files the task asked" "Python extensions"
           "`run_tests(\"python\")`" "native" "CLI: `vis python -m pytest <paths>`"
@@ -113,18 +117,16 @@
           "paths/symbols, hypothesis, edit/test, and dirty files"
           "decisions, verification, recovery IDs" "exact paths; confirm reduction"
           "Fold only settled steps through the last completed scope"
-          ;; REPL lifecycle: the agent must reuse managed REPLs and STOP the ones
-          ;; it started, or every session leaks a JVM/interpreter child.
-          "Before `repl_eval` or any REPL lifecycle change"
-          "`session[\"resources\"][\"repls\"][language][dir]`" "Reuse managed REPLs across turns"
-          "stop the ones you" "External REPLs are user-owned" "detach them"
-          ;; Anchor staleness: avoid chains on anchors invalidated by an earlier write,
-          ;; without forcing wasteful re-reads of untouched files.
-          "successful write invalidates pre-write anchors for THAT file only"
-          "anchors for other\n  files remain valid"
+          ;; REPL lifecycle: the core keeps only what no tool description owns — that the
+          ;; visible session map IS the read. `repl`'s own description owns the op menu and
+          ;; the stop-what-you-started contract; §7 owns end-of-turn teardown. No third copy.
+          "REPL state in `session` is a read already" "Reuse a live REPL across turns"
+          ;; Anchor MECHANICS (which files a write invalidates) belong to the `patch` and
+          ;; `cat` descriptions — see editing core_test. The core keeps only the ordering rule.
+          "Re-read a file you already wrote before editing it again"
           ;; One batching rule for EVERY tool — reads, shell/git commands and edits.
           "BATCH every tool" "`patch`/`struct_patch` `edits`" "one call, never one per file"
-          "re-read only that file" "use its fresh\n  anchors"
+          "re-read that one target and retry"
           "Lead with the answer. Be terse; depth only when earned."
           ;; End-of-turn teardown: without this the session leaks every REPL and
           ;; background shell the agent spawned.

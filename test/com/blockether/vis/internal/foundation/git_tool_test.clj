@@ -30,26 +30,29 @@
                      (reset! repositories [{:root "/workspace/vis"}])
                      (expect (true? (boolean (activate? {}))))))))
 
-(defdescribe git-native-contract-test
-             (it "documents the direct native call shape and result semantics"
-                 (let [description (:ext.symbol/description gt/git-symbol)]
-                   (expect (str/includes? description "session[\"workspace\"]"))
-                   (expect (str/includes? description "Call with `commands`"))
-                   (expect (str/includes? description "[[\"status\", \"--short\"]]"))
-                   (expect (str/includes? description "omit `git`"))
-                   (expect (str/includes? description "non-zero exits"))
-                   (expect (< (count description) 300))))
-             (it "makes command batches the closed native contract"
-                 (let [schema (:ext.symbol/schema gt/git-symbol)]
-                   (expect (= ["commands"] (:required schema)))
-                   (expect (= ["commands"] (get-in gt/git-symbol [:ext.symbol/call :pos])))
-                   (expect (false? (:additionalProperties schema)))
-                   (expect (= "array" (get-in schema [:properties "commands" :type])))
-                   (expect (= 1 (get-in schema [:properties "commands" :minItems])))
-                   (expect (= "array" (get-in schema [:properties "commands" :items :type])))
-                   (expect (= "string"
-                              (get-in schema [:properties "commands" :items :items :type])))
-                   (expect (str/includes? (:doc (meta #'gt/git)) "await git")))))
+(defdescribe
+  git-native-contract-test
+  (it "documents the direct native call shape and result semantics"
+      (let [description (:ext.symbol/description gt/git-symbol)]
+        (expect (str/includes? description "session[\"workspace\"]"))
+        ;; The argv shape belongs on the `commands` parameter it governs,
+        ;; stated once rather than mirrored into the tool description.
+        (let
+          [commands (get-in gt/git-symbol [:ext.symbol/schema :properties "commands" :description])]
+          (expect (str/includes? commands "[[\"status\", \"--short\"]]"))
+          (expect (str/includes? commands "`git` omitted")))
+        (expect (str/includes? description "non-zero exits"))
+        (expect (< (count description) 300))))
+  (it "makes command batches the closed native contract"
+      (let [schema (:ext.symbol/schema gt/git-symbol)]
+        (expect (= ["commands"] (:required schema)))
+        (expect (= ["commands"] (get-in gt/git-symbol [:ext.symbol/call :pos])))
+        (expect (false? (:additionalProperties schema)))
+        (expect (= "array" (get-in schema [:properties "commands" :type])))
+        (expect (= 1 (get-in schema [:properties "commands" :minItems])))
+        (expect (= "array" (get-in schema [:properties "commands" :items :type])))
+        (expect (= "string" (get-in schema [:properties "commands" :items :items :type])))
+        (expect (str/includes? (:doc (meta #'gt/git)) "await git")))))
 (defdescribe
   git-python-sandbox-test
   (it "await git exposes each serial command's stdout, stderr, and exit as plain Python data"
@@ -182,10 +185,8 @@
           (expect (str/includes? body " M src/core.clj"))
           (expect (str/includes? body "bad revision"))
           ;; One blank row on each side of the divider keeps command cards distinct.
-          (expect (re-find
-                    #"(?s)### 1[.].*?\n\n────────────────────────────────────────\n\n### 2[.]"
-                    body))
-          (expect (= 2 (count (re-seq #"────────────────────────────────────────" body))))
+          (expect (re-find #"(?s)### 1[.].*?\n\n────────────\n\n### 2[.]" body))
+          (expect (= 2 (count (re-seq #"────────────" body))))
           (expect (str/includes? body "warning: renamed")))))))
 
 
