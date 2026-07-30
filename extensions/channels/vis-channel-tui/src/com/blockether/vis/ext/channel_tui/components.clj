@@ -330,7 +330,6 @@
                     :btn
                     (let [kind (nth op 1)]
                       (+ x
-                         #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
                          (long (button! g
                                         x
                                         row

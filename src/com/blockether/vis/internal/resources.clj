@@ -32,7 +32,7 @@
    switches on it; only owners do.
 
    Model ctx stays PURE DATA and groups the flat registry through `model-view`:
-   REPLs live at `session[\"resources\"][\"repls\"][language][dir]`; `dir` is
+   REPLs live at `session[\"resources\"][\"repls\"][language][cwd]`; `cwd` is
    their model-facing identity. It advertises `can_stop`/`can_restart` but never
    carries a callable. Killing goes through `stop!`/`restart!` (by session + id) — the
    single path the agent tool AND the footer both call. `id` IS the binding."
@@ -355,11 +355,11 @@
                    (let
                      [language (str/lower-case (str (or (get resource "language") "unknown")))
                       detail (or (get resource "detail") {})
-                      dir (model-dir root (get detail "dir"))
+                      dir (model-dir root (get detail "cwd"))
                       leaf (-> resource
                                (dissoc "detail")
                                (merge detail)
-                               (assoc "dir" dir))]
+                               (assoc "cwd" dir))]
 
                      (assoc acc :repls (assoc-in repls [language dir] leaf)))
                    (assoc acc :other (assoc-in other [(str kind) (get resource "id")] resource)))))

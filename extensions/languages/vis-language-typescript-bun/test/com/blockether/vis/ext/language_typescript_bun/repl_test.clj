@@ -294,12 +294,12 @@
            (.getCanonicalPath (io/file root "apps" "api"))]
 
           (try ;; app dir: explicit start + eval succeed
-            (core/ts-start-repl-fn (test-env root) "start" {"dir" "apps/api"})
-            (let [r (core/ts-repl-eval-fn (test-env root) {"code" "1+1" "dir" "apps/api"})]
+            (core/ts-start-repl-fn (test-env root) "start" {"cwd" "apps/api"})
+            (let [r (core/ts-repl-eval-fn (test-env root) {"code" "1+1" "cwd" "apps/api"})]
               (expect (= "2" (get-in r [:result "value"]))))
             ;; explicit "." at the root is allowed (deliberate root REPL)
-            (core/ts-start-repl-fn (test-env root) "start" {"dir" "."})
-            (let [r (core/ts-repl-eval-fn (test-env root) {"code" "40+2" "dir" "."})]
+            (core/ts-start-repl-fn (test-env root) "start" {"cwd" "."})
+            (let [r (core/ts-repl-eval-fn (test-env root) {"code" "40+2" "cwd" "."})]
               (expect (= "42" (get-in r [:result "value"]))))
             (finally (repl/stop! api) (repl/stop! (.getCanonicalPath root)) (cleanup root))))))
   (it "a plain (non-workspaces) root is untouched by the guard"

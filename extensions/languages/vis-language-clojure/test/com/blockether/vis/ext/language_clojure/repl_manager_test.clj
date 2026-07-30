@@ -559,7 +559,7 @@
                         {"value" "2"})]
 
                      (core/clj-eval-fn {:workspace/root root :session-id "s"}
-                                       {"code" "(+ 1 1)" "dir" "sub"})
+                                       {"code" "(+ 1 1)" "cwd" "sub"})
                      (expect (= (.getCanonicalPath (io/file root "sub")) @captured)))))
              (it "defaults default-dir to the workspace root when no `dir` is given"
                  (let
@@ -628,7 +628,7 @@
                         {"value" "2"})]
 
                      (core/clj-eval-fn {:workspace/root root :session-id "s"}
-                                       {"code" "(+ 1 1)" "id" "nrepl:/stale" "dir" "sub"})
+                                       {"code" "(+ 1 1)" "id" "nrepl:/stale" "cwd" "sub"})
                      (expect (= [nil (.getCanonicalPath (io/file root "sub"))] @captured))))))
 
 (defdescribe

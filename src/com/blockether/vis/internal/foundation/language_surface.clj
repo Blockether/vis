@@ -321,9 +321,9 @@
           {:type :language-surface/bad-args
            :got args
            :examples ["repl('clojure')"
-                      "repl('clojure', {'op': 'restart', 'dir': 'extensions/foo'})"
+                      "repl('clojure', {'op': 'restart', 'cwd': 'extensions/foo'})"
                       "repl('clojure', 'status')"
-                      "repl('clojure', 'main', 'restart', {'dir': 'extensions/foo'})"]})))))
+                      "repl('clojure', 'main', 'restart', {'cwd': 'extensions/foo'})"]})))))
 
 (defn repl-stop
   "Stop a REPL by session resource id. This is the REPL-specific wrapper around resource_stop(id)."
@@ -928,19 +928,19 @@
 
 (defn repl-eval
   "Evaluate code in an already-running project REPL. ALWAYS pass the language
-   FIRST — repl_eval(language, arg). `arg` may include `id`/`repl_id`, `dir`,
-   and `timeout_ms`; `dir` defaults to the workspace root."
+   FIRST — repl_eval(language, arg). `arg` may include `id`/`repl_id`, `cwd`,
+   and `timeout_ms`; `cwd` defaults to the workspace root."
   [env & args]
   (dispatch! env :repl-eval-fn args))
 
 (defn start-repl
   "Start or restart a language REPL resource. ALWAYS pass the language FIRST —
-   repl(language, {op, dir, id, ...}); `op` defaults to `start`."
+   repl(language, {op, cwd, id, ...}); `op` defaults to `start`."
   [env & args]
   (dispatch-start-repl! env args))
 
 (defn connect-repl
-  "Attach to an EXTERNAL, ALREADY-RUNNING REPL the user started themselves — repl_connect(language, {\"port\": N, \"host\"?, \"dir\"?}). Explicit opt-in: vis registers the address as a session REPL resource (eval/test/ctx target it like a managed one) but NEVER spawns, kills, or reaps the process — stopping it merely detaches."
+  "Attach to an EXTERNAL, ALREADY-RUNNING REPL the user started themselves — repl_connect(language, {\"port\": N, \"host\"?, \"cwd\"?}). Explicit opt-in: vis registers the address as a session REPL resource (eval/test/ctx target it like a managed one) but NEVER spawns, kills, or reaps the process — stopping it merely detaches."
   [env & args]
   (let
     [[language more]
@@ -1040,13 +1040,13 @@
      (str
        "One string-keyed object stamped with `op`; null and mode-inapplicable fields may be "
        "omitted. Possible fields are `mode`, `language`, `framework`, `runner`, `tool`, `command`, "
-       "`dir`, `ns`, `port`, `exit`, `ms`, `is_pass`, `total`, `pass`, `fail`, `selected`, "
+       "`cwd`, `ns`, `port`, `exit`, `ms`, `is_pass`, `total`, `pass`, `fail`, `selected`, "
        "`skipped`, `failures`, `errors`, `by-dir`, `output`, `note`, `hint`, `error`, `timed_out`, "
        "`repl_unusable`, `repl_wedged`, and `recovered`.")
      :description
      (str
        "Run project tests through the active language pack. Prefer the smallest target that proves the "
-       "change; use the full suite only when its broader coverage is relevant. Selection: `dir` picks the "
+       "change; use the full suite only when its broader coverage is relevant. Selection: `cwd` picks the "
        "project, `namespaces` (or `paths`, used only when `namespaces` is absent) picks what loads, and "
        "`only`/`filter`/`include`/`exclude` narrow inside that.")
      :call {:lead-opt "language" :rest :always}
@@ -1079,10 +1079,10 @@
        {:type "array" :items {:type "string"} :description "Only run tests carrying these tags."}
        "exclude"
        {:type "array" :items {:type "string"} :description "Skip tests carrying these tags."}
-       "dir"
+       "cwd"
        {:type "string"
         :description
-        "Directory to run the test command in (e.g. a monorepo app dir). Defaults to the workspace root."}
+        "Directory to run the test command in (e.g. a monorepo app directory). Defaults to the workspace root."}
        "filter" {:type "string"
                  :description "Test-name filter, for packs that support it (e.g. `bun test -t`)."}}
       :required ["language"]
@@ -1123,10 +1123,10 @@
        "id" {:type "string"
              :minLength 1
              :description "Target a specific registered REPL resource by id."}
-       "dir"
+       "cwd"
        {:type "string"
         :description
-        "Directory of the already-running REPL (e.g. \"apps/api\"); selects that dir's project config. Defaults to the workspace root."}
+        "Directory of the already-running REPL (e.g. \"apps/api\"); selects that directory's project config. Defaults to the workspace root."}
        "timeout_ms"
        {:type "integer" :minimum 1 :description "Eval timeout in milliseconds (default 30000)."}}
       :required ["language" "code"]
@@ -1142,16 +1142,16 @@
      :result
      (str
        "Pack-defined string-keyed lifecycle object stamped with `op` for the requested directory, "
-       "never a `{resources: [...]}` list. Clojure status includes `result`, `id`, `dir`, and "
-       "`status`; Python/Bun status includes `dir` and `status`. Start/restart/connect may add "
+       "never a `{resources: [...]}` list. Clojure status includes `result`, `id`, `cwd`, and "
+       "`status`; Python/Bun status includes `cwd` and `status`. Start/restart/connect may add "
        "`running`, `port`, `pid`, `cmd`, `tool`, `aliases`, `external`, `host`, `log`, or `message`; "
        "stop by resource id returns `{result,id,message}`.")
      :description
      (str
-       "THE one REPL lifecycle tool. Read `session[\"resources\"][\"repls\"][language][dir]` "
+       "THE one REPL lifecycle tool. Read `session[\"resources\"][\"repls\"][language][cwd]` "
        "(`.` is root) FIRST, then pick `op`: already `up` → reuse it, no call needed (`starting` → "
        "recheck); \"start\" for absent/down/failed; \"restart\" for unresponsive; \"stop\" ends a "
-       "managed REPL you started (by `id`, else `dir`'s); \"connect\" attaches an EXTERNAL running "
+       "managed REPL you started (by `id`, else `cwd`'s); \"connect\" attaches an EXTERNAL running "
        "REPL by `port` — never owned or killed, so stopping it only detaches; \"status\" reports "
        "that directory's lifecycle state.")
      :call {:lead-opt "language" :rest :always}
@@ -1168,10 +1168,10 @@
                "id" {:type "string"
                      :minLength 1
                      :description "Lifecycle resource id (stop: the exact REPL to stop)."}
-               "dir" {:type "string"
+               "cwd" {:type "string"
                       :minLength 1
                       :description
-                      "Directory the REPL serves (connect: the dir the attachment is keyed by)."}
+                      "Directory the REPL serves (connect: the directory the attachment is keyed by)."}
                "port" {:type "integer"
                        :description "connect only: port of the already-running external REPL."}
                "host" {:type "string" :description "connect only: its host (default localhost)."}
@@ -1205,10 +1205,10 @@
                :maximum 65535
                :description "Port of the ALREADY-RUNNING external REPL to attach to."}
        "host" {:type "string" :description "Its host (default localhost)."}
-       "dir"
+       "cwd"
        {:type "string"
         :description
-        "Project dir this REPL serves (default the workspace root) — the attachment is keyed and addressed by it."}}
+        "Project directory this REPL serves (default the workspace root) — the attachment is keyed and addressed by it."}}
       :required ["language" "port"]
       :additionalProperties false}
      :before-fn inject-env

@@ -1517,7 +1517,7 @@ class __VisNativeResults__:
                 return type(__vis_v__).__name__
             __vis_bits__ = []
             __vis_op__ = __vis_v__.get('op')
-            for __vis_k__ in ('path', 'query', 'cmd', 'name', 'target', 'code', 'dir', 'language'):
+            for __vis_k__ in ('path', 'query', 'cmd', 'name', 'target', 'code', 'cwd', 'language'):
                 __vis_x__ = __vis_v__.get(__vis_k__)
                 if isinstance(__vis_x__, str) and __vis_x__.strip():
                     __vis_s__ = ' '.join(__vis_x__.split())

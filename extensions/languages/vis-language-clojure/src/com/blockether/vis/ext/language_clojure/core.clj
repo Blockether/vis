@@ -75,7 +75,7 @@
 
 (defn- expand-home
   "Expand a leading `~` / `~/…` to the user's home dir (`user.home`), so a REPL
-   `dir` written the way a human types it resolves to a real absolute path
+   `cwd` written the way a human types it resolves to a real absolute path
    instead of a bogus `~` segment under the workspace root. `~user` (another
    user's home) is NOT resolved — it passes through untouched."
   ^String [^String d]
@@ -112,7 +112,7 @@
         :else [(name a)]))
 
 (defn- repl-resource-id
-  "Stable session-resource id for the REPL rooted at `dir` — the SAME id
+  "Stable session-resource id for the REPL rooted at `cwd` — the SAME id
    `repl-manager/id-of` stamps, so ctx, eval targeting, and the footer all agree
    on one name per dir. Addressing a REPL is always by this id."
   [dir]
@@ -166,7 +166,7 @@
          ;; `:detail` is passed THROUGH verbatim by resources.clj/->data (it only
          ;; stringifies its own keys + the kind/status/owner/language enums), so it
          ;; must already be STRING-keyed to survive the strings-only boundary.
-         :detail (cond-> {"dir" dir}
+         :detail (cond-> {"cwd" dir}
                    (get result "port")
                    (assoc "port" (get result "port"))
 
@@ -230,7 +230,7 @@
 
 (defn repl-start-fn
   "Manage THIS session's workspace nREPL(s). Positional op (default \"status\") +
-   optional opts dict `{\"dir\": <path>, \"aliases\": [\"dev\", \"test\"]}`:
+   optional opts dict `{\"cwd\": <path>, \"aliases\": [\"dev\", \"test\"]}`:
 
      \"status\"  — managed-process view for this session (always allowed)
      \"start\"   — start a project nREPL subprocess (always allowed)
@@ -239,7 +239,7 @@
      \"connect\" — attach to an EXTERNAL user-started nREPL: opts {\"port\": N,
                  \"host\"?: S (default localhost)}; vis never spawns/kills it
 
-   \"dir\" runs the REPL in a subdir (e.g. an extension) instead of the workspace
+   \"cwd\" runs the REPL in a subdir (e.g. an extension) instead of the workspace
    root — that's how MULTIPLE REPLs coexist, each addressed by its id. \"aliases\"
    default to [:dev :test] (full deps/paths, user :main-opts dropped). Live nREPL
    state already rides in ctx under `:session/env :languages :clojure :nrepl`;
@@ -264,7 +264,7 @@
       (when (map? opts) opts)
 
       dir
-      (resolve-repl-dir root (get opts "dir"))
+      (resolve-repl-dir root (get opts "cwd"))
 
       aliases
       (coerce-aliases (get opts "aliases"))]
@@ -283,7 +283,7 @@
 
          (when-not port
            (throw (ex-info (str "repl \"connect\" needs {\"port\": <the external nREPL's port>}"
-                                " (optional \"host\", \"dir\") — e.g."
+                                " (optional \"host\", \"cwd\") — e.g."
                                 " repl(\"clojure\", \"connect\", {\"port\": 7888})")
                            {:type :clj/bad-args :got opts})))
          (let
@@ -304,7 +304,7 @@
 
        ("start" "restart")
        (do (when-not (.isDirectory (io/file dir))
-             (throw (ex-info (str "repl \"" op "\" target dir does not exist: " dir)
+             (throw (ex-info (str "repl \"" op "\" target cwd does not exist: " dir)
                              {:type :clj/bad-args :dir dir})))
            (let
              [result (if (= op "restart")
@@ -323,7 +323,7 @@
             :got op
             :examples
             ["repl(\"clojure\")" "repl(\"clojure\", \"status\")" "repl(\"clojure\", \"start\")"
-             "repl(\"clojure\", \"start\", {\"dir\": \"extensions/languages/vis-language-clojure\", \"aliases\": [\"dev\", \"test\"]})"
+             "repl(\"clojure\", \"start\", {\"cwd\": \"extensions/languages/vis-language-clojure\", \"aliases\": [\"dev\", \"test\"]})"
              "repl(\"clojure\", \"stop\")" "repl(\"clojure\", \"restart\")"]}))))))
 
 
@@ -389,9 +389,9 @@
   "Evaluate Clojure over a RUNNING nREPL in this session. Target resolution:
      - explicit `port` → dial it directly (escape hatch);
      - `id`/`repl_id`  → the REPL registered under that id in THIS session;
-     - `dir`           → the REPL rooted at that dir (when the session owns one);
+     - `cwd`           → the REPL rooted at that directory (when the session owns one);
      - no id, 1 REPL   → use it (the implicit default);
-     - no id, >1 REPLs → the REPL owning `dir` (default: the workspace root) when
+     - no id, >1 REPLs → the REPL owning `cwd` (default: the workspace root) when
                          present, else the first (dir-sorted);
      - no id, 0 REPLs  → error (:clj/no-repl): no running nREPL to hit.
    A connect failure surfaces as DATA so the model can repl / wait."
@@ -422,7 +422,7 @@
       (:session-id env)
 
       requested-dir?
-      (contains? m "dir")
+      (contains? m "cwd")
 
       requested-rid
       (some-> (or (get m "id") (get m "repl_id"))
@@ -432,14 +432,14 @@
 
       rid
       ;; A model may carry a stale/previous ctx resource id while also passing
-      ;; an explicit `dir`. If that id is not live in THIS session, let `dir`
+      ;; an explicit `cwd`. If that id is not live in THIS session, let `cwd`
       ;; drive the default resolution instead of failing on the unknown id.
       ;; With no explicit dir, keep the strict id contract and surface the error.
       (when-not (and requested-dir? requested-rid (not (repl-manager/repl-by-id sid requested-rid)))
         requested-rid)
 
       default-dir
-      (resolve-repl-dir root (get m "dir"))
+      (resolve-repl-dir root (get m "cwd"))
 
       run
       (fn [h p repl-label]
@@ -653,21 +653,34 @@
 (defn- clj-format-one-file!
   "Format a single file at `path` IN PLACE (paren-repair + cljfmt), writing
    back ONLY when the content changes. Returns a per-file result map with the
-   workspace-relative path."
+   workspace-relative path.
+
+   Runs parinfer ONCE and reuses that result both as the formatter's input and
+   as the `\"repaired\"` flag — the old shape called `fix-delimiters` a second
+   time purely to answer the flag."
   [env path]
   (let
     [code
      (slurp (str path))
 
+     for-path
+     (or path (:workspace/root env))
+
+     fixed
+     (repair/fix-delimiters code)
+
+     repaired?
+     (and (string? fixed) (not= fixed code))
+
      out
-     (clj-repair+format code (or path (:workspace/root env)))]
+     (fmt/format-source (if (string? fixed) fixed code) for-path)]
 
     (when (not= out code) (spit (str path) out))
     {"path" (relativize-path (io/file (or (:workspace/root env) ".")) path)
      "changed" (not= out code)
-     "repaired" (not= (or (repair/fix-delimiters code) code) code)
+     "repaired" repaired?
      "wrote" (not= out code)
-     "formatter" (name (fmt/formatter-for (or path (:workspace/root env))))}))
+     "formatter" (name (fmt/formatter-for for-path))}))
 
 (defn- group-format-by-dir
   "Nest the per-file format results under their DIRECTORY so each directory
@@ -761,8 +774,14 @@
                             "format(\"clojure\", {\"paths\": [\"src\" \"test\"]})"
                             "format(\"clojure\", {})"]})))
 
+          for-path
+          (or path (:workspace/root env))
+
+          fixed
+          (repair/fix-delimiters code)
+
           out
-          (clj-repair+format code (or path (:workspace/root env)))]
+          (fmt/format-source (if (string? fixed) fixed code) for-path)]
 
          (when (and path (not= out code)) (spit (str path) out))
          (extension/success
@@ -772,8 +791,8 @@
                         {"op" "clj-format"
                          "changed" (not= out code)
                          "chars" (- (count out) (count code))
-                         "repaired" (not= (or (repair/fix-delimiters code) code) code)
-                         "formatter" (name (fmt/formatter-for (or path (:workspace/root env))))}
+                         "repaired" (and (string? fixed) (not= fixed code))
+                         "formatter" (name (fmt/formatter-for for-path))}
                         path
                         (assoc "path"
                           (relativize-path (io/file (or (:workspace/root env) ".")) path) "wrote"

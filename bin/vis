@@ -244,7 +244,7 @@ vis_install_dir="$vis_home/install"
 vis_repo_slug="Blockether/vis"
 
 vis_platform_asset() {
-  # Release asset basename for THIS host (no -with-assets suffix).
+  # Release asset basename for THIS host (the model ships separately).
   local os arch
   case "$(uname -s)" in
     Darwin) os=macos ;;

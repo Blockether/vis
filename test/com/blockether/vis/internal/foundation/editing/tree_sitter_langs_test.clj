@@ -10,6 +10,7 @@
    Plus targeted CONTENT edits and SYNTAX-REFUSAL across paradigms."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.editing.index :as ix]
+            [com.blockether.vis.internal.foundation.editing.structural :as st]
             [com.blockether.vis.internal.foundation.editing.zipper :as z]
             [lazytest.core :refer [defdescribe it expect]]))
 
@@ -455,3 +456,296 @@
                        (expect (some (fn [r]
                                        (and (= nested ((juxt :name :kind) r)) (pos? (:depth r))))
                                      rows)))))))
+
+;; ── E. SPAN END: an exclusive end position must not swallow the next node ──
+;; Several grammars let a definition node run to column 0 of the FOLLOWING line
+;; (Groovy `command`) and even past the blank rows before the next sibling.
+;; A line-based splice that trusts that end deletes whatever starts there.
+(def ^:private groovy-span-src
+  (str "class Greeter {\n"
+       "    String hi(String n) { \"hi $n\" }\n" "}\n"
+       "\n" "interface I { int m() }\n"
+       "\n" "enum E { A, B }\n"
+       "\n" "def add(a, b) { a + b }\n"))
+
+(defdescribe span-end-test
+             (it "a span ending at column 0 stops on its last content line"
+                 ;; 0-based: `interface I { int m() }` is row 4 and nothing else
+                 (expect (= [4 4] (ix/node-span groovy-span-src "groovy" "I" nil))))
+             (it "a kind-targeted replace keeps the definitions that follow"
+                 (let
+                   [out (st/edit-source
+                          "a.groovy"
+                          groovy-span-src
+                          {:op :replace :target "I" :code "interface I { int m(); long n() }"})]
+                   (expect (str/includes? out "long n()"))
+                   (expect (str/includes? out "enum E { A, B }"))
+                   (expect (str/includes? out "def add(a, b)"))
+                   (expect (str/includes? out "class Greeter {")))))
+
+;; ---------------------------------------------------------------------------
+;; SPAN TORTURE — the property behind the `endLineOf` fix, checked over layouts
+;; designed to break it: blank rows before a closing delimiter, several blank
+;; rows between definitions, no blank rows at all, nested definitions, heredocs
+;; and template literals holding blank lines, unicode, CRLF, a leading gap and a
+;; trailing gap.
+;; ---------------------------------------------------------------------------
+
+(def ^:private span-torture-bank
+  {"a.groovy"
+   "class Alpha {\n  void a() {}\n\n}\n\n\n\ninterface Beta {\n  int m()\n}\n\n\n\nenum Delta { A, B }\n"
+   "A.java" "class Alpha {\n\n  int m() {\n    return 1;\n  }\n\n}\n\nclass Beta {\n}\n"
+   "a.py"
+   "class Alpha:\n    def a(self):\n        pass\n\n    def b(self):\n        pass\n\n\n\nclass Beta:\n    pass\n"
+   "u.py"
+   "def αlpha():\n    s = \"🚀中文\"\n    return s\n\n\ndef beta():\n    return \"café naïve\"\n"
+   "a.rs" "pub mod outer {\n    pub fn inner() {\n    }\n\n}\n\npub fn beta() {}\n"
+   "a.ex"
+   "defmodule Alpha do\n  defmacro mac(x) do\n    quote do: unquote(x)\n  end\n\nend\n\ndefmodule Beta do\n  def run, do: :ok\nend\n"
+   "a.tf"
+   "resource \"aws_s3_bucket\" \"alpha\" {\n  bucket = \"x\"\n\n}\n\n\n\nvariable \"beta\" {\n  type = string\n}\n"
+   "a.graphql" "type Alpha {\n  n: Int\n\n}\n\n\ntype Beta {\n  m: Int\n}\n"
+   "a.ts"
+   "export function alpha() {\n  const s = `a\n\nb`;\n  return s;\n}\n\nexport class Beta {\n\n  m() {}\n\n}\n"
+   "a.js" "function alpha() {}\nfunction beta() {}\nclass Delta { m() {} }\n"
+   "a.rb" "def alpha\n  <<~TXT\n    a\n\n    b\n  TXT\nend\n\ndef beta\n  2\nend\n"
+   "a.hcl"
+   "job \"alpha\" {\n  group \"g\" {\n    count = 1\n\n  }\n\n}\n\nservice \"beta\" {\n  port = 80\n}\n"
+   "a.yaml" "alpha:\n  n: 1\n\n\nbeta:\n  m: |\n    text\n\n    more\n\ndelta:\n  k: 3\n"})
+
+(defn- torture-variants
+  "The same source under layouts that stress trailing-blank-row handling."
+  [src]
+  {:plain src
+   :trailing-blanks (str src "\n\n\n")
+   :leading-blanks (str "\n\n" src)
+   :wide-gaps (str/replace src "\n\n" "\n\n\n\n")
+   :crlf (str/replace src "\n" "\r\n")})
+
+(defn- torture-rows
+  "Definitions with their 1-based start/end lines lifted out of the anchors."
+  [path src]
+  (let
+    [line #(some-> %
+                   (str/split #":")
+                   first
+                   parse-long)]
+    (mapv #(assoc %
+             :start (line (:anchor %))
+             :end (line (:end-anchor %)))
+          (ix/definitions src (ix/detect-language path)))))
+
+(defn- own-text
+  "A row's own source, never reaching into the next same-or-shallower row."
+  [lines rows i]
+  (let
+    [row
+     (nth rows i)
+
+     cap
+     (or (some (fn [r]
+                 (when (<= (:depth r) (:depth row)) (dec (:start r))))
+               (subvec rows (inc i)))
+         (:end row))]
+
+    (str/join
+      "\n"
+      (subvec lines (dec (:start row)) (max (:start row) (min (count lines) (:end row) cap))))))
+
+(defn- span-findings
+  "Every way this file's spans could be wrong: a span that runs past EOF, ends on
+   a blank row, inverts, overlaps its next sibling or escapes its parent — and,
+   the end-to-end property, a replace of a definition with its OWN text that is
+   not byte-identical (an overshooting end splices the NEXT definition away)."
+  [path src]
+  (let
+    [lines
+     (vec (str/split src #"\n" -1))
+
+     n
+     (count lines)
+
+     rows
+     (torture-rows path src)
+
+     out
+     (atom [])
+
+     bad!
+     (fn [& xs]
+       (swap! out conj (str/join " " (cons path (map str xs)))))]
+
+    (doseq [row rows]
+      (let [{:keys [name kind start end]} row]
+        (if-not (and start end)
+          (bad! "missing span" name)
+          (do (when (> start end) (bad! "start>end" name start end))
+              (when (> end n) (bad! "end past EOF" name end n))
+              (when (and (<= end n) (str/blank? (nth lines (dec end) "x")))
+                (bad! "end line blank" name start end))
+              (when (= "other" (str kind)) (bad! "bare other kind" name))))))
+    (doseq [[a b] (partition 2 1 rows)]
+      (if (> (:depth b) (:depth a))
+        (when-not (and (>= (:start b) (:start a)) (<= (:end b) (:end a)))
+          (bad! "child escapes parent" (:name a) (:name b)))
+        (when (>= (:end a) (:start b))
+          (bad! "sibling overlap"
+                (:name a)
+                [(:start a) (:end a)]
+                (:name b)
+                [(:start b) (:end b)]))))
+    (let
+      [unique (set (for
+                     [[k v] (frequencies (map :name rows))
+                      :when (and (= 1 v) (string? k) (seq k) (str/includes? src k))]
+
+                     k))]
+      (doseq
+        [i (range (count rows))
+         :let [row (nth rows i)]
+         :when (unique (:name row))]
+
+        (let
+          [res (try (st/edit-source path
+                                    src
+                                    {:op :replace
+                                     :target (:name row)
+                                     :kind (:kind row)
+                                     :code (own-text lines rows i)})
+                    (catch Exception e (.getMessage e)))]
+          (when-not (= res src)
+            (bad! "replacing" (:name row)
+                  "with its own text is not identity —" (first (str/split-lines (str res))))))))
+    @out))
+
+(defdescribe span-torture-test
+             (it "spans stay inside their own definition across nasty layouts"
+                 (let
+                   [findings (for
+                               [[path src] span-torture-bank
+                                [_ variant] (torture-variants src)
+                                :when (nil? (z/describe-syntax-errors (ix/detect-language path)
+                                                                      variant))
+                                f (span-findings path variant)]
+
+                               f)]
+                   (expect (= [] (vec findings)))))
+             (it "the identity property really catches a wrong span end"
+                 ;; Guard the guard: an end four rows too long swallows `interface Beta`,
+                 ;; and such an edit must be refused rather than silently applied.
+                 (let
+                   [src
+                    (get span-torture-bank "a.groovy")
+
+                    lines
+                    (vec (str/split src #"\n" -1))
+
+                    overshoot
+                    (str/join "\n" (subvec lines 0 8))]
+
+                   (expect (= :refused
+                              (try (st/edit-source
+                                     "a.groovy"
+                                     src
+                                     {:op :replace :target "Alpha" :kind "class" :code overshoot})
+                                   (catch Exception _ :refused)))))))
+
+;; ---------------------------------------------------------------------------
+;; LINE-ENDING FIDELITY. A structural edit is line surgery: it must return the
+;; file's own terminator (and its own CR) untouched. Two real regressions this
+;; guards: `StructuralApi.splice` trimmed the trailing "" element that IS the
+;; final newline (INSERT_AFTER on the LAST definition stripped it in every
+;; language, and Groovy — whose grammar demands a terminating newline — had the
+;; edit REFUSED outright), and vis' own `move-source` rebuilt the file with
+;; `str/split-lines`, which drops both the final newline and every CR.
+;; ---------------------------------------------------------------------------
+(def ^:private newline-bank
+  {"a.py" "def alpha(x):\n    return x + 1\n\n\ndef beta():\n    return 2\n"
+   "a.groovy"
+   "class Alpha {\n    String hi(String n) { \"hi $n\" }\n}\n\ndef beta(a, b) { a + b }\n"
+   "a.rs" "fn alpha() -> i32 { 1 }\n\nfn beta() -> i32 { 2 }\n"
+   "a.rb" "def alpha\n  1\nend\n\ndef beta\n  2\nend\n"
+   "a.go" "package main\n\nfunc alpha() int { return 1 }\n\nfunc beta() int { return 2 }\n"
+   "a.java"
+   "class Alpha {\n    int a() { return 1; }\n}\n\nclass Beta {\n    int b() { return 2; }\n}\n"
+   "a.clj" "(defn alpha [] 1)\n\n(defn beta [] 2)\n"
+   "a.ts"
+   "export function alpha(): number { return 1; }\n\nexport function beta(): number { return 2; }\n"
+   "a.lua" "function alpha() return 1 end\n\nfunction beta() return 2 end\n"})
+
+(def ^:private newline-insert
+  "A syntactically harmless line to splice in, per language."
+  {"a.py" "# tail"
+   "a.groovy" "// tail"
+   "a.rs" "// tail"
+   "a.rb" "# tail"
+   "a.go" "// tail"
+   "a.java" "// tail"
+   "a.clj" ";; tail"
+   "a.ts" "// tail"
+   "a.lua" "-- tail"})
+
+(defn- top-names
+  "Top-level definition names of `src`, in source order."
+  [path src]
+  (->> (ix/definitions path src)
+       (remove :parent)
+       (keep :name)
+       vec))
+
+(defn- lone-lf?
+  "True when `s` contains a bare LF that is not part of a CRLF pair."
+  [^String s]
+  (boolean (re-find #"(?<!\r)\n" s)))
+
+(defdescribe
+  newline-fidelity-test
+  (it "insert_after the last definition keeps the file's final newline"
+      (let
+        [findings (for
+                    [[path src] (sort newline-bank)
+                     :let [names (top-names path src)
+                           last-name (last names)
+                           res (try (st/edit-source path
+                                                    src
+                                                    {:op :insert-after
+                                                     :target last-name
+                                                     :code (get newline-insert path)})
+                                    (catch Exception e (.getMessage e)))]
+                     :when (or (not (string? res))
+                               (not (str/ends-with? res "\n"))
+                               (not (str/includes? res (str (first names)))))]
+
+                    [path last-name (str res)])]
+        (expect (= [] (vec findings)))))
+  (it "moving a definition keeps the final newline and every other definition"
+      (let
+        [findings (for
+                    [[path src] (sort newline-bank)
+                     :let [names (top-names path src)
+                           res (try (st/edit-source
+                                      path
+                                      src
+                                      {:op :move-before :target (last names) :anchor (first names)})
+                                    (catch Exception e (.getMessage e)))]
+                     :when (or (not (string? res))
+                               (not (str/ends-with? res "\n"))
+                               (not (every? #(str/includes? res %) names)))]
+
+                    [path names (str res)])]
+        (expect (= [] (vec findings)))))
+  (it "a CRLF file stays CRLF through insert and move"
+      (let
+        [findings
+         (for
+           [[path src] (sort newline-bank)
+            :let [crlf (str/replace src "\n" "\r\n")
+                  names (top-names path crlf)]
+            [op m] [[:insert-after
+                     {:op :insert-after :target (last names) :code (get newline-insert path)}]
+                    [:move-before {:op :move-before :target (last names) :anchor (first names)}]]
+            :let [res (try (st/edit-source path crlf m) (catch Exception e (.getMessage e)))]
+            :when (or (not (string? res)) (not (str/ends-with? res "\r\n")) (lone-lf? res))]
+
+           [path op (pr-str res)])]
+        (expect (= [] (vec findings))))))

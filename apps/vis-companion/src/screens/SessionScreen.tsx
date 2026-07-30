@@ -788,6 +788,32 @@ function ShareLink({ className }: { className: string }) {
   );
 }
 
+/**
+ * The live bubble to paint on the FIRST frame of a session, from memory.
+ *
+ * Re-entering a streaming session used to start with `liveTurn = null`: the
+ * screen painted the previous turn's ending, and the in-flight answer only
+ * reappeared once the hub replayed its buffer or `adoptRunningTurn` finished a
+ * round trip. The bubble is cached on every delta (see the effect that calls
+ * `rememberLiveTurn`), so re-entry can start exactly where it left off and take
+ * only NEW frames on top.
+ *
+ * Two guards, because a wrong seed renders an answer twice: the remembered turn
+ * must still be `running`, and the hub must not have seen a terminal frame for
+ * this session while the screen was away (that answer is already a settled
+ * transcript row).
+ */
+function seedLiveTurn(
+  client: GatewayClient,
+  subscriptions: SessionSubscriptionHub,
+  sid: string,
+): { turn: LiveTurn; seq: number } | null {
+  const cached = client.cachedLiveTurn<LiveTurn>(sid);
+  if (!cached || cached.turn.status !== 'running') return null;
+  if (subscriptions.hasEndedTurn(sid)) return null;
+  return cached;
+}
+
 export function SessionScreen({
   client,
   subscriptions,
@@ -854,8 +880,10 @@ export function SessionScreen({
   // The veil outlives `loading` by one transition so it can dissolve.
   const [veiled, setVeiled] = useState(!fresh);
   const [connected, setConnected] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [liveTurn, setLiveTurn] = useState<LiveTurn | null>(null);
+  // The bubble this screen re-enters with, resolved ONCE at mount.
+  const [liveSeed] = useState(() => seedLiveTurn(client, subscriptions, sid));
+  const [running, setRunning] = useState(liveSeed !== null);
+  const [liveTurn, setLiveTurn] = useState<LiveTurn | null>(liveSeed?.turn ?? null);
   const [queued, setQueued] = useState<QueuedTurn[]>(() => client.cachedQueuedTurns(sid) ?? []);
   // Turn ids with a queue mutation in flight. The gateway is the ONE writer of the
   // queue tray (rows appear on `turn.queued` and leave on `.updated`/`.deleted`/
@@ -1007,7 +1035,16 @@ export function SessionScreen({
   // to survive until that data arrives.
   const resumePinRef = useRef(false);
   const showJumpRef = useRef(false);
-  const liveTurnRef = useRef<LiveTurn | null>(null);
+  const liveTurnRef = useRef<LiveTurn | null>(liveSeed?.turn ?? null);
+  // Journal cursor of the newest event already folded into the live bubble. The
+  // hub replays a still-streaming turn from its `turn.started` on every
+  // (re)subscribe; when the bubble was seeded from cache those frames are
+  // ALREADY in it, and re-applying them would reset it to empty and re-append
+  // the same prose. Anything at or below this seq is dropped.
+  const lastLiveSeqRef = useRef(liveSeed?.seq ?? -1);
+  // The sid whose bubble the cache effect last wrote, so a session switch never
+  // stores the outgoing bubble under the incoming id.
+  const liveSidRef = useRef(sid);
   // turn id -> the image bytes this device sent with it. A queued message drains
   // into a live turn minutes later, and the SSE rail never replays attachments,
   // so the sender keeps them until the persisted transcript row takes over.
@@ -1094,7 +1131,18 @@ export function SessionScreen({
   // Ids of every transcript row that existed BEFORE the current live turn — the
   // baseline `liveTurnSettledInto` measures "a new settled row landed" against.
   // Frozen for as long as a live bubble is on screen (see the mirror effect).
-  const preLiveTurnIdsRef = useRef<Set<string>>(new Set());
+  //
+  // Seeded here rather than left empty: when the screen re-enters a streaming
+  // session the bubble exists on the very first render, so the mirror effect
+  // never gets a chance to take the baseline and every cached row would count as
+  // "landed after this turn started".
+  const [preLiveTurnIdsSeed] = useState(
+    () =>
+      new Set(
+        (client.cachedTranscript(sid) ?? []).filter((turn) => !isRunningRow(turn)).map(rowId),
+      ),
+  );
+  const preLiveTurnIdsRef = useRef<Set<string>>(preLiveTurnIdsSeed);
   const cancelRef = useRef<() => void>(() => undefined);
   // Keep the loading overlay up until a freshly opened session has been
   // scrolled to its bottom, so persisted history never flashes at the top first.
@@ -1122,6 +1170,20 @@ export function SessionScreen({
     cancelRef.current = () => void cancel();
   });
 
+  // Remember the live bubble so LEAVING and RE-ENTERING this session repaints it
+  // instantly instead of showing the previous turn's ending until a replay or a
+  // refetch lands. Memory only (see `rememberLiveTurn`), keyed with the journal
+  // cursor already folded in so the replay that follows resubscription can be
+  // dropped rather than applied twice.
+  //
+  // The guard matters on a session switch: this effect runs with the NEW sid
+  // while `liveTurn` still holds the OUTGOING session's bubble — the reset effect
+  // below is what re-points both, and it sets `liveSidRef` when it does.
+  useEffect(() => {
+    if (liveSidRef.current !== sid) return;
+    client.rememberLiveTurn(sid, liveTurn, lastLiveSeqRef.current);
+  }, [client, sid, liveTurn]);
+
   // Switching session identity resets this screen's whole view state. React's
   // alternative is remounting via `key`, which would also tear down the live SSE
   // subscription mid-stream, so the reset stays explicit here.
@@ -1133,12 +1195,22 @@ export function SessionScreen({
     setTurnsFresh(false);
     setEarlierRemaining(client.transcriptWindow(sid).offset);
     setLoadingEarlier(false);
-    setLiveTurn(null);
+    // Re-entering a session that is STILL streaming keeps its bubble: dropping it
+    // here is what made the reader land on the previous turn's ending and wait for
+    // a replay before the in-flight answer came back.
+    const seed = seedLiveTurn(client, subscriptions, sid);
+    setLiveTurn(seed?.turn ?? null);
+    setRunning(seed !== null);
     sentAttachmentsRef.current.clear();
     setQueued(client.cachedQueuedTurns(sid) ?? []);
     setQueueBusy(new Set());
     setQueuePaused(null);
-    liveTurnRef.current = null;
+    liveTurnRef.current = seed?.turn ?? null;
+    lastLiveSeqRef.current = seed?.seq ?? -1;
+    liveSidRef.current = sid;
+    preLiveTurnIdsRef.current = new Set(
+      (client.cachedTranscript(sid) ?? []).filter((turn) => !isRunningRow(turn)).map(rowId),
+    );
     setSession(client.cachedSession(sid));
     setAttachments([]);
     setPastes(new Map());
@@ -1993,10 +2065,25 @@ export function SessionScreen({
     // Match the TUI's 150 ms live-body throttle. One reducer pass and one React
     // state update replace hundreds of token-level updates during fast streams.
     const eventQueue: SseEvent[] = [];
+    // Highest seq ENQUEUED, which runs ahead of the highest seq APPLIED for as
+    // long as a flush is pending. Dedup has to key off this one (an event sitting
+    // in the queue must not be taken again on a resubscribe replay), while the
+    // cache cursor may only ever advance with content that is actually folded in.
+    let enqueuedSeq = lastLiveSeqRef.current;
     let timerId: number | null = null;
     const flushEvents = () => {
       timerId = null;
-      const batch = coalesceLiveEvents(eventQueue.splice(0));
+      const drained = eventQueue.splice(0);
+      // Advance the cached cursor HERE, not on arrival: unmounting drops the
+      // pending queue, and a cursor that had already counted those frames would
+      // make the next visit filter them out of a bubble that never got them —
+      // a hole in the answer that only the terminal frame could fill.
+      for (const event of drained) {
+        if (typeof event.seq === 'number' && event.seq > lastLiveSeqRef.current) {
+          lastLiveSeqRef.current = event.seq;
+        }
+      }
+      const batch = coalesceLiveEvents(drained);
       if (!batch.length) return;
 
       // Queue-mirror + pause control frames (channel-agnostic, same events the
@@ -2150,9 +2237,26 @@ export function SessionScreen({
       sid,
       (event) => {
         lastEventAt = Date.now();
+        // The hub replays a still-streaming turn from its `turn.started` on every
+        // (re)subscribe. When the bubble was seeded from the in-memory cache those
+        // frames are already folded in, and re-applying them would blank the
+        // bubble (`turn.started` resets it) and re-append the same prose. `seq` is
+        // the gateway's per-session journal cursor and is monotonic across stored
+        // AND live-only frames, so anything at or below what we hold is a repeat.
+        if (lastLiveSeqRef.current > enqueuedSeq) enqueuedSeq = lastLiveSeqRef.current;
+        if (typeof event.seq === 'number') {
+          if (event.seq <= enqueuedSeq) return;
+          enqueuedSeq = event.seq;
+        }
         eventQueue.push(event);
         if (timerId !== null) return;
-        const delay = TERMINAL_EVENTS.has(event.type) ? 0 : LIVE_BODY_THROTTLE_MS;
+        // `turn.started` also flushes immediately: on re-entry it is the frame
+        // that replaces a cached bubble whose turn has since been superseded, and
+        // holding it for a throttle window paints the previous answer twice.
+        const delay =
+          TERMINAL_EVENTS.has(event.type) || event.type === 'turn.started'
+            ? 0
+            : LIVE_BODY_THROTTLE_MS;
         timerId = window.setTimeout(flushEvents, delay);
       },
     );

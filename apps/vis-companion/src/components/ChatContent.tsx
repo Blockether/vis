@@ -1,4 +1,5 @@
 import {
+  Fragment,
   isValidElement,
   memo,
   useEffect,
@@ -171,11 +172,14 @@ function diffCellClass(cell: DiffCell | null): string {
   return 'bg-code text-code-foreground';
 }
 
-function DiffCellView({ cell }: { cell: DiffCell | null }) {
+// A diff cell NEVER clips its own text: the block's horizontal scroller (below) is
+// what reveals a long line, and `overflow-hidden`/`text-ellipsis` here silently ate
+// the tail of every wide hunk with nothing left to scroll to.
+function DiffCellView({ cell, className = '' }: { cell: DiffCell | null; className?: string }) {
   return (
-    <span className={`flex min-w-0 whitespace-pre px-3 py-px ${diffCellClass(cell)}`}>
+    <span className={`flex whitespace-pre px-3 py-px ${diffCellClass(cell)} ${className}`}>
       <span className="mr-2 w-8 shrink-0 select-none text-right text-code-duration">{cell?.line ?? ''}</span>
-      <span className="min-w-0 overflow-hidden text-ellipsis">{cell?.text || ' '}</span>
+      <span>{cell?.text || ' '}</span>
     </span>
   );
 }
@@ -189,21 +193,26 @@ const DiffBlock = memo(function DiffBlock({ value, compact, frameless = false }:
     >
       {!frameless && <CopyButton value={value} />}
       <div className={`${compact ? 'text-meta' : 'text-ui'} max-w-full overflow-x-auto overscroll-x-contain py-2 font-mono`}>
-        <div className={`grid min-w-[44rem] grid-cols-2 ${frameless ? '' : 'first:pr-16'}`}>
-          <span className="border-b border-code-edge px-3 py-1 font-semibold text-code-duration">before</span>
-          <span className="border-b border-l border-code-edge px-3 py-1 font-semibold text-code-duration">after</span>
-          {rows.map((row, index) =>
-            row.kind === 'meta' ? (
-              <span className="col-span-2 whitespace-pre px-3 py-px text-code-syntax-keyword" key={`${index}-${row.text}`}>
+        {/* ONE grid for the whole hunk (rows are fragments, not nested grids) so both
+            columns share a track sizing pass: `w-max` lets those tracks grow to the
+            widest line and hands the real content width to the scroller, `min-w-full`
+            keeps the row backgrounds spanning the viewport when the diff is narrow. */}
+        <div className="grid w-max min-w-full grid-cols-2">
+          {rows.map((row, index) => {
+            // The copy chip floats over the top-right corner; only the FIRST row needs
+            // to keep its tail out from under it.
+            const clearance = !frameless && index === 0 ? ' pr-16' : '';
+            return row.kind === 'meta' ? (
+              <span className={`col-span-2 whitespace-pre px-3 py-px text-code-syntax-keyword${clearance}`} key={`${index}-${row.text}`}>
                 {row.text || ' '}
               </span>
             ) : (
-              <div className="col-span-2 grid grid-cols-2" key={`${index}-${row.before?.text}-${row.after?.text}`}>
+              <Fragment key={`${index}-${row.before?.text}-${row.after?.text}`}>
                 <DiffCellView cell={row.before} />
-                <span className="border-l border-code-edge"><DiffCellView cell={row.after} /></span>
-              </div>
-            ),
-          )}
+                <DiffCellView cell={row.after} className={`border-l border-code-edge${clearance}`} />
+              </Fragment>
+            );
+          })}
         </div>
       </div>
     </div>

@@ -149,7 +149,7 @@
    "runner" nil
    "tool" nil
    "command" nil
-   "dir" nil
+   "cwd" nil
    "ns" nil
    "port" nil
    "exit" nil

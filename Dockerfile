@@ -41,10 +41,9 @@ ARG SPEL_SHA256=5fc16873fdd879522fe75a7ada5aeb57e3310bc1927571c60d6b9b2578444059
 ARG PARAKEET_MODEL=sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8
 ARG PARAKEET_RELEASE=asr-models
 
-# `:community` — the FULL agent: every channel AND voice ASR. NOT `:cross`,
-# which drops com.blockether/vis-foundation-voice entirely: with that profile
-# the Parakeet model below would be dead weight the binary can never load.
-ARG VIS_PROFILE=community
+# The shipped binary is the ONE distribution, `community`: the FULL agent —
+# every channel AND voice ASR — which is what makes baking the Parakeet model
+# below worth it. There is no leaner build to select, so nothing to configure.
 ARG VIS_ORACLE_NATIVE_IMAGE=false
 ARG VIS_NATIVE_EXTRA_ARGS=
 ARG WITH_BROWSERS=true
@@ -88,7 +87,6 @@ RUN set -eux; \
 # ── Stage: builder ───────────────────────────────────────────────────────────
 FROM jdk AS builder
 ARG CLOJURE_VERSION
-ARG VIS_PROFILE
 ARG VIS_ORACLE_NATIVE_IMAGE
 ARG VIS_NATIVE_EXTRA_ARGS
 
@@ -166,7 +164,7 @@ RUN check-graal-pins
 # /home/vis/.vis — matching the runtime user's HOME. Setting HOME alone does not
 # do it: the JDK derives user.home from getpwuid(), and the build runs as root.
 RUN VIS_NATIVE_EXTRA_ARGS="-Duser.home=/home/vis ${VIS_NATIVE_EXTRA_ARGS}" \
-    clojure -T:build native :profile ${VIS_PROFILE} \
+    clojure -T:build native \
     && test -x target/vis \
     && ./target/vis --version
 
@@ -175,12 +173,11 @@ RUN VIS_NATIVE_EXTRA_ARGS="-Duser.home=/home/vis ${VIS_NATIVE_EXTRA_ARGS}" \
 # release — NOT Hugging Face — and it must stay the exact model
 # extensions/common/vis-foundation-voice/asr.clj resolves.
 #
-# Baked into the image rather than embedded in the binary with
-# `:with-assets true`: that flag also embeds it, but asr.clj then EXTRACTS it
-# to ~/.vis/models on first run, so the same 465 MB is paid twice — once in the
-# binary, once in the volume — and re-paid on every container recreate. As an
-# image layer it is downloaded once, shared by every container, and read
-# in place via VIS_PARAKEET_MODEL_DIR.
+# Baked into the image as its own layer. The model is ALWAYS distributed
+# separately from the binary (nothing embeds it any more), so fetching it once
+# here means every container shares one copy and reads it in place via
+# VIS_PARAKEET_MODEL_DIR, instead of each one re-downloading 465 MB into its
+# own volume on first use.
 #
 # The archive has a top-level directory; --strip-components=1 puts the four
 # files asr.clj looks for (encoder/decoder/joiner .int8.onnx + tokens.txt)

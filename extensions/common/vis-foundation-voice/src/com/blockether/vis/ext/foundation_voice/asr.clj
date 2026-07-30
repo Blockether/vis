@@ -12,9 +12,9 @@
            [org.apache.commons.compress.compressors.bzip2 BZip2CompressorInputStream]))
 
 ;; Reflective interop is FATAL in the native image (needs metadata per call
-;; site) — keep this ns reflection-free at compile time. The bundled-model
-;; installer's untyped `(or (resource-stream …))` with-open already shipped
-;; one such failure ("Cannot reflectively invoke ByteArrayInputStream.close").
+;; site) — keep this ns reflection-free at compile time. An untyped
+;; `(or (resource-stream …))` inside with-open already shipped one such failure
+;; ("Cannot reflectively invoke ByteArrayInputStream.close").
 (set! *warn-on-reflection* true)
 
 (def model-dir-env "VIS_PARAKEET_MODEL_DIR")
@@ -248,47 +248,6 @@
       (delete-dir! c)))
   (.delete f))
 
-(def ^:private bundled-resource-dir "voice-assets/parakeet")
-
-(def ^:private bundled-file-names
-  ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"])
-
-(defn bundled-model-available?
-  "True when the ASR model is embedded as classpath resources — i.e. this is a
-   `--with-assets` native build — so it can be installed WITHOUT a network
-   download by copying the resources straight out of the binary."
-  []
-  (every? #(some? (resource-stream (str bundled-resource-dir "/" %))) bundled-file-names))
-
-(defn- install-bundled-model!
-  "Copy the embedded model resources into a STAGING dir, verify, then ATOMICALLY
-   move into `dir` (same no-partial-files guarantee as the download path)."
-  [dir]
-  (let [staging (io/file (str dir ".staging-" (System/nanoTime)))]
-    (try (.mkdirs staging)
-         (doseq [name bundled-file-names]
-           ;; ^InputStream: same reflective-`.close` trap as
-           ;; ensure-onnxruntime-native! — fatal in a native image.
-           (with-open
-             [^java.io.InputStream in (or (resource-stream (str bundled-resource-dir "/" name))
-                                          (throw (ex-info "bundled model resource missing"
-                                                          {:type :voice-asr/bundled-missing
-                                                           :resource name})))
-              out (FileOutputStream. (io/file staging name))]
-
-             (io/copy in out)))
-         (when-not (model-installed? (str staging))
-           (throw (ex-info "bundled model extraction incomplete"
-                           {:type :voice-asr/bundled-incomplete :model-dir dir})))
-         (let [final (io/file dir)]
-           (when (.exists final) (delete-dir! final))
-           (.mkdirs (.getParentFile final))
-           (when-not (.renameTo staging final)
-             (throw (ex-info "could not move bundled model into place"
-                             {:type :voice-asr/install-failed :model-dir dir}))))
-         dir
-         (finally (try (when (.exists staging) (delete-dir! staging)) (catch Throwable _))))))
-
 (defn- install-model!
   "Download + extract into a STAGING dir, verify all files, then ATOMICALLY
    move it into place. The final `dir` never holds partial files — an
@@ -339,18 +298,12 @@
    a non-blocking download via `start-download!` + `model-state`."
   ([] (ensure-model! (model-dir)))
   ([dir]
-   (cond (model-installed? dir) dir
-         ;; --with-assets binary: extract the embedded model (no network)
-         (bundled-model-available?)
-         (do (vis/notify! "Installing bundled Parakeet ASR model..." :level :info :ttl-ms 5000)
-             (install-bundled-model! dir)
-             (vis/notify! "Parakeet ASR model ready." :level :info :ttl-ms 3000)
-             dir)
-         :else
-         (do (vis/notify! "Downloading Parakeet ASR model (~465MB)..." :level :info :ttl-ms 5000)
-             (install-model! dir nil)
-             (vis/notify! "Parakeet ASR model ready." :level :info :ttl-ms 3000)
-             dir))))
+   (if (model-installed? dir)
+     dir
+     (do (vis/notify! "Downloading Parakeet ASR model (~465MB)..." :level :info :ttl-ms 5000)
+         (install-model! dir nil)
+         (vis/notify! "Parakeet ASR model ready." :level :info :ttl-ms 3000)
+         dir))))
 
 ;; ── Async / UI-driven model lifecycle ──────────────────────────────────────
 ;; `:ready` is DERIVED from `model-installed?`, never stored, so it can't go
@@ -376,13 +329,10 @@
   (locking download-state
     (when (and (not (model-installed?)) (not= :downloading (:state @download-state)))
       (reset! download-state {:state :downloading :phase :downloading :progress 0})
-      (future (try (if (bundled-model-available?)
-                     ;; --with-assets binary: copy the embedded model out (no network)
-                     (install-bundled-model! (model-dir))
-                     (install-model! (model-dir)
-                                     (fn [m]
-                                       (swap! download-state #(when (= :downloading (:state %))
-                                                                (merge % m))))))
+      (future (try (install-model! (model-dir)
+                                   (fn [m]
+                                     (swap! download-state #(when (= :downloading (:state %))
+                                                              (merge % m)))))
                    (reset! download-state nil) ; model-state now derives :ready
                    (catch Throwable t
                      (reset! download-state {:state :failed

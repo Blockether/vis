@@ -179,24 +179,35 @@
     (get kind-aliases-inverse k k)))
 
 (defn- span-end-line
-  "0-based LAST CONTENT row of `span`. tree-sitter end positions are exclusive, so a
-   grammar whose node swallows its terminating newline (Groovy `command`, and any
-   node ending at column 0) reports the FOLLOWING line as `endLine`. Trimming that
-   is what keeps a kind-targeted replace from eating the next definition."
-  ^long [^Span span]
-  (let [e (.endLine span)]
-    (if (and (zero? (.endColumn span)) (> e (.startLine span))) (dec e) e)))
+  "0-based LAST CONTENT row of `span`. tree-sitter end positions are exclusive, and
+   several grammars let a definition node swallow its terminating newline and even
+   the blank rows up to the next sibling (Groovy `command`). Given `lines` those
+   trailing blank rows are trimmed too; without them only the column-0 overshoot
+   is. Trimming is what keeps a kind-targeted replace from eating the next
+   definition."
+  (^long [^Span span] (span-end-line nil span))
+  (^long [lines ^Span span]
+   (let [start (.startLine span)
+         e (long (cond-> (.endLine span)
+                   (and (zero? (.endColumn span)) (> (.endLine span) start)) dec))]
+     (if (nil? lines)
+       e
+       (loop [e e]
+         (if (and (> e start) (str/blank? (nth lines e "")))
+           (recur (dec e))
+           e))))))
 
 (defn node-span
   "0-based inclusive `[start-line end-line]` of the TOP-LEVEL structural node named
    `target` (optionally narrowed by `kind`, case-insensitive), or nil if not found.
    Used by the structural `move` op to extract a node's exact source text by name."
   [^String source ^String language ^String target kind]
-  (let [k (canonical-kind kind)]
+  (let [k (canonical-kind kind)
+        lines (str/split-lines source)]
     (some (fn [^StructureItem it]
             (when (and (= target (.name it)) (or (nil? k) (= k (canonical-kind (item-kind it)))))
               (let [^Span span (.span it)]
-                [(.startLine span) (span-end-line span)])))
+                [(.startLine span) (span-end-line lines span)])))
           (structure-items source language))))
 
 (defn- flatten-items
@@ -306,7 +317,7 @@
      (inc (.startLine span))
 
      end
-     (inc (span-end-line span))
+     (inc (span-end-line lines span))
 
      kind
      (item-kind it)
@@ -366,7 +377,7 @@
      (inc (.startLine span))
 
      end
-     (inc (span-end-line span))]
+     (inc (span-end-line lines span))]
 
     {:name (.name it)
      :kind (canonical-kind (item-kind it))
@@ -547,7 +558,7 @@
      (inc (.startLine span))
 
      end
-     (inc (span-end-line span))
+     (inc (span-end-line lines span))
 
      private?
      (= "private"

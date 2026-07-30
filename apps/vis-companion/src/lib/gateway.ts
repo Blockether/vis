@@ -952,6 +952,31 @@ export class GatewayClient {
   }
 
   /**
+   * The live bubble of ONE session, as it was last painted.
+   *
+   * MEMORY ONLY, on purpose: this is written on every streamed delta, and
+   * `writeSnapshot` re-serialises the whole store to `localStorage`. It also has
+   * no business surviving a cold start — a turn that was running when the
+   * process died is re-adopted from the gateway, not from a stale cache. It
+   * exists so that LEAVING and RE-ENTERING a session inside one process repaints
+   * the in-flight answer instantly, instead of showing the previous turn's
+   * ending until a replay or a refetch lands on top of it.
+   *
+   * `seq` is the gateway's per-session journal cursor of the newest event folded
+   * into `turn`, so the reader can drop a replay it has already applied.
+   */
+  cachedLiveTurn<T>(sid: string): { turn: T; seq: number } | null {
+    const cached = snapshots.get(this.snapshotKey('live', sid));
+    return (cached as { turn: T; seq: number } | undefined) ?? null;
+  }
+
+  rememberLiveTurn(sid: string, turn: unknown, seq: number): void {
+    const key = this.snapshotKey('live', sid);
+    if (turn === null) snapshots.delete(key);
+    else snapshots.set(key, { turn, seq });
+  }
+
+  /**
    * Drop ONE row from the cached backlog.
    *
    * A row leaves the queue on `turn.queued.drained` / `.deleted`, and the gateway
@@ -973,6 +998,7 @@ export class GatewayClient {
     snapshots.delete(this.snapshotKey('session', sid));
     snapshots.delete(this.snapshotKey('transcript', sid));
     snapshots.delete(this.snapshotKey('queued', sid));
+    snapshots.delete(this.snapshotKey('live', sid));
     transcriptStamps.delete(this.snapshotKey('transcript', sid));
     transcriptWindows.delete(this.snapshotKey('transcript', sid));
     scheduleSnapshotFlush(snapshotStores);

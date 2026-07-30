@@ -107,7 +107,7 @@
 
         (try
           (@#'nx/ensure-resource! sid {7001 {:status :up}} {:id rid :dir dir :port 7001 :tool :clj})
-          (expect (= dir (get-in (vis/get-resource sid rid) ["detail" "dir"])))
+          (expect (= dir (get-in (vis/get-resource sid rid) ["detail" "cwd"])))
           (finally (vis/unregister-resource! sid rid))))))
 
 (defdescribe

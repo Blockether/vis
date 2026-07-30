@@ -86,7 +86,7 @@
                              :kind :repl
                              :label (str "bun REPL " (.getName (io/file dir)))
                              :status (or (get result "status") :up)
-                             :detail {"dir" dir "cmd" (get result "cmd")}
+                             :detail {"cwd" dir "cmd" (get result "cmd")}
                              :pid (get result "pid")
                              :owner :ext/language-typescript-bun
                              :language :typescript}
@@ -104,7 +104,7 @@
 ;; =============================================================================
 
 (defn- monorepo-root-hint
-  "When `dir` IS the workspace root and its package.json declares `workspaces`,
+  "When `cwd` IS the workspace root and its package.json declares `workspaces`,
    a REPL there is almost always a mistake: it reads the ROOT tsconfig /
    package.json, so app code misbehaves (e.g. NestJS decorators crash without
    `experimentalDecorators`). Returns an actionable hint string listing the
@@ -151,11 +151,11 @@
           (str "This is a Bun MONOREPO ROOT (package.json has \"workspaces\") — a REPL "
                "here picks up the ROOT tsconfig/package.json, so app code misbehaves "
                "(e.g. NestJS decorators crash). Pass the app dir explicitly: "
-               "repl_eval(\"typescript\", code, {\"dir\": \""
+               "repl_eval(\"typescript\", code, {\"cwd\": \""
                suggestion
                "\"})."
                (when (seq candidates) (str " Workspace dirs: " (str/join ", " candidates) "."))
-               " To force a root REPL anyway: repl(\"typescript\", {\"dir\": \".\"})."))))))
+               " To force a root REPL anyway: repl(\"typescript\", {\"cwd\": \".\"})."))))))
 
 (defn ts-start-repl-fn
   "repl handler for TypeScript/Bun. Positional `op` (default \"start\") +
@@ -174,7 +174,7 @@
      (or (get opts "id") (get opts "repl_id"))
 
      dir
-     (resolve-dir root (get opts "dir"))]
+     (resolve-dir root (get opts "cwd"))]
 
     (case op
       "status"
@@ -189,8 +189,8 @@
       (do (when (= op "restart") (repl/stop! dir))
           ;; Starting at a monorepo ROOT without an explicit dir is (almost)
           ;; always a mistake — refuse with the app-dir hint. Explicit
-          ;; {"dir": "."} still forces a root REPL.
-          (when (nil? (get opts "dir"))
+          ;; {"cwd": "."} still forces a root REPL.
+          (when (nil? (get opts "cwd"))
             (when-let [hint (monorepo-root-hint root dir)]
               (throw (ex-info hint {:type :ts/monorepo-root :dir dir}))))
           (let [r (repl/start! dir (assoc (or opts {}) :session-id (:session-id env)))]
@@ -217,19 +217,19 @@
                                  {:type :ts/bad-args :got arg})))
 
      dir
-     (resolve-dir root (and (map? arg) (get arg "dir")))
+     (resolve-dir root (and (map? arg) (get arg "cwd")))
 
      tmo
      (and (map? arg) (get arg "timeout_ms"))]
 
     (when-not (= "up" (get (repl/status dir) "status"))
       ;; Preserve the more specific monorepo error when the caller omitted dir.
-      (when-not (and (map? arg) (get arg "dir"))
+      (when-not (and (map? arg) (get arg "cwd"))
         (when-let [hint (monorepo-root-hint root dir)]
           (throw (ex-info hint {:type :ts/monorepo-root :dir dir}))))
       (throw (ex-info (str "TypeScript REPL is not up for "
                            dir
-                           "; call repl(\"typescript\", {\"dir\": "
+                           "; call repl(\"typescript\", {\"cwd\": "
                            (pr-str dir)
                            "}) first")
                       {:type :ts/no-repl :dir dir})))
@@ -255,7 +255,7 @@
      (if (map? arg) arg {})
 
      dir
-     (resolve-dir root (get opts "dir"))
+     (resolve-dir root (get opts "cwd"))
 
      paths
      (seq (map str (get opts "paths")))
@@ -306,7 +306,7 @@
                                    "framework" "bun:test"
                                    "tool" "bun"
                                    "cmd" (vec cmd)
-                                   "dir" dir
+                                   "cwd" dir
                                    "exit" (if done? (.exitValue p) nil)
                                    "timed_out" (not done?)
                                    "passed" (some-> pass

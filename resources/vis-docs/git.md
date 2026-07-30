@@ -35,6 +35,13 @@ as `add` then `commit` reliable. A non-zero exit is result data, not a tool
 transport failure: inspect it and expect later commands in the same batch to
 still run.
 
+`git` IS a user of the `shell` tool: every command runs through the shell's own
+runner, so it inherits one working directory (`cwd`), one process jail, one
+capped capture and one timeout. It takes the same `commands` key, in the same
+input order, and returns the same `{"commands": [...]}` envelope. Only the item
+shape differs, and it has to: a git item is an argv list (no shell, nothing to
+quote), a shell item is one `bash -lc` command line.
+
 ## Python sandbox call
 
 The same engine-bound tool is available in `python_execution`. Await it and

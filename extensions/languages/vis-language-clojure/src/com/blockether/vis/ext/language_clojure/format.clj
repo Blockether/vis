@@ -66,6 +66,16 @@
      (try (if (seq opts) (cljfmt/reformat-string source opts) (cljfmt/reformat-string source))
           (catch Throwable _ source)))))
 
+(defn- cljfmt-config-file
+  "The nearest cljfmt config file walking UP from `path`, as a `java.io.File`,
+   or nil. Split out of `cljfmt-opts-for` so the result cache can stamp its key
+   with the config that actually governs this path."
+  ^java.io.File [path]
+  (when (seq (str path))
+    (try (when-let [cf (cljfmt-config/find-config-file (str path))]
+           (io/file cf))
+         (catch Throwable _ nil))))
+
 (defn cljfmt-opts-for
   "cljfmt options from the nearest `.cljfmt.edn`/`.cljfmt.clj` walking UP from
    `path` (a file OR directory path), so project-local indent rules (e.g. the
@@ -73,10 +83,9 @@
    cljfmt defaults. Returns nil when no config is found or it can't be read —
    callers then fall back to plain defaults. Cached per config-file + mtime."
   [path]
-  (when (seq (str path))
-    (try (when-let [cf (cljfmt-config/find-config-file (str path))]
-           (cached-opts (io/file cf) cljfmt-config/read-config))
-         (catch Throwable _ nil))))
+  (try (when-let [cf (cljfmt-config-file path)]
+         (cached-opts cf cljfmt-config/read-config))
+       (catch Throwable _ nil)))
 
 ;; ── zprint backend ───────────────────────────────────────────────────────────
 
@@ -132,18 +141,96 @@
 
 ;; ── transparent dispatch ─────────────────────────────────────────────────────
 
+;; ── formatted-result cache ───────────────────────────────────────────────────
+
+(def ^:private result-cache-limit
+  "Hard cap on cached formatted sources. On overflow the whole map is dropped
+   rather than evicting an LRU: the cache is a latency optimization, not a
+   correctness input, and a rebuild costs one format per live file."
+  512)
+
+(def ^:private result-cache
+  "[backend config-path config-mtime source-sha] -> formatted source.
+
+   zprint/cljfmt are PURE functions of (source, opts), and `opts` is fully
+   determined by the governing config file + its mtime — so this key is total:
+   an edited file, an edited `.zprint.edn`, or a different backend all miss.
+   Without it every `format_code` re-runs zprint's layout search over files it
+   has already proven unchanged, which is seconds per call on deeply nested
+   namespaces."
+  (atom {}))
+
+(defn- source-sha
+  "SHA-256 of `s` as a URL-safe base64 string — the content half of the cache
+   key. Hashing avoids pinning whole file bodies in the key."
+  ^String [^String s]
+  (let [md (java.security.MessageDigest/getInstance "SHA-256")]
+    (.encodeToString (java.util.Base64/getUrlEncoder) (.digest md (.getBytes s "UTF-8")))))
+
+(defn- result-key
+  "Cache key for formatting `source` under `backend` governed by config file
+   `cfg` (nil = the backend's built-in defaults)."
+  [backend ^java.io.File cfg ^String source]
+  [backend (when cfg (.getCanonicalPath cfg)) (when cfg (.lastModified cfg)) (count source)
+   (source-sha source)])
+
+(defn- cache-put!
+  "Remember `out` for `k` and return `out`, dropping the map when it outgrows
+   `result-cache-limit`."
+  [k out]
+  (swap! result-cache (fn [m]
+                        (assoc (if (>= (count m) (long result-cache-limit)) {} m) k out)))
+  out)
+
+(defn clear-result-cache!
+  "Forget every cached formatting. Only needed when something outside
+   (source, config-file+mtime) changes the answer — i.e. in tests."
+  []
+  (reset! result-cache {}))
+
 (defn format-source
   "Format Clojure `source`, choosing the backend from the config files present
    around `path`: zprint when a `.zprint.edn`/`.zprintrc` is found (its options
    applied), otherwise cljfmt (with the nearest `.cljfmt.edn` opts, or cljfmt
    defaults when neither config exists). zprint WINS when both configs are
    present. TRANSPARENT to callers — they just format; the magic of which
-   formatter to run lives here. Returns `source` unchanged on any failure."
+   formatter to run lives here. Returns `source` unchanged on any failure.
+
+   Memoized through `result-cache` on (backend, config file + mtime, source),
+   so re-formatting content this JVM has already formatted is a hash, not a
+   layout search. A computed result is ALSO seeded under its own key: a
+   formatter is idempotent, so the output is its own fixed point, and the very
+   common `format → write → format again` sequence (every re-run of an
+   edit/format/lint block) then hits instead of paying a second layout search on
+   content only just produced."
   ([source] (format-source source nil))
   ([source path]
-   (if (zprint-config-file path)
-     (zprint-string source (zprint-opts-for path))
-     (format-string source (cljfmt-opts-for path)))))
+   (if-not (and (string? source) (seq source))
+     source
+     (let
+       [zcf
+        (zprint-config-file path)
+
+        backend
+        (if zcf :zprint :cljfmt)
+
+        cfg
+        (or zcf (cljfmt-config-file path))
+
+        k
+        (result-key backend cfg source)]
+
+       (if-some [hit (get @result-cache k)]
+         hit
+         (let
+           [out (if zcf
+                  (zprint-string source (zprint-opts-for path))
+                  (format-string source (cljfmt-opts-for path)))]
+           (cache-put! k out)
+           ;; Fixed point: formatting `out` again yields `out`. Seeding it here
+           ;; makes the next format of the file we just rewrote a cache hit.
+           (when (not= out source) (cache-put! (result-key backend cfg out) out))
+           out))))))
 
 (defn formatter-for
   "Which backend `format-source` picks for `path`: `:zprint` when a

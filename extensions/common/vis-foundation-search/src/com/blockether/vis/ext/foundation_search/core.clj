@@ -1597,7 +1597,7 @@
 
 (defn search-papers
   "await search_papers(\"diffusion models for protein folding\")
-   await search_papers(\"…\", {\"max_results\": 10, \"sort\": \"relevance\", \"timeout_ms\": 20000})
+   await search_papers(\"…\", {\"num_results\": 10, \"sort\": \"relevance\", \"timeout_ms\": 20000})
 
    arxiv paper search.
    Returns {\"query\", \"citations\": [{\"type\": \"paper\", \"title\", \"url\", \"excerpt\", \"authors\", \"published\", \"source\"}, ...], \"citation_count\", \"truncated\", \"source\"}.
@@ -1607,7 +1607,9 @@
   ([query opts]
    (let
      [max-results
-      (or (get opts "max_results") ARXIV_DEFAULT_MAX_RESULTS)
+      ;; `num_results` everywhere; `max_results` is the retired papers-only
+      ;; spelling, still accepted.
+      (or (get opts "num_results") (get opts "max_results") ARXIV_DEFAULT_MAX_RESULTS)
 
       sort-key
       (or (get opts "sort") "relevance")
@@ -1675,13 +1677,13 @@
 (defn search
   "await search(\\\"rust async runtime comparison\\\")                        (kind defaults to \\\"web\\\")
    await search(\\\"…\\\", {\\\"kind\\\": \\\"code\\\", \\\"tokens_num\\\": N})
-   await search(\\\"…\\\", {\\\"kind\\\": \\\"papers\\\", \\\"max_results\\\": 10, \\\"sort\\\": \\\"relevance\\\"})
+   await search(\\\"…\\\", {\\\"kind\\\": \\\"papers\\\", \\\"num_results\\\": 10, \\\"sort\\\": \\\"relevance\\\"})
 
    One research entry point. \\\"kind\\\" picks the corpus:
    \\\"web\\\" = live web (Exa), \\\"code\\\" = repos + technical docs (Exa),
    \\\"papers\\\" = arXiv abstracts.
    Per-kind opts: web -> num_results/type/livecrawl/context_max_characters;
-   code -> tokens_num; papers -> max_results/sort/timeout_ms.
+   code -> tokens_num; papers -> num_results/sort/timeout_ms.
    Returns {\\\"query\\\", \\\"citations\\\": [{\\\"type\\\", \\\"title\\\", \\\"url\\\", \\\"excerpt\\\", ...}, ...], \\\"citation_count\\\", \\\"truncated\\\", \\\"source\\\", \\\"endpoint\\\"}.
    Gotcha: \\\"excerpt\\\" is markdown/abstract text — read it directly; on failure \\\"citations\\\"[0] carries \\\"error\\\": True."
   ([query] (search query {}))
@@ -1962,7 +1964,7 @@
      {:type "object"
       :properties
       {"query" {:type "string" :minLength 1 :description "Natural-language paper search query."}
-       "max_results" {:type "integer" :minimum 1 :description "Max papers to return (default 10)."}
+       "num_results" {:type "integer" :minimum 1 :description "Max papers to return (default 10)."}
        "sort" {:type "string"
                :enum ["relevance" "lastUpdatedDate" "submittedDate"]
                :description "relevance | lastUpdatedDate | submittedDate (default relevance)."}
@@ -2001,7 +2003,7 @@
         :enum ["auto" "exa" "github"]
         :description
         "code only: provider (default auto: Exa then GitHub); github requires `gh auth login`."}
-       "num_results" {:type "integer" :description "web: max results."}
+       "num_results" {:type "integer" :description "web/papers: max results (papers default 10)."}
        "type" {:type "string"
                :description "web: Exa search type, e.g. \"auto\", \"neural\", \"keyword\"."}
        "livecrawl" {:type "string"
@@ -2010,7 +2012,7 @@
                                  :description "web: cap on context characters per result."}
        "tokens_num" {:type "integer"
                      :description "code: approximate token budget for the returned context."}
-       "max_results" {:type "integer" :description "papers: max papers (default 10)."}
+       ;; `num_results` is shared with web — declared once, above.
        "sort" {:type "string"
                :enum ["relevance" "lastUpdatedDate" "submittedDate"]
                :description "papers: sort order (default relevance)."}

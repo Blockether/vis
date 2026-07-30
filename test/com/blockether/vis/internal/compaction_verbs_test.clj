@@ -1162,7 +1162,7 @@
          (apply-summaries [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "p"}]}]]
                           [{"scopes" #{"t1/i1"} "gist" "no store"}])]
 
-        (expect (= (str "# ⋯ folded t1/i1-i2 · more results: ntr.describe() · did it")
+        (expect (= "# ⋯ folded t1/i1-i2 · more results: ntr.describe() · did it"
                    (:content (irm (second (first folded))))))
         (expect (= "# ⋯ dropped t1/i1 · misread" (:content (irm (second (first dropped))))))
         (expect (= "# ⋯ folded t1/i1 · no store" (:content (irm (second (first printed))))))))

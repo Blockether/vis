@@ -831,7 +831,7 @@
                     " to run tests via CLI")})))
 
 (defn- restart-repl-async!
-  "Best-effort background kill+relaunch of `session-id`'s managed nREPL for `dir`
+  "Best-effort background kill+relaunch of `session-id`'s managed nREPL for `cwd`
    on a daemon thread, so the NEXT eval/test hits a fresh server. Returns at once —
    the relaunch (deps resolve + JVM boot, up to ~2 min) never blocks the caller."
   [session-id dir]
@@ -884,7 +884,7 @@
         :else result))
 
 (defn- has-build-file?
-  "True when `dir` holds a Clojure build manifest (deps.edn / project.clj / bb.edn)."
+  "True when `cwd` holds a Clojure build manifest (deps.edn / project.clj / bb.edn)."
   [^java.io.File dir]
   (boolean (some (fn [n]
                    (.isFile (io/file dir n)))
@@ -932,12 +932,12 @@
    across the language / framework / tool / mode axes."
   ([env arg]
    (let
-     [;; An explicit `dir` (the run_tests `dir` param) roots the run — and thus
+     [;; An explicit `cwd` (the run_tests `cwd` param) roots the run — and thus
       ;; nREPL selection — at THAT project instead of the workspace root, so a
       ;; SIBLING / added-folder project runs against its OWN nREPL classpath
       ;; rather than booting the workspace-root REPL (whose classpath lacks it).
       req-dir
-      (when (map? arg) (get arg "dir"))
+      (when (map? arg) (get arg "cwd"))
 
       root
       (let

@@ -3556,7 +3556,7 @@
             ;; the third file defines nothing, so ownership is NOT guessed
             (expect (= [c] (mapv #(get % "path") (get res "other_uses"))))
             (expect (= 2 (count (get (first (get res "other_uses")) "anchors"))))))))
-    (it "the card renders one block per symbol, uses indented beneath"
+    (it "the card renders a table: one row per symbol, its use sites beneath"
         (let
           [render
            (private-fn "render-index-result")
@@ -3577,8 +3577,23 @@
                                 "uses" [{"path" "src/b.clj" "anchors" ["4:ccc" "9:ddd"]}]}]})]
 
           (expect (= "`gizmo` · 1 def · 2 uses · 2 files · project-wide" summary))
-          (expect (clojure.string/includes? body "`gizmo [x]` · fn · src/a.clj @1:aaa · 2 uses"))
-          (expect (clojure.string/includes? body "    src/b.clj  4, 9"))))
+          (expect (clojure.string/includes? body "| Def | Arity | Kind | Where | Uses |"))
+          (expect (clojure.string/includes? body "| gizmo | [x] | fn | src/a.clj @1:aaa | 2 |"))
+          (expect (clojure.string/includes? body "· src/b.clj | — | use | 4, 9 | 2 |"))))
+    (it "uses no definition owns are their own table rows, and anchors sort by line"
+        (let
+          [render
+           (private-fn "render-index-result")
+
+           {:keys [body]}
+           (render {"name" "gizmo"
+                    "count" 2
+                    "definition_count" 0
+                    "paths" ["."]
+                    "symbols" []
+                    "other_uses" [{"path" "src/c.clj" "anchors" ["9:ddd" "4:ccc"]}]})]
+
+          (expect (clojure.string/includes? body "· src/c.clj | — | unowned use | 4, 9 | 2 |"))))
     (it "struct_index without `paths` and without `name` is refused"
         (expect (throws? clojure.lang.ExceptionInfo #(idx {}))))
     (it "struct_patch with `paths` + op `rename` renames across files"

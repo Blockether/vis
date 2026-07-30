@@ -522,15 +522,11 @@
                                     0))
 
                             rr
-                            #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
                             (long (section-rows (or (:result-render f) (:result f))))
 
                             cardr
                             (long (reduce (fn [^long x card]
-                                            (+ x
-                                               1
-                                               #_{:clj-kondo/ignore [:redundant-primitive-coercion]}
-                                               (long (section-rows (:body card)))))
+                                            (+ x 1 (long (section-rows (:body card)))))
                                           0
                                           (:cards f)))
 

@@ -199,7 +199,7 @@
 
           (let
             [r (:result (tr/clj-test-fn {:workspace/root "/ws" :session-id "sid"}
-                                        {"dir" "/some/proj" "namespaces" ["x.y-test"]}))]
+                                        {"cwd" "/some/proj" "namespaces" ["x.y-test"]}))]
             (expect (= "/some/proj" @seen-root))
             (expect (= "/some/proj" (get r "root")))))))
   (it "falls back to the workspace root when no dir arg is given"

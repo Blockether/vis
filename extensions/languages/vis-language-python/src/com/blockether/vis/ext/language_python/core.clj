@@ -71,7 +71,7 @@
                              :kind :repl
                              :label (str "python REPL " (.getName (io/file dir)))
                              :status (or (get result "status") :up)
-                             :detail {"dir" dir "cmd" (get result "cmd")}
+                             :detail {"cwd" dir "cmd" (get result "cmd")}
                              :pid (get result "pid")
                              :owner :ext/language-python
                              :language :python}
@@ -107,7 +107,7 @@
      (or (get opts "id") (get opts "repl_id"))
 
      dir
-     (resolve-dir root (get opts "dir"))]
+     (resolve-dir root (get opts "cwd"))]
 
     (case op
       "status"
@@ -143,7 +143,7 @@
                                  {:type :py/bad-args :got arg})))
 
      dir
-     (resolve-dir root (and (map? arg) (get arg "dir")))
+     (resolve-dir root (and (map? arg) (get arg "cwd")))
 
      tmo
      (and (map? arg) (get arg "timeout_ms"))]
@@ -151,7 +151,7 @@
     (when-not (= "up" (get (repl/status dir) "status"))
       (throw (ex-info (str "Python REPL is not up for "
                            dir
-                           "; call repl(\"python\", {\"dir\": "
+                           "; call repl(\"python\", {\"cwd\": "
                            (pr-str dir)
                            "}) first")
                       {:type :py/no-repl :dir dir})))
@@ -222,7 +222,7 @@
 
 (defn- project-test
   "Escape-hatch backend: shell the project interpreter's pytest (uv / poetry /
-   .venv / python3 `-m pytest <paths>`) in `dir` so installed deps are visible."
+   .venv / python3 `-m pytest <paths>`) in `cwd` so installed deps are visible."
   [session-id ^String dir paths]
   (let
     [cmd
@@ -272,7 +272,7 @@
        "framework" "pytest"
        "tool" "pytest"
        "cmd" (vec cmd)
-       "dir" dir
+       "cwd" dir
        "exit" (when done? (.exitValue p))
        "timed_out" (not done?)
        "passed" (some-> passed
@@ -302,7 +302,7 @@
      (if (map? arg) arg {})
 
      dir
-     (resolve-dir root (get opts "dir"))
+     (resolve-dir root (get opts "cwd"))
 
      runner
      (let

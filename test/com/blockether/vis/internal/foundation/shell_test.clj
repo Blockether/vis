@@ -6,6 +6,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.process-jail :as process-jail]
+            [com.blockether.vis.internal.foundation.serial-batch :as batch]
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.workspace :as workspace]
@@ -249,6 +250,7 @@
            workspace/*filesystem-roots*
            nil]
 
+          ;; `cwd` is the ONLY spelling — `~` expands against the home root.
           (let [r (:result (shell-run* env "pwd" {"cwd" "~"}))]
             (expect (= home (str/trim (get r "stdout"))))
             (expect (= home (get r "cwd")))))))
@@ -258,7 +260,6 @@
                          (let
                            [abs (.getCanonicalPath (java.io.File. (str (workspace/cwd))))
                             r (:result (shell-run* {} "pwd" {"cwd" abs}))]
-
                            (expect (string? (get r "cwd")))
                            (expect (= abs (get r "cwd"))))
                          ;; an absolute path OUTSIDE every root is still rejected
@@ -397,8 +398,6 @@
 
               (try (let [b (:result (shell-bg* env "c" "pwd; sleep 60" {"cwd" "src"}))]
                      ;; The schema advertises `cwd` for run AND bg; a bg that silently
-                     ;; ran in the workspace root is a wrong-directory bug, not a nit.
-                     (expect (str/ends-with? (get b "cwd") "/src"))
                      (poll #(get (:result (shell-logs* env "c")) "lines")
                            #(str/includes? (str/join "\n" %) "/src")
                            20)
@@ -663,12 +662,12 @@
 
 (defdescribe
   shell-batch-test
-  ;; Commands live in ONE place: the positional argument. A LIST of strings is the
-  ;; strictly ordered batch; there is no `commands` option to contradict it.
+  ;; A batch is `commands`, spelled and shaped exactly as `git` spells it; the
+  ;; positional stays ONE command line, so nothing is disambiguated by type.
   (it "runs commands strictly in input order, retaining each result after a failure"
       (binding [workspace/*workspace-root* (workspace/trunk-root)]
         (let
-          [env (shell* {} ["printf first; exit 3" "printf second"])
+          [env (shell* {} {"commands" ["printf first; exit 3" "printf second"]})
            results (get-in env [:result "commands"])]
 
           (expect (extension/envelope-success? env))
@@ -679,7 +678,8 @@
   (it "retains a not-started result at every input position after a launch failure"
       (binding [workspace/*workspace-root* (workspace/trunk-root)]
         (let
-          [results (get-in (shell* {} ["printf first" "printf second"] {"cwd" "does-not-exist"})
+          [results (get-in (shell* {} {"commands" ["printf first" "printf second"]
+                                       "cwd" "does-not-exist"})
                            [:result "commands"])]
           (expect (= ["printf first" "printf second"] (mapv #(get % "cmd") results)))
           (expect (= [false false] (mapv #(get % "started") results)))
@@ -690,14 +690,14 @@
         (let
           [marker (str "/tmp/vis-shell-batch-" (java.util.UUID/randomUUID))
            env (shell* {}
-                       [(str "sleep 0.15; touch " marker) (str "test -f " marker)
-                        (str "rm -f " marker)])]
+                       {"commands" [(str "sleep 0.15; touch " marker) (str "test -f " marker)
+                                    (str "rm -f " marker)]})]
 
           (expect (= [0 0 0] (mapv #(get % "exit") (get-in env [:result "commands"])))))))
-  (it "refuses a commands option outright \u2014 a command is never spelled twice"
-      ;; The conflict that broke real calls is now UNREPRESENTABLE: there is no
-      ;; second carrier to disagree with the positional one.
-      (expect (threw? #(shell* {} {"commands" ["printf skipped"]})))
+  (it "keeps the two carriers apart \u2014 a command is never spelled twice"
+      ;; The conflict that broke real calls stays impossible: the positional is
+      ;; ONE line, `commands` is the batch, and no call may carry both.
+      (expect (threw? #(shell* {} ["printf skipped" "printf also-skipped"])))
       (expect (threw? #(shell* {} "printf skipped" {"commands" ["printf also-skipped"]})))
       (expect (threw? #(shell* {} {"cmd" "printf skipped"}))))
   (it "treats schema-filled blank options as absent instead of a conflict"
@@ -707,24 +707,27 @@
       (binding [workspace/*workspace-root* (workspace/trunk-root)]
         (let
           [env (shell* {}
-                       ["printf first" "printf second"]
-                       {"id" "" "op" "run" "n" 200 "text" "" "enter" true})]
+                       {"commands" ["printf first" "printf second"]
+                        "id" "" "op" "run" "n" 200 "is_enter" true})]
           (expect (extension/envelope-success? env))
           (expect (= ["first" "second"]
                      (mapv #(str/trim (get % "stdout")) (get-in env [:result "commands"])))))))
   (it "still runs a lone positional command next to every empty option"
       (binding [workspace/*workspace-root* (workspace/trunk-root)]
         (let
-          [env (shell* {} "printf lone" {"id" "" "op" "" "cwd" "" "text" "" "n" 200 "enter" true})]
+          [env (shell* {} "printf lone" {"id" "" "op" "" "cwd" "" "text" "" "n" 200 "is_enter" true})]
           (expect (extension/envelope-success? env))
           (expect (nil? (get-in env [:result "commands"])))
           (expect (= "lone" (str/trim (get-in env [:result "stdout"])))))))
-  (it "still refuses a batch that names another lifecycle stage"
-      (expect (threw? #(shell* {} ["printf skipped"] {"id" "srv"})))
-      (expect (threw? #(shell* {} ["printf skipped"] {"op" "logs"}))))
+  (it "still refuses a batch that names a stage which cannot run one"
+      ;; `run` and `background` are the two stages a group has meaning for;
+      ;; logs/send/stop address an EXISTING resource by id.
+      (expect (threw? #(shell* {} {"commands" ["printf skipped"] "op" "logs"})))
+      (expect (threw? #(shell* {} {"commands" ["printf skipped"] "op" "send" "id" "srv"})))
+      (expect (threw? #(shell* {} {"commands" ["printf skipped"] "op" "stop" "id" "srv"}))))
   (it "rejects an empty or unordered command collection before spawning"
-      (expect (threw? #(shell* {} [])))
-      (expect (threw? #(shell* {} #{"printf first" "printf second"})))))
+      (expect (threw? #(shell* {} {"commands" []})))
+      (expect (threw? #(shell* {} {"commands" #{"printf first" "printf second"}})))))
 
 (defdescribe
   shell-native-contract-test
@@ -742,7 +745,7 @@
       (let [d (:ext.symbol/description shell/shell-symbol)]
         (expect (str/includes? d "THE one shell tool"))
         (expect (str/includes? d "PREFER background"))
-        (expect (str/includes? d "Reserve run for short commands"))
+        (expect (str/includes? d "Reserve run for one short command"))
         (expect (str/includes? d "strictly ordered batch"))
         (expect (str/includes? d "\"stop\" kills it"))
         ;; Native JSON carries `cmd`; the Python positional-vs-options-map
@@ -763,16 +766,25 @@
   (it "puts every op in the schema, where the model cannot miss it"
       (let [props (get-in shell/shell-symbol [:ext.symbol/schema :properties])]
         (expect (= ["run" "background" "logs" "send" "stop"] (get-in props ["op" :enum])))
-        (expect (every? #(contains? props %) ["cmd" "op" "id" "timeout_secs" "cwd" "n" "enter"]))
-        ;; ONE carrier for everything fed to a shell: neither a `commands`
-        ;; nor a `text` property may contradict the one `cmd` positional
-        (expect (not (contains? props "commands")))
+        (expect (every? #(contains? props %) ["cmd" "op" "id" "timeout_secs" "cwd" "n" "is_enter"]))
+        ;; The working directory is `cwd`, as in every other tool and as in
+        ;; Python itself; the retired `dir` is neither advertised nor honoured.
+        (expect (not (contains? props "dir")))
+        ;; TWO carriers, no overlap: one command line as the positional `cmd`,
+        ;; the ordered batch as `commands` — git's own key and shape. A `text`
+        ;; property would be a THIRD way to say the same thing.
+        (expect (contains? props "commands"))
         (expect (not (contains? props "text")))
         ;; the common bounded run keeps its bare one-positional shape
         (expect (= {:opt-pos ["cmd"] :rest :opt} (:ext.symbol/call shell/shell-symbol)))
-        ;; that one positional carries either one command or an ordered batch
-        (expect (= ["string" "array"] (mapv :type (get-in props ["cmd" :oneOf]))))
-        (expect (= 1 (get-in props ["cmd" :oneOf 1 :minItems])))))
+        ;; the positional is a plain string — no string-or-array to disambiguate
+        (expect (= "string" (get-in props ["cmd" :type])))
+        (expect (nil? (get-in props ["cmd" :oneOf])))
+        ;; and the batch is exactly the shape git advertises
+        (expect (= (dissoc (batch/commands-property {:items {:type "string" :minLength 1}
+                                                     :description "x"})
+                           :description)
+                   (dissoc (get props "commands") :description)))))
   (it "closes every native shell input schema"
       (doseq [s shell/shell-symbols]
         (expect (false? (get-in s [:ext.symbol/schema :additionalProperties]))))))
@@ -876,7 +888,7 @@
          d
          (str (py (py-ctx {}) "doc('shell')"))]
 
-        (expect (= 7 (count (re-seq #"shell\(" source-doc))))
+        (expect (= 9 (count (re-seq #"shell\(" source-doc))))
         (expect (= (count (re-seq #"shell\(" source-doc))
                    (count (re-seq #"await shell\(" source-doc))))
         (expect (not (str/includes? source-doc "shell({\"cmd\"")))

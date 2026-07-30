@@ -617,7 +617,7 @@ For provider portability, every native `:schema` root must be `type: object` wit
 
 Both `:description` and `:schema` are mandatory. Close the top-level schema with `:additionalProperties false` unless unknown keys are intentional. `doc(name)` renders the compact description plus schema-derived parameters exactly once; it never substitutes the implementation docstring. `vis/render-prompt` also skips native symbols, preventing a prompt fragment from duplicating their provider contract.
 
-For a tool with a large replay-only argument, declare the policy on its symbol: `:replay {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"allow_dirty" true}}`. Vis keeps the original call for execution and forensics, but replaces a successful or approved-retry oversized call with a hashed textual receipt. A matching failed call can be retried by id without resending its arguments. svar remains a faithful provider codec and never elides arguments itself.
+For a tool with a large replay-only argument, declare the policy on its symbol: `:replay {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"is_dirty_ok" true}}`. Vis keeps the original call for execution and forensics, but replaces a successful or approved-retry oversized call with a hashed textual receipt. A matching failed call can be retried by id without resending its arguments. svar remains a faithful provider codec and never elides arguments itself.
 
 ### Sandbox shims and autoloads
 

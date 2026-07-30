@@ -86,12 +86,12 @@
                              "kind" "nrepl"
                              "language" "clojure"
                              "status" "up"
-                             "detail" {"dir" "/repo" "port" 7888}}
+                             "detail" {"cwd" "/repo" "port" 7888}}
                             {"id" "api"
                              "kind" "repl"
                              "language" "python"
                              "status" "starting"
-                             "detail" {"dir" "/repo/apps/api" "cmd" "python -i"}}]
+                             "detail" {"cwd" "/repo/apps/api" "cmd" "python -i"}}]
                            {:root "/repo" :languages ["clojure" "python" "typescript"]})]
                    (expect (= "up" (get-in view ["repls" "clojure" "." "status"])))
                    (expect (= 7888 (get-in view ["repls" "clojure" "." "port"])))

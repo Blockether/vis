@@ -91,13 +91,13 @@
         [env (fake-env [{:language "clojure"
                          :start-repl-fn (fn [_ op opts]
                                           {:success? true :result {:op op :opts opts}})}])]
-        (expect (= {:op "restart" :opts {"dir" "ext" "aliases" ["dev"]}}
+        (expect (= {:op "restart" :opts {"cwd" "ext" "aliases" ["dev"]}}
                    (:result
-                     (language-surface/start-repl env "restart" {"dir" "ext" "aliases" ["dev"]}))))
+                     (language-surface/start-repl env "restart" {"cwd" "ext" "aliases" ["dev"]}))))
         (expect (= {:op "start" :opts {"aliases" ["dev"]}}
                    (:result (language-surface/start-repl env {"aliases" ["dev"]}))))
-        (expect (= {:op "restart" :opts {"dir" "ext"}}
-                   (:result (language-surface/start-repl env {"op" "restart" "dir" "ext"}))))
+        (expect (= {:op "restart" :opts {"cwd" "ext"}}
+                   (:result (language-surface/start-repl env {"op" "restart" "cwd" "ext"}))))
         (expect (= {:op "start" :opts {}} (:result (language-surface/start-repl env))))))
   (it "advertises explicit lifecycle op and no repl_eval auto-start"
       (expect (= ["start" "restart" "connect" "stop" "status"]
@@ -128,7 +128,7 @@
         (expect (str/includes? stop "managed REPL you started"))
         (expect (str/includes? stop "never killed")))
       (expect (not (str/includes? (get-in language-surface/repl-eval-symbol
-                                          [:ext.symbol/schema :properties "dir" :description])
+                                          [:ext.symbol/schema :properties "cwd" :description])
                                   "auto-start"))))
   (it "keeps every native language input schema closed"
       (doseq [s language-surface/symbols]
@@ -151,9 +151,9 @@
         [env (fake-env [{:language "clojure"
                          :start-repl-fn (fn [_ op opts]
                                           {:success? true :result {:op op :opts opts}})}])]
-        (expect (= {:op "restart" :opts {"id" "main" "dir" "ext"}}
+        (expect (= {:op "restart" :opts {"id" "main" "cwd" "ext"}}
                    (:result
-                     (language-surface/start-repl env "clojure" "main" "restart" {"dir" "ext"}))))
+                     (language-surface/start-repl env "clojure" "main" "restart" {"cwd" "ext"}))))
         (expect (= {:op "start" :opts {"id" "main" "aliases" ["dev"]}}
                    (:result (language-surface/start-repl env
                                                          "clojure"

@@ -159,6 +159,51 @@
         (persistent! acc)
         (recur next-offset (inc page) acc)))))
 
+(defn- rg-fff-rel-files
+  "fff items → File objects resolved under `base`, dropping items with no path."
+  [^File base items]
+  (keep (fn [{:keys [relative-path]}]
+          (some->> relative-path
+                   (io/file base)))
+        items))
+
+(defn- rg-fff-path-hit?
+  "True when a FUZZY fff path item's path LITERALLY contains `query`, case-insensitively.
+   fff's path search is fuzzy and returns a full page of unrelated paths; this is the
+   filter that keeps rg from opening and reading all of them."
+  [^String query {:keys [relative-path]}]
+  (boolean (and relative-path
+                (str/includes? (str/lower-case ^String relative-path) (str/lower-case query)))))
+
+(defn- rg-fff-query-files
+  "Candidate files ONE `query` contributes from an open fff index `idx`: native-GREP
+   content hits (paged to exhaustion) plus the literal-filtered fuzzy-PATH hits.
+   A needle hostile to fff's fuzzy path search skips the path side entirely — native
+   grep is literal/smart-case, so it already sees every content candidate."
+  [idx ^File base query]
+  (let
+    [path-items
+     (when-not (rg-needle-hostile-to-fff? query)
+       (->> (:items (fff/search idx {:query query :page-size 1000}))
+            (filter #(rg-fff-path-hit? query %))))
+
+     grep-items
+     (rg-fff-grep-files idx query)]
+
+    (concat (rg-fff-rel-files base path-items) (rg-fff-rel-files base grep-items))))
+
+(defn- rg-fff-root-files
+  "`rg-fff-candidate-files` for ONE root: a FILE root is its own only candidate, a
+   directory root leases a single fff index and realizes every needle's hits in it."
+  [^File root needles overlay]
+  (if (.isFile root)
+    [root]
+    (fff-index/with-index [idx (fff-index/lease root true overlay)]
+                          (let [base (.getCanonicalFile root)]
+                            ;; doall: realize the lazy hits INSIDE with-open, before the fresh
+                            ;; instance is closed.
+                            (doall (mapcat #(rg-fff-query-files idx base %) needles))))))
+
 (defn- rg-fff-candidate-files
   "Files under `roots` that MIGHT contain a needle, via fff — the fast, nested-
    `.gitignore`-aware universe rg then RE-VALIDATES with the literal `make-line-matcher`.
@@ -180,48 +225,14 @@
    170ms vs 8ms on this repo) for no extra recall.
    Returns a File vec, deduped by canonical path."
   [roots needles overlay]
-  (let
-    [rel-files
-     (fn [^File base items]
-       (keep (fn [{:keys [relative-path]}]
-               (some->> relative-path
-                        (io/file base)))
-             items))
-
-     path-hit?
-     (fn [^String query {:keys [relative-path]}]
-       (boolean (and relative-path
-                     (str/includes? (str/lower-case ^String relative-path)
-                                    (str/lower-case query)))))]
-
-    (->> roots
-         (mapcat
-           (fn [^File root]
-             (cond (.isFile root) [root]
-                   :else (fff-index/with-index
-                           [idx (fff-index/lease root true overlay)]
-                           (let [base (.getCanonicalFile root)]
-                             ;; doall: realize the lazy hits INSIDE with-open, before the fresh
-                             ;; instance is closed.
-                             (doall (mapcat (fn [query]
-                                              (let
-                                                [path-items
-                                                 (when-not (rg-needle-hostile-to-fff? query)
-                                                   (->> (:items (fff/search idx
-                                                                            {:query query
-                                                                             :page-size 1000}))
-                                                        (filter #(path-hit? query %))))
-                                                 grep-items (rg-fff-grep-files idx query)]
-
-                                                (concat (rel-files base path-items)
-                                                        (rel-files base grep-items))))
-                                            needles)))))))
-         ;; dedup by canonical path, keep File objects
-         (reduce (fn [acc ^File f]
-                   (assoc acc (.getCanonicalPath f) f))
-                 {})
-         vals
-         vec)))
+  (->> roots
+       (mapcat #(rg-fff-root-files % needles overlay))
+       ;; dedup by canonical path, keep File objects
+       (reduce (fn [acc ^File f]
+                 (assoc acc (.getCanonicalPath f) f))
+               {})
+       vals
+       vec))
 
 
 (def ^:private default-find-limit 50)
@@ -1826,6 +1837,58 @@
        :is_hidden (boolean (get spec "is_hidden"))
        :is_ls ls?})))
 
+(defn- find-direct-file-item
+  "The single candidate a DIRECT FILE root contributes to a find scan: itself, at score 1.0."
+  [^File root]
+  {:path (rel-path root)
+   :file-name (.getName root)
+   :size (.length root)
+   :binary? false
+   :source :direct-file
+   :score 1.0})
+
+(defn- find-scan-item
+  "One fff hit → a scored candidate map, or nil when it misses `find-min-score` or is
+   hidden while `is_hidden` is false.
+
+   No gitignore re-check here: the index was opened with this exact ignore policy AND
+   overlay, so fff already decided. Re-running a Clojure matcher would drop the very
+   files `:include-gitignored-paths` re-includes."
+  [^File base query is_hidden
+   {:keys [relative-path file-name git-status size modified frecency-score binary?]}]
+  (let
+    [f
+     (io/file base relative-path)
+
+     rel
+     (rel-path f)
+
+     score
+     (find-relevance query rel)]
+
+    (when (and (>= (double score) (double find-min-score)) (or is_hidden (not (.isHidden f))))
+      {:path rel
+       :file-name (or file-name (.getName f))
+       :size size
+       :modified modified
+       :frecency-score frecency-score
+       :git-status git-status
+       :binary? (boolean binary?)
+       :score score})))
+
+(defn- find-scan-root
+  "`find-scan` for ONE root: a FILE root contributes itself, a directory root leases one
+   fff index and scores its page of hits inside the lease."
+  [^File root query is_hidden candidate-page overlay]
+  (if (.isFile root)
+    [(find-direct-file-item root)]
+    (fff-index/with-index [idx (fff-index/lease root true overlay)]
+                          (let [base (.getCanonicalFile root)]
+                            ;; doall: realize hits INSIDE with-open, before the fresh instance is closed.
+                            (doall (->> (:items
+                                          (fff/search idx {:query query :page-size candidate-page}))
+                                        (keep #(find-scan-item base query is_hidden %))))))))
+
 (defn- find-scan
   "Scan `roots` for ONE `query` string and keep candidates whose
    `find-relevance` (name-weighted, order-insensitive) clears `find-min-score`.
@@ -1838,45 +1901,7 @@
    `overlay`. `.gitignore` is always respected; vis walks no tree here."
   [roots query is_hidden candidate-page overlay]
   (->> roots
-       (mapcat
-         (fn [^File root]
-           (cond (.isFile root) [{:path (rel-path root)
-                                  :file-name (.getName root)
-                                  :size (.length root)
-                                  :binary? false
-                                  :source :direct-file
-                                  :score 1.0}]
-                 :else (fff-index/with-index
-                         [idx (fff-index/lease root true overlay)]
-                         (let [base (.getCanonicalFile root)]
-                           ;; doall: realize hits INSIDE with-open, before the
-                           ;; fresh instance is closed.
-                           (doall
-                             (->> (:items (fff/search idx {:query query :page-size candidate-page}))
-                                  (keep
-                                    (fn
-                                      [{:keys [relative-path file-name git-status size modified
-                                               frecency-score binary?]}]
-                                      (let
-                                        [f (io/file base relative-path)
-                                         rel (rel-path f)
-                                         score (find-relevance query rel)]
-
-                                        ;; No gitignore re-check here: the index was
-                                        ;; opened with this exact ignore policy AND
-                                        ;; overlay, so fff already decided. Re-running
-                                        ;; a Clojure matcher would drop the very files
-                                        ;; `:include-gitignored-paths` re-includes.
-                                        (when (and (>= (double score) (double find-min-score))
-                                                   (or is_hidden (not (.isHidden f))))
-                                          {:path rel
-                                           :file-name (or file-name (.getName f))
-                                           :size size
-                                           :modified modified
-                                           :frecency-score frecency-score
-                                           :git-status git-status
-                                           :binary? (boolean binary?)
-                                           :score score})))))))))))
+       (mapcat #(find-scan-root % query is_hidden candidate-page overlay))
        (distinct)
        vec))
 
@@ -1898,6 +1923,45 @@
          (take 5)
          vec)))
 
+(defn- find-ls-item
+  "One fff ls hit → an unscored listing map, or nil when hidden while `is_hidden` is false.
+   See `find-scan-item`: fff owns the ignore verdict."
+  [^File base is_hidden
+   {:keys [relative-path file-name git-status size modified frecency-score binary?]}]
+  (let
+    [f
+     (io/file base relative-path)
+
+     rel
+     (rel-path f)]
+
+    (when (or is_hidden (not (.isHidden f)))
+      {:path rel
+       :file-name (or file-name (.getName f))
+       :size size
+       :modified modified
+       :frecency-score frecency-score
+       :git-status git-status
+       :binary? (boolean binary?)
+       :score 1.0})))
+
+(defn- find-ls-root
+  "`find-ls` for ONE root: a FILE root lists itself, a directory root enumerates its fff
+   index with a blank query inside the lease."
+  [^File root limit is_hidden overlay]
+  (if (.isFile root)
+    [(find-direct-file-item root)]
+    (fff-index/with-index
+      [idx (fff-index/lease root true overlay)]
+      (let [base (.getCanonicalFile root)]
+        (doall (->> (:items (fff/search idx {:query "" :page-size (max (long limit) 300)}))
+                    (keep #(find-ls-item base is_hidden %))))))))
+
+(defn- find-ls-rank
+  "ls ordering key: frecency desc, then recency desc, then path."
+  [it]
+  [(- (long (or (:frecency-score it) 0))) (- (long (or (:modified it) 0))) (:path it)])
+
 (defn- find-ls
   "ls-mode listing for a BLANK grep query: enumerate every file under
    `roots` (a FILE root lists itself) ranked by frecency then recency, capped at
@@ -1906,42 +1970,9 @@
    ignore `overlay` as the scored path."
   [roots limit is_hidden overlay]
   (->> roots
-       (mapcat
-         (fn [^File root]
-           (cond (.isFile root) [{:path (rel-path root)
-                                  :file-name (.getName root)
-                                  :size (.length root)
-                                  :binary? false
-                                  :source :direct-file
-                                  :score 1.0}]
-                 :else (fff-index/with-index
-                         [idx (fff-index/lease root true overlay)]
-                         (let [base (.getCanonicalFile root)]
-                           (doall
-                             (->> (:items
-                                    (fff/search idx {:query "" :page-size (max (long limit) 300)}))
-                                  (keep
-                                    (fn
-                                      [{:keys [relative-path file-name git-status size modified
-                                               frecency-score binary?]}]
-                                      (let
-                                        [f (io/file base relative-path)
-                                         rel (rel-path f)]
-
-                                        ;; see find-scan: fff owns the ignore verdict.
-                                        (when (or is_hidden (not (.isHidden f)))
-                                          {:path rel
-                                           :file-name (or file-name (.getName f))
-                                           :size size
-                                           :modified modified
-                                           :frecency-score frecency-score
-                                           :git-status git-status
-                                           :binary? (boolean binary?)
-                                           :score 1.0})))))))))))
+       (mapcat #(find-ls-root % limit is_hidden overlay))
        (distinct)
-       (sort-by (fn [it]
-                  [(- (long (or (:frecency-score it) 0))) (- (long (or (:modified it) 0)))
-                   (:path it)]))
+       (sort-by find-ls-rank)
        (take limit)
        vec))
 
@@ -3374,7 +3405,9 @@
 (def ^:private write-optional-keys
   ;; "atomic" = the documented multi-file escape flag (read from raw args by
   ;; `mutation-atomic?`); allowed here so it isn't refused as unknown.
-  #{"expected_mtime" "expected_size" "is_overwrite" "atomic" "allow_dirty"})
+  ;; "allow_dirty" = the retired spelling of "is_dirty_ok"; still accepted so
+  ;; older call sites keep working, but only `is_dirty_ok` is advertised.
+  #{"expected_mtime" "expected_size" "is_overwrite" "atomic" "is_dirty_ok" "allow_dirty"})
 
 (def ^:private write-allowed-keys (set/union write-required-keys write-optional-keys))
 
@@ -3451,8 +3484,10 @@
      is_overwrite
      (if (contains? args "is_overwrite") (get args "is_overwrite") true)
 
-     allow_dirty
-     (boolean (get args "allow_dirty"))
+     is_dirty_ok
+     (boolean (if (contains? args "is_dirty_ok")
+                (get args "is_dirty_ok")
+                (get args "allow_dirty")))
 
      expected_mtime
      (get args "expected_mtime")
@@ -3501,7 +3536,7 @@
                 ;; A whole-file write over a file with UNCOMMITTED changes is
                 ;; how a truncated reconstruction silently wipes work. Refuse
                 ;; it: surgical edits belong in patch()/struct_patch().
-                (and exists? (not is-dir?) (not allow_dirty) (git/file-dirty? file))
+                (and exists? (not is-dir?) (not is_dirty_ok) (git/file-dirty? file))
                 {:reason :dirty
                  :path rel
                  :message (str "write refused: "
@@ -3512,7 +3547,7 @@
                                "file). Make surgical changes with patch(...) or "
                                "struct_patch(...) instead, or commit/checkout "
                                rel
-                               " first. Pass allow_dirty=True to overwrite on purpose.")}
+                               " first. Pass is_dirty_ok=True to overwrite on purpose.")}
                 (and exists?
                      (some? expected_mtime)
                      (pos? (long expected_mtime))
@@ -4443,7 +4478,7 @@
    REFUSED on a file with uncommitted changes (:reason \"dirty\") — a whole-file
    write would clobber edits already in flight (e.g. a truncated reconstruction).
    For an existing file you're changing use patch(...)/struct_patch(...); write is
-   for NEW files and clean overwrites. Override with allow_dirty=True."
+   for NEW files and clean overwrites. Override with is_dirty_ok=True."
   [& args]
   (let [result (write-safe (normalize-write-args args))]
     (if (:success? result)
@@ -5337,6 +5372,24 @@
            (str/replace "|" "\\|"))]
     (if (> (count s) (long max-len)) (str (subs s 0 (max 0 (dec (long max-len)))) "…") s)))
 
+(defn- idx-path-cell
+  "Length-capped table cell for a PATH. Unlike `idx-cell` it elides the FRONT
+   (`…/foundation/editing/core.clj`): a deep path's tail — file name, then its
+   anchor — is what a reader needs, while a right-truncated one is all shared
+   directory prefix and identifies nothing."
+  [s max-len]
+  (let
+    [s
+     (-> (str s)
+         (str/replace #"\s+" " ")
+         str/trim
+         (str/replace "|" "\\|"))
+
+     n
+     (long max-len)]
+
+    (if (> (count s) n) (str "…" (subs s (- (count s) (max 0 (dec n))))) s)))
+
 (defn- render-index-one
   "Render one structural index result as its own headline and definition table."
   [r]
@@ -5444,15 +5497,18 @@
       (render-index-one r))))
 
 (defn- render-occurrences-result
-  "struct_index `name` mode → `{:summary :body}`, grouped PER SYMBOL. Headline is
-   `` `name` · K defs · N uses · M files · <scope> ``; <scope> is `project-wide` for
-   the default scan, else `in <paths>`. Then ONE block per DEFINITION — a headline
-   carrying its name + signature, kind (visibility only when not public), def site
-   anchor and use count — with the use lines attached to it indented beneath, one
-   file per line. Uses that no single definition owns come last under `other uses`.
-   `r` is wire-shaped: `{:name :symbols [{:kind :visibility :signature :path
-   :anchor :end_anchor :use_count :uses [{:path :anchors}]}] :other_uses :count
-   :definition_count}`."
+  "struct_index `name` mode → `{:summary :body}`, a definition TABLE grouped PER
+   SYMBOL — the same shape the `paths` mode draws, so both modes of the tool read
+   alike. Headline is `` `name` · K defs · N uses · M files · <scope> ``; <scope>
+   is `project-wide` for the default scan, else `in <paths>`. Each DEFINITION is a
+   table row (name, signature, kind — visibility only when not public — its def
+   site, its use count), immediately followed by one indented row per file that
+   uses it, carrying that file's line numbers. Uses no single definition owns come
+   last as `unowned use` rows. Cells are plain text (the table painter does not
+   render inline markdown) and use anchors are re-sorted by line number, since the
+   wire round-trip does not preserve map order. `r` is wire-shaped:
+   `{:name :symbols [{:kind :visibility :signature :path :anchor :end_anchor
+   :use_count :uses [{:path :anchors}]}] :other_uses :count :definition_count}`."
   [r]
   (let
     [symbols
@@ -5489,11 +5545,69 @@
                                       symbols)
                               (map #(kw->str (get % "path")) other))))
 
-     use-lines
-     (fn [us]
-       (for [u us]
-         (str "    " (disp-path (kw->str (get u "path")))
-              "  " (str/join ", " (map #(rg-anchor-lineno (kw->str %)) (get u "anchors"))))))]
+     use-row
+     (fn [u kind]
+       (let
+         [anchors
+          (get u "anchors")
+
+          lines
+          (->> anchors
+               (sort-by rg-anchor-lineno-long)
+               (map (comp rg-anchor-lineno kw->str))
+               (str/join ", "))]
+
+         (str "| "
+              "\u00a0\u00a0· "
+              (idx-path-cell (disp-path (kw->str (get u "path"))) 42)
+              " | "
+              (idx-cell "—" 22)
+              " | "
+              (idx-cell kind 16)
+              " | "
+              (idx-cell lines 44)
+              " | "
+              (idx-cell (count anchors) 6)
+              " |")))
+
+     def-block
+     (fn [s]
+       (let
+         [sig
+          (some-> (get s "signature")
+                  kw->str
+                  not-empty)
+
+          vis
+          (some-> (get s "visibility")
+                  kw->str
+                  not-empty)
+
+          kind
+          (some-> (get s "kind")
+                  kw->str
+                  not-empty)
+
+          kindc
+          (if (and vis (not= vis "public")) (str vis " " kind) (or kind "—"))]
+
+         (cons (str "| "
+                    (idx-cell (or nm (kw->str (get s "name"))) 44)
+                    " | "
+                    (idx-cell (or sig "—") 22)
+                    " | "
+                    (idx-cell kindc 16)
+                    " | "
+                    (idx-path-cell (disp-path (kw->str (get s "path"))) 34)
+                    " @"
+                    (kw->str (get s "anchor"))
+                    " | "
+                    (idx-cell (or (get s "use_count") 0) 6)
+                    " |")
+               (map #(use-row % "use") (get s "uses")))))
+
+     header
+     ["| Def | Arity | Kind | Where | Uses |" "|-----|-------|------|-------|------|"]]
 
     {:summary (str (when nm (str "`" nm "` · "))
                    defs
@@ -5504,46 +5618,11 @@
                    " file" (when (not= 1 fc) "s")
                    " · " scope)
      :body (when (or (seq symbols) (seq other))
-             (str
-               "\n"
-               (str/join
-                 "\n\n"
-                 (concat
-                   (for [s symbols]
-                     (let
-                       [su (get s "uses")
-                        n (long (or (get s "use_count") 0))
-                        sig (some-> (get s "signature")
-                                    kw->str
-                                    not-empty)
-                        vis (some-> (get s "visibility")
-                                    kw->str
-                                    not-empty)
-                        kind (some-> (get s "kind")
-                                     kw->str
-                                     not-empty)]
-
-                       (str "`"
-                            (or nm (kw->str (get s "name")))
-                            (when sig (str " " sig))
-                            "`"
-                            (when kind
-                              (str " · " (if (and vis (not= vis "public")) (str vis " ") "") kind))
-                            " · "
-                            (disp-path (kw->str (get s "path")))
-                            " @"
-                            (kw->str (get s "anchor"))
-                            " · "
-                            n
-                            " use"
-                            (when (not= 1 n) "s")
-                            (when (seq su) (str "\n" (str/join "\n" (use-lines su)))))))
-                   (when (seq other)
-                     [(str (if (pos? (long defs))
-                             "other uses · no single definition owns them"
-                             "uses · no definition in scope")
-                           "\n"
-                           (str/join "\n" (use-lines other)))])))))}))
+             (str "\n"
+                  (str/join "\n"
+                            (concat header
+                                    (mapcat def-block symbols)
+                                    (map #(use-row % "unowned use") other)))))}))
 
 (defn- render-symbol-rename-result
   "struct_rename → `{:summary :body}`: `renamed in N files` (+ any failures), then
@@ -5769,6 +5848,66 @@
      :tag :observation
      :on-error-fn (tool-failure-on-error :struct_index :file nil)}))
 
+(def ^:private cat-ranges-schema
+  "Shape of a `ranges` value: a non-empty list of 1-based inclusive [start end] pairs."
+  {:type "array"
+   :items {:type "array" :items {:type "integer" :minimum 1} :minItems 2 :maxItems 2}
+   :minItems 1})
+
+(def ^:private cat-anchor-schema
+  "Shape of an `anchor` value: one `lineno:hash` string, or a [from to] pair of them."
+  {:oneOf [{:type "string"} {:type "array" :items {:type "string"} :minItems 2 :maxItems 2}]})
+
+(def ^:private cat-path-entry-schema
+  "A per-path object entry in `paths`: the path plus selectors that override the shared ones."
+  {:type "object"
+   :properties
+   {"path" {:type "string" :minLength 1}
+    "ranges" (assoc cat-ranges-schema
+               :description "Windows for THIS path only; overrides the shared `ranges`.")
+    "anchor" (assoc cat-anchor-schema :description "Anchor selector for THIS path only.")
+    "tail" {:type "integer" :minimum 1 :description "Tail for THIS path only."}
+    "depth" {:type "integer" :minimum 1 :description "Listing depth for THIS path only."}
+    "is_hidden" {:type "boolean" :description "Hidden entries for THIS path only."}}
+   :required ["path"]
+   :additionalProperties false})
+
+(def ^:private cat-paths-schema
+  "The `paths` argument: bare path strings and/or per-path override objects."
+  {:type "array"
+   :items {:oneOf [{:type "string" :minLength 1} cat-path-entry-schema]}
+   :minItems 1
+   :description
+   (str
+     "Exact physical file/directory paths — batch every region you need into ONE call. A bare "
+     "string takes the shared selectors; `{\"path\": \"…\", \"ranges\": [[a, b]]}` overrides them "
+     "for that file.")})
+
+(def ^:private cat-schema
+  "`cat`'s JSON Schema: `paths` plus the selectors shared by every bare path in it."
+  {:type "object"
+   :properties
+   {"paths" cat-paths-schema
+    "ranges" (assoc cat-ranges-schema
+               :description
+               "Optional [[start,end],…] windows (one or more, 1-based and inclusive).")
+    "anchor"
+    (assoc cat-anchor-schema
+      :description
+      "Optional lineno:hash anchor — a string for ONE line, or [from,to] for an inclusive span.")
+    "tail"
+    {:type "integer" :minimum 1 :description "Optional: read the last N lines (omit N → 2000)."}
+    "depth" {:type "integer"
+             :minimum 1
+             :description
+             "Directory listing only: nesting depth (default 1, a shallow one-level listing)."}
+    "is_hidden" {:type "boolean"
+                 :description
+                 "Directory listing only: include dotfiles / hidden entries (default false)."}}
+   :required ["paths"]
+   :additionalProperties false
+   :maxProperties 4})
+
 (def cat-symbol
   (vis/symbol
     #'cat-tool
@@ -5788,57 +5927,7 @@
        "Run `struct_index` first on code; a write invalidates pre-write anchors for that file, not other files.")
      :render render-cat-result
      :color-role :tool-color/read
-     :schema
-     {:type "object"
-      :properties
-      {"paths"
-       {:type "array"
-        :items
-        {:oneOf
-         [{:type "string" :minLength 1}
-          {:type "object"
-           :properties
-           {"path" {:type "string" :minLength 1}
-            "ranges" {:type "array"
-                      :items
-                      {:type "array" :items {:type "integer" :minimum 1} :minItems 2 :maxItems 2}
-                      :minItems 1
-                      :description "Windows for THIS path only; overrides the shared `ranges`."}
-            "anchor" {:oneOf [{:type "string"}
-                              {:type "array" :items {:type "string"} :minItems 2 :maxItems 2}]
-                      :description "Anchor selector for THIS path only."}
-            "tail" {:type "integer" :minimum 1 :description "Tail for THIS path only."}
-            "depth" {:type "integer" :minimum 1 :description "Listing depth for THIS path only."}
-            "is_hidden" {:type "boolean" :description "Hidden entries for THIS path only."}}
-           :required ["path"]
-           :additionalProperties false}]}
-        :minItems 1
-        :description
-        (str
-          "Exact physical file/directory paths — batch every region you need into ONE call. A bare "
-          "string takes the shared selectors; `{\"path\": \"…\", \"ranges\": [[a, b]]}` overrides them "
-          "for that file.")}
-       "ranges" {:type "array"
-                 :items {:type "array" :items {:type "integer" :minimum 1} :minItems 2 :maxItems 2}
-                 :minItems 1
-                 :description
-                 "Optional [[start,end],…] windows (one or more, 1-based and inclusive)."}
-       "anchor"
-       {:oneOf [{:type "string"} {:type "array" :items {:type "string"} :minItems 2 :maxItems 2}]
-        :description
-        "Optional lineno:hash anchor — a string for ONE line, or [from,to] for an inclusive span."}
-       "tail"
-       {:type "integer" :minimum 1 :description "Optional: read the last N lines (omit N → 2000)."}
-       "depth" {:type "integer"
-                :minimum 1
-                :description
-                "Directory listing only: nesting depth (default 1, a shallow one-level listing)."}
-       "is_hidden" {:type "boolean"
-                    :description
-                    "Directory listing only: include dotfiles / hidden entries (default false)."}}
-      :required ["paths"]
-      :additionalProperties false
-      :maxProperties 4}
+     :schema cat-schema
      :before-fn (path-protected-before-fn :cat :file :read read-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :cat :file nil)}))
@@ -5939,9 +6028,9 @@
      :result
      "Array containing one result object with `path`, `op`, `changed`, `diff`, and — when the rewritten region is small — `anchors` (`{\"lineno:hash\": {\"text\": line}}`) reusable as the next `from_anchor` with no re-read."
      :description (str "Create a new file or intentionally replace an entire clean file. Refuses "
-                       "uncommitted targets unless `allow_dirty`.")
+                       "uncommitted targets unless `is_dirty_ok`.")
      :replay
-     {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"allow_dirty" true}}
+     {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"is_dirty_ok" true}}
      :render render-patch-result
      :color-role :tool-color/edit
      :schema {:type "object"
@@ -5952,7 +6041,7 @@
                {:type "boolean"
                 :description
                 "Overwrite an existing file (default true); false = fail if it exists."}
-               "allow_dirty" {:type "boolean"
+               "is_dirty_ok" {:type "boolean"
                               :description "Allow writing a file with uncommitted git changes."}
                "expected_mtime" {:type "integer"
                                  :description
@@ -6190,10 +6279,10 @@
                                 :match (get args "match")
                                 :anchor (get args "anchor")}))
 
-     ;; allow_dirty: a re-parsed structural edit is SAFE on a file with
+     ;; is_dirty_ok: a re-parsed structural edit is SAFE on a file with
      ;; uncommitted changes — the dirty-guard only blocks the raw `write`.
      result
-     (write-safe {"path" path "content" new-content "allow_dirty" true})]
+     (write-safe {"path" path "content" new-content "is_dirty_ok" true})]
 
     (if (:success? result)
       (let
@@ -6854,7 +6943,7 @@
                             path
                             src
                             {:op :rename :target name :kind nil :code new_name :match nil})]
-                 (write-safe {"path" path "content" renamed "allow_dirty" true})
+                 (write-safe {"path" path "content" renamed "is_dirty_ok" true})
                  (update acc :changed conj path))
                acc))
            (catch Exception e

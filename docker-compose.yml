@@ -25,7 +25,6 @@ services:
       dockerfile: Dockerfile
       args:
         # Bump alongside ~/infrastructure/playbooks/vars/vis-toolchain-versions.yml.
-        VIS_PROFILE: ${VIS_PROFILE:-community}
         WITH_BROWSERS: ${WITH_BROWSERS:-true}
         WITH_CHROME: ${WITH_CHROME:-true}
         # The GraalPy JIT variant forces -Xms14g on the builder JVM. Only turn

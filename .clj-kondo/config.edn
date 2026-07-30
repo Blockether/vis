@@ -19,7 +19,13 @@
   :unresolved-var
   {:exclude [taoensso.telemere/handler:file
              taoensso.telemere/handler:console
-             taoensso.telemere/call-on-shutdown!]}}
+             taoensso.telemere/call-on-shutdown!]}
+  ;; kondo infers primitive types THROUGH map literals, `:keyword` lookups and fn
+  ;; return values; the Clojure COMPILER does not. Every coercion it calls
+  ;; redundant here was measured: dropping it turns the info into a real
+  ;; `*warn-on-boxed-math*` / reflection warning from the compiler (the `general`
+  ;; lint provider), which is strictly worse. The coercions stay; the check goes.
+  :redundant-primitive-coercion {:level :off}}
 
  :hooks
  {:analyze-call

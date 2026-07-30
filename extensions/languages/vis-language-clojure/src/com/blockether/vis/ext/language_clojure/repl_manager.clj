@@ -457,7 +457,7 @@
      (proc-alive? info)]
 
     (cond->
-      {"result" "status" "id" (or id (id-of dir)) "dir" dir "status" (if running? "up" "down")}
+      {"result" "status" "id" (or id (id-of dir)) "cwd" dir "status" (if running? "up" "down")}
       running?
       (assoc "running" true)
 
@@ -599,7 +599,7 @@
                       log-path (.getAbsolutePath log)
                       tail (tail-log log-path 80)
                       base {"id" (id-of dir)
-                            "dir" dir
+                            "cwd" dir
                             "port" port
                             "tool" (name tool)
                             "aliases" (mapv name aliases)
@@ -638,7 +638,7 @@
                  {"result" "failed"
                   "status" "failed"
                   "id" (id-of dir)
-                  "dir" dir
+                  "cwd" dir
                   "port" port
                   "tool" (name tool)
                   "aliases" (mapv name aliases)
@@ -647,7 +647,7 @@
                   "message" (str "Could not start nREPL launcher: " (.getMessage e))}))
              {"result" "no-launcher"
               "status" "down"
-              "dir" dir
+              "cwd" dir
               "message"
               "No deps.edn / project.clj / bb.edn in this directory to start an nREPL."})))))))
 
@@ -674,7 +674,7 @@
     (cond external? (do (swap! processes dissoc k)
                         {"result" "detached"
                          "id" (id-of dir)
-                         "dir" dir
+                         "cwd" dir
                          "message" (str "Detached from external nREPL at "
                                         (or host "localhost")
                                         ":"
@@ -683,10 +683,10 @@
           process (do (swap! processes dissoc k)
                       (.destroy process)
                       (when-not (.waitFor process 3 TimeUnit/SECONDS) (.destroyForcibly process))
-                      {"result" "stopped" "id" (id-of dir) "dir" dir})
+                      {"result" "stopped" "id" (id-of dir) "cwd" dir})
           :else {"result" "not-managed"
                  "id" (id-of dir)
-                 "dir" dir
+                 "cwd" dir
                  "message" "No Vis-managed nREPL for this directory in this session."})))
 
 (defn connect!
@@ -735,13 +735,13 @@
               {"result" "connected"
                "status" "up"
                "id" (id-of dir)
-               "dir" dir
+               "cwd" dir
                "host" host
                "port" port
                "external" true})
           {"result" "unreachable"
            "status" "down"
-           "dir" dir
+           "cwd" dir
            "host" host
            "port" port
            "message" (str "No nREPL answering at "
@@ -876,7 +876,7 @@
             (do (touch! session-id dir) info)
             {"result" "external-unreachable"
              "status" "down"
-             "dir" dir
+             "cwd" dir
              "host" (or (:host info) "localhost")
              "port" (:port info)
              "message" (str "External nREPL at "
@@ -895,7 +895,7 @@
             (cond->
               {"result" "crash-looping"
                "status" "failed"
-               "dir" dir
+               "cwd" dir
                "message" (str "nREPL for this dir crashed "
                               max-crashes-in-window
                               "+ times in "

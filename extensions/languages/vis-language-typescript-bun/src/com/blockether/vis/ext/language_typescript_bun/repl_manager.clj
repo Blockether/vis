@@ -79,7 +79,7 @@
       :started-at (System/currentTimeMillis)}]
 
     (swap! processes assoc dir info)
-    {"status" "up" "pid" (.pid p) "cmd" (display-cmd cmd) "dir" dir}))
+    {"status" "up" "pid" (.pid p) "cmd" (display-cmd cmd) "cwd" dir}))
 
 (defn- request!
   [dir req timeout-ms]
@@ -123,13 +123,13 @@
     (try (when (.isAlive ^Process (:process info)) (.destroyForcibly ^Process (:process info)))
          (catch Throwable _ nil)))
   (swap! processes dissoc dir)
-  {"status" "stopped" "dir" dir})
+  {"status" "stopped" "cwd" dir})
 
 (defn status
   "STRING-keyed lifecycle view (crosses as a tool `:result`)."
   [dir]
   (let [info (get @processes dir)]
-    {"dir" dir
+    {"cwd" dir
      "status" (if (alive? info) "up" "down")
      "pid" (some-> ^Process (:process info)
                    .pid)

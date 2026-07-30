@@ -41,10 +41,18 @@
            " write(path, content) or patch(...).)")
       m)))
 
+(defn- split-keep-lines
+  "Split `source` on \"\\n\" KEEPING every element — including the trailing \"\" of a
+   newline-terminated file and any \\r of CRLF endings. `clojure.string/split-lines`
+   drops both, which silently strips the file's final newline (and de-CRLFs it) from
+   any line surgery done on top of it."
+  [^String source]
+  (vec (str/split source #"\n" -1)))
+
 (defn- slice-lines
   "Inclusive 0-based `[start end]` line slice of `source` as a string."
   [^String source ^long start ^long end]
-  (->> (str/split-lines source)
+  (->> (split-keep-lines source)
        (drop start)
        (take (inc (- end start)))
        (str/join "\n")))
@@ -57,7 +65,7 @@
   [^String source ^long s ^long e]
   (let
     [lines
-     (vec (str/split-lines source))
+     (split-keep-lines source)
 
      before
      (subvec lines 0 (min s (count lines)))
@@ -67,9 +75,12 @@
 
      ;; seam = end of `before` meets start of `after`. If both sides are blank
      ;; (the node had a blank line above AND below), drop one so a single blank
-     ;; remains — local to this seam, nothing else.
+     ;; remains — local to this seam, nothing else. A LONE trailing "" is not a
+     ;; blank line, it is the file's final newline: never collapse that away.
      after
-     (if (and (str/blank? (str (last before))) (seq after) (str/blank? (str (first after))))
+     (if (and (str/blank? (str (last before)))
+              (> (count after) 1)
+              (str/blank? (str (first after))))
        (vec (rest after))
        after)]
 

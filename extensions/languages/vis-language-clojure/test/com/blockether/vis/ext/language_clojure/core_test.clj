@@ -6,6 +6,7 @@
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.language-clojure.core :as core]
+            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.surface-contract :as contract]
             [com.blockether.vis.ext.language-clojure.format :as fmt]
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
@@ -147,7 +148,7 @@
                                                       ["dev"]
                                                       {"result" "started"
                                                        "id" rid
-                                                       "dir" (.getAbsolutePath dir)
+                                                       "cwd" (.getAbsolutePath dir)
                                                        "status" "up"
                                                        "port" 5555
                                                        "pid" 12345
@@ -723,6 +724,13 @@
    closer), commits the batch itself, and substitutes a success envelope."
   (it
     "whole-source-repairs the broken candidate, writes the WHOLE batch, returns success"
+    ;; The SUCCESS envelope the hook substitutes carries the op's mandatory
+    ;; observation/mutation tag, and `:patch` is tagged by the FOUNDATION's
+    ;; symbol registry — which this standalone pack JVM never loads on its own,
+    ;; so the op-tag lookup failed closed with `:extension/unregistered-op`.
+    ;; `discover-extensions!` pulls the foundation in from its built-in list
+    ;; (idempotent; same move as the engine's own foundation test).
+    (extension/discover-extensions!)
     (let [root (tmp-dir)]
       (try
         ;; the failing class from session 9c829d10: the replacement line is

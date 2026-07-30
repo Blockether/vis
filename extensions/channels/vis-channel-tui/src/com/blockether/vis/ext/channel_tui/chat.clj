@@ -111,7 +111,8 @@
                                (when-some [v (get metadata wk)]
                                  [k v])))
                        [[:spec "spec"] [:paths "paths"] [:hit_count "hit_count"]
-                        [:truncated_by "truncated_by"] [:command "command"] [:cwd "cwd"]
+                        [:truncated_by "truncated_by"] [:command "command"]
+                        [:cwd "cwd"]
                         [:target "target"]])))
         (seq channel)
         (let [first-ok (or (first (filter #(get % "is_success") channel)) (first channel))]

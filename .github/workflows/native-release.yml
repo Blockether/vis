@@ -63,8 +63,8 @@ jobs:
           # — the aarch64 backend's analysis/compile graphs simply need more heap
           # than x64 for this image — so arm64 gets 14 GB and starts smaller
           # (-J-Xms8g) so the 16 GB runner is not fully committed up front.
-          - { os: ubuntu-latest, profile: community, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx12g -J-Xms12g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
-          - { os: ubuntu-24.04-arm, profile: community, bin: target/vis, asset: vis-linux-arm64-community, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-latest, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx12g -J-Xms12g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-linux-arm64-community, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
           # NO macOS job, and that is a hard constraint, not an oversight:
           #   * the only free arm64 macOS runners have 7 GB — less than half of
           #     what the builder needs (v0.1.6/v0.1.8 each burned 4 h there);
@@ -113,7 +113,7 @@ jobs:
       - name: Build native image
         env:
           VIS_NATIVE_EXTRA_ARGS: ${{ matrix.extra_args }}
-        run: clojure -T:build native :profile :${{ matrix.profile }}
+        run: clojure -T:build native
       - name: Stage asset
         shell: bash
         run: cp "${{ matrix.bin }}" "${{ matrix.asset }}"

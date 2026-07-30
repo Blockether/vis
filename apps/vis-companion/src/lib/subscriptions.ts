@@ -88,6 +88,17 @@ export class SessionSubscriptionHub {
     return this.watched.has(sid);
   }
 
+  /**
+   * Has the turn this session was streaming already reached a terminal frame?
+   *
+   * A screen seeding its live bubble from a cache needs to know that the answer
+   * it remembers has since finished — the settled row is in the transcript, and
+   * repainting the bubble would render it twice.
+   */
+  hasEndedTurn(sid: string): boolean {
+    return this.ended.has(sid);
+  }
+
   watchedSessionIds(): ReadonlySet<string> {
     return this.watched;
   }

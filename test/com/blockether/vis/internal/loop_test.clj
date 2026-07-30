@@ -1728,7 +1728,7 @@
 
      policies
      {"write"
-      {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"allow_dirty" true}}}
+      {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"is_dirty_ok" true}}}
 
      target
      {:provider :lmstudio :model "google/gemma-4-12b-qat"}
@@ -1803,7 +1803,7 @@
 
      policies
      {"write"
-      {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"allow_dirty" true}}}
+      {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"is_dirty_ok" true}}}
 
      prior
      [[1
@@ -1811,11 +1811,11 @@
         :forms-vec [{:svar/tool-call-id id
                      :error {:type :editing/write-failed :data {:reason :dirty}}}]}]]]
 
-    (it "reuses the exact prior path/content and changes only allow_dirty"
+    (it "reuses the exact prior path/content and changes only is_dirty_ok"
         (let [resolved (:tool-call (resolve-retry prior policies {"tool_call_id" id}))]
           (expect (= "write" (:name resolved)))
           (expect (= content (get-in resolved [:input "content"])))
-          (expect (true? (get-in resolved [:input "allow_dirty"])))))
+          (expect (true? (get-in resolved [:input "is_dirty_ok"])))))
     (it "rejects a non-dirty target"
         (let [clean-prior (assoc-in prior [0 1 :forms-vec 0 :error :data :reason] :stale)]
           (expect (str/includes? (:error (resolve-retry clean-prior policies {"tool_call_id" id}))
