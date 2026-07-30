@@ -28,6 +28,7 @@ import type {
   SseEvent,
   SubmittedTurn,
   Toggle,
+  TranscriptIteration,
   TranscriptTurn,
   PushDevice,
   PushDeviceInput,
@@ -629,6 +630,20 @@ export class GatewayClient {
     );
     writeSnapshot(this.snapshotKey('settings'), response);
     return response;
+  }
+
+  /**
+   * One toggle by id. `/v1/settings` only lists what the settings sheet shows,
+   * so screen-owned knobs (reasoning effort lives in the model picker) are read
+   * one at a time here.
+   */
+  async setting(id: string, signal?: AbortSignal): Promise<Toggle> {
+    return this.request<Toggle>(
+      'GET',
+      `/v1/settings/${encodeURIComponent(id)}`,
+      undefined,
+      signal,
+    );
   }
 
   async setSetting(
@@ -1472,6 +1487,37 @@ export class GatewayClient {
       status,
       content: Array.isArray(row.content) ? row.content as TranscriptTurn['content'] : undefined,
     };
+  }
+
+  /**
+   * The iterations the gateway has ALREADY PERSISTED for ONE turn — the resume
+   * source for a turn that is still running.
+   *
+   * The live bubble is normally seeded by the `turn.started` frame, and every
+   * later delta is dropped while it is null. That frame is emitted exactly once
+   * and the hub subscribes LIVE-ONLY, so anyone who was not listening at that
+   * instant never gets it: a cold open on a session that is already streaming,
+   * and — the reported bug — an iOS webview whose WebContent process the OS
+   * killed during a long background (Capacitor #7810/#7905), which reloads the
+   * page mid-turn. The stream reconnects fine and then streams into nothing.
+   *
+   * This is the same trace the TUI resumes from, so the adopted bubble starts
+   * with everything that happened while we were away instead of a blank one.
+   */
+  async turnTrace(
+    sid: string,
+    tid: string,
+    signal?: AbortSignal,
+  ): Promise<TranscriptIteration[]> {
+    const response = await this.request<{ iterations?: unknown }>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/trace`,
+      undefined,
+      signal,
+    );
+    return Array.isArray(response.iterations)
+      ? (response.iterations as TranscriptIteration[])
+      : [];
   }
 
 

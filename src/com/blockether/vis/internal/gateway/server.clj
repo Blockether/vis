@@ -462,8 +462,12 @@
    Shared by BOTH event endpoints so `/v1/events?sids=…` and
    `/v1/sessions/:sid/events` resolve a cursor identically."
   ^long [sid requested]
-  (let [requested (long requested)
-        current (long (state/current-seq sid))]
+  (let
+    [requested
+     (long requested)
+
+     current
+     (long (state/current-seq sid))]
 
     (if (or (neg? requested) (> requested current))
       (long (or (state/running-turn-start-cursor sid) current))
@@ -1141,6 +1145,29 @@
                                           :toggles (mapv toggle-json group-specs)}))
                                   grouped)})))
 
+(defn- get-setting-handler
+  "GET /v1/settings/:id — ONE registered toggle row, INCLUDING the ids
+   `list-settings-handler` hides. `reasoning_level` is registered
+   `:settings? false` because every channel drives it from its own dedicated
+   control (TUI Ctrl+R, the companion's model dialog) rather than the Settings
+   list, so a remote channel still needs a way to READ its current value.
+   Same row shape as the list endpoint."
+  [request]
+  (let
+    [id-str
+     (get-in request [:path-params :id])
+
+     id
+     (when (string? id-str) (str/trim id-str))
+
+     spec
+     (when (seq id) (toggles/toggle-spec id))]
+
+    (cond (not (toggles/toggle-id? id))
+          (error-response 400 :bad-setting-id "settings id must be a snake_case string")
+          (nil? spec) (error-response 404 :unknown-setting "no such setting" :id (str id-str))
+          :else (json-response (toggle-json spec)))))
+
 (defn- set-setting-handler
   "POST /v1/settings {id, action} — flip (`toggle`, the default), `cycle`,
    or set an exact enum choice (`value` action with `{value}`) on one
@@ -1459,6 +1486,21 @@
           :else (let [count (state/reorder-project-sessions! pid order)]
                   (json-response {:project_id (str pid) :count count})))))
 
+(defn- configured-reasoning-level
+  "The shared `reasoning_level` toggle as a plain wire string (`quick` /
+   `balanced` / `deep`), or nil when it is unreadable.
+
+   The gateway is the ONLY reasoning source for channels that do not send
+   `reasoning_default` themselves (the companion app, plain HTTP clients): the
+   TUI reads the same toggle and passes it per turn, so honouring it here makes
+   one flip mean the same thing everywhere instead of silently falling back to
+   the engine's `balanced`."
+  []
+  (let [v (try (toggles/value-of "reasoning_level") (catch Throwable _ nil))]
+    (cond (keyword? v) (name v)
+          (string? v) (not-empty v)
+          :else nil)))
+
 (defn- submit-turn-handler
   [request]
   (let
@@ -1475,7 +1517,8 @@
                                     {:request (get body "request")
                                      :idempotency-key (get body "idempotency_key")
                                      :model (get body "model")
-                                     :reasoning-default (get body "reasoning_default")
+                                     :reasoning-default (or (get body "reasoning_default")
+                                                            (configured-reasoning-level))
                                      :extra-body (get body "extra_body")
                                      :turn-features (get body "turn_features")
                                      :workspace (get body "workspace")
@@ -2439,6 +2482,7 @@
         ["/devices/actions/test" {:post test-device-handler}]
         ["/devices/:token" {:delete delete-device-handler}]
         ["/settings" {:get list-settings-handler :post set-setting-handler}]
+        ["/settings/:id" {:get get-setting-handler}]
         ["/theme" {:get get-theme-handler :post set-theme-handler}]
         ["/slashes" {:get slashes-handler}]
         ["/providers/:provider-id/status" {:get provider-status-handler}]

@@ -721,6 +721,24 @@
            (:status ((rv 'set-setting-handler)
                       {:query-params {"id" "unknown_toggle" "action" "toggle"}}))))))
 
+(deftest get-setting-handler-serves-hidden-rows-test
+  (testing "reasoning_level is readable by id even though the settings list hides it"
+    (let
+      [response
+       ((rv 'get-setting-handler) {:path-params {:id "reasoning_level"}})
+
+       row
+       (wire/parse-json (:body response))]
+
+      (is (= 200 (:status response)))
+      (is (= "reasoning_level" (get row "id")))
+      (is (= "enum" (get row "type")))
+      (is (seq (get row "choices")))
+      (is (string? (get row "value")))))
+  (testing "a non-canonical id is a 400 and an unknown one a 404"
+    (is (= 400 (:status ((rv 'get-setting-handler) {:path-params {:id "reasoning-level"}}))))
+    (is (= 404 (:status ((rv 'get-setting-handler) {:path-params {:id "unknown_toggle"}}))))))
+
 (deftest settings-change-refreshes-cached-extension-bindings-test
   (toggles/register-toggle! {:id "server_test_toggle" :label "Test" :default false})
   (toggles/set-enabled! "server_test_toggle" false)

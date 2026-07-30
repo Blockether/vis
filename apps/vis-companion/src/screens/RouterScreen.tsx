@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
-import type { ModelPref, RouterProvider } from '../lib/types';
+import type { ModelPref, RouterProvider, Toggle } from '../lib/types';
 import { Banner, Button } from '../components/ui';
 import {
   defaultFirstProviders,
@@ -37,6 +37,8 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
   const [pref, setPref] = useState<ModelPref | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [picking, setPicking] = useState<string | null>(null);
+  const [reasoning, setReasoning] = useState<Toggle | null>(null);
+  const [reasoningPending, setReasoningPending] = useState<string | null>(null);
 
   const loadPref = useCallback(
     async (signal?: AbortSignal) => {
@@ -59,6 +61,25 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
     return () => controller.abort();
   }, [loadPref]);
 
+  const loadReasoning = useCallback(
+    async (signal?: AbortSignal) => {
+      try {
+        const toggle = await client.setting('reasoning_level', signal);
+        if (signal?.aborted) return;
+        setReasoning(toggle);
+      } catch {
+        // Optional knob: a gateway without it just paints the model list.
+      }
+    },
+    [client],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadReasoning(controller.signal);
+    return () => controller.abort();
+  }, [loadReasoning]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
@@ -79,6 +100,17 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
       fleet.setErr((e as Error).message);
     } finally {
       setPicking(null);
+    }
+  }
+
+  async function pickReasoning(choice: string) {
+    setReasoningPending(choice);
+    try {
+      setReasoning(await client.setSetting('reasoning_level', 'value', choice));
+    } catch (e) {
+      fleet.setErr((e as Error).message);
+    } finally {
+      setReasoningPending(null);
     }
   }
 
@@ -125,6 +157,39 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
         <div className="flex-1 touch-pan-y space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain border-t border-dialog-edge p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4">
           {err && <Banner kind="err">{err}</Banner>}
           {note && <Banner kind="ok">{note}</Banner>}
+
+          {reasoning && (reasoning.choices?.length ?? 0) > 0 && (
+            <div className="border border-dialog-edge bg-panel-2 p-3">
+              <p className="font-mono text-ui font-bold text-white">{reasoning.label}</p>
+              <p className="font-mono text-meta text-dialog-hint">
+                {reasoning.description ?? 'How much the model thinks before it answers.'}
+              </p>
+              <ul className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {(reasoning.choices ?? []).map((choice) => {
+                  const active = (reasoning.value ?? '') === choice;
+                  return (
+                    <li key={choice} className="min-w-0">
+                      <button
+                        type="button"
+                        className={`flex w-full min-h-9 items-center justify-center border px-2 py-1.5 font-mono text-ui transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none ${
+                          active
+                            ? 'border-accent bg-hover text-accent-ink'
+                            : 'border-dialog-edge text-white/85'
+                        }`}
+                        disabled={reasoningPending !== null}
+                        onClick={() => void pickReasoning(choice)}
+                        aria-pressed={active}
+                      >
+                        <span className="min-w-0 truncate">
+                          {reasoningPending === choice ? '…' : choice}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
 
           {providers === null && (
             <p className="py-8 text-center font-mono text-body text-dialog-hint">Loading models…</p>

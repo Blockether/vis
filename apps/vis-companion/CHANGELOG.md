@@ -2,6 +2,11 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.14 (2805) — 2026-07-30
+<!-- commit: 5bb959dd751a3ade42121036f3221ca427647e4a -->
+
+- Guarantee turn terminals and bound Python GC
+
 ## 0.1.14 (2804) — 2026-07-30
 <!-- commit: 88bbea7eb3eee254690946ef364d5f0a31b67e16 -->
 
