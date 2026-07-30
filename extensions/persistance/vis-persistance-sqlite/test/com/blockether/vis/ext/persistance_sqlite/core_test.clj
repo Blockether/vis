@@ -2399,7 +2399,10 @@
                                      :result {:op "cat"}}]})
 
        index
-       (persistance/db-native-result-index-for-session s cid)]
+       (persistance/db-native-result-index-for-session s cid)
+
+       latest-index
+       (persistance/db-native-result-index-for-latest-turn s cid)]
 
       ;; newest turn first, print-only form absent
       (expect (= ["toolu_NEW" "toolu_OLD"] (mapv :id index)))
@@ -2409,7 +2412,11 @@
       (expect (nil? (:gist (first index))))
       ;; internal row id never leaks to the sandbox
       (expect (every? #(nil? (:row-id %)) index))
-      ;; the id list is exactly this index, so both views can never drift
+      ;; `ntr.describe()` stays local to the latest turn; direct NTR recovery and
+      ;; mapping iteration retain their full branch behavior above.
+      (expect (= ["toolu_NEW"] (mapv :id latest-index)))
+      (expect (= ["cat"] (mapv :tool latest-index)))
+      ;; the full id list is exactly the full-session index, so both views never drift
       (expect (= (mapv :id index) (persistance/db-native-result-ids-for-session s cid)))))
   (it "unknown / nil session is a safe empty index"
       (let [s (h/store)]

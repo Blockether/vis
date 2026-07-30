@@ -2,6 +2,13 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.14 (2784) — 2026-07-30
+<!-- commit: bf89880867cd250b2947ade75598de10288edad6 -->
+
+- Simplify companion reconnect and transcript behavior
+- Improve compaction guidance and retry diagnostics
+- Install the pinned GraalVM CE automatically when it is missing
+
 ## 0.1.14 (2781) — 2026-07-29
 <!-- commit: 636ea5af07bb6fcea247870d9771f7d56efee6a7 -->
 

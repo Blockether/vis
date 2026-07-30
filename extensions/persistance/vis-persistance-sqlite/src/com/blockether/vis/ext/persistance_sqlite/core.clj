@@ -3677,48 +3677,56 @@
                       (assoc :gist (str (:result-summary form))))))))
         forms))
 
+(defn- ntr-state-index
+  "NEWEST-first index entries for result-bearing native forms in `state-ids`; when
+   `turn-ids` is supplied, only those turns. Rows missing from `ntr-index-cache` are
+   fetched and decoded."
+  [db-info state-ids & [turn-ids]]
+  (if (and (ds db-info) (seq state-ids))
+    (let
+      [;; Skinny: ids only, so an already-indexed blob never crosses the
+       ;; JDBC boundary again.
+       row-ids
+       (mapv :id
+             (query! db-info
+                     {:select [:qti.id]
+                      :from [[:session_turn_iteration :qti]]
+                      :join [[:session_turn_state :qts] [:= :qts.id :qti.session_turn_state_id]
+                             [:session_turn_soul :qs] [:= :qs.id :qts.session_turn_soul_id]]
+                      :where (cond->
+                               [:and [:in :qs.session_state_id state-ids] [:<> :qti.tool_calls nil]]
+                               (seq turn-ids)
+                               (conj [:in :qs.id turn-ids]))
+                      ;; NEWEST first so a de-dup keeps the latest occurrence.
+                      :order-by [[:qs.position :desc] [:qts.version :desc] [:qti.position :desc]]}))
+
+       missing
+       (into [] (remove #(.containsKey ntr-index-cache %)) row-ids)]
+
+      (when (seq missing)
+        (when (> (.size ntr-index-cache) (long ntr-index-cache-max)) (.clear ntr-index-cache))
+        (doseq [chunk (partition-all 400 missing)]
+          (doseq
+            [row (query! db-info
+                         {:select [:qti.id :qti.tool_calls]
+                          :from [[:session_turn_iteration :qti]]
+                          :where [:and [:in :qti.id (vec chunk)] [:<> :qti.tool_calls nil]]})]
+            (.put ntr-index-cache
+                  (:id row)
+                  (ntr-entries-of-forms (:id row) (<-blob (:tool_calls row)))))
+          ;; A row that vanished between the two queries indexes as empty —
+          ;; never re-queried, never a miss loop.
+          (doseq [rid chunk]
+            (when-not (.containsKey ntr-index-cache rid) (.put ntr-index-cache rid [])))))
+      (into [] (mapcat #(.get ntr-index-cache %)) row-ids))
+    []))
+
 (defn- ntr-branch-index
   "NEWEST-first index entries for every result-bearing native form in THIS
    session branch — all prior turns AND all earlier iterations of the current
-   turn. Only rows missing from `ntr-index-cache` are fetched and decoded."
+   turn."
   [db-info session-id]
-  (if (and (ds db-info) session-id)
-    (let [state-ids (session-state-chain db-info session-id)]
-      (if (seq state-ids)
-        (let
-          [;; Skinny: ids only, so an already-indexed blob never crosses the
-           ;; JDBC boundary again.
-           row-ids
-           (mapv :id
-                 (query!
-                   db-info
-                   {:select [:qti.id]
-                    :from [[:session_turn_iteration :qti]]
-                    :join [[:session_turn_state :qts] [:= :qts.id :qti.session_turn_state_id]
-                           [:session_turn_soul :qs] [:= :qs.id :qts.session_turn_soul_id]]
-                    :where [:and [:in :qs.session_state_id state-ids] [:<> :qti.tool_calls nil]]
-                    ;; NEWEST first so a de-dup keeps the latest occurrence.
-                    :order-by [[:qs.position :desc] [:qts.version :desc] [:qti.position :desc]]}))
-           missing (into [] (remove #(.containsKey ntr-index-cache %)) row-ids)]
-
-          (when (seq missing)
-            (when (> (.size ntr-index-cache) (long ntr-index-cache-max)) (.clear ntr-index-cache))
-            (doseq [chunk (partition-all 400 missing)]
-              (doseq
-                [row (query! db-info
-                             {:select [:qti.id :qti.tool_calls]
-                              :from [[:session_turn_iteration :qti]]
-                              :where [:and [:in :qti.id (vec chunk)] [:<> :qti.tool_calls nil]]})]
-                (.put ntr-index-cache
-                      (:id row)
-                      (ntr-entries-of-forms (:id row) (<-blob (:tool_calls row)))))
-              ;; A row that vanished between the two queries indexes as empty —
-              ;; never re-queried, never a miss loop.
-              (doseq [rid chunk]
-                (when-not (.containsKey ntr-index-cache rid) (.put ntr-index-cache rid [])))))
-          (into [] (mapcat #(.get ntr-index-cache %)) row-ids))
-        []))
-    []))
+  (ntr-state-index db-info (session-state-chain db-info session-id)))
 
 (defn db-native-result-index-for-session
   "Browseable index behind `ntr.describe()`: `[{:id :tool :gist}]` for every
@@ -3735,6 +3743,33 @@
                   (let [id (:id entry)]
                     (when-not (contains? @seen id) (vswap! seen conj id) (dissoc entry :row-id)))))
           (ntr-branch-index db-info session-id))))
+
+(defn db-native-result-index-for-latest-turn
+  "Browseable index behind `ntr.describe()`: `[{:id :tool :gist}]` for result-bearing
+   native forms from ONLY the latest turn on this session branch, newest first and
+   de-duped by id. Exact `ntr[id]` retrieval remains available across all turns."
+  [db-info session-id]
+  (let
+    [state-ids
+     (session-state-chain db-info session-id)
+
+     latest-turn-id
+     (when (seq state-ids)
+       (:id (query-one! db-info
+                        {:select [:qs.id]
+                         :from [[:session_turn_soul :qs]]
+                         :where [:in :qs.session_state_id state-ids]
+                         :order-by [[:qs.created_at :desc] [:qs.position :desc]]
+                         :limit 1})))
+
+     seen
+     (volatile! #{})]
+
+    (into []
+          (keep (fn [entry]
+                  (let [id (:id entry)]
+                    (when-not (contains? @seen id) (vswap! seen conj id) (dissoc entry :row-id)))))
+          (if latest-turn-id (ntr-state-index db-info state-ids [latest-turn-id]) []))))
 
 (defn db-native-result-ids-for-session
   "List every persisted NATIVE tool_use id (`:svar/tool-call-id`) in THIS

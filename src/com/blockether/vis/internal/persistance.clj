@@ -610,9 +610,13 @@
 (defdelegate db-native-result-ids-for-session [db-info session-id])
 
 ;; Same branch scan, but LABELLED: [{:id :tool :gist}] newest-first, de-duped —
-;; what each stored result actually holds, with NO payload thaw. Backs
-;; `ntr.describe()`.
+;; what each stored result actually holds, with NO payload thaw. Backs full-session
+;; NTR mapping discovery.
 (defdelegate db-native-result-index-for-session [db-info session-id])
+
+;; Labelled index for ONLY the latest turn in this branch. Backs `ntr.describe()`,
+;; keeping browse output local while exact `ntr[id]` recovery remains session-wide.
+(defdelegate db-native-result-index-for-latest-turn [db-info session-id])
 
 ;; --- Extension aggregate sidecars ---
 (defdelegate db-create-extension-aggregate! [db-info opts])

@@ -1371,8 +1371,8 @@ print = __vis_print__
 # every persisted tool_use id in the session (newest first), backing keys() /
 # items() / values() / __iter__ / __len__ so the store is BROWSEABLE without
 # knowing an id up front. Ids alone are opaque, so `describe()` labels a bounded
-# newest-first window with each result's op and salient fields — browse by what a
-# result HOLDS, then spend one fetch on the id worth fetching.
+# newest-first window from the latest turn with each result's op and salient fields —
+# browse by what a result HOLDS, then spend one fetch on the id worth fetching.
 class __VisNativeResults__:
     def __init__(self):
         self.__vis_cache__ = {}          # id -> pyified __VisResult__ (already fetched)
@@ -1501,9 +1501,9 @@ class __VisNativeResults__:
     # ── Browse by MEANING, not by opaque id. keys() hands back 24-char tool_use
     # ids that say nothing about what they hold, and items()/values() thaw the
     # ENTIRE store to find out. describe() sits between them: ONE batched prime of
-    # a bounded newest-first window, each id labelled with its op plus a couple of
-    # that result's own salient fields, so a stored result can be CHOSEN before it
-    # is fetched and read in full.
+    # a bounded newest-first window from the latest turn, each id labelled with its
+    # op plus a couple of that result's own salient fields, so a stored result can
+    # be CHOSEN before it is fetched and read in full.
     def __vis_gist_of__(self, __vis_v__):
         try:
             if not isinstance(__vis_v__, dict):
@@ -1570,7 +1570,7 @@ class __VisNativeResults__:
         except Exception:
             __vis_n__ = len(self.__vis_cache__)
         return ('<ntr: ' + str(__vis_n__) + ' stored native results · ntr[tool_id] fetches one '
-                'with no re-run · ntr.describe() lists the newest with what each holds>')
+                'with no re-run · ntr.describe() lists the latest turn with what each holds>')
 
 ntr = __VisNativeResults__()
 native_tools_results = ntr  # backwards-compatible verbose alias
