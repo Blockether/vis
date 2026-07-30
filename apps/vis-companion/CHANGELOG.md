@@ -2,6 +2,13 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.14 (2808) — 2026-07-30
+<!-- commit: f567648ee4a861d6110c4475d7b75e95da3482da -->
+
+- Let the companion app change the reasoning mode
+- Adopt already-running turns in the companion session screen
+- Add PRIVACY.md for the companion app (Play store policy URL)
+
 ## 0.1.14 (2805) — 2026-07-30
 <!-- commit: 5bb959dd751a3ade42121036f3221ca427647e4a -->
 
