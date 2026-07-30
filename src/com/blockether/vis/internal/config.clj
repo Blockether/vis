@@ -1331,6 +1331,22 @@
    Bind in tests; production defaults to the process working directory."
   (str (System/getProperty "user.dir") "/.env.local"))
 
+(def ^:dynamic *extension-getenv*
+  "Function used to read process environment variables. Bind in tests."
+  System/getenv)
+
+(defn- dotenv-value-text
+  [value]
+  (let [value (str/trim value)]
+    (if (#{(char 39) (char 34)} (first value))
+      (let
+        [quote (first value)
+         closing-index (.indexOf ^String value (str quote) 1)]
+
+        (if (neg? closing-index) value (subs value 1 closing-index)))
+      (some-> (first (str/split value #"\s+#" 2))
+              str/trim))))
+
 (defn- dotenv-assignment
   "Return the final assignment for `name` in `path`, including a blank value."
   [path name]
@@ -1341,17 +1357,12 @@
            (some (fn [line]
                    (let
                      [line (-> line
+                               (str/replace-first #"^﻿" "")
                                str/trim
                                (str/replace-first #"^export\s+" ""))]
                      (when-let
                        [[_ key value] (re-matches #"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)" line)]
-                       (when (= key name)
-                         {:value (let [value (str/trim value)]
-                                   (if (and (<= 2 (count value))
-                                            (#{(char 39) (char 34)} (first value))
-                                            (= (first value) (last value)))
-                                     (subs value 1 (dec (count value)))
-                                     value))}))))
+                       (when (= key name) {:value (dotenv-value-text value)}))))
                  (reverse (vec (line-seq reader)))))
          (catch java.io.FileNotFoundException _ nil)
          (catch java.io.IOException _ nil))))
@@ -1370,8 +1381,10 @@
    Vis config is deliberately never consulted. `:source` is `:env`, `:dotenv`, or `:unset`."
   [name]
   (let [name' (str name)]
-    (if-let [from-env (not-empty (str/trim (or (System/getenv name') "")))]
-      {:name name' :source :env :value from-env}
+    (if-some [from-env (*extension-getenv* name')]
+      (if-let [value (not-empty (str/trim from-env))]
+        {:name name' :source :env :value value}
+        {:name name' :source :unset :value nil})
       (if-let [from-dotenv (dotenv-value name')]
         {:name name' :source :dotenv :value from-dotenv}
         {:name name' :source :unset :value nil}))))

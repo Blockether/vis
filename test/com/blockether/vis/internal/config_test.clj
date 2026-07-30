@@ -633,4 +633,37 @@
 
                (expect (= :env (:source (config/extension-env-status "PATH"))))
                (expect (= (System/getenv "PATH") (config/extension-env-value "PATH"))))
-             (finally (.delete (io/file path)))))))
+             (finally (.delete (io/file path))))))
+  (it "handles a blank process value and common dotenv edge cases without falling through"
+      (let
+        [suffix
+         (System/nanoTime)
+
+         env-path
+         (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" suffix)
+
+         local-path
+         (str env-path ".local")]
+
+        (try (spit env-path
+                   (str "﻿VIS_TEST_BOM=ok\r\n"
+                        "VIS_TEST_INLINE=bare # comment\n"
+                        "VIS_TEST_QUOTED=\"quoted # value\" # comment\n"))
+             (spit local-path "VIS_TEST_MASKED=from-local\n")
+             (binding
+               [config/*extension-dotenv-path*
+                env-path
+
+                config/*extension-dotenv-local-path*
+                local-path
+
+                config/*extension-getenv*
+                (fn [name]
+                  (when (= name "VIS_TEST_MASKED") ""))]
+
+               (expect (= "ok" (config/extension-env-value "VIS_TEST_BOM")))
+               (expect (= "bare" (config/extension-env-value "VIS_TEST_INLINE")))
+               (expect (= "quoted # value" (config/extension-env-value "VIS_TEST_QUOTED")))
+               (expect (= {:name "VIS_TEST_MASKED" :source :unset :value nil}
+                          (config/extension-env-status "VIS_TEST_MASKED"))))
+             (finally (.delete (io/file env-path)) (.delete (io/file local-path)))))))

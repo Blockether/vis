@@ -387,7 +387,7 @@ precedes both.
 
 ## Extension environment
 
-Extensions may declare the environment variables they read so Vis can report whether they are available. Their values never come from `vis.yml` or Vis state. Set them in the environment that starts Vis, or in the working directory's `.env` / `.env.local` files. Precedence is: process environment, then `.env`, then `.env.local`; a blank assignment in a higher-precedence file intentionally masks a lower value:
+Extensions may declare the environment variables they read so Vis can report whether they are available. Their values never come from `vis.yml` or Vis state. Set them in the environment that starts Vis, or in the working directory's `.env` / `.env.local` files. Precedence is: process environment, then `.env`, then `.env.local`; a blank value from any higher-precedence source intentionally masks a lower value. Dotenv files support `NAME=value` and `export NAME=value`, quoted values, comments, CRLF, and a UTF-8 BOM:
 
 ```dotenv
 ANTHROPIC_API_KEY=…

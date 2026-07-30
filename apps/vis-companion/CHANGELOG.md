@@ -2,6 +2,16 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.14 (2792) — 2026-07-30
+<!-- commit: dfece59420181d2b9112e8a56514468a25a2dbc6 -->
+
+- Enforce GraalVM pin consistency
+- Update GraalVM and extension runtime
+- Smooth terminal result scrolling
+- Improve extension configuration and tools
+- Refresh shell bindings after settings changes
+- Respect disabled shell toggle in sub-agents
+
 ## 0.1.14 (2786) — 2026-07-30
 <!-- commit: 66da8bf722c3080cec05a5fa84dcbcbff60e833f -->
 
