@@ -887,9 +887,17 @@ export function SessionScreen({
   // Both halves must count answers only: `turn_count` includes the turn that is
   // running right now (the gateway persists it at submit), and marking that as
   // read would pre-read the answer before it exists.
-  const readTurns = Math.max(
-    answeredTurnCount(session),
-    turns.filter((turn) => turn.status !== 'running' && turn.status !== 'pending').length,
+  // This can be a much larger held history than the eight mounted rows after the
+  // reader pages upward. Keep the completed-turn scan off the composer render path:
+  // keystrokes do not change `turns`, and the read marker only needs to move when
+  // the transcript or its meta row changes.
+  const readTurns = useMemo(
+    () =>
+      Math.max(
+        answeredTurnCount(session),
+        turns.filter((turn) => turn.status !== 'running' && turn.status !== 'pending').length,
+      ),
+    [session, turns],
   );
   useEffect(() => {
     if (document.visibilityState !== 'hidden') markSessionRead(sid, readTurns);

@@ -97,6 +97,30 @@
   (let [sc (norm sc)]
     (boolean (and (:pos sc) (not= (long (:pos sc)) (desired sc max-s))))))
 
+(defn reveal
+  "Begin a one-frame reveal of a terminal result from the current viewport.
+
+   A final result replaces the live placeholder atomically. Holding its old
+   position for that layout pass prevents auto-bottom from teleporting to the
+   new tail; after the new height is known, normal FOLLOW easing takes over."
+  [sc ^long max-s]
+  {:mode :follow :pos (displayed sc max-s) :reveal-from max-s})
+
+(defn settle-reveal
+  "Clear a reveal marker when its first measured layout did not grow.
+
+   Without this, a zero-height replacement would unnecessarily turn FOLLOW's
+   exact auto-bottom lock into a concrete anchored offset."
+  [sc ^long max-s]
+  (let
+    [sc
+     (norm sc)
+
+     from
+     (:reveal-from sc)]
+
+    (if (and (some? from) (<= max-s (long from))) (dissoc sc :reveal-from) sc)))
+
 (defn bottom-hidden?
   "True when the live bottom sits BELOW the current viewport — i.e. there is
    content to jump DOWN to. FALSE when following at the bottom, AND false when
@@ -125,8 +149,8 @@
 
    `nil` ⇒ auto-bottom (never anchored, always tracks the latest message
    — used when FOLLOW is settled at the bottom). A concrete row is
-   returned while parked or mid-ease so the painter anchors / animates
-   against it."
+   returned while parked, mid-ease, or during the single reveal layout pass
+   for a terminal result."
   [sc ^long max-s]
   (let
     [sc
@@ -137,9 +161,9 @@
 
     (case (:mode sc)
       ;; Settled at (or below) the bottom ⇒ nil exact-bottom lock.
-      ;; Mid-ease (pos above the bottom) ⇒ the concrete eased row.
+      ;; Mid-ease (pos above the bottom), or a terminal reveal ⇒ concrete row.
       :follow
-      (when (and pos (< (long pos) max-s)) (long pos))
+      (when (and pos (or (:reveal-from sc) (< (long pos) max-s))) (long pos))
 
       :at
       (displayed sc max-s)
@@ -162,11 +186,13 @@
    - Mid-ease ⇒ step `:pos` toward the target.
    - Settled while PARKED ⇒ drop `:pos` (clean snap; no further repaint).
    - Settled while FOLLOWING ⇒ KEEP `:pos` pinned at the bottom so the
-     next content growth eases FROM here instead of teleporting."
+     next content growth eases FROM here instead of teleporting.
+   - A terminal-result `:reveal-from` marker is consumed only after its
+     held layout has measured the new bottom."
   [sc ^long max-s]
   (let
     [sc
-     (norm sc)
+     (dissoc (norm sc) :reveal-from)
 
      d
      (desired sc max-s)
