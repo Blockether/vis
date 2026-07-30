@@ -995,7 +995,7 @@
 ;; All-observation concurrent batch
 ;;
 ;; When ONE iteration emits ≥2 native tool calls that are ALL read-only
-;; OBSERVATIONS (cat / grep / ls / struct_index / struct_occurrences / struct_nodes /
+;; OBSERVATIONS (cat / grep / ls / struct_index / struct_nodes /
 ;; file_exists — anything the extension declares `:tag :observation`), and NONE
 ;; is python_execution, a native handler, or carries a preflight error, we run
 ;; the whole batch CONCURRENTLY through the isolated bounded platform pool
@@ -4947,7 +4947,7 @@
    default) — it returns RAW argument values (no `py-literal`, so tool namespaces
    need no engine dependency) which THIS fn renders. A tool with NO shape → the
    generic `name({…whole input…})` form (correct for struct_patch, struct_rename,
-   grep, struct_occurrences, struct_index …).
+   grep, struct_index …).
 
    `python_execution` is the ONE engine tool (not a symbol): its `code` really IS a
    Python program, passed through verbatim. This is deliberately the ONLY `code`

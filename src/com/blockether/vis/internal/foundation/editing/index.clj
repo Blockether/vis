@@ -74,9 +74,9 @@
    the STRICT structured-config formats (json/yaml/toml). This is the vetted subset
    the syntax guard runs on; extend it as vis takes on more languages."
   #{"clojure" "python" "rust" "javascript" "typescript" "tsx" "java" "kotlin" "go" "ruby" "c" "cpp"
-    "csharp" "php" "scala" "swift" "dart" "zig" "lua" "bash" "elixir" "haskell" "ocaml" "ocaml_interface"
-    "elm" "julia" "r" "perl" "vim" "groovy" "nix" "hcl" "terraform" "graphql" "svelte" "vue"
-    "json" "yaml" "toml"})
+    "csharp" "php" "scala" "swift" "dart" "zig" "lua" "bash" "elixir" "haskell" "ocaml"
+    "ocaml_interface" "elm" "julia" "r" "perl" "vim" "groovy" "nix" "hcl" "terraform" "graphql"
+    "svelte" "vue" "json" "yaml" "toml"})
 
 (defn code-language
   "The tree-sitter language for `path` IFF it is a vetted CODE language
@@ -130,7 +130,7 @@
 
 (def ^:private kind-aliases
   "Terse canonical names for the pack's verbose `StructureKind`s — what `:kind`
-   carries in the `struct_index`/`struct_occurrences` DATA (and what struct_patch's `kind`
+   carries in the `struct_index` DATA (and what struct_patch's `kind`
    disambiguator matches). Only `function` → `fn` so far; all else passes through."
   {"function" "fn"})
 
@@ -149,6 +149,23 @@
                not-empty)]
     (get kind-aliases k k)))
 
+(defn- item-kind
+  "The item's kind WORD, lower-cased. `StructureKind/Other` is a payload-carrying
+   Rust variant (`{\"Other\": \"resource\"}` on the wire) that a Java enum cannot
+   hold, so the pack now surfaces the payload separately as `.kindLabel` — a
+   GraphQL `type`, a Terraform `resource`, an Elixir `Macro`. Prefer it: without
+   it every language-specific construct collapses into one indistinguishable
+   `other` bucket. nil for a kind-less item."
+  [^StructureItem it]
+  (or (some-> (.kindLabel it)
+              str
+              str/trim
+              not-empty
+              str/lower-case)
+      (some-> (.kind it)
+              str
+              str/lower-case)))
+
 (defn pack-kind
   "Inverse of `canonical-kind`: map a terse `:kind` (`fn`) BACK to the pack's raw
    StructureKind name (`function`) so struct_patch's `kind` disambiguator matches
@@ -161,6 +178,15 @@
                not-empty)]
     (get kind-aliases-inverse k k)))
 
+(defn- span-end-line
+  "0-based LAST CONTENT row of `span`. tree-sitter end positions are exclusive, so a
+   grammar whose node swallows its terminating newline (Groovy `command`, and any
+   node ending at column 0) reports the FOLLOWING line as `endLine`. Trimming that
+   is what keeps a kind-targeted replace from eating the next definition."
+  ^long [^Span span]
+  (let [e (.endLine span)]
+    (if (and (zero? (.endColumn span)) (> e (.startLine span))) (dec e) e)))
+
 (defn node-span
   "0-based inclusive `[start-line end-line]` of the TOP-LEVEL structural node named
    `target` (optionally narrowed by `kind`, case-insensitive), or nil if not found.
@@ -168,9 +194,9 @@
   [^String source ^String language ^String target kind]
   (let [k (canonical-kind kind)]
     (some (fn [^StructureItem it]
-            (when (and (= target (.name it)) (or (nil? k) (= k (canonical-kind (.kind it)))))
+            (when (and (= target (.name it)) (or (nil? k) (= k (canonical-kind (item-kind it)))))
               (let [^Span span (.span it)]
-                [(.startLine span) (.endLine span)])))
+                [(.startLine span) (span-end-line span)])))
           (structure-items source language))))
 
 (defn- flatten-items
@@ -205,7 +231,7 @@
                          (= target (.name it)))
                        (flatten-items (structure-items source language)))
          kind-match? (boolean (some (fn [^StructureItem it]
-                                      (= k (canonical-kind (.kind it))))
+                                      (= k (canonical-kind (item-kind it))))
                                     named))]
 
         (cond kind-match? raw
@@ -280,12 +306,10 @@
      (inc (.startLine span))
 
      end
-     (inc (.endLine span))
+     (inc (span-end-line span))
 
      kind
-     (some-> (.kind it)
-             str
-             str/lower-case)
+     (item-kind it)
 
      ;; The pack reports the clean name + a structured `visibility`; the
      ;; skeleton surfaces only the noteworthy `private` marker — public is
@@ -342,10 +366,10 @@
      (inc (.startLine span))
 
      end
-     (inc (.endLine span))]
+     (inc (span-end-line span))]
 
     {:name (.name it)
-     :kind (canonical-kind (.kind it))
+     :kind (canonical-kind (item-kind it))
      :visibility (some-> (.visibility it)
                          str
                          str/lower-case
@@ -361,8 +385,8 @@
      :anchor (patch/line-anchor start (line-text lines start))
      :end-anchor (patch/line-anchor end (line-text lines end))
      ;; Nesting depth (0 = top-level). The flat list drops parent linkage; depth
-     ;; lets a consumer rebuild the tree. struct_occurrences rows are flat (no depth);
-     ;; every other def field is name-for-name the SAME as a struct_occurrences def row.
+     ;; lets a consumer rebuild the tree. `name`-mode rows are flat (no depth);
+     ;; every other def field is name-for-name the SAME as a `name`-mode def row.
      :depth depth}))
 
 (defn- defs-tree
@@ -496,7 +520,14 @@
    "variable" "variables"
    "module" "modules"
    "protocol" "protocols"
-   "other" "other"})
+   "other" "other"
+   ;; `StructureKind/Other` labels (see `item-kind`) — only the ones a naive
+   ;; `<kind>s` would mangle or that read badly pluralised.
+   "query" "queries"
+   "data" "data"
+   "locals" "locals"
+   "schema" "schema"
+   "terraform" "terraform"})
 
 (defn- section-label
   "Section header for `kind` — a curated plural, else a naive `<kind>s`."
@@ -516,7 +547,7 @@
      (inc (.startLine span))
 
      end
-     (inc (.endLine span))
+     (inc (span-end-line span))
 
      private?
      (= "private"
@@ -569,10 +600,7 @@
 
      kind-of
      (fn [^StructureItem it]
-       (or (some-> (.kind it)
-                   str
-                   str/lower-case)
-           "other"))
+       (or (item-kind it) "other"))
 
      by-kind
      (group-by kind-of items)]
@@ -621,7 +649,7 @@
      (inc (.startLine span))
 
      end
-     (inc (.endLine span))]
+     (inc (span-end-line span))]
 
     (and (<= start hi) (>= end lo))))
 

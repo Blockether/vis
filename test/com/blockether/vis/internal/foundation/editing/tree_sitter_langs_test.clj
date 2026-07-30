@@ -9,6 +9,7 @@
                        reconstruction footgun violated).
    Plus targeted CONTENT edits and SYNTAX-REFUSAL across paradigms."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.foundation.editing.index :as ix]
             [com.blockether.vis.internal.foundation.editing.zipper :as z]
             [lazytest.core :refer [defdescribe it expect]]))
 
@@ -44,7 +45,16 @@
    ["nim" "proc add(a, b: int): int = a + b\n"]
    ["vim" "function! Add(a, b)\n  return a:a + a:b\nendfunction\n"]
    ["md" "# Title\n\nSome *text*.\n"] ["proto" "message M { int32 a = 1; }\n"]
-   ["dockerfile" "FROM x\nRUN echo hi\n"] ["graphql" "type Q { a: Int }\n"]])
+   ["dockerfile" "FROM x\nRUN echo hi\n"] ["graphql" "type Q { a: Int }\n"]
+   ;; ── languages vis gained structural intelligence for in pack 1.12.3-blockether.27 ──
+   ["mli" "val add : int -> int -> int\n"]
+   ["nix" "{ pkgs }:\nlet\n  add = a: b: a + b;\nin add 1 2\n"]
+   ["tf" "variable \"region\" {\n  default = \"eu\"\n}\n"] ["hcl" "job \"web\" {\n  count = 1\n}\n"]
+   ["gradle" "def add(a, b) { a + b }\n"]
+   ["svelte"
+    "<script>\n  export let n = 1;\n  function bump() { n += 1; }\n</script>\n\n<button on:click={bump}>{n}</button>\n"]
+   ["vue"
+    "<template>\n  <p>{{ n }}</p>\n</template>\n\n<script>\nexport default { data() { return { n: 1 }; } };\n</script>\n"]])
 
 (defn- lang-of [ext] (z/detect-language (str "f." ext)))
 
@@ -249,3 +259,199 @@
           (let [r (z/edit lang src p :replace (:text node))]
             (expect (:ok? r))
             (expect (= src (:new-source r))))))))
+
+;; ===========================================================================
+;; E. STRUCTURAL INTELLIGENCE per language — `index/file-index` must return real
+;;    definitions (name + kind + nesting) and imports, not just a parse tree.
+;;    Guards the pack's intel modules (ts-pack-core/src/intel/lang/*.rs) and
+;;    vis's `code-languages` allowlist for the languages added in
+;;    tree-sitter-language-pack 1.12.3-blockether.27.
+;; ===========================================================================
+(def ^:private intel-bank
+  [{:path "a.hs"
+    :lang "haskell"
+    :src
+    "module Main where\n\nimport Data.List (sort)\n\nadd :: Int -> Int -> Int\nadd a b = a + b\n\ndata Shape = Circle Double | Square Double\n\nmain :: IO ()\nmain = print (add 1 2)\n"
+    :defs #{["Main" "module"] ["add" "fn"] ["Shape" "type"]}
+    :imports ["import Data.List (sort)"]}
+   {:path "a.ml"
+    :lang "ocaml"
+    :src
+    "let add a b = a + b\n\ntype shape = Circle of float\n\nmodule M = struct\n  let x = 1\nend\n"
+    :defs #{["add" "fn"] ["shape" "type"] ["M" "module"]}}
+   {:path "a.mli"
+    :lang "ocaml_interface"
+    :src "val add : int -> int -> int\n\ntype shape = Circle of float\n"
+    :defs #{["add" "fn"] ["shape" "type"]}}
+   {:path "a.rs"
+    :lang "rust"
+    :src
+    "use std::fmt;\n\npub struct P { x: i32 }\n\nimpl P {\n    pub fn new(x: i32) -> Self { P { x } }\n}\n\npub fn add(a: i32, b: i32) -> i32 { a + b }\n"
+    :defs #{["P" "struct"] ["P" "impl"] ["new" "fn"] ["add" "fn"]}
+    :nested #{["new" "fn"]}
+    :imports ["use std::fmt;"]}
+   {:path "a.groovy"
+    :lang "groovy"
+    :src "class Greeter {\n  String hi(String n) { \"hi $n\" }\n}\n\ndef add(a, b) { a + b }\n"
+    :defs #{["Greeter" "class"] ["hi" "method"] ["add" "fn"]}
+    :nested #{["hi" "method"]}}
+   {:path "a.gradle"
+    :lang "groovy"
+    :src "plugins { id 'java' }\n\ndef add(a, b) { a + b }\n"
+    :defs #{["add" "fn"]}}
+   {:path "a.nix"
+    :lang "nix"
+    :src
+    "{ pkgs ? import <nixpkgs> {} }:\nlet\n  add = a: b: a + b;\n  name = \"demo\";\nin pkgs.stdenv.mkDerivation { inherit name; }\n"
+    :defs #{["add" "fn"] ["name" "constant"]}}
+   {:path "a.tf"
+    :lang "terraform"
+    :src
+    "variable \"region\" {\n  default = \"eu\"\n}\n\nresource \"aws_s3_bucket\" \"b\" {\n  bucket = \"x\"\n}\n\nmodule \"vpc\" {\n  source = \"./vpc\"\n}\n"
+    :defs #{["region" "variable"] ["aws_s3_bucket.b" "resource"] ["vpc" "module"]}}
+   {:path "a.hcl"
+    :lang "hcl"
+    :src "job \"web\" {\n  group \"g\" {\n    count = 1\n  }\n}\n"
+    ;; HCL's label IS the block type — `job "web"` is a `job`, not an `other`
+    :defs #{["web" "job"]}}
+   {:path "a.graphql"
+    :lang "graphql"
+    :src "type Query {\n  user(id: ID!): User\n}\n\ninput NewUser { name: String }\n"
+    :defs #{["Query" "type"] ["user" "field"] ["NewUser" "input"] ["name" "field"]}
+    :nested #{["user" "field"] ["name" "field"]}}
+   {:path "a.svelte"
+    :lang "svelte"
+    :src
+    "<script>\n  import { onMount } from 'svelte';\n  export let n = 1;\n  function bump() { n += 1; }\n</script>\n\n<button on:click={bump}>{n}</button>\n"
+    :defs #{["script" "script"] ["n" "variable"] ["bump" "fn"]}
+    :nested #{["bump" "fn"]}
+    ;; the <script> island's imports are lifted into HOST-file coordinates
+    :imports ["import { onMount } from 'svelte';"]}
+   {:path "a.vue"
+    :lang "vue"
+    :src
+    "<template>\n  <p>{{ n }}</p>\n</template>\n\n<script>\nimport { ref } from 'vue';\nexport default {\n  data() { return { n: 1 }; },\n  methods: { bump() { this.n += 1; } }\n};\n</script>\n"
+    :defs #{["template" "template"] ["script" "script"] ["data" "method"] ["bump" "method"]}
+    :nested #{["bump" "method"]}
+    :imports ["import { ref } from 'vue';"]}])
+
+(defdescribe structural-intel-test
+             (doseq [{:keys [path lang src defs nested imports]} intel-bank]
+               (it (str path " indexes real definitions (" lang ")")
+                   (let
+                     [idx (ix/file-index path src)
+                      rows (:definitions idx)
+                      pairs (set (map (juxt :name :kind) rows))]
+
+                     ;; the language is detected AND vetted as CODE (syntax guard applies)
+                     (expect (= lang (ix/detect-language path)))
+                     (expect (= lang (ix/code-language path)))
+                     (expect (= lang (:language idx)))
+                     ;; every expected definition is present with its exact kind
+                     (expect (empty? (remove pairs defs)))
+                     ;; nested defs really are nested (depth > 0), not flattened to top level
+                     (doseq [want (or nested #{})]
+                       (expect (some (fn [r]
+                                       (and (= want ((juxt :name :kind) r)) (pos? (:depth r))))
+                                     rows)))
+                     ;; every row is anchored and named
+                     (expect (every? #(and (string? (:anchor %)) (seq (:name %))) rows))
+                     ;; imports are extracted (Svelte/Vue: lifted out of the <script> island)
+                     (doseq [want (or imports [])]
+                       (expect (some #(= want (:source %)) (:imports idx))))
+                     ;; the skeleton renders and mentions the file
+                     (expect (str/includes? (:skeleton idx) lang))))))
+
+;; ===========================================================================
+;; F. KIND LABELS — Rust's `StructureKind::Other("resource")` carries a payload
+;;    a Java enum cannot hold. Until tree-sitter-language-pack
+;;    1.12.3-blockether.28 the binding dropped it, so a GraphQL `type`, a
+;;    Terraform `resource` and an Elixir `defmacro` all collapsed into one
+;;    indistinguishable `other` bucket. `StructureItem/kindLabel` restores it and
+;;    `index/item-kind` prefers it — for display AND for kind-targeted edits.
+;; ===========================================================================
+(def ^:private kind-label-bank
+  [{:path "a.graphql"
+    :src "type Query { me: User }\n\ninput NewUser { name: String }\n"
+    :defs #{["Query" "type"] ["me" "field"] ["NewUser" "input"]}
+    :sections ["types:" "inputs:"]
+    :span ["Query" "type"]}
+   {:path "a.tf"
+    :src
+    "variable \"region\" {\n  default = \"eu\"\n}\n\nresource \"aws_s3_bucket\" \"b\" {\n  bucket = \"x\"\n}\n\nlocals {\n  a = 1\n}\n\ndata \"aws_ami\" \"x\" {}\n"
+    :defs #{["region" "variable"] ["aws_s3_bucket.b" "resource"] ["aws_ami.x" "data"]}
+    ;; `data`/`locals` must NOT be naively pluralised into `datas`/`localss`
+    :sections ["resources:" "variables:" "data:" "locals:"]
+    :span ["aws_s3_bucket.b" "resource"]}
+   {:path "a.ex"
+    :src
+    "defmodule M do\n  defmacro mac(x) do\n    quote do: unquote(x)\n  end\n\n  def f(y), do: y\nend\n"
+    :defs #{["M" "module"] ["mac" "macro"] ["f" "fn"]}
+    :sections ["macros:"]
+    ;; a macro is only ever nested inside its module, so it exercises the
+    ;; label on a NESTED row instead of a top-level span lookup
+    :nested ["mac" "macro"]}
+   ;; every other language whose intel emits `StructureKind::Other(..)`:
+   ;; clojure's arbitrary `def*` heads, ocaml exceptions, generic HCL blocks,
+   ;; groovy blocks and the web single-file-component section tags.
+   {:path "a.clj"
+    :src "(defthing foo 1)\n\n(defrecord R [a])\n"
+    :defs #{["foo" "defthing"] ["R" "struct"]}
+    :sections ["defthings:" "structs:"]
+    :span ["foo" "defthing"]}
+   {:path "a.ml"
+    :src "exception Boom\n\nlet f x = x + 1\n"
+    :defs #{["Boom" "exception"] ["f" "fn"]}
+    :sections ["exceptions:"]
+    :span ["Boom" "exception"]}
+   {:path "a.hcl"
+    :src "job \"web\" {\n  group \"g\" {\n  }\n}\n"
+    :defs #{["web" "job"]}
+    :sections ["jobs:"]
+    :span ["web" "job"]}
+   {:path "a.groovy"
+    :src "task hello {\n  doLast {\n    println 'hi'\n  }\n}\n"
+    :defs #{["task hello" "block"]}
+    :sections ["blocks:"]
+    :span ["task hello" "block"]}
+   {:path "a.vue"
+    :src
+    "<template>\n  <p>hi</p>\n</template>\n\n<script>\nexport default {}\n</script>\n\n<style>\np { color: red; }\n</style>\n"
+    :defs #{["template" "template"] ["script" "script"] ["style" "style"]}
+    :sections ["templates:" "scripts:" "styles:"]
+    :span ["script" "script"]}
+   {:path "a.svelte"
+    :src "<script>\n  let a = 1;\n</script>\n\n<style>\n  p { color: red; }\n</style>\n"
+    :defs #{["script" "script"] ["style" "style"]}
+    :sections ["scripts:" "styles:"]
+    :span ["style" "style"]
+    :nested ["a" "variable"]}])
+
+(defdescribe kind-label-test
+             (doseq [{:keys [path src defs sections span nested]} kind-label-bank]
+               (it (str path " reports the Other(..) kind label, never a bare `other`")
+                   (let
+                     [idx (ix/file-index path src)
+                      rows (:definitions idx)
+                      pairs (set (map (juxt :name :kind) rows))
+                      lang (:language idx)
+                      [target kind] span]
+
+                     ;; the labelled kinds arrive verbatim on every definition row
+                     (expect (empty? (remove pairs defs)))
+                     ;; nothing degraded into the generic bucket
+                     (expect (not-any? #(= "other" (:kind %)) rows))
+                     ;; and the skeleton groups them under real section headings
+                     (doseq [want sections]
+                       (expect (str/includes? (:skeleton idx) want)))
+                     (expect (not (str/includes? (:skeleton idx) "other:")))
+                     ;; a labelled kind is also SELECTABLE: it must resolve a span,
+                     ;; and a wrong kind must resolve none (no accidental match-all)
+                     (when span
+                       (expect (some? (ix/node-span src lang target kind)))
+                       (expect (nil? (ix/node-span src lang target "interface"))))
+                     ;; a labelled NESTED row keeps its label too
+                     (when nested
+                       (expect (some (fn [r]
+                                       (and (= nested ((juxt :name :kind) r)) (pos? (:depth r))))
+                                     rows)))))))

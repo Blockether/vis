@@ -56,6 +56,17 @@ Exactly the script from method 1, only fetched over `raw.githubusercontent.com`.
 
 Prereqs for methods 1 and 3: `git`, `java` 25+, and the [Clojure CLI](https://clojure.org/guides/install_clojure) 1.12+ — the installer checks for them and tells you what's missing (`brew install openjdk@25 clojure/tools/clojure git`). The native binary (method 2) needs none of them. **Building** the native binary needs **GraalVM Community Edition 25.2.4** — exactly that edition and version, pinned in [`.graalvm-version`](.graalvm-version) — plus at least 16 GB RAM. Get it with `bin/require-graalvm --install`, then `sdk env` (the repo ships a `.sdkmanrc`). Oracle GraalVM and stock JDKs are rejected by the build, on purpose: CE's Classpath Exception is what keeps the shipped binary FOSS, and Truffle hard-refuses any other version against the `org.graalvm.*` pins in `deps.edn`.
 
+## Companion app (iPhone / Android)
+
+Vis Companion is the phone client for a Vis gateway you run yourself — it drives the same sessions as the TUI (see [Gateway & pairing](resources/vis-docs/gateway.md)). Both stores are in public testing; no invite, no tester list, just the link.
+
+| Platform | Public test link | Status |
+|---|---|---|
+| iOS / iPadOS | **https://testflight.apple.com/join/4anYT4Wk** | TestFlight public link, open to anyone with the URL (requires the free TestFlight app) |
+| Android | **https://play.google.com/apps/testing/com.blockether.viscompanion** | Play open testing (`beta` track), package `com.blockether.viscompanion` |
+
+The app is useless on its own: it needs a gateway. Start one with `vis gateway`, then pair by scanning the QR it prints. Feedback goes to `karol@blockether.com` (or the TestFlight feedback button).
+
 ## What `vis` runs
 
 `vis` is the stable command. It proxies to the best available distribution, in this order:

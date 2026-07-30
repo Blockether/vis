@@ -83,6 +83,28 @@ stale/rotated `gateway.token`. Fixes: run the client on the same host as the
 gateway, re-pair the remote client, or restart the gateway on loopback
 (`vis gateway start`).
 
+## Getting the companion app (public testing)
+
+The companion ships as one app for web, iOS and Android. Both mobile stores
+are in **public testing** — the links are open to anyone, with no tester list
+and no invite:
+
+| Platform | Link |
+|---|---|
+| iOS / iPadOS (TestFlight) | <https://testflight.apple.com/join/4anYT4Wk> |
+| Android (Play open testing) | <https://play.google.com/apps/testing/com.blockether.viscompanion> |
+
+On iOS you install Apple's free **TestFlight** app first, then open the link;
+on Android the link is an opt-in page that switches your Play account over to
+the testing build of `com.blockether.viscompanion`. Both builds carry the same
+version number as the CLI (the repo-root `VERSION`), and the app refuses to
+talk to a gateway whose protocol version does not match — see
+[Protocol version and compatibility](#protocol-version-and-compatibility).
+
+Beta feedback goes to `karol@blockether.com`, or the **Send Beta Feedback**
+button inside TestFlight. There is no account to create: the app is a client
+for **your** gateway, so until you pair one it shows only the pairing screen.
+
 ## Pairing a phone (mobile companion)
 
 Start the gateway on a reachable host and print a pairing QR:

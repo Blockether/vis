@@ -667,3 +667,34 @@
                          "print(repr(ntr))\n"))]
           (expect (str/includes? out "stored native results"))
           (expect (str/includes? out "ntr.describe()"))))))
+
+(defdescribe collect-garbage-gil-budget-test
+  ;; Regression: `collect-garbage!` runs in `loop/send!`'s `finally`, i.e. between
+  ;; the engine unwinding and `gateway.state/run-turn!` appending the terminal
+  ;; event. Its `.eval` first takes the Python GIL, which a SIBLING session holds
+  ;; for the whole of its in-flight Python (a `shell` subprocess can hold it for
+  ;; hours) and which no cancel token can unpark. Waiting for it without a budget
+  ;; wedged an already-finished turn forever: no `turn.completed`/`turn.cancelled`
+  ;; reached the wire, the session stayed pinned to a turn nobody was running, the
+  ;; queued backlog never drained and Esc could not close the live panel.
+  (it "returns within its budget while another thread holds the GIL"
+      (let [env {:python-context (:python-context (ep/create-python-context {}))}
+            entered (promise)
+            hog (doto (Thread. ^Runnable
+                               (fn []
+                                 (try (deliver entered true)
+                                      (ep/run-python-block (:python-context env)
+                                                           "import time\ntime.sleep(30)")
+                                      (catch Throwable _ nil)))
+                               "gil-hog")
+                  (.setDaemon true)
+                  (.start))
+            _ (deref entered 10000 nil)
+            ;; give the hog time to actually be inside the sleep, holding the GIL
+            _ (Thread/sleep 1000)
+            started (System/currentTimeMillis)
+            _ (ep/collect-garbage! env)
+            elapsed (- (System/currentTimeMillis) started)]
+        (.interrupt hog)
+        (expect (< elapsed 15000)
+                (str "collect-garbage! blocked on the GIL for " elapsed "ms")))))

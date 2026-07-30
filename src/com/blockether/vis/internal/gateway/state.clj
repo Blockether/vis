@@ -1884,6 +1884,57 @@
       (.start))
     nil))
 
+(defonce ^:private turn-terminal-claims
+  ;; `[sid tid]` pairs whose ONE terminal landing has been claimed.
+  (java.util.concurrent.ConcurrentHashMap/newKeySet))
+
+(defn- claim-turn-terminal!
+  "Claim the RIGHT to land `tid`'s terminal record + event. True exactly once.
+
+   Every path that finishes a turn (the worker's success and failure arms, the
+   permit-denied cancel, the post-cancel backstop) goes through here, so a turn
+   can never emit two terminals and — more importantly — a worker WEDGED between
+   the engine unwinding and its terminal append can be overtaken: the backstop
+   lands the terminal, and if the worker ever thaws its landing is a no-op."
+  [sid tid]
+  (.add ^java.util.Set turn-terminal-claims [sid tid]))
+
+(def ^:private CANCEL_TERMINAL_GRACE_MS
+  "How long a cancelled turn's worker gets to land its OWN terminal before the
+   backstop lands one for it.
+
+   A worker unwinding on a fired token normally finishes in milliseconds. When it
+   does not, it is stuck somewhere `cancel!` cannot reach (the observed case: the
+   between-turns Python GC parked on a GIL held by another session's shell), and
+   the terminal event sits BEHIND that park — so the session stays pinned to a
+   turn nobody is running and its queued backlog never drains."
+  30000)
+
+(defn- start-cancel-terminal-backstop!
+  "Daemon backstop for ONE cancelled turn: if `tid` is still the session's current
+   turn and nobody has landed its terminal `CANCEL_TERMINAL_GRACE_MS` after the
+   cancel, land `turn.cancelled` here and drain the queue.
+
+   This is the last line of defence for a wedged worker: the stall watchdog only
+   fires `cancel!`, and a thread parked in uninterruptible native code (or any
+   post-engine cleanup) ignores it forever."
+  [sid tid cancel-token land!]
+  (doto (Thread. ^Runnable
+                 (fn []
+                   (try (Thread/sleep (long CANCEL_TERMINAL_GRACE_MS))
+                        (when (= tid (:current-turn (get @registry sid)))
+                          (tel/log!
+                            :warn
+                            ["gateway: cancelled turn never landed a terminal — backstopping" tid
+                             (str CANCEL_TERMINAL_GRACE_MS "ms after cancel")])
+                          (land! sid tid cancel-token))
+                        (catch InterruptedException _ nil)
+                        (catch Throwable _ nil)))
+                 (str "gateway-turn-cancel-backstop-" tid))
+    (.setDaemon true)
+    (.start))
+  nil)
+
 (defn- run-turn!
   "Worker body for one submitted turn. Streams phased chunks into the
   event log, runs the blocking `lp/send!`, then lands the terminal turn
@@ -2083,35 +2134,37 @@
           :error (when failure-code failure-text)
           :completed_at (System/currentTimeMillis)}]
 
-        (finish-turn! sid tid patch)
-        (record-metrics! sid result)
-        (close-blocks! @open-blocks)
-        (append-event! sid
-                       (case status
-                         "failed"
-                         "turn.failed"
+        (when (claim-turn-terminal! sid tid)
+          (finish-turn! sid tid patch)
+          (record-metrics! sid result)
+          (close-blocks! @open-blocks)
+          (append-event! sid
+                         (case status
+                           "failed"
+                           "turn.failed"
 
-                         "cancelled"
-                         "turn.cancelled"
+                           "cancelled"
+                           "turn.cancelled"
 
-                         "turn.completed")
-                       (turn-terminal-payload sid tid status))
-        (emit-context-updated! sid)
-        ;; A user cancel means "stop", not "advance": the backlog queued BEFORE
-        ;; the cancel is DROPPED with it (`drop-cancelled-backlog!`) so nothing
-        ;; can resurrect it later; the channel keeps its own copy and pulls it
-        ;; back into the editor. A message submitted AFTER the cancel fired is
-        ;; the OPPOSITE intent — "stop that, run THIS" — so it survives the drop
-        ;; and drains the moment this worker unwinds.
-        ;; A STALL force-cancel, though, is a FAILURE not a user stop — the token
-        ;; is cancelled either way, so distinguish on the stall flag and drain.
-        (after-turn-terminal! sid
-                              tid
-                              {:failed? (= "failed" status)
-                               :transient? (failure-transient? {:stalled? stalled? :result result})
-                               :cancel-token cancel-token
-                               :stalled? stalled?
-                               :retry-after-ms (failure-retry-after-ms {:result result})}))
+                           "turn.completed")
+                         (turn-terminal-payload sid tid status))
+          (emit-context-updated! sid)
+          ;; A user cancel means "stop", not "advance": the backlog queued BEFORE
+          ;; the cancel is DROPPED with it (`drop-cancelled-backlog!`) so nothing
+          ;; can resurrect it later; the channel keeps its own copy and pulls it
+          ;; back into the editor. A message submitted AFTER the cancel fired is
+          ;; the OPPOSITE intent — "stop that, run THIS" — so it survives the drop
+          ;; and drains the moment this worker unwinds.
+          ;; A STALL force-cancel, though, is a FAILURE not a user stop — the token
+          ;; is cancelled either way, so distinguish on the stall flag and drain.
+          (after-turn-terminal! sid
+                                tid
+                                {:failed? (= "failed" status)
+                                 :transient? (failure-transient? {:stalled? stalled?
+                                                                  :result result})
+                                 :cancel-token cancel-token
+                                 :stalled? stalled?
+                                 :retry-after-ms (failure-retry-after-ms {:result result})})))
       (catch Throwable t
         (let
           [stalled?
@@ -2158,60 +2211,65 @@
           (if user-cancel?
             (tel/log! :info ["gateway: turn cancelled by user" tid])
             (tel/log! :error ["gateway: turn worker failed" tid err]))
-          (finish-turn! sid
-                        tid
-                        (cond->
-                          {:status status
-                           :role "assistant"
-                           :content
-                           (cond user-cancel? []
-                                 ;; A provider failure that unwound the worker (rate
-                                 ;; limit, auth rejection, dead connection) is the SAME
-                                 ;; failure the in-loop path renders as a styled card.
-                                 ;; Emitting the bare `ex-message` here is why an error
-                                 ;; Vis formats perfectly elsewhere sometimes landed in
-                                 ;; the TUI (and the app) as raw unformatted text.
-                                 (and (not stalled?) (provider-error/provider-failure? t))
-                                 (provider-error/provider-error-content t)
-                                 :else [(content/error "turn_failed" (or err "Turn failed") false)])
-                           :completed_at (System/currentTimeMillis)}
-                          err
-                          (assoc :error err)
+          (when (claim-turn-terminal! sid tid)
+            (finish-turn!
+              sid
+              tid
+              (cond->
+                {:status status
+                 :role "assistant"
+                 :content (cond user-cancel? []
+                                ;; A provider failure that unwound the worker (rate
+                                ;; limit, auth rejection, dead connection) is the SAME
+                                ;; failure the in-loop path renders as a styled card.
+                                ;; Emitting the bare `ex-message` here is why an error
+                                ;; Vis formats perfectly elsewhere sometimes landed in
+                                ;; the TUI (and the app) as raw unformatted text.
+                                (and (not stalled?) (provider-error/provider-failure? t))
+                                (provider-error/provider-error-content t)
+                                :else [(content/error "turn_failed" (or err "Turn failed") false)])
+                 :completed_at (System/currentTimeMillis)}
+                err
+                (assoc :error err)
 
-                          eval
-                          (assoc :eval eval)))
-          ;; Close every block still OPEN. Without it a cancelled/failed turn
-          ;; leaves half-open live panels in every channel — the blank screen the
-          ;; TUI showed after Esc.
-          (close-blocks! @open-blocks)
-          (append-event! sid
-                         (if user-cancel? "turn.cancelled" "turn.failed")
-                         (turn-terminal-payload sid tid status))
-          (emit-context-updated! sid)
-          (after-turn-terminal! sid
-                                tid
-                                {:failed? (not user-cancel?)
-                                 :transient? (and (not user-cancel?)
-                                                  (failure-transient? {:stalled? stalled?
-                                                                       :throwable t}))
-                                 :cancel-token cancel-token
-                                 :stalled? stalled?
-                                 :retry-after-ms (failure-retry-after-ms {:throwable t})}))))))
+                eval
+                (assoc :eval eval)))
+            ;; Close every block still OPEN. Without it a cancelled/failed turn
+            ;; leaves half-open live panels in every channel — the blank screen the
+            ;; TUI showed after Esc.
+            (close-blocks! @open-blocks)
+            (append-event! sid
+                           (if user-cancel? "turn.cancelled" "turn.failed")
+                           (turn-terminal-payload sid tid status))
+            (emit-context-updated! sid)
+            (after-turn-terminal! sid
+                                  tid
+                                  {:failed? (not user-cancel?)
+                                   :transient? (and (not user-cancel?)
+                                                    (failure-transient? {:stalled? stalled?
+                                                                         :throwable t}))
+                                   :cancel-token cancel-token
+                                   :stalled? stalled?
+                                   :retry-after-ms (failure-retry-after-ms {:throwable t})})))))))
 
 (defn- cancel-waiting-turn!
   "Land a turn cancelled while waiting for the global execution permit without
-   constructing a Python environment."
+   constructing a Python environment. Also the backstop's landing path.
+
+   Claims the turn's ONE terminal, so it is a no-op when the worker already
+   landed (or is about to land) its own."
   [sid tid cancel-token]
-  (finish-turn!
-    sid
-    tid
-    {:status "cancelled" :role "assistant" :content [] :completed_at (System/currentTimeMillis)})
-  (append-event! sid "turn.cancelled" (turn-terminal-payload sid tid "cancelled"))
-  (emit-context-updated! sid)
-  (after-turn-terminal!
-    sid
-    tid
-    {:failed? false :transient? false :cancel-token cancel-token :stalled? false}))
+  (when (claim-turn-terminal! sid tid)
+    (finish-turn!
+      sid
+      tid
+      {:status "cancelled" :role "assistant" :content [] :completed_at (System/currentTimeMillis)})
+    (append-event! sid "turn.cancelled" (turn-terminal-payload sid tid "cancelled"))
+    (emit-context-updated! sid)
+    (after-turn-terminal!
+      sid
+      tid
+      {:failed? false :transient? false :cancel-token cancel-token :stalled? false})))
 
 (defn- launch-turn-worker!
   [sid tid request
@@ -2284,12 +2342,17 @@
       cancel-token
       (fn []
         (try (.cancel ^java.util.concurrent.Future fut true) (catch Throwable _ nil))
-        (when (.compareAndSet claimed false true)
+        (if (.compareAndSet claimed false true)
           ;; Off the cancelling thread: this lands a terminal and drains the
           ;; queue, which must never run inside an HTTP/UI cancel handler.
           (cancellation/worker-future (str "gateway-turn-cancel-" tid)
                                       (fn []
-                                        (cancel-waiting-turn! sid tid cancel-token))))))
+                                        (cancel-waiting-turn! sid tid cancel-token)))
+          ;; The body IS running, so it owns the terminal — unless it never
+          ;; gets there. `cancel!` only fires a token; a worker parked in
+          ;; uninterruptible code (native GIL, stuck cleanup) ignores it and the
+          ;; session stays pinned to a turn nobody runs, with its backlog held.
+          (start-cancel-terminal-backstop! sid tid cancel-token cancel-waiting-turn!))))
     fut))
 
 (defn- left-queued-by-cancel?

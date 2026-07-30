@@ -111,15 +111,14 @@
                      false
                      (catch clojure.lang.ExceptionInfo _ true)))))))
 
-(defdescribe op-keyword-regression-test
-             (it "every structural op emits an op-keyword that resolves its registered tag"
-                 ;; struct_patch / project_references were long broken: their tools emitted a
-                 ;; DASH op (:struct-patch) while the registry key derived from the underscore
-                 ;; symbol (:struct_patch), so op-tag threw on every real invocation. Guard it.
-                 (doseq
-                   [op [:struct_nodes :struct_patch :struct_occurrences :create-dirs :delete :patch
-                        :write]]
-                   (expect (#{:observation :mutation} (ext/op-tag op))))))
+(defdescribe
+  op-keyword-regression-test
+  (it "every structural op emits an op-keyword that resolves its registered tag"
+      ;; struct_patch / project_references were long broken: their tools emitted a
+      ;; DASH op (:struct-patch) while the registry key derived from the underscore
+      ;; symbol (:struct_patch), so op-tag threw on every real invocation. Guard it.
+      (doseq [op [:struct_nodes :struct_patch :struct_index :create-dirs :delete :patch :write]]
+        (expect (#{:observation :mutation} (ext/op-tag op))))))
 
 (defdescribe error-localization-test
              (it "error-nodes locates each ERROR/MISSING node with a 1-based line"

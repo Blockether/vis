@@ -2167,3 +2167,82 @@
         ;; instead of waiting for the terminal flush.
         (expect (< (long (completed-idx 1)) (long (second started-idxs))))
         (expect (< (long (completed-idx 2)) (long terminal-idx)))))))
+
+(defdescribe
+  cancel-terminal-backstop-test
+  "A cancelled turn ALWAYS lands a terminal, even when its worker cannot.
+
+   `cancel!` only fires a token: a worker parked in uninterruptible code (the
+   observed case: the between-turns Python GC blocked on a GIL held by another
+   session's shell subprocess, inside `send!`'s `finally` — i.e. AFTER the engine
+   unwound and BEFORE the terminal event) never reaches its own terminal append.
+   The session then stays pinned to a turn nobody is running, the queued backlog
+   never drains, and every channel shows 'Sending request to provider' forever.
+   The backstop lands `turn.cancelled` for it, and the terminal claim guarantees
+   the thawed worker cannot land a second one."
+  (let
+    [backstop
+     @#'state/start-cancel-terminal-backstop!
+
+     claim
+     @#'state/claim-turn-terminal!
+
+     registry
+     @#'state/registry
+
+     await-flag
+     (fn [flag ms]
+       (let [deadline (+ (System/currentTimeMillis) (long ms))]
+         (loop []
+
+           (cond @flag true
+                 (>= (System/currentTimeMillis) deadline) false
+                 :else (do (Thread/sleep 25) (recur))))))]
+
+    (it "claims a turn's ONE terminal landing exactly once"
+        (let [sid (str "claim-" (java.util.UUID/randomUUID))]
+          (expect (true? (claim sid "t1")))
+          (expect (false? (claim sid "t1")))
+          ;; a different turn of the same session is untouched
+          (expect (true? (claim sid "t2")))))
+
+    (it "lands the terminal for a cancelled worker that never lands its own"
+        (let
+          [sid
+           (str "backstop-" (java.util.UUID/randomUUID))
+
+           tid
+           "t1"
+
+           token
+           (cancellation/cancellation-token)
+
+           landed
+           (atom false)]
+
+          (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
+               ;; await INSIDE with-redefs: the daemon thread reads the lowered
+               ;; grace before with-redefs reverts it (alter-var-root is global).
+               (with-redefs [state/CANCEL_TERMINAL_GRACE_MS 150]
+                 (backstop sid tid token (fn [& _] (reset! landed true)))
+                 (expect (true? (await-flag landed 4000))))
+               (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
+
+    (it "stays silent once the turn is no longer the session's current turn"
+        (let
+          [sid
+           (str "backstop-" (java.util.UUID/randomUUID))
+
+           token
+           (cancellation/cancellation-token)
+
+           landed
+           (atom false)]
+
+          (try
+            ;; the worker DID land its terminal and the session moved on
+            (swap! registry assoc sid {:next-seq 0 :current-turn "other"})
+            (with-redefs [state/CANCEL_TERMINAL_GRACE_MS 150]
+              (backstop sid "t1" token (fn [& _] (reset! landed true)))
+              (expect (false? (await-flag landed 1200))))
+            (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))))

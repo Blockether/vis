@@ -2988,84 +2988,88 @@
         (let [fields (get-in patch-schema [:properties "edits" :items :properties])]
           (expect (= #{"path" "from_anchor" "to_anchor" "replace"} (set (keys fields))))))))
 
-(defdescribe editing-native-schema-shape-test
-             (it "grep advertises content-list OR, filename semantics, and empty-query listing"
-                 (let
-                   [description
-                    (:ext.symbol/description editing/grep-symbol)
+(defdescribe
+  editing-native-schema-shape-test
+  (it "grep advertises content-list OR, filename semantics, and empty-query listing"
+      (let
+        [description
+         (:ext.symbol/description editing/grep-symbol)
 
-                    query
-                    (get-in editing/grep-symbol [:ext.symbol/schema :properties "query"])
+         query
+         (get-in editing/grep-symbol [:ext.symbol/schema :properties "query"])
 
-                    alternatives
-                    (into {} (map (juxt :type identity) (:oneOf query)))
+         alternatives
+         (into {} (map (juxt :type identity) (:oneOf query)))
 
-                    string-schema
-                    (get alternatives "string")
+         string-schema
+         (get alternatives "string")
 
-                    array-schema
-                    (get alternatives "array")]
+         array-schema
+         (get alternatives "array")]
 
-                   (expect (= #{"string" "array"} (set (keys alternatives))))
-                   (expect (nil? (:minLength string-schema)))
-                   (expect (= 1 (get-in array-schema [:items :minLength])))
-                   (expect (string/includes? description "`query: \"\"`"))
-                   (expect (string/includes? (:description query) "empty string"))
-                   (expect (string/includes? (:description query) "frecency/recency"))
-                   (expect (string/includes? (:description query) "OR for content search"))
-                   (expect (string/includes? (:description query) "joined terms"))))
-             (it "advertises file-scope fallback and non-negative context lines"
-                 (let
-                   [properties
-                    (get-in editing/grep-symbol [:ext.symbol/schema :properties])
+        (expect (= #{"string" "array"} (set (keys alternatives))))
+        (expect (nil? (:minLength string-schema)))
+        (expect (= 1 (get-in array-schema [:items :minLength])))
+        (expect (string/includes? description "`query: \"\"`"))
+        (expect (string/includes? (:description query) "empty string"))
+        (expect (string/includes? (:description query) "frecency/recency"))
+        (expect (string/includes? (:description query) "OR for content search"))
+        (expect (string/includes? (:description query) "joined terms"))))
+  (it "advertises file-scope fallback and non-negative context lines"
+      (let
+        [properties
+         (get-in editing/grep-symbol [:ext.symbol/schema :properties])
 
-                    paths
-                    (get properties "paths")
+         paths
+         (get properties "paths")
 
-                    context
-                    (get properties "context")]
+         context
+         (get properties "context")]
 
-                   (expect (string/includes? (:description paths) "searched exactly"))
-                   (expect (string/includes? (:description paths) "never widened"))
-                   (expect (string/includes? (:description paths) "nearest existing directory"))
-                   (expect (string/includes? (:description paths) "missing_paths"))
-                   (expect (string/includes? (:description paths) "exact physical paths"))
-                   (expect (string/includes? (:description paths)
-                                             "never rebuilt from a language namespace"))
-                   (expect (= "integer" (:type context)))
-                   (expect (= 0 (:minimum context)))))
-             (it "requires plural exact discovered paths for struct_index and cat"
-                 (let
-                   [index-schema
-                    (:ext.symbol/schema editing/index-symbol)
+        (expect (string/includes? (:description paths) "searched exactly"))
+        (expect (string/includes? (:description paths) "never widened"))
+        (expect (string/includes? (:description paths) "nearest existing directory"))
+        (expect (string/includes? (:description paths) "missing_paths"))
+        (expect (string/includes? (:description paths) "exact physical paths"))
+        (expect (string/includes? (:description paths) "never rebuilt from a language namespace"))
+        (expect (= "integer" (:type context)))
+        (expect (= 0 (:minimum context)))))
+  (it "requires plural exact discovered paths for struct_index and cat"
+      (let
+        [index-schema
+         (:ext.symbol/schema editing/index-symbol)
 
-                    cat-schema
-                    (:ext.symbol/schema editing/cat-symbol)
+         cat-schema
+         (:ext.symbol/schema editing/cat-symbol)
 
-                    index-paths-description
-                    (get-in index-schema [:properties "paths" :description])
+         index-paths-description
+         (get-in index-schema [:properties "paths" :description])
 
-                    cat-paths-description
-                    (get-in cat-schema [:properties "paths" :description])]
+         cat-paths-description
+         (get-in cat-schema [:properties "paths" :description])]
 
-                   (expect (string/includes? index-paths-description "Exact physical"))
-                   (expect (string/includes? index-paths-description "grep/cat/struct_index"))
-                   (expect (not (contains? (:properties index-schema) "path")))
-                   (expect (not (contains? (:properties cat-schema) "path")))
-                   (expect (= ["paths"] (:required index-schema)))
-                   (expect (= ["paths"] (:required cat-schema)))
-                   (expect (= 4 (:maxProperties cat-schema)))
-                   (expect (string/includes? cat-paths-description "Exact physical"))
-                   (expect (not (contains? (:properties cat-schema) "range")))
-                   (expect (= 2 (get-in cat-schema [:properties "ranges" :items :minItems])))
-                   (expect (= 2 (get-in cat-schema [:properties "ranges" :items :maxItems])))))
-             (it "uses one portable patch shape with a path on every edit"
-                 (let [schema (:ext.symbol/schema editing/patch-symbol)]
-                   (expect (= "object" (:type schema)))
-                   (expect (not-any? #(contains? schema %) [:oneOf :allOf :anyOf]))
-                   (expect (= #{"edits"} (set (keys (:properties schema)))))
-                   (expect (= ["path" "from_anchor" "replace"]
-                              (get-in schema [:properties "edits" :items :required]))))))
+        (expect (string/includes? index-paths-description "Exact physical"))
+        (expect (string/includes? index-paths-description "grep/cat/struct_index"))
+        (expect (not (contains? (:properties index-schema) "path")))
+        (expect (not (contains? (:properties cat-schema) "path")))
+        ;; struct_index takes EITHER `paths` (structure) or `name`
+        ;; (occurrences), so neither is schema-required; the tool
+        ;; itself rejects a call carrying neither.
+        (expect (nil? (:required index-schema)))
+        (expect (contains? (:properties index-schema) "name"))
+        (expect (= ["paths"] (:required cat-schema)))
+        (expect (= 4 (:maxProperties cat-schema)))
+        (expect (string/includes? cat-paths-description "Exact physical"))
+        (expect (not (contains? (:properties cat-schema) "range")))
+        (expect (= 2 (get-in cat-schema [:properties "ranges" :items :minItems])))
+        (expect (= 2 (get-in cat-schema [:properties "ranges" :items :maxItems])))))
+  (it "uses one portable patch shape with a path on every edit"
+      (let [schema (:ext.symbol/schema editing/patch-symbol)]
+        (expect (= "object" (:type schema)))
+        (expect (not-any? #(contains? schema %) [:oneOf :allOf :anyOf]))
+        (expect (= #{"edits"} (set (keys (:properties schema)))))
+        (expect (= ["path" "from_anchor" "replace"]
+                   (get-in schema [:properties "edits" :items :required]))))))
 
 (defdescribe
   outline-path-resolution-test
@@ -3101,7 +3105,7 @@
 
 (defdescribe
   anchor-zipper-tool-test
-  "A row anchor from outline/occurrences/cat is now a first-class zipper handle:
+  "A row anchor from struct_index / cat is now a first-class zipper handle:
    sexpr can enter at it, and struct_patch can edit the corresponding node."
   (let
     [sexpr-tool
@@ -3347,16 +3351,83 @@
 ;; ── e2e: REAL tool invocations against REAL temp files ───────────────────────
 
 (defdescribe
-  occurrences-tool-e2e-test
-  "The `occurrences` TOOL (not just the structural fn): rg prefilter → per-file
-   parse → def-marked result envelope, over real files on disk."
-  (let [occ (private-fn "occurrences-tool")]
+  nodes-tool-plural-cross-file-test
+  "`struct_nodes` is the PLURAL navigator: many cursors, many files, ONE call.
+   Every entry answers with the node's verbatim `source` PLUS the `at` cursor
+   struct_patch takes, and a cursor that misses fails closed per ENTRY while its
+   siblings still answer."
+  (let [nodes (private-fn "nodes-tool")]
+    (it "answers many cursors across MANY files (and languages) in one call"
+        (let
+          [f1 (write-temp! "nodes-plural/a.clj"
+                           "(ns a)\n\n(defn zonk [x]\n  (if (pos? x) (* x 2) 0))\n")
+           f2 (write-temp! "nodes-plural/b.py" "def helper(n):\n    return n * 2\n")
+           r (nodes {"nodes" [f1 {"path" f2 "nav" [{"find_kind" "function_definition"}]}]})
+           [c1 c2] (get-in r [:result "results"])]
+
+          (expect (:success? r))
+          (expect (= 2 (count (get-in r [:result "results"]))))
+          (expect (= f1 (get c1 "path")))
+          (expect (= [] (get c1 "at")))
+          (expect (string/includes? (get c1 "source") "(defn zonk"))
+          (expect (= f2 (get c2 "path")))
+          (expect (= [0] (get c2 "at")))
+          (expect (string/includes? (get c2 "source") "def helper"))))
+    (it "a shared top-level `path` feeds every entry, and at/nav agree on one node"
+        (let
+          [p (write-temp! "nodes-shared/a.clj"
+                          "(ns a)\n\n(defn zonk [x]\n  (if (pos? x) (* x 2) 0))\n")
+           r (nodes {"path" p "nodes" [{"at" [1]} {"nav" [{"find" "zonk"}]}]})
+           [by-at by-nav] (get-in r [:result "results"])]
+
+          (expect (:success? r))
+          (expect (every? #(= p (get % "path")) [by-at by-nav]))
+          (expect (string/includes? (get by-at "source") "(defn zonk"))
+          (expect (= "zonk" (get by-nav "source")))))
+    (it "ONE impossible move is data on THAT entry; its siblings still answer"
+        (let
+          [p (write-temp! "nodes-partial/a.clj" "(ns a)\n\n(def k 1)\n")
+           r (nodes {"path" p "nodes" [{"at" [1]} {"nav" ["down" "right" "right" "right"]}]})
+           [ok miss] (get-in r [:result "results"])]
+
+          (expect (:success? r))
+          (expect (= "(def k 1)" (get ok "source")))
+          (expect (some? (get miss "error")))
+          (expect (= "bad-move" (get miss "reason")))))
+    (it "a call whose EVERY cursor missed is a failure, not an empty success"
+        (let
+          [p (write-temp! "nodes-allmiss/a.clj" "(ns a)\n")
+           r (nodes {"path" p "nodes" [{"nav" ["up"]} {"nav" [{"find" "nope-nope"}]}]})]
+
+          (expect (false? (boolean (:success? r))))
+          (expect (= :struct_nodes (get-in r [:error :mode])))))
+    (it "refuses a malformed `nodes` list instead of guessing"
+        (expect (throws? clojure.lang.ExceptionInfo #(nodes {"path" "a.clj" "nodes" []})))
+        (expect (throws? clojure.lang.ExceptionInfo #(nodes {"nodes" [42]})))
+        (expect (throws? clojure.lang.ExceptionInfo #(nodes {"nodes" [{"nav" ["down"]}]}))))))
+
+(defdescribe
+  name-mode-index-e2e-test
+  "struct_index in `name` mode (not just the structural fn): rg prefilter →
+   per-file parse → def-marked result envelope, over real files on disk."
+  (let
+    [idx
+     (private-fn "index-tool")
+
+     occ
+     #(idx {"name" %})]
+
     (it
       "traces a symbol across real files: marks the def (kind/signature), lists uses"
       (let
-        [_ (temp-dir-path "occ")
-         f1 (str (temp-root) "/occ/lib.clj")
-         f2 (str (temp-root) "/occ/use.clj")]
+        [_
+         (temp-dir-path "occ")
+
+         f1
+         (str (temp-root) "/occ/lib.clj")
+
+         f2
+         (str (temp-root) "/occ/use.clj")]
 
         (spit (fs/file f1) "(defn widget [x] (inc x))\n")
         (spit (fs/file f2) "(ns u)\n(println (widget 1))\n(println (widget 2))\n")
@@ -3364,38 +3435,186 @@
           (let
             [r (occ "widget")
              res (:result r)
-             all (mapcat #(get % "occurrences") (get res "files"))
-             defs (filter #(get % "is_definition") all)]
+             syms (get res "symbols")
+             s (first syms)
+             uses (get s "uses")]
 
             (expect (:success? r))
             (expect (= 3 (get res "count"))) ;; 1 def + 2 uses
             (expect (= 1 (get res "definition_count")))
-            (expect (= 1 (count defs)))
-            (expect (= "widget" (get (first defs) "name")))
-            (expect (= "fn" (get (first defs) "kind")))
-            (expect (= "[x]" (get (first defs) "signature")))
-            ;; every non-def occurrence still carries a patch anchor
-            (expect (every? #(get % "anchor") all))
-            ;; a plain USE is ANCHORS-ONLY — the `lineno:hash` anchor IS the sole
-            ;; position; no redundant line/column/byte (unbounded, they'd bloat the
-            ;; wire until it clips mid-object)
-            (let [use (first (remove #(get % "is_definition") all))]
-              (expect (= #{"anchor"} (set (keys use)))))
-            (expect (not-any? #(or (contains? % "line")
-                                   (contains? % "column")
-                                   (contains? % "start_byte")
-                                   (contains? % "end_byte"))
-                              all))))))
+            ;; PER SYMBOL: one entry per definition, uses hanging off it
+            (expect (= 1 (count syms)))
+            (expect (= "widget" (get s "name")))
+            (expect (= "fn" (get s "kind")))
+            (expect (= "[x]" (get s "signature")))
+            (expect (= f1 (get s "path")))
+            (expect (get s "anchor"))
+            ;; a definition row is no longer flagged — being IN `symbols` says it
+            (expect (not (contains? s "is_definition")))
+            ;; the sole definition owns every use, grouped by file
+            (expect (= 2 (get s "use_count")))
+            (expect (= [f2] (mapv #(get % "path") uses)))
+            (expect (= 2 (count (get (first uses) "anchors"))))
+            ;; a use is ANCHORS-ONLY — the `lineno:hash` anchor IS the sole
+            ;; position; no redundant line/column/byte (unbounded, they'd bloat
+            ;; the wire until it clips mid-object)
+            (expect (= #{"path" "anchors"} (set (keys (first uses)))))
+            (expect (every? string? (get (first uses) "anchors")))
+            ;; nothing left over: one definition attaches everything
+            (expect (not (contains? res "other_uses")))
+            (expect (nil? (get res "files")))))))
     (it "a name with no definition on disk yields definition_count 0"
         (let
-          [_ (temp-dir-path "occ2")
-           f (str (temp-root) "/occ2/u.clj")]
+          [_
+           (temp-dir-path "occ2")
+
+           f
+           (str (temp-root) "/occ2/u.clj")]
 
           (spit (fs/file f) "(ns u)\n(println (widget 1))\n") ;; used, never defined here
           (with-redefs [editing/rg-search (constantly {:files [f]})]
             (let [res (:result (occ "widget"))]
               (expect (= 0 (get res "definition_count")))
+              (expect (empty? (get res "symbols")))
+              ;; no definition to attach them to — the uses surface as `other_uses`
+              (expect (= [f] (mapv #(get % "path") (get res "other_uses"))))
               (expect (pos? (get res "count")))))))))
+
+(defdescribe
+  merged-symbol-entry-points-test
+  "`struct_occurrences` is GONE (tracing a name is `struct_index(name)`) and
+   `struct_rename` is no longer advertised (renaming project-wide is
+   `struct_patch(paths, op \"rename\")`, still a Python-callable symbol)."
+  (let
+    [idx
+     (private-fn "index-tool")
+
+     sp
+     (private-fn "struct-patch-tool")]
+
+    (it "struct_index with `name` returns the occurrences envelope"
+        (let
+          [_
+           (temp-dir-path "idxname")
+
+           f1
+           (str (temp-root) "/idxname/lib.clj")
+
+           f2
+           (str (temp-root) "/idxname/use.clj")]
+
+          (spit (fs/file f1) "(defn widget [x] (inc x))\n")
+          (spit (fs/file f2) "(ns u)\n(println (widget 1))\n")
+          (with-redefs [editing/rg-search (constantly {:files [f1 f2]})]
+            (let
+              [r (idx {"name" "widget"})
+               res (:result r)]
+
+              (expect (:success? r))
+              (expect (= :struct_index (:symbol r)))
+              (expect (= "widget" (get res "name")))
+              (expect (= 2 (get res "count")))
+              (expect (= 1 (get res "definition_count")))))))
+    (it
+      "an ambiguous name groups PER SYMBOL and parks the rest in other_uses"
+      (let
+        [occ2
+         (private-fn "occurrences-data")
+
+         _
+         (temp-dir-path "idxamb")
+
+         a
+         (str (temp-root) "/idxamb/a.clj")
+
+         b
+         (str (temp-root) "/idxamb/b.clj")
+
+         c
+         (str (temp-root) "/idxamb/c.clj")]
+
+        (spit (fs/file a) "(defn gizmo [x] x)\n(gizmo 1)\n")
+        (spit (fs/file b) "(defn gizmo [x y] y)\n(gizmo 1 2)\n")
+        ;; uses only — owned by neither definition
+        (spit (fs/file c) "(ns c)\n(gizmo 9)\n(gizmo 8)\n")
+        (with-redefs [editing/rg-search (constantly {:files [a b c]})]
+          (let
+            [res (:result (occ2 {"name" "gizmo"}))
+             syms (get res "symbols")]
+
+            (expect (= 2 (get res "definition_count")))
+            (expect (= 2 (count syms)))
+            ;; each definition keeps its own path + signature to disambiguate
+            (expect (= [a b] (mapv #(get % "path") syms)))
+            (expect (= ["[x]" "[x y]"] (mapv #(get % "signature") syms)))
+            ;; a use in a file that defines the name exactly once is attributed there
+            (expect (= [1 1] (mapv #(get % "use_count") syms)))
+            (expect (= [[a] [b]]
+                       (mapv (fn [s]
+                               (mapv #(get % "path") (get s "uses")))
+                             syms)))
+            ;; the third file defines nothing, so ownership is NOT guessed
+            (expect (= [c] (mapv #(get % "path") (get res "other_uses"))))
+            (expect (= 2 (count (get (first (get res "other_uses")) "anchors"))))))))
+    (it "the card renders one block per symbol, uses indented beneath"
+        (let
+          [render
+           (private-fn "render-index-result")
+
+           {:keys [summary body]}
+           (render {"name" "gizmo"
+                    "count" 3
+                    "definition_count" 1
+                    "paths" ["."]
+                    "symbols" [{"name" "gizmo"
+                                "kind" "fn"
+                                "visibility" "public"
+                                "signature" "[x]"
+                                "path" "src/a.clj"
+                                "anchor" "1:aaa"
+                                "end_anchor" "3:bbb"
+                                "use_count" 2
+                                "uses" [{"path" "src/b.clj" "anchors" ["4:ccc" "9:ddd"]}]}]})]
+
+          (expect (= "`gizmo` · 1 def · 2 uses · 2 files · project-wide" summary))
+          (expect (clojure.string/includes? body "`gizmo [x]` · fn · src/a.clj @1:aaa · 2 uses"))
+          (expect (clojure.string/includes? body "    src/b.clj  4, 9"))))
+    (it "struct_index without `paths` and without `name` is refused"
+        (expect (throws? clojure.lang.ExceptionInfo #(idx {}))))
+    (it "struct_patch with `paths` + op `rename` renames across files"
+        (let
+          [_
+           (temp-dir-path "sprename")
+
+           f1
+           (str (temp-root) "/sprename/lib.clj")
+
+           f2
+           (str (temp-root) "/sprename/use.clj")]
+
+          (spit (fs/file f1) "(defn widget [x] (inc x))\n")
+          (spit (fs/file f2) "(ns u)\n(println (widget 1))\n")
+          (with-redefs [editing/rg-search (constantly {:files [f1 f2]})]
+            (let
+              [r (sp {"paths" [(str (temp-root) "/sprename")]
+                      "op" "rename"
+                      "target" "widget"
+                      "code" "gadget"})]
+              (expect (:success? r))
+              (expect (= 2 (count (:result r))))
+              (expect (every? #(and (= "rename" (get % "op")) (get % "changed")) (:result r)))
+              (expect (clojure.string/includes? (slurp f1) "(defn gadget"))
+              (expect (clojure.string/includes? (slurp f2) "(gadget 1)"))))))
+    (it "struct_patch `paths` only accepts op `rename`"
+        (expect (throws? clojure.lang.ExceptionInfo
+                         #(sp {"paths" ["src"] "op" "delete" "target" "x"}))))
+    (it "struct_occurrences is gone entirely; struct_rename is merely unadvertised"
+        ;; No `struct_occurrences` symbol is exported at all any more — `name` mode
+        ;; of struct_index is the ONE entry point (a stale Var can survive a REPL
+        ;; :reload, so assert on the exported symbol list, not `resolve`).
+        (expect (not-any? #(= 'struct_occurrences (:ext.symbol/symbol %))
+                          (editing/available-editing-symbols)))
+        (expect (false? (boolean (:ext.symbol/native-tool? @#'editing/symbol-rename-symbol)))))))
 
 (defdescribe
   index-tool-e2e-test
@@ -4569,8 +4788,8 @@
          (extension/symbol-active? sym nil)))
 
      struct-syms
-     [editing/struct-patch-symbol editing/index-symbol editing/occurrences-symbol
-      editing/symbol-rename-symbol editing/nodes-symbol]]
+     [editing/struct-patch-symbol editing/index-symbol editing/symbol-rename-symbol
+      editing/nodes-symbol]]
 
     (it "a Clojure project advertises every structural editor"
         (doseq [s struct-syms]

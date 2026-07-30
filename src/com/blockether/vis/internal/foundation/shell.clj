@@ -1775,7 +1775,7 @@ Gotcha: logs returns \"lines\" as plain STRINGS and NOTHING else carries that ta
       {"cmd"
        {:oneOf [{:type "string"} {:type "array" :minItems 1 :items {:type "string" :minLength 1}}]
         :description
-        "The ONLY place a command or a keystroke may appear — in Python the first positional argument; there is no `commands` key and no `text` key. A STRING is one command line (bash -lc, workspace root); an ARRAY is a strictly ordered batch of bounded runs, each completing before the next, keeping the default `run` op and no `id`, with `cwd` and `timeout_secs` applied to every command. Under `op` \"send\" it is the exact text typed into that background shell's stdin — never trimmed, so control characters survive and an EMPTY string is a bare Enter. Omit it for `logs`/`stop`, and for `background` on an id that is already running."}
+        "The ONLY place a command or a keystroke goes — in Python the first positional argument. A STRING is one command line (bash -lc, workspace root); an ARRAY is a strictly ordered batch of bounded runs sharing `cwd`/`timeout_secs`. Under `op` \"send\" it is typed into that background shell's stdin verbatim — never trimmed, an EMPTY string a bare Enter. Omit for `logs`/`stop`."}
        "op" {:type "string"
              :enum ["run" "background" "logs" "send" "stop"]
              :description "Operation (default \"run\", or \"background\" when an `id` is given)."}

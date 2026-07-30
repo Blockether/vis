@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.14 (2804) — 2026-07-30
+<!-- commit: 88bbea7eb3eee254690946ef364d5f0a31b67e16 -->
+
+- Allow block-local shadowing of bound tool names in vis Python
+- Release notes for 0.1.14 (2802)
+
 ## 0.1.14 (2802) — 2026-07-30
 <!-- commit: 7e3b8a2c2788faca62f436ad6fda377531a79824 -->
 

@@ -3566,8 +3566,8 @@
     (it "a tool with NO :call gets the generic whole-dict call"
         (expect (= "rg({\"query\": [\"x\"]})" (synth {:name "rg" :input {"query" ["x"]}})))
         (expect (= "grep({\"query\": \"x\"})" (synth {:name "grep" :input {"query" "x"}})))
-        (expect (= "struct_occurrences({\"name\": \"foo\"})"
-                   (synth {:name "struct_occurrences" :input {"name" "foo"}})))
+        (expect (= "struct_index({\"name\": \"foo\"})"
+                   (synth {:name "struct_index" :input {"name" "foo"}})))
         (expect (= "struct_index({\"paths\": [\"src/x.clj\"]})"
                    (synth {:name "struct_index" :input {"paths" ["src/x.clj"]}})))
         (expect (= "lint_code({\"code\": \"x\"})" (synth {:name "lint_code" :input {"code" "x"}}))))
@@ -3695,7 +3695,6 @@
       "rg" :observation
       "grep" :observation
       "struct_index" :observation
-      "struct_occurrences" :observation
       "file_exists" :observation
       "struct_nodes" :observation
       "patch" :mutation

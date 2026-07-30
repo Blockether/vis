@@ -42,7 +42,7 @@
 
 (def ^:private scan-max-concurrency
   "Permit count for `scan-semaphore`: the max number of FRESH fff index
-   scans (grep / struct_occurrences — everything that goes through
+   scans (grep / struct_index — everything that goes through
    `open!`) allowed to run at once. A fresh scan spins fff's own worker
    threads over the whole tree — cheap for a small repo (~11ms), but up to the
    `scan-timeout-ms` (~30s) ceiling for a large one — so an UNBOUNDED

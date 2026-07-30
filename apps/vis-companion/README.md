@@ -138,6 +138,21 @@ version and is usually instant afterwards; the link itself never changes, so it
 can go in a README or a tweet. Internal testers get the build immediately,
 without review. The public URL is printed at the end of the run.
 
+**Live link: <https://testflight.apple.com/join/4anYT4Wk>** (group **External
+Testers**). The group already existed, so pass it explicitly instead of letting
+the default create a third one:
+
+```sh
+node scripts/testflight.mjs --group "External Testers"
+```
+
+Beta metadata (feedback email, review contact, notes) is filled and permanent.
+One gotcha it cost us: Apple validates `betaAppLocalizations` against the app's
+**primary locale** — this app is `en-GB`, and an `en-US`-only localization made
+`betaAppReviewSubmissions` answer the misleading *"betaAppLocalizations not
+found for this app"*. `distribute()` now reads `primaryLocale` from the app and
+uses it.
+
 ## Release to Google Play (Android)
 
 ```sh
@@ -151,6 +166,22 @@ npm run release:android -- --tracks            # what each track serves today
 Play's equivalent of a public TestFlight link is the **`beta` (Open testing)**
 track: anyone with the URL joins, no invite and no tester list. `internal` is
 the fast lane (100 named testers, no review), `alpha` is closed testing.
+
+Opt-in URL once the track is live:
+**<https://play.google.com/apps/testing/com.blockether.viscompanion>**
+
+While the app is still a **draft** in Play Console (never published), the API
+refuses a normal rollout with *"Only releases with status draft may be created
+on draft app"*. Upload with `--draft` in the meantime:
+
+```sh
+npm run release:android -- --track beta --draft
+```
+
+and finish it in Play Console ▸ the app's **Dashboard** — store listing, App
+content (privacy policy, data safety, content rating, target audience, ads) and
+then **Publish** — none of which the Play Developer API exposes. After that
+first publish, `--track beta` rolls out unattended.
 
 Versioning matches iOS exactly — `versionName` from `package.json`,
 `versionCode` from `git rev-list --count HEAD` — and both are stamped into the

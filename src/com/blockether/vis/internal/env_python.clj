@@ -3537,6 +3537,19 @@ def network_probe(method='GET', url=None, headers=None, body=None):
   [python-context code]
   {:source code :result (->clj (.eval ^Context python-context "python" (str code)))})
 
+(def ^:private gc-gil-budget-ms
+  "How long [[collect-garbage!]] may wait for the Python GIL before giving up.
+
+   Small on purpose: this runs in `loop/send!`'s `finally`, i.e. AFTER the turn's
+   answer exists and BEFORE the gateway lands the turn's terminal event."
+  2000)
+
+(def ^:private gc-in-flight
+  "Context identities with an abandoned [[collect-garbage!]] thread still parked on
+   the GIL. Without it every subsequent turn of every session would add another
+   parked thread while one holder keeps the GIL."
+  (java.util.concurrent.ConcurrentHashMap/newKeySet))
+
 (defn collect-garbage!
   "Best-effort GC between turns. Two steps, because GraalPy reclaims
    native-extension (numpy/pandas/PIL) memory in TWO stages:
@@ -3547,11 +3560,36 @@ def network_probe(method='GET', url=None, headers=None, body=None):
         graalpython IMPLEMENTATION_DETAILS: the guest collect ALONE does not free
         non-cyclic native objects whose only managed ref was just dropped).
    Runs while the interpreter is idle between turns, the cheapest time for a
-   pause. Never throws; a closed/cancelled context is ignored."
+   pause. Never throws; a closed/cancelled context is ignored.
+
+   BOUNDED, and that is the whole point. `.eval` first acquires the Python GIL,
+   which a SIBLING session holds for the entire duration of its own in-flight
+   Python — a `shell` subprocess or a long tool call holds it for minutes or
+   hours. Waiting for it here is unbounded AND uninterruptible (a cancelled token
+   does not unpark `PythonContext.acquireGil`), and it sits between the engine
+   unwinding and `gateway.state/run-turn!` appending the terminal event. One busy
+   sibling therefore wedged a finished turn forever: no `turn.completed` /
+   `turn.cancelled` on the wire, the session pinned to a turn nobody was running,
+   the queued backlog never drained, and every channel showed a live panel that
+   Esc could not close. GC is best effort, so give it a budget and walk away; the
+   abandoned daemon thread completes the collect whenever the GIL frees."
   [environment]
   (when-let [python-context (:python-context environment)]
-    (try (.eval ^Context python-context "python" "import gc\ngc.collect()") (catch Throwable _ nil))
-    (try (System/gc) (catch Throwable _ nil))))
+    (let [k (System/identityHashCode python-context)]
+      (when (.add ^java.util.Set gc-in-flight k)
+        (let [done (promise)]
+          (doto (Thread. ^Runnable
+                         (fn []
+                           (try (.eval ^Context python-context "python" "import gc\ngc.collect()")
+                                (catch Throwable _ nil)
+                                (finally (.remove ^java.util.Set gc-in-flight k)
+                                         (deliver done true))))
+                         "vis-python-gc")
+            (.setDaemon true)
+            (.start))
+          ;; Layer 2 only pays off once the guest collect actually ran.
+          (when (deref done gc-gil-budget-ms nil)
+            (try (System/gc) (catch Throwable _ nil))))))))
 
 (defn- prose-leading-syntax-hint
   "When a `:python/syntax` failure came from a reply that OPENED with PROSE — the

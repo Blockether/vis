@@ -42,7 +42,10 @@ import { appIdFor, asc, ascToken, waitForBuild } from './asc.mjs';
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 // "already exists" / "already submitted" are the normal state of a re-run, not a failure.
-const isDuplicate = (err) => err.status === 409 || /already/i.test(err.message);
+// A build that is already IN Beta App Review answers "not in a valid processing state" to a
+// second submission — same thing, different wording, and equally not an error for a re-run.
+const isDuplicate = (err) =>
+  err.status === 409 || /already/i.test(err.message) || /not in a valid processing state/i.test(err.message);
 
 /** Beta App Review refuses a submission when these are unset; they are per-app and set once. */
 const ensureBetaMeta = async (token, appId, { locale = 'en-US', feedbackEmail, description, contact = {}, log }) => {
@@ -149,7 +152,11 @@ export const distribute = async ({
     if (!found?.id) return { ok: false, reason: `build ${build} not visible in App Store Connect yet` };
     if (found.state !== 'VALID') return { ok: false, reason: `build ${build} is still ${found.state} — re-run with --build ${build} once it is VALID` };
 
-    const missing = await ensureBetaMeta(token, appId, { ...meta, log });
+    // Apple validates the beta metadata against the app's PRIMARY locale, not en-US: with only an
+    // en-US localization on an en-GB app, `betaAppReviewSubmissions` fails with the misleading
+    // "betaAppLocalizations not found for this app". Ask the app which locale it wants.
+    const primaryLocale = (await asc(token, 'GET', `/v1/apps/${appId}`))?.data?.attributes?.primaryLocale;
+    const missing = await ensureBetaMeta(token, appId, { locale: primaryLocale || 'en-US', ...meta, log });
     if (review && missing.length) {
       return { ok: false, reason: `beta metadata incomplete: ${missing.join('; ')}` };
     }

@@ -123,7 +123,7 @@
   com.github.weisj/jsvg {:mvn/version "2.1.0"}
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
-  com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.26"}
+  com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.28"}
   com.blockether/ruff {:mvn/version "0.3.2"}
   org.clojure/core.memoize {:mvn/version "1.2.281"}
   com.blockether/fff {:mvn/version "0.12.0"}
