@@ -17,6 +17,7 @@
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.toggles :as toggles]
             [lazytest.core :refer [defdescribe describe it expect throws?]]))
 
 (defn- captured-ask-code-opts
@@ -3057,6 +3058,45 @@
                  :input-tokens input
                  :max-input-tokens max-input
                  :overflow (when (and input max-input) (- input max-input))}))
+(defdescribe
+  sub-loop-shell-toggle-test
+  (it
+    "honors a disabled shell toggle in the child turn"
+    (let
+      [before
+       (toggles/enabled? "shell")
+
+       seen
+       (atom nil)
+
+       parent
+       {:router {:providers [{:id :anthropic :models [{:name "haiku"}]}]}
+        :db-info :db
+        :depth-atom (atom 0)
+        :workspace {:id "parent-ws" :root "/parent"}}]
+
+      (try (toggles/set-enabled! "shell" false)
+           (with-redefs
+             [lp/child-workspace!
+              (fn [& _]
+                {:id "child-ws" :root "/child" :fork-ms 0})
+
+              lp/create-environment
+              (fn [& _]
+                {:ctx-atom (atom {}) :owns-db? false :db-info :db})
+
+              lp/run-turn!
+              (fn [& _]
+                (reset! seen (toggles/enabled? "shell"))
+                {:status :success :answer "disabled"})
+
+              lp/dispose-environment!
+              (fn [_])]
+
+             (lp/sub-loop! parent {:prompt "no shell" :subctx {"focus" "no-shell"}}))
+           (expect (false? @seen))
+           (finally (toggles/set-enabled! "shell" before))))))
+
 
      ctx
      {:iteration 1 :messages [] :routing {} :reasoning-level nil}]

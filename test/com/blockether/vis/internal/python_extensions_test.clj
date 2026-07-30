@@ -11,6 +11,7 @@
             [com.blockether.vis.internal.persistance :as ps]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.python-extensions :as pyx]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.python-test-runner :as runner]
@@ -1212,13 +1213,19 @@ vis.extension(
   reload-slash-toggles-test
   "`/reload` is the ONE user-facing re-read of `vis.yml`. Toggles used to be
    hydrated only at process start (gateway `install-toggle-persistence!`, TUI
-   `screen/run-chat!`), so `web_search: false` in the YAML kept the tool live
-   until a restart while `/reload` reported success."
-  (it "a toggle edited in vis.yml applies after /reload — #64"
-      (toggles/register-toggle!
-        {:id "test_reload_gate" :label "Reload gate" :default true :persist? true})
-      (toggles/set-value! "test_reload_gate" true)
-      (expect (true? (toggles/enabled? "test_reload_gate")))
+   `screen/run-chat!`), so `shell: false` in the YAML kept the tool live until a
+   restart while `/reload` reported success."
+  (it
+    "the shell toggle edited in vis.yml applies after /reload — #64"
+    (let
+      [_
+       shell/vis-extension
+
+       before
+       (toggles/enabled? "shell")]
+
+      (toggles/set-value! "shell" true)
+      (expect (true? (toggles/enabled? "shell")))
       (try (with-redefs
              [pyx/reload-python-extensions!
               (fn [& _]
@@ -1231,7 +1238,7 @@ vis.extension(
               (constantly {})
 
               config/load-config-raw
-              (constantly {"toggles" {"test_reload_gate" false}})
+              (constantly {"toggles" {"shell" false}})
 
               extension/run-reload-hooks!
               (constantly {})
@@ -1244,5 +1251,5 @@ vis.extension(
 
              (let [res ((var pyx/reload-slash) {:channel/id :tui :command/argv []})]
                (expect (= :ok (:slash/status res)))))
-           (expect (false? (toggles/enabled? "test_reload_gate")))
-           (finally (toggles/reset-to-default! "test_reload_gate")))))
+           (expect (false? (toggles/enabled? "shell")))
+           (finally (toggles/set-value! "shell" before))))))

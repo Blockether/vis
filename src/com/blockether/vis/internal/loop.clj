@@ -10035,14 +10035,6 @@
     (try (workspace/apply! db-info {:workspace-id (:id child-ws)})
          (catch Throwable t (log-subloop-warn! :merge t (:id child-ws)) nil))))
 
-(def child-forced-toggles
-  "Toggle ids a `sub_loop` child has ON by DEFAULT, whatever the global state —
-   so a dispatched agent can always run shell commands. Canonical snake_case
-   string ids (the only shape `toggles/enabled?` matches); the harness skill/
-   agent verbs are unconditionally available and no longer gated by a toggle.
-   Bound around the child turn; binding-conveyance carries it into `parallel`
-   futures."
-  #{"shell"})
 
 (defn- project-child-result
   "Run the child turn, merge its edits back (rift path), and project the result
@@ -10056,13 +10048,8 @@
      turn-opts
      (if (seq (str system-prompt)) {:system-prompt (str system-prompt)} {})
 
-     ;; Child runs with shell + harness forced ON (see child-forced-toggles).
-     ;; sync-active-extension-symbols! (turn start, inside run-turn!) reads
-     ;; toggles/enabled? under this binding → the child's sandbox gets the
-     ;; shell + skill/agent verbs bound even when they're OFF for the parent.
      result
-     (binding [toggles/*forced-on* (into toggles/*forced-on* child-forced-toggles)]
-       (run-turn! child-env (str prompt) turn-opts))
+     (run-turn! child-env (str prompt) turn-opts)
 
      merged
      (when rift? (merge-child-edits! db-info child-ws))

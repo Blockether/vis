@@ -243,7 +243,7 @@ The process jail is **off by default** and opt-in via `jail.enabled: true`.
 managed shells and language processes run with the gateway user's full host
 permissions. With it enabled, shell commands and managed language processes run
 under the OS jail (Seatbelt on macOS, bubblewrap on Linux) and use the gateway
-egress proxy. There is no separate shell or network toggle. Unsupported hosts
+egress proxy. Shell access has a separate `toggles.shell` switch. Unsupported hosts
 currently have no OS boundary and a requested `jail.enabled: true` fails loud.
 
 Filesystem roots are declared once in the `workspace.filesystem` catalog (`id`,
@@ -402,12 +402,14 @@ Built-in extensions can expose a boolean toggle under `toggles:`. Toggle values 
 
 ```yaml
 toggles:
-  # Default: true. Set false to remove the Exa/arXiv live-research extension.
+  # Default: true. Set false to remove the Exa/GitHub/arXiv live-research extension.
   web_search: false
 ```
 
-When `web_search` is false, Vis does not bind `search`, `search_web`, `search_code`, or `search_papers`; no request can be sent to Exa through that extension.
+After editing `vis.yml`, run `/reload` in the session. With `shell: false`, Vis does not bind the `shell` tool (including for sub-agents), so it cannot launch commands or managed language processes. `jail.enabled` is independent: it confines commands when shell access is enabled.
 
+  # Default: true. Set false to remove the shell command tool, including from sub-agents.
+  shell: false
 ## Session titling
 
 Vis names a session from its first request. The name is written locally and
