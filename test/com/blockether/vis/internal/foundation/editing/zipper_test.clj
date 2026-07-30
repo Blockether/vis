@@ -114,8 +114,8 @@
                  ;; DASH op (:struct-patch) while the registry key derived from the underscore
                  ;; symbol (:struct_patch), so op-tag threw on every real invocation. Guard it.
                  (doseq
-                   [op [:struct_node :struct_patch :struct_occurrences :create-dirs
-                        :delete-if-exists :patch :write]]
+                   [op [:struct_node :struct_patch :struct_occurrences :create-dirs :delete :patch
+                        :write]]
                    (expect (#{:observation :mutation} (ext/op-tag op))))))
 
 (defdescribe error-localization-test

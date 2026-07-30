@@ -1854,21 +1854,21 @@
    Navigation  ↑/↓ move a row · n/p next/prev SECTION · PageUp/Down page
                Home/End top/bottom · TAB fold diff · RET visit · q/Esc close
    Staging     s/u stage/unstage at point · S/U stage/unstage ALL
-   Discard     k discard at point (asks first)
+   Discard     x/k discard at point (asks first)
    Commit      c commit flow (prompt; amend)
    History     l log graph · C-w copy sha/path/ref
    Remote      P push · F pull · f fetch
    Branch      b branch flow      Stash  z stash flow
    Buffer      g refresh
 
-   FAITHFUL to vanilla Emacs magit — every key above matches magit's own
-   binding: k discard, g refresh, C-w copy-section-value, n/p section motion.
-   Magit keys we do not implement stay FREE (never bound to a wrong verb):
-   x reset · r rebase · y show-refs · d/D diff · m merge · V revert ·
+   Magit-compatible bindings use Magit's own verbs, with `x` as an additional
+   discard alias alongside Magit's `k`.
+   Unimplemented Magit keys stay FREE:
+   r rebase · y show-refs · d/D diff · m merge · V revert ·
    A cherry-pick · t tag · G refresh-all · SPC/DEL scroll · M-n/M-p sibling."
   [["↑/↓" "move"] ["n/p" "section"] ["TAB" "diff"] ["RET" "visit"] ["s/u" "±stage"] ["S/U" "all"]
-   ["k" "discard"] ["c" "commit"] ["l" "log"] ["C-w" "copy"] ["P" "push"] ["F" "pull"] ["f" "fetch"]
-   ["b" "branch"] ["z" "stash"] ["g" "refresh"] ["Esc" "close"]])
+   ["x/k" "discard"] ["c" "commit"] ["l" "log"] ["C-w" "copy"] ["P" "push"] ["F" "pull"]
+   ["f" "fetch"] ["b" "branch"] ["z" "stash"] ["g" "refresh"] ["Esc" "close"]])
 
 (defn- magit-row-style
   "`[fg bold? bg]` for one status-buffer row — foreground, bold?, and an optional
@@ -2584,7 +2584,7 @@
     \U
     (magit/unstage-all! root)
 
-    \k
+    (\x \k)
     (magit-discard-flow! mini root row)
 
     \c

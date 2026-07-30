@@ -3556,7 +3556,8 @@
              (@#'lp/tool-call->python-source real-call-shapes tc))]
     (it "the shapes come from the tools themselves (not a hand-copied engine table)"
         ;; wiring: the interesting shapes are declared on the real symbols.
-        (expect (= {:pos ["path"] :rest :opt} (get real-call-shapes "cat")))
+        ;; `cat` is plural-only (`paths`), so it declares NO positional shape.
+        (expect (nil? (get real-call-shapes "cat")))
         (expect (= {:lead-opt "language" :rest :always} (get real-call-shapes "repl_eval")))
         (expect (= {:pos ["path"]} (get real-call-shapes "file_exists")))
         (expect (fn? (get real-call-shapes "patch")))
@@ -3567,8 +3568,8 @@
         (expect (= "grep({\"query\": \"x\"})" (synth {:name "grep" :input {"query" "x"}})))
         (expect (= "struct_occurrences({\"name\": \"foo\"})"
                    (synth {:name "struct_occurrences" :input {"name" "foo"}})))
-        (expect (= "struct_index({\"path\": \"src/x.clj\"})"
-                   (synth {:name "struct_index" :input {"path" "src/x.clj"}})))
+        (expect (= "struct_index({\"paths\": [\"src/x.clj\"]})"
+                   (synth {:name "struct_index" :input {"paths" ["src/x.clj"]}})))
         (expect (= "lint_code({\"code\": \"x\"})" (synth {:name "lint_code" :input {"code" "x"}}))))
     (it "python_execution still passes the model's code through"
         (expect (= "print(1)" (synth {:name "python_execution" :input {"code" "print(1)"}}))))
@@ -3596,10 +3597,12 @@
                  {"path" "a.clj" "op" "replace" "target" "f" "code" "(defn f []\n  \"d\"\n  1)"}})]
         (expect (not (.contains ^String prog "\n")))
         (expect (.startsWith ^String prog "struct_patch("))))
-    (it "positional + optional-rest-dict shapes (cat/sexpr/copy/shell)"
-        (expect (= "cat(\"a.clj\")" (synth {:name "cat" :input {"path" "a.clj"}})))
-        (expect (= "cat(\"a.clj\", {\"range\": [1, 2]})"
-                   (synth {:name "cat" :input {"path" "a.clj" "range" [1 2]}})))
+    (it "positional + optional-rest-dict shapes (struct_node/copy/shell)"
+        ;; `cat` is plural-only, so it rides the generic whole-dict form.
+        (expect (= "cat({\"paths\": [\"a.clj\"]})"
+                   (synth {:name "cat" :input {"paths" ["a.clj"]}})))
+        (expect (= "cat({\"paths\": [\"a.clj\"], \"ranges\": [[1, 2]]})"
+                   (synth {:name "cat" :input {"paths" ["a.clj"] "ranges" [[1 2]]}})))
         (expect (= "struct_node(\"a.clj\", {\"nav\": [\"down\"]})"
                    (synth {:name "struct_node" :input {"path" "a.clj" "nav" ["down"]}})))
         (expect (= "copy(\"a\", \"b\")" (synth {:name "copy" :input {"src" "a" "dest" "b"}})))
@@ -3611,8 +3614,7 @@
         (expect (= "move(\"a\", \"b\")" (synth {:name "move" :input {"src" "a" "dest" "b"}})))
         (expect (= "delete(\"p\")" (synth {:name "delete" :input {"path" "p"}})))
         (expect (= "create_dirs(\"d\")" (synth {:name "create_dirs" :input {"path" "d"}})))
-        (expect (= "delete_if_exists(\"d\")"
-                   (synth {:name "delete_if_exists" :input {"path" "d"}})))
+        (expect (= "file_exists(\"d\")" (synth {:name "file_exists" :input {"path" "d"}})))
         ;; ONE `shell` tool: every op synthesizes through the same lone-positional
         ;; `cmd` shape, with the rest riding the trailing opts dict.
         (expect (= "shell(\"sleep 1\", {\"id\": \"x\", \"op\": \"background\"})"
@@ -3635,7 +3637,7 @@
         ;; left NESTED dict keys colon-prefixed, so `patch` leaked
         ;; `patch([{\":from_anchor\": …}])`. Keys normalize at all depths; VALUES
         ;; that happen to start with a colon are untouched.
-        (expect (= "cat(\"x\")" (synth {:name "cat" :input {":path" "x"}})))
+        (expect (= "cat({\"paths\": [\"x\"]})" (synth {:name "cat" :input {":paths" ["x"]}})))
         (expect (= "patch([{\"path\": \"a.clj\", \"from_anchor\": \"1:a\", \"replace\": \"x\"}])"
                    (synth {:name "patch"
                            :input {"edits"

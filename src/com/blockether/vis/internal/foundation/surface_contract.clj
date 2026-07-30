@@ -86,6 +86,7 @@
          (count-key "info")
          #(s/valid? (s/coll-of ::finding) (get % "findings"))
          (opt "providers" #(s/valid? (s/coll-of string?) %))
+         (opt "snippet" string?)
          (opt "by-dir" #(s/valid? ::by-dir %))))
 
 ;; =============================================================================

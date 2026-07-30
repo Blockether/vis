@@ -593,6 +593,28 @@
          (vec (remove nil? (if (sequential? paths) paths [paths]))))
        (catch Throwable _ [])))
 
+(defn- read-arg-paths
+  "Extract one `path`, or every path of a `paths` BATCH, from a native read call
+   for protection. A batch entry is either a plain path string or a per-path
+   options object carrying its own `path`."
+  [args]
+  (let
+    [a
+     (first args)
+
+     entry-path
+     (fn [e]
+       (cond (string? e) e
+             (map? e) (get e "path")
+             :else nil))]
+
+    (cond (map? a) (or (when-let [paths (get a "paths")]
+                         (when (sequential? paths) (vec (keep entry-path paths))))
+                       (when-let [path (get a "path")]
+                         [path]))
+          (some? a) [a]
+          :else [])))
+
 (defn- first-arg-paths [args] (when (seq args) [(first args)]))
 
 (defn- first-two-arg-paths [args] (take 2 args))
@@ -611,10 +633,17 @@
     (keep #(get % "path") edits)))
 
 (defn- write-arg-paths
+  "Every path a write-side call touches: the lone `path`, plus every path an
+   `edits` BATCH entry carries (struct_patch batches one file or many)."
   [args]
   (let [a (first args)]
-    (cond (map? a) (when-let [path (get a "path")]
-                     [path])
+    (cond (map? a) (let
+                     [own (when-let [path (get a "path")]
+                            [path])
+                      batch (when (sequential? (get a "edits"))
+                              (keep #(when (map? %) (get % "path")) (get a "edits")))]
+
+                     (seq (distinct (concat own batch))))
           (string? a) [a]
           :else nil)))
 
@@ -2962,8 +2991,14 @@
              (let
                [file (:file resolved)
                 rel (:rel resolved)
-                current (or (get origs path) (slurp file))
-                origs (assoc origs path current)
+                ;; Key the per-file snapshot by the RESOLVED relative path, never by the
+                ;; caller's spelling: "a/b.clj", "./a/b.clj" and an absolute path all name
+                ;; ONE file. Keying by the raw string split them into independent plans,
+                ;; each spliced from the same original snapshot — so the last write won and
+                ;; the other edits vanished while `patch` still reported success (and the
+                ;; overlap + syntax guards ran on a partial view of the batch).
+                current (or (get origs rel) (slurp file))
+                origs (assoc origs rel current)
                 replace (str replace)
                 base-check {:edit-index idx
                             :path rel
@@ -2995,7 +3030,7 @@
                    (recur (inc idx)
                           (next remaining)
                           origs
-                          (update spans path (fnil conj []) span)
+                          (update spans rel (fnil conj []) span)
                           (conj checks check)
                           failures))))))
          {:origs origs :spans spans :checks checks :failures failures}))
@@ -3193,35 +3228,43 @@
    clean parse to a broken one, instead of a hardcoded edit-index 0."
   [plans]
   (vec
-    (keep (fn [{:keys [path before after spans]}]
-            (when-let [lang (index/code-language path)]
-              (when (and (not (zipper/syntax-broken? lang (str before)))
-                         (zipper/syntax-broken? lang (str after)))
-                (let
-                  [culprit (loop
-                             [content (str before)
-                              remaining (reverse spans)]
+    (keep
+      (fn [{:keys [path before after spans]}]
+        (when-let [lang (index/code-language path)]
+          (when (and (not (zipper/syntax-broken? lang (str before)))
+                     (zipper/syntax-broken? lang (str after)))
+            (let
+              [[culprit broken-content]
+               (loop
+                 [content (str before)
+                  remaining (reverse spans)]
 
-                             (when-let [{:keys [start end replacement] :as span} (first remaining)]
-                               (let
-                                 [next-content (str (subs content 0 (long start))
-                                                    replacement
-                                                    (subs content (long end)))]
-                                 (if (zipper/syntax-broken? lang next-content)
-                                   span
-                                   (recur next-content (rest remaining))))))
-                   culprit (or culprit (first spans))]
+                 (when-let [{:keys [start end replacement] :as span} (first remaining)]
+                   (let
+                     [next-content
+                      (str (subs content 0 (long start)) replacement (subs content (long end)))]
+                     (if (zipper/syntax-broken? lang next-content)
+                       [span next-content]
+                       (recur next-content (rest remaining))))))
+               culprit (or culprit (first spans))
+               ;; LOCATE the fault, never just assert it: tree-sitter knows where the
+               ;; parse broke and often which delimiter it expected. A bare "would break
+               ;; syntax" is unactionable and indistinguishable from a parser artefact.
+               detail (zipper/describe-syntax-errors lang (or broken-content (str after)))]
 
-                  {:edit-index (:edit-index culprit)
-                   :from_anchor (:from_anchor culprit)
-                   :path path
-                   :reason :syntax-error
-                   :message (str "edit "
-                                 (:edit-index culprit)
-                                 " would break syntax in "
-                                 path
-                                 ". Fix the replacement or use struct_patch.")}))))
-          plans)))
+              {:edit-index (:edit-index culprit)
+               :from_anchor (:from_anchor culprit)
+               :path path
+               :reason :syntax-error
+               :message (str "edit "
+                             (:edit-index culprit)
+                             " would break syntax in "
+                             path
+                             ;; Trim the detail's own sentence stop so the fix advice
+                             ;; below reads as one sentence, not "…`..".
+                             (when detail (str ": " (str/replace detail #"\.+$" "")))
+                             ". Fix the replacement or use struct_patch.")}))))
+      plans)))
 
 (defn- commit-patch-plans!
   "Write validated plans and clear their retry counters."
@@ -3527,8 +3570,6 @@
     (fff-index/note-fs-write!)
     true))
 
-(defn- delete-safe [path] (delete-path! path))
-
 (defn- delete-if-exists-safe
   [path]
   (let [f (safe-path path)]
@@ -3624,7 +3665,32 @@
     (when (and (seq items) (<= (count items) 2) (every? some? nums))
       [(long (first nums)) (long (last nums))])))
 
-(defn- cat-tool
+(defn- batch-path-specs
+  "Normalize a `paths` BATCH into ONE option map per read, in request order. An
+   entry is either a plain path string — the call's shared options apply to it —
+   or an object `{\"path\" \"…\", …}` whose OWN selectors (`ranges`, `anchor`,
+   `tail`, …) override the shared ones, so a single call can read a DIFFERENT
+   region of every file. A malformed entry fails the whole call instead of
+   silently dropping a path."
+  [tool err-type shared entries]
+  (when-not (and (sequential? entries) (seq entries))
+    (throw (ex-info (str tool " `paths` must be a non-empty array of paths")
+                    {:type err-type :got entries})))
+  (mapv (fn [e]
+          (let
+            [p (cond (string? e) e
+                     (map? e) (get e "path")
+                     :else nil)]
+            (when-not (and (string? p) (seq (str/trim p)))
+              (throw (ex-info
+                       (str tool " `paths` entries must be a path string or a {\"path\": …} object")
+                       {:type err-type :got e})))
+            (assoc (merge shared (when (map? e) (dissoc e "path"))) "path" p)))
+        entries))
+
+(declare cat-tool)
+
+(defn- cat-one
   "Read a text-file window. `await cat(path)` reads the whole file (≤2000 lines)
    — slice only for bigger files or a middle/tail section. Options = a dict,
    snake_case keys:
@@ -3789,6 +3855,24 @@
 
      (throw (ex-info "cat window must use {\"range\": [start, end]} or {\"anchor\": [from, to]}"
                      {:type :ext.foundation.editing/invalid-cat-args :got mode})))))
+
+(defn- cat-tool
+  "Read independent paths with `{\"paths\": [...]}`, answering `{\"results\": [...]}`
+   in request order. Shared options apply to every entry; an entry may instead be
+   `{\"path\": \"…\", \"ranges\": [[start, end]]}` to read a DIFFERENT region per file."
+  [& args]
+  (let [a (first args)]
+    (cond (and (= 1 (count args)) (map? a) (contains? a "paths"))
+          (let
+            [specs (batch-path-specs "cat"
+                                     :ext.foundation.editing/invalid-cat-args
+                                     (dissoc a "paths")
+                                     (get a "paths"))]
+            (tool-success
+              {:op :cat :kind :file :result {"results" (mapv #(:result (cat-one %)) specs)}}))
+          ;; Private legacy map/positional calls remain available to Clojure callers;
+          ;; the native schema exposes only the plural `paths` contract above.
+          :else (apply cat-one args))))
 
 
 (def ^:private ^:const patch-diff-context-lines 3)
@@ -4258,32 +4342,10 @@
 (defn- delete-tool
   "Delete a path (file or directory).
      await delete(path)
-     await delete(path, {\"is_missing_ok\": True})   # no-op instead of raising when absent
 
-   Returns {\"path\": path, \"deleted\": bool}. Without is_missing_ok a missing path
-   raises; with it, \"deleted\" is False when nothing was there (folds in the old
-   delete_if_exists)."
-  [path & {:as opts}]
-  (let
-    ;; All-kwargs `delete(path="p", is_missing_ok=True)` collapses to ONE map; split it.
-    [[path opts]
-     (if (map? path) [(get path "path") (dissoc path "path")] [path opts])
-
-     deleted?
-     (if (get opts "is_missing_ok") (delete-if-exists-safe path) (do (delete-safe path) true))]
-
-    (tool-success {:op :delete
-                   :path path
-                   :kind :path
-                   :result {"path" path "deleted" deleted?}
-                   :metadata {:deleted? deleted?}})))
-
-(defn- delete-if-exists-tool
-  "Delete a path if it exists (no-op otherwise).
-     await delete_if_exists(path)
-
-   Returns {\"path\": path, \"deleted\": bool}.
-   Gotcha: \"deleted\" is False when nothing was there — never raises on a missing path."
+   Returns {\"path\": path, \"deleted\": bool}. A missing path is NEVER an error:
+   \"deleted\" is False when nothing was there (folds in the old delete_if_exists
+   and the old is_missing_ok flag)."
   [path]
   (let
     [path
@@ -4292,7 +4354,7 @@
      deleted?
      (delete-if-exists-safe path)]
 
-    (tool-success {:op :delete-if-exists
+    (tool-success {:op :delete
                    :path path
                    :kind :path
                    :result {"path" path "deleted" deleted?}
@@ -4370,7 +4432,7 @@
     (:wildcard imp)
     (assoc "wildcard" true)))
 
-(defn- index-tool
+(defn- index-one
   "Structural INDEX of a source file — a Maki-style, line-ranged skeleton via
    tree-sitter. Read this BEFORE cat: a `<file> · <language> · <N> lines` header,
    an anchored `imports:` section (the file's require/import deps), then every
@@ -4471,6 +4533,25 @@
                                   "No structural index for this language yet — use cat(path).")
                        :else (assoc base "note" "Unknown language — use cat(path).")))})))
 
+(defn- index-tool
+  "Index independent source paths with `{\"paths\": [...]}`; results preserve request
+   order. Shared `ranges` apply to every entry, and an entry may instead be
+   `{\"path\": \"…\", \"ranges\": [[start, end]]}` to scope EACH file differently."
+  [& args]
+  (let [a (first args)]
+    (cond (and (= 1 (count args)) (map? a) (contains? a "paths"))
+          (let
+            [specs (batch-path-specs "struct_index"
+                                     :ext.foundation.editing/invalid-index-args
+                                     (dissoc a "paths")
+                                     (get a "paths"))]
+            (tool-success {:op :struct_index
+                           :kind :file
+                           :result {"results" (mapv #(:result (index-one %)) specs)}}))
+          ;; Private legacy map/positional calls remain available to Clojure callers;
+          ;; the native schema exposes only the plural `paths` contract above.
+          :else (apply index-one args))))
+
 ;; -----------------------------------------------------------------------------
 ;; Native-tool result renderers — `(result → markdown)`. The loop applies these
 ;; so a native tool's result shows as a clean card in BOTH the TUI and the web
@@ -4510,6 +4591,52 @@
   [p]
   (paths/abbreviate-home p))
 
+(defn- batch-paths-summary
+  "Headline for a BATCH of paths: `dir/{a.clj, b.clj}` when the paths share a
+   directory, else a comma-joined list — so ONE card says exactly which files the
+   batched call touched without repeating the common prefix. Long batches show
+   the first three plus `+N more`."
+  [paths]
+  (let
+    [ps
+     (->> paths
+          (keep identity)
+          (mapv (comp str disp-path)))
+
+     segs
+     (mapv #(vec (str/split % #"/")) ps)
+
+     ;; Longest shared DIRECTORY prefix (the file name never joins it).
+     common
+     (if (< (count ps) 2)
+       []
+       (let [heads (mapv (comp vec butlast) segs)]
+         (loop
+           [i 0
+            acc []]
+
+           (let [col (mapv #(get % i) heads)]
+             (if (and (every? some? col) (apply = col))
+               (recur (inc i) (conj acc (first col)))
+               acc)))))
+
+     rel
+     (mapv #(str/join "/" (drop (count common) %)) segs)
+
+     shown
+     (vec (take 3 rel))
+
+     more
+     (- (count rel) (count shown))
+
+     listed
+     (str (str/join ", " shown) (when (pos? more) (str ", +" more " more")))]
+
+    (cond (empty? ps) ""
+          (= 1 (count ps)) (str "`" (first ps) "`")
+          (seq common) (str "`" (str/join "/" common) "/{" listed "}`")
+          :else (str "`" listed "`"))))
+
 (defn- render-ls-result
   "cat-on-directory → `{:summary :body}`: the summary is the dir path + entry
    count; the body lists entries one per row, `name/` for subdirs, two-space
@@ -4541,8 +4668,8 @@
     {:summary (str "`" (disp-path (get r "path")) "/` · " n " " (if (= 1 n) "entry" "entries"))
      :body (when (seq entries) (str "\n" (strutil/fenced body)))}))
 
-(defn- render-cat-result
-  "cat → `{:summary :body}`: the summary is the path + the LINE SPANS read +
+(defn- render-cat-one
+  "cat, ONE path → `{:summary :body}`: the summary is the path + the LINE SPANS read +
    line count (the op-card headline); the body is the numbered slice as a code
    block. `r` is the inner cat data `{:path :anchors}`; anchor keys are
    keywords like `:12:ab` (lineno via `name`).
@@ -4637,6 +4764,28 @@
                   (strutil/fenced joined lang)]
 
                  (str "\n" fenced)))})))
+
+(defn- render-cat-result
+  "cat → `{:summary :body}`. A single path renders its own card; a BATCH renders a
+   `dir/{a, b}` headline over each file's own section, preserving request order."
+  [r]
+  (if-let [results (seq (get r "results"))]
+    (let
+      [rendered (mapv render-cat-one results)
+       files (count results)
+       lines (reduce + (map #(count (get % "anchors")) results))]
+
+      {:summary (str (batch-paths-summary (map #(get % "path") results))
+                     " · "
+                     files
+                     " file"
+                     (when (not= 1 files) "s")
+                     (when (pos? (long lines)) (str " · " lines " line" (when (not= 1 lines) "s"))))
+       :body (str/join "\n\n"
+                       (map (fn [{:keys [summary body]}]
+                              (str "### " summary (or body "")))
+                            rendered))})
+    (render-cat-one r)))
 
 (defn- render-exists-result
   "file_exists → `{:summary}` only (no body): the path + presence mark. `r` is
@@ -4975,14 +5124,8 @@
            (str/replace "|" "\\|"))]
     (if (> (count s) (long max-len)) (str (subs s 0 (max 0 (dec (long max-len)))) "…") s)))
 
-(defn- render-index-result
-  "struct_index → `{:summary :body}`: a path headline (defs · language · lines)
-   over a GFM TABLE of every definition — nesting shown by a `·` indent, the row
-   columns Def (name) · Arity (signature) · Kind (visibility+kind) · Anchor (span
-   anchors) · Doc (gist). `r` is the wire result `{:skeleton :definitions :imports
-   :language :line_count :path}`. With no definitions it falls back to the raw
-   anchored skeleton fence (imports-only files), and to a bare no-structure
-   summary when nothing was indexed."
+(defn- render-index-one
+  "Render one structural index result as its own headline and definition table."
   [r]
   (let
     [loc
@@ -5060,6 +5203,27 @@
                     not-empty)]
         {:summary (str (or loc "struct_index") win) :body (str "\n" (strutil/fenced sk))}
         {:summary (str (or loc "struct_index") " · no structural index" win)}))))
+
+(defn- render-index-result
+  "struct_index → `{:summary :body}`. A single file is a definition table. A batch
+   groups those tables beneath their per-file headlines, preserving request order."
+  [r]
+  (if-let [results (seq (get r "results"))]
+    (let
+      [rendered (mapv render-index-one results)
+       files (count rendered)
+       defs (reduce + (map #(count (get % "definitions")) results))]
+
+      {:summary (str (batch-paths-summary (map #(get % "path") results))
+                     " · " files
+                     " file" (when (not= 1 files) "s")
+                     " · " defs
+                     " def" (when (not= 1 defs) "s"))
+       :body (str/join "\n\n"
+                       (map (fn [{:keys [summary body]}]
+                              (str "### " summary (or body "")))
+                            rendered))})
+    (render-index-one r)))
 
 (defn- render-occurrences-result
   "struct_occurrences → `{:summary :body}`: a `N · K defs in M files of `name` · <scope>`
@@ -5258,23 +5422,39 @@
     {:symbol 'struct_index
      :native-tool? true
      :result
-     "Object with string keys `op`, `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, and `ranges`. No rendered source-text field."
+     "Object with string key `results`; each item has `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, and `ranges`. No rendered source-text field."
      :active-fn structural-supported?
      :description
      (str
-       "Inspect supported source structurally before reading bodies. Returns imports plus a "
-       "nested definition skeleton with signatures, doc gists, and fresh start/end anchors; "
-       "use those anchors to read one definition or its name/kind with `struct_patch`. "
-       "The path must be an exact physical path returned by grep/cat/struct_index; if location is unknown, grep first and never reconstruct it from a namespace.")
+       "Inspect supported source structurally before reading bodies: imports plus a nested definition "
+       "skeleton with signatures, doc gists, and fresh start/end anchors for `cat`/`struct_patch`. "
+       "BATCH every file you already need into ONE call — `paths: [\"a.clj\", {\"path\": \"b.clj\", \"ranges\": [[1, 80]]}]`. "
+       "Paths must be exact physical paths from grep/cat/struct_index; if unknown, grep first.")
      :render render-index-result
      :color-role :tool-color/read
      :schema
      {:type "object"
       :properties
-      {"path"
-       {:type "string"
+      {"paths"
+       {:type "array"
+        :items {:oneOf [{:type "string" :minLength 1}
+                        {:type "object"
+                         :properties
+                         {"path" {:type "string" :minLength 1}
+                          "ranges" {:type "array"
+                                    :items
+                                    {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
+                                    :minItems 1
+                                    :description
+                                    "Windows for THIS path only; overrides the shared `ranges`."}}
+                         :required ["path"]
+                         :additionalProperties false}]}
+        :minItems 1
         :description
-        "Exact physical source-file path. Copy a path returned by grep/cat/struct_index unchanged; if unknown, grep first—never reconstruct it from a namespace."}
+        (str "Exact physical source-file paths to index in ONE call — always batch the files you "
+             "already know you need. Copy paths returned by grep/cat/struct_index unchanged. "
+             "Shared `ranges` apply to every entry; pass `{\"path\": \"…\", \"ranges\": [[a, b]]}` "
+             "to scope a single file differently.")}
        "ranges"
        {:type "array"
         :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
@@ -5283,9 +5463,9 @@
         (str
           "Optional [[start, end], …] 1-based inclusive line windows in one call. A definition "
           "is kept when its span intersects ANY window; line_count still reports the whole file.")}}
-      :required ["path"]
+      :required ["paths"]
       :additionalProperties false}
-     :before-fn (path-protected-before-fn :struct_index :file :read first-arg-paths)
+     :before-fn (path-protected-before-fn :struct_index :file :read read-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :struct_index :file nil)}))
 
@@ -5296,28 +5476,50 @@
      :native-tool? true
      :result
      (str
-       "File result: object with string keys `op`, `path`, `size`, `mtime`, `eof`, `truncated`, "
+       "Batch result: object with string key `results`; each file item has `op`, `path`, `size`, `mtime`, `eof`, `truncated`, "
        "`next_offset`, `ranges`, and `anchors`; `anchors` maps each `line:hash` to `{\"text\": line}` "
-       "and is the only content field (no `content`/`lines`). In Python iterate "
-       "`result[\"anchors\"].items()`; rendered source-like lines are presentation, not raw fields. "
-       "Directory result: object with `op`, `path`, `type`, `depth`, and `entries`.")
-     ;; cat(path, {opts}) — path positional, the rest a Python options dict.
-     :call {:pos ["path"] :rest :opt}
+       "and is the only content field (no `content`/`lines`). In Python iterate `result[\"anchors\"].items()` "
+       "for each item; rendered source-like lines are presentation, not raw fields. "
+       "Directory items have `op`, `path`, `type`, `depth`, and `entries`.")
      :description
      (str
-       "Read ONE sufficient file region as patch-ready `lineno:hash` anchored lines. "
-       "A DIRECTORY path switches to listing mode (entries one level deep; `depth`/`is_hidden` apply only there). "
-       "Pass physical paths exactly as `grep`/`struct_index` returned them; never reconstruct a path from a language namespace or module name. "
-       "For supported code run `struct_index` first, then read only the body you need; a write invalidates pre-write anchors for that file, not other files.")
+       "Read EVERY region you already need, from EVERY requested path, as patch-ready `lineno:hash` anchored lines. "
+       "BATCH all known targets into ONE call — "
+       "`paths: [{\"path\": \"a.clj\", \"ranges\": [[1, 40]]}, \"b.tsx\"]`; a bare string uses the shared `ranges`/`tail`. "
+       "A DIRECTORY entry lists instead (`depth`/`is_hidden`). Pass paths exactly as grep/struct_index returned them. "
+       "Run `struct_index` first on code; a write invalidates pre-write anchors for that file, not other files.")
      :render render-cat-result
      :color-role :tool-color/read
      :schema
      {:type "object"
       :properties
-      {"path"
-       {:type "string"
+      {"paths"
+       {:type "array"
+        :items
+        {:oneOf
+         [{:type "string" :minLength 1}
+          {:type "object"
+           :properties
+           {"path" {:type "string" :minLength 1}
+            "ranges" {:type "array"
+                      :items
+                      {:type "array" :items {:type "integer" :minimum 1} :minItems 2 :maxItems 2}
+                      :minItems 1
+                      :description "Windows for THIS path only; overrides the shared `ranges`."}
+            "anchor" {:oneOf [{:type "string"}
+                              {:type "array" :items {:type "string"} :minItems 2 :maxItems 2}]
+                      :description "Anchor selector for THIS path only."}
+            "tail" {:type "integer" :minimum 1 :description "Tail for THIS path only."}
+            "depth" {:type "integer" :minimum 1 :description "Listing depth for THIS path only."}
+            "is_hidden" {:type "boolean" :description "Hidden entries for THIS path only."}}
+           :required ["path"]
+           :additionalProperties false}]}
+        :minItems 1
         :description
-        "Exact physical file/directory path (relative to a filesystem root or absolute under one); copy discovered paths from grep/struct_index unchanged."}
+        (str
+          "Exact physical file/directory paths to read in ONE call — always batch the regions "
+          "you already know you need. Every shared selector applies to each path; pass "
+          "`{\"path\": \"…\", \"ranges\": [[a, b]]}` entries to read a DIFFERENT region per file.")}
        "ranges" {:type "array"
                  :items {:type "array" :items {:type "integer" :minimum 1} :minItems 2 :maxItems 2}
                  :minItems 1
@@ -5336,10 +5538,10 @@
        "is_hidden" {:type "boolean"
                     :description
                     "Directory listing only: include dotfiles / hidden entries (default false)."}}
-      :required ["path"]
+      :required ["paths"]
       :additionalProperties false
       :maxProperties 4}
-     :before-fn (path-protected-before-fn :cat :file :read first-arg-paths)
+     :before-fn (path-protected-before-fn :cat :file :read read-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :cat :file nil)}))
 
@@ -5361,11 +5563,11 @@
        "`for anchor, row in rows.items():`. This is a mapping, never a list, and has no `content` field.")
      :description
      (str
-       "Find code by CONTENT (literal, smart-case) and by fuzzy file name — the first move when you do not "
-       "know where something lives; `query: \"\"` lists scoped files instead. Returns patch-ready `matches`, "
-       "hit/file counts, ranked name hits in `paths`, `missing_paths` for stale scopes. Returned paths are "
-       "authoritative: pass them to `cat`/`struct_index` unchanged, never rebuild from a language namespace "
-       "or module name. Every result key always ships; content is complete when `hits_truncated_by` is null.")
+       "Find code by CONTENT (literal, smart-case) and by fuzzy file name — the first move when location is "
+       "unknown; `query: \"\"` lists scoped files. BATCH: one call ORs SEVERAL needles across SEVERAL scopes — "
+       "`query: [\"foo\", \"bar\"], paths: [\"src\", \"apps/x/src\", \"test\"]`. Returns patch-ready `matches`, "
+       "ranked name hits in `paths`, `missing_paths`. Pass returned paths to cat/struct_index unchanged, "
+       "never rebuild from a language namespace; content is complete when `hits_truncated_by` is null.")
      :render render-grep-result
      :color-role :tool-color/search
      :schema
@@ -5539,7 +5741,7 @@
                          {:type :ext.foundation.editing/struct-anchor-error
                           :reason (get-in resolved [:error :reason])})))))))
 
-(defn- struct-patch-tool
+(defn- struct-patch-one
   "Structural edit via tree-sitter (every language). Locate the node EITHER by
    NAME or by a zipper PATH, then edit — the file is re-parsed and the write is
    REFUSED if it introduces a syntax error. This is the PREFERRED way to edit
@@ -5569,7 +5771,7 @@
      then edit the same path here.
    Locate targets with struct_index(path) / struct_node(path) / struct_occurrences(name).
    Returns the [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write."
-  [& {:as args}]
+  [args]
   (let
     [path
      (get args "path")
@@ -5665,6 +5867,20 @@
                             {:type :ext.foundation.editing/struct-nav-error
                              :reason (get-in nav [:error :reason])})))
 
+          match
+          (get args "match")
+
+          _
+          ;; A locator chooses ONE node. `match` then becomes an optimistic
+          ;; concurrency guard, never a silently ignored second selector.
+          (when (and (= raw-op :replace-node) (not (str/blank? (str match))))
+            (let [actual (:text (zipper/inspect lang source at))]
+              (when (not= match actual)
+                (throw
+                  (ex-info
+                    "struct_patch: `match` does not equal the node selected by `anchor`/`at`; inspect the node or omit `match`."
+                    {:type :ext.foundation.editing/struct-locator-match-mismatch :at at})))))
+
           r
           (zipper/edit lang source at op code)]
 
@@ -5713,24 +5929,100 @@
                     :mode :struct_patch}
          :error {:message (:message result) :failures (:failures result) :mode :struct_patch}}))))
 
+(defn- struct-patch-tool
+  "struct_patch — ONE syntax-safe structural edit, or an ORDERED `edits` BATCH.
+
+   Batch form: `{\"edits\": [{...}, {...}]}`. Every entry takes the same keys as a
+   single call (`path`/`op`/`target`/`at`/`anchor`/`code`/…), and TOP-LEVEL keys
+   are shared defaults for every entry — so one `path` plus many ops needs no
+   repetition, and entries may also span several files. Entries apply in request
+   order, each against the file as the previous entry left it, and the results
+   come back as ONE ordered array. There is no rollback: a failing entry stops
+   the batch and the earlier writes stand — the error says how many applied."
+  [& {:as args}]
+  (let [edits (get args "edits")]
+    (if-not (and (sequential? edits) (seq edits))
+      (struct-patch-one args)
+      (let
+        [shared (dissoc args "edits")
+         specs (mapv #(merge shared %) edits)
+         total (count specs)]
+
+        (loop
+          [i 0
+           summaries []
+           befores []]
+
+          (if (>= i total)
+            (tool-success {:op :struct_patch
+                           :path (or (get (first summaries) "path") (get (first specs) "path") ".")
+                           :kind :file
+                           :result summaries
+                           :metadata {:mode :struct_patch
+                                      :file-count (count summaries)
+                                      :changed-count (count (filter #(get % "changed") summaries))
+                                      :edit-count total
+                                      :file-befores befores}})
+            (let
+              [env
+               ;; A throwing entry keeps its `:type` (so :on-error-fn still routes
+               ;; it) but gains the batch position — earlier writes already stand.
+               (try (struct-patch-one (nth specs i))
+                    (catch Throwable e
+                      (throw (ex-info (str (ex-message e)
+                                           " — struct_patch batch stopped at edit "
+                                           (inc i)
+                                           " of "
+                                           total
+                                           "; "
+                                           i
+                                           " earlier edit(s) already written.")
+                                      (assoc (or (ex-data e) {})
+                                        :edit-index i
+                                        :applied-count i)
+                                      e))))]
+              (if (:success? env)
+                (recur (inc i)
+                       (into summaries (:result env))
+                       (into befores (get-in env [:metadata :file-befores])))
+                (extension/failure {:result nil
+                                    :op :struct_patch
+                                    :metadata (assoc (:metadata env)
+                                                :mode :struct_patch
+                                                :edit-index i
+                                                :applied-count i)
+                                    :error (assoc (:error env)
+                                             :edit-index i
+                                             :applied-count i)})))))))))
+
 (def struct-patch-symbol
   (vis/symbol
     #'struct-patch-tool
     {:symbol 'struct_patch
      :native-tool? true
      :result
-     "Array containing one result object with `path`, `op`, `changed`, `diff`, and — when the rewritten region is small — `anchors` (`{\"lineno:hash\": {\"text\": line}}`) reusable as the next `from_anchor` with no re-read."
+     "Array with ONE result object per edit, in request order: `path`, `op`, `changed`, `diff`, and — when the rewritten region is small — `anchors` (`{\"lineno:hash\": {\"text\": line}}`) reusable as the next `from_anchor` with no re-read."
      :active-fn structural-supported?
      :description
-     (str "Preferred syntax-safe editor for supported code. Locate a named definition from "
-          "`struct_index` or a nested path from `struct_node`; the file is re-parsed and any "
-          "syntax-breaking write is refused.")
+     (str "Preferred syntax-safe editor for supported code: the file is re-parsed and any "
+          "syntax-breaking write is refused. BATCH — pass `edits`, an ORDERED array of edit "
+          "maps, to make EVERY structural change in ONE call (top-level keys are shared "
+          "defaults, so one `path` + many ops, or several files, need no repetition); "
+          "entries apply in order and are never rolled back. Locate targets with "
+          "`struct_index`/`struct_node` first — also in one call.")
      :render render-patch-result
      :color-role :tool-color/edit
      :schema
      {:type "object"
       :properties
-      {"path" {:type "string" :description "File to edit."}
+      {"path" {:type "string"
+               :description "File to edit (a lone edit, or the shared default for `edits`)."}
+       "edits"
+       {:type "array"
+        :minItems 1
+        :items {:type "object"}
+        :description
+        "ORDERED BATCH: every structural change in ONE call. Each entry takes the same keys as a single edit; top-level keys are shared defaults (one `path`, many ops — or several files). Entries apply in request order against the file the previous entry left, with no rollback. OMIT for a single edit."}
        "op"
        {:type "string"
         :enum ["replace" "delete" "insert_before" "insert_after" "append" "add_doc" "replace_doc"
@@ -5758,7 +6050,7 @@
         "Named-child index path from struct_node(path) (path-based ops). Or use `anchor` to enter by a lineno:hash row instead."}
        "nav" {:type "array"
               :description "Relative zipper moves applied after `at` (strings or maps)."}}
-      :required ["path" "op"]
+      ;; Either a lone `path`+`op` edit or an `edits` batch — validated in the tool.
       :additionalProperties false}
      :before-fn (plan-gated-before-fn :struct_patch :file :write write-arg-paths)
      :tag :mutation
@@ -6211,41 +6503,18 @@
     #'delete-tool
     {:symbol 'delete
      :native-tool? false
-     :call {:pos ["path"] :rest :opt}
+     :call {:pos ["path"]}
      :description
-     "Destructively delete one confined file or directory only with explicit user intent; can safely no-op when the target is already absent."
+     "Destructively delete one confined file or directory only with explicit user intent; a path that is already absent is a no-op, never an error."
      :render render-delete-result
      :color-role :tool-color/delete
      :schema {:type "object"
-              :properties
-              {"path" {:type "string" :description "Path to delete."}
-               "is_missing_ok"
-               {:type "boolean"
-                :description
-                "No-op instead of raising when the path does not exist (default false)."}}
+              :properties {"path" {:type "string" :description "Path to delete."}}
               :required ["path"]
               :additionalProperties false}
      :before-fn (path-protected-before-fn :delete :path :write first-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :delete :path nil)}))
-
-(def delete-if-exists-symbol
-  (vis/symbol
-    #'delete-if-exists-tool
-    {:symbol 'delete-if-exists
-     :native-tool? false
-     :call {:pos ["path"]}
-     :name "delete_if_exists"
-     :description
-     "Delete a path if it exists, else no-op (never raises on a missing path). Returns {`path`, `deleted`: bool}."
-     :render render-delete-result
-     :color-role :tool-color/delete
-     :schema {:type "object"
-              :properties {"path" {:type "string" :description "Path to delete if present."}}
-              :required ["path"]}
-     :before-fn (path-protected-before-fn :delete-if-exists :path :write first-arg-paths)
-     :tag :mutation
-     :on-error-fn (tool-failure-on-error :delete-if-exists :path nil)}))
 
 (def file-exists-symbol
   (vis/symbol #'exists-tool
@@ -6479,8 +6748,8 @@
    delete / create_dirs / exists also take a BATCH `paths` — N targets in ONE
    call, answered as `{\"action\" … \"paths\" [{\"path\" … \"is_<foo>\" …} …]}` in
    request order, so removing nine files is one tool call and one card instead
-   of nine. Targets are processed IN ORDER and a failure aborts the rest: with
-   no `is_missing_ok`, a missing entry throws and later entries are untouched."
+   of nine. Targets are processed IN ORDER, one result entry per path. Deleting
+   a path that is already absent is a no-op reported as `is_deleted` false."
   [m]
   (let
     [op
@@ -6544,9 +6813,7 @@
                                              (rel-path (safe-path p))
 
                                              deleted?
-                                             (if (get m "is_missing_ok")
-                                               (delete-if-exists-safe p)
-                                               (do (delete-safe p) true))]
+                                             (delete-if-exists-safe p)]
 
                                             {"path" rel "is_deleted" deleted?}))
                                         targets)})
@@ -6600,7 +6867,7 @@
                "where `paths` is one such entry per target, minus `action`, in request order. "
                "The top-level object also has string `op`; all keys are strings.")
      :description
-     "One confined filesystem tool: `op` picks the verb and which params it reads. copy/move take src+dest and refuse an existing dest unless is_overwrite. delete takes path, is destructive, and needs explicit user intent (is_missing_ok no-ops when absent). create_dirs takes path and makes missing parents. exists takes path and checks without reading. delete/create_dirs/exists also take `paths` — MANY targets in ONE call, one entry per path."
+     "One confined filesystem tool: `op` picks the verb and which params it reads. copy/move take src+dest and refuse an existing dest unless is_overwrite. delete/create_dirs/exists take `paths` — ALWAYS a list, MANY targets in ONE call, processed in order, one result entry per path. delete is destructive and needs explicit user intent (an already-absent path is a no-op, reported as is_deleted false); create_dirs makes missing parents; exists checks without reading."
      :render render-fs-result
      :color-role :tool-color/move
      :schema
@@ -6609,18 +6876,16 @@
       {"op" {:type "string"
              :enum ["copy" "move" "delete" "create_dirs" "exists"]
              :description "Filesystem operation."}
-       "path" {:type "string" :description "Target path (delete / create_dirs / exists)."}
        "paths"
        {:type "array"
         :items {:type "string"}
+        :minItems 1
         :description
-        "delete / create_dirs / exists: MANY target paths in ONE call, processed in order; the result carries one entry per path."}
+        "delete / create_dirs / exists: target paths — ALWAYS a list, even for ONE target. Processed in request order; the result carries one entry per path."}
        "src" {:type "string" :description "Source path (copy / move)."}
        "dest" {:type "string" :description "Destination path (copy / move)."}
        "is_overwrite" {:type "boolean"
-                       :description "copy/move: overwrite an existing dest (default false)."}
-       "is_missing_ok" {:type "boolean"
-                        :description "delete: no-op when a path is absent (default false)."}}
+                       :description "copy/move: overwrite an existing dest (default false)."}}
       :required ["op"]
       :additionalProperties false}
      :before-fn fs-before-fn
@@ -6631,7 +6896,7 @@
   []
   [index-symbol cat-symbol grep-symbol patch-symbol write-symbol struct-patch-symbol sexpr-symbol
    occurrences-symbol symbol-rename-symbol fs-symbol create-dirs-symbol copy-symbol move-symbol
-   delete-symbol delete-if-exists-symbol file-exists-symbol])
+   delete-symbol file-exists-symbol])
 
 (defn available-editing-prompt
   "No separate editing prompt: active native descriptions own routing and their

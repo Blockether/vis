@@ -30,13 +30,13 @@ def __vis_install_posix_compat__():
     )
 
     def _shell():
-        # Extension contexts expose a `vis.jailed_shell` callback instead of
-        # native process access. Agent sandboxes keep their ordinary `shell`
-        # tool. Both paths use the same `(cmd, opts)` lifecycle grammar.
+        # Extension contexts expose `vis.shell` instead of native process
+        # access. Agent sandboxes keep their ordinary `shell` tool. Both paths
+        # use the same `(cmd, opts)` lifecycle grammar.
         fn = globals().get("shell")
         if fn is None:
             vis = sys.modules.get("vis")
-            fn = getattr(vis, "jailed_shell", None) if vis is not None else None
+            fn = getattr(vis, "shell", None) if vis is not None else None
         if fn is None:
             raise RuntimeError(_SHELL_DISABLED)
         # Tools are async-DEFERRED (return a thunk); this internal bridge calls

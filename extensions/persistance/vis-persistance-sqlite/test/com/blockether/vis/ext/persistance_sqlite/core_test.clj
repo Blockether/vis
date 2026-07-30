@@ -2274,6 +2274,21 @@
                                         :stdout "1\n"}]})
           (let [out (persistance/db-native-results-for-tool-ids s cid #{"toolu_P"})]
             (expect (not (contains? out "toolu_P"))))))
+    (it "a session_fold receipt is never recoverable through ntr"
+        (let
+          [s (h/store)
+           cid (h/store-session! s {:channel :cli})
+           tid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "q"})]
+
+          (h/store-iteration! s
+                              {:session-turn-id tid
+                               :status :done
+                               :idx 0
+                               :code "session_fold"
+                               :forms [(assoc (form "toolu_FOLD" "folded")
+                                         :vis/tool-name "session_fold")]})
+          (let [out (persistance/db-native-results-for-tool-ids s cid #{"toolu_FOLD"})]
+            (expect (not (contains? out "toolu_FOLD"))))))
     (it "empty id set and unknown session are safe no-ops"
         (let
           [s (h/store)
@@ -2325,13 +2340,16 @@
                                 :status :done
                                 :idx 0
                                 :code "cat"
-                                :forms [(form "toolu_B" {:op "rg" :hits 2})]})]
+                                :forms [(form "toolu_B" {:op "rg" :hits 2})
+                                        (assoc (form "toolu_FOLD" "folded")
+                                          :vis/tool-name "session_fold")]})]
 
         (let [ids (persistance/db-native-result-ids-for-session s cid)]
           (expect (= #{"toolu_A" "toolu_B"} (set ids)))
           ;; de-duped, no print-only id
           (expect (= 2 (count ids)))
-          (expect (not (some #{"toolu_P"} ids))))))
+          (expect (not (some #{"toolu_P"} ids)))
+          (expect (not (some #{"toolu_FOLD"} ids))))))
     (it "unknown / nil session is a safe empty list"
         (let [s (h/store)]
           (expect (= [] (persistance/db-native-result-ids-for-session s nil)))

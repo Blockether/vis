@@ -395,7 +395,7 @@ case "$dist" in
   jar)
     if [[ -f "$uber_jar" ]]; then
       measure_log "--jar → $uber_jar"; cd "$invocation_cwd"
-      run_measured_or_exec "process java -jar uberjar" java "-Duser.dir=$invocation_cwd" "${jfr_java_opts[@]}" -jar "$uber_jar" "$@"
+      run_measured_or_exec "process java -jar uberjar" java "--enable-native-access=ALL-UNNAMED" "-Duser.dir=$invocation_cwd" "${jfr_java_opts[@]}" -jar "$uber_jar" "$@"
     else
       echo "vis: --jar requested but $uber_jar is missing (build it with 'vis uber'); using live source." >&2
     fi ;;

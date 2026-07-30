@@ -2194,7 +2194,9 @@
   [rec]
   (into []
         (comp (filter (fn [f]
-                        (and (:svar/tool-call-id f) (some? (:result f)))))
+                        (and (:svar/tool-call-id f)
+                             (some? (:result f))
+                             (not= "session_fold" (:vis/tool-name f)))))
               (map (fn [f]
                      (cond-> {"id" (str (:svar/tool-call-id f))}
                        (not (str/blank? (str (:vis/tool-name f))))
@@ -3179,15 +3181,53 @@
             ;; already collapsed on a prior turn — a whole-session
             ;; `{"through" "tN"}` re-fold) should still tell the human where
             ;; the window stands, so the card is never a bare `folded …`.
-            ;; `context <U>%` is the provider's absolute saturation, not the
-            ;; fold's own reduction, so it complements `saved` rather than
-            ;; replacing it — both always render.
+            ;; `context <U>%` is the provider's authoritative saturation — but
+            ;; it is stamped by the LAST request, so on a card printed the
+            ;; instant a fold lands it is strictly the PRE-fold reading:
+            ;; nothing has been sent since. Alone next to `saved ~188k` that
+            ;; reads as "the fold changed nothing" (the number even looks
+            ;; frozen across consecutive folds), which is exactly the display
+            ;; bug humans report. So when this fold DOES reclaim wire we render
+            ;; the transition `44%→~31%`: the projection is anchored to the
+            ;; SAME `last_request_tokens` and only SUBTRACTS the residence this
+            ;; fold removes, so unlike issue #27's estimate — which baselined
+            ;; on a growing request and therefore climbed after a successful
+            ;; fold — it is monotonically ≤ the current reading and can only
+            ;; move for the fold's own reason. With nothing reclaimed the
+            ;; absolute reading stands unchanged. The arrow is deliberately
+            ;; UNSPACED: `session-fold-card` splits the receipt from the gist on
+            ;; the FIRST " → ", so a spaced arrow here would swallow the whole
+            ;; tail into the gist.
             ctx-pct
             (when (and sat (pos? (long sat)))
-              (let [lrt (get util "last_request_tokens")]
-                (str " · context " sat
-                     "%" (when (and lrt lim (pos? (long lrt)) (pos? (long lim)))
-                           (str " (" (fmt-tok lrt) "/" (fmt-tok lim) " tokens)")))))]
+              (let
+                [lrt
+                 (long (or (get util "last_request_tokens") 0))
+
+                 lim
+                 (long (or lim 0))
+
+                 measurable?
+                 (and (pos? lrt) (pos? lim))
+
+                 left
+                 (max 0 (- lrt (long toks)))
+
+                 left-pct
+                 (when measurable? (long (Math/round (/ (* 100.0 (double left)) (double lim)))))]
+
+                (cond (and measurable? (pos? (long toks))) (str " · context "
+                                                                sat
+                                                                "%→~"
+                                                                left-pct
+                                                                "% ("
+                                                                (fmt-tok lrt)
+                                                                "→"
+                                                                (fmt-tok left)
+                                                                " tokens)")
+                      measurable?
+                      (str " · context " sat "% (" (fmt-tok lrt) "/" (fmt-tok lim) " tokens)")
+                      :else (str " · context " sat "%"))))]
 
            {:note (str saved ctx-pct) :reclaimed-tokens toks})
          (catch Throwable _ {:note "" :reclaimed-tokens 0})))
@@ -4135,7 +4175,7 @@
      ;; gets no handle).
      result-handle
      (fn [tc own]
-       (when (and (:id tc) (some #(some? (:result %)) own))
+       (when (and (:id tc) (not= "session_fold" (:name tc)) (some #(some? (:result %)) own))
          (str "# saved: ntr[" (pr-str (str (:id tc))) "] — re-read without re-running")))
 
      call-content
@@ -4649,7 +4689,8 @@
      "plus the current turn's already-completed iterations (read `session[\"turn\"]`); the "
      "live iteration you are emitting right now, and any future step, is not settled and "
      "blocks the call — fold through the last finished iteration instead "
-     "({\"through\": \"tN/iK\"}). Recover an exact folded result via `ntr[tool_id]` "
+     "({\"through\": \"tN/iK\"}). `ntr` never stores this fold receipt; if you need evidence "
+     "from a folded step, recover that step's individual data-tool result via `ntr[tool_id]` "
      "(one native result, no re-run, survives a restart). Fold receipts stay compact and "
      "only direct you to `ntr.describe()`, which lists labelled results from the latest turn."
      (if (toggles/enabled? "introspection")

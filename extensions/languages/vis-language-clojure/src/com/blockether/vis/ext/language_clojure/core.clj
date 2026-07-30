@@ -914,6 +914,9 @@
                                                         "language" "clojure"
                                                         "providers" providers
                                                         "by-dir" (lint/group-by-dir findings))
+                                                      code
+                                                      (assoc "snippet" code)
+
                                                       (seq targets)
                                                       (assoc "targets" (vec targets))))})))))
 

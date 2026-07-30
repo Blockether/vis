@@ -322,9 +322,9 @@
               (expect (some? err2))
               (expect (= :ext.foundation.editing/path-escape (:type (ex-data err1))))
               (expect (= :ext.foundation.editing/path-escape (:type (ex-data err2))))))))
-    (it "delete and delete-if-exists refuse paths outside cwd"
+    (it "delete refuses paths outside cwd, present or absent"
         (let
-          [del (private-fn "delete-safe")
+          [del (private-fn "delete-path!")
            del-if (private-fn "delete-if-exists-safe")]
 
           (doseq [p escape-paths]
@@ -1357,51 +1357,38 @@
         (expect (= [[2 "L2"] [3 "L3"] [4 "L4"]]
                    (patch/anchor-map->tuples (get (first (get out "ranges")) "anchors"))))
         (expect (nil? (get out "next_offset")))))
-  (it
-    "(cat {\"path\" p, ...}) accepts the collapsed all-kwargs spec map"
-    (let
-      [body
-       (string/join "\n" (map #(str "L" %) (range 1 21)))
-
-       path
-       (write-temp! "range/spec-map.txt" (str body "\n"))
-
-       cat-tool
-       (private-fn "cat-tool")
-
-       ;; `cat(path=p, ranges=[[2 4]])` collapses to ONE spec map at
-       ;; the Python boundary; it must equal the positional form.
-       spec
-       (-> (cat-tool {"path" path "ranges" [[2 4]]})
-           :result)
-
-       positional
-       (-> (cat-tool path {"ranges" [[2 4]]})
-           :result)]
-
-      (expect (= [[2 "L2"] [3 "L3"] [4 "L4"]] (patch/anchor-map->tuples (get spec "anchors"))))
-      (expect (= spec positional))
-      ;; `grep` returns a result map, not its path. When it has one content-hit
-      ;; file, pass the result straight to cat without a blank-path failure.
-      (let [grep-result {"matches" {path {"1:test" {"text" "L1"}}}}]
-        (expect (= (-> (cat-tool path)
-                       :result)
-                   (-> (cat-tool grep-result)
-                       :result))))
-      ;; A path-only spec map == whole-file read. An empty JSON ranges array is an
-      ;; optional-argument serialization artifact, so it normalizes to that default.
+  (it "cat accepts the plural paths spec map"
       (let
-        [whole (-> (cat-tool path)
-                   :result)]
-        (expect (= whole
-                   (-> (cat-tool path {"ranges" []})
-                       :result)))
-        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path {"range" [2 4]})))
-        (expect (= [[2 4]]
-                   (mapv #(get % "range")
-                         (get (-> (cat-tool path {"ranges" [[2 4]]})
-                                  :result)
-                              "ranges")))))))
+        [body
+         (string/join "\n" (map #(str "L" %) (range 1 21)))
+
+         path
+         (write-temp! "range/spec-map.txt" (str body "\n"))
+
+         cat-tool
+         (private-fn "cat-tool")
+
+         spec
+         (get-in (cat-tool {"paths" [path] "ranges" [[2 4]]}) [:result "results" 0])
+
+         positional
+         (-> (cat-tool path {"ranges" [[2 4]]})
+             :result)]
+
+        (expect (= [[2 "L2"] [3 "L3"] [4 "L4"]] (patch/anchor-map->tuples (get spec "anchors"))))
+        (expect (= spec positional))
+        (let
+          [whole (-> (cat-tool path)
+                     :result)]
+          (expect (= whole
+                     (-> (cat-tool path {"ranges" []})
+                         :result)))
+          (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path {"range" [2 4]})))
+          (expect (= [[2 4]]
+                     (mapv #(get % "range")
+                           (get (-> (cat-tool path {"ranges" [[2 4]]})
+                                    :result)
+                                "ranges")))))))
   (it
     "cat coerces stringy/flat `ranges` shapes models mis-pass"
     (let
@@ -1495,9 +1482,6 @@
        delete
        (private-fn "delete-tool")
 
-       delete-if
-       (private-fn "delete-if-exists-tool")
-
        copy
        (private-fn "copy-tool")
 
@@ -1520,10 +1504,8 @@
       (expect (true? (get (:result (exists {"path" txt})) "exists")))
       (expect (= txt (get (:result (exists {"path" txt})) "path")))
       (expect (= (str txt "-dir") (get (:result (create-dirs {"path" (str txt "-dir")})) "path")))
-      (expect (false? (get (:result (delete-if {"path" (str txt "-absent")})) "deleted")))
-      ;; `delete(path=p, is_missing_ok=True)` splits the lone map into path + opts.
-      (expect (false? (get (:result (delete {"path" (str txt "-absent") "is_missing_ok" true}))
-                           "deleted")))
+      ;; `delete(path=p)` on an already-absent path is a no-op, never an error.
+      (expect (false? (get (:result (delete {"path" (str txt "-absent")})) "deleted")))
       ;; `copy/move(src=a, dest=b)` previously threw wrong-arity (1).
       (expect (= txt (get (:result (copy {"src" txt "dest" (str txt ".bak")})) "src")))
       (expect (= (str txt ".bak")
@@ -2202,84 +2184,67 @@
       (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
                                      "journal-render-bash"))))))
 
-(defdescribe
-  delete-tool-shape-test
-  ;; Regression: `delete-tool` used to set `:result nil`. The channel
-  ;; preview then painted `DELETE nil` and `(def r (delete p))`
-  ;; consumers couldn't read `(:path r)` (same parity bug `exists?`
-  ;; already fixed). All `v/*` tools now return a map shape.
-  (it "delete returns {:op :delete :path P :deleted? true} (no bare nil)"
-      (let
-        [delete-tool
-         (private-fn "delete-tool")
+(defdescribe delete-tool-shape-test
+             ;; Regression: `delete-tool` used to set `:result nil`. The channel
+             ;; preview then painted `DELETE nil` and `(def r (delete p))`
+             ;; consumers couldn't read `(:path r)` (same parity bug `exists?`
+             ;; already fixed). All `v/*` tools now return a map shape.
+             (it "delete returns {:op :delete :path P :deleted? true} (no bare nil)"
+                 (let
+                   [delete-tool
+                    (private-fn "delete-tool")
 
-         p
-         (write-temp! "delete-shape/x.txt" "goodbye\n")
+                    p
+                    (write-temp! "delete-shape/x.txt" "goodbye\n")
 
-         envelope
-         (delete-tool p)]
+                    envelope
+                    (delete-tool p)]
 
-        (expect (true? (:success? envelope)))
-        (expect (= :delete (:symbol envelope)))
-        (expect (= :delete (:symbol envelope)))
-        (let [r (:result envelope)]
-          (expect (map? r))
-          (expect (= p (get r "path")))
-          (expect (true? (get r "deleted"))))))
-  (it "delete-if-exists returns the same map shape with :deleted? reflecting the actual outcome"
-      (let
-        [delete-if
-         (private-fn "delete-if-exists-tool")
+                   (expect (true? (:success? envelope)))
+                   (expect (= :delete (:symbol envelope)))
+                   (expect (= :delete (:symbol envelope)))
+                   (let [r (:result envelope)]
+                     (expect (map? r))
+                     (expect (= p (get r "path")))
+                     (expect (true? (get r "deleted"))))))
+             (it "delete returns the same map shape with :deleted? reflecting the actual outcome"
+                 (let
+                   [delete-if
+                    (private-fn "delete-tool")
 
-         p
-         (write-temp! "delete-shape/here.txt" "x\n")
+                    p
+                    (write-temp! "delete-shape/here.txt" "x\n")
 
-         present
-         (:result (delete-if p))
+                    present
+                    (:result (delete-if p))
 
-         absent
-         (:result (delete-if p))]
+                    absent
+                    (:result (delete-if p))]
 
-        ;; First call deletes the file; the result map carries "deleted" true.
-        (expect (map? present))
-        (expect (= p (get present "path")))
-        (expect (true? (get present "deleted")))
-        ;; Second call hits an already-absent path; the map stays the same shape.
-        (expect (map? absent))
-        (expect (= p (get absent "path")))
-        (expect (false? (get absent "deleted")))))
-  (it "delete recursively removes non-empty directories"
-      (let
-        [delete-tool
-         (private-fn "delete-tool")
+                   ;; First call deletes the file; the result map carries "deleted" true.
+                   (expect (map? present))
+                   (expect (= p (get present "path")))
+                   (expect (true? (get present "deleted")))
+                   ;; Second call hits an already-absent path; the map stays the same shape.
+                   (expect (map? absent))
+                   (expect (= p (get absent "path")))
+                   (expect (false? (get absent "deleted")))))
+             (it "delete recursively removes non-empty directories"
+                 (let
+                   [delete-tool
+                    (private-fn "delete-tool")
 
-         dir
-         (temp-dir-path "delete-shape/tree")
+                    dir
+                    (temp-dir-path "delete-shape/tree")
 
-         nested-file
-         (fs/file dir "nested" "x.txt")]
+                    nested-file
+                    (fs/file dir "nested" "x.txt")]
 
-        (fs/create-dirs (fs/parent nested-file))
-        (spit nested-file "x\n")
-        (let [r (:result (delete-tool dir))]
-          (expect (true? (get r "deleted")))
-          (expect (false? (fs/exists? dir))))))
-  (it "delete-if-exists recursively removes non-empty directories"
-      (let
-        [delete-if
-         (private-fn "delete-if-exists-tool")
-
-         dir
-         (temp-dir-path "delete-shape/tree-if-exists")
-
-         nested-file
-         (fs/file dir "nested" "x.txt")]
-
-        (fs/create-dirs (fs/parent nested-file))
-        (spit nested-file "x\n")
-        (let [r (:result (delete-if dir))]
-          (expect (true? (get r "deleted")))
-          (expect (false? (fs/exists? dir)))))))
+                   (fs/create-dirs (fs/parent nested-file))
+                   (spit nested-file "x\n")
+                   (let [r (:result (delete-tool dir))]
+                     (expect (true? (get r "deleted")))
+                     (expect (false? (fs/exists? dir)))))))
 
 (defdescribe
   patch-summary-shape-test
@@ -2984,28 +2949,28 @@
                                              "never rebuild from a language namespace"))
                    (expect (= "integer" (:type context)))
                    (expect (= 0 (:minimum context)))))
-             (it "requires exact discovered paths for struct_index and cat"
+             (it "requires plural exact discovered paths for struct_index and cat"
                  (let
-                   [index-path-description
-                    (get-in editing/index-symbol
-                            [:ext.symbol/schema :properties "path" :description])
+                   [index-schema
+                    (:ext.symbol/schema editing/index-symbol)
 
                     cat-schema
                     (:ext.symbol/schema editing/cat-symbol)
 
-                    cat-path-description
-                    (get-in cat-schema [:properties "path" :description])]
+                    index-paths-description
+                    (get-in index-schema [:properties "paths" :description])
 
-                   (expect (string/includes? index-path-description "Exact physical"))
-                   (expect (string/includes? index-path-description "grep first"))
-                   (expect (string/includes? index-path-description "never reconstruct"))
-                   ;; path + one selector + the two directory flags/depth options.
-                   ;; Runtime coercion rejects mutually exclusive selectors.
+                    cat-paths-description
+                    (get-in cat-schema [:properties "paths" :description])]
+
+                   (expect (string/includes? index-paths-description "Exact physical"))
+                   (expect (string/includes? index-paths-description "grep/cat/struct_index"))
+                   (expect (not (contains? (:properties index-schema) "path")))
+                   (expect (not (contains? (:properties cat-schema) "path")))
+                   (expect (= ["paths"] (:required index-schema)))
+                   (expect (= ["paths"] (:required cat-schema)))
                    (expect (= 4 (:maxProperties cat-schema)))
-                   (expect (string/includes? cat-path-description "Exact physical"))
-                   (expect (string/includes? cat-path-description "grep/struct_index unchanged"))
-                   (expect (string/includes? (:ext.symbol/description editing/cat-symbol)
-                                             "never reconstruct a path from a language namespace"))
+                   (expect (string/includes? cat-paths-description "Exact physical"))
                    (expect (not (contains? (:properties cat-schema) "range")))
                    (expect (= 2 (get-in cat-schema [:properties "ranges" :items :minItems])))
                    (expect (= 2 (get-in cat-schema [:properties "ranges" :items :maxItems])))))
@@ -3108,6 +3073,26 @@
 
           (expect (:success? r))
           (expect (clojure.string/includes? (slurp (fs/file path)) "(+ y 2)"))))
+    (it "refuses a locator/match mismatch instead of replacing the located node"
+        (let
+          [path
+           (write-temp! "anchor-zipper/match-mismatch.clj"
+                        "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n")
+
+           anchor
+           (patch/line-anchor 3 "(defn foo [x]")
+
+           error
+           (try (struct-patch {"path" path
+                               "op" "replace_node"
+                               "anchor" anchor
+                               "match" "(inc x)"
+                               "code" "(defn foo [x]\n  (- x 1))"})
+                nil
+                (catch clojure.lang.ExceptionInfo e e))]
+
+          (expect (= :ext.foundation.editing/struct-locator-match-mismatch (:type (ex-data error))))
+          (expect (= "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n" (slurp (fs/file path))))))
     (it "an anchor wins over a serializer-default empty at path"
         (let
           [path
@@ -3411,6 +3396,107 @@
                                             "2 windows"))))))
 
 (defdescribe
+  render-index-batch-test
+  (let
+    [render
+     (private-fn "render-index-result")
+
+     result
+     (fn [path name]
+       {"path" path
+        "language" "clojure"
+        "line_count" 3
+        "definitions" [{"name" name
+                        "kind" "function"
+                        "visibility" "public"
+                        "anchor" "1:aa"
+                        "end_anchor" "1:bb"
+                        "depth" 0}]})]
+
+    (it "renders a batch as ordered per-file index tables"
+        (let
+          [rendered
+           (render {"results" [(result "src/a.clj" "a") (result "src/b.clj" "b")]})
+
+           body
+           (:body rendered)
+
+           a-heading
+           "### `src/a.clj` · 1 def · clojure · 3 lines"
+
+           b-heading
+           "### `src/b.clj` · 1 def · clojure · 3 lines"]
+
+          (expect (clojure.string/includes? (:summary rendered) "src/{a.clj, b.clj}"))
+          (expect (clojure.string/includes? (:summary rendered) "2 files · 2 defs"))
+          (expect (< (clojure.string/index-of body a-heading)
+                     (clojure.string/index-of body b-heading)))
+          (expect (= 2 (count (re-seq #"\\| Def \\| Arity \\| Kind" body))))
+          (expect (clojure.string/includes? body "| a |"))
+          (expect (clojure.string/includes? body "| b |"))))))
+
+(defdescribe
+  batch-read-tools-test
+  (let
+    [cat-tool
+     (private-fn "cat-tool")
+
+     index-tool
+     (private-fn "index-tool")]
+
+    (it "batches cat and struct_index paths in request order"
+        (let
+          [_
+           (temp-dir-path "batch-read")
+
+           a
+           (str (temp-root) "/batch-read/a.clj")
+
+           b
+           (str (temp-root) "/batch-read/b.clj")]
+
+          (spit (fs/file a) "(defn a [] 1)\n")
+          (spit (fs/file b) "(defn b [] 2)\n")
+          (let
+            [cat-results
+             (get-in (cat-tool {"paths" [a b] "ranges" [[1 1]]}) [:result "results"])
+
+             index-results
+             (get-in (index-tool {"paths" [a b]}) [:result "results"])]
+
+            (expect (= [a b] (mapv #(get % "path") cat-results)))
+            (expect (= [a b] (mapv #(get % "path") index-results)))
+            (expect (= ["a" "b"] (mapv #(get-in % ["definitions" 0 "name"]) index-results))))))
+    (it "gives every batched cat path its OWN ranges"
+        (let
+          [_
+           (temp-dir-path "batch-ranges")
+
+           a
+           (str (temp-root) "/batch-ranges/a.txt")
+
+           b
+           (str (temp-root) "/batch-ranges/b.txt")]
+
+          (spit (fs/file a) "a1\na2\na3\n")
+          (spit (fs/file b) "b1\nb2\nb3\n")
+          (let
+            [results
+             (get-in (cat-tool {"paths" [{"path" a "ranges" [[2 2]]} {"path" b "ranges" [[3 3]]}]})
+                     [:result "results"])
+
+             texts
+             (mapv #(->> (get % "anchors")
+                         vals
+                         (map (fn [v]
+                                (get v "text")))
+                         vec)
+                   results)]
+
+            (expect (= [a b] (mapv #(get % "path") results)))
+            (expect (= [["a2"] ["b3"]] texts)))))))
+
+(defdescribe
   rg-tool-e2e-test
   "The `rg` TOOL over real files: the comma-split + smart-case fixes end-to-end."
   (let
@@ -3707,6 +3793,64 @@
             (expect (clojure.string/includes? (slurp (fs/file f)) "(* 2 x)")))))))
 
 (defdescribe
+  struct-patch-batch-test
+  "struct_patch BATCHES at the tool level: one call carries an ORDERED `edits`
+   array, top-level keys are shared defaults, and results come back one per edit
+   in request order (across one file or several)."
+  (let [sp (private-fn "struct-patch-tool")]
+    (it "one `edits` batch edits several files in request order"
+        (let
+          [_ (temp-dir-path "spb")
+           f1 (str (temp-root) "/spb/one.clj")
+           f2 (str (temp-root) "/spb/two.clj")]
+
+          (spit (fs/file f1) "(defn a [] 1)\n\n(defn b [] 2)\n")
+          (spit (fs/file f2) "(defn c [] 3)\n")
+          (let
+            [r (sp {"edits" [{"path" f1 "op" "replace" "target" "a" "code" "(defn a [] 11)"}
+                             {"path" f1 "op" "replace" "target" "b" "code" "(defn b [] 22)"}
+                             {"path" f2 "op" "replace" "target" "c" "code" "(defn c [] 33)"}]})]
+            (expect (:success? r))
+            (expect (= 3 (count (:result r))))
+            (expect (= 3 (get-in r [:metadata :edit-count])))
+            (expect (= 3 (get-in r [:metadata :changed-count])))
+            (expect (clojure.string/includes? (slurp (fs/file f1)) "(defn a [] 11)"))
+            (expect (clojure.string/includes? (slurp (fs/file f1)) "(defn b [] 22)"))
+            (expect (clojure.string/includes? (slurp (fs/file f2)) "(defn c [] 33)")))))
+    (it "top-level keys are shared defaults; each edit sees the previous one's file"
+        (let
+          [_ (temp-dir-path "spb2")
+           f (str (temp-root) "/spb2/m.clj")]
+
+          (spit (fs/file f) "(defn a [] 1)\n")
+          (let
+            [r (sp {"path" f
+                    "edits" [{"op" "rename" "target" "a" "code" "aa"}
+                             {"op" "append" "code" "(defn d [] 4)"}]})
+             src (slurp (fs/file f))]
+
+            (expect (:success? r))
+            (expect (= 2 (count (:result r))))
+            (expect (clojure.string/includes? src "(defn aa [] 1)"))
+            (expect (clojure.string/includes? src "(defn d [] 4)")))))
+    (it "a failing entry stops the batch and names how many edits already applied"
+        (let
+          [_ (temp-dir-path "spb3")
+           f (str (temp-root) "/spb3/m.clj")]
+
+          (spit (fs/file f) "(defn a [] 1)\n")
+          (let
+            [r (try (sp {"path" f
+                         "edits" [{"op" "replace" "target" "a" "code" "(defn a [] 9)"}
+                                  {"op" "replace" "target" "nope" "code" "(defn nope [] 0)"}]})
+                    (catch Throwable e e))]
+            (expect (instance? Throwable r))
+            (expect (clojure.string/includes? (ex-message r) "stopped at edit 2 of 2"))
+            (expect (= 1 (:applied-count (ex-data r))))
+            ;; No rollback: the first edit stands.
+            (expect (clojure.string/includes? (slurp (fs/file f)) "(defn a [] 9)")))))))
+
+(defdescribe
   patch-syntax-guard-test
   "patch RE-PARSES the result and REFUSES an edit that turns CLEANLY-parsing code
    into broken code (parity with struct_patch). The guard compares before→after, so
@@ -3727,10 +3871,13 @@
           ;; summary must SHOW it, not flatten it to the generic "edit N in P failed."
           ;; (explain-failure used to drop :message because :syntax-error is not one
           ;; of the anchor-resolution `reason`s it case-matches on).
-          (expect (= (str "No changes (atomic): edit 0 would break syntax in "
-                          p
-                          ". Fix the replacement or use struct_patch.")
-                     (:message r)))
+          ;; The message now also LOCATES the fault (tree-sitter line/col), so it is
+          ;; asserted by its stable head and tail rather than verbatim.
+          (expect (string/starts-with? (:message r)
+                                       (str "No changes (atomic): edit 0 would break syntax in "
+                                            p)))
+          (expect (string/ends-with? (:message r) ". Fix the replacement or use struct_patch."))
+          (expect (string/includes? (:message r) "parse-error node"))
           (expect (not (string/includes? (:message r) "failed.")))
           ;; The refusal carries the WHOLE-BATCH candidates so a language
           ;; pack's :around op-hook (e.g. the Clojure pack's parinfer rescue)
@@ -4878,7 +5025,7 @@
         (let [r (res {"op" "delete" "path" (str base "/z.txt")})]
           (expect (= {"action" "delete" "path" (str base "/z.txt") "is_deleted" true} r))
           (expect (= (str "deleted `" base "/z.txt`") (:summary (render r)))))
-        (let [r (res {"op" "delete" "path" (str base "/z.txt") "is_missing_ok" true})]
+        (let [r (res {"op" "delete" "path" (str base "/z.txt")})]
           (expect (= {"action" "delete" "path" (str base "/z.txt") "is_deleted" false} r))
           (expect (= (str "nothing to delete at `" base "/z.txt`") (:summary (render r)))))
         (expect (throws? clojure.lang.ExceptionInfo #(fs-tool {"op" "touch" "path" base})))
@@ -4927,10 +5074,7 @@
           (expect (= "1 of 2 paths exist · 1 missing" (:summary (render r))))
           (expect (= (str "\n- `" base "/a/x.txt` — exists" "\n- `" base "/a/nope.txt` — missing")
                      (:body (render r)))))
-        (let
-          [r (res {"op" "delete"
-                   "paths" [(str base "/a/x.txt") (str base "/a/nope.txt")]
-                   "is_missing_ok" true})]
+        (let [r (res {"op" "delete" "paths" [(str base "/a/x.txt") (str base "/a/nope.txt")]})]
           (expect (= [true false] (mapv #(get % "is_deleted") (get r "paths"))))
           (expect (= "deleted 1 of 2 paths · 1 already absent" (:summary (render r))))
           (expect
@@ -5083,3 +5227,88 @@
         ;; a write moves it exactly once
         (expect (< idle after))
         (expect (= after (do (run) (.get synced))))))))
+
+(defdescribe
+  patch-path-alias-test
+  "One file named two ways (\"a/b.clj\", \"./a/b.clj\", an absolute path) is ONE
+   atomic plan. Keying the per-file snapshot by the CALLER'S SPELLING split the
+   batch into independent plans, each spliced from the same original snapshot:
+   the last write won, the other edits vanished, and `patch` still reported
+   success — with the overlap and syntax guards seeing only a partial batch."
+  (let [patch (private-fn "patch-safe")]
+    (it "aliased spellings collapse into a single plan and every edit lands"
+        (let
+          [p (write-temp! "alias/multi.clj" "(ns a)\n(def one 1)\n(def two 2)\n")
+           r (patch [{"path" p
+                      "from_anchor" (patch/line-anchor 2 "(def one 1)")
+                      "replace" "(def one 100)"}
+                     {"path" (str "./" p)
+                      "from_anchor" (patch/line-anchor 3 "(def two 2)")
+                      "replace" "(def two 200)"}])]
+
+          (expect (true? (:success? r)))
+          (expect (= 1 (count (:plans r))))
+          (expect (= "(ns a)\n(def one 100)\n(def two 200)\n" (slurp p)))))
+    (it "the overlap guard still fires when the two spellings differ"
+        (let
+          [p (write-temp! "alias/overlap.clj" "(ns a)\n(def one 1)\n(def two 2)\n")
+           r (patch [{"path" p
+                      "from_anchor" (patch/line-anchor 2 "(def one 1)")
+                      "to_anchor" (patch/line-anchor 3 "(def two 2)")
+                      "replace" "(def x 1)"}
+                     {"path" (str (fs/absolutize p))
+                      "from_anchor" (patch/line-anchor 3 "(def two 2)")
+                      "replace" "(def y 2)"}])]
+
+          (expect (false? (:success? r)))
+          (expect (= :overlapping-edits (:reason (last (:failures r)))))
+          (expect (= "(ns a)\n(def one 1)\n(def two 2)\n" (slurp p)))))
+    (it "a refused syntax-breaking edit LOCATES the fault instead of only asserting it"
+        (let
+          [p (write-temp! "alias/syntax.clj" "(ns a)\n(def one 1)\n")
+           r (patch [{"path" p
+                      "from_anchor" (patch/line-anchor 2 "(def one 1)")
+                      "replace" "(def one 1"}])
+           msg (:message r)]
+
+          (expect (false? (:success? r)))
+          (expect (= :syntax-error (:reason (first (:failures r)))))
+          (expect (string/includes? msg "parse-error node"))
+          (expect (string/includes? msg "line 2"))
+          ;; the located detail must not leave a doubled sentence stop
+          (expect (not (string/includes? msg "..")))))))
+
+(defdescribe
+  plural-only-path-schemas-test
+  "Read/search/fs tools expose ONE plural `paths` contract — never a singular
+   `path` twin beside it — and `paths` entries carry their own per-file windows
+   so several files with DIFFERENT regions are one call."
+  (it "cat/struct_index/grep/fs advertise `paths` and no singular `path`"
+      (doseq [sym [editing/cat-symbol editing/index-symbol editing/grep-symbol editing/fs-symbol]]
+        (let [props (get-in sym [:ext.symbol/schema :properties])]
+          (expect (contains? props "paths"))
+          (expect (nil? (get props "path"))))))
+  (it "`fs` carries no `is_missing_ok` twin and there is no `delete_if_exists` tool"
+      ;; Deleting an absent path is a no-op reported as `is_deleted` false, so the
+      ;; flag AND the whole delete_if_exists alias tool are dead weight.
+      (expect (nil? (get-in editing/fs-symbol [:ext.symbol/schema :properties "is_missing_ok"])))
+      (let
+        [names (into #{}
+                     (map #(str (or (:ext.symbol/name %) (:ext.symbol/symbol %))))
+                     (editing/available-editing-symbols))]
+        (expect (contains? names "delete"))
+        (expect (not (contains? names "delete_if_exists")))))
+  (it "cat/struct_index `paths` entries take per-file `ranges`"
+      (doseq [sym [editing/cat-symbol editing/index-symbol]]
+        (let
+          [entry (->> (get-in sym [:ext.symbol/schema :properties "paths" :items :oneOf])
+                      (filter #(= "object" (:type %)))
+                      first)]
+          (expect (some? entry))
+          (expect (some? (get-in entry [:properties "ranges"]))))))
+  (it "grep ORs MANY needles across MANY scopes in one call"
+      (let [schema (:ext.symbol/schema editing/grep-symbol)]
+        ;; query: string OR a non-empty array of needles
+        (expect (some #(= "array" (:type %)) (get-in schema [:properties "query" :oneOf])))
+        ;; paths: always an array of scopes
+        (expect (= "array" (get-in schema [:properties "paths" :type]))))))

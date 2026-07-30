@@ -173,6 +173,30 @@
                    (expect (.exists (io/file dir "new.txt")))
                    (expect (= ["new.txt"] (:untracked (magit/status-model dir)))))))
 
+(defdescribe discard-x-alias-test
+             (it "discards an unstaged file with x after confirmation"
+                 (let
+                   [dir
+                    (init-repo!)
+
+                    row
+                    {:kind :file :area :unstaged :path "a.txt"}]
+
+                   (spit (str dir "/a.txt") "mangled\n")
+                   (let
+                     [r ((var-get #'dialogs/magit-char-action!)
+                          nil
+                          nil
+                          {:confirm! (constantly true)}
+                          dir
+                          nil
+                          []
+                          0
+                          row
+                          \x)]
+                     (expect (:ok? r))
+                     (expect (= "one\n" (slurp (str dir "/a.txt"))))))))
+
 ;;; ── commit ──────────────────────────────────────────────────────────────────
 
 (defdescribe commit-test

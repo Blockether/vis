@@ -478,8 +478,18 @@
                                         (fn [_]
                                           true)))]
                    (expect (= "running" (get logs "status"))))
-                 (let [sent (:result (shell* env {"op" "send" "id" "ops" "text" "hello"}))]
+                 ;; The keystrokes ride the SAME one positional as a command:
+                 ;; there is no `text` option to say the payload a second way.
+                 (let [sent (:result (shell* env "hello" {"op" "send" "id" "ops"}))]
                    (expect (= 6 (get sent "sent"))))
+                 ;; The retired second carrier is unrepresentable, not merely
+                 ;; discouraged: a `text` option is refused outright.
+                 (expect (threw? #(shell* env {"op" "send" "id" "ops" "text" "y"})))
+                 (expect (threw? #(shell* env "y" {"op" "send" "id" "ops" "text" "y"})))
+                 ;; Keystrokes are NOT trimmed like a command line: a bare control
+                 ;; character (Esc) is delivered as its single byte.
+                 (let [ctrl (:result (shell* env "\u001b" {"op" "send" "id" "ops" "enter" false}))]
+                   (expect (= 1 (get ctrl "sent"))))
                  (let
                    [logs (poll #(:result (shell* env {"op" "logs" "id" "ops"}))
                                #(some (fn [line]
@@ -635,6 +645,71 @@
         (expect (= "↵ `ops` sent 0 chars"
                    (:summary (render-shell-send-result {"id" "ops" "sent" 0})))))))
 
+(defdescribe
+  shell-batch-test
+  ;; Commands live in ONE place: the positional argument. A LIST of strings is the
+  ;; strictly ordered batch; there is no `commands` option to contradict it.
+  (it "runs commands strictly in input order, retaining each result after a failure"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let
+          [env (shell* {} ["printf first; exit 3" "printf second"])
+           results (get-in env [:result "commands"])]
+
+          (expect (extension/envelope-success? env))
+          (expect (= ["first" "second"] (mapv #(str/trim (get % "stdout")) results)))
+          (expect (= [true true] (mapv #(get % "started") results)))
+          (expect (= [3 0] (mapv #(get % "exit") results)))
+          (expect (= ["run" "run"] (mapv #(get % "stage") results))))))
+  (it "retains a not-started result at every input position after a launch failure"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let
+          [results (get-in (shell* {} ["printf first" "printf second"] {"cwd" "does-not-exist"})
+                           [:result "commands"])]
+          (expect (= ["printf first" "printf second"] (mapv #(get % "cmd") results)))
+          (expect (= [false false] (mapv #(get % "started") results)))
+          (expect (= ["not started" "not started"] (mapv #(get % "status") results)))
+          (expect (every? #(seq (get % "note")) results)))))
+  (it "waits for each command to complete before starting the next"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let
+          [marker (str "/tmp/vis-shell-batch-" (java.util.UUID/randomUUID))
+           env (shell* {}
+                       [(str "sleep 0.15; touch " marker) (str "test -f " marker)
+                        (str "rm -f " marker)])]
+
+          (expect (= [0 0 0] (mapv #(get % "exit") (get-in env [:result "commands"])))))))
+  (it "refuses a commands option outright \u2014 a command is never spelled twice"
+      ;; The conflict that broke real calls is now UNREPRESENTABLE: there is no
+      ;; second carrier to disagree with the positional one.
+      (expect (threw? #(shell* {} {"commands" ["printf skipped"]})))
+      (expect (threw? #(shell* {} "printf skipped" {"commands" ["printf also-skipped"]})))
+      (expect (threw? #(shell* {} {"cmd" "printf skipped"}))))
+  (it "treats schema-filled blank options as absent instead of a conflict"
+      ;; A native caller that fills EVERY schema property sends id "" and op ""
+      ;; next to the real command; blank is absent, and options a plain run
+      ;; ignores (n, text, enter) must not fail a batch either.
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let
+          [env (shell* {}
+                       ["printf first" "printf second"]
+                       {"id" "" "op" "run" "n" 200 "text" "" "enter" true})]
+          (expect (extension/envelope-success? env))
+          (expect (= ["first" "second"]
+                     (mapv #(str/trim (get % "stdout")) (get-in env [:result "commands"])))))))
+  (it "still runs a lone positional command next to every empty option"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let
+          [env (shell* {} "printf lone" {"id" "" "op" "" "cwd" "" "text" "" "n" 200 "enter" true})]
+          (expect (extension/envelope-success? env))
+          (expect (nil? (get-in env [:result "commands"])))
+          (expect (= "lone" (str/trim (get-in env [:result "stdout"])))))))
+  (it "still refuses a batch that names another lifecycle stage"
+      (expect (threw? #(shell* {} ["printf skipped"] {"id" "srv"})))
+      (expect (threw? #(shell* {} ["printf skipped"] {"op" "logs"}))))
+  (it "rejects an empty or unordered command collection before spawning"
+      (expect (threw? #(shell* {} [])))
+      (expect (threw? #(shell* {} #{"printf first" "printf second"})))))
+
 (defdescribe shell-native-contract-test
              (it "advertises exactly ONE native shell tool covering the whole lifecycle"
                  ;; Four names (shell_run / shell_bg / shell_logs / shell_send) for ONE
@@ -651,8 +726,7 @@
                    (expect (str/includes? d "THE one shell tool"))
                    (expect (str/includes? d "PREFER background"))
                    (expect (str/includes? d "Reserve run for short commands"))
-                   ;; The native grep/cat/fs tools must win over shell one-liners.
-                   (expect (str/includes? d "leave filesystem work to native"))
+                   (expect (str/includes? d "strictly in input order"))
                    (expect (str/includes? d "stop what you started"))
                    ;; Native JSON carries `cmd`; the model-facing description must
                    ;; distinguish its Python positional from the map-only id.
@@ -665,14 +739,21 @@
                    ;; one description for five ops still costs less than the four it
                    ;; replaces — but it must not sprawl
                    (expect (< (count d) 1200))))
-             (it
-               "puts every op in the schema, where the model cannot miss it"
-               (let [props (get-in shell/shell-symbol [:ext.symbol/schema :properties])]
-                 (expect (= ["run" "background" "logs" "send" "stop"] (get-in props ["op" :enum])))
-                 (expect (every? #(contains? props %)
-                                 ["cmd" "op" "id" "timeout_secs" "cwd" "n" "text" "enter"]))
-                 ;; the common bounded run keeps its bare one-positional shape
-                 (expect (= {:opt-pos ["cmd"] :rest :opt} (:ext.symbol/call shell/shell-symbol)))))
+             (it "puts every op in the schema, where the model cannot miss it"
+                 (let [props (get-in shell/shell-symbol [:ext.symbol/schema :properties])]
+                   (expect (= ["run" "background" "logs" "send" "stop"]
+                              (get-in props ["op" :enum])))
+                   (expect (every? #(contains? props %)
+                                   ["cmd" "op" "id" "timeout_secs" "cwd" "n" "enter"]))
+                   ;; ONE carrier for everything fed to a shell: neither a `commands`
+                   ;; nor a `text` property may contradict the one `cmd` positional
+                   (expect (not (contains? props "commands")))
+                   (expect (not (contains? props "text")))
+                   ;; the common bounded run keeps its bare one-positional shape
+                   (expect (= {:opt-pos ["cmd"] :rest :opt} (:ext.symbol/call shell/shell-symbol)))
+                   ;; that one positional carries either one command or an ordered batch
+                   (expect (= ["string" "array"] (mapv :type (get-in props ["cmd" :oneOf]))))
+                   (expect (= 1 (get-in props ["cmd" :oneOf 1 :minItems])))))
              (it "closes every native shell input schema"
                  (doseq [s shell/shell-symbols]
                    (expect (false? (get-in s [:ext.symbol/schema :additionalProperties]))))))
@@ -776,7 +857,7 @@
          d
          (str (py (py-ctx {}) "doc('shell')"))]
 
-        (expect (= 6 (count (re-seq #"shell\(" source-doc))))
+        (expect (= 7 (count (re-seq #"shell\(" source-doc))))
         (expect (= (count (re-seq #"shell\(" source-doc))
                    (count (re-seq #"await shell\(" source-doc))))
         (expect (not (str/includes? source-doc "shell({\"cmd\"")))

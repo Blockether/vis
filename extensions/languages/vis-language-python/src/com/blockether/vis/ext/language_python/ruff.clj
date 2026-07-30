@@ -484,6 +484,9 @@
                                (update-in acc [d (.getName p) (get f "level")] (fnil conj []) f)))
                            {}
                            findings)}
+                        code
+                        (assoc "snippet" code)
+
                         cfg
                         (assoc "config" (relativize-path root cfg))
 

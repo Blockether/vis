@@ -1002,10 +1002,10 @@ vis.extension(
 (defdescribe
   python-extension-process-boundary-test
   (it
-    "routes subprocess and vis.jailed_shell through the live session jail"
+    "routes public vis.shell single and serial commands through the live session jail"
     (with-loaded
       {"jail.py"
-       "import subprocess\nimport vis\ndef run():\n    \"Run through the session jail.\"\n    return [subprocess.run(['echo', 'jailed']).stdout, vis.jailed_shell('echo direct')['stdout']]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+       "import subprocess\nimport vis\ndef run():\n    \"Run through the session jail.\"\n    batch = vis.shell(['echo one', 'echo two'])\n    return [subprocess.run(['echo', 'jailed']).stdout, vis.shell('echo direct')['stdout'], [r['stdout'] for r in batch['commands']], vis.jailed_shell is vis.shell]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
       (fn [_ _]
         (let
           [run
@@ -1020,10 +1020,33 @@ vis.extension(
           (with-redefs
             [shell/jailed-shell (fn [actual-env command opts]
                                   (swap! seen conj [actual-env command opts])
-                                  {"stdout" (str command)})]
+                                  (if (sequential? command)
+                                    {"commands" (mapv #(hash-map "stdout" %) command)}
+                                    {"stdout" (str command)}))]
             (binding [extension/*current-environment* env]
-              (expect (= ["echo jailed" "echo direct"] (:result (run))))
-              (expect (= [[env "echo jailed" nil] [env "echo direct" nil]] @seen)))))))))
+              (expect (= ["echo jailed" "echo direct" ["echo one" "echo two"] true]
+                         (:result (run))))
+              (expect (= [[env ["echo one" "echo two"] nil] [env "echo jailed" nil]
+                          [env "echo direct" nil]]
+                         @seen)))))))))
+
+(it
+  "rejects a Python set so serial command ordering cannot be lost"
+  (with-loaded
+    {"jail.py"
+     "import vis\ndef run():\n    return vis.shell({'echo first', 'echo second'})\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+    (fn [_ _]
+      (let
+        [run
+         (symbol-fn (registered "jail") 'run)
+
+         env
+         {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
+
+        (expect (try (binding [extension/*current-environment* env]
+                       (run))
+                     false
+                     (catch Throwable _ true)))))))
 
 (defdescribe
   net-probe-report-test

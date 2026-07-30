@@ -1015,13 +1015,17 @@
   ;; (issue #27's scary regression). A per-fold reduction can never mislead that way.
   ;; Alongside it the card ALSO surfaces the live window fullness as `context <U>%`,
   ;; taken straight from the provider's authoritative `saturation` — a separate,
-  ;; absolute reading, omitted when no `saturation` is stamped.
+  ;; absolute reading, omitted when no `saturation` is stamped. That stamp is the
+  ;; PRE-fold one (nothing has been sent since), so whenever the fold reclaims wire
+  ;; the clause renders the transition `<U>%→~<U'>%` with `U'` projected by
+  ;; SUBTRACTING this fold's own reclaim from `last_request_tokens` — never the
+  ;; frozen pre-fold number alone beside `saved ~Nk`.
   (it
     "an explicit scope card prices its ~tokens + the reduction as % of budget"
     (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
       (expect
         (=
-          "folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44% (42k/96k tokens) → big cat dump"
+          "folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44%→~31% (42k→30k tokens) → big cat dump"
           (sf ["t1/i1"] "big cat dump")))))
   (it
     "a `through` selector sums the weight of EVERY scope it resolves"
@@ -1029,12 +1033,12 @@
       ;; through t1/i2 folds t1/i1 (12k) + t1/i2 (3.4k) = ~15k
       (expect
         (=
-          "folded through t1/i2 · saved ~15k tokens · ~22% of budget · context 44% (42k/96k tokens) → traced"
+          "folded through t1/i2 · saved ~15k tokens · ~22% of budget · context 44%→~28% (42k→27k tokens) → traced"
           (sf {"through" "t1/i2"} "traced")))))
   (it "a gist-less fold still shows the tokens + reduction suffix"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
         (expect (=
-                  "folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44% (42k/96k tokens)"
+                  "folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44%→~31% (42k→30k tokens)"
                   (sf ["t1/i1"])))))
   (it
     "a scope with NO stamped weight reclaims nothing, so the card reads an explicit saved ~0 alongside the live window fullness"
@@ -1074,7 +1078,7 @@
 
       (expect
         (=
-          "folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44% (42k/96k tokens) → first"
+          "folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44%→~31% (42k→30k tokens) → first"
           card1))
       ;; second fold reclaims only its own 3.4k regardless of the 90k request
       (expect (= "folded t1/i2 · saved ~3k tokens · ~4% of budget → second" card2))))
@@ -1102,7 +1106,7 @@
       ;; ceiling = max(70000, 90000) = 90000; 60000/90000 = 67%
       (expect
         (=
-          "folded t1/i1 · saved ~60k tokens · ~67% of budget · context 94% (90k/96k tokens) → bigger task"
+          "folded t1/i1 · saved ~60k tokens · ~67% of budget · context 94%→~31% (90k→30k tokens) → bigger task"
           (sf ["t1/i1"] "bigger task")))))
   (it
     "the note ALSO lands in the persistent breadcrumb, not just the tool card"
@@ -1130,7 +1134,7 @@
 
       (expect
         (=
-          "# ⋯ folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44% (42k/96k tokens) · big cat dump"
+          "# ⋯ folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44%→~31% (42k→30k tokens) · big cat dump"
           line))))
   (it "a fold breadcrumb points to ntr.describe() without carrying result ids"
       ;; The durable breadcrumb stays short even when a fold covers many calls.
@@ -1196,14 +1200,14 @@
     "splits a full receipt into headline + gist paragraph + metric bullets"
     (let
       [card (session-fold-card (str "folded t1/i1 · saved ~60k tokens · ~67% of budget"
-                                    " · context 94% (90k/96k tokens) · more results: ntr.describe()"
+                                    " · context 94%→~31% (90k→30k tokens) · more results: ntr.describe()"
                                     " → bigger task"))]
       ;; Collapsed view: WHAT was folded + HOW MUCH it reclaimed.
       (expect (= "folded `t1/i1` · saved **~60k tokens**" (:summary card)))
       ;; `~67% of budget` qualifies the `saved …` it follows, so the pair
       ;; stays on ONE bullet instead of stranding a bare percentage.
       (expect (= (str "\nbigger task\n\n" "- **saved** ~60k tokens · ~67% of budget\n"
-                      "- **context** 94% (90k/96k tokens)\n" "- **more results:** `ntr.describe()`")
+                      "- **context** 94%→~31% (90k→30k tokens)\n" "- **more results:** `ntr.describe()`")
                  (:body card)))
       (expect (not (str/includes? (:body card) "```")))))
   (it "a tilde in an accessor label can't strike out the breadcrumb"

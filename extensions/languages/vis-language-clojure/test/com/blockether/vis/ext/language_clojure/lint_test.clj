@@ -82,6 +82,7 @@
       (let [res (lint-result {} "(ns a) (defn h [a b] a)")]
         (expect (= "clj-lint" (get res "op")))
         (expect (= "clojure" (get res "language")))
+        (expect (= "(ns a) (defn h [a b] a)" (get res "snippet")))
         (expect (pos? (get res "warning")))))
   ;; Model args are STRING-keyed (strings-only boundary); the tool reads only
   ;; string keys.

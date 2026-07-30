@@ -69,7 +69,7 @@
       (let
         [steps (mapv #(str/index-of text %)
                      ["use `grep` to locate unknown code" "known supported file" "`struct_index`"
-                      "`cat` only the needed body" "`struct_patch`"])]
+                      "`cat` only the" "needed bodies in ONE call" "`struct_patch`"])]
         (expect (every? some? steps))
         (expect (apply < steps)))
       (expect (str/includes? text "`grep` FIRST"))
@@ -78,7 +78,7 @@
       (expect (not (str/includes? text "`~/.vis/gateway/events/<id>.ndjson`")))
       (expect (str/includes? text "scoped to real paths"))
       (expect (str/includes? text "only for product questions"))
-      (expect (str/includes? text "the first move, before docs"))
+      (expect (str/includes? text "locate unknown code first"))
       (expect (str/includes? text "**Filesystem work goes through native tools**"))
       (expect (str/includes? text "keep `shell` for running programs"))
       (expect (< (str/index-of text "`grep` FIRST") (str/index-of text "`vis_docs()`")))
@@ -97,17 +97,17 @@
           "Direct native tools: single operations" "simple edits" "small fixed call sets"
           "default for most Python/data work" "YAML/JSON/TOML/CSV" "over shell."
           "Call advertised native tools directly" "for unadvertised sandbox" "read-only `session`"
-          "raw data, not rendered text" "Use documented keys"
-          "Before re-running or scanning transcript" "recover raw result" "saved id"
+          "raw data, not rendered text" "Use documented keys" "never a `session_fold` receipt"
+          "# saved:" "Before re-running or scanning transcript" "recover raw result" "saved id"
           "`ntr.describe()`" "labelled candidates" "not `ntr.keys()`/`items()` to discover results"
-          "shape/type" "inspect keys/types" "then adapt" "visible, do not print it"
+          "shape before indexing" "inspect keys/types" "then adapt" "visible, do not print it"
           "or call `repl` status merely to read it" "reproduce before editing"
-          "rerun the same check after the fix" "batch independent reads"
-          "Write only files the task asked" "Python extensions" "`run_tests(\"python\")`" "native"
-          "CLI: `vis python -m pytest <paths>`" "on your own and report what you did"
-          "Keep secrets out of answers" "Commit, push, publish" "Treat context as a budget"
-          "act before the provider fails" "Fold obsolete settled work"
-          "one broad `through`/range fold"
+          "rerun the same check after the fix" "reads, `shell`/`git` `commands`" "Batch independent"
+          "plural args" "Write only files the task asked" "Python extensions"
+          "`run_tests(\"python\")`" "native" "CLI: `vis python -m pytest <paths>`"
+          "on your own and report what you did" "Keep secrets out of answers"
+          "Commit, push, publish" "Treat context as a budget" "act before the provider fails"
+          "Fold obsolete settled work" "one broad `through`/range fold"
           "When edit-ready and headroom permits, patch before folding"
           "Before unavoidable folds, checkpoint"
           "paths/symbols, hypothesis, edit/test, and dirty files"
@@ -121,7 +121,9 @@
           ;; Anchor staleness: avoid chains on anchors invalidated by an earlier write,
           ;; without forcing wasteful re-reads of untouched files.
           "successful write invalidates pre-write anchors for THAT file only"
-          "anchors for other\n  files remain valid" "ONE atomic `patch`/`struct_patch` call"
+          "anchors for other\n  files remain valid"
+          ;; One batching rule for EVERY tool — reads, shell/git commands and edits.
+          "BATCH every tool" "`patch`/`struct_patch` `edits`" "one call, never one per file"
           "re-read only that file" "use its fresh\n  anchors"
           "Lead with the answer. Be terse; depth only when earned."
           ;; End-of-turn teardown: without this the session leaks every REPL and

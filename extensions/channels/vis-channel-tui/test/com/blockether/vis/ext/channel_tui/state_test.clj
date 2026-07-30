@@ -611,6 +611,36 @@
                (expect (= "quick" (vis/toggle-value "reasoning_level")))
                (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level])))))
            (finally (vis/toggle-reset-to-default! "reasoning_level"))))
+  (it "advances reasoning exactly one step when the registry listener dispatches back"
+      ;; REGRESSION (Ctrl+X r cycled forever): `dispatch` runs an :fx handler's
+      ;; FUNCTION inside `swap! app-db` and only its returned effects after the
+      ;; commit. Flipping the toggle in the function body ran the registry
+      ;; listener synchronously; the listener's re-entrant
+      ;; :resync-toggle-settings dispatch committed an inner swap, the outer CAS
+      ;; failed, and the retry cycled the level AGAIN - each retry guaranteeing
+      ;; the next. The flip now lives in the :cycle-toggle EFFECT, so one
+      ;; keystroke advances exactly one step.
+      (vis/toggle-set-value! "reasoning_level" "quick")
+      (let [dispose (vis/toggle-add-listener!
+                      (fn [event]
+                        (state/dispatch [:resync-toggle-settings (:id event)])))]
+        (try (with-redefs
+               [vis/load-config-raw (fn [] {})
+                vis/save-config! (fn [_])
+                vis/get-router (constantly :router)
+                vis/resolve-effective-model (fn [_]
+                                              {:provider :openai
+                                               :name "gpt-5"
+                                               :reasoning? true})
+                vis/notify! (fn [& _])]
+               (reset! state/app-db {:settings {:reasoning-level "quick"}
+                                     :render-version 0})
+               (let [result (future (state/dispatch [:cycle-reasoning-level]) :done)]
+                 (expect (= :done (deref result 2000 :timeout)))
+                 (expect (= "balanced" (vis/toggle-value "reasoning_level")))
+                 (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))))
+             (finally (dispose)
+                      (vis/toggle-reset-to-default! "reasoning_level")))))
   (it "wraps reasoning level from deep back to quick"
       (vis/toggle-set-value! "reasoning_level" "deep")
       (try (with-redefs

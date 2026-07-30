@@ -488,8 +488,8 @@
   "lint_code → `` `path` — clean `` / `N targets — E errors, W warnings` headline
    (the LINT_CODE badge already names the tool, and the headline names the linted
    target(s) — the file/dir path(s) when given, else `snippet` for a stdin lint or
-   `N files` for a bare workspace lint); the findings as a `file / row:col / level /
-   message` markdown table (rendered as a boxed grid) in the body."
+   `N files` for a bare workspace lint). A stdin lint also renders the exact snippet
+   in a fenced body, followed by the findings table when present."
   [r]
   (let
     [errors
@@ -504,6 +504,9 @@
      findings
      (get r "findings")
 
+     snippet
+     (get r "snippet")
+
      clean?
      (and (zero? errors) (zero? warnings) (zero? infos))
 
@@ -514,15 +517,21 @@
      (get r "files")
 
      head
-     (cond (= 1 (count targets)) (str "`" (first targets)
-                                      "`" (when (and n (> (long n) 1)) (str " (" n " files)")))
-           (seq targets) (str (count targets)
-                              " targets"
-                              (when (and n (> (long n) (count targets))) (str " (" n " files)")))
-           n (if (= 1 n) "snippet" (str n " files")))]
+     (cond (seq targets) (if (= 1 (count targets))
+                           (str "`" (first targets)
+                                "`" (when (and n (> (long n) 1)) (str " (" n " files)")))
+                           (str (count targets)
+                                " targets"
+                                (when (and n (> (long n) (count targets))) (str " (" n " files)"))))
+           (some? snippet) "snippet"
+           n (if (= 1 n) "snippet" (str n " files")))
 
-    {:summary (not-empty (str head
-                              (when head
+     body
+     (not-empty (str/join "\n\n"
+                          (keep identity [(fence "snippet" snippet) (findings->table findings)])))]
+
+    {:summary (not-empty (when head
+                           (str head
                                 (if clean?
                                   " — clean"
                                   (str " — "
@@ -534,7 +543,7 @@
                                        " warning"
                                        (when (not= 1 warnings) "s")
                                        (when (pos? infos) (str ", " infos " info")))))))
-     :body (when (seq findings) (findings->table findings))}))
+     :body body}))
 
 (defn- failures->table
   "Structured test `failures` → a markdown table the RUN_TESTS card renders as a
@@ -879,22 +888,22 @@
                    (str " " id)))})
 
 (defn format-code
-  "Format source using a language extension. Pass `language` FIRST when you know it — format_code(language, arg); it may be omitted only for the {\"path\": file} form (then inferred from the file/workspace).
-   `arg` is either a raw code string / {\"code\": ...} (returns a lean changed? + char-delta ack, not the text), a {\"path\": file} map (formats that ONE file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back), or a {\"paths\": [file-or-dir …]} map (formats MANY paths IN PLACE — a DIRECTORY is walked RECURSIVELY for source files — returning a per-file changed roll-up). Omit all of code/path/paths to format the workspace's default source paths recursively. The payload is passed through to the language handler verbatim."
+  "Format source using a language extension. Pass `language` FIRST when you know it — format_code(language, arg); it may be omitted only for the {\"paths\": […]} form (then inferred from the files/workspace).
+   `arg` is either a raw code string / {\"code\": ...} (returns a lean changed? + char-delta ack, not the text) or a {\"paths\": [file-or-dir …]} map (formats those paths IN PLACE — ALWAYS a list, even for one file; a DIRECTORY is walked RECURSIVELY for source files — returning a per-file changed roll-up, NOT the files' text, so don't print it back). Omit both code and paths to format the workspace's default source paths recursively. The payload is passed through to the language handler verbatim."
   [env & args]
   (dispatch! env :format-fn args))
 
 (defn lint-code
   "Lint source using a language extension. Pass `language` FIRST when you know it —
    lint_code(language, arg); inferred from the file/workspace only when omitted. `arg` is a raw code string / {\"code\": ...}
-   (lints the snippet), a {\"path\": file} or {\"paths\": […]} map (lints those on
-   disk), or nothing (lints the workspace's default source paths). Returns the
+   (lints the snippet), a {\"paths\": […]} map (lints those on disk — ALWAYS a list, even
+   for one file), or nothing (lints the workspace's default source paths). Returns the
    linter's findings + severity counts."
   [env & args]
   (dispatch! env :lint-fn args))
 
 (defn run-tests
-  "Run tests using a language extension. ALWAYS pass the language FIRST — run_tests(language, arg). `arg` selects what to run: a namespace/module string (e.g. run_tests(\"clojure\", \"my.app.core-test\")), or a dict — {\"namespaces\": [\"a-test\" \"b-test\"]} (alias :ns) to run several, {\"paths\": [\"test\" ...]} to discover *_test namespaces under dirs/files, plus optional {\"only\": [...] :include/:exclude [tags]} selectors. Omit arg to run the whole suite."
+  "Run tests using a language extension. ALWAYS pass the language FIRST — run_tests(language, arg). `arg` selects what to run: a namespace/module string (e.g. run_tests(\"clojure\", \"my.app.core-test\")), or a dict — {\"namespaces\": [\"a-test\" \"b-test\"]} to run several, {\"paths\": [\"test\" ...]} to discover *_test namespaces under dirs/files, plus optional {\"only\": [...] :include/:exclude [tags]} selectors. Every selector is PLURAL — always a list, even for one entry. Omit arg to run the whole suite."
   [env & args]
   ;; Park outside the generic 30s native wall. Language packs own the test budget.
   (let [started-at (System/nanoTime)]
@@ -977,17 +986,12 @@
        "code" {:type "string"
                :description
                "Source to format (returns a lean changed? + char-delta ack, not the text)."}
-       "path"
-       {:type "string"
-        :minLength 1
-        :description
-        "Format this ONE file IN PLACE (returns a lean ack, not the text). Mutually exclusive with code. A directory is walked RECURSIVELY for source files."}
        "paths"
        {:type "array"
         :items {:type "string" :minLength 1}
         :minItems 1
         :description
-        "Format MANY paths IN PLACE (returns a per-file changed roll-up). A DIRECTORY is walked RECURSIVELY for source files. Mutually exclusive with code/path; OMIT all to format the workspace's default source paths recursively."}}
+        "Format these paths IN PLACE — ALWAYS a list, even for ONE file (returns a per-file changed roll-up, not the text). A DIRECTORY is walked RECURSIVELY for source files. Mutually exclusive with code; OMIT both to format the workspace's default source paths recursively."}}
       :required []
       :additionalProperties false}
      :before-fn inject-env
@@ -1001,8 +1005,8 @@
      :result
      (str
        "String-keyed object with `op`, `language`, `error`, `warning`, `info`, `files`, `findings`, "
-       "`providers`, and `by-dir`; explicit path runs may add `targets`. Each finding uses `file`, "
-       "`row`, `col`, `level`, `type`, `message`, and `provider` when reported.")
+       "`providers`, `by-dir`, and (for stdin lints) `snippet`; explicit path runs may add `targets`. "
+       "Each finding uses `file`, `row`, `col`, `level`, `type`, `message`, and `provider` when reported.")
      :description
      "Run the active language pack's linter on source or project files. Returns findings and severity counts without changing files."
      :render render-lint-result
@@ -1015,14 +1019,13 @@
                    :description
                    "Language pack (e.g. \"clojure\"); pass it first — inferred when omitted."}
        "code" {:type "string"
-               :description
-               "Source to lint (returns findings). Mutually exclusive with path/paths."}
-       "path" {:type "string" :minLength 1 :description "Lint this file on disk."}
-       "paths" {:type "array"
-                :items {:type "string" :minLength 1}
-                :minItems 1
-                :description
-                "Lint these files/dirs. OMIT all to lint the workspace's default source paths."}}
+               :description "Source to lint (returns findings). Mutually exclusive with paths."}
+       "paths"
+       {:type "array"
+        :items {:type "string" :minLength 1}
+        :minItems 1
+        :description
+        "Lint these files/dirs — ALWAYS a list, even for ONE file. OMIT to lint the workspace's default source paths."}}
       :required []
       :additionalProperties false}
      :before-fn inject-env

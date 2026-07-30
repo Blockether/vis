@@ -1169,12 +1169,11 @@
         ;; top margin. Border and margin drop when input-top is tight
         ;; (small terminal, lots of suggestions); only the title row
         ;; is reserved up-front.
-        max-list
-        (max 0 (dec (long input-top)))
-
-        ; reserve title only
+        ;; Keep command/file pickers compact even in a tall terminal. The list
+        ;; scrolls around the selected row, so matches stay reachable without
+        ;; letting a bare `/` cover the entire transcript.
         visible-cap
-        (max 0 (long max-list))
+        (min 8 (max 0 (dec (long input-top))))
 
         total
         (count suggestions)
@@ -4225,12 +4224,18 @@
      (or (first (filter blank? entries)) {:line (str result-marker "") :meta nil})
 
      content
-     (into [] (remove blank?) entries)]
+     (into [] (remove blank?) entries)
+
+     divider?
+     #(boolean (re-matches #"\s*[─-]{3,}\s*" (strip-paint-markers-line (:line %))))]
 
     (if (empty? content)
       []
       (-> (reduce (fn [acc e]
-                    (if (and (seq acc) (section-label-entry? e)) (conj acc pad e) (conj acc e)))
+                    (cond (divider? e) (into acc [pad e pad])
+                          (and (seq acc) (section-label-entry? e) (not (blank? (peek acc))))
+                          (conj acc pad e)
+                          :else (conj acc e)))
                   []
                   content)
           (conj pad)))))

@@ -4522,25 +4522,6 @@
           ;; value, and the first Ctrl+X r cycle appears to "do nothing"
           ;; (it advances the toggle, but only up to the already-shown value).
           (state/dispatch [:resync-toggle-settings])
-          (vis/toggle-add-listener!
-            (fn [_event]
-              (try (let [raw (or (vis/load-config-raw) {})]
-                     (vis/save-config! (assoc raw "toggles" (vis/toggles-snapshot))))
-                   (catch Throwable t
-                     (tel/log!
-                       {:level :warn :id ::toggle-persist-failed :data {:error (ex-message t)}}
-                       "Toggle persistence failed; in-memory value still applies.")))
-              ;; Rebuild the cached `:settings` projection AND drop the
-              ;; stale render/height caches so consumer code and the
-              ;; painter observe the new value on the next paint.
-              ;; `:resync-toggle-settings` busts both render caches (a
-              ;; registry-only toggle like `:vis/show-thinking` isn't in
-              ;; the height cache's `settings-fingerprint`, so without
-              ;; the bust the flip only took effect after a restart).
-              ;; `:bump-render-version` then wakes the render thread for
-              ;; the actual redraw.
-              (state/dispatch [:resync-toggle-settings])
-              (state/dispatch [:bump-render-version])))
           (catch Throwable t
             (tel/log! {:level :warn :id ::toggles-hydrate-failed :data {:error (ex-message t)}}
                       "Toggle hydration from config failed; defaults stand.")))
@@ -4558,9 +4539,28 @@
         ;; invalidation events that restart it.
         provider-limits-thread (volatile! nil)
         workspace-refresh-thread (volatile! nil)
-        terminal-signal-cleanup (volatile! nil)]
+        terminal-signal-cleanup (volatile! nil)
+        ;; Toggle listeners are process-global. Keep the disposal thunk so a
+        ;; closed TUI cannot keep invalidating the next TUI's transcript.
+        toggle-listener-dispose (volatile! nil)]
 
        (.startScreen screen)
+       (vreset! toggle-listener-dispose
+                (vis/toggle-add-listener!
+                  (fn [event]
+                    (try
+                      (let [raw (or (vis/load-config-raw) {})]
+                        (vis/save-config! (assoc raw "toggles" (vis/toggles-snapshot))))
+                      (catch Throwable t
+                        (tel/log! {:level :warn
+                                   :id ::toggle-persist-failed
+                                   :data {:error (ex-message t)}}
+                                  "Toggle persistence failed; in-memory value still applies.")))
+                    ;; Carry the flipped toggle's id: render-neutral ids (the
+                    ;; provider request knobs) must NOT bust the height caches,
+                    ;; or every reasoning-effort cycle re-lays out the transcript.
+                    (state/dispatch [:resync-toggle-settings (:id event)])
+                    (state/dispatch [:bump-render-version]))))
        ;; Ask the terminal for its real cell pixel size NOW — raw mode is on and
        ;; nothing reads input yet — so inline-image boxes reserve the exact rows.
        (probe-terminal-cell-size!)
@@ -7183,6 +7183,8 @@
              ;; eventually hold references to dead atoms).
              (try (vis/unwatch-notifications! :tui-screen) (catch Throwable _ nil))
              (try (vis/remove-channel-event-listener! :tui :tui-screen) (catch Throwable _ nil))
+             (when-let [dispose! @toggle-listener-dispose]
+               (try (dispose!) (catch Throwable _ nil)))
              ;; Tell the render thread to exit and wake it so the wait
              ;; finishes immediately. Daemon thread, so the join is
              ;; optional - doing it anyway lets the final paint (or the

@@ -3668,7 +3668,7 @@
   (into []
         (keep (fn [form]
                 (let [id (:svar/tool-call-id form)]
-                  (when (and id (some? (:result form)))
+                  (when (and id (some? (:result form)) (not= "session_fold" (:vis/tool-name form)))
                     (cond-> {:row-id row-id :id id}
                       (not (str/blank? (str (:vis/tool-name form))))
                       (assoc :tool (str (:vis/tool-name form)))
@@ -3824,7 +3824,8 @@
                                             (if (and id
                                                      (contains? wanted id)
                                                      (= (:id row) (get id->row id))
-                                                     (some? (:result form)))
+                                                     (some? (:result form))
+                                                     (not= "session_fold" (:vis/tool-name form)))
                                               (assoc! acc id (:result form))
                                               acc)))
                                         acc

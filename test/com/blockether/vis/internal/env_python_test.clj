@@ -413,6 +413,7 @@
                          "print(doc('session_fold'))"))]
           (expect (str/includes? out "session_fold(target, gist=None) -> str"))
           (expect (str/includes? out "there is no destructive unfold command"))
+          (expect (str/includes? out "`ntr` never stores a `session_fold` receipt"))
           (expect (str/includes? out "s = await session_state()"))
           (expect (str/includes? out "['iterations'][...]['blocks']"))
           (expect (str/includes? out "broader newer fold supersedes fully covered"))

@@ -51,7 +51,7 @@
 ;;   U            unstage EVERYTHING back to the working tree
 ;;
 ;; ── Discarding / committing ─────────────────────────────────────────────────
-;;   k            discard the change at point (throw it away — asks first)
+;;   x / k        discard the change at point (throw it away — asks first)
 ;;   c            commit flow (message prompt; supports amend)
 ;;
 ;; ── History / inspection ────────────────────────────────────────────────────
@@ -70,15 +70,15 @@
 ;; ── Buffer ──────────────────────────────────────────────────────────────────
 ;;   g            refresh the status buffer from disk
 ;;
-;; ── FAITHFUL to vanilla Emacs magit — no divergence ──────────────────────────
-;; Every key above is bound to the SAME verb Emacs magit binds it to:
-;;   k discard · g refresh · C-w copy-section-value · n/p section motion ·
+;; ── Magit-compatible bindings ────────────────────────────────────────────────
+;; Every key above uses Magit's corresponding verb, except `x`, which is an
+;; additional discard alias so the obvious destructive key works in the TUI:
+;;   x/k discard · g refresh · C-w copy-section-value · n/p section motion ·
 ;;   s/u/S/U stage · c commit · l log · P/F/f remote · b branch · z stash ·
 ;;   TAB toggle · RET visit · q bury.  Case-sensitive, exactly like magit.
 ;;
-;; Magit keys we do NOT implement yet are deliberately left UNBOUND — never
-;; remapped to a wrong verb — so magit muscle memory is never betrayed:
-;;   x reset (magit-reset-quickly) · r rebase · y show-refs · d/D + e/E diff/ediff
+;; Magit keys we do NOT implement yet stay FREE:
+;;   r rebase · y show-refs · d/D + e/E diff/ediff
 ;;   · m merge · M remote · V revert · X reset transient · A cherry-pick ·
 ;;   a/v apply/reverse · t tag · w/W am/patch · !/: run-git · i/I gitignore ·
 ;;   j jump · +/-/0 diff-context · G refresh-all · SPC/DEL scroll ·

@@ -112,48 +112,100 @@ function CopyButton({
   );
 }
 
-type DiffLineKind = 'meta' | 'hunk' | 'add' | 'del' | 'ctx';
+type DiffCellKind = 'add' | 'del' | 'ctx';
+type DiffCell = { line: number | null; text: string; kind: DiffCellKind };
+type DiffRow =
+  | { kind: 'meta'; text: string }
+  | { kind: 'code'; before: DiffCell | null; after: DiffCell | null };
 
-function diffLineKind(line: string): DiffLineKind {
-  if (line.startsWith('+++') || line.startsWith('---')) return 'meta';
-  if (line.startsWith('@@')) return 'hunk';
-  if (line.startsWith('+')) return 'add';
-  if (line.startsWith('-')) return 'del';
-  return 'ctx';
+function sideBySideDiff(value: string): DiffRow[] {
+  const rows: DiffRow[] = [];
+  let beforeLine: number | null = null;
+  let afterLine: number | null = null;
+  let removed: DiffCell[] = [];
+  let added: DiffCell[] = [];
+
+  const flushChanges = () => {
+    for (let index = 0; index < Math.max(removed.length, added.length); index += 1) {
+      rows.push({ kind: 'code', before: removed[index] ?? null, after: added[index] ?? null });
+    }
+    removed = [];
+    added = [];
+  };
+
+  for (const line of value.split('\n')) {
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (hunk) {
+      flushChanges();
+      beforeLine = Number(hunk[1]);
+      afterLine = Number(hunk[2]);
+      rows.push({ kind: 'meta', text: line });
+    } else if (line.startsWith('-') && !line.startsWith('---')) {
+      removed.push({ line: beforeLine, text: line.slice(1), kind: 'del' });
+      beforeLine = beforeLine === null ? null : beforeLine + 1;
+    } else if (line.startsWith('+') && !line.startsWith('+++')) {
+      added.push({ line: afterLine, text: line.slice(1), kind: 'add' });
+      afterLine = afterLine === null ? null : afterLine + 1;
+    } else if (line.startsWith(' ')) {
+      flushChanges();
+      rows.push({
+        kind: 'code',
+        before: { line: beforeLine, text: line.slice(1), kind: 'ctx' },
+        after: { line: afterLine, text: line.slice(1), kind: 'ctx' },
+      });
+      beforeLine = beforeLine === null ? null : beforeLine + 1;
+      afterLine = afterLine === null ? null : afterLine + 1;
+    } else {
+      flushChanges();
+      rows.push({ kind: 'meta', text: line });
+    }
+  }
+  flushChanges();
+  return rows;
 }
 
-function codeLanguage(node: ReactNode): string {
-  if (!isValidElement<{ className?: string }>(node)) return '';
-  return /(?:^|\s)language-([\w-]+)/.exec(node.props.className ?? '')?.[1]?.toLowerCase() ?? '';
+function diffCellClass(cell: DiffCell | null): string {
+  if (!cell) return 'bg-code';
+  if (cell.kind === 'add') return 'bg-code-ok text-code-success';
+  if (cell.kind === 'del') return 'bg-code-err text-code-error';
+  return 'bg-code text-code-foreground';
+}
+
+function DiffCellView({ cell }: { cell: DiffCell | null }) {
+  return (
+    <span className={`flex min-w-0 whitespace-pre px-3 py-px ${diffCellClass(cell)}`}>
+      <span className="mr-2 w-8 shrink-0 select-none text-right text-code-duration">{cell?.line ?? ''}</span>
+      <span className="min-w-0 overflow-hidden text-ellipsis">{cell?.text || ' '}</span>
+    </span>
+  );
 }
 
 const DiffBlock = memo(function DiffBlock({ value, compact, frameless = false }: { value: string; compact: boolean; frameless?: boolean }) {
-  const lineClasses: Record<DiffLineKind, string> = {
-    meta: 'text-code-duration',
-    hunk: 'text-code-syntax-keyword',
-    add: 'bg-code-ok text-code-success',
-    del: 'bg-code-err text-code-error',
-    ctx: 'text-code-foreground',
-  };
-
+  const rows = sideBySideDiff(value);
   return (
     <div
       className={`${compact ? 'my-2' : 'my-3'} relative overflow-hidden bg-code ${frameless ? '' : 'border border-code-edge'}`}
-      aria-label="Unified diff"
+      aria-label="Side-by-side diff"
     >
       {!frameless && <CopyButton value={value} />}
-      <pre
-        className={`${compact ? 'text-meta ' : 'text-ui '} m-0 max-w-full overflow-x-auto overscroll-x-contain py-2 font-mono`}
-      >
-        {value.split('\n').map((line, index) => (
-          <span
-            className={`block min-w-full w-fit whitespace-pre px-3 ${frameless ? '' : 'first:pr-16'} ${lineClasses[diffLineKind(line)]}`}
-            key={`${index}-${line}`}
-          >
-            {line || ' '}
-          </span>
-        ))}
-      </pre>
+      <div className={`${compact ? 'text-meta' : 'text-ui'} max-w-full overflow-x-auto overscroll-x-contain py-2 font-mono`}>
+        <div className={`grid min-w-[44rem] grid-cols-2 ${frameless ? '' : 'first:pr-16'}`}>
+          <span className="border-b border-code-edge px-3 py-1 font-semibold text-code-duration">before</span>
+          <span className="border-b border-l border-code-edge px-3 py-1 font-semibold text-code-duration">after</span>
+          {rows.map((row, index) =>
+            row.kind === 'meta' ? (
+              <span className="col-span-2 whitespace-pre px-3 py-px text-code-syntax-keyword" key={`${index}-${row.text}`}>
+                {row.text || ' '}
+              </span>
+            ) : (
+              <div className="col-span-2 grid grid-cols-2" key={`${index}-${row.before?.text}-${row.after?.text}`}>
+                <DiffCellView cell={row.before} />
+                <span className="border-l border-code-edge"><DiffCellView cell={row.after} /></span>
+              </div>
+            ),
+          )}
+        </div>
+      </div>
     </div>
   );
 });
@@ -468,6 +520,11 @@ function extractText(node: ReactNode): string {
     return extractText((node as { props: { children?: ReactNode } }).props.children);
   }
   return '';
+}
+
+function codeLanguage(node: ReactNode): string {
+  if (!isValidElement<{ className?: string }>(node)) return '';
+  return /(?:^|\s)language-([^\s]+)/.exec(node.props.className ?? '')?.[1] ?? '';
 }
 
 function jsonText(value: JsonValue | unknown): string {

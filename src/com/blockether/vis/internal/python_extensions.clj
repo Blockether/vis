@@ -247,8 +247,24 @@ def log(level, msg):
 def notify(text, level='info'):
     _host['notify'](str(text), str(level))
 
-def jailed_shell(cmd, opts=None):
-    return _host['jailed_shell'](str(cmd), opts)
+def shell(cmd=None, opts=None):
+    # ONE place for whatever is fed to a shell: `cmd` - a string for one command,
+    # an ordered list of strings for a strictly serial batch, or (op 'send') the
+    # keystrokes typed into a live shell. There is no second carrier.
+    if isinstance(opts, dict) and ('cmd' in opts or 'commands' in opts or 'text' in opts):
+        raise TypeError('shell takes its command(s) as the first argument, never in opts')
+    if cmd is None:
+        payload = None
+    elif isinstance(cmd, str):
+        payload = str(cmd)
+    elif isinstance(cmd, (list, tuple)):
+        payload = [str(c) for c in cmd]
+    else:
+        raise TypeError('shell commands must be a string or an ordered list of strings')
+    return _host['jailed_shell'](payload, opts)
+
+# Compatibility for extensions written before the public `vis.shell` spelling.
+jailed_shell = shell
 '''
 
 _vis_mod = _vis_types.ModuleType('vis')
@@ -356,7 +372,7 @@ def __vis_registration__():
 (defn ^:no-doc build-context
   "Build one Python extension context. Native process creation stays disabled;
    the POSIX compatibility layer routes `subprocess` and `os.system` through
-   `vis.jailed_shell`, where the invoking session's `wrap-argv` policy applies.
+   `vis.shell`, where the invoking session's `wrap-argv` policy applies.
    Host interop remains restricted to the explicitly bound `vis` callbacks."
   ^Context []
   (-> (Context/newBuilder (into-array String ["python"]))

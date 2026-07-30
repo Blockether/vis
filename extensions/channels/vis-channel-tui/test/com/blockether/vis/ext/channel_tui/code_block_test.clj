@@ -193,3 +193,61 @@
                     (content-rows lines)]
 
                    (expect (= [src] rows)))))
+
+;; --- side-by-side diff fence -----------------------------------------------
+;; Regression for the "WHERE IS A RED AND WHERE IS A GREEN?!" thread: the
+;; two-column projection prefixes every body row with a line number, so
+;; re-classifying the COMPOSED row called each change `:ctx` and the whole diff
+;; painted in neutral code colours. A diff with no `@@` header (the compact /
+;; whole-file form) additionally rendered as blank cells: the text was dropped
+;; whenever the side carried no line number, leaving only the column divider.
+
+(defn- strip-ansi [s] (str/replace (str s) #"\u001b\[[0-9;]*m" ""))
+
+(defdescribe
+  tui-side-by-side-diff-test
+  (it "pairs removed and added rows into bounded before/after columns"
+      (let
+        [rows
+         (content-rows (code-block->lines [:code {:lang "diff"}
+                                           "@@ -4,3 +4,3 @@\n keep\n-old value\n+new value\n tail"]
+                                          80
+                                          {}))
+
+         change-row
+         (first (filter #(and (str/includes? % "old value") (str/includes? % "new value")) rows))]
+
+        (expect (some? change-row))
+        (expect (str/includes? change-row "│"))
+        (expect (every? #(<= (p/display-width (strip-ansi %)) 80) rows))))
+  (it "colours the before half red and the after half green"
+      (let
+        [rows
+         (content-rows (code-block->lines [:code {:lang "diff"}
+                                           "@@ -4,3 +4,3 @@\n keep\n-old value\n+new value\n tail"]
+                                          80
+                                          {}))
+
+         change-row
+         (first (filter #(and (str/includes? % "old value") (str/includes? % "new value")) rows))]
+
+        ;; 91 = red (removed), 32 = green (added), in that column order.
+        (expect (re-find #"(?s)\u001b\[91m.*old value.*\u001b\[32m.*new value" change-row))
+        ;; context rows stay uncoloured
+        (expect (not-any? #(and (str/includes? % "keep") (str/includes? % "\u001b[")) rows))))
+  (it "renders a numberless diff (no @@ header) instead of empty columns"
+      (let
+        [rows
+         (content-rows (code-block->lines [:code {:lang "diff"}
+                                           (str "--- before\n+++ after\n"
+                                                "... 593 unchanged line(s) before\n"
+                                                "-old value\n+new value\n context tail")]
+                                          80
+                                          {}))
+
+         body
+         (remove #(str/starts-with? (strip-ansi %) "-") rows)]
+
+        (expect (some #(str/includes? % "old value") body))
+        (expect (some #(str/includes? % "new value") body))
+        (expect (some #(str/includes? % "context tail") body)))))

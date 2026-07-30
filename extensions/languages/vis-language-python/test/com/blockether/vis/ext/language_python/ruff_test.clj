@@ -104,6 +104,7 @@
         ;; an unused import is a WARNING — the file still runs
         (expect (= "warning" (get codes "F401")))
         (expect (= ["ruff"] (get r "providers")))
+        (expect (= "import os\nx = 1\n" (get r "snippet")))
         (expect (= 0 (get r "error")))))
   (it "grades an undefined name (F821) as an error"
       (let [r (:result (pyruff/py-lint-fn nil {"code" "x = undefined_thing\n"}))]

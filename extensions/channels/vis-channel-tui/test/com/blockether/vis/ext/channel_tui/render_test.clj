@@ -3241,18 +3241,23 @@
            this)
          (setCharacter [_ _ _] this))
 
+       ;; More matches than the overlay cap must stay a compact, scrollable
+       ;; menu instead of consuming all available transcript height.
        suggestions
-       [{:label "first" :slash/usage "/first" :slash/selected? true}
-        {:label "second" :slash/usage "/second" :slash/selected? false}]
+       (mapv (fn [i]
+               {:label (str "command-" i)
+                :slash/usage (str "/command-" i)
+                :slash/selected? (zero? i)})
+             (range 12))
 
        input-top
-       10
+       20
 
        cols
        80
 
        n
-       (count suggestions)
+       8
 
        ;; Layout (from top to bottom):
        ;;   margin-row -> title-row -> border-row -> sug rows ...
@@ -3710,7 +3715,22 @@
       (expect (= ["  RESULT" "  2" "  STDOUT" "  hi"] body-texts))
       ;; Sections are separated by exactly ONE blank row, each **LABEL** glued to
       ;; its own content, and the body ends with ONE trailing pad row.
-      (expect (= ["  RESULT" "  2" "" "  STDOUT" "  hi" ""] (vec (drop 2 texts)))))))
+      (expect (= ["  RESULT" "  2" "" "  STDOUT" "  hi" ""] (vec (drop 2 texts))))))
+  (it
+    "keeps a blank row on both sides of a batch command divider"
+    (let
+      [texts
+       (entry-text
+         (tool-card-entries
+           {:label "SHELL"
+            :color-role :tool-color/shell
+            :summary "$ 2 shell commands — 2 succeeded, 0 failed"
+            :body
+            "### 1. $ first\n\n**STATUS**\n\nstatus: success\n\n────────────────────────────────────────\n\n### 2. $ second\n\n**STATUS**\n\nstatus: success"}
+           {:fill-w 76 :session-id nil :detail-expansions {}}))]
+      (expect (= ["  ▍ 1. $ first" "" "  STATUS" "  status: success" ""
+                  "  ────────────────────────────────────────" "" "  ▍ 2. $ second"]
+                 (vec (take 8 (drop 2 texts))))))))
 
 (defdescribe tool-card-image-reservation-test
              ;; A `vis-image` fence inside an op-card RESULT (e.g. `vis_attach`'s stdout)
