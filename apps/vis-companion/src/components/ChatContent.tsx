@@ -2,8 +2,6 @@ import {
   isValidElement,
   memo,
   useEffect,
-  useLayoutEffect,
-  useRef,
   useState,
   type MouseEvent,
   type ReactNode,
@@ -25,7 +23,6 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { parseUserMessage } from '../lib/paste';
 import { formatCost, formatTokens, turnUsage } from '../lib/usage';
-import { isViewportRotating, onViewportRotation } from '../lib/viewport';
 import type {
   ContentBlock,
   GatewayAttachment,
@@ -918,13 +915,6 @@ const FormTrace = memo(function FormTrace(
   );
 });
 
-const REASONING_PREVIEW_LINES = 3;
-// Mirrors com.blockether.vis.internal.render/reasoning-collapse-min-hidden (3).
-// A disclosure that buys back one or two clipped rows is pure friction — you
-// uncollapse just to read one more line — so a barely-overflowing trace renders
-// inline, in full, with no toggle at all. Same rule as the TUI band and the
-// Clojure transcript split; keep the three in step.
-const REASONING_COLLAPSE_MIN_HIDDEN = 3;
 const ENCRYPTED_REASONING_PLACEHOLDER =
   '[provider returned encrypted reasoning; plaintext reasoning is unavailable]';
 
@@ -937,109 +927,15 @@ function normalizeReasoning(value: string): string {
     .trim();
 }
 
-// Collapsed-height measurement for THINKING bands, batched across the whole
-// transcript.
-//
-// One `ResizeObserver` per band is the obvious shape and the wrong one here: a
-// rotation resizes EVERY band in the same frame, so the browser delivers N
-// callbacks, each doing `getComputedStyle` + `scrollHeight` (a forced
-// synchronous layout) followed by its own `setState`. A long session holds
-// dozens of them, and that read-write-read-write thrash is what makes the
-// transcript churn while the device is still turning.
-//
-// So: ONE observer for every band on screen, all measurements coalesced into a
-// single animation frame (one layout flush, one React batch), and nothing
-// measured while the viewport is mid-rotation — those widths are transitional
-// and every intermediate answer is thrown away anyway. The pending set survives
-// the skip and is replayed once, from settled geometry, when the flip ends.
-const bandMeasures = new WeakMap<Element, () => void>();
-const observedBands = new Set<Element>();
-const pendingBands = new Set<Element>();
-let bandFrame: number | null = null;
-let bandObserver: ResizeObserver | null = null;
-
-function flushBands() {
-  bandFrame = null;
-  if (isViewportRotating()) return;
-  const targets = [...pendingBands];
-  pendingBands.clear();
-  for (const band of targets) bandMeasures.get(band)?.();
-}
-
-function scheduleBands(bands: Iterable<Element>) {
-  for (const band of bands) pendingBands.add(band);
-  if (bandFrame !== null || typeof window === 'undefined') return;
-  bandFrame = window.requestAnimationFrame(flushBands);
-}
-
-function observeBand(band: Element, measure: () => void): () => void {
-  if (typeof ResizeObserver === 'undefined') return () => {};
-  bandMeasures.set(band, measure);
-  observedBands.add(band);
-  if (!bandObserver) {
-    bandObserver = new ResizeObserver((entries) =>
-      scheduleBands(entries.map((entry) => entry.target)),
-    );
-    onViewportRotation((phase) => {
-      if (phase === 'end') scheduleBands(observedBands);
-    });
-  }
-  bandObserver.observe(band);
-  return () => {
-    bandObserver?.unobserve(band);
-    observedBands.delete(band);
-    pendingBands.delete(band);
-    bandMeasures.delete(band);
-  };
-}
-
+// Keep reasoning visible rather than calculating a viewport-dependent preview. The
+// transcript stays deterministic across font loads, width changes, and rotations.
 export const ThinkingBand = memo(function ThinkingBand({ children }: { children: string }) {
   const normalized = normalizeReasoning(children);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const [isExpandRequested, setExpandRequested] = useState(false);
-  const [hiddenRows, setHiddenRows] = useState(0);
-
-  useLayoutEffect(() => {
-    const body = bodyRef.current;
-    if (!body) return;
-
-    const measure = () => {
-      const lineHeight = Number.parseFloat(window.getComputedStyle(body).lineHeight) || 20;
-      const previewHeight = lineHeight * REASONING_PREVIEW_LINES;
-      const hiddenHeight = Math.max(0, body.scrollHeight - previewHeight);
-      const nextHiddenRows = Math.ceil(hiddenHeight / lineHeight);
-      setHiddenRows(nextHiddenRows >= REASONING_COLLAPSE_MIN_HIDDEN ? nextHiddenRows : 0);
-    };
-
-    measure();
-    return observeBand(body, measure);
-  }, [normalized]);
-
-  // Collapsing is derived, not stored: a block with nothing hidden is never expanded.
-  const expanded = isExpandRequested && hiddenRows > 0;
-
-
   if (!normalized || normalized === ENCRYPTED_REASONING_PLACEHOLDER) return null;
-  const collapsible = hiddenRows >= REASONING_COLLAPSE_MIN_HIDDEN;
 
   return (
     <section className="my-2 bg-thinking-surface px-3 py-2 text-ui text-thinking">
-      {collapsible && (
-        <button
-          type="button"
-          data-disclosure-toggle
-          className="mb-1 flex min-h-6 w-full items-center gap-1.5 text-left font-mono text-chip font-bold not-italic tracking-[0.07em] text-thinking transition-colors hover:text-dialog-hint-key"
-          aria-expanded={expanded}
-          onClick={() => setExpandRequested((value) => !value)}
-        >
-          <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>
-          <span>{expanded ? 'THINKING' : `THINKING +${hiddenRows} more`}</span>
-        </button>
-      )}
-      <div
-        ref={bodyRef}
-        className={`${collapsible && !expanded ? 'max-h-[3.75rem] overflow-hidden' : ''} italic`}
-      >
+      <div className="italic">
         <Markdown compact hardBreaks>{normalized}</Markdown>
       </div>
     </section>
@@ -1407,7 +1303,7 @@ function runningTurnPhase(turn: TranscriptTurn): string {
     if (request.startsWith('!&')) return 'Vis is starting a command';
     if (request.startsWith('!')) return 'Vis is running a command';
     if (request.startsWith('/')) return `Vis is running: ${request.split(/\s+/, 1)[0]}`;
-    return 'Vis is calling the provider';
+    return 'Vis is waiting for an update';
   }
   const last = iterations.at(-1);
   const suffix = `(iter ${iteration})`;

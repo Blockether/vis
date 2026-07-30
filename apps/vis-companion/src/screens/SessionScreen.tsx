@@ -63,7 +63,6 @@ import {
   onViewportRotation,
   scrollAnchorFor,
   type ScrollAnchor,
-  shellViewportHeight,
   useVisualViewportShell,
 } from '../lib/viewport';
 import { answeredTurnCount, markSessionRead } from '../lib/unread';
@@ -239,7 +238,8 @@ function commandPhase(request: string): string | null {
   return null;
 }
 
-function liveProgressPhase(turn: LiveTurn): string {
+function liveProgressPhase(turn: LiveTurn, connected: boolean): string {
+  if (!connected) return 'Reconnecting — checking turn status';
   if (turn.cancelling) return 'Vis is cancelling';
 
   const last = turn.iterations.at(-1);
@@ -250,7 +250,7 @@ function liveProgressPhase(turn: LiveTurn): string {
   );
 
   if (last?.error != null) return 'Vis is retrying';
-  if (iteration === 0) return commandPhase(turn.request) ?? 'Vis is calling the provider';
+  if (iteration === 0) return commandPhase(turn.request) ?? 'Vis is waiting for an update';
 
   const suffix = `(iter ${iteration})`;
   switch (activity?.kind) {
@@ -786,10 +786,8 @@ export function SessionScreen({
   fresh?: boolean;
 }) {
   // The device rotates freely here. A flip is survived rather than forbidden:
-  // `lib/viewport.ts` holds a rotation window open for the whole animation, and
-  // every measurement in this screen (the `ResizeObserver` below, the thinking
-  // bands in `ChatContent`) simply stops running inside it — the intermediate
-  // widths are transitional and every answer taken from them is thrown away.
+  // `lib/viewport.ts` holds a rotation window open for the whole animation, so
+  // the final anchor restore runs only after the geometry has settled.
   // Every screen-level snapshot is seeded from the client's cache: reopening a
   // session paints its last known transcript on the FIRST frame and revalidates
   // underneath, instead of holding the loading sheet over an empty view.
@@ -946,20 +944,12 @@ export function SessionScreen({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recordingRef = useRef<WavRecording | null>(null);
   const pasteCounterRef = useRef(peekDraftMessage(draftMessageId).counter);
-  const resizeScrollFrameRef = useRef<number | null>(null);
   const disclosureScrollFrameRef = useRef<number | null>(null);
   const prependScrollHeightRef = useRef<number | null>(null);
   const scrollMetricsFrameRef = useRef<number | null>(null);
-  // A rotation has one terminal scroll write: keep observers and stale scroll
-  // events from competing with that write until it has landed.
+  // A rotation has one terminal scroll write: keep stale scroll events from
+  // competing with that write until it has landed.
   const rotationRestorePendingRef = useRef(false);
-  // Last measured height of the scroller itself, so a box that shrinks under a
-  // parked reader can hand the lost pixels back (see the ResizeObserver below).
-  const viewportHeightRef = useRef<number | null>(null);
-  // The shell (window / visual viewport) height, so a scroller resize can be told
-  // apart from a keyboard or rotation: same shell, different scroller = the
-  // composer autosized.
-  const shellHeightRef = useRef<number | null>(null);
   // Dictation that was already captured but not yet turned into text. A
   // backgrounded webview loses the network mid-request, and dropping the blob
   // there would throw away a finished sentence.
@@ -1183,12 +1173,8 @@ export function SessionScreen({
 
   // Opening a session must LAND on the latest turn, and one scrollTo cannot do
   // that: the transcript keeps growing after the first paint (deferred Markdown,
-  // fonts, images, code blocks). Worse, the scroll event produced by that first
-  // scrollTo is delivered AFTER the growth, so `handleScroll` measured a large
-  // distance-to-bottom and cleared `followingRef` — which then vetoed the
-  // ResizeObserver's catch-up scroll and left the session parked mid-history.
-  // Pin instead: re-scroll on a settle schedule and own every scroll event in
-  // that window.
+  // fonts, images, code blocks). The opening pin re-scrolls on a short settle
+  // schedule and owns every scroll event in that window.
   const pinToEnd = useCallback(() => {
     settleTimersRef.current.forEach((id) => window.clearTimeout(id));
     settleTimersRef.current = [];
@@ -2045,80 +2031,12 @@ export function SessionScreen({
     return () => window.clearTimeout(timer);
   }, [loading]);
 
-  // Deferred Markdown, fonts, and content-visibility can change the transcript's
-  // measured height after React commits. Keep a newly opened/followed session at
-  // its actual bottom as those measurements settle.
-  //
-  // The SCROLLER itself must be observed too, not just its content. Focusing the
-  // composer raises the keyboard, which shrinks the shell and therefore the
-  // scroller's `clientHeight` while the transcript's own height never changes —
-  // so a content-only observer stays silent, `scrollTop` is left where it was,
-  // and the bottom of the conversation slides under the keyboard. That is the
-  // "I tapped the input and got scrolled up" jump: nothing scrolled, the window
-  // shrank around a reader who was pinned to the end.
+  // Scroll only from explicit user or application state transitions: transcript
+  // commits, opening/following a session, composer focus, and rotation. We do not
+  // observe every incidental layout change; a late font or image reflow must not
+  // take control away from someone reading history.
   useEffect(() => {
-    const transcript = transcriptRef.current;
-    const viewport = scrollRef.current;
-    if (!transcript || typeof ResizeObserver === 'undefined') return;
-    viewportHeightRef.current = viewport?.clientHeight ?? null;
-    shellHeightRef.current = shellViewportHeight();
-
-    const observer = new ResizeObserver(() => {
-      // A composer that grows or shrinks a line takes those pixels from the
-      // scroller's BOTTOM edge only: every line already on screen keeps its exact
-      // y, so the still-looking thing to do is NOTHING. Touching `scrollTop` at
-      // all — re-anchoring a mid-history reader or re-following the end — is what
-      // slides the answer bubble up and down as the input stretches while you
-      // type. A shell-height change is the other story: the keyboard really does
-      // eat the bottom of the conversation, so that case keeps its compensation.
-      // A rotation resizes both observed boxes several times before the layout
-      // settles. Those measurements belong to different geometries, so this
-      // keyboard-only compensation must not issue a competing scroll write. The
-      // rotation transaction restores its snapshot once after the final paint.
-      if (isViewportRotating() || rotationRestorePendingRef.current) {
-        const box = scrollRef.current;
-        if (box) viewportHeightRef.current = box.clientHeight;
-        shellHeightRef.current = shellViewportHeight();
-        return;
-      }
-      const box = scrollRef.current;
-      let composerOnly = false;
-      if (box) {
-        const previous = viewportHeightRef.current;
-        const height = box.clientHeight;
-        viewportHeightRef.current = height;
-        const shell = shellViewportHeight();
-        const shellMoved =
-          shellHeightRef.current === null || Math.abs(shell - shellHeightRef.current) > 1;
-        shellHeightRef.current = shell;
-        if (previous !== null && previous !== height) {
-          // ...unless the reader is parked at the END. Those pixels come off the
-          // scroller's bottom edge, so the last streamed line slides under the
-          // grown composer and simply stays there: following is silently broken
-          // until the next chunk snaps the view back by the whole accumulated
-          // gap. Re-pin in the frame it grew — one line, not a leap.
-          if (!shellMoved) composerOnly = !followingRef.current;
-          else if (!followingRef.current) {
-            const limit = Math.max(0, box.scrollHeight - height);
-            box.scrollTop = Math.max(0, Math.min(limit, box.scrollTop + (previous - height)));
-          }
-        }
-      }
-      if (composerOnly || !followingRef.current || resizeScrollFrameRef.current !== null) return;
-      resizeScrollFrameRef.current = window.requestAnimationFrame(() => {
-        resizeScrollFrameRef.current = null;
-        if (followingRef.current) scrollToEnd('auto');
-      });
-    });
-    observer.observe(transcript);
-    if (viewport) observer.observe(viewport);
-
     return () => {
-      observer.disconnect();
-      if (resizeScrollFrameRef.current !== null) {
-        window.cancelAnimationFrame(resizeScrollFrameRef.current);
-        resizeScrollFrameRef.current = null;
-      }
       if (disclosureScrollFrameRef.current !== null) {
         window.cancelAnimationFrame(disclosureScrollFrameRef.current);
         disclosureScrollFrameRef.current = null;
@@ -2130,7 +2048,7 @@ export function SessionScreen({
       settleTimersRef.current.forEach((id) => window.clearTimeout(id));
       settleTimersRef.current = [];
     };
-  }, [scrollToEnd, sid]);
+  }, [sid]);
 
   // Autosize the composer WITHOUT thrashing layout. The naive pattern
   // (`height='auto'` then read `scrollHeight` on every keystroke) invalidates
@@ -2158,9 +2076,9 @@ export function SessionScreen({
       // (smaller) maximum, so the browser CLAMPS `scrollTop` down — and the clamp
       // is not undone when the height is written back a statement later. Deleting
       // a single character therefore walked the transcript down by up to a full
-      // composer's worth of pixels, with no resize left for the ResizeObserver to
-      // react to. Undo the transient clamp here: same scroller geometry before and
-      // after means the only thing that moved was the browser's clamp.
+      // composer's worth of pixels. Undo the transient clamp here: same scroller
+      // geometry before and after means the only thing that moved was the browser's
+      // clamp.
       const box = scrollRef.current;
       const parkedTop = box ? box.scrollTop : 0;
       const parkedHeight = box ? box.clientHeight : 0;
@@ -2949,7 +2867,7 @@ export function SessionScreen({
                   : []),
             }}
             streaming={liveTurn.status === 'running'}
-            activity={liveProgressPhase(liveTurn)}
+            activity={liveProgressPhase(liveTurn, connected)}
             startedAt={liveTurn.startedAt}
             client={client}
             sid={sid}
@@ -2957,7 +2875,7 @@ export function SessionScreen({
         </div>
       );
     },
-    [liveTurn, turns.length, client, sid],
+    [liveTurn, turns.length, client, sid, connected],
   );
   // Pin the viewport to the content it is already showing, so rows added ABOVE
   // do not shove it. The layout effect reads this height on the next paint.
