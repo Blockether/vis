@@ -229,12 +229,15 @@
 
 (defn answer-content
   "Convert the engine's final answer value into canonical blocks.
-   Accepted answer values are Markdown strings, `{:answer string}`, and
-   needs-input maps. Typed content vectors pass through after validation."
+   Accepted answer values are Markdown strings, `{:answer string}`, wrapped
+   canonical content vectors, and needs-input maps. Typed content vectors pass
+   through after validation."
   [answer]
   (let [answer (if (and (map? answer) (contains? answer :result)) (:result answer) answer)]
     (cond (nil? answer) []
           (and (vector? answer) (every? block-valid? answer)) answer
+          (and (map? answer) (vector? (:answer answer)) (every? block-valid? (:answer answer)))
+          (:answer answer)
           (string? answer) [(prose answer)]
           (and (map? answer) (string? (:answer answer))) [(prose (:answer answer))]
           (and (map? answer) (string? (:answer/text answer))) [(prose (:answer/text answer))]

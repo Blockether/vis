@@ -612,6 +612,23 @@ def __vis_install_matplotlib__():
         def grid(self, *a, **k):
             return grid(*a, **k)
 
+        def set(self, **kwargs):
+            if "title" in kwargs:
+                self.set_title(kwargs["title"])
+            if "xlabel" in kwargs:
+                self.set_xlabel(kwargs["xlabel"])
+            if "ylabel" in kwargs:
+                self.set_ylabel(kwargs["ylabel"])
+            if "xlim" in kwargs:
+                self.set_xlim(kwargs["xlim"])
+            if "ylim" in kwargs:
+                self.set_ylim(kwargs["ylim"])
+            if "xscale" in kwargs:
+                self.set_xscale(kwargs["xscale"])
+            if "yscale" in kwargs:
+                self.set_yscale(kwargs["yscale"])
+            return self
+
         def set_title(self, s, **k):
             title(s)
 

@@ -90,7 +90,7 @@
            (fn []
              (is (true? ((rv 'retire-loopback-orphan!) "/tmp/recover/vis.db" "127.0.0.1" 7890)))
              (is (= [[{:host "127.0.0.1" :port 7890 :secret "stable-secret"} "GET" "/healthz"
-                      {:timeout-ms 1500}]
+                      {:timeout-ms 1500 :headers {"X-Vis-Suppress-Registry-Recovery" "true"}}]
                      [{:host "127.0.0.1" :port 7890 :secret "stable-secret" :pid 9154} "POST"
                       "/v1/admin/stop" {}]]
                     @calls))))

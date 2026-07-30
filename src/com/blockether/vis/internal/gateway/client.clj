@@ -85,7 +85,7 @@
    asks for `text/event-stream` with compression disabled so the SSE body stays
    byte-live for the line reader + idle watchdog."
   [{:keys [secret] :as _entry} method path
-   {:keys [body as timeout-ms] :or {as :string timeout-ms 30000}}]
+   {:keys [body as timeout-ms headers] :or {as :string timeout-ms 30000}}]
   (http/request
     (cond->
       {:client @http-client
@@ -96,6 +96,7 @@
        :as as
        :headers (cond->
                   (merge (protocol/client-headers client-label)
+                         headers
                          {"Accept" (if (= as :stream) "text/event-stream" "application/json")
                           "X-Vis-Gateway-Secret" (str secret)})
                   (= as :stream)
@@ -207,7 +208,13 @@
 
          response
          (when candidate
-           (gw-send! candidate "GET" "/healthz" {:timeout-ms health-probe-timeout-ms}))
+           ;; Health normally repairs a missing registry. Keep this diagnostic probe
+           ;; side-effect-free so we can retire only a genuine orphan.
+           (gw-send! candidate
+                     "GET"
+                     "/healthz"
+                     {:timeout-ms health-probe-timeout-ms
+                      :headers {"X-Vis-Suppress-Registry-Recovery" "true"}}))
 
          body
          (when (= 200 (:status response)) (note-handshake! (parse-json-body (:body response))))

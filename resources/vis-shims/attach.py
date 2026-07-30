@@ -115,6 +115,25 @@ def __vis_install_attach__():
         return None
 
     def vis_attach(path, kind=None, media_type=None, filename=None):
+        if hasattr(path, "savefig"):
+            import io
+
+            # Support the natural matplotlib idiom `vis_attach(fig, 'plot.png')`
+            # without requiring a sandbox-visible temporary file.
+            buf = io.BytesIO()
+            path.savefig(buf, format="png")
+            if (
+                filename is None
+                and isinstance(kind, str)
+                and kind.lower().endswith(".png")
+            ):
+                filename, kind = kind, None
+            return vis_attach_bytes(
+                buf.getvalue(),
+                filename or "figure.png",
+                kind=kind,
+                media_type=media_type,
+            )
         with open(path, "rb") as f:
             data = f.read()
         name = filename or _os.path.basename(str(path)) or "artifact"

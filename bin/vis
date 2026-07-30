@@ -137,6 +137,50 @@ run_measured_or_exec() {
   fi
 }
 
+# A JVM/source launch must not inherit an incompatible GraalVM from a long-lived
+# parent (IDE, terminal multiplexer, service runner, etc.). Clojure's launcher
+# prefers JAVA_CMD / the `java` on PATH over JAVA_HOME, so merely running
+# `sdk env` in a newer shell does not repair an already-started runner.
+#
+# Stock JDKs are deliberately accepted: the Maven-pinned Truffle runtime runs
+# unchained there. When the selected JVM IS GraalVM, however, its built-in
+# Truffle must be the exact CE release pinned by this checkout. Resolve an
+# already-installed pin through the repository's single JDK gate and export all
+# three selectors that the Clojure CLI may consult.
+ensure_compatible_jvm_runtime() {
+  local java_cmd vendor pinned_home
+
+  if [[ -n "${JAVA_CMD:-}" ]]; then
+    java_cmd="$(command -v "$JAVA_CMD" 2>/dev/null || true)"
+  else
+    java_cmd="$(command -v java 2>/dev/null || true)"
+  fi
+  [[ -n "$java_cmd" ]] || return 0
+
+  vendor="$("$java_cmd" -XshowSettings:properties -version 2>&1 |
+    sed -n 's/^ *java\.vendor\.version = //p' | head -n1)"
+  [[ "$vendor" == *GraalVM* ]] || return 0
+
+  # shellcheck source=/dev/null
+  . "$repo_root/.graalvm-version"
+  [[ "$vendor" == "$GRAAL_VENDOR_VERSION" ]] && return 0
+
+  if pinned_home="$("$repo_root/bin/require-graalvm" 2>/dev/null)"; then
+    export JAVA_HOME="$pinned_home"
+    export GRAALVM_HOME="$pinned_home"
+    export JAVA_CMD="$pinned_home/bin/java"
+    export PATH="$pinned_home/bin:$PATH"
+    echo "vis: JVM launcher replaced incompatible $vendor with $GRAAL_VENDOR_VERSION." >&2
+    measure_log "selected pinned JVM $pinned_home"
+    return 0
+  fi
+
+  echo "vis: incompatible JVM runtime: $vendor" >&2
+  echo "vis: this checkout embeds GraalPy/Truffle $GRAAL_VERSION and requires $GRAAL_VENDOR_VERSION." >&2
+  echo "vis: install it with '$repo_root/bin/require-graalvm --install', or run --jvm on a stock JDK 25." >&2
+  return 1
+}
+
 # Strip launcher-only flags before they reach the app. They pick which build
 # to run, overriding the auto precedence (native > live source; the uberjar is
 # never auto-selected):
@@ -344,7 +388,10 @@ uber_jar="$repo_root/target/vis.jar"
 
 # ── Explicit build override (--source / --jar / --native) wins over auto. ─────
 case "$dist" in
-  source) measure_log "--source → live source" ;;   # fall through to live source below
+  source)
+    ensure_compatible_jvm_runtime
+    measure_log "--source → live source"
+    ;;   # fall through to live source below
   jar)
     if [[ -f "$uber_jar" ]]; then
       measure_log "--jar → $uber_jar"; cd "$invocation_cwd"
@@ -417,6 +464,7 @@ case "${VIS_STREAM_TRACE:-0}" in
 esac
 
 measure_log "exec cold clojure -M:vis"
+ensure_compatible_jvm_runtime
 if (( ${#vis_extension_sdeps[@]} > 0 )); then
   run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} ${jfr_clj_opts[@]+"${jfr_clj_opts[@]}"} "${vis_extension_sdeps[@]}" -M:vis "$@"
 else

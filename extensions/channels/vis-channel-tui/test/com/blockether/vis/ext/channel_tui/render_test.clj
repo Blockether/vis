@@ -9,6 +9,8 @@
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
+(declare strip-ansi)
+
 (def ^:private format-iteration-entry @#'render/format-iteration-entry)
 
 (def ^:private input-more-hint @#'render/input-more-hint)
@@ -221,7 +223,7 @@
          {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
 
        txt
-       (str/join "\n" (map :line entries))]
+       (str/join "\n" (map (comp strip-ansi :line) entries))]
 
       (expect (not (str/includes? txt "PYTHON")))
       (expect (str/includes? txt "first = 1"))
@@ -237,7 +239,7 @@
 
          txt
          (str/join "\n"
-                   (map :line
+                   (map (comp strip-ansi :line)
                         (format-iteration-entry-entries
                           (iteration/canonicalize
                             {:position 0
@@ -551,15 +553,15 @@
         (expect (str/includes? body "git_status()"))
         (expect (str/includes? body "print(42)"))))
   (it
-    "renders form eval errors inline with source caret"
+    "syntax-highlights malformed Python while retaining its inline error caret"
     (let
       [code
-       "(def git-diff-doc (doc 'v/git-diff))"
+       "def broken(:\n    return 1"
 
        err
-       {:message "Unable to resolve symbol: 'v/git-diff"
-        :trace "clojure.lang.ExceptionInfo: Unable to resolve symbol: 'v/git-diff"
-        :block {:source code :row 1 :col 24}}
+       {:message "invalid syntax"
+        :trace "SyntaxError: invalid syntax"
+        :block {:source code :row 1 :col 12}}
 
        lines
        (format-iteration-entry {:iteration 0
@@ -583,17 +585,14 @@
        (str/join "\n" visible)
 
        error-line
-       (first (filter #(str/includes? % "Unable to resolve symbol") lines))]
+       (first (filter #(str/includes? % "invalid syntax") lines))]
 
-      (expect (str/includes? body "(def git-diff-doc"))
-      (expect (not (str/includes? body " 1:")))
+      (expect (str/includes? body "def broken(:"))
+      (expect (str/includes? body "return 1"))
       (expect (str/includes? body "^---"))
-      (expect (str/includes? body "Unable to resolve symbol: 'v/git-diff"))
-      (expect (not (str/includes? body "Error: Unable")))
-      (expect (not (str/includes? body "ERROR — clojure.lang.ExceptionInfo")))
-      (expect (= 1 (count (re-seq (re-pattern (java.util.regex.Pattern/quote code)) body))))
-      ;; Code bands are status-neutral now: an error keeps the plain code
-      ;; marker and is signalled by the message rows, not a red wash.
+      (expect (str/includes? body "invalid syntax"))
+      (expect (some #(and (str/includes? % "\u001b[") (str/includes? (strip-ansi %) "def broken"))
+                    lines))
       (expect (= p/MARKER_CODE (marker-of error-line)))))
   (it
     "renders a form eval error message exactly once"

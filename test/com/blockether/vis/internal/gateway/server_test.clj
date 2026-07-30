@@ -45,6 +45,21 @@
           (zero? remaining) false
           :else (do (Thread/sleep 10) (recur (dec remaining))))))
 
+(deftest orphan-health-probe-does-not-repair-the-registry
+  (let
+    [repairs
+     (atom 0)
+
+     health-handler
+     (rv 'health-handler)]
+
+    (with-redefs-fn {(rv 'ensure-self-registered!) #(swap! repairs inc)}
+      (fn []
+        (health-handler {:headers {"x-vis-suppress-registry-recovery" "true"}})
+        (is (zero? @repairs))
+        (health-handler {:headers {}})
+        (is (= 1 @repairs))))))
+
 (deftest gateway-router-compiles-with-project-action-routes
   (testing "static project actions do not conflict with the dynamic project-id route"
     (is (some? ((rv 'router) "test-token" [])))))

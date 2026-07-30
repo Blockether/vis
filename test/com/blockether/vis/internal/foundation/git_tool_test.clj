@@ -3,10 +3,13 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.git-tool :as gt]
             [com.blockether.vis.internal.git :as git]
+            [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private render #'gt/render-git-result)
+
+(def ^:private render-batch #'gt/render-git-batch-result)
 
 (def ^:private verbose-add #'gt/verbose-add-tokens)
 
@@ -17,26 +20,72 @@
 (defdescribe git-activation-test
              (it "activates for nested repositories but stays absent from Git-free workspaces"
                  (let [repositories (atom [])]
-                   (with-redefs [git/cwd-file (constantly (java.io.File. "/workspace"))
-                                 git/in-repository? (constantly false)
-                                 vis/repository-inventory
-                                 (fn [_] {:repositories @repositories})]
+                   (with-redefs
+                     [git/cwd-file (constantly (java.io.File. "/workspace"))
+                      git/in-repository? (constantly false)
+                      vis/repository-inventory (fn [_]
+                                                 {:repositories @repositories})]
+
                      (expect (false? (boolean (activate? {}))))
                      (reset! repositories [{:root "/workspace/vis"}])
                      (expect (true? (boolean (activate? {}))))))))
 
 (defdescribe git-native-contract-test
-             (it "routes from session state in the native description"
+             (it "documents the direct native call shape and result semantics"
                  (let [description (:ext.symbol/description gt/git-symbol)]
                    (expect (str/includes? description "session[\"workspace\"]"))
-                   (expect (str/includes? description "non-zero exit"))
-                   (expect (not (str/includes? description "[\"status\"")))
+                   (expect (str/includes? description "Call with `commands`"))
+                   (expect (str/includes? description "[[\"status\", \"--short\"]]"))
+                   (expect (str/includes? description "omit `git`"))
+                   (expect (str/includes? description "non-zero exits"))
                    (expect (< (count description) 300))))
-             (it "keeps exact arguments in a closed JSON Schema"
+             (it "makes command batches the closed native contract"
                  (let [schema (:ext.symbol/schema gt/git-symbol)]
-                   (expect (= ["args"] (:required schema)))
+                   (expect (= ["commands"] (:required schema)))
+                   (expect (= ["commands"] (get-in gt/git-symbol [:ext.symbol/call :pos])))
                    (expect (false? (:additionalProperties schema)))
-                   (expect (= "array" (get-in schema [:properties "args" :type]))))))
+                   (expect (= "array" (get-in schema [:properties "commands" :type])))
+                   (expect (= 1 (get-in schema [:properties "commands" :minItems])))
+                   (expect (= "array" (get-in schema [:properties "commands" :items :type])))
+                   (expect (= "string"
+                              (get-in schema [:properties "commands" :items :items :type])))
+                   (expect (str/includes? (:doc (meta #'gt/git)) "await git")))))
+(defdescribe
+  git-python-sandbox-test
+  (it "await git exposes each serial command's stdout, stderr, and exit as plain Python data"
+      (let [seen (atom [])]
+        (with-redefs
+          [git/run-command
+           (fn [_ args _]
+             (swap! seen conj args)
+             (case (first args)
+               "status"
+               {:exit 0 :out "clean\n" :err "" :timed-out? false :duration-ms 1}
+
+               "show"
+               {:exit 128 :out "" :err "bad revision\n" :timed-out? false :duration-ms 2}
+
+               "diff"
+               {:exit 0 :out "diff\n" :err "warning\n" :timed-out? false :duration-ms 3}))]
+          (let
+            [{:keys [python-context]} (ep/create-python-context
+                                        {'git (fn [commands]
+                                                ;; The Python bridge receives the tool's result, not
+                                                ;; its internal extension envelope.
+                                                (:result (git-impl {} commands nil)))})
+             result
+             (ep/run-python-block
+               python-context
+               (str
+                 "r = await git([['status', '--short'], ['show', 'missing'], ['diff', '--stat']])\n"
+                 "[(c['stdout'], c['stderr'], c['exit']) for c in r['commands']]")
+               "t1/i1")]
+
+            (expect (nil? (:error result)))
+            (expect (= [["status" "--short"] ["show" "missing"] ["diff" "--stat"]] @seen))
+            (expect (= [["clean\n" "" 0] ["" "bad revision\n" 128] ["diff\n" "warning\n" 0]]
+                       (:result result))))))))
+
 
 (defdescribe verbose-add-tokens-test
              ;; `git add` is silent, so a bare `add` gets --verbose appended for the
@@ -56,35 +105,89 @@
                  (expect (= ["push"] (verbose-add ["push"])))
                  (expect (= ["status" "--short"] (verbose-add ["status" "--short"])))))
 
-(defdescribe shared-git-routing-test
-             (it "delegates literal argv to the shared Git command adapter"
-                 (let [root
-                       (.toFile
-                         (java.nio.file.Files/createTempDirectory
-                           "vis-git-tool-routing"
-                           (make-array java.nio.file.attribute.FileAttribute 0)))
+(defdescribe
+  shared-git-routing-test
+  (it
+    "delegates literal argv to the shared Git command adapter"
+    (let
+      [root
+       (.toFile (java.nio.file.Files/createTempDirectory
+                  "vis-git-tool-routing"
+                  (make-array java.nio.file.attribute.FileAttribute 0)))
 
-                       seen
-                       (atom nil)]
+       seen
+       (atom nil)]
 
-                   (try
-                     (with-redefs
-                       [workspace/cwd (fn [] root)
-                        git/run-command
-                        (fn [dir args opts]
-                          (reset! seen [dir args opts])
-                          {:exit 1
-                           :out ""
-                           :err "verification required"
-                           :timed-out? false
-                           :duration-ms 3})]
-                       (let [args ["-C" "other" "commit" "-m" "x"]
-                             result (:result (git-impl {} args nil))]
-                         (expect (= 1 (get result "exit")))
-                         (expect (= "verification required" (get result "stderr")))
-                         (expect (= args (second @seen)))
-                         (expect (= {:timeout-secs 120} (nth @seen 2)))))
-                     (finally (.delete root))))))
+      (try (with-redefs
+             [workspace/cwd
+              (fn []
+                root)
+
+              git/run-command
+              (fn [dir args opts]
+                (reset! seen [dir args opts])
+                {:exit 1 :out "" :err "verification required" :timed-out? false :duration-ms 3})]
+
+             (let
+               [args
+                ["-C" "other" "commit" "-m" "x"]
+
+                result
+                (:result (git-impl {} [args] nil))
+
+                command
+                (first (get result "commands"))]
+
+               (expect (= 1 (get command "exit")))
+               (expect (= "verification required" (get command "stderr")))
+               (expect (= args (second @seen)))
+               (expect (= {:timeout-secs 120} (nth @seen 2)))))
+           (finally (.delete root))))))
+(defdescribe
+  git-batch-test
+  (it
+    "keeps stdout, stderr, and partial failures with their own serial commands"
+    (let [seen (atom [])]
+      (with-redefs
+        [git/run-command
+         (fn [_ args _]
+           (swap! seen conj args)
+           (case (first args)
+             "status"
+             {:exit 0 :out " M src/core.clj\n" :err "" :timed-out? false :duration-ms 1}
+
+             "show"
+             {:exit 128 :out "" :err "bad revision" :timed-out? false :duration-ms 2}
+
+             "diff"
+             {:exit 0
+              :out " src/core.clj | 2 +-\n"
+              :err "warning: renamed"
+              :timed-out? false
+              :duration-ms 3}))]
+        (let
+          [result (:result
+                    (git-impl {} [["status" "--short"] ["show" "missing"] ["diff" "--stat"]] nil))
+           commands (get result "commands")
+           {:keys [summary body]} (render-batch result)]
+
+          (expect (= [["status" "--short"] ["show" "missing"] ["diff" "--stat"]] @seen))
+          (expect (= 3 (count commands)))
+          (expect (= " M src/core.clj\n" (get-in commands [0 "stdout"])))
+          (expect (= "bad revision" (get-in commands [1 "stderr"])))
+          (expect (= 128 (get-in commands [1 "exit"])))
+          (expect (= " src/core.clj | 2 +-\n" (get-in commands [2 "stdout"])))
+          (expect (= "warning: renamed" (get-in commands [2 "stderr"])))
+          (expect (= "⎇ 3 git commands — 2 succeeded, 1 failed" summary))
+          (expect (str/includes? body " M src/core.clj"))
+          (expect (str/includes? body "bad revision"))
+          ;; One blank row on each side of the divider keeps command cards distinct.
+          (expect (re-find
+                    #"(?s)### 1[.].*?\n\n────────────────────────────────────────\n\n### 2[.]"
+                    body))
+          (expect (= 2 (count (re-seq #"────────────────────────────────────────" body))))
+          (expect (str/includes? body "warning: renamed")))))))
+
 
 (defdescribe
   render-git-result-test

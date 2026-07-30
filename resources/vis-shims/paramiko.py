@@ -778,6 +778,34 @@ def __vis_install_paramiko__():
         def accept(self, timeout=None):
             return None
 
+        def auth_none(self, username):
+            if self._sess is not None:
+                return None
+            if self._sock is None or not hasattr(self._sock, "getpeername"):
+                raise SSHException("Transport is not active")
+            try:
+                peer = self._sock.getpeername()
+                host, port = peer[0], peer[1]
+            except Exception:
+                raise SSHException("Transport is not active")
+            self._sess = _call(
+                _connect,
+                {
+                    "hostname": str(host),
+                    "port": int(port),
+                    "username": username or "",
+                    "password": "",
+                    "key_filename": "",
+                    "passphrase": "",
+                    "policy": "add",
+                    "timeout_ms": 0,
+                    "look_for_keys": False,
+                    "compress": False,
+                    "auth_none": True,
+                },
+            )
+            return None
+
         def close(self):
             self._server_started = False
             if getattr(self, "_server_handle", None) is not None:

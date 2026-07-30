@@ -757,9 +757,10 @@
 (defn- health-handler
   [request]
   ;; `/healthz` is also the recovery rendezvous for a client that still knows
-  ;; the stable token but found the registry missing. Restore ownership before
-  ;; answering so subsequent discovery calls attach instead of bind-racing us.
-  (ensure-self-registered!)
+  ;; the stable token but found the registry missing. The orphan-retirement probe
+  ;; suppresses that repair long enough to make its authenticated stop decision.
+  (when-not (= "true" (get-in request [:headers "x-vis-suppress-registry-recovery"]))
+    (ensure-self-registered!))
   (let
     [{:keys [token]}
      @server-state

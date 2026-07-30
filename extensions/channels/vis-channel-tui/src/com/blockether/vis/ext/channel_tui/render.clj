@@ -3311,15 +3311,12 @@
   "Babashka-style code context for form eval errors. Kept inside the
    code band so failing source, caret, error message, and status occupy
    one visual block instead of code + error + repeated context blocks."
-  [code-text error]
+  [code-text error colored-lines]
   (let
     [block
      (error-field error :block)
 
      source
-     ;; The submitted program is the source of truth. Runtime exceptions may
-     ;; carry only a short numbered excerpt in :block/:source; preferring that
-     ;; excerpt hid the rest of the code that actually ran.
      (or (not-empty code-text) (error-field block :source))
 
      opened
@@ -3341,7 +3338,7 @@
 
          fmt-line
          (fn [idx0]
-           (nth lines idx0))
+           (or (nth colored-lines idx0 nil) (nth lines idx0)))
 
          arrow-line
          (when (and arrow-row arrow-col (<= 1 arrow-row total))
@@ -4675,17 +4672,14 @@
           code-text
           (str/trim (str (or (not-empty (str display-code)) (vis/beautify-python code))))
 
-          ;; Syntax-color the executed source (always Python in the engine
-          ;; loop) with the tree-sitter highlighter — the SAME ANSI-SGR run
-          ;; mechanism `paint-ansi-line!` already translates for diff fences,
-          ;; so no painter change is needed. Split into per-line colored rows.
+          ;; Tree-sitter recovers from syntax errors, so colorize failed programs too.
+          ;; The diagnostic caret remains plain and column-aligned below.
           colored-lines
-          (when-not error
-            (some-> (hl/highlight "python" code-text)
-                    str/split-lines))
+          (some-> (hl/highlight "python" code-text)
+                  str/split-lines)
 
           inline-error-code-lines
-          (when error (inline-error-context-lines code-text error))
+          (when error (inline-error-context-lines code-text error colored-lines))
 
           ;; A pathologically wide single line (a one-line `git_commit({...})`
           ;; arg) is SOFT-FOLDED at the bubble edge via `p/fold-cols` so it

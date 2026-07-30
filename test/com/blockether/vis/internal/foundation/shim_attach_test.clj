@@ -150,7 +150,20 @@
          out
          (block pctx (str "vis_attach_bytes('1', 'a.txt')\n" "vis_attach_bytes('2', 'b.json')\n"))]
 
-        (expect (= ["a.txt" "b.json"] (mapv :filename (:attachments out)))))))
+        (expect (= ["a.txt" "b.json"] (mapv :filename (:attachments out))))))
+  (it "renders and captures a matplotlib Figure with a positional filename"
+    (let [pctx (ctx-with-root (temp-root))
+          out (block pctx (str "import matplotlib.pyplot as plt\n"
+                               "fig, ax = plt.subplots(figsize=(7, 4))\n"
+                               "ax.plot([0, 1], [0, 1])\n"
+                               "ax.set(title='plot', xlabel='x', ylabel='y')\n"
+                               "vis_attach(fig, 'plot.png')\n"
+                               "plt.close(fig)\n"))
+          [att] (:attachments out)]
+      (expect (nil? (:error out)))
+      (expect (= "plot.png" (:filename att)))
+      (expect (= "image/png" (:media-type att)))
+      (expect (= "image" (:kind att))))))
 
 (defdescribe vis-attach-path-test
              (it "reads a confined file from disk and captures it"

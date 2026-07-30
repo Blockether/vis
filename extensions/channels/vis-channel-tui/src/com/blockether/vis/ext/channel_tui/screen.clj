@@ -1449,12 +1449,11 @@
                    :img (assoc img
                           :crop-top crop-top
                           :crop-bottom crop-bot))
-                 ;; iTerm2 can't source-crop, so a top-cropped image can't be
-                 ;; shown partially at all — drop it.
-                 (pos? crop-top) nil
-                 ;; Bottom overflow only (BOTH protocols): the whole picture
-                 ;; shrinks, aspect-preserving, into the rows that are left —
-                 ;; never a decapitated top slice.
+                 ;; Kitty can source-crop an image the user scrolled INTO, keeping
+                 ;; its visible slice at the original scale. iTerm2 cannot, so every
+                 ;; other partial placement scales the whole image into the visible
+                 ;; rows. That makes a tall image visible as soon as any part of its
+                 ;; reserved box reaches the viewport instead of dropping it.
                  :else (assoc topmost
                          :img (assoc img
                                 :rows visible

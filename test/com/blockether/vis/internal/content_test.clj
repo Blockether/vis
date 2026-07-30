@@ -35,6 +35,16 @@
         (expect (= "prose" (get-in blocks [0 "type"])))
         (expect (= "done" (get-in blocks [0 "markdown"])))
         (expect (= "done" (content/text-projection blocks)))))
+  (it "preserves canonical error blocks in wrapped final answers"
+      (let
+        [error
+         (content/error "e1" "provider_unavailable" "Try again later." true)
+
+         blocks
+         (content/answer-content {:answer [error]})]
+
+        (expect (= [error] blocks))
+        (expect (s/valid? ::content/block (first blocks)))))
   (it "validates append-only streaming events"
       (expect (s/valid?
                 ::content/event

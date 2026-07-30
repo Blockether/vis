@@ -129,6 +129,15 @@
                          "timeout=3, look_for_keys=False, allow_agent=False)\n"
                          "except paramiko.SSHException as e:\n"
                          "  out=type(e).__name__\n" "out"))))))
+  (it "exposes Transport.auth_none and rejects an inactive transport"
+      (with-python-context
+        (expect (= [true "SSHException"]
+                   (ev python-context
+                       (str "import paramiko\n"
+                            "t=paramiko.Transport()\n" "try:\n"
+                            "  t.auth_none('vis')\n" "except paramiko.SSHException as e:\n"
+                            "  result=type(e).__name__\n"
+                            "[hasattr(paramiko.Transport, 'auth_none'), result]"))))))
   (it "marshals SFTPAttributes fields from the host bridge shape"
       (with-python-context
         (expect (= [42 33188 1000 "readme.txt"]
@@ -278,10 +287,10 @@
     (let
       [info
        ((deref #'shim/op-server-start)
-         (fn [_u _p]
-           0)
-         (fn [_a _p]
-           true))
+        (fn [_u _p]
+          0)
+        (fn [_a _p]
+          true))
 
        handle
        (long (get info "handle"))

@@ -2,6 +2,18 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.14 (2800) — 2026-07-30
+<!-- commit: c9b84ab7ed0ca15062d65d199aa3d951eb2b6886 -->
+
+- Fix failed turn error cards after watchdog recovery
+- Guard orphan retirement against registered gateways
+- Retire orphaned loopback gateways before restart
+- Route extension subprocess APIs through jailed shell
+- Improve dotenv environment handling
+- Activate Git tool for nested repositories
+- Gate commits through verification hooks
+- Prefer JSON in Bridge extension docs
+
 ## 0.1.14 (2792) — 2026-07-30
 <!-- commit: dfece59420181d2b9112e8a56514468a25a2dbc6 -->
 

@@ -1,13 +1,13 @@
 (ns com.blockether.vis.internal.foundation.git-tool
   "The single `git` tool — a thin, honest proxy to the host `git` binary.
 
-   ONE built-in Python function, `git`, runs `git <args…>` in the active
-   workspace root and returns a TOTAL, string-keyed result the model reads
-   directly: `{\"cmd\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\",
-   \"timed_out\", \"timeout_secs\"}` — every key ALWAYS present (`stderr` \"\" when
-   empty, `exit` None only when the run timed out), so no field ever KeyErrors.
-   A non-zero exit is DATA, not a tool failure — the model reads it like it
-   would in a terminal.
+   ONE built-in Python function, `git`, runs a SERIAL batch of `git <args…>` commands
+   in the active workspace root and returns a TOTAL, string-keyed result the model reads
+   directly: `{\"commands\" [{\"cmd\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\",
+   \"timed_out\", \"timeout_secs\"} …]}`. Every key is present for every command
+   (`stderr` \"\" when empty, `exit` None only when that command timed out), so no
+   field ever KeyErrors. A non-zero exit is DATA, not a tool failure; later commands
+   still run, so a batch reports partial outcomes exactly like a terminal script.
 
    This REPLACES the old JGit-backed `git_*` surface (foundation-git): no
    embedded git implementation, no SSH/BouncyCastle stack — the only git is
@@ -88,44 +88,53 @@
     (conj (vec tokens) "--verbose")
     (vec tokens)))
 
+(defn- git-command-result
+  "Run one literal Git argv in `dir` and return its total, string-keyed result.
+   A non-zero exit is deliberately a result, so callers can continue a batch and
+   inspect every command's stdout/stderr independently."
+  [^File dir args]
+  (let [tokens (normalize-args args)]
+    (when (empty? tokens)
+      (throw
+        (ex-info
+          "Every git command needs at least one argument, e.g. [\"status\"] or [\"commit\", \"-m\", \"msg\"]."
+          {:type ::no-args})))
+    (let
+      [t0 (now-ms)
+       {:keys [exit out err timed-out? duration-ms]}
+       (git/run-command dir (verbose-add-tokens tokens) {:timeout-secs default-timeout-secs})
+       t1 (now-ms)]
+
+      {"cmd" (str "git " (str/join " " tokens))
+       "args" (vec tokens)
+       "stdout" (or out "")
+       "stderr" (or err "")
+       "exit" exit
+       "duration_ms" (or duration-ms (- t1 t0))
+       "timed_out" (boolean timed-out?)
+       "timeout_secs" default-timeout-secs})))
+
 (defn- git-impl
-  ([env args] (git-impl env args nil))
-  ([_env args _opts]
-   (let [tokens (normalize-args args)]
-     (when (empty? tokens)
-       (throw
-         (ex-info
-           "git needs at least one argument, e.g. git([\"status\"]) or git([\"commit\", \"-m\", \"msg\"])."
-           {:type ::no-args})))
+  ([env commands] (git-impl env commands nil))
+  ([_env commands _opts]
+   (let [commands (vec commands)]
+     (when (empty? commands)
+       (throw (ex-info "git needs at least one command." {:type ::no-commands})))
+     ;; Deliberately serial: a later command may depend on an earlier mutation
+     ;; (`add` → `commit` → `push`). A failed command remains data and never
+     ;; prevents the remaining commands from producing their own total results.
      (let
        [dir ^File (.getCanonicalFile (workspace/cwd))
         t0 (now-ms)
-        {:keys [exit out err timed-out? duration-ms]}
-        (git/run-command
-          dir
-          (verbose-add-tokens tokens)
-          {:timeout-secs default-timeout-secs})
+        results (mapv #(git-command-result dir %) commands)
         t1 (now-ms)]
 
-       (extension/success
-         ;; TOTAL result shape (same contract as `shell`): no key is dropped
-         ;; for carrying no signal, so `r["stderr"]` / `r["timed_out"]` can be
-         ;; indexed directly instead of dying on a bare KeyError.
-         {:result {"cmd" (str "git " (str/join " " tokens))
-                   "args" (vec tokens)
-                   "stdout" (or out "")
-                   "stderr" (or err "")
-                   "exit" exit
-                   "duration_ms" (or duration-ms (- t1 t0))
-                   "timed_out" (boolean timed-out?)
-                   "timeout_secs" default-timeout-secs}
-          :op :git
-          :metadata {:command (str "git " (str/join " " tokens))
-                     :exit exit
-                     :timed-out? (boolean timed-out?)
-                     :started-at-ms t0
-                     :finished-at-ms t1
-                     :duration-ms (or duration-ms (- t1 t0))}})))))
+       (extension/success {:result {"commands" results}
+                           :op :git
+                           :metadata {:command-count (count results)
+                                      :started-at-ms t0
+                                      :finished-at-ms t1
+                                      :duration-ms (- t1 t0)}})))))
 
 ;; =============================================================================
 ;; Render — the op-card for a `git` call: `<args>` headline (with an
@@ -301,6 +310,25 @@
 
     {:summary (str "⎇ " head note) :body (when (seq body) body)}))
 
+(defn- render-git-batch-result
+  "Render one expandable result card with each command's own stdout/stderr intact."
+  [r]
+  (let [commands (vec (get r "commands"))
+        rendered (mapv render-git-result commands)
+        failures (count (filter #(or (get % "timed_out")
+                                     (let [exit (get % "exit")]
+                                       (and exit (not (zero? (long exit))))))
+                                commands))
+        successes (- (count commands) failures)
+        outcome (str successes " succeeded, " failures " failed")
+        body (->> rendered
+                  (map-indexed (fn [^long idx {:keys [summary body]}]
+                                 (str "### " (inc idx) ". " summary
+                                      (when (seq body) (str "\n\n" body)))))
+                  (str/join "\n\n────────────────────────────────────────\n\n"))]
+    {:summary (str "⎇ " (count commands) " git commands — " outcome)
+     :body (when (seq body) body)}))
+
 ;; =============================================================================
 ;; Symbol + extension. Built-in ⇒ binds BARE as `git` in the sandbox ns.
 ;; =============================================================================
@@ -309,16 +337,18 @@
 
 (def
   ^{:doc
-    "await git([\"status\", \"--short\"])
-await git([\"commit\", \"-m\", \"wip: message with spaces\"])
+    "await git([[\"status\", \"--short\"], [\"diff\", \"--stat\"]])
+await git([[\"add\", \"-A\"], [\"commit\", \"-m\", \"wip: message with spaces\"]])
 
-Run the host `git` binary in the workspace root with the given args and return
-its result. `args` is a LIST of literal tokens (each element is one git argument
-— safe for commit messages / paths with spaces); a bare string is quote-aware
-split for convenience.
-Returns {\"cmd\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\", \"timed_out\", \"timeout_secs\"} — EVERY key is ALWAYS present, so index them directly (\"stderr\" is \"\" when empty, \"exit\" is None only when the run timed out).
-Gotcha: a non-zero \"exit\" is DATA to read (like in a terminal), not a tool failure."
-    :arglists '([args])}
+Run SERIAL host-Git commands in the workspace root. `commands` is a non-empty LIST
+of non-empty LISTS of literal tokens; each inner element is one git argument, safe
+for commit messages and paths with spaces. Commands run in request order, so later
+mutations see earlier ones. Every command returns exactly `{\"cmd\", \"args\", \"stdout\",
+\"stderr\", \"exit\", \"duration_ms\", \"timed_out\", \"timeout_secs\"}` under
+`{\"commands\" [...]}`. ALL stdout and stderr stay with the command that emitted them.
+
+Gotcha: a non-zero `exit` is DATA to read, not a tool failure; remaining commands run."
+    :arglists '([commands])}
   git
   git-impl)
 
@@ -328,28 +358,28 @@ Gotcha: a non-zero \"exit\" is DATA to read (like in a terminal), not a tool fai
     {:symbol 'git
      :native-tool? true
      :result
-     "Object with exactly `op`, `args`, `cmd`, `stdout`, `stderr`, `exit`, `timed_out`, `timeout_secs`, and `duration_ms`."
+     "Object with exactly `commands`, whose entries each have `cmd`, `args`, `stdout`, `stderr`, `exit`, `timed_out`, `timeout_secs`, and `duration_ms`."
      :name "git"
      :description
-     (str "Run the host Git binary only to act or when `session[\"workspace\"]` lacks a needed "
-          "VCS fact. Arguments stay literal, and a non-zero exit is result data to inspect rather "
-          "than a tool-transport failure.")
-     :call {:pos ["args"]}
-     :render render-git-result
+     (str
+       "Run SERIAL host-Git commands only when `session[\"workspace\"]` lacks needed VCS facts or to act. "
+       "Call with `commands`: non-empty literal argv lists, e.g. `[[\"status\", \"--short\"]]` (omit `git`). "
+       "Each keeps stdout/stderr; non-zero exits are data and later commands run.")
+     :call {:pos ["commands"]}
+     :render render-git-batch-result
      :color-role :tool-color/shell
      :before-fn inject-env
      :tag :mutation
-     :schema
-     {:type "object"
-      :properties
-      {"args"
-       {:type "array"
-        :items {:type "string"}
-        :minItems 1
-        :description
-        "git arguments as a list of literal tokens, e.g. [\"status\", \"--short\"] or [\"commit\", \"-m\", \"a message\"]."}}
-      :required ["args"]
-      :additionalProperties false}}))
+     :schema {:type "object"
+              :properties
+              {"commands"
+               {:type "array"
+                :minItems 1
+                :description
+                "Git commands in serial request order; each command is a list of literal tokens."
+                :items {:type "array" :minItems 1 :items {:type "string"}}}}
+              :required ["commands"]
+              :additionalProperties false}}))
 
 (def git-symbols [git-symbol])
 
@@ -357,7 +387,7 @@ Gotcha: a non-zero \"exit\" is DATA to read (like in a terminal), not a tool fai
   (vis/extension
     {:ext/name "foundation-git"
      :ext/description
-     "Single built-in `git` tool: runs the host git binary in the workspace root with the given args (git([\"status\"]) / git([\"commit\", \"-m\", \"msg\"])) and returns exit/stdout/stderr. Replaces the JGit-backed git_ surface — the only git is the one on the user's PATH. Activates when the workspace sits inside or contains a repository."
+     "Single built-in `git` tool: runs SERIAL batches of host-Git argv in the workspace root and returns per-command exit/stdout/stderr. Replaces the JGit-backed git_ surface — the only git is the one on the user's PATH. Activates when the workspace sits inside or contains a repository."
      :ext/version "0.2.0"
      :ext/author "Blockether"
      :ext/owner "vis"

@@ -92,7 +92,7 @@
   [opts]
   (let
     [{:strs [hostname port username password key_filename passphrase timeout_ms policy look_for_keys
-             compress]}
+             compress auth_none]}
      opts
 
      js
@@ -102,7 +102,8 @@
       (if (non-empty? passphrase)
         (.addIdentity js (str key_filename) (str passphrase))
         (.addIdentity js (str key_filename))))
-    (when (and (not (non-empty? password))
+    (when (and (not auth_none)
+               (not (non-empty? password))
                (not (non-empty? key_filename))
                (not (false? look_for_keys)))
       (add-default-keys! js))
@@ -118,7 +119,9 @@
 
       (when (non-empty? password) (.setPassword sess (str password)))
       (.put props "StrictHostKeyChecking" (if (= policy "reject") "yes" "no"))
-      (.put props "PreferredAuthentications" "publickey,keyboard-interactive,password")
+      (.put props
+            "PreferredAuthentications"
+            (if auth_none "none" "publickey,keyboard-interactive,password"))
       (when compress
         (.put props "compression.s2c" "zlib@openssh.com,zlib,none")
         (.put props "compression.c2s" "zlib@openssh.com,zlib,none"))
