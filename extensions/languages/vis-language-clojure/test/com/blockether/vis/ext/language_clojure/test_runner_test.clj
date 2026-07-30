@@ -122,9 +122,9 @@
             (expect (false? @restarted)))))))
 
 (defdescribe
-  group-faults-by-dir-test
-  "`group-faults-by-dir` folds the flat failures/errors vectors into the same
-   directory-nested `by-dir` shape lint and format expose — the file's dir written
+  group-faults-by-cwd-test
+  "`group-faults-by-cwd` folds the flat failures/errors vectors into the same
+   directory-nested `by-cwd` shape lint and format expose — the file's dir written
    once, basename inner, failures/errors kinds separated, edge files handled."
   (it "nests faults by directory then basename, writing each dir prefix once"
       (let
@@ -141,7 +141,7 @@
          {"ns" "a.core" "test" "boom" "file" "src/a/core.clj" "line" 99}
 
          grouped
-         (tr/group-faults-by-dir [f1 f2 f3] [e1])]
+         (tr/group-faults-by-cwd [f1 f2 f3] [e1])]
 
         (expect (= #{"src/a"} (set (keys grouped))))
         (expect (= #{"core.clj" "util.clj"} (set (keys (get grouped "src/a")))))
@@ -155,7 +155,7 @@
          {"ns" "a.core" "file" "Numbers.java" "line" 7}
 
          grouped
-         (tr/group-faults-by-dir [] [e])]
+         (tr/group-faults-by-cwd [] [e])]
 
         (expect (= [e] (get-in grouped ["." "Numbers.java" "errors"])))))
   (it "buckets a fileless fault under \".\"/\"<unknown>\""
@@ -164,7 +164,7 @@
          {"ns" "a.core" "test" "nofile"}
 
          grouped
-         (tr/group-faults-by-dir [f] [])]
+         (tr/group-faults-by-cwd [f] [])]
 
         (expect (= [f] (get-in grouped ["." "<unknown>" "failures"])))))
   (it "treats a blank file string as fileless"
@@ -173,19 +173,19 @@
          {"ns" "a.core" "file" "   "}
 
          grouped
-         (tr/group-faults-by-dir [f] [])]
+         (tr/group-faults-by-cwd [f] [])]
 
         (expect (= [f] (get-in grouped ["." "<unknown>" "failures"])))))
   (it "returns an empty map when there is nothing to group"
-      (expect (= {} (tr/group-faults-by-dir [] [])))))
+      (expect (= {} (tr/group-faults-by-cwd [] [])))))
 
 (defdescribe
-  clj-test-fn-dir-root-test
-  "An explicit `dir` arg roots the run — and thus nREPL selection — at THAT
+  clj-test-fn-cwd-root-test
+  "An explicit `cwd` arg roots the run — and thus nREPL selection — at THAT
    project, so tests in a sibling / added-folder project run against their own
    nREPL classpath instead of booting the workspace-root REPL (regression:
-   run_tests silently dropped `dir`, FileNotFoundException on the wrong REPL)."
-  (it "boots/selects the nREPL at the dir arg, not the workspace root"
+   run_tests silently dropped `cwd`, FileNotFoundException on the wrong REPL)."
+  (it "boots/selects the nREPL at the cwd arg, not the workspace root"
       (let [seen-root (atom nil)]
         (with-redefs
           [extension/run-outside-tool-wall (fn [_env thunk]
@@ -202,7 +202,7 @@
                                         {"cwd" "/some/proj" "namespaces" ["x.y-test"]}))]
             (expect (= "/some/proj" @seen-root))
             (expect (= "/some/proj" (get r "root")))))))
-  (it "falls back to the workspace root when no dir arg is given"
+  (it "falls back to the workspace root when no cwd arg is given"
       (let [seen-root (atom nil)]
         (with-redefs
           [extension/run-outside-tool-wall (fn [_env thunk]

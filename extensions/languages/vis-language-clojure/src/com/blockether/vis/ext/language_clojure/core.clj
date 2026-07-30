@@ -434,7 +434,7 @@
       ;; A model may carry a stale/previous ctx resource id while also passing
       ;; an explicit `cwd`. If that id is not live in THIS session, let `cwd`
       ;; drive the default resolution instead of failing on the unknown id.
-      ;; With no explicit dir, keep the strict id contract and surface the error.
+      ;; With no explicit cwd, keep the strict id contract and surface the error.
       (when-not (and requested-dir? requested-rid (not (repl-manager/repl-by-id sid requested-rid)))
         requested-rid)
 
@@ -682,12 +682,12 @@
      "wrote" (not= out code)
      "formatter" (name (fmt/formatter-for for-path))}))
 
-(defn- group-format-by-dir
+(defn- group-format-by-cwd
   "Nest the per-file format results under their DIRECTORY so each directory
    prefix is written once: `{<dir> {<basename> {\"changed\" .. \"repaired\" ..
    \"wrote\" ..}}}`. `<dir>` is the file's parent (`\".\"` when it has none); the
    inner key is the basename, its payload the per-file map minus the now-implied
-   `\"path\"`. Mirrors `lint/group-by-dir` so format and lint share one shape."
+   `\"path\"`. Mirrors `lint/group-by-cwd` so format and lint share one shape."
   [files]
   (reduce (fn [m f]
             (let
@@ -753,7 +753,7 @@
                                        {"op" "clj-format"
                                         "files" files
                                         "changed" (count (filter #(get % "changed") files))
-                                        "by-dir" (group-format-by-dir files)
+                                        "by-cwd" (group-format-by-cwd files)
                                         "formatters" (vec (sort (distinct (keep #(get % "formatter")
                                                                                 files))))})}))
        (let
@@ -843,7 +843,7 @@
    Reflection/boxed-math only exist at compile time, so `\"general\"` COMPILES its
    target: the code-string snippet, or every source file the lint targets (path /
    paths / whole project) — each in a throwaway namespace that is torn down. The
-   flat `\"findings\"` vector is also grouped under `\"by-dir\"` — nested by
+   flat `\"findings\"` vector is also grouped under `\"by-cwd\"` — nested by
    directory to write each path prefix once:
    `{<dir> {<basename> {\"error\"/\"warning\"/\"info\" [...]}}}`."
   [env arg]
@@ -932,7 +932,7 @@
                                                         "findings" findings
                                                         "language" "clojure"
                                                         "providers" providers
-                                                        "by-dir" (lint/group-by-dir findings))
+                                                        "by-cwd" (lint/group-by-cwd findings))
                                                       code
                                                       (assoc "snippet" code)
 

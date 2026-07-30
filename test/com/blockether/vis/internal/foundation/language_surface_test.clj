@@ -113,7 +113,7 @@
          stop
          (:ext.symbol/description language-surface/repl-stop-symbol)]
 
-        (expect (str/includes? start "[language][dir]"))
+        (expect (str/includes? start "[language][cwd]"))
         (expect (str/includes? start "absent/down/failed"))
         (expect (str/includes? start "\"stop\" ends a managed REPL"))
         (expect (str/includes? start "\"status\" reports that directory's lifecycle state"))

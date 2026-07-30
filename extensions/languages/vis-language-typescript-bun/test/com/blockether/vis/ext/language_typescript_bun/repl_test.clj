@@ -267,7 +267,7 @@
 
 (defdescribe
   monorepo-root-guard-test
-  (it "repl_eval WITHOUT dir at a monorepo root refuses with the app-dir hint"
+  (it "repl_eval WITHOUT cwd at a monorepo root refuses with the app-dir hint"
       (let [root (monorepo-fixture)]
         (try (let
                [{:keys [type msg]} (monorepo-guard-ex #(core/ts-repl-eval-fn (test-env root)
@@ -277,14 +277,14 @@
                (expect (re-find #"apps/api" (str msg)))
                (expect (re-find #"apps/web" (str msg))))
              (finally (cleanup root)))))
-  (it "repl WITHOUT dir at a monorepo root refuses the same way"
+  (it "repl WITHOUT cwd at a monorepo root refuses the same way"
       (let [root (monorepo-fixture)]
         (try (let
                [{:keys [type]} (monorepo-guard-ex
                                  #(core/ts-start-repl-fn (test-env root) "start" {}))]
                (expect (= :ts/monorepo-root type)))
              (finally (cleanup root)))))
-  (it "an explicit dir escapes the guard (app dir works; '.' forces a root REPL)"
+  (it "an explicit cwd escapes the guard (app dir works; '.' forces a root REPL)"
       (when (has-bun?)
         (let
           [root

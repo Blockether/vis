@@ -69,7 +69,7 @@
       (seq filesystem-roots)
       (assoc "filesystem_roots"
         (mapv (fn [{:keys [trunk]}]
-                {"dir" trunk "isolated" false})
+                {"cwd" trunk "isolated" false})
               filesystem-roots))
 
       changed

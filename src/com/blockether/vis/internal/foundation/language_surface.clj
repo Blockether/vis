@@ -443,12 +443,12 @@
     (let
       [n (count files)
        changed (or (get r "changed") 0)
-       by-dir (get r "by-dir")]
+       by-cwd (get r "by-cwd")]
 
       {:summary (str n " file" (when (not= 1 n) "s") " — " changed " changed")
        :body (fence
                nil
-               (if (map? by-dir)
+               (if (map? by-cwd)
                  ;; grouped: each directory prefix written ONCE, its files indented
                  (str/join
                    "\n"
@@ -457,7 +457,7 @@
                                    (for [[base v] (sort-by key entries)]
                                      (str "  " base
                                           " " (if (get v "changed") "(changed)" "(no change)")))))
-                           (sort-by key by-dir)))
+                           (sort-by key by-cwd)))
                  (str/join
                    "\n"
                    (for [f files]
@@ -967,7 +967,7 @@
      :result
      (str
        "String-keyed object with `op`; code/single-file results include `changed` and may include "
-       "`chars`, `path`, `formatter`, or `repaired`; batch results include `files`, `by-dir`, "
+       "`chars`, `path`, `formatter`, or `repaired`; batch results include `files`, `by-cwd`, "
        "and `formatters`. It never returns formatted source text.")
      :description
      "Format code or project files through the active language pack."
@@ -1005,7 +1005,7 @@
      :result
      (str
        "String-keyed object with `op`, `language`, `error`, `warning`, `info`, `files`, `findings`, "
-       "`providers`, `by-dir`, and (for stdin lints) `snippet`; explicit path runs may add `targets`. "
+       "`providers`, `by-cwd`, and (for stdin lints) `snippet`; explicit path runs may add `targets`. "
        "Each finding uses `file`, `row`, `col`, `level`, `type`, `message`, and `provider` when reported.")
      :description
      "Run the active language pack's linter on source or project files. Returns findings and severity counts without changing files."
@@ -1041,7 +1041,7 @@
        "One string-keyed object stamped with `op`; null and mode-inapplicable fields may be "
        "omitted. Possible fields are `mode`, `language`, `framework`, `runner`, `tool`, `command`, "
        "`cwd`, `ns`, `port`, `exit`, `ms`, `is_pass`, `total`, `pass`, `fail`, `selected`, "
-       "`skipped`, `failures`, `errors`, `by-dir`, `output`, `note`, `hint`, `error`, `timed_out`, "
+       "`skipped`, `failures`, `errors`, `by-cwd`, `output`, `note`, `hint`, `error`, `timed_out`, "
        "`repl_unusable`, `repl_wedged`, and `recovered`.")
      :description
      (str

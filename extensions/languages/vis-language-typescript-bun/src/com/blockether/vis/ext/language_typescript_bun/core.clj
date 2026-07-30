@@ -187,7 +187,7 @@
 
       ("start" "restart")
       (do (when (= op "restart") (repl/stop! dir))
-          ;; Starting at a monorepo ROOT without an explicit dir is (almost)
+          ;; Starting at a monorepo ROOT without an explicit cwd is (almost)
           ;; always a mistake — refuse with the app-dir hint. Explicit
           ;; {"cwd": "."} still forces a root REPL.
           (when (nil? (get opts "cwd"))

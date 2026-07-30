@@ -370,12 +370,12 @@
             (expect (= 2 (get-in r [:result "changed"]))) ; a + b changed, c tidy
             ;; findings/files ALSO grouped under the directory (prefix written once)
             ;; and the whole result conforms to the language-surface contract
-            (let [by-dir (get-in r [:result "by-dir"])]
-              (expect (= #{"." "sub"} (set (keys by-dir))))
-              (expect (= #{"a.clj"} (set (keys (get by-dir ".")))))
-              (expect (= #{"b.cljc" "c.clj"} (set (keys (get by-dir "sub")))))
-              (expect (true? (get-in by-dir ["." "a.clj" "changed"])))
-              (expect (false? (get-in by-dir ["sub" "c.clj" "changed"]))))
+            (let [by-cwd (get-in r [:result "by-cwd"])]
+              (expect (= #{"." "sub"} (set (keys by-cwd))))
+              (expect (= #{"a.clj"} (set (keys (get by-cwd ".")))))
+              (expect (= #{"b.cljc" "c.clj"} (set (keys (get by-cwd "sub")))))
+              (expect (true? (get-in by-cwd ["." "a.clj" "changed"])))
+              (expect (false? (get-in by-cwd ["sub" "c.clj" "changed"]))))
             (expect (contract/valid? :format-fn (:result r)))
             (expect (= "(defn f [x]\n  (* x 2))\n" (slurp (io/file dir "a.clj"))))
             (expect (= "(defn g [y]\n  (+ y 1))\n" (slurp (io/file sub "b.cljc"))))

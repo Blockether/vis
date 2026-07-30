@@ -531,13 +531,13 @@
                    (spit f "a\nb\n")
                    (expect (= ["a" "b"] (rm/tail-log (str f)))))))
 
-(defdescribe clj-eval-dir-routing-test
-             ;; Regression: clj-eval-fn must READ `dir` from the arg map and hand the
-             ;; RESOLVED (canonical) dir to resolve-target! as its default-dir — so a
-             ;; multi-REPL session routes the eval to the REPL rooted at that dir instead
-             ;; of silently dropping `dir` and always matching the workspace-root REPL.
+(defdescribe clj-eval-cwd-routing-test
+             ;; Regression: clj-eval-fn must READ `cwd` from the arg map and hand the
+             ;; RESOLVED (canonical) directory to resolve-target! as its default-dir — so a
+             ;; multi-REPL session routes the eval to the REPL rooted at that directory instead
+             ;; of silently dropping `cwd` and always matching the workspace-root REPL.
              ;; resolve-target! and the nREPL client are stubbed: no subprocess, no socket.
-             (it "hands the resolved (canonical) `dir` to resolve-target! as default-dir"
+             (it "hands the resolved (canonical) `cwd` to resolve-target! as default-dir"
                  (let
                    [root
                     (tmp-dir)
@@ -561,7 +561,7 @@
                      (core/clj-eval-fn {:workspace/root root :session-id "s"}
                                        {"code" "(+ 1 1)" "cwd" "sub"})
                      (expect (= (.getCanonicalPath (io/file root "sub")) @captured)))))
-             (it "defaults default-dir to the workspace root when no `dir` is given"
+             (it "defaults default-dir to the workspace root when no `cwd` is given"
                  (let
                    [root
                     (tmp-dir)

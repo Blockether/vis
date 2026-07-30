@@ -154,9 +154,9 @@
                  (let [findings (get (lint/lint-code "(ns a) (defn h [a b] a)") "findings")]
                    (expect (seq findings))
                    (expect (every? #(= "clj-kondo" (get % "provider")) findings))))
-             (it "group-by-dir nests findings by directory then basename then level"
+             (it "group-by-cwd nests findings by directory then basename then level"
                  (let
-                   [grouped (lint/group-by-dir
+                   [grouped (lint/group-by-cwd
                               [{"file" "src/x.clj" "level" "warning" "type" "a"}
                                {"file" "src/x.clj" "level" "error" "type" "b"}
                                {"file" "test/y.clj" "level" "warning" "type" "c"}])]
@@ -180,13 +180,13 @@
   (it "flags boxed math via the :general provider"
       (let [res (lint-result {} "(ns demo) (defn add [a b] (+ a b))")]
         (expect (some #(= "boxed-math" (get % "type")) (get res "findings")))))
-  (it "exposes the by-dir grouped view nested directory → basename"
+  (it "exposes the by-cwd grouped view nested directory → basename"
       (let
         [res
          (lint-result {} "(ns demo) (defn h [a b] (.length a))")
 
          grouped
-         (get res "by-dir")]
+         (get res "by-cwd")]
 
         ;; <stdin> has no directory → grouped under "." then its basename;
         ;; clj-kondo (unused b) + general (reflection) mix under one file group

@@ -3,6 +3,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.git-tool :as gt]
             [com.blockether.vis.internal.git :as git]
+            [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -58,18 +59,18 @@
   (it "await git exposes each serial command's stdout, stderr, and exit as plain Python data"
       (let [seen (atom [])]
         (with-redefs
-          [git/run-command
-           (fn [_ args _]
-             (swap! seen conj args)
-             (case (first args)
+          [shell/run-argv
+           (fn [_ argv _]
+             (swap! seen conj (vec (rest argv)))
+             (case (second argv)
                "status"
-               {:exit 0 :out "clean\n" :err "" :timed-out? false :duration-ms 1}
+               {"exit" 0 "stdout" "clean\n" "stderr" "" "timed_out" false "duration_ms" 1}
 
                "show"
-               {:exit 128 :out "" :err "bad revision\n" :timed-out? false :duration-ms 2}
+               {"exit" 128 "stdout" "" "stderr" "bad revision\n" "timed_out" false "duration_ms" 2}
 
                "diff"
-               {:exit 0 :out "diff\n" :err "warning\n" :timed-out? false :duration-ms 3}))]
+               {"exit" 0 "stdout" "diff\n" "stderr" "warning\n" "timed_out" false "duration_ms" 3}))]
           (let
             [{:keys [python-context]} (ep/create-python-context
                                         {'git (fn [commands]
@@ -126,10 +127,10 @@
               (fn []
                 root)
 
-              git/run-command
-              (fn [dir args opts]
-                (reset! seen [dir args opts])
-                {:exit 1 :out "" :err "verification required" :timed-out? false :duration-ms 3})]
+              shell/run-argv
+              (fn [_ argv opts]
+                (reset! seen [argv opts])
+                {"exit" 1 "stdout" "" "stderr" "verification required" "timed_out" false "duration_ms" 3})]
 
              (let
                [args
@@ -143,8 +144,8 @@
 
                (expect (= 1 (get command "exit")))
                (expect (= "verification required" (get command "stderr")))
-               (expect (= args (second @seen)))
-               (expect (= {:timeout-secs 120} (nth @seen 2)))))
+               (expect (= (into ["git"] args) (first @seen)))
+               (expect (= {"timeout_secs" 120} (second @seen)))))
            (finally (.delete root))))))
 (defdescribe
   git-batch-test
@@ -152,22 +153,22 @@
     "keeps stdout, stderr, and partial failures with their own serial commands"
     (let [seen (atom [])]
       (with-redefs
-        [git/run-command
-         (fn [_ args _]
-           (swap! seen conj args)
-           (case (first args)
+        [shell/run-argv
+         (fn [_ argv _]
+           (swap! seen conj (vec (rest argv)))
+           (case (second argv)
              "status"
-             {:exit 0 :out " M src/core.clj\n" :err "" :timed-out? false :duration-ms 1}
+             {"exit" 0 "stdout" " M src/core.clj\n" "stderr" "" "timed_out" false "duration_ms" 1}
 
              "show"
-             {:exit 128 :out "" :err "bad revision" :timed-out? false :duration-ms 2}
+             {"exit" 128 "stdout" "" "stderr" "bad revision" "timed_out" false "duration_ms" 2}
 
              "diff"
-             {:exit 0
-              :out " src/core.clj | 2 +-\n"
-              :err "warning: renamed"
-              :timed-out? false
-              :duration-ms 3}))]
+             {"exit" 0
+              "stdout" " src/core.clj | 2 +-\n"
+              "stderr" "warning: renamed"
+              "timed_out" false
+              "duration_ms" 3}))]
         (let
           [result (:result
                     (git-impl {} [["status" "--short"] ["show" "missing"] ["diff" "--stat"]] nil))

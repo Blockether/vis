@@ -49,7 +49,7 @@
   {"name" (:name s)
    "description" (:description s)
    "body" (:body s)
-   "dir" (:dir s)
+   "cwd" (:dir s)
    "resources" (mapv #(str (:dir s) "/" %) (:resources s))})
 
 (defn- current-iter-scope
@@ -122,7 +122,7 @@
      :tag :observation
      :native-tool? true
      :result (str
-               "Loaded: `{name,description,body,dir,resources}`. Already active: "
+               "Loaded: `{name,description,body,cwd,resources}`. Already active: "
                "`{name,status,scope,note}`. Unknown name: `{error,available}`. Every branch also "
                "includes string `op`; all keys are strings.")
      :name "skill"

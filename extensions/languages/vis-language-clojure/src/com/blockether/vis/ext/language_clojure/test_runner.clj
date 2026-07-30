@@ -423,14 +423,14 @@
              (str/join "\n" (cons head detail)))))
        (str/join "\n")))
 
-(defn group-faults-by-dir
+(defn group-faults-by-cwd
   "Regroup the flat `failures` / `errors` vectors into the SAME directory-nested
-   `by-dir` shape lint and format expose, writing each file's directory ONCE:
+   `by-cwd` shape lint and format expose, writing each file's directory ONCE:
    `{<dir> {<basename> {\"failures\" [...] \"errors\" [...]}}}`.
    `<dir>` is the failing file's parent (`\".\"` when it has none, e.g. a bare JVM
    frame like `Numbers.java` or a missing file) and the inner key is the
    basename, so the long path prefix isn't repeated per file — the same
-   character saving `lint/group-by-dir` gives lint. A fault with no usable file
+   character saving `lint/group-by-cwd` gives lint. A fault with no usable file
    lands under `\".\"`/`\"<unknown>\"`, and a kind with no faults is absent."
   [failures errors]
   (let
@@ -1058,7 +1058,7 @@
           (run-via-cli eff-root norm)
           result)
 
-        ;; Directory-nested view of the fault maps — the same `by-dir` grouping
+        ;; Directory-nested view of the fault maps — the same `by-cwd` grouping
         ;; lint/format expose, so a 30-failure run writes each path prefix ONCE.
         ;; Only present when there's something to group.
         result''
@@ -1070,7 +1070,7 @@
            (get result' "errors")]
 
           (if (or (seq failures) (seq errors))
-            (assoc result' "by-dir" (group-faults-by-dir failures errors))
+            (assoc result' "by-cwd" (group-faults-by-cwd failures errors))
             result'))]
 
        (extension/success {:result (surface/check :test-fn

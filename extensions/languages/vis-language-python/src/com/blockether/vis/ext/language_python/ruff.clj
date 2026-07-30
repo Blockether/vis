@@ -337,7 +337,7 @@
                          "language" "python"
                          "files" files
                          "changed" (count (filter #(get % "changed") files))
-                         "by-dir" (reduce (fn [acc f]
+                         "by-cwd" (reduce (fn [acc f]
                                             (let
                                               [p
                                                (io/file (get f "path"))
@@ -469,7 +469,7 @@
                          "files" (count (distinct (keep #(get % "file") findings)))
                          "findings" findings
                          "providers" ["ruff"]
-                         "by-dir"
+                         "by-cwd"
                          (reduce
                            (fn [acc f]
                              (let

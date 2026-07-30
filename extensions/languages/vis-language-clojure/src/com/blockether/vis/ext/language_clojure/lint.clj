@@ -80,7 +80,7 @@
   [file]
   (.getName (java.io.File. ^String file)))
 
-(defn group-by-dir
+(defn group-by-cwd
   "Regroup a flat `findings` vector into a directory-nested map that writes each
    file's directory ONCE:
    `{<dir> {<basename> {\"error\" [...] \"warning\" [...] \"info\" [...]}}}`.

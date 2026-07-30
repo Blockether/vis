@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.foundation.surface-contract-test
   "Contract tests for the clojure.spec language-surface result specs: the
-   directory-nested `by-dir` shape shared by format + lint, and `check`'s
+   directory-nested `by-cwd` shape shared by format + lint, and `check`'s
    accept/reject/pass-through behaviour."
   (:require [com.blockether.vis.internal.foundation.surface-contract :as contract]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -10,7 +10,7 @@
    "files" [{"path" "a.clj" "changed" true "wrote" true "formatter" "zprint"}
             {"path" "sub/b.clj" "changed" false "wrote" false}]
    "changed" 1
-   "by-dir" {"." {"a.clj" {"changed" true "wrote" true}}
+   "by-cwd" {"." {"a.clj" {"changed" true "wrote" true}}
              "sub" {"b.clj" {"changed" false "wrote" false}}}
    "formatters" ["zprint"]})
 
@@ -26,7 +26,7 @@
                 "provider" "clj-kondo"}]
    "providers" ["clj-kondo" "general"]
    "language" "clojure"
-   "by-dir" {"." {"a.clj" {"warning" [{"level" "warning" "message" "unused binding b"}]}}}})
+   "by-cwd" {"." {"a.clj" {"warning" [{"level" "warning" "message" "unused binding b"}]}}}})
 
 (def ^:private test-ok
   {"mode" "repl"
@@ -49,16 +49,16 @@
   (it "accepts a conforming lint result and returns it unchanged"
       (expect (contract/valid? :lint-fn lint-ok))
       (expect (= lint-ok (contract/check :lint-fn lint-ok))))
-  (it "accepts a minimal single-file format result (no files / no by-dir)"
+  (it "accepts a minimal single-file format result (no files / no by-cwd)"
       (expect (contract/valid? :format-fn {"op" "clj-format" "changed" true "chars" -3})))
   (it "accepts a single-file format result naming the formatter that ran"
       (expect (contract/valid? :format-fn
                                {"op" "clj-format" "changed" true "chars" -3 "formatter" "zprint"})))
   (it "rejects a format result whose formatters set is not strings"
       (expect (not (contract/valid? :format-fn (assoc format-ok "formatters" [1 2])))))
-  (it "rejects a format result whose by-dir is not a nested dir->file->map"
-      (expect (not (contract/valid? :format-fn (assoc format-ok "by-dir" ["oops"]))))
-      (expect (not (contract/valid? :format-fn (assoc format-ok "by-dir" {"." ["flat"]})))))
+  (it "rejects a format result whose by-cwd is not a nested dir->file->map"
+      (expect (not (contract/valid? :format-fn (assoc format-ok "by-cwd" ["oops"]))))
+      (expect (not (contract/valid? :format-fn (assoc format-ok "by-cwd" {"." ["flat"]})))))
   (it "rejects a format result missing the op key"
       (expect (not (contract/valid? :format-fn (dissoc format-ok "op")))))
   (it "rejects a lint result whose findings lack level/message"
@@ -100,7 +100,7 @@
                                     (assoc test-ok "failures" [{"message" "boom" "line" "12"}]))))
       (expect (not (contract/valid? :test-fn
                                     (assoc test-ok "failures" [{"message" "boom" "ns" 7}])))))
-  (it "accepts a test result carrying the shared by-dir grouping"
+  (it "accepts a test result carrying the shared by-cwd grouping"
       (let
         [fail
          {"ns" "my.core-test" "file" "src/com/blockether/vis/core.clj" "line" 12 "message" "boom"}
@@ -108,17 +108,17 @@
          err
          {"message" "kaboom"}
 
-         by-dir
+         by-cwd
          {"src/com/blockether/vis" {"core.clj" {"failures" [fail]}}
           "." {"<unknown>" {"errors" [err]}}}]
 
         (expect (contract/valid? :test-fn
                                  (assoc test-ok
                                    "fail" 1
-                                   "by-dir" by-dir)))))
-  (it "rejects a test result whose by-dir is not a nested dir->file->map"
-      (expect (not (contract/valid? :test-fn (assoc test-ok "by-dir" ["oops"]))))
-      (expect (not (contract/valid? :test-fn (assoc test-ok "by-dir" {"." ["flat"]})))))
+                                   "by-cwd" by-cwd)))))
+  (it "rejects a test result whose by-cwd is not a nested dir->file->map"
+      (expect (not (contract/valid? :test-fn (assoc test-ok "by-cwd" ["oops"]))))
+      (expect (not (contract/valid? :test-fn (assoc test-ok "by-cwd" {"." ["flat"]})))))
   (it "passes a capability with no registered spec straight through"
       (expect (contract/valid? :repl-eval-fn {:anything :goes}))
       (expect (= :untouched (contract/check :repl-eval-fn :untouched))))
@@ -134,7 +134,7 @@
         (expect (every? #(contains? r %) (keys contract/test-result-base)))
         (expect (= [] (get r "failures")))
         (expect (= [] (get r "errors")))
-        (expect (= {} (get r "by-dir")))
+        (expect (= {} (get r "by-cwd")))
         (expect (nil? (get r "total")))
         (expect (false? (get r "is_pass")))
         (expect (false? (get r "timed_out")))))
