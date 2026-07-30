@@ -2,6 +2,11 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.14 (2815) — 2026-07-30
+<!-- commit: 060fe81dfe16d410e4ef6efd2b03cd7d8bc70572 -->
+
+- Cover turn attachments with tests and note 0.1.14 in the changelog
+
 ## 0.1.14 (2814) — 2026-07-30
 <!-- commit: e3b729f13299640d797fef528bf655c7fc1f6f56 -->
 
