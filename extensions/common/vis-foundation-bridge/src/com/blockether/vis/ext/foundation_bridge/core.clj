@@ -12,7 +12,7 @@
             [com.blockether.vis.internal.extension :as extension]))
 
 (def ^:private default-profile-paths
-  ;; Bridge 0.2.x writes YAML profiles; keep the legacy `.edn` names as
+  ;; Bridge writes YAML profiles; keep the legacy `.edn` names as
   ;; fallbacks so older workspaces still resolve. Order = discovery priority.
   [".bridge/profile.yaml" ".bridge/persistent/profile.yaml" ".bridge/profile.edn"
    ".bridge/persistent/profile.edn"])
@@ -499,7 +499,14 @@
                     summary
                     (br/check profile
                               {:changed-files (ensure-vector (get opts "changed_files"))
-                               :policy policy})]
+                               :policy policy
+                               :policy-path policy-path
+                               :index? (boolean (or (get opts "is_index")
+                                                    (get opts "index")))
+                               :tree (get opts "tree")
+                               :frontier (get opts "frontier")
+                               :approve? (boolean (or (get opts "is_approve")
+                                                     (get opts "approve")))})]
 
                    (assoc summary
                      :configured? true
@@ -568,7 +575,7 @@
                :policy-loaded? (boolean policy)})))))))
 
 (defn check
-  "Run Bridge check. `await br_check({\"changed_files\": [path, ...]})` (also `\"profile\"`/`\"policy\"`). Returns `{\"status\", \"issue_count\", \"next_action\", ...}` (an unconfigured project returns `\"next_step\"` guidance instead) — summarize it, don't paste raw."
+  "Run Bridge check. Bare calls inspect the working snapshot; use `{\"is_index\": True}` for the staged commit candidate or `{\"tree\": sha, \"frontier\": sha}` for a pinned tree. `\"is_approve\": True` explicitly approves a clear candidate. Returns canonical status — summarize it, don't paste raw."
   [env & [opts]]
   (let
     [opts*
@@ -613,7 +620,7 @@
                                :commands (br/list-commands profile)})))))))
 
 (defn run-evidence
-  "Run one evidence command and write its receipt. `await br_run_evidence(id, {\"subject\": s, \"out\": path, \"out_dir\": path, \"timeout_seconds\": n, \"is_dry_run\": True})`. `is_dry_run` previews the plan without writing."
+  "Run one evidence command and write its receipt. `await br_run_evidence(id, {\"is_index\": True})` or pin `{\"tree\": sha, \"frontier\": sha}` for candidate evidence; `is_dry_run` previews without writing."
   [env id & [opts]]
   (stringify-result
     (bridge-tool :br/run-evidence
@@ -622,7 +629,7 @@
                  (fn [opts]
                    (let [discovery (profile-discovery (workspace-root env) opts)]
                      (when-not (:configured? discovery) (throw-profile-selection! discovery))
-                     (let [{:keys [profile profile-path]} (load-profile+policy env opts)]
+                     (let [{:keys [profile profile-path policy-path]} (load-profile+policy env opts)]
                        {:profile-path profile-path
                         :result (br/run-command profile
                                                 (str id)
@@ -630,6 +637,11 @@
                                                  :out-path (get opts "out")
                                                  :subject (get opts "subject")
                                                  :timeout-seconds (get opts "timeout_seconds")
+                                                 :policy-path policy-path
+                                                 :index? (boolean (or (get opts "is_index")
+                                                                      (get opts "index")))
+                                                 :tree (get opts "tree")
+                                                 :frontier (get opts "frontier")
                                                  :dry-run? (boolean (get opts
                                                                          "is_dry_run"))})}))))))
 
@@ -697,7 +709,8 @@
   "Parse a residual arg vector into a Bridge opts map. Supported
    flags: `--root PATH`, `--profile PATH`, `--policy PATH`, `--changed-file PATH`
    (repeatable), `--subject S`, `--out PATH`, `--out-dir PATH`,
-   `--timeout-seconds N`, `--dry-run`. Unknown flags raise so the
+   `--timeout-seconds N`, `--index`, `--tree TREE`, `--frontier TREE`,
+   `--approve`, `--dry-run`. Unknown flags raise so the
    user sees a structural error instead of a silent drop."
   [residual]
   (loop
@@ -710,7 +723,11 @@
     (let [[head & tail] xs]
       (cond (nil? head) opts
             (= "--dry-run" head) (recur (vec tail) (assoc opts "is_dry_run" true))
-            (#{"--root" "--profile" "--policy" "--subject" "--out" "--out-dir"} head)
+            (= "--index" head) (recur (vec tail) (assoc opts "is_index" true))
+            (= "--approve" head) (recur (vec tail) (assoc opts "is_approve" true))
+            (#{"--root" "--profile" "--policy" "--subject" "--out" "--out-dir" "--tree"
+               "--frontier"}
+              head)
             (let
               [k (case head
                    "--root"
@@ -729,7 +746,13 @@
                    "out"
 
                    "--out-dir"
-                   "out_dir")]
+                   "out_dir"
+
+                   "--tree"
+                   "tree"
+
+                   "--frontier"
+                   "frontier")]
               (recur (vec (rest tail)) (assoc opts k (first tail))))
             (= "--changed-file" head)
             (recur (vec (rest tail)) (update opts "changed_files" (fnil conj []) (first tail)))
@@ -778,7 +801,7 @@
      {:cmd/name "check"
       :cmd/doc "Run Bridge check for the workspace; exits non-zero on open obligations."
       :cmd/usage
-      "vis extension bridge check [--changed-file PATH ...] [--profile PATH] [--policy PATH]"
+      "vis extension bridge check [--index | --tree TREE] [--frontier TREE] [--approve] [--changed-file PATH ...] [--profile PATH] [--policy PATH]"
       :cmd/run-fn cli-check!}
      {:cmd/name "list-evidence"
       :cmd/doc "List evidence commands configured by the active profile."
@@ -787,10 +810,75 @@
      {:cmd/name "run-evidence"
       :cmd/doc "Run a configured evidence command and write its receipt."
       :cmd/usage
-      "vis extension bridge run-evidence <id> [--dry-run] [--subject S] [--out PATH] [--out-dir PATH] [--timeout-seconds N] [--profile PATH]"
-      :cmd/examples ["vis extension bridge run-evidence unit --dry-run"
+      "vis extension bridge run-evidence <id> [--index | --tree TREE] [--frontier TREE] [--dry-run] [--subject S] [--out PATH] [--out-dir PATH] [--timeout-seconds N] [--profile PATH]"
+     :cmd/examples ["vis extension bridge run-evidence unit --dry-run"
                      "vis extension bridge run-evidence unit --timeout-seconds 300"]
       :cmd/run-fn cli-run-evidence!}]}])
+
+(defn- bridge-commit-gate
+  [{:keys [root candidate-tree index-preserving?]} _op args next]
+  (when-not (and (string? root)
+                 (not (str/blank? root))
+                 (string? candidate-tree)
+                 (not (str/blank? candidate-tree))
+                 (true? index-preserving?))
+    (throw
+      (ex-info
+        "Bridge blocked commit: Vis did not provide an exact staged candidate."
+        {:type :vis.bridge/invalid-commit-candidate})))
+  (let [env {:workspace/root root}
+        discovery (profile-discovery (workspace-root env) {})]
+    (cond
+      (:selection-ambiguous? discovery)
+      (throw
+        (ex-info
+          "Bridge blocked commit: multiple configured projects require an explicit verification authority."
+          {:type :vis.bridge/ambiguous-commit-authority}))
+
+      (not (:configured? discovery))
+      (next args)
+
+      :else
+      (let [{:keys [profile policy policy-path]} (load-profile+policy env {})
+            summary
+            (try
+              (br/check profile
+                        {:index? true
+                         :approve? true
+                         :policy policy
+                         :policy-path policy-path})
+              (catch Throwable t
+                (throw
+                  (ex-info
+                    (str "Bridge blocked commit: " (or (ex-message t) "verification failed"))
+                    {:type :vis.bridge/commit-check-failed}
+                    t))))
+            checked-tree (get-in summary [:change-detection :candidate-tree])
+            approval-status (get-in summary [:change-detection :approval :status])]
+        (cond
+          (not= candidate-tree checked-tree)
+          (throw
+            (ex-info
+              "Bridge blocked commit: the staged candidate changed during verification; retry."
+              {:type :vis.bridge/candidate-changed
+               :candidate-tree candidate-tree
+               :checked-tree checked-tree}))
+
+          (and (= "clear" (:status summary)) (= "approved" approval-status))
+          (next args)
+
+          :else
+          (throw
+            (ex-info
+              (str "Bridge blocked commit: "
+                   (or (:issue-count summary) 0)
+                   " verification issue(s) remain"
+                   (when-let [action (:next-action summary)]
+                     (str "; next evidence: " (:evidence-id action))))
+              {:type :vis.bridge/commit-not-approved
+               :status (:status summary)
+               :issue-count (:issue-count summary)
+               :approval-status approval-status})))))))
 
 (def vis-extension
   (vis/extension {:ext/name "foundation-bridge"
@@ -802,6 +890,9 @@
                   :ext/engine {:ext.engine/alias 'br :ext.engine/symbols bridge-symbols}
                   :ext/cli bridge-cli
                   :ext/kind "verification"
+                  :ext/op-hooks [{:op :git/commit
+                                  :phase :around
+                                  :fn bridge-commit-gate}]
                   :ext/ctx-fn bridge-session-context
                   :ext/protected-paths bridge-protected-paths
                   :ext/prompt-fn bridge-prompt}))

@@ -2200,8 +2200,9 @@
 ;; the foundation's `struct_patch`/`patch`/`write`. Distinct from a symbol's own
 ;; `:before-fn`/`:after-fn` (which only its DEFINER can set): these compose ON TOP
 ;; at the single `invoke-symbol-wrapper` chokepoint, so the hook is wired ONCE and
-;; applies wherever that op is called. Best-effort — a hook that throws or returns
-;; a non-envelope is skipped (logged), never breaking the underlying tool.
+;; applies wherever that op is called. Before/after hooks are best-effort;
+;; :around hooks are control flow, so their return values and exceptions
+;; propagate to the operation caller.
 (defonce ^:private op-hooks (atom {}))   ; op-keyword -> [{:phase :owner :fn}]
 
 (defn register-op-hook!
@@ -2327,6 +2328,13 @@
                base
                arounds)
         args))))
+
+(defn invoke-operation
+  "Invoke host operation `f` through the declarative :around hooks for
+   `op-kw`. This is the non-model-tool entry point for operations such as a TUI
+   Git commit; hook lifecycle remains owned by extension registration."
+  [op-kw env f args]
+  (run-op-around (keyword op-kw) env f (vec args)))
 
 (defn- folded-kwargs->positional
   "Inverse of the engine's `synth-call` for the DIRECT-python surface. When the
@@ -2480,7 +2488,7 @@
              (record-tool-event! (tool-start-event ext sym-entry clean-args call-started-at-ms))
              (try (let
                     [r
-                     (run-op-around op-kw call-env f call-args)
+                     (invoke-operation op-kw call-env f call-args)
 
                      ms
                      (elapsed-ms ct0)]

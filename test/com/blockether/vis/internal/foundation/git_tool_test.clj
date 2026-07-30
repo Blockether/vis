@@ -1,11 +1,15 @@
 (ns com.blockether.vis.internal.foundation.git-tool-test
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.git-tool :as gt]
+            [com.blockether.vis.internal.git :as git]
+            [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private render #'gt/render-git-result)
 
 (def ^:private verbose-add #'gt/verbose-add-tokens)
+
+(def ^:private git-impl #'gt/git-impl)
 
 (defdescribe git-native-contract-test
              (it "routes from session state in the native description"
@@ -37,6 +41,36 @@
                  (expect (= ["commit" "-m" "x"] (verbose-add ["commit" "-m" "x"])))
                  (expect (= ["push"] (verbose-add ["push"])))
                  (expect (= ["status" "--short"] (verbose-add ["status" "--short"])))))
+
+(defdescribe shared-git-routing-test
+             (it "delegates literal argv to the shared Git command adapter"
+                 (let [root
+                       (.toFile
+                         (java.nio.file.Files/createTempDirectory
+                           "vis-git-tool-routing"
+                           (make-array java.nio.file.attribute.FileAttribute 0)))
+
+                       seen
+                       (atom nil)]
+
+                   (try
+                     (with-redefs
+                       [workspace/cwd (fn [] root)
+                        git/run-command
+                        (fn [dir args opts]
+                          (reset! seen [dir args opts])
+                          {:exit 1
+                           :out ""
+                           :err "verification required"
+                           :timed-out? false
+                           :duration-ms 3})]
+                       (let [args ["-C" "other" "commit" "-m" "x"]
+                             result (:result (git-impl {} args nil))]
+                         (expect (= 1 (get result "exit")))
+                         (expect (= "verification required" (get result "stderr")))
+                         (expect (= args (second @seen)))
+                         (expect (= {:timeout-secs 120} (nth @seen 2)))))
+                     (finally (.delete root))))))
 
 (defdescribe
   render-git-result-test

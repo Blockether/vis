@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
+            [bridge.api :as br]
             [bridge.io :as bio]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.env-python :as boundary]
@@ -44,6 +45,73 @@
 
 (defn- protected-env [root] {:workspace/root root :extensions (atom [bridge/vis-extension])})
 
+(def ^:private bridge-commit-gate (var-get #'bridge/bridge-commit-gate))
+
+(defdescribe bridge-commit-gate-test
+             (it "is declared as lifecycle-owned semantic middleware"
+                 (expect (= [{:op :git/commit
+                              :phase :around
+                              :fn bridge-commit-gate}]
+                            (:ext/op-hooks bridge/vis-extension))))
+             (it "allows an ordinary commit when Bridge is not configured"
+                 (let [root (temp-root "bridge-ext-no-gate")
+                       called (atom nil)
+                       result
+                       (bridge-commit-gate
+                         {:root root
+                          :candidate-tree "candidate"
+                          :index-preserving? true}
+                         :git/commit
+                         []
+                         (fn [args]
+                           (reset! called args)
+                           :committed))]
+                   (expect (= :committed result))
+                   (expect (= [] @called))))
+             (it "approves only the exact semantic candidate supplied by Vis"
+                 (let [root (temp-root "bridge-ext-gate-candidate")
+                       _ (configure-project! root root)
+                       seen-opts (atom nil)
+                       context {:root root
+                                :candidate-tree "candidate"
+                                :index-preserving? true}]
+                   (with-redefs
+                     [br/check
+                      (fn [_profile opts]
+                        (reset! seen-opts opts)
+                        {:status "clear"
+                         :issue-count 0
+                         :change-detection
+                         {:candidate-tree "candidate"
+                          :approval {:status "approved"}}})]
+                     (expect (= :committed
+                                (bridge-commit-gate
+                                  context
+                                  :git/commit
+                                  []
+                                  (constantly :committed))))
+                     (expect (true? (:index? @seen-opts)))
+                     (expect (true? (:approve? @seen-opts))))
+                   (with-redefs
+                     [br/check
+                      (fn [_profile _opts]
+                        {:status "clear"
+                         :issue-count 0
+                         :change-detection
+                         {:candidate-tree "different"
+                          :approval {:status "approved"}}})]
+                     (let [error
+                           (try
+                             (bridge-commit-gate
+                               context
+                               :git/commit
+                               []
+                               (constantly :committed))
+                             nil
+                             (catch clojure.lang.ExceptionInfo e e))]
+                       (expect (some? error))
+                       (expect (str/includes? (ex-message error) "candidate changed")))))))
+
 (defdescribe
   bridge-extension-test
   (it "configures the extension"
@@ -56,6 +124,7 @@
       (expect (fn? (:ext/ctx-fn bridge/vis-extension)))
       (expect (fn? (:ext/protected-paths bridge/vis-extension)))
       (expect (nil? (:ext/hooks bridge/vis-extension)))
+      (expect (= :git/commit (get-in bridge/vis-extension [:ext/op-hooks 0 :op])))
       (expect (= :observation (vis/op-tag :br/check)))
       (expect (= :mutation (vis/op-tag :br/init)))
       (expect (= :mutation (vis/op-tag :br/run-evidence))))
@@ -149,6 +218,18 @@
        ambiguous
        (bridge/check {:workspace/root root})
 
+       guard-error
+       (try
+         (bridge-commit-gate
+           {:root root
+            :candidate-tree "candidate"
+            :index-preserving? true}
+           :git/commit
+           []
+           (constantly :committed))
+         nil
+         (catch clojure.lang.ExceptionInfo e e))
+
        selected
        (bridge/check {:workspace/root root} {"profile" beta-profile})]
 
@@ -157,6 +238,8 @@
       (expect (not (contains? bridge-slice "default_profile_path")))
       (expect (false? (:success? ambiguous)))
       (expect (str/includes? (get-in ambiguous [:error :message]) "Multiple Bridge projects"))
+      (expect (some? guard-error))
+      (expect (str/includes? (ex-message guard-error) "multiple configured projects"))
       (expect (= 2 (count (get-in ambiguous [:error :details :projects]))))
       (expect (true? (:success? selected)))
       (expect (= beta-profile (get-in (result-of selected) ["profile_path"])))

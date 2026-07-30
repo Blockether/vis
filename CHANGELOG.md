@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Bridge exact-candidate options in `br/check` and `br/run-evidence`.
+- A shared fail-closed `:git/commit` operation for the model-facing Git tool
+  and TUI Magit. The generic Git adapter resolves Git-global repository
+  options, rejects index-changing commit forms, rechecks the staged tree, and
+  verifies the resulting commit tree; Bridge contributes only the
+  lifecycle-owned approval hook.
+
+### Changed
+
+- `vis-foundation-bridge` now targets the Bridge 0.2.2
+  candidate-verification API.
+
 ## [v0.1.13] - 2026-07-29
 
 ### Changed
@@ -163,8 +177,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 #### com.blockether/vis-provider-zai
 - providers: add OpenRouter and persist auth files in snake_case (3ee3993c6)
-
-
 
 ## [v0.1.12] - 2026-07-28
 

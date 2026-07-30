@@ -101,7 +101,10 @@
        [dir ^File (.getCanonicalFile (workspace/cwd))
         t0 (now-ms)
         {:keys [exit out err timed-out? duration-ms]}
-        (git/run-git dir (verbose-add-tokens tokens) {:timeout-secs default-timeout-secs})
+        (git/run-command
+          dir
+          (verbose-add-tokens tokens)
+          {:timeout-secs default-timeout-secs})
         t1 (now-ms)]
 
        (extension/success

@@ -328,10 +328,7 @@
      @#'extension/run-op-after-hooks
 
      run-before
-     @#'extension/run-op-before-hooks
-
-     run-around
-     @#'extension/run-op-around]
+     @#'extension/run-op-before-hooks]
 
     (it "after-hooks compose: the result threads through each registered hook"
         (extension/register-op-hook! {:op :ophtest1
@@ -370,8 +367,8 @@
                                       :fn (fn [_ _ args]
                                             (conj (vec args) :extra))})
         (expect (= [:x :extra] (run-before :ophtest4 {} [:x]))))
-    (it "no :around hook → run-op-around is just (apply f args)"
-        (expect (= 3 (run-around :ophtest-none {} + [1 2]))))
+    (it "the generic operation dispatcher invokes a host operation with no :around hook"
+        (expect (= 3 (extension/invoke-operation :ophtest-none {} + [1 2]))))
     (it "around middleware wraps the call, catches a throw, and recovers"
         (extension/register-op-hook! {:op :ophtest5
                                       :phase :around
@@ -379,11 +376,12 @@
                                       :fn (fn [_ _ args nxt]
                                             (try (nxt args) (catch Throwable _ :recovered)))})
         (expect (= :recovered
-                   (run-around :ophtest5
-                               {}
-                               (fn [& _]
-                                 (throw (ex-info "boom" {})))
-                               [:x]))))
+                   (extension/invoke-operation
+                     :ophtest5
+                     {}
+                     (fn [& _]
+                       (throw (ex-info "boom" {})))
+                     [:x]))))
     (it "around middleware can RETRY with rewritten args (the don't-fail pattern)"
         (let [attempts (atom 0)]
           (extension/register-op-hook! {:op :ophtest6
@@ -395,7 +393,7 @@
             [f (fn [a]
                  (swap! attempts inc)
                  (if (= a :fixed) :ok (throw (ex-info "nope" {}))))]
-            (expect (= :ok (run-around :ophtest6 {} f [:bad])))
+            (expect (= :ok (extension/invoke-operation :ophtest6 {} f [:bad])))
             (expect (= 2 @attempts)))))
     (it "declarative :ext/op-hooks install on register and tear down on deregister"
         (try (extension/register-extension! {:ext/name "test.ophooks-ext"

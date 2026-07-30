@@ -9,6 +9,7 @@
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.magit :as magit]
+            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.git :as git]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
@@ -203,7 +204,30 @@
                    (let [m (magit/status-model dir)]
                      (expect (= "initial, reworded" (:head-subject m)))
                      (expect (= 1 (count (:commits m)))))
-                   (expect (= "initial, reworded" (magit/last-commit-message dir))))))
+                   (expect (= "initial, reworded" (magit/last-commit-message dir)))))
+             (it "routes through the shared semantic commit operation"
+                 (let [dir
+                       (init-repo!)
+
+                       extension-name
+                       "test.magit-commit-gate"]
+
+                   (spit (str dir "/a.txt") "guarded\n")
+                   (magit/stage-file! dir "a.txt")
+                   (try
+                     (extension/register-extension!
+                       {:ext/name extension-name
+                        :ext/description "block Magit commit"
+                        :ext/op-hooks
+                        [{:op :git/commit
+                          :phase :around
+                          :fn (fn [_context _op _args _next]
+                                (throw (ex-info "verification evidence missing" {})))}]})
+                     (let [result (magit/commit! dir "blocked" {})]
+                       (expect (false? (:ok? result)))
+                       (expect (= "verification evidence missing" (:msg result)))
+                       (expect (= "initial" (:head-subject (magit/status-model dir)))))
+                     (finally (extension/deregister-extension! extension-name))))))
 
 ;;; ── branches ────────────────────────────────────────────────────────────────
 

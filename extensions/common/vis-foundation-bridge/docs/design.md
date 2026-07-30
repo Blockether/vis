@@ -22,7 +22,8 @@ Mutation tools:
   refuses to guess. Pass `{"root": "/abs/path/to/project"}`; initialization
   still targets exactly one project.
 - `(br/run-evidence id)` runs one configured evidence command and writes the
-  Bridge receipt.
+  Bridge receipt. Candidate evidence accepts `"is_index" true`, or pinned
+  `"tree"` and `"frontier"` values.
 
 Observation tools:
 
@@ -32,6 +33,10 @@ Observation tools:
 - `(br/check)` runs Bridge's verification status check for the current
   workspace. When no profile is configured, it returns
   `{:configured? false :status "unconfigured" ...}`.
+- Bare `(br/check)` keeps iterative working-snapshot semantics. Pass
+  `{"is_index": true}` for the exact staged candidate, or
+  `{"tree": sha, "frontier": sha}` for a pinned candidate. A clear candidate
+  is recorded only when `"is_approve": true`.
 - When configured, `br/check` returns Bridge's **canonical status summary**
   (`:summary-version` 1, produced by `bridge.api/check` — the same shape as
   `bb bridge check --format json`): `:counts`, `:required-obligations`
@@ -64,6 +69,10 @@ All tools accept an optional opts map where relevant:
  "profile" "/abs/path/to/.bridge/profile.yaml"
  "policy" "/abs/path/to/verification-policy.yaml"
  "changed_files" ["src/foo.clj"]
+ "is_index" true
+ "tree" "candidate-tree-or-commit"
+ "frontier" "approved-base-tree-or-commit"
+ "is_approve" true
  "subject" "core"
  "out_dir" ".bridge/ephemeral/evidence"
  "out" ".bridge/ephemeral/evidence/unit.yaml"
@@ -72,7 +81,8 @@ All tools accept an optional opts map where relevant:
 ```
 
 `br/run-evidence` supports `"is_dry_run" true` to return the execution plan
-without running a command or writing a receipt.
+without running a command or writing a receipt. Candidate selection is mutually
+exclusive with `"changed_files"`.
 
 ## Session Context
 
@@ -110,6 +120,40 @@ obligations, receipts, or next action: those are fresh, explicit outputs of
    command.
 8. The agent calls `(br/check)` again and reports clear status or remaining
    obligations in the final answer.
+
+Both TUI Magit and the model-facing Git tool call
+`internal.git/commit!`. That generic Vis operation owns Git syntax and the exact
+tree invariant: it resolves the effective repository after Git-global options,
+rejects index-mutating commit flags/pathspecs, computes T0 with `write-tree`,
+dispatches `:git/commit`, rechecks T0 immediately before Git, and asserts
+`HEAD^{tree} == T0` afterward.
+
+The Bridge extension contributes a declarative lifecycle-owned around hook:
+
+```clojure
+{:op :git/commit
+ :phase :around
+ :fn bridge-commit-gate}
+```
+
+The hook receives only semantic context (`:root`, `:candidate-tree`, and
+`:index-preserving?`). It runs an exact Bridge index check with explicit
+approval, compares Bridge's candidate with T0, and either invokes the inner
+operation or refuses with the next evidence action. It never parses Git
+arguments and returns no magic candidate field. Magit has no Bridge-specific
+knowledge.
+
+Required evidence is never run as a side effect of commit. Git options such as
+`-a` (including combined short forms), commit pathspecs, and
+`--pathspec-from-file` are refused by Vis; stage the intended tree first.
+Git-global options such as `git -C other-repo commit` are resolved before the
+semantic hook, so Bridge checks that repository rather than the original
+workspace. Ambiguous multi-project discovery fails closed.
+
+Repository hooks and CI are optional, independent project-policy adapters; Vis
+commit enforcement does not depend on either. Enabling the unrestricted shell
+surface is a deliberate escape from Vis-managed Git operations (Python
+`subprocess` routes through that same shell surface).
 
 ## Profile Discovery
 
@@ -170,9 +214,10 @@ Extension-owned:
 - converting Bridge library calls into plain Vis tool envelopes
 - registering op tags and prompt guidance
 - translating Bridge path sandbox policy into Vis protected-path declarations
+- declaring the fail-closed semantic `:git/commit` around hook
 
 The extension consumes Bridge exclusively through `bridge.api` (Bridge's
-public library contract, pinned by git SHA; see `bridge/docs/api.md`
+public library contract, pinned by release version; see `bridge/docs/api.md`
 upstream). No other `bridge.*` namespace is required anywhere in this
 extension — needing one is the signal to grow the upstream contract
 instead.
@@ -184,3 +229,7 @@ instead.
 - No direct storage poking into Vis or Bridge internals.
 - No automatic evidence execution without an explicit `br/run-evidence` call.
 - No aggregate multi-project verdict or implicit mutable current-project state.
+- No Git argument parsing or Git-specific result protocol in the Bridge
+  extension.
+- No claim to intercept the deliberately unrestricted shell or external Git
+  clients.
