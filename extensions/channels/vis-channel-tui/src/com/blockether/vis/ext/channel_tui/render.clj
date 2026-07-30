@@ -1174,7 +1174,7 @@
 
         ; reserve title only
         visible-cap
-        (max 0 (min 6 (long max-list)))
+        (max 0 (long max-list))
 
         total
         (count suggestions)
@@ -4696,15 +4696,18 @@
           ;; keeps its COLORED form; a folded (over-wide) row falls back to
           ;; its plain segments so the column math (ANSI-blind) and overflow
           ;; guards stay correct.
-          code-lines
+          ;; Keep folded display rows grouped by submitted source line. The
+          ;; disclosure previews and its `+N more` count describe PROGRAM lines,
+          ;; never the extra screen rows introduced by soft wrapping.
+          code-line-groups
           (cond native-tool-error? []
-                :else (or inline-error-code-lines
-                          (vec
-                            (mapcat (fn [plain colored]
-                                      (let [folded (p/fold-cols plain fill-w)]
-                                        (if (and colored (= 1 (count folded))) [colored] folded)))
-                                    (str/split-lines code-text)
-                                    (or colored-lines (repeat nil))))))
+                :else (or (some->> inline-error-code-lines
+                                   (mapv vector))
+                          (mapv (fn [plain colored]
+                                  (let [folded (p/fold-cols plain fill-w)]
+                                    (if (and colored (= 1 (count folded))) [colored] folded)))
+                                (str/split-lines code-text)
+                                (or colored-lines (repeat nil)))))
 
           code-node-id
           (when session-id
@@ -4714,16 +4717,19 @@
                              :section :iteration
                              :kind :code}))
 
+          c-line-groups-full
+          (mapv #(tag-copy-block-body (mapv (fn [line]
+                                              (line-entry (str c-marker line)))
+                                            %)
+                                      code-node-id
+                                      code-text)
+                code-line-groups)
+
           c-lines-full
-          (tag-copy-block-body (mapv #(line-entry (str c-marker %)) code-lines)
-                               code-node-id
-                               code-text)
+          (vec (mapcat identity c-line-groups-full))
 
           python-program-row-count
-          ;; An error context adds a caret row to `c-lines-full`; collapse
-          ;; decisions count the submitted PROGRAM rows so a five-line program
-          ;; plus one diagnostic row does not gain a pointless disclosure.
-          (if error (count (str/split-lines code-text)) (count c-lines-full))
+          (count (str/split-lines code-text))
 
           python-code-collapsible?
           (and (= "python_execution"
@@ -4743,17 +4749,23 @@
                ;; the disclosure reveals the complete program and caret.
                (detail-expanded? detail-expansions session-id code-node-id false)
 
+               visible-groups
+               (vec (take python-code-preview-line-limit c-line-groups-full))
+
+               hidden-groups
+               (vec (drop python-code-preview-line-limit c-line-groups-full))
+
                visible
-               (vec (take python-code-preview-line-limit c-lines-full))
+               (vec (mapcat identity visible-groups))
 
                hidden
-               (vec (drop python-code-preview-line-limit c-lines-full))
+               (vec (mapcat identity hidden-groups))
 
                summary
                (detail-summary-entries
                  {:marker c-marker
                   :max-w fill-w
-                  :summary (if expanded? "PYTHON" (str "PYTHON +" (count hidden) " more"))
+                  :summary (if expanded? "PYTHON" (str "PYTHON +" (count hidden-groups) " more"))
                   :collapsed? (not expanded?)
                   :session-id session-id
                   :node-id code-node-id
@@ -4981,12 +4993,16 @@
                           ;; footer; code blocks stay source-only.
                           [(line-entry (str c-pad ""))])))]
 
-         ;; The form contributes its code body (errors keep their inline
-         ;; caret) followed by what it PRINTED (stdout) — the single result
-         ;; surface, one ` ` gutter row of breathing space above it.
+         ;; A code band already closes with its one blank bottom edge. Python
+         ;; results begin immediately after that edge, rather than adding a
+         ;; second visually blank row from the result band.
          (vec (concat code-block
                       (when (seq result-lines)
-                        (concat [(line-entry (str result-marker ""))] result-lines))))))
+                        (concat (when-not (= "python_execution"
+                                             (some-> (:vis/tool-name form)
+                                                     name))
+                                  [(line-entry (str result-marker ""))])
+                                result-lines))))))
 
      ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
      ;; rows joined into the one card. Phase-5 dropped per-form result

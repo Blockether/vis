@@ -18,17 +18,27 @@
      (atom [])
 
      sent
-     (atom [])]
+     (atom [])
+
+     listener-added
+     (promise)
+
+     input-sent
+     (promise)]
 
     {:listeners listeners
      :sent sent
+     :listener-added listener-added
+     :input-sent input-sent
      :handle {:add-listener (fn [f]
                               (swap! listeners conj f)
+                              (deliver listener-added true)
                               (fn []
                                 (swap! listeners (fn [ls]
                                                    (vec (remove #(identical? % f) ls))))))
               :send (fn [^bytes b]
-                      (swap! sent conj (String. b)))}}))
+                      (swap! sent conj (String. b))
+                      (deliver input-sent true))}}))
 
 (defn- tmp-sock
   []
@@ -40,9 +50,8 @@
   (SocketChannel/open (UnixDomainSocketAddress/of (Paths/get ^String path (make-array String 0)))))
 
 (defn- read-str
-  "Read whatever's available after a short settle, as a String."
-  [^SocketChannel ch]
-  (Thread/sleep 150)
+  "Read the next available response from the blocking Unix socket."
+  [ch]
   (let
     [buf
      (ByteBuffer/allocate 1024)
@@ -62,7 +71,7 @@
                    (expect (str/includes? (str (.getFileName p)) "sess-abc"))))
              (it "replays recent output, tees live output, and forwards client input"
                  (let
-                   [{:keys [sent handle listeners]}
+                   [{:keys [sent handle listeners listener-added input-sent]}
                     (fake-pty)
 
                     path
@@ -78,14 +87,15 @@
                         (with-open [ch (connect sp)]
                           ;; late attacher gets the replay buffer
                           (expect (= "REPLAY\n" (read-str ch)))
-                          ;; live master output is teed to the attached client
-                          (Thread/sleep 50)
+                          ;; The client handler registered its live-output listener.
+                          (expect (= true (deref listener-added 1000 false)))
+                          ;; Live master output is teed to the attached client.
                           (doseq [l @listeners]
                             (l (.getBytes "LIVE\n")))
                           (expect (= "LIVE\n" (read-str ch)))
                           ;; bytes the human types flow into the pty master (:send)
                           (.write ch (ByteBuffer/wrap (.getBytes "typed\n")))
-                          (Thread/sleep 150)
+                          (expect (= true (deref input-sent 1000 false)))
                           (expect (= ["typed\n"] @sent)))
                         (finally (stop)))
                    ;; stop unlinks the socket file

@@ -998,6 +998,9 @@
       {:running? false})))
 
 (defn stop-daemon!
+  "Request the registered daemon to stop. When its registry is stale but its
+   configured endpoint still accepts TCP connections, report the live orphan
+   rather than falsely claiming it stopped."
   []
   (let
     [db
@@ -1011,7 +1014,16 @@
         (reset! cached-entry nil)
         (reset! client-id nil)
         res)
-      {:status "stopped" :stopping false})))
+      (if (and (:host entry) (:port entry) (not (port-free? (str (:host entry)) (:port entry))))
+        {:status "orphaned"
+         :type :gateway/orphaned-daemon
+         :host (:host entry)
+         :port (:port entry)
+         :pid (:pid entry)
+         :recovery (str "Inspect it with `lsof -nP -iTCP:"
+                        (:port entry)
+                        " -sTCP:LISTEN`, stop that process, then retry `vis gateway stop`.")}
+        {:status "stopped" :stopping false}))))
 
 (defn- port-free?
   "True when nothing is accepting TCP connections on host:port — i.e. a previous

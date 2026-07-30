@@ -3430,11 +3430,11 @@
 (defn- extension-env-status-label
   [source]
   (case source
-    :config
-    "set in Vis config"
-
     :env
     "set in environment"
+
+    :dotenv
+    "set in .env"
 
     :unset
     "unset"
@@ -3496,7 +3496,7 @@
       act
 
       :env-var
-      act
+      [" " t/dialog-fg]
 
       :choice
       val
@@ -3568,7 +3568,7 @@
 
 (defn- settings-selectable?
   [{:keys [type]}]
-  (contains? #{:toggle :choice :action :env-var :set-toggle :registry-toggle} type))
+  (contains? #{:toggle :choice :action :set-toggle :registry-toggle} type))
 
 (defn- first-selectable-index
   [rows]
@@ -3587,22 +3587,6 @@
             (and (pos? delta) (= idx (dec n))) selected
             :else (recur (p/clamp (+ idx delta) 0 (max 0 (dec n))))))))
 
-(defn- edit-extension-env-var!
-  [^TerminalScreen screen {:keys [name label description secret?]}]
-  (let
-    [{:keys [source value]}
-     (vis/extension-env-status name)
-
-     raw
-     (text-input-dialog! screen
-                         "Extension Environment" (str name ":")
-                         :mask (when secret? \*)
-                         :initial (if secret? "" (or value ""))
-                         :body
-                         [(str label " - " (extension-env-status-label source)) (or description "")
-                          "Blank input clears the Vis config override; OS env still applies."])]
-
-    (when (some? raw) (vis/save-extension-env-var! name raw))))
 
 (defn- theme-display-label
   [theme-id]
@@ -3752,9 +3736,6 @@
     :action
     (when-let [f (get callbacks (:id row))]
       (f @values))
-
-    :env-var
-    (edit-extension-env-var! screen row)
 
     (if (= :theme-name (:key row))
       (activate-theme-row! screen values callbacks row)

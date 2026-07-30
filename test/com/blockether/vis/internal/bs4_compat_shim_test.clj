@@ -11,11 +11,13 @@
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
 
+;; A namespace-local context avoids paying GraalPy + shim bootstrap per assertion.
+(defonce ^:private python-context* (delay (ep/create-python-context {})))
+
 (defmacro with-python-context
   [& body]
-  `(let
-     [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context {}))]
-     (try ~@body (finally (.close ~'python-context)))))
+  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context @python-context*)]
+     ~@body))
 
 ;; A shared HTML document (single-quoted inside Python so the Clojure string needs
 ;; no double-quote escaping in the markup itself).

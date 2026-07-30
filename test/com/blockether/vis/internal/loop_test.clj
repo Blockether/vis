@@ -313,8 +313,6 @@
 
 (def ^:private MAX_PROVIDER_UNAVAILABLE_RETRIES (deref #'lp/MAX_PROVIDER_UNAVAILABLE_RETRIES))
 
-(def ^:private provider-connect-failure? (deref #'lp/provider-connect-failure?))
-
 (def ^:private bumped-max-tokens-extra-body (deref #'lp/bumped-max-tokens-extra-body))
 
 (def ^:private llm-provider-error-context (deref #'lp/llm-provider-error-context))
@@ -590,14 +588,28 @@
              ;; cancel, leaving every sibling running as an orphaned full LLM turn whose
              ;; result nobody would ever read.
              (it "an escaping child error becomes one failed slot and never orphans a sibling"
-                 (let [sib (atom {:started false :finished false})]
-                   (with-redefs-fn {#'lp/run-spec! (fn [_ spec]
-                                                     (if (= "boom" (get spec "prompt"))
-                                                       (throw (Error. "hard child failure"))
-                                                       (do (swap! sib assoc :started true)
-                                                           (Thread/sleep 150)
-                                                           (swap! sib assoc :finished true)
-                                                           {"status" "completed"})))}
+                 (let
+                   [sib
+                    (atom {:started false :finished false})
+
+                    sibling-started
+                    (promise)
+
+                    release-sibling
+                    (promise)]
+
+                   (with-redefs-fn {#'lp/run-spec!
+                                    (fn [_ spec]
+                                      (if (= "boom" (get spec "prompt"))
+                                        (do (when-not (deref sibling-started 1000 false)
+                                              (throw (ex-info "sibling never started" {})))
+                                            (deliver release-sibling true)
+                                            (throw (Error. "hard child failure")))
+                                        (do (swap! sib assoc :started true)
+                                            (deliver sibling-started true)
+                                            @release-sibling
+                                            (swap! sib assoc :finished true)
+                                            {"status" "completed"})))}
                      (fn []
                        (let [res (lp/parallel-sub-loops! nil [{"prompt" "boom"} {"prompt" "ok"}])]
                          ;; input order preserved, one slot per spec
@@ -3044,20 +3056,6 @@
              ;; parent's db-info is still usable after the child was disposed
              (expect (= [] (persistance/db-list-session-turns (:db-info parent) (random-uuid))))
              (finally (lp/dispose-environment! parent)))))))
-
-(defdescribe
-  context-overflow-terminal-breaker-test
-  "Typed context overflow must never be fed back into an unreachable next model call."
-  (let
-    [overflow-ex
-     (fn [input max-input source]
-       (ex-info "Context overflow"
-                {:type :svar.tokens/context-overflow
-                 :source source
-                 :model "claude-fable-5"
-                 :input-tokens input
-                 :max-input-tokens max-input
-                 :overflow (when (and input max-input) (- input max-input))}))
 (defdescribe
   sub-loop-shell-toggle-test
   (it
@@ -3097,6 +3095,20 @@
            (expect (false? @seen))
            (finally (toggles/set-enabled! "shell" before))))))
 
+
+(defdescribe
+  context-overflow-terminal-breaker-test
+  "Typed context overflow must never be fed back into an unreachable next model call."
+  (let
+    [overflow-ex
+     (fn [input max-input source]
+       (ex-info "Context overflow"
+                {:type :svar.tokens/context-overflow
+                 :source source
+                 :model "claude-fable-5"
+                 :input-tokens input
+                 :max-input-tokens max-input
+                 :overflow (when (and input max-input) (- input max-input))}))
 
      ctx
      {:iteration 1 :messages [] :routing {} :reasoning-level nil}]
@@ -3185,8 +3197,8 @@
      (fn []
        (ex-info "Provider unavailable" {:type :svar.llm/provider-unavailable :status 503}))
 
-     ;; Same, but a CONNECT-level blip: no HTTP response ever reached us
-     ;; (`:status` nil), so it earns the generous 6-retry connect budget.
+     ;; Same, but a connect-level failure: no HTTP response reached us. svar owns
+     ;; its retry policy, so Vis surfaces it immediately without an outer retry.
      pu-connect
      (fn []
        (ex-info "Provider unavailable" {:type :svar.llm/provider-unavailable :status nil}))
@@ -3232,16 +3244,18 @@
         (expect (= [true true true false]
                    (mapv #(provider-unavailable-retry? (pu) %)
                          (range (inc MAX_PROVIDER_UNAVAILABLE_RETRIES))))))
-    (it "a non-provider-unavailable error is never gated for PU retry"
-        (expect (false? (provider-unavailable-retry? (ex-info "x" {:type :svar.llm/empty-content})
-                                                     0))))
+    (it "only retries HTTP 5xx; 429 and all other 4xx responses are terminal"
+        (expect (= [false false true true false]
+                   (mapv #(provider-unavailable-retry?
+                            (ex-info "Provider unavailable"
+                                     {:type :svar.llm/provider-unavailable :status %})
+                            0)
+                         [400 429 500 503 nil]))))
     (it "backoff widens 1s -> 2s -> 4s and clamps past the vector"
         (expect (= [1000 2000 4000 4000 4000]
                    (mapv provider-unavailable-retry-delay-ms (range 5)))))
     (it
       "connect-level (:status nil) is NOT retried by vis — svar owns it, card surfaces immediately"
-      (expect (true? (provider-connect-failure? (pu-connect))))
-      (expect (false? (provider-connect-failure? (pu))))
       (expect (false? (provider-unavailable-retry? (pu-connect) 0)))
       (let [{:keys [delays outcome pu-attempt]} (drive zero pu-connect)]
         (expect (= [] delays))

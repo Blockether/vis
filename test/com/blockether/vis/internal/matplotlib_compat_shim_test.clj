@@ -31,11 +31,13 @@
            "__buf = io.BytesIO()\nplt.savefig(__buf)\n"
            "list(__buf.getvalue()[:8]) == [137, 80, 78, 71, 13, 10, 26, 10]")))
 
+;; A namespace-local context avoids paying GraalPy + shim bootstrap per assertion.
+(defonce ^:private python-context* (delay (ep/create-python-context {})))
+
 (defmacro with-python-context
   [& body]
-  `(let
-     [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context {}))]
-     (try ~@body (finally (.close ~'python-context)))))
+  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context @python-context*)]
+     ~@body))
 
 (defdescribe
   matplotlib-module-test

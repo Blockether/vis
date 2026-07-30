@@ -221,15 +221,16 @@
                                     {:status :ok})}]
 
         (with-redefs [registry/provider-by-id (constantly descriptor)]
-          (let [{:keys [flow]} (pauth/start-auth! :fake-device)]
-            (expect (eventually (fn []
-                                  (pos? @polls))))
+          (let
+            [{:keys [flow]} (pauth/start-auth! :fake-device)
+             await-future (get-in @(var-get #'pauth/flows) [(:flow-id flow) :await-future])]
+
+            (expect (eventually #(pos? @polls)))
             (pauth/cancel-auth! (:flow-id flow))
-            (Thread/sleep 60)
+            (expect (eventually #(future-done? await-future)))
+            ;; A completed cancellation means the interrupted poll can no longer
+            ;; increment `polls`; observing it now needs no timing padding.
             (let [frozen @polls]
-              (Thread/sleep 200)
-              ;; WITHOUT the future cancel this keeps climbing for the whole
-              ;; device-code lifetime — and could still write credentials.
               (expect (= frozen @polls)))))))
   (it "supersedes a provider's previous flow so retried starts cannot stack polls"
       (let
@@ -255,11 +256,11 @@
                               (= :unknown-flow (:error (pauth/poll-auth! id))))
                             (butlast ids)))
             (expect (= true (:ok? (pauth/poll-auth! (last ids)))))
-            (pauth/cancel-auth! (last ids))
-            (Thread/sleep 60)
-            (let [frozen @polls]
-              (Thread/sleep 120)
-              (expect (= frozen @polls)))))))
+            (let [await-future (get-in @(var-get #'pauth/flows) [(last ids) :await-future])]
+              (pauth/cancel-auth! (last ids))
+              (expect (eventually #(future-done? await-future)))
+              (let [frozen @polls]
+                (expect (= frozen @polls))))))))
   (it "trims the pasted redirect URL before handing it to the provider"
       (let
         [seen
@@ -330,24 +331,33 @@
         [exchanges
          (atom 0)
 
+         entered
+         (java.util.concurrent.CountDownLatch. 1)
+
+         release
+         (java.util.concurrent.CountDownLatch. 1)
+
          descriptor
          {:provider/auth-start-fn (fn []
                                     {:kind :pkce :url "https://auth" :flow {:verifier "v"}})
           :provider/auth-complete-fn (fn [_flow _input]
                                        (swap! exchanges inc)
-                                       (Thread/sleep 120)
+                                       (.countDown entered)
+                                       (.await release)
                                        {:status :ok})}]
 
         (with-redefs [registry/provider-by-id (constantly descriptor)]
           (let
             [fid (:flow-id (:flow (pauth/start-auth! :fake-pkce)))
-             results (mapv deref
-                           [(future (pauth/complete-auth! fid "code"))
-                            (future (pauth/complete-auth! fid "code"))])]
+             first (future (pauth/complete-auth! fid "code"))]
 
-            (expect (= 1 @exchanges))
-            (expect (= 1 (count (filter :ok? results))))
-            (expect (= [:unknown-flow] (keep :error results)))))))
+            (expect (.await entered 1 java.util.concurrent.TimeUnit/SECONDS))
+            (let [second (future (pauth/complete-auth! fid "code"))]
+              (.countDown release)
+              (let [results [@first @second]]
+                (expect (= 1 @exchanges))
+                (expect (= 1 (count (filter :ok? results))))
+                (expect (= [:unknown-flow] (keep :error results)))))))))
   (it "hands a flow back after a failed exchange so a mistyped paste is retryable"
       (let
         [descriptor {:provider/auth-start-fn

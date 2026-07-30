@@ -751,10 +751,9 @@
    lookup key in `internal/slash.clj`."
   [slash-spec]
   (conj (vec (:slash/parent slash-spec)) (:slash/name slash-spec)))
-;; Optional extension-owned environment/config declarations. These name
-;; OS-style environment variables that can also be overridden from
-;; Vis config/TUI under `:environment`. The host never mutates the
-;; process env; extension code resolves them through config helpers.
+;; Optional extension-owned environment declarations. These name OS-style
+;; variables an extension reads; values come from the process environment or the
+;; working directory's `.env`, never from Vis config or the TUI.
 (s/def :ext.env/name non-blank-string?)
 
 (s/def :ext.env/label non-blank-string?)
@@ -3538,8 +3537,7 @@
     com.blockether.vis.internal.foundation.shim-matplotlib
     com.blockether.vis.internal.foundation.shim-requests
     com.blockether.vis.internal.foundation.shim-pytest
-    com.blockether.vis.internal.foundation.shim-ruff
-    com.blockether.vis.internal.foundation.shim-pil
+    com.blockether.vis.internal.foundation.shim-ruff com.blockether.vis.internal.foundation.shim-pil
     com.blockether.vis.internal.foundation.shim-numpy
     com.blockether.vis.internal.foundation.shim-bs4
     com.blockether.vis.internal.foundation.shim-pandas

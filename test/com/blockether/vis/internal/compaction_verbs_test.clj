@@ -1132,60 +1132,40 @@
         (=
           "# ⋯ folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44% (42k/96k tokens) · big cat dump"
           line))))
-  (it
-    "a fold breadcrumb carries its folded steps' ntr[...] recovery accessors"
-    ;; The scope→accessor index rides the DURABLE breadcrumb so a harness
-    ;; restart (which drops the per-call `# saved: ntr[…]` lines) can't strip
-    ;; the recovery handles. Drops and python_execution-only folds (no stored
-    ;; result) carry none.
-    (let
-      [tr
-       [[1
-         {:forms-vec [{:scope "t1/i1/f1"
-                       :svar/tool-call-id "toolu_A"
-                       :result "a"
-                       :vis/tool-name "grep"
-                       :result-summary "`ntr` · 2 files"}]}]
-        [2
-         {:forms-vec
-          [{:scope "t1/i2/f1" :svar/tool-call-id "toolu_B" :result "b" :vis/tool-name "cat"}]}]]
+  (it "a fold breadcrumb points to ntr.describe() without carrying result ids"
+      ;; The durable breadcrumb stays short even when a fold covers many calls.
+      ;; `ntr.describe()` is the labelled discovery surface; drops and
+      ;; python_execution-only folds (no stored result) carry no pointer.
+      (let
+        [tr
+         [[1
+           {:forms-vec [{:scope "t1/i1/f1"
+                         :svar/tool-call-id "toolu_A"
+                         :result "a"
+                         :vis/tool-name "grep"
+                         :result-summary "`ntr` · 2 files"}]}]
+          [2
+           {:forms-vec
+            [{:scope "t1/i2/f1" :svar/tool-call-id "toolu_B" :result "b" :vis/tool-name "cat"}]}]]
 
-       folded
-       (apply-summaries tr [{"scopes" #{"t1/i1" "t1/i2"} "gist" "did it"}])
+         folded
+         (apply-summaries tr [{"scopes" #{"t1/i1" "t1/i2"} "gist" "did it"}])
 
-       dropped
-       (apply-summaries tr [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])
+         dropped
+         (apply-summaries tr [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])
 
-       printed
-       (apply-summaries [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "p"}]}]]
-                        [{"scopes" #{"t1/i1"} "gist" "no store"}])]
+         printed
+         (apply-summaries [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "p"}]}]]
+                          [{"scopes" #{"t1/i1"} "gist" "no store"}])]
 
-      (expect
-        (=
-          (str
-            "# ⋯ folded t1/i1-i2 · recover raw result/no rerun: ntr[\"toolu_A\"] grep: ntr, 2 files; "
-            "ntr[\"toolu_B\"] cat · did it")
-          (:content (irm (second (first folded))))))
-      (expect (= "# ⋯ dropped t1/i1 · misread" (:content (irm (second (first dropped))))))
-      (expect (= "# ⋯ folded t1/i1 · no store" (:content (irm (second (first printed))))))))
+        (expect (= (str "# ⋯ folded t1/i1-i2 · more results: ntr.describe() · did it")
+                   (:content (irm (second (first folded))))))
+        (expect (= "# ⋯ dropped t1/i1 · misread" (:content (irm (second (first dropped))))))
+        (expect (= "# ⋯ folded t1/i1 · no store" (:content (irm (second (first printed))))))))
   (it "with NO stamped utilization the card degrades to the bare confirmation"
       (let [sf (get (compaction-verbs (atom {"session_turn" 2})) 'session-fold)]
         (expect (= "folded t1/i1 → g" (sf ["t1/i1"] "g")))))
-  (it "the fold card carries the same ntr[...] recovery accessors"
-      ;; `stamp-iter-universe!` stamps `engine_iter_ntr` {scope -> ids} so the
-      ;; verb resolves the SAME recover clause for the human-facing card that the
-      ;; durable breadcrumb carries — a restart-proof handle visible on scroll-back.
-      (let
-        [sf (get (compaction-verbs (atom {"session_turn" 2
-                                          "engine_iter_universe" ["t1/i1"]
-                                          "engine_iter_ntr" {"t1/i1" ["toolu_A" "toolu_B"]}}))
-                 'session-fold)]
-        (expect
-          (= "folded t1/i1 · recover raw result/no rerun: ntr[\"toolu_A\"]; ntr[\"toolu_B\"] → g"
-             (sf ["t1/i1"] "g")))))
-  (it "a fold advertises only its 3 newest labelled recovery accessors"
-      ;; Older results stay available through ntr.describe(); the breadcrumb must
-      ;; favor the newest work and never grow without bound.
+  (it "a fold points to ntr.describe() without copying result labels into the breadcrumb"
       (let
         [entries
          (mapv (fn [i]
@@ -1201,28 +1181,9 @@
          out
          (sf ["t1/i1"] "g")]
 
-        ;; Everything older than the 3 newest is deliberately omitted; the 3rd-from-end
-        ;; and newest entries remain labelled and selectable.
-        (expect (not (str/includes? out "ntr[\"toolu_0\"]")))
-        (expect (not (str/includes? out "ntr[\"toolu_22\"]")))
-        (expect (str/includes? out "ntr[\"toolu_23\"] cat;"))
-        (expect (str/includes? out "ntr[\"toolu_25\"] cat"))
-        (expect (str/includes? out " · +23 older labelled results: ntr.describe() → ntr[id]"))))
-  (it "a long label is truncated instead of drowning the breadcrumb"
-      (let
-        [sf
-         (get (compaction-verbs (atom {"session_turn" 2
-                                       "engine_iter_universe" ["t1/i1"]
-                                       "engine_iter_ntr"
-                                       {"t1/i1" [{"id" "toolu_A"
-                                                  "tool" "repl_eval"
-                                                  "gist" (apply str (repeat 12 "long "))}]}}))
-              'session-fold)
-
-         out
-         (sf ["t1/i1"] "g")]
-
-        (expect (str/includes? out "repl_eval: long long long long long long long long lon…")))))
+        (expect (= "folded t1/i1 · more results: ntr.describe() → g" out))
+        (expect (not (str/includes? out "toolu_")))
+        (expect (not (str/includes? out "older labelled results"))))))
 
 (defdescribe
   session-fold-card-render-test
@@ -1231,23 +1192,20 @@
    char-folds mid-word and the companion gives `overflow-x-auto`. Prose and
    bullets soft-wrap to whatever width each surface has, so one engine-side
    shape reads correctly in the TUI and on the web."
-  (it "splits a full receipt into headline + gist paragraph + metric bullets"
-      (let
-        [card (session-fold-card
-                (str
-                  "folded t1/i1 · saved ~60k tokens · ~67% of budget"
-                  " · context 94% (90k/96k tokens) · recover raw result/no rerun: ntr[\"toolu_A\"]"
-                  " → bigger task"))]
-        ;; Collapsed view: WHAT was folded + HOW MUCH it reclaimed.
-        (expect (= "folded `t1/i1` · saved **~60k tokens**" (:summary card)))
-        ;; `~67% of budget` qualifies the `saved …` it follows, so the pair
-        ;; stays on ONE bullet instead of stranding a bare percentage.
-        (expect (= (str "\nbigger task\n\n"
-                        "- **saved** ~60k tokens · ~67% of budget\n"
-                        "- **context** 94% (90k/96k tokens)\n"
-                        "- **recover** exact raw result, no re-run:\n" "  - `ntr[\"toolu_A\"]`")
-                   (:body card)))
-        (expect (not (str/includes? (:body card) "```")))))
+  (it
+    "splits a full receipt into headline + gist paragraph + metric bullets"
+    (let
+      [card (session-fold-card (str "folded t1/i1 · saved ~60k tokens · ~67% of budget"
+                                    " · context 94% (90k/96k tokens) · more results: ntr.describe()"
+                                    " → bigger task"))]
+      ;; Collapsed view: WHAT was folded + HOW MUCH it reclaimed.
+      (expect (= "folded `t1/i1` · saved **~60k tokens**" (:summary card)))
+      ;; `~67% of budget` qualifies the `saved …` it follows, so the pair
+      ;; stays on ONE bullet instead of stranding a bare percentage.
+      (expect (= (str "\nbigger task\n\n" "- **saved** ~60k tokens · ~67% of budget\n"
+                      "- **context** 94% (90k/96k tokens)\n" "- **more results:** `ntr.describe()`")
+                 (:body card)))
+      (expect (not (str/includes? (:body card) "```")))))
   (it "a tilde in an accessor label can't strike out the breadcrumb"
       ;; ONE tilde opens GFM strikethrough and tool gists are full of `~/vis/…`
       ;; paths, so every label is monospaced — and each accessor gets its own

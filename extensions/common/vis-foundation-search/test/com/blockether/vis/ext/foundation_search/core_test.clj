@@ -9,12 +9,18 @@
      - parse-arxiv-atom maps arxiv entries into the canonical citation
        shape"
   (:require [babashka.http-client :as http]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.foundation-search.core :as search]
             [com.blockether.vis.internal.env-python :as boundary]
             [com.blockether.vis.internal.extension :as extension]
-            [lazytest.core :refer [defdescribe describe expect it]]))
+            [lazytest.core :refer [defdescribe describe expect it]])
+  (:import (java.io ByteArrayOutputStream)
+           (java.nio.charset StandardCharsets)
+           (java.nio.file Files)
+           (java.util.zip GZIPOutputStream)
+           (org.apache.commons.compress.archivers.tar TarArchiveEntry TarArchiveOutputStream)))
 
 ;; ---------------------------------------------------------------------------
 ;; arxiv Atom sample
@@ -390,10 +396,116 @@ const total = add(1, 2);")
             (expect (= "exa" (get c "source")))
             (expect (= "arxiv" (get p "source"))))))))
 
+(defdescribe
+  github-fallback-test
+  (describe
+    "code search uses GitHub only after a retryable Exa failure"
+    (with-redefs
+      [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+       (fn [_ _]
+         (throw (ex-info "MCP HTTP 429" {:type :search/mcp-http-error :status 429})))
+
+       com.blockether.vis.ext.foundation-search.core/*github-token-fn*
+       (constantly "gh-cli-token")
+
+       com.blockether.vis.ext.foundation-search.core/*github-get-fn*
+       (fn [_url opts]
+         (expect (= "Bearer gh-cli-token" (get-in opts [:headers "authorization"])))
+         {:status 200
+          :body
+          "{\"items\":[{\"name\":\"core.clj\",\"path\":\"src/core.clj\",\"html_url\":\"https://github.com/acme/demo/blob/main/src/core.clj\",\"repository\":{\"full_name\":\"acme/demo\"},\"text_matches\":[{\"fragment\":\"(defn hello [] :world)\"}]}]}"})]
+
+      (let
+        [env
+         (search/search-code "hello" {"num_results" 3})
+
+         r
+         (envelope-result env)
+
+         citation
+         (first (get r "citations"))]
+
+        (it "returns a successful GitHub-sourced envelope"
+            (expect (extension/envelope-success? env)))
+        (it "reports the provider and its Exa fallback reason"
+            (expect (= "github" (get r "source")))
+            (expect (= "exa" (get r "fallback_from"))))
+        (it "normalizes GitHub code matches into canonical citations"
+            (expect (= "code" (get citation "type")))
+            (expect (= "github" (get citation "source")))
+            (expect (= "acme/demo/src/core.clj" (get citation "title")))
+            (expect (str/includes? (get citation "excerpt") "defn hello"))))))
+  (describe "auth and malformed Exa failures do not silently fail over"
+            (with-redefs
+              [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+               (fn [_ _]
+                 (throw (ex-info "MCP HTTP 401" {:type :search/mcp-http-error :status 401})))
+
+               com.blockether.vis.ext.foundation-search.core/*github-get-fn*
+               (fn [& _]
+                 (throw (ex-info "GitHub must not be called" {})))]
+
+              (let [env (search/search-code "hello" {})]
+                (it "keeps the original Exa error" (expect (extension/envelope-failure? env)))
+                (it "does not claim a GitHub fallback"
+                    (expect (= "exa" (get (envelope-result env) "source"))))))))
+
+(defdescribe
+  github-provider-test
+  (describe
+    "GitHub can be selected as the primary code provider"
+    (with-redefs
+      [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+       (fn [& _]
+         (throw (ex-info "Exa must not be called" {})))
+
+       com.blockether.vis.ext.foundation-search.core/*github-token-fn*
+       (constantly "gh-cli-token")
+
+       com.blockether.vis.ext.foundation-search.core/*github-get-fn*
+       (fn [_ opts]
+         (expect (= "Bearer gh-cli-token" (get-in opts [:headers "authorization"])))
+         {:status 200
+          :body
+          "{\"items\":[{\"name\":\"readme.md\",\"path\":\"README.md\",\"html_url\":\"https://github.com/acme/demo/blob/main/README.md\",\"repository\":{\"full_name\":\"acme/demo\"}}]}"})]
+
+      (let
+        [env
+         (search/search-code "hello" {"provider" "github"})
+
+         r
+         (envelope-result env)]
+
+        (it "does not call Exa and does not claim a fallback"
+            (expect (extension/envelope-success? env))
+            (expect (= "github" (get r "source")))
+            (expect (nil? (get r "fallback_from")))))))
+  (describe "an unauthenticated GitHub CLI gives an actionable failure"
+            (with-redefs
+              [com.blockether.vis.ext.foundation-search.core/*github-token-fn*
+               (constantly nil)
+
+               com.blockether.vis.ext.foundation-search.core/*github-get-fn*
+               (fn [& _]
+                 (throw (ex-info "GitHub HTTP must not be called" {})))]
+
+              (let
+                [env
+                 (search/search-code "hello" {"provider" "github"})
+
+                 c
+                 (first (get (envelope-result env) "citations"))]
+
+                (it "asks the user to authenticate with gh instead of searching anonymously"
+                    (expect (extension/envelope-failure? env))
+                    (expect (= "search_github_auth_required" (get c "error_type")))
+                    (expect (str/includes? (get c "excerpt") "gh auth login")))))))
+
 (defdescribe engine-scope-test
              (describe "no search/* symbol declares an engine-scope (single agent surface)"
                        (doseq
                          [[label sym-entry] [[:web search/web-symbol] [:code search/code-symbol]
+                                             [:download-code search/download-code-symbol]
                                              [:papers search/papers-symbol]]]
                          (it (str (name label) " omits :ext.symbol/engine-scope")
                              (expect (nil? (:ext.symbol/engine-scope sym-entry))))
@@ -472,9 +584,66 @@ const total = add(1, 2);")
   (describe "wire surface"
             (it "`search` is the only NATIVE search tool"
                 (expect (true? (:ext.symbol/native-tool? search/search-symbol)))
-                (doseq [sym-entry [search/web-symbol search/code-symbol search/papers-symbol]]
+                (doseq
+                  [sym-entry [search/web-symbol search/code-symbol search/download-code-symbol
+                              search/papers-symbol]]
                   (expect (false? (:ext.symbol/native-tool? sym-entry)))))
-            (it "the schema exposes the three kinds"
+            (it "the schema exposes the three search kinds"
                 (expect (= ["web" "code" "papers"]
                            (get-in search/search-symbol
-                                   [:ext.symbol/schema :properties "kind" :enum]))))))
+                                   [:ext.symbol/schema :properties "kind" :enum]))))
+            (it "download_code requires a repository and bounds its input"
+                (expect (= ["repository"]
+                           (get-in search/download-code-symbol [:ext.symbol/schema :required])))
+                (expect (= 20
+                           (get-in search/download-code-symbol
+                                   [:ext.symbol/schema :properties "max_files" :maximum]))))))
+
+(defn- tar-gzip-fixture
+  [entries]
+  (let [out (ByteArrayOutputStream.)]
+    (with-open
+      [gzip (GZIPOutputStream. out)
+       tar (TarArchiveOutputStream. gzip)]
+
+      (doseq [[path content] entries]
+        (let
+          [data (.getBytes ^String content StandardCharsets/UTF_8)
+           entry (TarArchiveEntry. path)]
+
+          (.setSize entry (alength data))
+          (.putArchiveEntry tar entry)
+          (.write tar data 0 (alength data))
+          (.closeArchiveEntry tar))))
+    (.toByteArray out)))
+
+(defdescribe download-archive-test
+             (it "downloads and extracts the complete codeload archive below the supplied workspace"
+                 (let
+                   [workspace (.toFile (Files/createTempDirectory
+                                         "vis-download-archive-test"
+                                         (make-array java.nio.file.attribute.FileAttribute 0)))]
+                   (try (let
+                          [archive (tar-gzip-fixture {"demo-main/README.md" "hello archive\n"
+                                                      "demo-main/src/app.clj" "(println :ok)\n"})]
+                          (with-redefs
+                            [search/*github-get-fn* (fn [_ _]
+                                                      {:status 200 :body archive})]
+                            (let
+                              [env (search/download-archive workspace "acme/demo" {"ref" "main"})
+                               result (envelope-result env)
+                               path (get result "path")]
+
+                              (expect (extension/envelope-success? env))
+                              (expect (= "download_archive" (get result "op")))
+                              (expect (= 2 (get result "files")))
+                              (expect (= "hello archive\n" (slurp (io/file path "README.md"))))
+                              (expect (= "(println :ok)\n" (slurp (io/file path "src/app.clj")))))))
+                        (finally (doseq [f (reverse (file-seq workspace))]
+                                   (io/delete-file f true))))))
+             (it "exposes a closed sandbox schema with a workspace-relative destination"
+                 (expect (= ["repository"]
+                            (get-in search/download-archive-symbol [:ext.symbol/schema :required])))
+                 (expect (contains? (get-in search/download-archive-symbol
+                                            [:ext.symbol/schema :properties])
+                                    "directory"))))

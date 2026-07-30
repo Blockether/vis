@@ -109,14 +109,17 @@ const LIVE_BODY_THROTTLE_MS = 150;
 // directly. Long enough that a healthy terminal frame always wins the race.
 const TURN_LIVENESS_IDLE_MS = 10000;
 const TURN_LIVENESS_PROBE_INTERVAL_MS = 5000;
-const INITIAL_VISIBLE_TURNS = 24;
-// A transcript of 24 turns is tens of thousands of DOM nodes; building all of
-// them before the first paint is what made opening a session feel slow — the
-// wait was never the network. Only the newest turns are on screen when a
-// session opens (it lands pinned to the bottom), so mount just those, then fill
-// the rest of the window in ABOVE the fold once the reader already has pixels.
-const FIRST_PAINT_TURNS = 3;
-const HYDRATE_TURNS_PER_FRAME = 10;
+const INITIAL_VISIBLE_TURNS = 8;
+// Assistant turns can contain thousands of syntax-highlighted nodes. Twenty-four
+// such turns is still enough DOM to make keyboard resize and momentum scrolling
+// hitch on a phone, even when React does not re-render them. Keep the mounted
+// window deliberately small; older turns remain available through the explicit
+// pager above the transcript.
+const FIRST_PAINT_TURNS = 2;
+// Do not spend the next frame after opening a session mounting a second screenful
+// of markdown. A small ramp leaves input focus, keyboard animation, and scrolling
+// a chance to paint between batches.
+const HYDRATE_TURNS_PER_FRAME = 2;
 // Last-resort reveal for the loading veil. The veil is dropped by whoever
 // finishes first — the transcript read, or the scroll effect one animation
 // frame after the first paint — and BOTH can be lost on mobile: a webview that
@@ -2765,7 +2768,7 @@ export function SessionScreen({
     !slashText.includes('\n');
   const slashQuery = slashText.toLowerCase();
   const slashMatches = slashOpen
-    ? slashCommands.filter((command) => command.name.toLowerCase().startsWith(slashQuery)).slice(0, 8)
+    ? slashCommands.filter((command) => command.name.toLowerCase().startsWith(slashQuery))
     : [];
   const selectedSlash = slashMatches[Math.min(slashIndex, Math.max(0, slashMatches.length - 1))];
 

@@ -1381,6 +1381,13 @@
 
       (expect (= [[2 "L2"] [3 "L3"] [4 "L4"]] (patch/anchor-map->tuples (get spec "anchors"))))
       (expect (= spec positional))
+      ;; `grep` returns a result map, not its path. When it has one content-hit
+      ;; file, pass the result straight to cat without a blank-path failure.
+      (let [grep-result {"matches" {path {"1:test" {"text" "L1"}}}}]
+        (expect (= (-> (cat-tool path)
+                       :result)
+                   (-> (cat-tool grep-result)
+                       :result))))
       ;; A path-only spec map == whole-file read. An empty JSON ranges array is an
       ;; optional-argument serialization artifact, so it normalizes to that default.
       (let

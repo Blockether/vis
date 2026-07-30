@@ -3642,11 +3642,25 @@
    opts {\"depth\": N} recurses (default 1), {\"is_hidden\": true} adds dotfiles; gitignored paths are ALWAYS skipped."
   ([path]
    (if (map? path)
-     ;; All-kwargs form: `cat(path=\"p\", ranges=rs)` collapses at the Python
-     ;; boundary to ONE spec map `{\"path\" \"p\", ...opts}` (see __vis_exec_call__).
-     ;; Pull the path out and delegate to the opts-map arity so ranges/anchor/tail
-     ;; keep working — mirrors rg's lone-spec-map contract.
-     (cat-tool (get path "path") (dissoc path "path"))
+     ;; All-kwargs form: `cat(path="p", ranges=rs)` collapses at the Python
+     ;; boundary to ONE spec map `{ "path" "p", ...opts}`. A grep result is
+     ;; also a map; when it identifies exactly one matched file, accept it as
+     ;; the path directly rather than turning the missing `"path"` into a
+     ;; blank-path failure.
+     (let
+       [spec
+        path
+
+        direct-path
+        (get spec "path")
+
+        match-paths
+        (keys (get spec "matches"))
+
+        inferred-path
+        (when (= 1 (count match-paths)) (first match-paths))]
+
+       (cat-tool (or direct-path inferred-path) (dissoc spec "path")))
      (let [f (safe-path path)]
        (if (.isDirectory f)
          (dir-listing-success path (list-dir f nil))

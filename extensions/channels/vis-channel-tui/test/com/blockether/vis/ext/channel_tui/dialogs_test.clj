@@ -838,7 +838,7 @@
                             (settings-option-label row {:theme-name :THEME_NAME})))))
              (finally (vis/reset-themes!)))))
   (it
-    "extension-declared env vars render under Extensions / Exa without UNKNOWN labels"
+    "extension-declared env vars render their external source under Extensions / Exa"
     (let
       [settings-rows
        (var-get #'dlg/settings-rows)
@@ -861,7 +861,7 @@
 
          vis/extension-env-status
          (fn [name]
-           {:name name :source :config :value "secret"})]
+           {:name name :source :dotenv :value "secret"})]
 
         (let
           [rows
@@ -870,8 +870,6 @@
            row
            (first (filter #(= [:environment "EXA_API_KEY"] (:id %)) rows))]
 
-          ;; "Extension Settings" is the LAST section in the flat list; the
-          ;; env-var rows live under it.
           (expect (= "Extension Settings"
                      (->> rows
                           (filter #(= :section (:type %)))
@@ -882,8 +880,8 @@
                           (filter #(= :subsection (:type %)))
                           (mapv :label))))
           (expect (= :env-var (:type row)))
-          (expect (= "Exa API key: set in Vis config" (settings-option-label row {})))
-          (expect (not (str/includes? (settings-option-label row {}) "UNKNOWN")))))))
+          (expect (= "Exa API key: set in .env" (settings-option-label row {})))
+          (expect (false? ((var-get #'dlg/settings-selectable?) row)))))))
   (it
     "retired extension setting declarations are dropped, registry owns the rows"
     (let [settings-rows (var-get #'dlg/settings-rows)]

@@ -464,6 +464,7 @@
   ^long [sid requested]
   (let [requested (long requested)
         current (long (state/current-seq sid))]
+
     (if (or (neg? requested) (> requested current))
       (long (or (state/running-turn-start-cursor sid) current))
       requested)))

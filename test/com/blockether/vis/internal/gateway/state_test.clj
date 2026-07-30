@@ -1669,16 +1669,27 @@
                     (cancellation/cancellation-token)
 
                     acquire!
-                    (deref #'state/acquire-turn-permit!)]
+                    (deref #'state/acquire-turn-permit!)
+
+                    waiting
+                    (var-get #'state/turns-waiting)
+
+                    queued
+                    (promise)]
 
                    (.acquire semaphore)
                    (try (with-redefs-fn {#'state/turn-permits semaphore}
                           (fn []
-                            (let [result (future (acquire! token))]
-                              (Thread/sleep 150)
-                              (expect (not (realized? result)))
-                              (cancellation/cancel! token)
-                              (expect (= false (deref result 1000 ::timeout))))))
+                            (add-watch waiting
+                                       ::queued
+                                       (fn [_ _ _ n]
+                                         (when (pos? n) (deliver queued true))))
+                            (try (let [result (future (acquire! token))]
+                                   (expect (= true (deref queued 1000 false)))
+                                   (expect (not (realized? result)))
+                                   (cancellation/cancel! token)
+                                   (expect (= false (deref result 1000 ::timeout))))
+                                 (finally (remove-watch waiting ::queued)))))
                         (finally (.release semaphore)))))
              (it "keeps one unused prewarm context per channel"
                  (let

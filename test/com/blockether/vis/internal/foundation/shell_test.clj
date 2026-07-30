@@ -379,22 +379,24 @@
                      (expect (nil? (get r "exit"))))
                    (finally (resources/stop-all! sid))))))))
   (it "honors the bg op's cwd and reports it on every stage of that shell"
-      (with-shell-on (fn []
-                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         (let
-                           [sid "shell-ext-bg-cwd"
-                            env {:session-id sid}]
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-ext-bg-cwd"
+               env {:session-id sid}]
 
-                           (try (let [b (:result (shell-bg* env "c" "pwd; sleep 60" {"cwd" "src"}))]
-                                  ;; The schema advertises `cwd` for run AND bg; a bg that silently
-                                  ;; ran in the workspace root is a wrong-directory bug, not a nit.
-                                  (expect (str/ends-with? (get b "cwd") "/src"))
-                                  (Thread/sleep 400)
-                                  (let [r (:result (shell-logs* env "c"))]
-                                    (expect (= (get b "cwd") (get r "cwd")))
-                                    (expect (str/includes? (str/join "\n" (get r "lines"))
-                                                           "/src"))))
-                                (finally (resources/stop-all! sid))))))))
+              (try (let [b (:result (shell-bg* env "c" "pwd; sleep 60" {"cwd" "src"}))]
+                     ;; The schema advertises `cwd` for run AND bg; a bg that silently
+                     ;; ran in the workspace root is a wrong-directory bug, not a nit.
+                     (expect (str/ends-with? (get b "cwd") "/src"))
+                     (poll #(get (:result (shell-logs* env "c")) "lines")
+                           #(str/includes? (str/join "\n" %) "/src")
+                           20)
+                     (let [r (:result (shell-logs* env "c"))]
+                       (expect (= (get b "cwd") (get r "cwd")))
+                       (expect (str/includes? (str/join "\n" (get r "lines")) "/src"))))
+                   (finally (resources/stop-all! sid))))))))
   (it "stops promptly even when the command double-forks a detached daemon"
       (with-shell-on
         (fn []
@@ -807,8 +809,8 @@
 
         (try (expect (= ["background" true "logs" true "stop" true]
                         (py c
-                            (str "import time\n" "b = __vis_settle__(shell('echo alive; sleep 30',"
-                                 " {'op':'background','id':'pyjob'}))\n" "time.sleep(0.5)\n"
+                            (str "b = __vis_settle__(shell('echo alive; sleep 30',"
+                                 " {'op':'background','id':'pyjob'}))\n"
                                  "l = __vis_settle__(shell({'op':'logs','id':'pyjob','n':10}))\n"
                                  "s = __vis_settle__(shell({'op':'stop','id':'pyjob'}))\n"
                                  "[b['stage'], b['pid'] is not None, l['stage'],"

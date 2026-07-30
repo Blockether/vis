@@ -6,7 +6,7 @@
    kernel, no `;; -- EXTENSION search --` prompt block:
 
      search_web(query, opts?)    — web search via Exa MCP
-     search_code(query, opts?)   — code/doc context via Exa MCP
+     search_code(query, opts?)   — code/doc context via Exa MCP, GitHub fallback
      search_papers(query, opts?) — arxiv papers (Atom feed)
 
    Output shape — consistent with the rest of the `:tag :observation`
@@ -18,7 +18,8 @@
       :citations    [{:type :title :url :excerpt :source …} …]
       :citation-count N
       :truncated?   B
-      :source       :exa|:arxiv
+      :source       :exa|:github|:arxiv
+      :fallback-from :exa                    ;; only GitHub fallback results
       :endpoint     \"…REDACTED…\"   ;; web/code only
       :error?       true               ;; only on failure
       :error        {:message … …}}    ;; only on failure
@@ -42,11 +43,18 @@
             [clojure.string :as str]
             [clojure.xml :as xml]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.extension :as extension])
-  (:import (java.io ByteArrayInputStream)
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.workspace :as workspace])
+  (:import (java.io ByteArrayInputStream ByteArrayOutputStream)
            (java.net URI URLDecoder URLEncoder)
            (java.nio.charset StandardCharsets)
-           (java.util UUID)))
+           (java.nio.file Files LinkOption Path)
+           (java.nio.file.attribute FileAttribute)
+           (java.security MessageDigest)
+           (java.util UUID)
+           (java.util.concurrent TimeUnit)
+           (java.util.zip GZIPInputStream)
+           (org.apache.commons.compress.archivers.tar TarArchiveInputStream)))
 
 (def ^:private default-endpoint "https://mcp.exa.ai/mcp")
 
@@ -75,6 +83,10 @@
   "Test seam. Function of `[request-map]` returning the
    babashka.http-client response shape `{:status :headers :body}`."
   nil)
+
+(def ^:dynamic *github-get-fn* "Test seam for GitHub REST and codeload GET requests." nil)
+
+(def ^:dynamic *github-token-fn* "Test seam for retrieving the token held by the GitHub CLI." nil)
 
 (defn- env [k] (not-empty (str/trim (or (vis/extension-env-value k) ""))))
 
@@ -834,7 +846,7 @@
   "Canonical Python-facing :result map for a successful search call.
    STRINGS-ONLY: string keys, enum values (`op`, `source`) snake-cased so the
    map crosses the boundary already string-clean."
-  [{:keys [op query citations source endpoint truncated?]}]
+  [{:keys [op query citations source endpoint truncated? fallback-from]}]
   (cond->
     {"op" (kw->snake op)
      "query" (str query)
@@ -843,19 +855,23 @@
      "truncated" (boolean truncated?)
      "source" (kw->snake source)}
     endpoint
-    (assoc "endpoint" endpoint)))
+    (assoc "endpoint" endpoint)
+
+    fallback-from
+    (assoc "fallback_from" (kw->snake fallback-from))))
 
 (defn- search-success
   "Wrap a successful search call in the canonical tool envelope so it
    travels through `invoke-symbol-wrapper` the same way v/* tools do."
-  [{:keys [op tool query citations source endpoint truncated?]}]
+  [{:keys [op tool query citations source endpoint truncated? fallback-from]}]
   (let
     [payload (search-result-payload {:op op
                                      :query query
                                      :citations citations
                                      :source source
                                      :endpoint endpoint
-                                     :truncated? truncated?})]
+                                     :truncated? truncated?
+                                     :fallback-from fallback-from})]
     (extension/success {:result payload
                         :op op
                         :metadata (cond->
@@ -865,7 +881,10 @@
                                      :truncated? (get payload "truncated")
                                      :query (str query)}
                                     endpoint
-                                    (assoc :endpoint endpoint))})))
+                                    (assoc :endpoint endpoint)
+
+                                    fallback-from
+                                    (assoc :fallback-from fallback-from))})))
 
 (defn- search-failure
   "Failure envelope. Carries a single error-flagged citation on
@@ -920,69 +939,597 @@
                :query (str query)
                :source source}})))
 
+(defn- retryable-exa-error?
+  "True only for Exa quota and server failures. Authentication, malformed
+   requests, and MCP protocol errors remain visible instead of being masked."
+  [t]
+  (let [{:keys [type status]} (ex-data t)]
+    (and (= :search/mcp-http-error type) (or (= 429 status) (<= 500 (long (or status 0)) 599)))))
+
+(def ^:private github-code-endpoint "https://api.github.com/search/code")
+
+(defn- github-cli-token
+  "Read the token from a logged-in `gh` CLI without exposing it in config or logs.
+   Returns nil when the CLI is missing, unauthenticated, or too slow."
+  []
+  (try (let
+         [process
+          (.start (doto (ProcessBuilder. ^"[Ljava.lang.String;"
+                                         (into-array String ["gh" "auth" "token"]))
+                    (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD)))
+
+          output
+          (future (slurp (io/reader (.getInputStream process))))
+
+          finished?
+          (.waitFor process 2 TimeUnit/SECONDS)]
+
+         (if (and finished? (zero? (.exitValue process)))
+           (not-empty (str/trim (deref output 1000 "")))
+           (do (.destroyForcibly process) nil)))
+       (catch Throwable _ nil)))
+
+(defn- github-request
+  [query opts]
+  (let [token ((or *github-token-fn* github-cli-token))]
+    (when-not token
+      (throw
+        (ex-info
+          "GitHub Code Search requires an authenticated GitHub CLI. Run `gh auth login` and grant it access to the repositories you need."
+          {:type :search/github-auth-required})))
+    (let
+      [per-page (min 100 (long (positive-long (get opts "num_results") 10)))
+       url (str github-code-endpoint "?q=" (encode-url query) "&per_page=" per-page)
+       headers {"accept" "application/vnd.github.text-match+json"
+                "authorization" (str "Bearer " token)
+                "user-agent" "vis-foundation-search/0.1"}
+       response (if *github-get-fn*
+                  (*github-get-fn* url {:headers headers :throw false :timeout default-timeout-ms})
+                  (http/get url {:headers headers :throw false :timeout default-timeout-ms}))
+       status (:status response)
+       body (str (or (:body response) ""))]
+
+      (when (or (nil? status) (< (long status) 200) (>= (long status) 300))
+        (throw (ex-info (str "GitHub HTTP " status ": " (subs body 0 (min 240 (count body))))
+                        {:type :search/github-http-error :status status})))
+      (json/read-json body :key-fn keyword))))
+
+(defn- github-citations
+  [response citation-type]
+  (mapv (fn [{:keys [name path html_url repository text_matches]}]
+          (let
+            [repo-name
+             (or (get repository :full_name) "GitHub")
+
+             fragments
+             (keep :fragment text_matches)
+
+             excerpt
+             (if (seq fragments)
+               (str/join "\n\n" fragments)
+               (str "GitHub code result: " repo-name "/" (or path name "")))]
+
+            {"type" (kw->snake citation-type)
+             "title" (str repo-name "/" (or path name ""))
+             "url" (or html_url "")
+             "excerpt" excerpt
+             "source" "github"}))
+        (or (:items response) [])))
+
+(defn- search-github-code!
+  ([op tool query opts citation-type] (search-github-code! op tool query opts citation-type nil))
+  ([op tool query opts citation-type fallback-from]
+   (let
+     [response
+      (github-request query opts)
+
+      citations
+      (github-citations response citation-type)]
+
+     (search-success {:op op
+                      :tool tool
+                      :query query
+                      :citations citations
+                      :source :github
+                      :endpoint github-code-endpoint
+                      :truncated? false
+                      :fallback-from fallback-from}))))
+
 (defn- call-exa!
   "Common path for `web` + `code`: call MCP, parse text → envelope.
-   Returns an `extension/success` (or `extension/failure`) envelope
-   so the wrapper produces channel-renderable structured output.
+   An optional fallback receives only retryable Exa HTTP errors. Its failure is
+   reported directly so callers see remediation such as GitHub authentication."
+  ([op tool-name args citation-type query] (call-exa! op tool-name args citation-type query nil))
+  ([op tool-name args citation-type query fallback]
+   (try
+     (let
+       [{:keys [endpoint result]}
+        (call-mcp-tool! tool-name args)
 
-   `op` is the public op kw (`:search-web` / `:search-code`).
-   `tool-name` is the Exa MCP tool string (`\"web_search_exa\"` etc.)."
-  [op tool-name args citation-type query]
-  (try (let
-         [{:keys [endpoint result]}
-          (call-mcp-tool! tool-name args)
+        raw
+        (mcp-result->text result)
 
-          raw
-          (mcp-result->text result)
+        {:keys [content truncated?]}
+        (truncate-text raw (effective-limits {}))
 
-          {:keys [content truncated?]}
-          (truncate-text raw (effective-limits {}))
+        citations
+        (parse-exa-text content citation-type)
 
-          citations
-          (parse-exa-text content citation-type)
+        redacted-ep
+        (some-> endpoint
+                redact-endpoint)]
 
-          redacted-ep
-          (some-> endpoint
-                  redact-endpoint)]
-
-         (search-success {:op op
-                          :tool tool-name
-                          :query query
-                          :citations citations
-                          :source :exa
-                          :endpoint redacted-ep
-                          :truncated? truncated?}))
-       (catch Throwable t
+       (search-success {:op op
+                        :tool tool-name
+                        :query query
+                        :citations citations
+                        :source :exa
+                        :endpoint redacted-ep
+                        :truncated? truncated?}))
+     (catch Throwable exa-error
+       (if (and fallback (retryable-exa-error? exa-error))
+         (try (fallback exa-error)
+              (catch Throwable fallback-error
+                (search-failure {:op op
+                                 :tool tool-name
+                                 :query query
+                                 :source :github
+                                 :endpoint github-code-endpoint
+                                 :citation-type citation-type
+                                 :throwable fallback-error})))
          (search-failure {:op op
                           :tool tool-name
                           :query query
                           :source :exa
                           :citation-type citation-type
-                          :throwable t}))))
+                          :throwable exa-error}))))))
 
 (defn search-web
   "await search_web(\"rust async runtime comparison\")
    await search_web(\"…\", {\"num_results\": 5, \"type\": \"auto\", \"livecrawl\": \"preferred\", \"context_max_characters\": N})
 
-   Live web search via Exa.
-   Returns {\"query\", \"citations\": [{\"type\": \"web\", \"title\", \"url\", \"excerpt\", \"published\", \"authors\", \"source\"}, ...], \"citation_count\", \"truncated\", \"source\", \"endpoint\"}.
-   Gotcha: \"excerpt\" is markdown text — read it directly; on failure \"citations\"[0] carries \"error\": True with the message in \"excerpt\"."
+   Live web search via Exa."
   ([query] (search-web query {}))
   ([query opts]
    (call-exa! :search-web "web_search_exa" (web-args (str query) (or opts {})) :web (str query))))
 
 (defn search-code
   "await search_code(\"clojure core.async go-loop example\")
-   await search_code(\"…\", {\"tokens_num\": N})
+   await search_code(\"…\", {\"provider\": \"github\", \"tokens_num\": N})
 
-   Live code/docs search via Exa (github repos, clojuredocs, readthedocs, API refs). Narrow with \"site:github.com X\" or \"<repo> X\".
-   Returns {\"query\", \"citations\": [{\"type\": \"code\", \"title\", \"url\", \"excerpt\", \"source\"}, ...], \"citation_count\", \"truncated\", \"source\", \"endpoint\"}.
-   Gotcha: \"excerpt\" is markdown text; on failure \"citations\"[0] has \"error\": True."
+   Code/docs search. `provider` selects `auto` (default: Exa then GitHub on Exa
+   quota/server failures), `exa`, or `github`. GitHub Code Search requires a
+   logged-in GitHub CLI; on a missing login the failure tells the user to run
+   `gh auth login` rather than attempting an unsupported anonymous search."
   ([query] (search-code query {}))
   ([query opts]
-   (call-exa! :search-code
-              "get_code_context_exa" (code-args (str query) (or opts {}))
-              :code (str query))))
+   (let
+     [query
+      (str query)
+
+      opts
+      (or opts {})
+
+      provider
+      (str (or (get opts "provider") "auto"))
+
+      provider-opts
+      (dissoc opts "provider")]
+
+     (case provider
+       "auto"
+       (call-exa!
+         :search-code
+         "get_code_context_exa"
+         (code-args query provider-opts)
+         :code
+         query
+         (fn [_]
+           (search-github-code! :search-code "github-code-search" query provider-opts :code :exa)))
+
+       "exa"
+       (call-exa! :search-code "get_code_context_exa" (code-args query provider-opts) :code query)
+
+       "github"
+       (try (search-github-code! :search-code "github-code-search" query provider-opts :code)
+            (catch Throwable t
+              (search-failure {:op :search-code
+                               :tool "github-code-search"
+                               :query query
+                               :source :github
+                               :endpoint github-code-endpoint
+                               :citation-type :code
+                               :throwable t})))
+
+       (search-failure {:op :search-code
+                        :tool "search-code"
+                        :query query
+                        :source :exa
+                        :citation-type :code
+                        :throwable (ex-info (str "unknown code search provider "
+                                                 (pr-str provider)
+                                                 " — use auto | exa | github")
+                                            {:provider provider})})))))
+
+;; =============================================================================
+;; GitHub source archive download (public codeload)
+;; =============================================================================
+
+(def ^:private github-codeload-base "https://codeload.github.com")
+(def ^:private github-archive-max-bytes (* 10 1024 1024))
+(def ^:private github-full-archive-max-bytes (* 100 1024 1024))
+(def ^:private github-full-archive-max-extracted-bytes (* 1024 1024 1024))
+(def ^:private github-full-archive-max-files 10000)
+(def ^:private github-download-default-files 6)
+(def ^:private github-download-max-files 20)
+(def ^:private github-download-default-bytes 51200)
+(def ^:private github-download-max-bytes 131072)
+
+(defn- github-repository!
+  [repository]
+  (let [repository (str repository)]
+    (when-not (re-matches #"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" repository)
+      (throw (ex-info "repository must be an owner/repo pair"
+                      {:type :search/invalid-github-repository})))
+    repository))
+
+(defn- github-ref!
+  [ref]
+  (let [ref (str (or ref "HEAD"))]
+    (when-not (and (<= 1 (count ref) 255) (not (re-find #"[\u0000-\u001f\u007f]" ref)))
+      (throw (ex-info "ref must be a non-empty Git ref" {:type :search/invalid-github-ref})))
+    ref))
+
+(defn- github-archive-url
+  [repository ref]
+  (str github-codeload-base "/" repository "/tar.gz/" (encode-url ref)))
+
+(defn- github-download-response
+  ([url] (github-download-response url github-archive-max-bytes))
+  ([url max-bytes]
+   (let
+     [response
+      (if *github-get-fn*
+        (*github-get-fn* url
+                         {:as :bytes
+                          :throw false
+                          :timeout default-timeout-ms
+                          :headers {"user-agent" "vis-foundation-search/0.1"}})
+        (http/get url
+                  {:as :bytes
+                   :throw false
+                   :timeout default-timeout-ms
+                   :headers {"user-agent" "vis-foundation-search/0.1"}}))
+
+      status
+      (:status response)
+
+      body
+      (:body response)]
+
+     (when (or (nil? status) (< (long status) 200) (>= (long status) 300))
+       (throw (ex-info (str "GitHub archive HTTP " status)
+                       {:type :search/github-archive-http-error :status status})))
+     (when-not (bytes? body)
+       (throw (ex-info "GitHub archive response was not binary"
+                       {:type :search/github-archive-invalid})))
+     (when (> (long (alength ^bytes body)) (long max-bytes))
+       (throw (ex-info
+                (str "GitHub archive exceeds the " max-bytes " byte compressed download limit")
+                {:type :search/github-archive-too-large :max-bytes max-bytes})))
+     body)))
+
+(defn- archive-relative-path
+  [entry-name]
+  ;; codeload wraps every archive in one top-level `owner-repo-ref/` directory.
+  (some-> (second (str/split (str entry-name) #"/" 2))
+          not-empty))
+
+(defn- requested-path?
+  [path prefix]
+  (or (nil? prefix) (= path prefix) (str/starts-with? path (str prefix "/"))))
+
+(defn- archive-files
+  [archive-bytes prefix max-files max-bytes]
+  (let
+    [max-files
+     (long max-files)
+
+     max-bytes
+     (long max-bytes)]
+
+    (with-open
+      [gzip
+       (GZIPInputStream. (ByteArrayInputStream. ^bytes archive-bytes))
+
+       tar
+       (TarArchiveInputStream. gzip)]
+
+      (loop
+        [files
+         []
+
+         total-bytes
+         0
+
+         truncated?
+         false]
+
+        (if-let [entry (.getNextTarEntry tar)]
+          (let [path (archive-relative-path (.getName entry))]
+            (if (or (.isDirectory entry) (nil? path) (not (requested-path? path prefix)))
+              (recur files total-bytes truncated?)
+              (let
+                [remaining (- max-bytes total-bytes)
+                 declared-size (.getSize entry)]
+
+                (if (or (zero? remaining) (>= (count files) max-files))
+                  (recur files total-bytes true)
+                  (let
+                    [limit (long (Math/min remaining declared-size))
+                     out (ByteArrayOutputStream. (int limit))
+                     buffer (byte-array 8192)]
+
+                    (loop [left limit]
+                      (when (pos? (long left))
+                        (let
+                          [read (.read tar
+                                       buffer
+                                       0
+                                       (int (Math/min (long left) (long (alength buffer)))))]
+                          (when (pos? read)
+                            (.write out buffer 0 read)
+                            (recur (long (- (long left) (long read))))))))
+                    (let [content (.toString out (.name StandardCharsets/UTF_8))]
+                      (recur (conj
+                               files
+                               {"path" path "content" content "truncated" (> declared-size limit)})
+                             (long (+ (long total-bytes) limit))
+                             (or truncated? (> declared-size limit)))))))))
+          {"files" files "truncated" truncated?})))))
+
+(defn download-code
+  "await download_code(\"owner/repo\", {\"ref\": \"main\", \"path\": \"src\"})
+
+   Fetch a public GitHub codeload tarball and return bounded UTF-8 source excerpts.
+   This is for a repository already identified by search, not code discovery. It never
+   writes to disk, accepts only owner/repo, and caps compressed downloads at 10 MiB.
+   `path` restricts the archive prefix; `max_files` (default 6, max 20) and
+   `max_bytes` (default 51200, max 131072) bound returned content."
+  ([repository] (download-code repository {}))
+  ([repository opts]
+   (let
+     [repository
+      (github-repository! repository)
+
+      opts
+      (or opts {})
+
+      ref
+      (github-ref! (get opts "ref"))
+
+      prefix
+      (some-> (get opts "path")
+              str
+              str/trim
+              not-empty)
+
+      max-files
+      (long (min (long github-download-max-files)
+                 (long (positive-long (get opts "max_files") github-download-default-files))))
+
+      max-bytes
+      (long (min (long github-download-max-bytes)
+                 (long (positive-long (get opts "max_bytes") github-download-default-bytes))))
+
+      url
+      (github-archive-url repository ref)]
+
+     (try (let
+            [{:strs [files truncated]}
+             (archive-files (github-download-response url) prefix max-files max-bytes)
+
+             citations
+             (mapv (fn [{:strs [path content truncated]}]
+                     {"type" "code"
+                      "title" (str repository "/" path)
+                      "url"
+                      (str "https://github.com/" repository "/blob/" (encode-url ref) "/" path)
+                      "excerpt" content
+                      "source" "github"
+                      "truncated" (boolean truncated)})
+                   files)]
+
+            (search-success {:op :download-code
+                             :tool "github-codeload"
+                             :query repository
+                             :citations citations
+                             :source :github
+                             :endpoint url
+                             :truncated? truncated}))
+          (catch Throwable t
+            (search-failure {:op :download-code
+                             :tool "github-codeload"
+                             :query repository
+                             :source :github
+                             :endpoint url
+                             :citation-type :code
+                             :throwable t}))))))
+
+(defn- archive-safe-relative-path!
+  [entry-name]
+  (let
+    [path
+     (archive-relative-path entry-name)
+
+     segments
+     (some-> path
+             (str/split #"/"))]
+
+    (when-not (and (seq segments)
+                   (every? #(and (not (str/blank? %)) (not= "." %) (not= ".." %)) segments)
+                   (not (str/includes? (str path) "\\")))
+      (throw (ex-info "GitHub archive contains an unsafe entry path"
+                      {:type :search/github-archive-unsafe-path :entry entry-name})))
+    path))
+
+(defn- sha256-hex
+  [^bytes bytes]
+  (let [digest (.digest (MessageDigest/getInstance "SHA-256") bytes)]
+    (apply str (map #(format "%02x" (bit-and (int %) 0xff)) digest))))
+
+(defn- extract-github-archive!
+  [^bytes archive-bytes ^Path destination]
+  (with-open
+    [gzip
+     (GZIPInputStream. (ByteArrayInputStream. archive-bytes))
+
+     tar
+     (TarArchiveInputStream. gzip)]
+
+    (loop
+      [files
+       0
+
+       total-bytes
+       0]
+
+      (if-let [entry (.getNextTarEntry tar)]
+        (let [entry-name (.getName entry)]
+          (if (nil? (archive-relative-path entry-name))
+            (recur files total-bytes)
+            (let
+              [^String relative (archive-safe-relative-path! entry-name)
+               ^Path output (-> ^Path destination
+                                (.resolve ^String relative)
+                                (.normalize))
+               size (.getSize entry)]
+
+              (when-not (.startsWith output destination)
+                (throw (ex-info "GitHub archive entry escapes its destination"
+                                {:type :search/github-archive-unsafe-path :entry entry-name})))
+              (cond (.isDirectory entry) (do (Files/createDirectories output
+                                                                      (make-array FileAttribute 0))
+                                             (recur files total-bytes))
+                    (or (.isSymbolicLink entry) (.isLink entry) (not (.isFile entry)) (neg? size))
+                    (throw (ex-info "GitHub archive contains an unsupported entry"
+                                    {:type :search/github-archive-unsafe-entry :entry entry-name}))
+                    (or (not (neg? (Long/compare (long files)
+                                                 (long github-full-archive-max-files))))
+                        (pos? (Long/compare (Math/addExact (long total-bytes) (long size))
+                                            (long github-full-archive-max-extracted-bytes))))
+                    (throw (ex-info "GitHub archive exceeds the extracted content limit"
+                                    {:type :search/github-archive-extracted-too-large}))
+                    :else
+                    (do (Files/createDirectories (.getParent output) (make-array FileAttribute 0))
+                        (with-open [out (io/output-stream (.toFile output))]
+                          (let [buffer (byte-array 8192)]
+                            (loop [remaining size]
+                              (when (pos? remaining)
+                                (let [n (.read tar buffer 0 (int (min remaining (alength buffer))))]
+                                  (when (neg? n)
+                                    (throw (ex-info
+                                             "GitHub archive ended before an entry was complete"
+                                             {:type :search/github-archive-truncated
+                                              :entry entry-name})))
+                                  (.write out buffer 0 n)
+                                  (recur (- remaining n)))))))
+                        (recur (inc files) (+ total-bytes size)))))))
+        {:files files :bytes total-bytes}))))
+
+(defn- archive-output-path!
+  ^Path [workspace-root repository ref directory]
+  (let
+    [^Path root
+     (.toPath (io/file workspace-root))
+
+     ^Path root
+     (.toAbsolutePath root)
+
+     _
+     (Files/createDirectories root (make-array FileAttribute 0))
+
+     default-name
+     (str/replace (str repository "-" ref) #"[^A-Za-z0-9_.-]+" "-")
+
+     ^String relative
+     (or (some-> directory
+                 str
+                 str/trim
+                 not-empty)
+         (str "downloads/" default-name))
+
+     ^Path candidate
+     (-> ^Path root
+         (.resolve ^String relative)
+         (.normalize))]
+
+    (when (or (.isAbsolute (io/file relative)) (not (.startsWith candidate root)))
+      (throw (ex-info "directory must stay within the workspace root"
+                      {:type :search/invalid-archive-directory})))
+    candidate))
+
+(defn download-archive
+  "await download_archive(\"owner/repo\", {\"ref\": \"main\"})
+
+   Download a complete public GitHub codeload tar.gz and extract it into a new directory
+   below the workspace. Returns the absolute directory path; it never puts archive bytes in
+   the model context. Default destination is `downloads/owner-repo-ref`; `directory` may
+   choose another relative destination. The compressed archive is capped at 100 MiB, with a
+   1 GiB / 10,000-file extracted safety cap."
+  ([repository] (download-archive repository {}))
+  ([repository opts] (download-archive (workspace/cwd) repository opts))
+  ([workspace-root repository opts]
+   (let
+     [opts
+      (or opts {})
+
+      repository
+      (github-repository! repository)
+
+      ref
+      (github-ref! (get opts "ref"))
+
+      url
+      (github-archive-url repository ref)
+
+      destination
+      (archive-output-path! workspace-root repository ref (get opts "directory"))]
+
+     (try (when (Files/exists destination (make-array LinkOption 0))
+            (throw (ex-info "archive destination already exists; choose another directory"
+                            {:type :search/github-archive-destination-exists
+                             :path (str destination)})))
+          (let
+            [archive-bytes
+             (github-download-response url github-full-archive-max-bytes)
+
+             _
+             (Files/createDirectories destination (make-array FileAttribute 0))
+
+             {:keys [files bytes]}
+             (extract-github-archive! archive-bytes destination)]
+
+            (extension/success {:op :download-archive
+                                :result {"op" "download_archive"
+                                         "repository" repository
+                                         "ref" ref
+                                         "path" (str (.toAbsolutePath destination))
+                                         "files" files
+                                         "bytes" bytes
+                                         "archive_bytes" (alength ^bytes archive-bytes)
+                                         "sha256" (sha256-hex archive-bytes)
+                                         "source" "github"}
+                                :metadata
+                                {:tool "github-codeload" :endpoint url :path (str destination)}}))
+          (catch Throwable t
+            (extension/failure {:op :download-archive
+                                :result {"op" "download_archive"
+                                         "repository" repository
+                                         "error" (or (ex-message t) "archive download failed")}
+                                :error {:message (or (ex-message t) "archive download failed")}
+                                :metadata {:tool "github-codeload" :endpoint url}}))))))
+
 
 ;; =============================================================================
 ;; arxiv papers (Atom feed)
@@ -1332,18 +1879,74 @@
      :color-role :tool-color/search
      :render render-search-result
      :description
-     "Search live repositories and technical documentation when the local project and embedded docs are insufficient. Returns ranked citations with excerpts."
-     :schema {:type "object"
-              :properties
-              {"query"
-               {:type "string" :minLength 1 :description "Natural-language code/docs search query."}
-               "tokens_num" {:type "integer"
-                             :minimum 1
-                             :description "Approximate token budget for the returned context."}}
-              :required ["query"]
-              :additionalProperties false}
+     "Search live repositories and technical documentation when the local project and embedded docs are insufficient. Set provider to github to use GitHub Code Search directly."
+     :schema
+     {:type "object"
+      :properties
+      {"query" {:type "string" :minLength 1 :description "Natural-language code/docs search query."}
+       "provider" {:type "string"
+                   :enum ["auto" "exa" "github"]
+                   :description
+                   "Code provider (default auto: Exa, then GitHub on retryable Exa failure)."}
+       "tokens_num" {:type "integer"
+                     :minimum 1
+                     :description "Approximate token budget for the returned context."}}
+      :required ["query"]
+      :additionalProperties false}
      :handler (fn [_env input]
                 (search-code (str (get input "query")) (dissoc input "query")))}))
+
+(def download-code-symbol
+  (vis/symbol
+    #'download-code
+    {:tag :observation
+     :native-tool? false
+     :name "download_code"
+     :color-role :tool-color/search
+     :render render-search-result
+     :description
+     "Fetch bounded UTF-8 source excerpts from a known public GitHub owner/repo archive. Use after search, not for discovery."
+     :schema
+     {:type "object"
+      :properties
+      {"repository" {:type "string" :minLength 3 :description "GitHub repository as owner/repo."}
+       "ref" {:type "string" :minLength 1 :description "Git ref; default HEAD."}
+       "path" {:type "string" :minLength 1 :description "Optional archive path prefix to include."}
+       "max_files"
+       {:type "integer" :minimum 1 :maximum 20 :description "Returned file cap; default 6."}
+       "max_bytes" {:type "integer"
+                    :minimum 1
+                    :maximum 131072
+                    :description "Total returned UTF-8 byte cap; default 51200."}}
+      :required ["repository"]
+      :additionalProperties false}
+     :handler (fn [_env input]
+                (download-code (str (get input "repository")) (dissoc input "repository")))}))
+
+(def download-archive-symbol
+  (vis/symbol
+    #'download-archive
+    {:tag :observation
+     :native-tool? false
+     :name "download_archive"
+     :color-role :tool-color/search
+     :render render-search-result
+     :description
+     "Download and extract a complete public GitHub repository archive into the workspace. Returns the saved absolute directory path."
+     :schema
+     {:type "object"
+      :properties
+      {"repository" {:type "string" :minLength 3 :description "GitHub repository as owner/repo."}
+       "ref" {:type "string" :minLength 1 :description "Git ref; default HEAD."}
+       "directory" {:type "string"
+                    :minLength 1
+                    :description "Optional relative destination directory within the workspace."}}
+      :required ["repository"]
+      :additionalProperties false}
+     :handler (fn [env input]
+                (download-archive (workspace/workspace-root env)
+                                  (str (get input "repository"))
+                                  (dissoc input "repository")))}))
 
 (def papers-symbol
   (vis/symbol
@@ -1383,7 +1986,7 @@
      :color-role :tool-color/search
      :render render-search-result
      :description
-     "Research beyond the local project: live web, public repos/technical docs, or arXiv papers. Returns ranked citations with excerpts."
+     "Research beyond the local project: live web, public repos/technical docs, or arXiv papers. For code, provider can select GitHub directly. Returns ranked citations with excerpts."
      :schema
      {:type "object"
       :properties
@@ -1393,6 +1996,11 @@
         :enum ["web" "code" "papers"]
         :description
         "Corpus to search (default \"web\"): web = live web, code = repos + technical docs, papers = arXiv."}
+       "provider"
+       {:type "string"
+        :enum ["auto" "exa" "github"]
+        :description
+        "code only: provider (default auto: Exa then GitHub); github requires `gh auth login`."}
        "num_results" {:type "integer" :description "web: max results."}
        "type" {:type "string"
                :description "web: Exa search type, e.g. \"auto\", \"neural\", \"keyword\"."}
@@ -1412,7 +2020,8 @@
      :handler (fn [_env input]
                 (search (str (get input "query")) (dissoc input "query")))}))
 
-(def search-symbols [search-symbol web-symbol code-symbol papers-symbol])
+(def search-symbols
+  [search-symbol web-symbol code-symbol download-code-symbol download-archive-symbol papers-symbol])
 ;; `:tag :observation` carried INLINE on each `vis/symbol` opts map
 ;; above; register-extension! auto-populates the op registry.
 
@@ -1420,7 +2029,7 @@
   {:id "web_search"
    :label "Web search"
    :description
-   "Expose the live research tools backed by Exa MCP and arXiv. When OFF, the search extension is not bound."
+   "Expose live research over Exa, GitHub Code Search/codeload, and arXiv. When OFF, the search extension is not bound."
    :default true
    :owner :vis
    :persist? true
@@ -1430,7 +2039,7 @@
   (vis/extension
     {:ext/name "foundation-search"
      :ext/description
-     "Live research bindings: ONE native `search` tool (kind = web | code | papers) over Exa MCP + arxiv; search_web / search_code / search_papers remain sandbox verbs. Bound when the `web_search` toggle is ON (default)."
+     "Live research bindings: native `search` (web | code | papers), plus sandbox verbs search_web/search_code/search_papers/download_code. Exa, GitHub Code Search/codeload, and arXiv. Bound when `web_search` is ON."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

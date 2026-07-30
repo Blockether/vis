@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.14 (2786) — 2026-07-30
+<!-- commit: 66da8bf722c3080cec05a5fa84dcbcbff60e833f -->
+
+- Restore transcript layout stabilization
+- Limit NTR browsing to latest turn
+
 ## 0.1.14 (2784) — 2026-07-30
 <!-- commit: bf89880867cd250b2947ade75598de10288edad6 -->
 

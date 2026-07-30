@@ -16,11 +16,13 @@
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
 
+;; A namespace-local context avoids paying GraalPy + shim bootstrap per assertion.
+(defonce ^:private python-context* (delay (ep/create-python-context {})))
+
 (defmacro with-python-context
   [& body]
-  `(let
-     [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context {}))]
-     (try ~@body (finally (.close ~'python-context)))))
+  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context @python-context*)]
+     ~@body))
 
 (defdescribe
   paramiko-module-test
@@ -256,7 +258,8 @@
 
              (.connect sess 10000)
              (.setPortForwardingR sess "127.0.0.1" rport "127.0.0.1" tport)
-             (Thread/sleep 400)
+             ;; `setPortForwardingR` returns only after the server has acknowledged
+             ;; the listener; connecting is the synchronization point, not a timer.
              (let [cli (doto (Socket.) (.connect (InetSocketAddress. "127.0.0.1" rport) 3000))]
                (try (doto (.getOutputStream cli) (.write (.getBytes "ping-42")) (.flush))
                     (let
@@ -308,9 +311,9 @@
         (when connected?
           (.disconnect sess)
           ;; The reap runs on a daemon thread fired by the SessionListener; poll briefly.
-          (expect (loop [tries 50]
+          (expect (loop [tries 100]
                     (cond (not (contains? @registry handle)) true
                           (zero? tries) false
-                          :else (do (Thread/sleep 100) (recur (dec tries))))))))
+                          :else (do (Thread/sleep 10) (recur (dec tries))))))))
       ;; Never leak this test's server into later tests, even if the reap was skipped.
       ((deref #'shim/op-server-stop) handle))))

@@ -8,7 +8,16 @@
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
 
+;; Most checks only need the already-initialized shim; the one lazy-loading check
+;; below explicitly asks for a fresh context.
+(defonce ^:private python-context* (delay (ep/create-python-context {})))
+
 (defmacro with-python-context
+  [& body]
+  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context @python-context*)]
+     ~@body))
+
+(defmacro with-fresh-python-context
   [& body]
   `(let
      [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context {}))]
@@ -54,7 +63,7 @@ _rq.request = _fake
                                               (str fake "httpx.__version__.endswith('-vis')"))))))
   (it
     "loads the requests shim when httpx reaches its deferred dependency"
-    (with-python-context
+    (with-fresh-python-context
       (expect
         (true?
           (ev

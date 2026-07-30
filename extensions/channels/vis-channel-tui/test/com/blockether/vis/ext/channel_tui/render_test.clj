@@ -3909,50 +3909,101 @@
                                 (str/includes? l p/INLINE_BOLD_OFF))
                              (str "unbalanced sentinels on line " (pr-str l)))))))
 
-(defdescribe python-code-disclosure-is-a-header-test
-             ;; ONE accordion rule across every collapsible band (THINKING, op-cards, the
-             ;; python code band): the chevron row is a HEADER that labels the block BENEATH
-             ;; it. The code band used to append its `PYTHON +N more` row AFTER the peek,
-             ;; which read as a footer belonging to the next card and pushed the collapse
-             ;; control off screen once expanded.
-             (it
-               "puts `PYTHON +N more` ABOVE the peeked code, not after it"
-               (let
-                 [entries
-                  (format-iteration-entry-entries
-                    (iteration/canonicalize
-                      {:position 0
-                       :thinking nil
-                       :forms [{:vis/tool-name "python_execution"
-                                :success? true
-                                :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
-                                :result-summary "ok"
-                                :result "ok"}]})
-                    80
-                    1
-                    {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+(defdescribe
+  python-code-disclosure-is-a-header-test
+  ;; ONE accordion rule across every collapsible band (THINKING, op-cards, the
+  ;; python code band): the chevron row is a HEADER that labels the block BENEATH
+  ;; it. The code band used to append its `PYTHON +N more` row AFTER the peek,
+  ;; which read as a footer belonging to the next card and pushed the collapse
+  ;; control off screen once expanded.
+  (it
+    "puts `PYTHON +N more` ABOVE the peeked code, not after it"
+    (let
+      [entries
+       (format-iteration-entry-entries
+         (iteration/canonicalize {:position 0
+                                  :thinking nil
+                                  :forms [{:vis/tool-name "python_execution"
+                                           :success? true
+                                           :code
+                                           "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
+                                           :result-summary "ok"
+                                           :result "ok"}]})
+         80
+         1
+         {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
 
-                  lines
-                  (mapv (comp body-of strip-ansi :line) entries)
+       lines
+       (mapv (comp body-of strip-ansi :line) entries)
 
-                  toggle-i
-                  (first (keep-indexed (fn [i l]
-                                         (when (str/includes? l "PYTHON") i))
-                                       lines))
+       toggle-i
+       (first (keep-indexed (fn [i l]
+                              (when (str/includes? l "PYTHON") i))
+                            lines))
 
-                  first-code-i
-                  (first (keep-indexed (fn [i l]
-                                         (when (= "a = 1" l) i))
-                                       lines))]
+       first-code-i
+       (first (keep-indexed (fn [i l]
+                              (when (= "a = 1" l) i))
+                            lines))]
 
-                 (expect (some? toggle-i))
-                 (expect (some? first-code-i))
-                 (expect (= p/MARKER_CODE_PAD
-                            (marker-of (:line (nth entries (inc (long toggle-i)))))))
-                 (expect (< (long toggle-i) (long first-code-i)))
-                 ;; collapsed: exactly the 5-line peek, and the hidden count names the rest
-                 (expect (str/includes? (nth lines toggle-i) "+3 more"))
-                 (expect (not (some #{"f = 6"} lines))))))
+      (expect (some? toggle-i))
+      (expect (some? first-code-i))
+      (expect (= p/MARKER_CODE_PAD (marker-of (:line (nth entries (inc (long toggle-i)))))))
+      (expect (< (long toggle-i) (long first-code-i)))
+      ;; collapsed: exactly the 5-line peek, and the hidden count names the rest
+      (expect (str/includes? (nth lines toggle-i) "+3 more"))
+      (expect (not (some #{"f = 6"} lines)))))
+  (it "counts folded Python source lines, not their visual rows"
+      (let
+        [source-line
+         (str "value = '" (apply str (repeat 120 "x")) "'")
+
+         code
+         (str/join "\n" (map #(str source-line " # " %) (range 1 9)))
+
+         entries
+         (format-iteration-entry-entries
+           (iteration/canonicalize
+             {:position 0
+              :thinking nil
+              :forms
+              [{:vis/tool-name "python_execution" :success? true :display-code code :result "ok"}]})
+           40
+           1
+           {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+
+         lines
+         (mapv (comp body-of strip-ansi :line) entries)
+
+         summary
+         (first (filter #(str/includes? % "PYTHON") lines))]
+
+        (expect (str/includes? summary "+3 more"))))
+  (it "uses the code band's bottom edge as Python result spacing"
+      (let
+        [entries
+         (format-iteration-entry-entries
+           (iteration/canonicalize {:position 0
+                                    :thinking nil
+                                    :forms
+                                    [{:vis/tool-name "python_execution"
+                                      :success? true
+                                      :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
+                                      :result "ok"}]})
+           80
+           1
+           {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+
+         lines
+         (mapv (comp body-of strip-ansi :line) entries)
+
+         last-code-i
+         (first (keep-indexed (fn [i line]
+                                (when (= "e = 5" line) i))
+                              lines))]
+
+        (expect (= p/MARKER_CODE_PAD (marker-of (:line (nth entries (inc last-code-i))))))
+        (expect (str/includes? (str (:line (nth entries (+ 2 last-code-i)))) "RESULT")))))
 
 (defdescribe python-code-disclosure-is-clickable-test
              ;; The header row is only a control if the PAINTER publishes its hit target:

@@ -273,23 +273,18 @@
   [^Throwable e]
   (= :svar.llm/provider-unavailable (:type (ex-data e))))
 
-(defn- provider-connect-failure?
-  "True when a provider-unavailable never received an HTTP response at all —
-   `:status` is nil, meaning the TCP connect itself failed (ConnectException /
-   DNS / connect-timeout). SVAR OWNS this case (health-gated ride-out vs
-   fast-fail a dead endpoint), so vis does NOT retry it — it surfaces the card
-   immediately rather than double-stacking latency on svar's decision."
-  [^Throwable e]
-  (and (provider-unavailable-error? e) (nil? (:status (ex-data e)))))
-
 (defn- provider-unavailable-retry?
-  "True while a provider-5xx provider-unavailable still has retry budget left
-   (`pu-attempt` below the cap). Connect-level PU (`:status` nil) is EXCLUDED —
-   svar already decided it, so vis surfaces the card immediately."
+  "True while a terminal provider-unavailable represents an HTTP 5xx and still
+   has retry budget left (`pu-attempt` below the cap). 4xx responses, especially
+   429, are terminal here: svar has already applied its rate-limit policy, so a
+   Vis retry would stack a second retry ladder on top of it. Connect-level PU
+   (`:status` nil) is likewise excluded; svar already decided it."
   [^Throwable e pu-attempt]
-  (and (provider-unavailable-error? e)
-       (not (provider-connect-failure? e))
-       (< (long pu-attempt) (long MAX_PROVIDER_UNAVAILABLE_RETRIES))))
+  (let [status (:status (ex-data e))]
+    (and (provider-unavailable-error? e)
+         (integer? status)
+         (<= 500 (long status) 599)
+         (< (long pu-attempt) (long MAX_PROVIDER_UNAVAILABLE_RETRIES)))))
 
 (defn- provider-unavailable-retry-delay-ms
   "Widening backoff (ms) before the `pu-attempt`-th (0-based) provider-unavailable
@@ -3332,9 +3327,6 @@
                 "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
                 "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}"))))}))
 
-(def ^:private MAX_FOLD_NTR_HINTS 3)
-
-(def ^:private MAX_FOLD_NTR_GIST_CHARS 44)
 
 (defn- split-on
   "Split `s` on the LITERAL separator `sep`. Plain index scanning, no regex:
@@ -3350,113 +3342,13 @@
         (recur (+ (long i) (long n)) (conj acc (subs s from (long i))))
         (conj acc (subs s from))))))
 
-(defn- flatten-card-summary
-  "One-line squeeze of a card summary: markdown emphasis dropped, ` · `/`•`/`|`
-   separators turned into commas, runs of whitespace collapsed. Single character
-   walk — the fold card splits its own body on ` · `, so a summary that keeps
-   those separators would fracture into phantom metrics."
-  [s]
-  (let
-    [^String s
-     (str s)
-
-     n
-     (count s)
-
-     sb
-     (StringBuilder.)
-
-     last-ch
-     (fn []
-       (when (pos? (.length sb)) (.charAt sb (dec (.length sb)))))]
-
-    (loop
-      [i
-       0
-
-       gap?
-       false]
-
-      (if (>= i n)
-        (str/trim (.toString sb))
-        (let [ch (.charAt s i)]
-          (cond (or (= ch \`) (= ch \*)) (recur (inc i) gap?)
-                (Character/isWhitespace ch) (recur (inc i) true)
-                (or (= ch \·) (= ch \•) (= ch \|))
-                (do (while (and (pos? (.length sb)) (= \space (last-ch)))
-                      (.setLength sb (dec (.length sb))))
-                    (when (and (pos? (.length sb)) (not= \, (last-ch))) (.append sb \,))
-                    (recur (inc i) true))
-                :else (do (when (and gap? (pos? (.length sb)) (not= \space (last-ch)))
-                            (.append sb \space))
-                          (.append sb ch)
-                          (recur (inc i) false))))))))
-
-(defn- ntr-hint-label
-  "The WHAT of one recovery accessor: the tool that produced the result plus a
-   squeezed slice of its op-card summary, so a breadcrumb reads
-   `ntr[\"toolu_01Tc…\"] grep: session_fold, 6 file names` instead of 24 opaque
-   characters. nil for a legacy bare-id entry (older breadcrumbs carried strings).
-
-   The slice is FLATTENED on purpose: card summaries carry their own markdown and
-   ` · ` separators, and the fold card splits its body bullets on exactly that
-   separator — an unsqueezed summary would fracture into phantom metrics."
-  [entry]
-  (when (map? entry)
-    (let
-      [tool
-       (not-empty (str/trim (str (get entry "tool"))))
-
-       gist
-       (some-> (get entry "gist")
-               flatten-card-summary
-               not-empty)
-
-       gist
-       (when gist
-         (if (> (count gist) (long MAX_FOLD_NTR_GIST_CHARS))
-           (str (str/trimr (subs gist 0 (dec (long MAX_FOLD_NTR_GIST_CHARS)))) "…")
-           gist))]
-
-      (cond (and tool gist) (str tool ": " gist)
-            tool tool
-            gist gist
-            :else nil))))
-
 (defn- ntr-recover-hint
-  "Compact `ntr[<id>]` accessor clause stamped onto a FOLD breadcrumb so the
-   folded steps' native results stay reachable AFTER their per-call
-   `# saved: ntr[…]` lines collapse off the wire — or a harness restart drops
-   every in-context breadcrumb. Each id is DB-resolvable with no re-run.
-
-   Every shown accessor is LABELLED with what it holds (`ntr[\"toolu_…\"] cat:
-   loop.clj lines 3300-3370`): the point of the clause is deciding WHICH handle to
-   spend a fetch on, and an id alone can't be decided about. Advertise only the 3
-   NEWEST entries; recover older results through `ntr.describe()`, which browses the
-   whole store the same labelled way — not bare `ntr.keys()`. Accepts labelled entry
-   maps and legacy bare id strings. Returns a leading-` · ` fragment, or nil when the
-   fold covered no result-bearing calls (a pure python_execution fold stores nothing)."
+  "One compact recovery pointer for a folded result set. The receipt deliberately
+   never repeats ids, tool names, or gists: large folds otherwise turn a compact
+   breadcrumb into another transcript. `ntr.describe()` lists labelled results from
+   the latest turn, and `ntr[id]` still retrieves an exact persisted result."
   [ids]
-  (let
-    [ids (into []
-               (comp (filter some?) (distinct))
-               (map (fn [e]
-                      (if (map? e) e {"id" (str e)}))
-                    ids))]
-    (when (seq ids)
-      (let
-        [shown (vec (take-last MAX_FOLD_NTR_HINTS ids))
-         extra (- (count ids) (count shown))]
-
-        (str " · recover raw result/no rerun: "
-             (str/join "; "
-                       (map (fn [e]
-                              (str "ntr[" (pr-str (str (get e "id")))
-                                   "]" (when-let [label (ntr-hint-label e)]
-                                         (str " " label))))
-                            shown))
-             (when (pos? extra)
-               (str " · +" extra " older labelled results: ntr.describe() → ntr[id]")))))))
+  (when (seq (distinct (remove nil? ids))) " · more results: ntr.describe()"))
 
 (defn- scope-token-end
   "Index just PAST the iteration address starting at `i` (`t12`, `t1/i2`,
@@ -3674,7 +3566,10 @@
 
      markup-bullet
      (fn [seg]
-       (if (str/starts-with? seg "recover ") (recover-bullet seg) (code-ntr (bold-lead-word seg))))
+       (cond (str/starts-with? seg "recover ") (recover-bullet seg)
+             (str/starts-with? seg "more results:")
+             (str "**more results:** `" (str/trim (subs seg (count "more results:"))) "`")
+             :else (code-ntr (bold-lead-word seg))))
 
      ;; Collapsed view = WHAT was folded + HOW MUCH it reclaimed; the rest
      ;; (context level, recovery accessors, kept skills) reads fine one
@@ -4754,17 +4649,16 @@
      "plus the current turn's already-completed iterations (read `session[\"turn\"]`); the "
      "live iteration you are emitting right now, and any future step, is not settled and "
      "blocks the call — fold through the last finished iteration instead "
-     "({\"through\": \"tN/iK\"}). Recover a folded result via `ntr[tool_id]` (one native "
-     "result, no re-run, survives a restart; the breadcrumb lists its accessors, each "
-     "labelled with the tool and gist of what it holds, and `ntr.describe()` browses the "
-     "rest the same way)"
+     "({\"through\": \"tN/iK\"}). Recover an exact folded result via `ntr[tool_id]` "
+     "(one native result, no re-run, survives a restart). Fold receipts stay compact and "
+     "only direct you to `ntr.describe()`, which lists labelled results from the latest turn."
      (if (toggles/enabled? "introspection")
        ", else walk `await session_state()` → `transcript/turns/iterations/blocks` (`code`/`result`). "
        ". ")
      "Broader/newer folds supersede fully covered breadcrumbs; equal scopes keep the newer "
      "gist; partial overlaps remain.")
    :result
-   "String receipt naming the folded scope and, when retained, its labelled `ntr[...]` recovery accessors."
+   "String receipt naming the folded scope and, when results exist, pointing to `ntr.describe()`."
    :schema
    {:type "object"
     :properties

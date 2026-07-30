@@ -385,16 +385,23 @@ resolve against the working directory, `~` expands, and an entry that is not an
 existing directory is dropped. An explicit `PYTHONPATH` in the environment still
 precedes both.
 
-## Extension environment overrides
+## Extension environment
 
-Extensions declare the environment variables they read (API keys and the like). The `environment` map overrides the process environment per variable — set once in config instead of exporting in every shell:
+Extensions may declare the environment variables they read so Vis can report whether they are available. Their values never come from `vis.yml` or Vis state. Set them in the environment that starts Vis, or in the working directory's `.env` file; the process environment wins:
 
-```yaml
-environment:
-  ANTHROPIC_API_KEY: …
+```dotenv
+ANTHROPIC_API_KEY=…
 ```
 
-Config wins over the real environment; removing the entry reveals the process value again.
+For shell use, export the variable from your shell startup file (such as `.bashrc`) before starting Vis. Vis does not execute shell startup files itself.
+
+## Code search and public repository downloads
+
+GitHub is available for `search(..., {"kind": "code", "provider": "github"})`, or as the `auto` provider’s fallback after Exa returns HTTP 429 or a 5xx response. It requires an authenticated GitHub CLI because GitHub Code Search does not support anonymous requests. Run `gh auth login` and authorize access to the repositories you need; Vis reads the CLI credential only for the request and never stores or logs it. If the CLI is unavailable or unauthenticated, the search result tells the user exactly how to authenticate. Use `provider: "exa"` to disable fallback, or `provider: "github"` to choose GitHub first. GitHub cannot replace general web search.
+
+For a repository already found by search, `download_code("owner/repo", {"ref": "main", "path": "src"})` fetches its public `codeload.github.com` tarball and returns bounded source excerpts directly to the agent—without writing an archive to disk or requiring `gh`. It accepts only an `owner/repo` name, limits compressed archives to 10 MiB, and caps the result to 6 files / 51,200 bytes by default (`max_files` ≤ 20, `max_bytes` ≤ 131,072). It is intentionally not a code-discovery provider, and it cannot read private repositories.
+
+`download_archive("owner/repo", {"ref": "main"})` downloads the complete public codeload archive and **extracts it automatically** beneath the active project working directory. Its result includes the absolute saved `path` (by default `downloads/owner-repo-ref`); pass a relative `directory` to choose another destination within that project. It refuses an existing destination rather than overwriting it, never places archive bytes in model context, rejects unsafe archive entries, and caps compressed downloads at 100 MiB and extracted content at 1 GiB / 10,000 files.
 
 ## Feature toggles
 
@@ -404,12 +411,12 @@ Built-in extensions can expose a boolean toggle under `toggles:`. Toggle values 
 toggles:
   # Default: true. Set false to remove the Exa/GitHub/arXiv live-research extension.
   web_search: false
+  # Default: true. Set false to remove the shell command tool, including from sub-agents.
+  shell: false
 ```
 
 After editing `vis.yml`, run `/reload` in the session. With `shell: false`, Vis does not bind the `shell` tool (including for sub-agents), so it cannot launch commands or managed language processes. `jail.enabled` is independent: it confines commands when shell access is enabled.
 
-  # Default: true. Set false to remove the shell command tool, including from sub-agents.
-  shell: false
 ## Session titling
 
 Vis names a session from its first request. The name is written locally and

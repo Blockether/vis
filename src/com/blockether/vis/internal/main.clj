@@ -3172,10 +3172,18 @@
   (when-let [db (get parsed "db")]
     (System/setProperty "vis.db.path" db))
   (let
-    [{:keys [stopping status] :as m} ((requiring-resolve
-                                        'com.blockether.vis.internal.gateway.client/stop-daemon!))]
+    [{:keys [stopping status type host port pid recovery] :as m}
+     ((requiring-resolve 'com.blockether.vis.internal.gateway.client/stop-daemon!))]
     (stdout! (cond stopping "gateway stopping"
                    (= "stopped" status) "gateway stopped"
+                   (= :gateway/orphaned-daemon type) (str "gateway stop found a live orphan at "
+                                                          host
+                                                          ":"
+                                                          port
+                                                          (when pid
+                                                            (str " (registered PID " pid ")"))
+                                                          ". "
+                                                          recovery)
                    :else (str "gateway stop requested: " (pr-str m))))))
 
 ;;; ── `vis python` — standalone GraalPy interpreter ────────────────────────

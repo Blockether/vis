@@ -1320,80 +1320,53 @@
   (let [block (:router config)]
     (if (map? block) (select-keys block router-opts-keys) {})))
 
-(def ^:private extension-env-config-key "environment")
+(def ^:dynamic *extension-dotenv-path*
+  "Project `.env` consulted for extension-declared variables after the process environment.
+   Bind in tests; production defaults to the process working directory."
+  (str (System/getProperty "user.dir") "/.env"))
 
-(defn extension-env-overrides
-  "Persisted extension environment overrides from `~/.vis/state.yml`
-   under `:environment`. Keys are environment variable names as
-   strings. Values are strings. This does NOT mutate the process
-   environment; extension code should call `extension-env-value` when
-   it wants config-over-env resolution."
-  []
-  (let
-    [raw
-     (load-config-raw)
+(defn- dotenv-value
+  [name]
+  (when-let [path *extension-dotenv-path*]
+    (try (with-open [reader (io/reader path)]
+           (some (fn [line]
+                   (let
+                     [line (str/trim line)
+                      line (str/replace-first line #"^export\s+" "")]
 
-     m
-     (when (map? raw) (get raw extension-env-config-key))]
+                     (when-let
+                       [[_ key value] (re-matches #"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)" line)]
+                       (when (= key name)
+                         (let
+                           [value (str/trim value)
+                            value (if (and (<= 2 (count value))
+                                           (#{\' \"} (first value))
+                                           (= (first value) (last value)))
+                                    (subs value 1 (dec (count value)))
+                                    value)]
 
-    (if (map? m)
-      (into {}
-            (keep (fn [[k v]]
-                    (when (and (string? k) (string? v) (not (str/blank? v))) [k v])))
-            m)
-      {})))
+                           (not-empty value))))))
+                 (line-seq reader)))
+         (catch java.io.FileNotFoundException _ nil)
+         (catch java.io.IOException _ nil))))
 
 (defn extension-env-status
-  "Return source and value metadata for an extension-declared env var.
-   `:source` is one of `:config`, `:env`, or `:unset`."
+  "Return source and value metadata for an extension-declared variable.
+   The process environment wins over the working directory's `.env`; Vis config
+   is deliberately never consulted. `:source` is `:env`, `:dotenv`, or `:unset`."
   [name]
-  (let
-    [name'
-     (str name)
-
-     overrides
-     (extension-env-overrides)]
-
-    (if-let [configured (get overrides name')]
-      {:name name' :source :config :value configured}
-      (if-let [from-env (not-empty (str/trim (or (System/getenv name') "")))]
-        {:name name' :source :env :value from-env}
+  (let [name' (str name)]
+    (if-let [from-env (not-empty (str/trim (or (System/getenv name') "")))]
+      {:name name' :source :env :value from-env}
+      (if-let [from-dotenv (dotenv-value name')]
+        {:name name' :source :dotenv :value from-dotenv}
         {:name name' :source :unset :value nil}))))
 
 (defn extension-env-value
-  "Resolve an extension-declared env var as config override -> real env.
+  "Resolve an extension-declared variable from the process environment or `.env`.
    Blank/missing values return nil."
   [name]
   (:value (extension-env-status name)))
-
-(defn save-extension-env-var!
-  "Persist or clear one extension env override in `~/.vis/state.yml`.
-   Blank/nil `value` removes the override, revealing the process env
-   value again if one exists. Preserves all other config keys."
-  [name value]
-  (let
-    [name'
-     (str name)
-
-     raw
-     (or (load-global-config-raw) {})
-
-     value'
-     (when (string? value) (not-empty (str/trim value)))
-
-     envs
-     (cond-> (or (get raw extension-env-config-key) {})
-       value'
-       (assoc name' value')
-
-       (not value')
-       (dissoc name'))]
-
-    (save-config! (if (seq envs)
-                    (assoc raw extension-env-config-key envs)
-                    (dissoc raw extension-env-config-key))
-                  :environment)
-    (extension-env-status name')))
 
 (defn resolve-db-spec
   "Resolve DB spec: explicit -> JVM property -> environment -> validated YAML -> default."

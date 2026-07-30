@@ -563,3 +563,15 @@
                                             {"providers" [{"id" "gw" "is_stateless" true}]}))))))
       (expect (not (contains? (config/->svar-provider {:id :gw :api-key "k" :models [{:name "m"}]})
                               :stateless-items?)))))
+
+(defdescribe
+  extension-environment-test
+  (it "uses .env only when the process environment has no value"
+      (let
+        [path (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" (System/nanoTime))]
+        (try (spit path "# comment\nexport VIS_TEST_EXTENSION_TOKEN = quoted\nVIS_TEST_EMPTY=\n")
+             (binding [config/*extension-dotenv-path* path]
+               (expect (= {:name "VIS_TEST_EXTENSION_TOKEN" :source :dotenv :value "quoted"}
+                          (config/extension-env-status "VIS_TEST_EXTENSION_TOKEN")))
+               (expect (nil? (config/extension-env-value "VIS_TEST_EMPTY"))))
+             (finally (.delete (io/file path)))))))

@@ -13,6 +13,15 @@
   [sym]
   (ns-resolve 'com.blockether.vis.internal.providers sym))
 
+(defn- await-value
+  "Wait for a background refresh to publish its expected snapshot."
+  [read expected]
+  (loop [attempts 100]
+    (let [value (read)]
+      (cond (= expected value) value
+            (zero? attempts) nil
+            :else (do (Thread/sleep 10) (recur (dec attempts)))))))
+
 (deftest configured-providers-cached-warm-reads-never-re-enumerate
   (let
     [calls
@@ -69,7 +78,7 @@
         ;; several stale reads while the refresh is in flight stay single-flight
         (dotimes [_ 5]
           (providers/configured-providers-cached))
-        (Thread/sleep (+ slow-ms 250))
+        (await-value providers/configured-providers-cached fleet)
         (is (= 1 @calls) "only ONE background refresh runs (single-flight)")
         (is (= fleet (providers/configured-providers-cached)) "the refreshed snapshot lands")))
     (providers/invalidate-configured-providers!)))

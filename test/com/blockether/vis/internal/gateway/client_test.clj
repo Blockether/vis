@@ -15,6 +15,15 @@
 
 (def ^:private fake-entry {:host "127.0.0.1" :port 7890 :pid 4242 :secret "s"})
 
+(defn- await-value
+  "Wait for a background cache refresh to publish its expected value."
+  [read expected]
+  (loop [attempts 100]
+    (let [value (read)]
+      (cond (= expected value) value
+            (zero? attempts) nil
+            :else (do (Thread/sleep 10) (recur (dec attempts)))))))
+
 (deftest ensure-project-for-root-uses-project-action-route
   (let [request (atom nil)]
     (with-redefs-fn {(rv 'send-json!) (fn [method path body]
@@ -122,6 +131,22 @@
         (is (= {:mode :awaited :entry fake-entry}
                ((rv 'discover-or-recover!) "/tmp/race/vis.db" "127.0.0.1" 7890)))
         (is (zero? @spawns))))))
+
+(deftest stale-registry-stop-does-not-report-a-listening-gateway-as-stopped
+  (let [server (java.net.ServerSocket. 0)
+        port (.getLocalPort server)]
+    (try
+      (let [result
+            (with-redefs-fn {(rv 'db-target) (constantly "/tmp/orphan/vis.db")
+                             #'discovery/read-registry (constantly (assoc fake-entry :port port))
+                             #'discovery/registry-fresh? (constantly false)}
+              (fn [] (client/stop-daemon!)))]
+        (is (not= "stopped" (:status result))
+            "a listening configured endpoint must not be reported as stopped")
+        (is (= :gateway/orphaned-daemon (:type result)))
+        (is (= "127.0.0.1" (:host result)))
+        (is (= port (:port result))))
+      (finally (.close server)))))
 
 (deftest provider-limits-restores-engine-shape-from-gateway-wire
   (let [request (atom nil)]
@@ -609,7 +634,7 @@
           ;; several stale reads while the fetch is in flight stay single-flight
           (dotimes [_ 5]
             (client/list-resources-cached "sid-x"))
-          (Thread/sleep (+ slow-ms 250))
+          (await-value #(client/list-resources-cached "sid-x") [{"id" "bg"}])
           (is (= 1 @calls) "only ONE background fetch runs per sid (single-flight)")
           (let
             [t1
@@ -665,7 +690,7 @@
           ;; several stale reads while the fetch is in flight stay single-flight
           (dotimes [_ 5]
             (client/session-model-cached "sid-m"))
-          (Thread/sleep (+ slow-ms 250))
+          (await-value #(client/session-model-cached "sid-m") {:provider "anthropic" :model "opus"})
           (is (= 1 @calls) "only ONE background fetch runs per sid (single-flight)")
           (let
             [t1

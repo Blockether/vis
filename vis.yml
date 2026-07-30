@@ -73,7 +73,7 @@ toggles:
   # Default false. ON here because this repo IS vis: the agent needs to read its
   # own gateway event journals and session transcripts to debug them.
   introspection: true
-#   # Default true. Set false to remove the Exa/arXiv live-research extension.
+#   # Default true. Set false to remove the Exa/GitHub/arXiv live-research extension.
 #   web_search: false
 
 

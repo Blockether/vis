@@ -2,6 +2,8 @@ import {
   isValidElement,
   memo,
   useEffect,
+  useLayoutEffect,
+  useRef,
   useState,
   type MouseEvent,
   type ReactNode,
@@ -23,6 +25,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { parseUserMessage } from '../lib/paste';
 import { formatCost, formatTokens, turnUsage } from '../lib/usage';
+import { isViewportRotating, onViewportRotation } from '../lib/viewport';
 import type {
   ContentBlock,
   GatewayAttachment,
@@ -927,15 +930,103 @@ function normalizeReasoning(value: string): string {
     .trim();
 }
 
-// Keep reasoning visible rather than calculating a viewport-dependent preview. The
-// transcript stays deterministic across font loads, width changes, and rotations.
+const REASONING_PREVIEW_LINES = 3;
+// Mirrors com.blockether.vis.internal.render/reasoning-collapse-min-hidden (3).
+// A disclosure that buys back one or two clipped rows is pure friction — you
+// uncollapse just to read one more line — so a barely-overflowing trace renders
+// inline, in full, with no toggle at all. Same rule as the TUI band and the
+// Clojure transcript split; keep the three in step.
+const REASONING_COLLAPSE_MIN_HIDDEN = 3;
+
+// Collapsed-height measurement for THINKING bands, batched across the whole
+// transcript. One shared observer and one animation-frame flush prevent a
+// long session from doing N independent layout reads on rotation.
+const bandMeasures = new WeakMap<Element, () => void>();
+const observedBands = new Set<Element>();
+const pendingBands = new Set<Element>();
+let bandFrame: number | null = null;
+let bandObserver: ResizeObserver | null = null;
+
+function flushBands() {
+  bandFrame = null;
+  if (isViewportRotating()) return;
+  const targets = [...pendingBands];
+  pendingBands.clear();
+  for (const band of targets) bandMeasures.get(band)?.();
+}
+
+function scheduleBands(bands: Iterable<Element>) {
+  for (const band of bands) pendingBands.add(band);
+  if (bandFrame !== null || typeof window === 'undefined') return;
+  bandFrame = window.requestAnimationFrame(flushBands);
+}
+
+function observeBand(band: Element, measure: () => void): () => void {
+  if (typeof ResizeObserver === 'undefined') return () => {};
+  bandMeasures.set(band, measure);
+  observedBands.add(band);
+  if (!bandObserver) {
+    bandObserver = new ResizeObserver((entries) =>
+      scheduleBands(entries.map((entry) => entry.target)),
+    );
+    onViewportRotation((phase) => {
+      if (phase === 'end') scheduleBands(observedBands);
+    });
+  }
+  bandObserver.observe(band);
+  return () => {
+    bandObserver?.unobserve(band);
+    observedBands.delete(band);
+    pendingBands.delete(band);
+    bandMeasures.delete(band);
+  };
+}
+
 export const ThinkingBand = memo(function ThinkingBand({ children }: { children: string }) {
   const normalized = normalizeReasoning(children);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [isExpandRequested, setExpandRequested] = useState(false);
+  const [hiddenRows, setHiddenRows] = useState(0);
+
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+
+    const measure = () => {
+      const lineHeight = Number.parseFloat(window.getComputedStyle(body).lineHeight) || 20;
+      const previewHeight = lineHeight * REASONING_PREVIEW_LINES;
+      const hiddenHeight = Math.max(0, body.scrollHeight - previewHeight);
+      const nextHiddenRows = Math.ceil(hiddenHeight / lineHeight);
+      setHiddenRows(nextHiddenRows >= REASONING_COLLAPSE_MIN_HIDDEN ? nextHiddenRows : 0);
+    };
+
+    measure();
+    return observeBand(body, measure);
+  }, [normalized]);
+
+  // Collapsing is derived, not stored: a block with nothing hidden is never expanded.
+  const expanded = isExpandRequested && hiddenRows > 0;
   if (!normalized || normalized === ENCRYPTED_REASONING_PLACEHOLDER) return null;
+  const collapsible = hiddenRows >= REASONING_COLLAPSE_MIN_HIDDEN;
 
   return (
-    <section className="my-2 bg-thinking-surface px-3 py-2 text-ui text-thinking">
-      <div className="italic">
+    <section className="my-2 min-w-0 bg-thinking-surface px-3 py-2 text-ui text-thinking">
+      {collapsible && (
+        <button
+          type="button"
+          data-disclosure-toggle
+          className="mb-1 flex min-h-6 w-full items-center gap-1.5 text-left font-mono text-chip font-bold not-italic tracking-[0.07em] text-thinking transition-colors hover:text-dialog-hint-key"
+          aria-expanded={expanded}
+          onClick={() => setExpandRequested((value) => !value)}
+        >
+          <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>
+          <span>{expanded ? 'THINKING' : `THINKING +${hiddenRows} more`}</span>
+        </button>
+      )}
+      <div
+        ref={bodyRef}
+        className={`${collapsible && !expanded ? 'max-h-[3.75rem] overflow-hidden' : ''} min-w-0 italic`}
+      >
         <Markdown compact hardBreaks>{normalized}</Markdown>
       </div>
     </section>

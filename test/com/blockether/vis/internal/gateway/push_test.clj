@@ -20,6 +20,14 @@
     (.mkdirs (io/file d "apns"))
     d))
 
+(defn- await-count
+  "Wait only until async push dispatch reaches `n`, rather than sleeping a fixed interval."
+  [sent n]
+  (loop [attempts 100]
+    (cond (>= (count @sent) n) true
+          (zero? attempts) false
+          :else (do (Thread/sleep 10) (recur (dec attempts))))))
+
 (defmacro with-push-home
   "Run `body` against a throwaway push home with an empty device registry."
   [binding & body]
@@ -199,7 +207,7 @@
           (is (= [] @sent)))
         (testing "a completed turn pushes one alert carrying the ANSWER, title and ids"
           (push/on-event! sid {"type" "turn.completed" "turn_id" "t1" "status" "completed"})
-          (Thread/sleep 200)
+          (is (await-count sent 1) "completed-turn push arrives")
           (let [n (first @sent)]
             (is (= 1 (count @sent)))
             (is (= "Fix the gateway" (:title n)))
@@ -211,14 +219,14 @@
         (testing "a failed turn carries the failure text it produced"
           (reset! sent [])
           (push/on-event! sid {"type" "turn.failed" "turn_id" "t2" "status" "failed"})
-          (Thread/sleep 200)
+          (is (await-count sent 1) "failed-turn push arrives")
           (is (= "Compile failed: unable to resolve symbol foo." (:body (first @sent)))))
         (testing "with no answer text the status line is the fallback, never a blank body"
           (reset! sent [])
           (push/on-event! sid {"type" "turn.completed" "turn_id" "unknown" "status" "completed"})
-          (Thread/sleep 200)
+          (is (await-count sent 1) "completed fallback push arrives")
           (push/on-event! sid {"type" "turn.failed" "turn_id" "unknown" "status" "failed"})
-          (Thread/sleep 200)
+          (is (await-count sent 2) "failed fallback push arrives")
           (is (= ["Turn finished." "Turn failed."] (mapv :body @sent)))))
       (testing "with no device registered nothing is sent at all"
         (push/unregister-device! (apply str (repeat 64 "b")))
@@ -234,7 +242,7 @@
              [])]
 
           (push/on-event! sid {"type" "turn.completed" "turn_id" "t3" "status" "completed"})
-          (Thread/sleep 200)
+          (Thread/sleep 50)
           (is (= [] @sent))))
       (push/set-session-describer! nil))))
 

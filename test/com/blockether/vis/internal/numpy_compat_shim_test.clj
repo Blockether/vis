@@ -10,11 +10,14 @@
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
 
+;; Context creation initializes every sandbox shim and is much costlier than the
+;; individual pure-Python assertions; test snippets use fresh local names.
+(defonce ^:private python-context* (delay (ep/create-python-context {})))
+
 (defmacro with-python-context
   [& body]
-  `(let
-     [~(with-meta 'python-context {:tag `Context}) (:python-context (ep/create-python-context {}))]
-     (try ~@body (finally (.close ~'python-context)))))
+  `(let [~(with-meta 'python-context {:tag `Context}) (:python-context @python-context*)]
+     ~@body))
 
 (defdescribe
   numpy-module-test

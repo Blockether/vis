@@ -4,7 +4,6 @@
 
 (set! *unchecked-math* :warn-on-boxed)
 
-(def ^:private default-limit 6)
 
 (defn clamp-index
   [idx total]
@@ -134,7 +133,7 @@
   "Return slash-command suggestions for `text` from menu `commands`.
    Suggestions are fuzzy matched against id/name, label, and doc."
   ([text commands] (suggestions text commands {}))
-  ([text commands {:keys [limit selected-index] :or {limit default-limit}}]
+  ([text commands {:keys [limit selected-index] :or {limit Integer/MAX_VALUE}}]
    (when-not (slash-command-token-complete? text)
      (when-let [{:keys [query args]} (slash-query text)]
        (let

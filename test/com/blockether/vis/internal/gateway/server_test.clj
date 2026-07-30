@@ -533,11 +533,12 @@
                fut
                (future (try (write-body body {} baos) (catch Throwable _ nil)))]
 
-              (Thread/sleep 150)
+              (is (wait-until #(re-find #"subscription.ready"
+                                        (String. (.toByteArray baos) "UTF-8"))))
               (state/append-event! sid-a "test.alpha" {:n 1})
               (state/append-event! sid-b "test.beta" {:n 2})
               (state/append-event! sid-a "test.alpha2" {:n 3})
-              (Thread/sleep 200)
+              (is (wait-until #(re-find #"test.alpha2" (String. (.toByteArray baos) "UTF-8"))))
               (future-cancel fut)
               (let [s (String. (.toByteArray baos) "UTF-8")]
                 (testing "both sessions surfaced on the single stream"
@@ -925,15 +926,20 @@
   ;; stale cursor verbatim seeds the connection's `seq > last-seq` dedup guard
   ;; above every frame the next turn will ever emit — a connected, heartbeating
   ;; stream that silently delivers NOTHING until the app is killed.
-  (let [resolve-cursor (rv 'resolve-sse-cursor)
-        registry @(ns-resolve 'com.blockether.vis.internal.gateway.state 'registry)
-        sid (java.util.UUID/randomUUID)]
+  (let
+    [resolve-cursor
+     (rv 'resolve-sse-cursor)
+
+     registry
+     @(ns-resolve 'com.blockether.vis.internal.gateway.state 'registry)
+
+     sid
+     (java.util.UUID/randomUUID)]
+
     (swap! registry assoc sid {:next-seq 12})
-    (try
-      (testing "a cursor past the high-water resolves to the live tail"
-        (is (= 12 (resolve-cursor sid 5000))))
-      (testing "an in-range cursor is honoured verbatim"
-        (is (= 5 (resolve-cursor sid 5))))
-      (testing "the negative live-only sentinel is unchanged"
-        (is (= 12 (resolve-cursor sid -1))))
-      (finally (swap! registry dissoc sid)))))
+    (try (testing "a cursor past the high-water resolves to the live tail"
+           (is (= 12 (resolve-cursor sid 5000))))
+         (testing "an in-range cursor is honoured verbatim" (is (= 5 (resolve-cursor sid 5))))
+         (testing "the negative live-only sentinel is unchanged"
+           (is (= 12 (resolve-cursor sid -1))))
+         (finally (swap! registry dissoc sid)))))
