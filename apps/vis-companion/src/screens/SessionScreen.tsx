@@ -1357,6 +1357,72 @@ export function SessionScreen({
     [client, sid],
   );
 
+  // ADOPT a turn that was ALREADY RUNNING before this screen started listening.
+  //
+  // The live bubble is seeded by exactly one frame, `turn.started`, and
+  // `reduceLiveEvent` drops every delta while it is null. The hub subscribes
+  // LIVE-ONLY, so that frame is never replayed: anyone who was not listening at
+  // the instant it was emitted gets a perfectly healthy stream pouring into
+  // nothing.
+  //
+  // That is the "left the app mid-stream, came back, it never resumed" bug. On a
+  // long background iOS kills the WKWebView WebContent process (Capacitor
+  // ionic-team/capacitor#7810, #7905); the webview reloads the page from scratch
+  // on return, so React state — including the live bubble — is gone, while the
+  // gateway happily keeps working. Reconnecting the socket cannot fix it, and
+  // neither can any transport-level retry: the seed frame is in the past.
+  // Opening a session that is already streaming from another client is the same
+  // hole, cold.
+  //
+  // So ask for the state instead of waiting for an event that will not come:
+  // the session row says what is running, and the turn trace returns the
+  // iterations the gateway has already persisted for it — the same source the
+  // TUI resumes from. The bubble comes back with the work done while we were
+  // away, and every subsequent delta now has somewhere to land.
+  const adoptRunningTurn = useCallback(
+    async (row: Session | null, signal?: AbortSignal) => {
+      if (!row) return;
+      const gatewayLive = row.live !== undefined ? row.live : row.status === 'running';
+      const tid = row.current_turn_id ?? '';
+      if (!gatewayLive || tid === '') return;
+      // A bubble that is still streaming OWNS the turn: it holds deltas newer
+      // than any persisted trace, so replacing it would visibly rewind it. Only
+      // a missing (or already settled) bubble is adopted into.
+      const held = liveTurnRef.current;
+      if (held && (held.status === 'running' || held.id === tid)) return;
+      let iterations: TranscriptIteration[];
+      try {
+        iterations = await client.turnTrace(sid, tid, signal);
+      } catch {
+        // Older gateway, or a flaky link. The next reconcile tick retries.
+        return;
+      }
+      if (signal?.aborted) return;
+      const now = liveTurnRef.current;
+      if (now && (now.status === 'running' || now.id === tid)) return;
+      // `running_started_at` is the GATEWAY's clock; the bubble's elapsed timer
+      // reads the device's. Rebase through `server_time_ms` (shipped in the same
+      // response for exactly this) so a phone minutes off UTC does not show a
+      // turn that started in the future or an hour ago.
+      const startedAt =
+        row.running_started_at != null && row.server_time_ms != null
+          ? Date.now() - Math.max(0, row.server_time_ms - row.running_started_at)
+          : Date.now();
+      const adopted: LiveTurn = {
+        id: tid,
+        request: row.running_request ?? '',
+        answer: '',
+        iterations,
+        startedAt,
+        status: 'running',
+      };
+      liveTurnRef.current = adopted;
+      setLiveTurn(adopted);
+      setRunning(true);
+    },
+    [client, sid],
+  );
+
   useEffect(() => {
     const controller = new AbortController();
     // Meta FIRST: it is a tiny payload whose stamp decides whether the transcript
@@ -1380,6 +1446,11 @@ export function SessionScreen({
       }
       if (controller.signal.aborted) return;
       await (body ?? loadTranscript(row));
+      if (controller.signal.aborted) return;
+      // AFTER the transcript: the persisted 'running' placeholder must already be
+      // on screen when the bubble takes it over, or the two swap places and the
+      // turn flickers.
+      await adoptRunningTurn(row, controller.signal);
     })();
     // The queue tray paints ONLY gateway truth, and SSE carries just the
     // deltas that happen while we are subscribed — so read the existing
@@ -1393,7 +1464,7 @@ export function SessionScreen({
       })
       .catch(() => undefined);
     return () => controller.abort();
-  }, [client, sid, loadTranscript, acceptQueueBacklog]);
+  }, [client, sid, loadTranscript, acceptQueueBacklog, adoptRunningTurn]);
 
   // Reconcile against the gateway's authoritative liveness. A streamed live turn
   // is only cleared by a terminal SSE event, but that event can be missed — the
@@ -1508,6 +1579,13 @@ export function SessionScreen({
           return settledTurn;
         });
       }
+      // Last, against the row this tick read: the gateway is running a turn we
+      // are not painting. That is every way the seed frame can be missed — a
+      // webview the OS reloaded while backgrounded, a turn another client
+      // started, a stream that reconnected past it. Cheap when healthy: it only
+      // costs a request when the ids actually disagree.
+      if (cancelled) return;
+      await adoptRunningTurn(next);
       // Consumed either way: with no new turns the wake's own pin was enough.
       resumePinRef.current = false;
     };
@@ -1547,7 +1625,15 @@ export function SessionScreen({
       window.clearInterval(timer);
       stopWake();
     };
-  }, [client, sid, loadTranscript, subscriptions, pinToEnd, acceptQueueBacklog]);
+  }, [
+    client,
+    sid,
+    loadTranscript,
+    subscriptions,
+    pinToEnd,
+    acceptQueueBacklog,
+    adoptRunningTurn,
+  ]);
 
   const refreshSlashCommands = useCallback((signal?: AbortSignal) => {
     return client
@@ -1580,6 +1666,10 @@ export function SessionScreen({
     if (slashMode) void refreshSlashCommands();
   }, [slashMode, refreshSlashCommands]);
 
+  // Revalidated on every RECONNECT, not just on mount: a probe that lost the race
+  // with a gateway that was down/asleep used to pin `voiceSupported` false for the
+  // whole life of the screen — the mic button silently vanished from the composer
+  // and only a full app restart brought it back.
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
@@ -1594,12 +1684,18 @@ export function SessionScreen({
         try {
           const model = await client.voiceModel(sid, false, controller.signal);
           if (!active) return;
+          // An ANSWER of `unavailable` is the gateway saying it has no voice
+          // extension — that one is authoritative and does hide the mic.
           setVoiceSupported(model.status !== 'unavailable');
           setVoiceModel(model);
         } catch {
           if (!active) return;
-          setVoiceSupported(false);
-          setVoiceModel({ status: 'unavailable' });
+          // Both probes failed to ARRIVE: that is a transport verdict about the
+          // network, not about the gateway's features. Keep the last answer this
+          // gateway actually gave instead of inventing "voice is gone".
+          const cached = client.cachedCapabilities()?.features.voice;
+          setVoiceSupported(cached?.enabled ?? false);
+          setVoiceModel(cached?.model ?? { status: 'unavailable' });
         }
       }
     })();
@@ -1607,7 +1703,7 @@ export function SessionScreen({
       active = false;
       controller.abort();
     };
-  }, [client, sid]);
+  }, [client, sid, connected]);
 
   useEffect(() => {
     if (!voiceSupported || voiceModel?.status !== 'downloading') return;
