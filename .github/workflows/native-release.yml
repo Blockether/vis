@@ -18,6 +18,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v* tag to build and attach to (empty = this ref)"
+        type: string
+        default: ''
 
 permissions:
   contents: write          # upload assets to the release
@@ -61,10 +66,16 @@ jobs:
           # arm64 measurement (v0.1.10, run 30257185005): the SAME -J-Xmx12g that
           # passes on x64 died with "OutOfMemoryError: Java heap space" 2 h 07 m in
           # — the aarch64 backend's analysis/compile graphs simply need more heap
-          # than x64 for this image — so arm64 gets 14 GB and starts smaller
-          # (-J-Xms8g) so the 16 GB runner is not fully committed up front.
-          - { os: ubuntu-latest, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx12g -J-Xms12g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
-          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-linux-arm64-community, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          # than x64 for this image — so arm64 gets more, and starts smaller so the
+          # 16 GB runner is not fully committed up front.
+          # v0.1.14 (run 30586173742): the image kept growing and BOTH jobs died —
+          # x64 on "GC overhead limit exceeded" 23 m in, arm64 on "Java heap space"
+          # 1 h 23 m in. The 32 GB swapfile below is what makes a heap larger than
+          # the runner's RAM survivable, so the sizes go up again and the GC
+          # overhead guard is switched OFF: an analysis that is slow because it is
+          # swapping is still progressing, and aborting it only loses the build.
+          - { os: ubuntu-latest, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx20g -J-Xms12g -J-XX:+UseParallelGC -J-XX:-UseGCOverheadLimit -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-linux-arm64-community, extra_args: '-J-Xmx20g -J-Xms10g -J-XX:+UseParallelGC -J-XX:-UseGCOverheadLimit -H:DeadlockWatchdogInterval=0' }
           # NO macOS job, and that is a hard constraint, not an oversight:
           #   * the only free arm64 macOS runners have 7 GB — less than half of
           #     what the builder needs (v0.1.6/v0.1.8 each burned 4 h there);
@@ -78,7 +89,12 @@ jobs:
           # silicon Mac with GraalVM CE 25.1.3 (`clojure -T:build native :profile
           # :community`, needs ~16 GB free RAM) and uploaded to the release.
     steps:
+      # A dispatch may name an ALREADY-PUSHED tag: build that tag's source with
+      # THIS (fixed) workflow file, and attach the asset to that tag's release —
+      # otherwise a CI-only fix could never be applied to a release already cut.
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       # GraalVM COMMUNITY Edition (GPLv2 + Classpath Exception) — the SAME pinned
       # graalvm-ce-builds asset CI installs. Keeps Oracle GraalVM (GFTC) OUT of
       # the distributed binary, so the redistribution/license story stays FOSS.
@@ -142,4 +158,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: ${{ matrix.asset }}
+          # A dispatched rebuild must land on the tag it was asked for, not on
+          # the branch ref the dispatch ran from.
+          tag_name: ${{ inputs.tag || github.ref_name }}
           fail_on_unmatched_files: true
