@@ -688,8 +688,8 @@
 (defn- top-names
   "Top-level definition names of `src`, in source order."
   [path src]
-  (->> (ix/definitions path src)
-       (remove :parent)
+  (->> (ix/definitions src (ix/detect-language path))
+       (filter #(zero? (long (or (:depth %) 0))))
        (keep :name)
        vec))
 
@@ -749,3 +749,27 @@
 
            [path op (pr-str res)])]
         (expect (= [] (vec findings))))))
+
+(defdescribe replace-node-identity-test
+             (it "replace_node with a node's own text touches nothing around it"
+                 ;; The snippet match is whitespace-NORMALISED, so the winning node's byte
+                 ;; span can reach past the snippet — Groovy and Elixir end a definition node
+                 ;; ON the following newline. Splicing that span glued the next definition to
+                 ;; the replacement (or ate the file's final newline).
+                 (let
+                   [findings
+                    (for
+                      [[path src] (sort newline-bank)
+                       :let [lang (ix/detect-language path)
+                             lines (vec (str/split src #"\n" -1))]
+                       row (remove #(pos? (long (or (:depth %) 0))) (ix/definitions src lang))
+                       :let [s (dec (parse-long (first (str/split (:anchor row) #":"))))
+                             e (dec (parse-long (first (str/split (:end-anchor row) #":"))))
+                             own (str/join "\n" (subvec lines s (inc e)))
+                             res
+                             (try (st/edit-source path src {:op :replace-node :match own :code own})
+                                  (catch Exception ex (.getMessage ex)))]
+                       :when (not= res src)]
+
+                      [path (:name row) (pr-str res)])]
+                   (expect (= [] (vec findings))))))
