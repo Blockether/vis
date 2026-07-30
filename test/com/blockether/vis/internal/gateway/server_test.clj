@@ -12,6 +12,7 @@
             [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.theme :as theme]
             [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.loop :as lp]
             [reitit.ring :as rr]
             [ring.adapter.jetty :as jetty]
             [ring.middleware.params :as ring-params]))
@@ -703,6 +704,18 @@
     (is (= 404
            (:status ((rv 'set-setting-handler)
                       {:query-params {"id" "unknown_toggle" "action" "toggle"}}))))))
+
+(deftest settings-change-refreshes-cached-extension-bindings-test
+  (toggles/register-toggle! {:id "server_test_toggle" :label "Test" :default false})
+  (toggles/set-enabled! "server_test_toggle" false)
+  (let [synced (atom 0)]
+    (with-redefs [lp/sync-cached-extension-symbols! #(swap! synced inc)]
+      (let
+        [response ((rv 'set-setting-handler)
+                    {:query-params {"id" "server_test_toggle" "action" "toggle"}})]
+        (is (= 200 (:status response))))
+      (is (= 1 @synced)))
+    (toggles/set-enabled! "server_test_toggle" false)))
 
 (deftest provider-models-handler-serves-live-catalog-daemon-side
   (testing

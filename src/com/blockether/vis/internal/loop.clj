@@ -11489,6 +11489,22 @@
     (ensure-env-reaper!)
     {:id k :environment env}))
 
+(defn sync-cached-extension-symbols!
+  "Synchronize extension bindings in every idle cached session immediately.
+
+   A Settings change is process-wide while each session owns a persistent
+   Python context. Busy contexts retain their started tool surface and are
+   synchronized at the next turn boundary. Returns the refreshed count."
+  []
+  (reduce-kv (fn [refreshed _ {:keys [environment lock]}]
+               (if (and lock (.tryLock ^java.util.concurrent.locks.ReentrantLock lock))
+                 (try (sync-active-extension-symbols! environment)
+                      (unchecked-inc (long refreshed))
+                      (finally (.unlock ^java.util.concurrent.locks.ReentrantLock lock)))
+                 refreshed))
+             0
+             @cache))
+
 (defn refresh-cached-routers!
   "Reseat `:router` on every cached env's environment map.
 
