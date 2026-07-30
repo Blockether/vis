@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.foundation.git-tool-test
   (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.git-tool :as gt]
             [com.blockether.vis.internal.git :as git]
             [com.blockether.vis.internal.workspace :as workspace]
@@ -10,6 +11,19 @@
 (def ^:private verbose-add #'gt/verbose-add-tokens)
 
 (def ^:private git-impl #'gt/git-impl)
+
+(def ^:private activate? (:ext/activation-fn gt/vis-extension))
+
+(defdescribe git-activation-test
+             (it "activates for nested repositories but stays absent from Git-free workspaces"
+                 (let [repositories (atom [])]
+                   (with-redefs [git/cwd-file (constantly (java.io.File. "/workspace"))
+                                 git/in-repository? (constantly false)
+                                 vis/repository-inventory
+                                 (fn [_] {:repositories @repositories})]
+                     (expect (false? (boolean (activate? {}))))
+                     (reset! repositories [{:root "/workspace/vis"}])
+                     (expect (true? (boolean (activate? {}))))))))
 
 (defdescribe git-native-contract-test
              (it "routes from session state in the native description"

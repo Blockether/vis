@@ -17,8 +17,8 @@
    `com.blockether.vis.internal.git`; this namespace is purely the model-
    facing command tool.
 
-   Built-in (bare `git` in the sandbox, next to `cat`/`rg`), gated to
-   activate only when the workspace sits inside a repository."
+   Built-in (bare `git` in the sandbox, next to `cat`/`rg`), active when
+   the workspace sits inside or contains a repository."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
@@ -357,13 +357,15 @@ Gotcha: a non-zero \"exit\" is DATA to read (like in a terminal), not a tool fai
   (vis/extension
     {:ext/name "foundation-git"
      :ext/description
-     "Single built-in `git` tool: runs the host git binary in the workspace root with the given args (git([\"status\"]) / git([\"commit\", \"-m\", \"msg\"])) and returns exit/stdout/stderr. Replaces the JGit-backed git_ surface — the only git is the one on the user's PATH. Activates only when the workspace sits inside a repository."
+     "Single built-in `git` tool: runs the host git binary in the workspace root with the given args (git([\"status\"]) / git([\"commit\", \"-m\", \"msg\"])) and returns exit/stdout/stderr. Replaces the JGit-backed git_ surface — the only git is the one on the user's PATH. Activates when the workspace sits inside or contains a repository."
      :ext/version "0.2.0"
      :ext/author "Blockether"
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/activation-fn (fn [_env]
-                          (git/in-repository? (git/cwd-file)))
+                          (let [root (git/cwd-file)]
+                            (or (git/in-repository? root)
+                                (seq (:repositories (vis/repository-inventory root))))))
      :ext/engine {:ext.engine/builtin? true :ext.engine/symbols git-symbols}
      :ext/kind "foundation"}))
 
