@@ -100,73 +100,80 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
         aria-modal="true"
         aria-labelledby="provider-router-title"
       >
-        <header className="flex min-h-12 shrink-0 items-center bg-dialog-title text-dialog-title-foreground">
-          <div className="min-w-0 flex-1 px-3 py-2 sm:px-4">
-            <h2
-              id="provider-router-title"
-              className="truncate font-mono text-body font-bold tracking-wide"
-            >
+        <header className="flex min-h-14 shrink-0 items-center gap-2 bg-dialog-title px-3 text-dialog-title-foreground sm:px-4">
+          <div className="min-w-0 flex-1 py-2">
+            <h2 id="provider-router-title" className="truncate font-mono text-title font-bold tracking-wide">
               Model
             </h2>
-            <p className="truncate font-mono text-meta text-dialog-title-foreground/70">
-              {pref?.model ? `Current: ${pref.provider ?? '?'}/${pref.model}` : 'No model pinned'}
+            <p className="truncate font-mono text-ui text-dialog-title-foreground/70">
+              {pref?.model ? `${pref.provider ?? '?'} / ${pref.model}` : 'No model pinned'}
             </p>
           </div>
           <button
             type="button"
-            className="grid min-h-10 min-w-10 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
+            className="min-h-10 shrink-0 border border-dialog-title-foreground/25 px-3 font-mono text-ui text-dialog-title-foreground/80 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
             onClick={onClose}
-            aria-label="Close model picker"
           >
-            ✕
+            Close
           </button>
         </header>
 
-        <div className="flex-1 touch-pan-y space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain border-t border-dialog-edge p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4">
+        <div className="flex-1 touch-pan-y space-y-2 overflow-x-hidden overflow-y-auto overscroll-contain border-t border-dialog-edge p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4">
           {err && <Banner kind="err">{err}</Banner>}
           {note && <Banner kind="ok">{note}</Banner>}
 
           {providers === null && (
-            <p className="py-8 text-center font-mono text-body text-dialog-hint">Loading models…</p>
+            <p className="py-8 text-center font-mono text-ui text-dialog-hint">Loading models…</p>
           )}
 
           {providers?.length === 0 && (
-            <p className="py-8 text-center font-mono text-body text-dialog-hint">
+            <p className="py-8 text-center font-mono text-ui text-dialog-hint">
               No providers configured.
             </p>
           )}
 
           {defaultFirstProviders(providers ?? []).map((provider) => {
-            const dot = providerStatusDot(provider);
+            const state = providerStatusDot(provider);
             const limits = providerLimitsLine(provider);
             const open = expanded === provider.id;
             const authed = isProviderAuthed(provider);
+            const pinnedHere = pref?.provider === provider.id;
 
             return (
-              <div key={provider.id} className="border border-dialog-edge bg-panel-2">
+              <div
+                key={provider.id}
+                className={`border bg-panel-2 ${open ? 'border-dialog-hint-key' : 'border-dialog-edge'}`}
+              >
                 <button
                   type="button"
-                  className="flex w-full min-h-12 items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none"
+                  className="flex min-h-14 w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none"
                   onClick={() => setExpanded(open ? null : provider.id)}
                   aria-expanded={open}
                 >
-                  <span className={`font-mono text-body ${dot.tone}`} aria-label={dot.label}>
-                    {dot.glyph}
-                  </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-mono text-body font-bold text-white">
-                      {provider.label}
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate font-mono text-body font-bold text-white">
+                        {provider.label}
+                      </span>
+                      {pinnedHere && (
+                        <span className="shrink-0 border border-accent-ink px-1 font-mono text-meta text-accent-ink">
+                          in use
+                        </span>
+                      )}
                     </span>
-                    <span className="block truncate font-mono text-meta text-dialog-hint">
+                    <span className="mt-0.5 block truncate font-mono text-ui text-dialog-hint">
                       {limits ?? `${provider.models.length} models`}
                     </span>
                   </span>
-                  <span className="font-mono text-meta text-dialog-hint">{open ? '▾' : '▸'}</span>
+                  <span className={`shrink-0 font-mono text-meta ${state.tone}`}>{state.label}</span>
+                  <span className="shrink-0 font-mono text-meta text-dialog-hint">
+                    {open ? 'Hide' : 'Show'}
+                  </span>
                 </button>
 
                 {open && (
-                  <div className="space-y-2 border-t border-dialog-edge p-3">
-                    <p className="font-mono text-meta text-dialog-hint">
+                  <div className="space-y-3 border-t border-dialog-edge p-3">
+                    <p className="font-mono text-ui text-dialog-hint">
                       {providerStatusLine(provider)}
                     </p>
 
@@ -177,23 +184,29 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
                     )}
 
                     {sid && provider.models.length > 0 && (
-                      <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                         {preferredModelFirst(provider.models, provider.default_model).map((model) => {
                           const active = pref?.provider === provider.id && pref?.model === model;
+                          const busy = picking === `${provider.id}:${model}`;
                           return (
                             <li key={model} className="min-w-0">
                               <button
                                 type="button"
-                                className={`flex w-full min-h-9 items-center border px-2 py-1.5 text-left font-mono text-ui transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none ${
+                                className={`flex min-h-12 w-full items-center gap-2 border px-3 py-2 text-left font-mono text-ui transition-colors hover:bg-hover focus-visible:bg-hover focus-visible:outline-none ${
                                   active
-                                    ? 'border-accent bg-hover text-accent-ink'
+                                    ? 'border-accent-ink bg-hover text-accent-ink'
                                     : 'border-dialog-edge text-white/85'
                                 }`}
-                                disabled={picking === `${provider.id}:${model}`}
+                                disabled={busy}
                                 onClick={() => void pick(provider, model)}
                                 aria-pressed={active}
                               >
                                 <span className="min-w-0 flex-1 truncate">{model}</span>
+                                {(active || busy) && (
+                                  <span className="shrink-0 font-mono text-meta text-dialog-hint">
+                                    {busy ? 'Picking…' : 'Current'}
+                                  </span>
+                                )}
                               </button>
                             </li>
                           );
@@ -208,7 +221,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
         </div>
 
         <footer className="flex shrink-0 flex-col gap-2 border-t border-dialog-edge p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-between sm:p-4">
-          <p className="font-mono text-meta text-dialog-hint">
+          <p className="font-mono text-ui text-dialog-hint">
             Sign-in, OAuth, and API keys live in machine settings.
           </p>
           <div className="flex gap-2">
