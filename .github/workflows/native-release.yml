@@ -61,45 +61,26 @@ jobs:
           #   ubuntu-24.04-arm 4 cores / 16 GB arm64  -> same class, same args
           #   macos-15/26      3 cores /  7 GB arm64  -> impossible, never use
           # -H:DeadlockWatchdogInterval=0 keeps a slow-but-progressing analysis
-          # alive; -J-Xms == -Xmx commits the heap up front instead of paying
-          # repeated full GCs while it ratchets up under an already-full old gen.
-          # arm64 measurement (v0.1.10, run 30257185005): the SAME -J-Xmx12g that
-          # passes on x64 died with "OutOfMemoryError: Java heap space" 2 h 07 m in
-          # — the aarch64 backend's analysis/compile graphs simply need more heap
-          # than x64 for this image — so arm64 gets more, and starts smaller so the
-          # 16 GB runner is not fully committed up front.
-          # v0.1.14 (run 30586173742): the image kept growing and BOTH jobs died —
-          # x64 on "GC overhead limit exceeded" 23 m in, arm64 on "Java heap space"
-          # 1 h 23 m in. 12 GB is simply no longer enough for this image.
-          # v0.1.14 retry (run 30591356567) then proved the OTHER failure mode:
-          # -J-Xmx20g on a 16 GB runner is backed by the swapfile below, but with
-          # the PARALLEL collector every full GC compacts the WHOLE heap, so the
-          # swapped-out pages are dragged back in on each cycle: 4 h of thrashing
-          # without finishing.
-          # v0.1.14 retry 2 (run 30602521691): -J-Xmx14g -J-Xms14g died with
-          # "OutOfMemoryError: Java heap space" 16 m into [2/8] analysis. So the
-          # LIVE SET of this image's analysis is now > 14 GB and no amount of GC
-          # tuning fits it inside the runner's ~15.6 GB of RAM. Measured on a
-          # 36 GB machine at the same commit, the builder sits at ~16-17 GB RSS
-          # through analysis. The image grew past the runner when GraalPy/Truffle
-          # went 25.1.3 -> 25.2.4 (plus jsvg's Java2D and the bigger tree-sitter
-          # pack); the last green build (run 30353695813, 25.1.3) already spent
-          # 86.7 % of its 106 min in GC at Peak RSS 14.17 GB.
-          # The only configuration left that can work on a free runner therefore
-          # overcommits DELIBERATELY but collects INCREMENTALLY:
-          #   * -J-Xmx18g  — ~2.5 GB past RAM, into the 32 GB swapfile below;
-          #   * -J-Xms6g   — grow into it instead of committing (and touching)
-          #                  every page up front like the failed 20g attempt;
-          #   * -XX:+UseG1GC — region-based, mostly-young collections touch a
-          #                  small part of the heap, so cold old-gen pages can
-          #                  stay in swap instead of being walked every full GC.
-          #   * -XX:-UseGCOverheadLimit — a slow but progressing build must not
-          #                  be aborted; the job clock (350 min) is the guard.
-          # (the native-image driver preselects ParallelGC for the builder, so G1
-          # must switch it OFF first — otherwise the builder JVM refuses to start
-          # with "Multiple garbage collectors selected", run 30604196374.)
-          - { os: ubuntu-latest, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx18g -J-Xms6g -J-XX:-UseParallelGC -J-XX:+UseG1GC -H:DeadlockWatchdogInterval=0' }
-          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-linux-arm64-community, extra_args: '-J-Xmx18g -J-Xms6g -J-XX:-UseParallelGC -J-XX:+UseG1GC -H:DeadlockWatchdogInterval=0' }
+          # alive. That plus a heap ceiling is ALL the builder tuning there is
+          # here, on purpose: babashka and clojure-lsp ship far bigger native
+          # images with nothing but `-J-Xmx` (bb: 4.5 GB, `-O1`, no GC, thread
+          # or charset flags at all).
+          # The v0.1.14 saga is the evidence for that minimalism. -J-Xmx12g,
+          # 14g, 18g, -Xms==-Xmx, ParallelGC, G1, swapfiles: every one of them
+          # OOM'd or thrashed, and a 36 GB Mac OOM'd at -J-Xmx24g too. No GC
+          # setting fixes a live set that big; the live set was the bug.
+          # It came from TWO build flags, now dropped in build.clj:
+          #   * -Dpolyglot.image-build-time.PreinitializeContexts=python built
+          #     a whole Python context during analysis and snapshotted it into
+          #     the image heap;
+          #   * -H:+AddAllCharsets dragged every sun.nio.cs charset in with it.
+          # The agent-traced reflection metadata is gone too (1263 entries ->
+          # 0; only resources + FFM downcalls remain), together with the
+          # 30-entry --initialize-at-build-time list in native-image.properties:
+          # graal-build-time's InitClojureClasses is the only Clojure lever,
+          # exactly like babashka/clojure-lsp.
+          - { os: ubuntu-latest, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx22g -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-linux-arm64-community, extra_args: '-J-Xmx22g -H:DeadlockWatchdogInterval=0' }
           # NO macOS job, and that is a hard constraint, not an oversight:
           #   * the only free arm64 macOS runners have 7 GB — less than half of
           #     what the builder needs (v0.1.6/v0.1.8 each burned 4 h there);
