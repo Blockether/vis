@@ -2,6 +2,15 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.15 (2837) — 2026-07-31
+<!-- commit: 2add31771ef95afb1f471452210627b31cb7f95d -->
+
+- Preserve pinned provider selection
+- Revert(companion): restore the composer strip glyphs
+- Revert(companion): bring the glyphs back
+- Handle whitespace split across styled runs
+- Release notes for 0.1.15 (2832)
+
 ## 0.1.15 (2832) — 2026-07-31
 <!-- commit: 012b26d82f5a9fd6a817d70fa924f01251887f19 -->
 
