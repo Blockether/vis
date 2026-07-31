@@ -95,8 +95,11 @@ jobs:
           #                  stay in swap instead of being walked every full GC.
           #   * -XX:-UseGCOverheadLimit — a slow but progressing build must not
           #                  be aborted; the job clock (350 min) is the guard.
-          - { os: ubuntu-latest, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx18g -J-Xms6g -J-XX:+UseG1GC -J-XX:-UseGCOverheadLimit -H:DeadlockWatchdogInterval=0' }
-          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-linux-arm64-community, extra_args: '-J-Xmx18g -J-Xms6g -J-XX:+UseG1GC -J-XX:-UseGCOverheadLimit -H:DeadlockWatchdogInterval=0' }
+          # (the native-image driver preselects ParallelGC for the builder, so G1
+          # must switch it OFF first — otherwise the builder JVM refuses to start
+          # with "Multiple garbage collectors selected", run 30604196374.)
+          - { os: ubuntu-latest, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx18g -J-Xms6g -J-XX:-UseParallelGC -J-XX:+UseG1GC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-linux-arm64-community, extra_args: '-J-Xmx18g -J-Xms6g -J-XX:-UseParallelGC -J-XX:+UseG1GC -H:DeadlockWatchdogInterval=0' }
           # NO macOS job, and that is a hard constraint, not an oversight:
           #   * the only free arm64 macOS runners have 7 GB — less than half of
           #     what the builder needs (v0.1.6/v0.1.8 each burned 4 h there);
