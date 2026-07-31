@@ -634,8 +634,8 @@ export class GatewayClient {
 
   /**
    * One toggle by id. `/v1/settings` only lists what the settings sheet shows,
-   * so screen-owned knobs (reasoning effort lives in the model picker) are read
-   * one at a time here.
+   * so screen-owned knobs (reasoning effort lives in the composer footer) are
+   * read one at a time here.
    */
   async setting(id: string, signal?: AbortSignal): Promise<Toggle> {
     return this.request<Toggle>(

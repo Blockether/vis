@@ -53,6 +53,7 @@ import type {
   TranscriptTurn,
   VoiceModelState,
   ModelPref,
+  Toggle,
   GatewayAttachment,
 } from '../lib/types';
 import { startWavRecording, type WavRecording } from '../lib/voice';
@@ -1227,6 +1228,39 @@ export function SessionScreen({
     setRouterOpen(false);
     setModelPref(null);
   }, [sid, fresh, draftMessageId]);
+
+  // Reasoning effort is the other per-turn dial you change mid-session, so it
+  // rides the composer footer right next to the model chip — it is the ONLY
+  // control for it (the model picker deliberately has none). The gateway keeps
+  // it out of `/v1/settings` (`:settings? false`) because each channel owns its
+  // own control, hence the by-id read.
+  const [reasoning, setReasoning] = useState<Toggle | null>(null);
+  const [reasoningBusy, setReasoningBusy] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void client
+      .setting('reasoning_level', controller.signal)
+      .then((toggle) => setReasoning(toggle))
+      .catch(() => {
+        // Optional knob: a gateway without it simply paints no chip.
+      });
+    return () => controller.abort();
+  }, [client]);
+
+  // One tap = next choice. Cycling beats a popover for a two-to-four value
+  // enum, and the gateway owns the order (`cycle` action).
+  async function cycleReasoning() {
+    if (!reasoning || reasoningBusy) return;
+    setReasoningBusy(true);
+    try {
+      setReasoning(await client.setSetting(reasoning.id, 'cycle'));
+    } catch (e) {
+      setComposerNotice((e as Error).message);
+    } finally {
+      setReasoningBusy(false);
+    }
+  }
 
   // The header chip shows whatever model this session actually runs on, so read
   // the gateway's answer rather than assuming the global default.
@@ -3313,10 +3347,17 @@ export function SessionScreen({
 
   return (
     <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-ink transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+      {/* In landscape on a notched phone the horizontal safe-area insets are the
+         ones that bite (the notch on one side, the rounded corner on the other),
+         and this header used to pad only the TOP — so the back button and the
+         share/id cluster ran under the bezel and off the visible screen. The
+         insets live on the two edge children, not on the header, so the dark
+         back-button block and the panel background still reach the physical
+         edge; only their CONTENT is pushed into the safe area. */}
       <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
         <button
           type="button"
-          className="grid w-11 shrink-0 place-items-center border-r border-dialog-edge bg-dialog-title font-mono text-subhead font-bold text-dialog-title-foreground transition-[background-color,transform,translate,scale,rotate] duration-150 active:scale-[0.96] hover:bg-accent-2 focus-visible:outline-none focus-visible:bg-accent-2 motion-reduce:transition-none sm:w-10"
+          className="grid w-[calc(2.75rem+env(safe-area-inset-left))] shrink-0 place-items-center border-r border-dialog-edge bg-dialog-title pl-[env(safe-area-inset-left)] font-mono text-subhead font-bold text-dialog-title-foreground transition-[background-color,transform,translate,scale,rotate] duration-150 active:scale-[0.96] hover:bg-accent-2 focus-visible:outline-none focus-visible:bg-accent-2 motion-reduce:transition-none sm:w-[calc(2.5rem+env(safe-area-inset-left))]"
           onClick={onBack}
           aria-label="Back to sessions"
         >
@@ -3331,7 +3372,7 @@ export function SessionScreen({
             {connected ? 'Connected' : 'Reconnecting'}
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1 self-center pr-2 pl-1 sm:pr-3">
+        <div className="flex shrink-0 items-center gap-1 self-center pl-1 pr-[max(0.5rem,env(safe-area-inset-right))] sm:pr-[max(0.75rem,env(safe-area-inset-right))]">
           <CopyableId id={sid} className="hidden max-w-[9rem] sm:inline-flex" />
           <ShareLink className="" />
         </div>
@@ -3523,7 +3564,7 @@ export function SessionScreen({
             id="file-mention-list"
             role="listbox"
             aria-label="File mentions"
-            className="absolute inset-x-2 bottom-full mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-[max(1.5rem,calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
+            className="absolute bottom-full left-[max(0.5rem,env(safe-area-inset-left))] right-[max(0.5rem,env(safe-area-inset-right))] mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:left-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:right-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
           >
             <div className="bg-dialog-title px-3 py-2 font-mono text-meta font-bold text-dialog-title-foreground">
               Attach a file
@@ -3560,7 +3601,7 @@ export function SessionScreen({
             id="slash-command-list"
             role="listbox"
             aria-label="Slash commands"
-            className="absolute inset-x-2 bottom-full mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-[max(1.5rem,calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
+            className="absolute bottom-full left-[max(0.5rem,env(safe-area-inset-left))] right-[max(0.5rem,env(safe-area-inset-right))] mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:left-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:right-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
           >
             <div className="bg-dialog-title px-3 py-2 font-mono text-meta font-bold text-dialog-title-foreground">
               Slash commands
@@ -3959,10 +4000,24 @@ export function SessionScreen({
                 : 'Change provider and model'
             }
           >
-            <span aria-hidden="true" className="text-accent-ink/80 transition-colors duration-150 group-hover:text-accent-ink motion-reduce:transition-none">◇</span>
             <span className="truncate">{modelPref?.model ?? defaultPref?.model ?? 'model'}</span>
             <span aria-hidden="true" className="opacity-40 transition-opacity duration-150 group-hover:opacity-100 motion-reduce:transition-none">▾</span>
           </button>
+
+          {reasoning && (reasoning.choices?.length ?? 0) > 0 && (
+            <button
+              type="button"
+              onMouseDown={keepKeyboard}
+              className="group inline-flex shrink-0 items-center gap-1.5 px-1 py-1 font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none disabled:opacity-50 motion-reduce:transition-none"
+              onClick={() => void cycleReasoning()}
+              disabled={reasoningBusy}
+              aria-label={`${reasoning.label} — ${reasoning.value ?? 'default'}, tap for the next level`}
+              title={`${reasoning.label}: ${reasoning.value ?? 'default'} · tap to cycle`}
+            >
+              <span aria-hidden="true" className="opacity-40">·</span>
+              <span className="truncate">{reasoningBusy ? '…' : (reasoning.value ?? 'default')}</span>
+            </button>
+          )}
 
           {(usageTokens || usageCost) && (
             <span

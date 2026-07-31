@@ -714,7 +714,7 @@ function TabBar({ tab, onTab }: { tab: Tab; onTab: (tab: Tab) => void }) {
 
   return (
     <nav
-      className="relative z-30 grid shrink-0 grid-cols-2 border-t border-dialog-edge bg-panel-2 px-[max(0.5rem,env(safe-area-inset-left))] pb-[max(0.35rem,var(--safe-bottom,env(safe-area-inset-bottom)))] pt-1 sm:hidden"
+      className="relative z-30 grid shrink-0 grid-cols-2 border-t border-dialog-edge bg-panel-2 pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))] pb-[max(0.35rem,var(--safe-bottom,env(safe-area-inset-bottom)))] pt-1 sm:hidden"
       aria-label="Primary navigation"
     >
       {items.map((item) => (
