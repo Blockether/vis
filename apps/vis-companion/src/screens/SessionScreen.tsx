@@ -3984,16 +3984,14 @@ export function SessionScreen({
           </div>
         </div>
 
-        {/* Composer strip, in the TUI footer's own reading order: the two dials
-            you change mid-session — model, then thinking effort — sit LEFT
-            directly under the input, cumulative session usage (tokens, then
-            cost) rides the RIGHT edge. A written label carries each dial's
-            meaning, so the row needs no glyphs; the model name truncates first
-            so the level and the numbers survive a narrow phone. */}
-        <div className="flex w-full items-center gap-x-4 pt-0.5 font-mono">
+        {/* Composer strip, in the TUI footer's own reading order: the router chip
+            sits LEFT directly under the input, cumulative session usage (tokens,
+            then cost) rides the RIGHT edge. The chip truncates first so the
+            numbers survive a narrow phone. */}
+        <div className="flex w-full items-center gap-2 pt-1">
           <button
             type="button"
-            className="group inline-flex min-h-8 min-w-0 shrink items-baseline gap-1.5 py-1 text-left transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none"
+            className="group inline-flex min-w-0 shrink items-center gap-1.5 px-1 py-1 font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none"
             onClick={() => setRouterOpen(true)}
             aria-label="Change provider and model"
             title={
@@ -4002,35 +4000,34 @@ export function SessionScreen({
                 : 'Change provider and model'
             }
           >
-            <span className="shrink-0 text-meta text-dialog-hint">model</span>
-            <span className="truncate text-ui text-dialog-hint-key transition-colors duration-150 group-hover:text-accent-ink group-focus-visible:text-accent-ink motion-reduce:transition-none">
-              {modelPref?.model ?? defaultPref?.model ?? 'default'}
-            </span>
+            <span className="truncate">{modelPref?.model ?? defaultPref?.model ?? 'model'}</span>
+            <span aria-hidden="true" className="opacity-40 transition-opacity duration-150 group-hover:opacity-100 motion-reduce:transition-none">▾</span>
           </button>
 
           {reasoning && (reasoning.choices?.length ?? 0) > 0 && (
             <button
               type="button"
               onMouseDown={keepKeyboard}
-              className="group inline-flex min-h-8 shrink-0 items-baseline gap-1.5 py-1 transition-colors duration-150 disabled:opacity-50 focus-visible:outline-none motion-reduce:transition-none"
+              className="group inline-flex shrink-0 items-center gap-1.5 px-1 py-1 font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none disabled:opacity-50 motion-reduce:transition-none"
               onClick={() => void cycleReasoning()}
               disabled={reasoningBusy}
               aria-label={`${reasoning.label} — ${reasoning.value ?? 'default'}, tap for the next level`}
-              title={`${reasoning.label} — ${reasoning.value ?? 'default'}, tap to cycle`}
+              title={`${reasoning.label}: ${reasoning.value ?? 'default'} · tap to cycle`}
             >
-              <span className="shrink-0 text-meta text-dialog-hint">thinking</span>
-              <span className="truncate text-ui text-dialog-hint-key transition-colors duration-150 group-hover:text-accent-ink group-focus-visible:text-accent-ink motion-reduce:transition-none">
-                {reasoningBusy ? 'saving' : (reasoning.value ?? 'default')}
-              </span>
+              <span aria-hidden="true" className="opacity-40">·</span>
+              <span className="truncate">{reasoningBusy ? '…' : (reasoning.value ?? 'default')}</span>
             </button>
           )}
 
           {(usageTokens || usageCost) && (
             <span
-              className="ml-auto flex shrink-0 items-baseline gap-2 py-1 text-meta tabular-nums text-dialog-hint"
+              className="ml-auto flex shrink-0 items-center gap-1.5 px-1 py-1 font-mono text-chip tabular-nums text-dialog-hint"
               title={`Session usage — ${usageTitle}`}
             >
               {usageTokens && <span className="whitespace-nowrap">{usageTokens}</span>}
+              {usageTokens && usageCost && (
+                <span aria-hidden="true" className="opacity-40">·</span>
+              )}
               {usageCost && <span className="whitespace-nowrap text-accent-ink">{usageCost}</span>}
             </span>
           )}
