@@ -147,7 +147,40 @@ export async function getThemePref(): Promise<ThemePref> {
 export async function setThemePref(pref: ThemePref): Promise<void> {
   await setRaw(THEME_PREF_KEY, pref);
 }
+const SESSIONS_PER_PROJECT_KEY = 'vis.sessionsPerProject';
+export const DEFAULT_SESSION_PAGE_SIZE = 10;
+export const SESSION_PAGE_SIZES: readonly number[] = [5, 10, 15];
 
+function normalizePageSize(value: number): number {
+  return SESSION_PAGE_SIZES.includes(value) ? value : DEFAULT_SESSION_PAGE_SIZE;
+}
+
+// App-local only — never sent to the gateway. One knob for two views: how many
+// live sessions a collapsed project exposes, and the step size when a project is
+// expanded and paged.
+let pageSizeCache: number | null = null;
+const pageSizeListeners = new Set<(value: number) => void>();
+
+export async function getSessionsPerPage(): Promise<number> {
+  if (pageSizeCache !== null) return pageSizeCache;
+  const raw = await getRaw(SESSIONS_PER_PROJECT_KEY);
+  pageSizeCache = normalizePageSize(raw ? Number(raw) : DEFAULT_SESSION_PAGE_SIZE);
+  return pageSizeCache;
+}
+
+export async function setSessionsPerPage(value: number): Promise<void> {
+  const normalized = normalizePageSize(value);
+  await setRaw(SESSIONS_PER_PROJECT_KEY, String(normalized));
+  pageSizeCache = normalized;
+  for (const listener of pageSizeListeners) listener(normalized);
+}
+
+export function subscribeSessionsPerPage(listener: (value: number) => void): () => void {
+  pageSizeListeners.add(listener);
+  return () => {
+    pageSizeListeners.delete(listener);
+  };
+}
 const SUBSCRIPTIONS_KEY = 'vis.sessionSubscriptions';
 const MAX_SUBSCRIBED_SESSIONS = 24;
 

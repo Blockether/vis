@@ -20,7 +20,7 @@ import {
   type PushPermission,
 } from '../lib/push';
 import { applyGatewayTheme, resolveTheme } from '../lib/theme';
-import { getThemePref, setThemePref } from '../lib/storage';
+import { DEFAULT_SESSION_PAGE_SIZE, getSessionsPerPage, getThemePref, setSessionsPerPage, setThemePref } from '../lib/storage';
 import { Banner, Button, Input } from '../components/ui';
 import { REACH_HINT, REACH_LABEL, bestAddress, hostOf, mergeAddresses, reachOf } from '../lib/endpoints';
 import { onWake } from '../lib/wake';
@@ -64,6 +64,7 @@ export function GatewaySettingsDialog({
   );
   const [theme, setTheme] = useState<GatewayTheme | null>(null);
   const [pref, setPref] = useState<ThemePref>('light');
+  const [pageSize, setPageSize] = useState(DEFAULT_SESSION_PAGE_SIZE);
   const [err, setErr] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [unreachable, setUnreachable] = useState(false);
@@ -89,6 +90,7 @@ export function GatewaySettingsDialog({
           if (signal?.aborted) return;
           setTheme(activeTheme);
           setPref(themePref);
+          setPageSize(await getSessionsPerPage());
           if (isActive) applyGatewayTheme(resolveTheme(activeTheme, themePref));
         } catch (e) {
           if (signal?.aborted) return;
@@ -148,6 +150,18 @@ export function GatewaySettingsDialog({
       await setThemePref(next);
       setPref(next);
       if (isActive && theme) applyGatewayTheme(resolveTheme(theme, next));
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function choosePageSize(next: number) {
+    setPending(`pageSize:${next}`);
+    try {
+      await setSessionsPerPage(next);
+      setPageSize(next);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -231,6 +245,7 @@ export function GatewaySettingsDialog({
 
           <SettingsPanel
             title="Saved connection"
+            description="Reconnect to this machine without re-scanning its QR code."
             meta={
               <span className={`font-black ${status.tone}`}>
                 {status.dot} {status.label}
@@ -319,6 +334,7 @@ export function GatewaySettingsDialog({
           {!unreachable && !unauthorized && theme && (
             <SettingsPanel
               title="Theme"
+              description="How the app looks on this device. Follow machine mirrors whatever the gateway is set to."
               meta={pref === 'gateway' ? `machine · ${theme.display_name}` : 'saved on this device'}
             >
               {(() => {
@@ -378,6 +394,42 @@ export function GatewaySettingsDialog({
               })()}
             </SettingsPanel>
           )}
+
+          <SettingsPanel
+            title="Sessions per project"
+            description="How many sessions each project lists before paging. Collapsed projects show this many live sessions; expanding pages the rest in steps of the same size."
+            meta="saved on this device"
+          >
+            <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-3">
+              {[
+                { size: 5, label: 'compact' },
+                { size: 10, label: 'balanced' },
+                { size: 15, label: 'detailed' },
+              ].map(({ size, label }) => {
+                const selected = size === pageSize;
+                return (
+                  <button
+                    type="button"
+                    key={size}
+                    disabled={pending?.startsWith('pageSize:') ?? false}
+                    onClick={() => void choosePageSize(size)}
+                    className={`flex min-h-10 min-w-0 items-center justify-between gap-2 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-9 ${
+                      selected ? 'bg-accent text-accent-foreground' : 'bg-input text-white hover:bg-hover'
+                    }`}
+                    aria-pressed={selected}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate font-mono text-ui font-bold">{size}</span>
+                      <span className="block font-mono text-chip uppercase tracking-wider opacity-65">{label}</span>
+                    </span>
+                    <span className="shrink-0 font-mono text-meta font-black" aria-hidden="true">
+                      {selected ? '●' : '○'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </SettingsPanel>
 
           {unreachable ? (
             <SettingsPanel title="Settings">
@@ -560,6 +612,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
   return (
     <SettingsPanel
       title="Providers"
+      description="Sign in to model providers so this machine can reach them, and set each one's default model."
       meta={providers ? `${signedIn}/${providers.length} signed in` : 'checking…'}
     >
       <div className="space-y-2 p-3">
@@ -792,6 +845,7 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
   return (
     <SettingsPanel
       title="Notifications"
+      description="Get a native alert on this device whenever a turn finishes or fails."
       meta={
         push
           ? available
@@ -803,11 +857,6 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
       <div className="space-y-2 p-3">
         {err && <Banner kind="err">{err}</Banner>}
         {note && <Banner kind="ok">{note}</Banner>}
-
-        <p className="font-mono text-meta text-dialog-hint">
-          vis sends one alert when a turn finishes or fails, to every device you
-          register with this machine.
-        </p>
 
         {push && !available && (
           <Banner kind="warn">
@@ -890,19 +939,32 @@ function NotificationsPanel({ client }: { client: GatewayClient }) {
 
 function SettingsPanel({
   title,
+  description,
   meta,
   children,
 }: {
   title: string;
+  description?: string;
   meta?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className="min-w-0 overflow-hidden border border-dialog-edge bg-panel transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
-      <header className="flex min-h-8 items-center justify-between gap-3 border-b border-dialog-edge bg-panel-2 px-3 py-1.5">
-        <h3 className="min-w-0 truncate border-l-2 border-accent pl-2 font-mono text-meta font-black uppercase tracking-[0.12em] text-white">
-          {title}
-        </h3>
+      <header
+        className={`flex min-h-8 gap-3 border-b border-dialog-edge bg-panel-2 px-3 py-1.5 ${
+          description ? 'items-start' : 'items-center'
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          <h3 className="min-w-0 truncate border-l-2 border-accent pl-2 font-mono text-meta font-black uppercase tracking-[0.12em] text-white">
+            {title}
+          </h3>
+          {description && (
+            <p className="mt-0.5 pl-2 text-pretty font-mono text-chip leading-snug text-dialog-hint">
+              {description}
+            </p>
+          )}
+        </div>
         {meta && (
           <span className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
             {meta}
@@ -1063,7 +1125,11 @@ function AddressPanel({
   if (addresses.length < 2 && !gateway.pinned) return null;
 
   return (
-    <SettingsPanel title="Address" meta={gateway.pinned ? 'pinned' : 'automatic'}>
+    <SettingsPanel
+      title="Address"
+      description="Which network path this device uses to reach the machine — pin one, or let the app pick the most durable route."
+      meta={gateway.pinned ? 'pinned' : 'automatic'}
+    >
       <div className="space-y-2 p-3">
         {err && <Banner kind="err">{err}</Banner>}
 

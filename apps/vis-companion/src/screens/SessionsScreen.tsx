@@ -7,6 +7,7 @@ import { homeifyPath } from '../lib/path';
 import { onWake } from '../lib/wake';
 import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
 import { PencilIcon, SwipeActions, TrashIcon } from '../components/SwipeActions';
+import { DEFAULT_SESSION_PAGE_SIZE, getSessionsPerPage, subscribeSessionsPerPage } from '../lib/storage';
 
 const SESSION_LIST_EVENTS = new Set([
   'turn.started',
@@ -23,12 +24,9 @@ const SESSION_LIST_EVENTS = new Set([
 // this is treated as lost.
 const STALE_POLL_MS = 20_000;
 
-// Every session row is a snap-scrolling swipe container: mounting a 400-session
-// fleet means 400 of them, and that layout — not the request — is the lag between
-// tapping Sessions and seeing the list. The rows are already in memory, so only
-// the DOM is rationed: paint a screenful, grow while scrolling.
-const ROW_WINDOW = 24;
-const ROW_WINDOW_STEP = 40;
+// Each project is a collapsible section: collapsed shows only its live sessions
+// (capped), expanded pages its history in place — so the DOM is bounded without a
+// global window over the whole fleet.
 
 // Same frames as the session transcript's spinner and the TUI's
 // `paint-content-loading!` — one vocabulary for "working" across the product.
@@ -40,6 +38,22 @@ const SKELETON_GROUPS = [
   ['w-1/2', 'w-2/3'],
 ];
 
+
+function useSessionsPerPage(): number {
+  const [pageSize, setPageSize] = useState(DEFAULT_SESSION_PAGE_SIZE);
+  useEffect(() => {
+    let active = true;
+    void getSessionsPerPage().then((value) => {
+      if (active) setPageSize(value);
+    });
+    const unsubscribe = subscribeSessionsPerPage((value) => setPageSize(value));
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+  return pageSize;
+}
 
 interface Props {
   active: GatewayConn | null;
@@ -319,35 +333,23 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
     }
   }
 
-  const [windowSize, setWindowSize] = useState(ROW_WINDOW);
-  const sentinelRef = useRef<HTMLDivElement>(null);
+  const pageSize = useSessionsPerPage();
 
-  // A new filter — or a new gateway — is a new list: start from one screenful.
-  useEffect(() => {
-    setWindowSize(ROW_WINDOW);
-  }, [deferredQuery, activeKey]);
+  // Projects collapse to their live sessions and page their history independently,
+  // so there is no global window to grow. A search flattens every project open so
+  // matches are never hidden behind a collapse.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const forceExpand = deferredQuery.trim().length > 0;
+  const toggleProject = useCallback((project: string) => {
+    setExpanded((previous) => {
+      const next = new Set(previous);
+      if (next.has(project)) next.delete(project);
+      else next.add(project);
+      return next;
+    });
+  }, []);
 
-  const allGroups = useMemo(() => groupByProject(visible ?? []), [visible]);
-  const groups = useMemo(() => windowGroups(allGroups, windowSize), [allGroups, windowSize]);
-  const hasMoreRows = (visible?.length ?? 0) > windowSize;
-
-  // Re-observed on every growth step: the sentinel that is still on screen after
-  // a grow reports no NEW intersection, so a single observer would stall halfway.
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    const viewport = listRef.current;
-    if (!sentinel || !viewport || !hasMoreRows) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          setWindowSize((current) => current + ROW_WINDOW_STEP);
-        }
-      },
-      { root: viewport, rootMargin: '600px 0px' },
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [hasMoreRows, windowSize]);
+  const groups = useMemo(() => groupByProject(visible ?? []), [visible]);
 
   // A dead gateway is not a sessions problem: there is nothing to navigate, so the
   // shell drops us on the Machines screen instead of rendering a session list
@@ -489,20 +491,23 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
         ) : (
           <div className="border-t border-dialog-edge">
             {groups.map(([project, projectSessions]) => (
-              <ProjectGroup
-                key={project}
-                project={project}
-                sessions={projectSessions}
-                conn={active!}
-                subscribedIds={subscribedIds}
-                matches={matches}
-                needle={deferredQuery.trim()}
-                onOpen={onOpen}
-                onRename={startRename}
-                onDelete={startDelete}
-              />
-            ))}
-            {hasMoreRows && <div ref={sentinelRef} className="h-16" aria-hidden="true" />}
+            <ProjectGroup
+              key={project}
+              project={project}
+              sessions={projectSessions}
+              conn={active!}
+              subscribedIds={subscribedIds}
+              matches={matches}
+              needle={deferredQuery.trim()}
+              onOpen={onOpen}
+              onRename={startRename}
+              onDelete={startDelete}
+              expanded={expanded.has(project)}
+              forceExpand={forceExpand}
+              onToggle={toggleProject}
+              pageSize={pageSize}
+            />
+          ))}
           </div>
         )}
         </div>
@@ -593,6 +598,10 @@ const ProjectGroup = memo(function ProjectGroup({
   onOpen,
   onRename,
   onDelete,
+  expanded,
+  forceExpand,
+  onToggle,
+  pageSize,
 }: {
   project: string;
   sessions: Session[];
@@ -603,47 +612,85 @@ const ProjectGroup = memo(function ProjectGroup({
   onOpen: Props['onOpen'];
   onRename: (session: Session) => void;
   onDelete: (session: Session) => void;
+  expanded: boolean;
+  forceExpand: boolean;
+  onToggle: (project: string) => void;
+  pageSize: number;
 }) {
   const root = projectRoot(sessions);
-  const liveCount = sessions.filter(sessionIsLive).length;
+  const liveSessions = useMemo(() => sessions.filter(sessionIsLive), [sessions]);
+  const liveCount = liveSessions.length;
+  const isOpen = expanded || forceExpand;
+
+  // Expanded pages its own history in place; collapsing exposes only the live few.
+  const [shown, setShown] = useState(pageSize);
+  useEffect(() => {
+    setShown(pageSize);
+  }, [pageSize]);
+
+  const rows = isOpen ? sessions.slice(0, shown) : liveSessions.slice(0, pageSize);
+  const remaining = isOpen ? Math.max(0, sessions.length - shown) : 0;
 
   return (
     <section className="border-t border-dialog-edge first:border-t-0" aria-label={`${project} sessions`}>
-      <header className="flex min-h-11 items-center justify-between gap-3 bg-panel-2 px-3 py-2 sm:px-4">
-        <div className="min-w-0">
-          <h2 className="truncate font-mono text-ui font-bold text-white">{project}</h2>
-          <p className="mt-0.5 truncate font-mono text-chip text-dialog-hint" title={root}>
-            {root || 'No workspace path'}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2 font-mono text-chip text-dialog-hint">
-          <span>{sessions.length} {sessions.length === 1 ? 'session' : 'sessions'}</span>
-          {liveCount > 0 && (
-            <>
-              <span className="opacity-40" aria-hidden="true">·</span>
-              <span className="inline-flex items-center gap-1 font-bold text-ok">
-                <span className="size-1.5 animate-pulse bg-ok motion-reduce:animate-none" />
-                {liveCount} live
+      <header className="bg-panel-2">
+        <button
+          type="button"
+          onClick={() => onToggle(project)}
+          aria-expanded={isOpen}
+          className="flex min-h-11 w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:px-4"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 font-mono text-ui text-dialog-hint" aria-hidden="true">
+              {isOpen ? '▾' : '▸'}
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate font-mono text-ui font-bold text-white">{project}</span>
+              <span className="mt-0.5 block truncate font-mono text-chip text-dialog-hint" title={root}>
+                {root || 'No workspace path'}
               </span>
-            </>
+            </span>
+          </span>
+          <span className="flex shrink-0 items-center gap-2 font-mono text-chip text-dialog-hint">
+            <span>{sessions.length} {sessions.length === 1 ? 'session' : 'sessions'}</span>
+            {liveCount > 0 && (
+              <>
+                <span className="opacity-40" aria-hidden="true">·</span>
+                <span className="inline-flex items-center gap-1 font-bold text-ok">
+                  <span className="size-1.5 animate-pulse bg-ok motion-reduce:animate-none" />
+                  {liveCount} live
+                </span>
+              </>
+            )}
+          </span>
+        </button>
+      </header>
+      {rows.length > 0 && (
+        <div className="border-t border-dialog-edge">
+          {rows.map((session) => (
+            <SessionRow
+              key={session.id}
+              session={session}
+              conn={conn}
+              subscribed={subscribedIds.has(session.id)}
+              match={matches?.get(session.id) ?? null}
+              needle={needle}
+              onOpen={onOpen}
+              onRename={onRename}
+              onDelete={onDelete}
+            />
+          ))}
+          {remaining > 0 && (
+            <button
+              type="button"
+              onClick={() => setShown((current) => current + pageSize)}
+              className="flex w-full items-center justify-center gap-2 border-t border-dialog-edge px-3 py-2.5 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint transition-colors duration-150 hover:bg-hover hover:text-white focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:px-4"
+            >
+              Show {remaining} more
+            </button>
           )}
         </div>
-      </header>
-      <div className="border-t border-dialog-edge">
-        {sessions.map((session) => (
-          <SessionRow
-            key={session.id}
-            session={session}
-            conn={conn}
-            subscribed={subscribedIds.has(session.id)}
-            match={matches?.get(session.id) ?? null}
-            needle={needle}
-            onOpen={onOpen}
-            onRename={onRename}
-            onDelete={onDelete}
-          />
-        ))}
-      </div>
+      )}
     </section>
   );
 });
@@ -965,21 +1012,6 @@ function sessionSearchText(session: Session): string {
     .filter(Boolean)
     .join(' ')
     .toLowerCase();
-}
-
-/** The first `limit` rows of the grouped list, with group boundaries intact. */
-function windowGroups(
-  groups: Array<[string, Session[]]>,
-  limit: number,
-): Array<[string, Session[]]> {
-  const windowed: Array<[string, Session[]]> = [];
-  let remaining = limit;
-  for (const [project, sessions] of groups) {
-    if (remaining <= 0) break;
-    windowed.push(sessions.length <= remaining ? [project, sessions] : [project, sessions.slice(0, remaining)]);
-    remaining -= sessions.length;
-  }
-  return windowed;
 }
 
 function groupByProject(sessions: Session[]): Array<[string, Session[]]> {
