@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.15 (2832) — 2026-07-31
+<!-- commit: 012b26d82f5a9fd6a817d70fa924f01251887f19 -->
+
+- Glyph-free thinking band and model manager
+- Release notes for 0.1.15 (2830)
+
 ## 0.1.15 (2830) — 2026-07-31
 <!-- commit: dbab3492cd03e2c55a1be61d42a37a88eef3c069 -->
 
