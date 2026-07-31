@@ -252,6 +252,22 @@
   }
 }
 
+/* The composer's reasoning chip swaps ONE word in place. Nothing is ever
+   emptied while the gateway answers: the word blanking out to an ellipsis for
+   the length of a round-trip read as a hole in the footer, not as progress.
+   The next word is painted optimistically and re-keyed, so this keyframe plays
+   on the tap — `backwards` fill for the same WebKit reason as above. */
+@theme {
+  --animate-chip-swap: chip-swap 180ms cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+
+  @keyframes chip-swap {
+    from {
+      opacity: 0;
+      translate: 0 4px;
+    }
+  }
+}
+
 @layer base {
   /* A rotation re-lays out every line in the transcript, and anything with its
      own clock then plays THROUGH that reflow: an entry keyframe fades a bubble

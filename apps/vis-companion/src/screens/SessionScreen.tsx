@@ -1236,6 +1236,8 @@ export function SessionScreen({
   // own control, hence the by-id read.
   const [reasoning, setReasoning] = useState<Toggle | null>(null);
   const [reasoningBusy, setReasoningBusy] = useState(false);
+  // The level the user just asked for, shown until the gateway confirms it.
+  const [pendingLevel, setPendingLevel] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1249,18 +1251,37 @@ export function SessionScreen({
   }, [client]);
 
   // One tap = next choice. Cycling beats a popover for a two-to-four value
-  // enum, and the gateway owns the order (`cycle` action).
+  // enum, and the gateway owns the order (`cycle` action) — but it also HANDS
+  // that order over in `choices`, so the next word is known locally and the
+  // chip can show it on the tap instead of after the round-trip.
+  function nextReasoningLevel(toggle: Toggle): string | null {
+    const choices = toggle.choices ?? [];
+    if (choices.length < 2) return null;
+    const at = toggle.value ? choices.indexOf(toggle.value) : -1;
+    return choices[(at + 1) % choices.length] ?? null;
+  }
+
   async function cycleReasoning() {
     if (!reasoning || reasoningBusy) return;
+    // Optimistic: the guess is only ever a guess, and the gateway's answer
+    // below overwrites it — a disagreement re-keys the word and simply plays
+    // the swap a second time.
+    setPendingLevel(nextReasoningLevel(reasoning));
     setReasoningBusy(true);
     try {
       setReasoning(await client.setSetting(reasoning.id, 'cycle'));
     } catch (e) {
       setComposerNotice((e as Error).message);
     } finally {
+      setPendingLevel(null);
       setReasoningBusy(false);
     }
   }
+
+  // What the chip SAYS: the optimistic pick while the write is in flight, the
+  // gateway's own value the rest of the time. Never empty — that is the whole
+  // point of the swap.
+  const reasoningLevel = pendingLevel ?? reasoning?.value ?? 'default';
 
   // The header chip shows whatever model this session actually runs on, so read
   // the gateway's answer rather than assuming the global default.
@@ -3987,11 +4008,19 @@ export function SessionScreen({
         {/* Composer strip, in the TUI footer's own reading order: the router chip
             sits LEFT directly under the input, cumulative session usage (tokens,
             then cost) rides the RIGHT edge. The chip truncates first so the
-            numbers survive a narrow phone. */}
-        <div className="flex w-full items-center gap-2 pt-1">
+            numbers survive a narrow phone.
+
+            Words only. The `▾` caret and the `·` separators were two-pixel marks
+            at `text-chip` on a phone: too small to read, too small to aim at, and
+            pure decoration once the label itself is the tap target. An underline
+            carries the "tap me" the caret was carrying, and a hairline rule sets
+            the reasoning dial apart from the model without asking anyone to
+            decode punctuation. Tone does the rest: the model is the loud one,
+            its level the quiet one, the cost the only accent. */}
+        <div className="flex w-full items-center gap-3 pt-1">
           <button
             type="button"
-            className="group inline-flex min-w-0 shrink items-center gap-1.5 px-1 py-1 font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none"
+            className="min-w-0 shrink truncate px-1 py-1 text-left font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint-key underline decoration-dialog-edge decoration-1 underline-offset-4 transition-colors duration-150 hover:text-accent-ink hover:decoration-accent focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none"
             onClick={() => setRouterOpen(true)}
             aria-label="Change provider and model"
             title={
@@ -4000,34 +4029,39 @@ export function SessionScreen({
                 : 'Change provider and model'
             }
           >
-            <span className="truncate">{modelPref?.model ?? defaultPref?.model ?? 'model'}</span>
-            <span aria-hidden="true" className="opacity-40 transition-opacity duration-150 group-hover:opacity-100 motion-reduce:transition-none">▾</span>
+            {modelPref?.model ?? defaultPref?.model ?? 'model'}
           </button>
 
           {reasoning && (reasoning.choices?.length ?? 0) > 0 && (
             <button
               type="button"
               onMouseDown={keepKeyboard}
-              className="group inline-flex shrink-0 items-center gap-1.5 px-1 py-1 font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none disabled:opacity-50 motion-reduce:transition-none"
+              className="shrink-0 border-l border-dialog-edge py-1 pr-1 pl-3 font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none"
               onClick={() => void cycleReasoning()}
               disabled={reasoningBusy}
-              aria-label={`${reasoning.label} — ${reasoning.value ?? 'default'}, tap for the next level`}
-              title={`${reasoning.label}: ${reasoning.value ?? 'default'} · tap to cycle`}
+              aria-busy={reasoningBusy}
+              aria-live="polite"
+              aria-label={`${reasoning.label} — ${reasoningLevel}, tap for the next level`}
+              title={`${reasoning.label}: ${reasoningLevel} — tap to cycle`}
             >
-              <span aria-hidden="true" className="opacity-40">·</span>
-              <span className="truncate">{reasoningBusy ? '…' : (reasoning.value ?? 'default')}</span>
+              {/* Re-keyed on every change so the span REMOUNTS and the swap
+                  keyframe replays; a transition on a persistent node cannot
+                  animate a text swap at all. */}
+              <span
+                key={reasoningLevel}
+                className="inline-block animate-chip-swap motion-reduce:animate-none"
+              >
+                {reasoningLevel}
+              </span>
             </button>
           )}
 
           {(usageTokens || usageCost) && (
             <span
-              className="ml-auto flex shrink-0 items-center gap-1.5 px-1 py-1 font-mono text-chip tabular-nums text-dialog-hint"
+              className="ml-auto flex shrink-0 items-center gap-2 py-1 pl-1 font-mono text-chip tabular-nums text-dialog-hint"
               title={`Session usage — ${usageTitle}`}
             >
               {usageTokens && <span className="whitespace-nowrap">{usageTokens}</span>}
-              {usageTokens && usageCost && (
-                <span aria-hidden="true" className="opacity-40">·</span>
-              )}
               {usageCost && <span className="whitespace-nowrap text-accent-ink">{usageCost}</span>}
             </span>
           )}
