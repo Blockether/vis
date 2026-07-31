@@ -1706,21 +1706,52 @@
             (not= (count widened) (count gaps))
             (not= (str/split text #"\s+") (str/split stretched #"\s+")))
       runs
-      (let [idx (volatile! -1)]
-        (vec (map-indexed (fn [^long i r]
-                            (if (< i prefix-n)
-                              r
-                              (update r
-                                      :text
-                                      (fn [t]
-                                        (str/replace (str t)
-                                                     #"\s+"
-                                                     (fn [_]
-                                                       (nth widened
-                                                            (long (vswap! idx
-                                                                          (fn [^long v]
-                                                                            (inc v)))))))))))
-                          runs))))))
+      (let
+        [idx
+         (volatile! -1)
+
+         previous-ended-in-whitespace?
+         (volatile! false)]
+
+        (vec
+          (map-indexed
+            (fn [^long i r]
+              (if (< i prefix-n)
+                r
+                (update r
+                        :text
+                        (fn [t]
+                          (let
+                            [t
+                             (str t)
+
+                             first-match?
+                             (volatile! true)
+
+                             starts-in-whitespace?
+                             (boolean (re-find #"^\s" t))
+
+                             continued-gap?
+                             (and @previous-ended-in-whitespace? starts-in-whitespace?)
+
+                             replaced
+                             (str/replace t
+                                          #"\s+"
+                                          (fn [original]
+                                            (let [continuation? (and @first-match? continued-gap?)]
+                                              (vreset! first-match? false)
+                                              (if continuation?
+                                                ""
+                                                (nth widened
+                                                     (long (vswap! idx
+                                                                   (fn [^long v]
+                                                                     (inc v))))
+                                                     original)))))]
+
+                            (when (seq t)
+                              (vreset! previous-ended-in-whitespace? (boolean (re-find #"\s$" t))))
+                            replaced)))))
+            runs))))))
 
 (defn ast->entries
   "Drop-in replacement for the legacy `render/markdown->entries`.

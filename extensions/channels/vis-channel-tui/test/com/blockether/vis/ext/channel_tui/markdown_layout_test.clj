@@ -591,4 +591,23 @@
         (expect (some #(str/starts-with? % "- recover") lines))
         (expect (not-any? #(re-find #"^-\s\s+" %) lines))
         ;; code columns ARE the content — untouched
-        (expect (some #(str/includes? % "(a  b  c)") lines)))))
+        (expect (some #(str/includes? % "(a  b  c)") lines))))
+  (it "keeps one logical whitespace gap when styling splits it across runs"
+      (let
+        [justify
+         (deref (ns-resolve 'com.blockether.vis.ext.channel-tui.markdown-layout 'justify-line-runs))
+
+         runs
+         [{:text "foo " :style #{}} {:text " " :style #{:bold}} {:text "bar baz" :style #{}}]
+
+         justified
+         (justify runs 13)
+
+         text
+         (apply str (map :text justified))]
+
+        ;; The two adjacent run-local whitespace spans are ONE gap in the
+        ;; concatenated line. Counting them twice used to index past `widened` and
+        ;; crash the whole render frame.
+        (expect (= 13 (p/display-width text)))
+        (expect (= ["foo" "bar" "baz"] (str/split text #"\s+"))))))
