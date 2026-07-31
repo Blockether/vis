@@ -4010,17 +4010,18 @@ export function SessionScreen({
             then cost) rides the RIGHT edge. The chip truncates first so the
             numbers survive a narrow phone.
 
-            Words only. The `▾` caret and the `·` separators were two-pixel marks
-            at `text-chip` on a phone: too small to read, too small to aim at, and
-            pure decoration once the label itself is the tap target. An underline
-            carries the "tap me" the caret was carrying, and a hairline rule sets
-            the reasoning dial apart from the model without asking anyone to
-            decode punctuation. Tone does the rest: the model is the loud one,
-            its level the quiet one, the cost the only accent. */}
-        <div className="flex w-full items-center gap-3 pt-1">
+            ONE type step for the whole strip: `font-mono text-chip`, semibold,
+            uppercase, the same 0.08em tracking — model, level and usage are the
+            same sentence, so they must not read as three different fonts. The
+            divider is a 10px hairline centred between the two words, not a
+            full-height `border-l` rule: a border on the button grew with its
+            padding and towered over 11px text. Tone does the separating: the
+            model is the loud one, its level the quiet one, the cost the only
+            accent. */}
+        <div className="flex w-full items-center gap-2.5 pt-1">
           <button
             type="button"
-            className="min-w-0 shrink truncate px-1 py-1 text-left font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint-key underline decoration-dialog-edge decoration-1 underline-offset-4 transition-colors duration-150 hover:text-accent-ink hover:decoration-accent focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none"
+            className="min-w-0 shrink truncate px-1 py-1 text-left font-mono text-chip font-semibold uppercase tracking-[0.08em] text-dialog-hint-key underline decoration-dialog-edge decoration-1 underline-offset-4 transition-colors duration-150 hover:text-accent-ink hover:decoration-accent focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none"
             onClick={() => setRouterOpen(true)}
             aria-label="Change provider and model"
             title={
@@ -4033,32 +4034,38 @@ export function SessionScreen({
           </button>
 
           {reasoning && (reasoning.choices?.length ?? 0) > 0 && (
-            <button
-              type="button"
-              onMouseDown={keepKeyboard}
-              className="shrink-0 border-l border-dialog-edge py-1 pr-1 pl-3 font-mono text-chip font-bold uppercase tracking-[0.09em] text-dialog-hint transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none"
-              onClick={() => void cycleReasoning()}
-              disabled={reasoningBusy}
-              aria-busy={reasoningBusy}
-              aria-live="polite"
-              aria-label={`${reasoning.label} — ${reasoningLevel}, tap for the next level`}
-              title={`${reasoning.label}: ${reasoningLevel} — tap to cycle`}
-            >
-              {/* Re-keyed on every change so the span REMOUNTS and the swap
-                  keyframe replays; a transition on a persistent node cannot
-                  animate a text swap at all. */}
+            <>
               <span
-                key={reasoningLevel}
-                className="inline-block animate-chip-swap motion-reduce:animate-none"
+                aria-hidden="true"
+                className="h-2.5 w-px shrink-0 bg-dialog-edge"
+              />
+              <button
+                type="button"
+                onMouseDown={keepKeyboard}
+                className="shrink-0 px-1 py-1 font-mono text-chip font-semibold uppercase tracking-[0.08em] text-dialog-hint transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none"
+                onClick={() => void cycleReasoning()}
+                disabled={reasoningBusy}
+                aria-busy={reasoningBusy}
+                aria-live="polite"
+                aria-label={`${reasoning.label} — ${reasoningLevel}, tap for the next level`}
+                title={`${reasoning.label}: ${reasoningLevel} — tap to cycle`}
               >
-                {reasoningLevel}
-              </span>
-            </button>
+                {/* Re-keyed on every change so the span REMOUNTS and the swap
+                    keyframe replays; a transition on a persistent node cannot
+                    animate a text swap at all. */}
+                <span
+                  key={reasoningLevel}
+                  className="inline-block animate-chip-swap motion-reduce:animate-none"
+                >
+                  {reasoningLevel}
+                </span>
+              </button>
+            </>
           )}
 
           {(usageTokens || usageCost) && (
             <span
-              className="ml-auto flex shrink-0 items-center gap-2 py-1 pl-1 font-mono text-chip tabular-nums text-dialog-hint"
+              className="ml-auto flex shrink-0 items-center gap-2 py-1 pl-1 font-mono text-chip font-semibold uppercase tracking-[0.08em] tabular-nums text-dialog-hint"
               title={`Session usage — ${usageTitle}`}
             >
               {usageTokens && <span className="whitespace-nowrap">{usageTokens}</span>}
