@@ -549,35 +549,45 @@
              ;; measured at 1.01 busy cores with BOTH worker futures already cancelled —
              ;; and pinned its virtual thread's carrier. Only a Truffle safepoint
              ;; interrupt unwinds the guest frame, and it must leave the context REUSABLE.
-             (it "unwinds a runaway guest loop and keeps the context usable"
-                 (let
-                   [pc
-                    (:python-context (env/create-python-context {}))
+             (it
+               "unwinds a runaway guest loop and keeps the context usable"
+               (let
+                 [pc
+                  (:python-context (env/create-python-context {}))
 
-                    cpu-ns
-                    (fn []
-                      (.getProcessCpuTime
-                        ^com.sun.management.OperatingSystemMXBean
-                        (java.lang.management.ManagementFactory/getOperatingSystemMXBean)))
+                  cpu-ns
+                  (fn []
+                    (.getProcessCpuTime
+                      ^com.sun.management.OperatingSystemMXBean
+                      (java.lang.management.ManagementFactory/getOperatingSystemMXBean)))
 
-                    busy-cores
-                    (fn [ms]
-                      (let [before (cpu-ns)]
-                        (Thread/sleep (long ms))
-                        (/ (double (- (cpu-ns) before)) (* 1.0e6 (double ms)))))]
+                  ;; `getProcessCpuTime` is JVM-WIDE, so it also counts the rest of the
+                  ;; suite running in parallel — on a loaded CI runner the absolute
+                  ;; number reached 2.14 cores with no guest alive at all (CI run
+                  ;; 30586924255). Only the DELTA against a baseline sampled under the
+                  ;; same load says anything about the guest, and a live spinning guest
+                  ;; is worth a whole extra core.
+                  busy-cores
+                  (fn [ms]
+                    (let [before (cpu-ns)]
+                      (Thread/sleep (long ms))
+                      (/ (double (- (cpu-ns) before)) (* 1.0e6 (double ms)))))
 
-                   (try (let
-                          [result (binding [rt/*eval-timeout-ms* 3000]
-                                    ((deref #'lp/run-python-code) pc "while True:\n    pass"))]
-                          (expect (true? (:timeout? result)))
-                          ;; The guest is GONE: no core is still spinning after the timeout.
-                          ;; Leave room for the runner's unrelated JIT/compiler activity;
-                          ;; a live busy guest consumes approximately one full core.
-                          (expect (< (busy-cores 1500) 0.75))
-                          ;; ...and the interrupt did not poison the context.
-                          (expect (= 42 (:result ((deref #'lp/run-python-code) pc "40 + 2")))))
-                        (finally (try (.close ^org.graalvm.polyglot.Context pc true)
-                                      (catch Throwable _ nil)))))))
+                  baseline
+                  (busy-cores 750)]
+
+                 (try (let
+                        [result (binding [rt/*eval-timeout-ms* 3000]
+                                  ((deref #'lp/run-python-code) pc "while True:\n    pass"))]
+                        (expect (true? (:timeout? result)))
+                        ;; The guest is GONE: no EXTRA core is spinning after the timeout.
+                        ;; Take the quieter of two samples so one unlucky GC/JIT burst
+                        ;; cannot decide the verdict.
+                        (expect (< (- (min (busy-cores 1500) (busy-cores 1500)) baseline) 0.75))
+                        ;; ...and the interrupt did not poison the context.
+                        (expect (= 42 (:result ((deref #'lp/run-python-code) pc "40 + 2")))))
+                      (finally (try (.close ^org.graalvm.polyglot.Context pc true)
+                                    (catch Throwable _ nil)))))))
 
 (defdescribe parallel-sub-loops-child-error-isolation-test
              ;; REGRESSION: the settle loop only cancelled siblings on InterruptedException,
