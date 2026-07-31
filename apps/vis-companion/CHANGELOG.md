@@ -2,6 +2,13 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.15 (2844) — 2026-07-31
+<!-- commit: a70d925169253f6c0758254f726a880ff0685297 -->
+
+- Isolate shell re-renders from keyboard and rotation frames
+- Collapsible projects with per-project paging and richer settings
+- Release notes for 0.1.15 (2841)
+
 ## 0.1.15 (2841) — 2026-07-31
 <!-- commit: d15a8b24b9b1cf6a97b25f0e2a3cc03954df4028 -->
 
