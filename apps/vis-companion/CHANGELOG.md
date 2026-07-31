@@ -2,6 +2,15 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.15 (2823) — 2026-07-31
+<!-- commit: 2626ea8d7835f485bea60d9a79e0babc2e1c0501 -->
+
+- Measure the guest-interrupt CPU delta, not JVM-wide CPU
+- Keep the native-image heap inside runner RAM and give it a longer clock
+- Give the native-image builder enough heap, and let a dispatch rebuild a tag
+- Refresh dependency inventory
+- TestFlight notes for 0.1.14 (2817)
+
 ## 0.1.14 (2817) — 2026-07-30
 <!-- commit: edcac200a917a05e9f724ecc8a3706b122d60a37 -->
 
