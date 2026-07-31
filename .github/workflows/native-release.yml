@@ -35,7 +35,7 @@ jobs:
   native:
     name: native / ${{ matrix.asset }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 240
+    timeout-minutes: 350   # a swapping analysis is slow; only a 6 h job is hard-capped
     strategy:
       fail-fast: false
       matrix:
@@ -70,12 +70,16 @@ jobs:
           # 16 GB runner is not fully committed up front.
           # v0.1.14 (run 30586173742): the image kept growing and BOTH jobs died —
           # x64 on "GC overhead limit exceeded" 23 m in, arm64 on "Java heap space"
-          # 1 h 23 m in. The 32 GB swapfile below is what makes a heap larger than
-          # the runner's RAM survivable, so the sizes go up again and the GC
-          # overhead guard is switched OFF: an analysis that is slow because it is
-          # swapping is still progressing, and aborting it only loses the build.
-          - { os: ubuntu-latest, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx20g -J-Xms12g -J-XX:+UseParallelGC -J-XX:-UseGCOverheadLimit -H:DeadlockWatchdogInterval=0' }
-          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-linux-arm64-community, extra_args: '-J-Xmx20g -J-Xms10g -J-XX:+UseParallelGC -J-XX:-UseGCOverheadLimit -H:DeadlockWatchdogInterval=0' }
+          # 1 h 23 m in. 12 GB is simply no longer enough for this image.
+          # v0.1.14 retry (run 30591356567) then proved the OTHER failure mode:
+          # -J-Xmx20g on a 16 GB runner is backed by the swapfile below, and the
+          # builder spent 4 h thrashing without finishing — the job timeout, not
+          # the heap, killed it. So the heap must stay just INSIDE RAM (14 GB of
+          # ~15.6 GB usable, swap only as a cushion), the GC-overhead guard is
+          # switched OFF so a slow-but-progressing analysis is not aborted, and
+          # the job gets a longer clock.
+          - { os: ubuntu-latest, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx14g -J-Xms14g -J-XX:+UseParallelGC -J-XX:-UseGCOverheadLimit -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-linux-arm64-community, extra_args: '-J-Xmx14g -J-Xms10g -J-XX:+UseParallelGC -J-XX:-UseGCOverheadLimit -H:DeadlockWatchdogInterval=0' }
           # NO macOS job, and that is a hard constraint, not an oversight:
           #   * the only free arm64 macOS runners have 7 GB — less than half of
           #     what the builder needs (v0.1.6/v0.1.8 each burned 4 h there);
