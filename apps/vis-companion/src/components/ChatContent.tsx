@@ -1080,24 +1080,22 @@ export const ThinkingBand = memo(function ThinkingBand({ children }: { children:
   const collapsible = hiddenRows >= REASONING_COLLAPSE_MIN_HIDDEN;
 
   return (
-    <section className="my-2 min-w-0 border-l-2 border-thinking/40 bg-thinking-surface px-3 py-2 text-ui text-thinking">
+    <section className="my-2 min-w-0 bg-thinking-surface px-3 py-2 text-ui text-thinking">
       {collapsible && (
         <button
           type="button"
           data-disclosure-toggle
-          className="mb-1.5 flex min-h-6 w-full items-center justify-between gap-3 text-left font-mono text-meta font-bold not-italic text-thinking transition-colors hover:text-dialog-hint-key"
+          className="mb-1 flex min-h-6 w-full items-center gap-1.5 text-left font-mono text-chip font-bold not-italic tracking-[0.07em] text-thinking transition-colors hover:text-dialog-hint-key"
           aria-expanded={expanded}
           onClick={() => setExpandRequested((value) => !value)}
         >
-          <span>Thinking</span>
-          <span className="shrink-0 font-normal text-dialog-hint">
-            {expanded ? 'Show less' : `Show ${hiddenRows} more`}
-          </span>
+          <span aria-hidden="true">{expanded ? '▾' : '▸'}</span>
+          <span>{expanded ? 'THINKING' : `THINKING +${hiddenRows} more`}</span>
         </button>
       )}
       <div
         ref={bodyRef}
-        className={`${collapsible && !expanded ? 'max-h-[3.75rem] overflow-hidden' : ''} min-w-0 not-italic`}
+        className={`${collapsible && !expanded ? 'max-h-[3.75rem] overflow-hidden' : ''} min-w-0 italic`}
       >
         <Markdown compact hardBreaks>{normalized}</Markdown>
       </div>
