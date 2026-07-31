@@ -65,7 +65,7 @@ import {
   scrollAnchorFor,
   type ScrollAnchor,
   shellViewportHeight,
-  useVisualViewportShell,
+  useShellStyle,
 } from '../lib/viewport';
 import { answeredTurnCount, markSessionRead } from '../lib/unread';
 import { App } from '@capacitor/app';
@@ -815,6 +815,103 @@ function seedLiveTurn(
   return cached;
 }
 
+function PasteEditor({
+  editingPaste,
+  onDraftChange,
+  onClose,
+  onSave,
+}: {
+  editingPaste: { id: number; draft: string };
+  onDraftChange: (draft: string) => void;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  // The only fixed overlay that must follow the keyboard. It reads the shell pin through
+  // context (useShellStyle), not a prop, so a keyboard/rotation frame re-renders this
+  // overlay ALONE — not the screen behind it, which bailed out of that render.
+  const shellStyle = useShellStyle();
+  return (
+    <div
+      className="fixed inset-x-0 top-0 z-50 flex h-dvh items-stretch justify-center bg-ink/85 p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:p-5"
+      style={shellStyle}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        className="flex h-full w-full max-w-3xl flex-col overflow-hidden border-dialog-edge bg-panel shadow-none transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-6 starting:opacity-0 motion-reduce:transition-none sm:h-[70%] sm:max-h-[calc(100%-2rem)] sm:border sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:starting:translate-y-2"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="paste-editor-title"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.stopPropagation();
+            onClose();
+          } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            onSave();
+          }
+        }}
+      >
+        <header className="flex min-h-12 shrink-0 items-center bg-dialog-title pt-[env(safe-area-inset-top)] text-dialog-title-foreground sm:pt-0">
+          <div className="min-w-0 flex-1 px-3 py-2 sm:px-4">
+            <h2
+              id="paste-editor-title"
+              className="truncate font-mono text-body font-bold tracking-wide"
+            >
+              {`Pasted #${editingPaste.id}`}
+            </h2>
+            <p className="truncate font-mono text-meta text-dialog-title-foreground/70">
+              {pasteSummary(editingPaste.id, editingPaste.draft)}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="grid min-h-10 min-w-10 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
+            onMouseDown={keepKeyboard}
+            onClick={onClose}
+            aria-label="Close paste editor"
+          >
+            ✕
+          </button>
+        </header>
+
+        <textarea
+          // eslint-disable-next-line jsx-a11y/no-autofocus
+          autoFocus
+          value={editingPaste.draft}
+          onChange={(event) => onDraftChange(event.target.value)}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          className="min-h-0 flex-1 resize-none touch-pan-y overflow-y-auto overscroll-contain border-t border-dialog-edge bg-input p-3 font-mono text-body text-dialog-foreground outline-none sm:p-4"
+          aria-label={`Content of pasted block ${editingPaste.id}`}
+        />
+
+        <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-dialog-edge bg-panel-2 px-3 py-2 pb-[max(0.5rem,var(--safe-bottom,env(safe-area-inset-bottom)))] font-mono text-meta text-dialog-hint sm:px-4">
+          <span className="mr-auto hidden truncate sm:block">Esc cancels · ⌘↵ saves</span>
+          <button
+            type="button"
+            className="min-h-9 border border-dialog-edge px-3 text-ui text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err focus-visible:outline-none"
+            onMouseDown={keepKeyboard}
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="min-h-9 border border-accent bg-accent px-3 text-ui text-accent-foreground transition-colors hover:bg-accent/85 focus-visible:outline-none"
+            onMouseDown={keepKeyboard}
+            onClick={onSave}
+          >
+            Save
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 export function SessionScreen({
   client,
   subscriptions,
@@ -822,7 +919,6 @@ export function SessionScreen({
   onBack,
   onOpenSession,
   onManageProviders,
-  shellStyle,
   fresh = false,
 }: {
   client: GatewayClient;
@@ -832,8 +928,6 @@ export function SessionScreen({
   onOpenSession: (sid: string, fresh?: boolean) => void;
   /** Open this gateway's settings, where provider accounts and OAuth live. */
   onManageProviders?: () => void;
-  /** The app shell's visual-viewport pin, shared with fixed overlays. */
-  shellStyle?: ReturnType<typeof useVisualViewportShell>;
   fresh?: boolean;
 }) {
   // The device rotates freely here. A flip is survived rather than forbidden:
@@ -3410,84 +3504,12 @@ export function SessionScreen({
       )}
 
       {editingPaste && (
-        <div
-          className="fixed inset-x-0 top-0 z-50 flex h-dvh items-stretch justify-center bg-ink/85 p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:p-5"
-          style={shellStyle}
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) closePasteEditor();
-          }}
-        >
-          <section
-            className="flex h-full w-full max-w-3xl flex-col overflow-hidden border-dialog-edge bg-panel shadow-none transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-6 starting:opacity-0 motion-reduce:transition-none sm:h-[70%] sm:max-h-[calc(100%-2rem)] sm:border sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:starting:translate-y-2"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="paste-editor-title"
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                event.stopPropagation();
-                closePasteEditor();
-              } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-                event.preventDefault();
-                savePasteEdit();
-              }
-            }}
-          >
-            <header className="flex min-h-12 shrink-0 items-center bg-dialog-title pt-[env(safe-area-inset-top)] text-dialog-title-foreground sm:pt-0">
-              <div className="min-w-0 flex-1 px-3 py-2 sm:px-4">
-                <h2
-                  id="paste-editor-title"
-                  className="truncate font-mono text-body font-bold tracking-wide"
-                >
-                  {`Pasted #${editingPaste.id}`}
-                </h2>
-                <p className="truncate font-mono text-meta text-dialog-title-foreground/70">
-                  {pasteSummary(editingPaste.id, editingPaste.draft)}
-                </p>
-              </div>
-              <button
-                type="button"
-                className="grid min-h-10 min-w-10 place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
-                onMouseDown={keepKeyboard}
-                onClick={closePasteEditor}
-                aria-label="Close paste editor"
-              >
-                ✕
-              </button>
-            </header>
-
-            <textarea
-              // eslint-disable-next-line jsx-a11y/no-autofocus
-              autoFocus
-              value={editingPaste.draft}
-              onChange={(event) => setEditingPaste({ id: editingPaste.id, draft: event.target.value })}
-              spellCheck={false}
-              autoCapitalize="off"
-              autoCorrect="off"
-              className="min-h-0 flex-1 resize-none touch-pan-y overflow-y-auto overscroll-contain border-t border-dialog-edge bg-input p-3 font-mono text-body text-dialog-foreground outline-none sm:p-4"
-              aria-label={`Content of pasted block ${editingPaste.id}`}
-            />
-
-            <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-dialog-edge bg-panel-2 px-3 py-2 pb-[max(0.5rem,var(--safe-bottom,env(safe-area-inset-bottom)))] font-mono text-meta text-dialog-hint sm:px-4">
-              <span className="mr-auto hidden truncate sm:block">Esc cancels · ⌘↵ saves</span>
-              <button
-                type="button"
-                className="min-h-9 border border-dialog-edge px-3 text-ui text-dialog-hint transition-colors hover:bg-warn-surface hover:text-err focus-visible:outline-none"
-                onMouseDown={keepKeyboard}
-                onClick={closePasteEditor}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="min-h-9 border border-accent bg-accent px-3 text-ui text-accent-foreground transition-colors hover:bg-accent/85 focus-visible:outline-none"
-                onMouseDown={keepKeyboard}
-                onClick={savePasteEdit}
-              >
-                Save
-              </button>
-            </footer>
-          </section>
-        </div>
+        <PasteEditor
+          editingPaste={editingPaste}
+          onDraftChange={(draft) => setEditingPaste({ id: editingPaste.id, draft })}
+          onClose={closePasteEditor}
+          onSave={savePasteEdit}
+        />
       )}
 
       <div className="relative flex min-h-0 flex-1 flex-col">

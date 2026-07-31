@@ -318,18 +318,6 @@
     scrollbar-color: var(--dialog-border) var(--bg);
   }
 
-  /* Rotation freeze — see `useIsViewportRotating`. Mid-rotation frames are two
-     layouts at once, so anything animated between them interpolates a box that
-     never existed; entry transitions would also replay for every element the
-     relayout touches. Kill motion for the window instead of hiding the UI. */
-  [data-rotating='true'],
-  [data-rotating='true'] *,
-  [data-rotating='true'] *::before,
-  [data-rotating='true'] *::after {
-    transition: none !important;
-    animation: none !important;
-  }
-
   ::selection {
     background: var(--primary);
     color: var(--primary-fg);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
@@ -659,3 +659,22 @@ export function useVisualViewportShell(): CSSProperties | undefined {
   const curve = `${KEYBOARD_ANIMATION_MS}ms ${KEYBOARD_EASING}`;
   return { ...style, transition: `height ${curve}, transform ${curve}` };
 }
+
+/**
+ * The shell's visual-viewport pin, shared with fixed overlays WITHOUT forcing the
+ * whole screen to re-render on every keyboard/rotation frame.
+ *
+ * `useVisualViewportShell` drives the app shell (see `Shell` in `App.tsx`). Its state
+ * changes many times during a keyboard animation or a device rotation, so only the
+ * component that owns it (`Shell`) re-renders on those frames. Overlays that must ALSO
+ * follow the visual viewport — the paste editor — read the value here through context,
+ * which React propagates to a consumer even when the screen behind it bails out of the
+ * render.
+ */
+const ShellStyleContext = createContext<CSSProperties | undefined>(undefined);
+
+export function useShellStyle(): CSSProperties | undefined {
+  return useContext(ShellStyleContext);
+}
+
+export { ShellStyleContext };

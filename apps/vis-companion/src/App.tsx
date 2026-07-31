@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GatewayConn } from './lib/types';
 import { type Compat, compatOf } from './lib/compat';
 import { GatewayClient, ROUTER_TTL_MS } from './lib/gateway';
@@ -25,7 +25,7 @@ import { GatewaySettingsDialog } from './screens/SettingsScreen';
 import { SessionScreen } from './screens/SessionScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
 import { parseRoute, parseSessionDeepLink, sessionHash, tabHash } from './lib/router';
-import { useIsViewportRotating, useVisualViewportShell } from './lib/viewport';
+import { ShellStyleContext, useVisualViewportShell } from './lib/viewport';
 import { App as CapacitorApp } from '@capacitor/app';
 import {
   acquirePushToken,
@@ -561,16 +561,11 @@ export function App() {
 
   useEffect(() => () => subscriptions?.dispose(), [subscriptions]);
 
-  // iOS shrinks the visual viewport for the keyboard instead of the layout one;
-  // without this the header slides up under the status bar while typing.
-  const shellStyle = useVisualViewportShell();
-  // A rotation is a layout event, not an animation: for the few hundred ms the
-  // webview describes two devices at once, every transition would interpolate
-  // boxes that never existed and every `@starting-style` entry would replay —
-  // the wobble. Motion is frozen for that window (see `[data-rotating]` in
-  // index.css). The shell is NOT hidden: `opacity-0` exposed the page
-  // background, which in the default light theme is a full white flash.
-  const isRotating = useIsViewportRotating();
+  // The visual-viewport pin is owned by <Shell> below. Owning it there (instead of in
+  // this component) means a keyboard or rotation frame re-renders only <Shell>'s root,
+  // not this whole tree and not the multi-thousand-line session screen. The keyboard/
+  // rotation motion-freeze is applied at the html element by lib/viewport.ts and the
+  // `[data-rotating]` rules in index.css, so it needs no React-driven attribute here.
 
   if (!ready) return <Splash />;
 
@@ -580,11 +575,7 @@ export function App() {
   const hasConn = conns.length > 0 && !!active && !blocked;
 
   return (
-    <div
-      className="isolate fixed inset-x-0 top-0 flex h-dvh min-h-0 flex-col overflow-hidden bg-ink text-body"
-      data-rotating={isRotating ? 'true' : undefined}
-      style={shellStyle}
-    >
+    <Shell>
       {!openTarget && <Header tab={hasConn ? tab : 'connect'} hasConn={hasConn} onTab={setTab} />}
 
       <main className={`min-h-0 flex-1 overflow-x-hidden overscroll-contain ${openTarget ? 'overflow-hidden' : 'overflow-y-auto'}`}>
@@ -618,7 +609,6 @@ export function App() {
             onBack={leaveSession}
             onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
             onManageProviders={() => openSettings(openTarget.conn)}
-            shellStyle={shellStyle}
           />
         ) : (
           <SessionsScreen
@@ -671,7 +661,7 @@ export function App() {
           onClose={() => setSettingsTarget(null)}
         />
       )}
-    </div>
+    </Shell>
   );
 }
 
@@ -757,5 +747,23 @@ function Splash() {
     <div className="flex h-full items-center justify-center bg-ink" aria-label="Loading Vis">
       <img src="/vis-logo.png" alt="Vis" className="h-16 w-auto animate-pulse object-contain" />
     </div>
+  );
+}
+
+function Shell({ children }: { children: ReactNode }) {
+  // Owns the visual-viewport pin so a keyboard/rotation frame re-renders ONLY this root,
+  // not the screens inside it. `children` is a stable element reference created by <App>,
+  // so when this re-renders React bails the whole subtree out — while the context value
+  // still propagates to fixed overlays (the paste editor) that call useShellStyle().
+  const shellStyle = useVisualViewportShell();
+  return (
+    <ShellStyleContext.Provider value={shellStyle}>
+      <div
+        className="isolate fixed inset-x-0 top-0 flex h-dvh min-h-0 flex-col overflow-hidden bg-ink text-body"
+        style={shellStyle}
+      >
+        {children}
+      </div>
+    </ShellStyleContext.Provider>
   );
 }
