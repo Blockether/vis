@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.15 (2839) — 2026-07-31
+<!-- commit: 25fa99d8ee45873af76c2d03b0cdce1a46520331 -->
+
+- Glyph-free composer strip and animated reasoning swap
+- Release notes for 0.1.15 (2837)
+
 ## 0.1.15 (2837) — 2026-07-31
 <!-- commit: 2add31771ef95afb1f471452210627b31cb7f95d -->
 
