@@ -3485,9 +3485,7 @@
      (if (contains? args "is_overwrite") (get args "is_overwrite") true)
 
      is_dirty_ok
-     (boolean (if (contains? args "is_dirty_ok")
-                (get args "is_dirty_ok")
-                (get args "allow_dirty")))
+     (boolean (if (contains? args "is_dirty_ok") (get args "is_dirty_ok") (get args "allow_dirty")))
 
      expected_mtime
      (get args "expected_mtime")
@@ -4184,8 +4182,7 @@
      after-skip
      (- a-count post-end)]
 
-    (vec (concat ["--- before" "+++ after"]
-                 (when (pos? before-skip) [(str "... " before-skip " unchanged line(s) before")])
+    (vec (concat (when (pos? before-skip) [(str "... " before-skip " unchanged line(s) before")])
                  (map #(str " " %) pre-lines)
                  (prefixed-diff-lines "-" del-lines)
                  (prefixed-diff-lines "+" add-lines)
@@ -4193,9 +4190,22 @@
                  (when (pos? after-skip) [(str "... " after-skip " unchanged line(s) after")])))))
 
 (defn- java-unified-diff-lines
+  "Unified hunks WITHOUT the `--- before` / `+++ after` file header pair: every
+   renderer (TUI, companion app) already shows the path and colours each line by
+   its `-`/`+` prefix, so the two header lines only ate screen space."
   [a b]
-  (let [patch (DiffUtils/diff a b)]
-    (vec (UnifiedDiffUtils/generateUnifiedDiff "before" "after" a patch patch-diff-context-lines))))
+  (let
+    [patch
+     (DiffUtils/diff a b)
+
+     lines
+     (vec (UnifiedDiffUtils/generateUnifiedDiff "before" "after" a patch patch-diff-context-lines))]
+
+    (if (and (>= (count lines) 2)
+             (str/starts-with? (str (nth lines 0)) "---")
+             (str/starts-with? (str (nth lines 1)) "+++"))
+      (subvec lines 2)
+      lines)))
 
 (def ^:private diff-hunk-header-re #"^@@ -(\d+)(,\d+)? \+(\d+)(,\d+)? @@(.*)$")
 
@@ -4252,10 +4262,27 @@
         (when (java-diff-affordable? a-win b-win)
           (shift-hunk-headers (java-unified-diff-lines a-win b-win) start))))))
 
+(defn- whole-file-rewrite?
+  "True when NOTHING of the old content survives: no shared leading line and no
+   shared trailing line. A real unified diff then degenerates into every old
+   line as `-` immediately followed by every new line as `+` — the same file
+   twice, with zero signal about what changed, because everything changed."
+  [a b]
+  (and (seq a)
+       (seq b)
+       (zero? (long (common-prefix-count a b)))
+       (zero? (long (common-suffix-count a b 0)))))
+
 (defn- unified-diff-text
   "Unified diff preview for two file blobs: real `@@` hunks at real file line
    numbers, bounded hunk-wise. Only a change too expensive to diff (a full
-   rewrite of a very large file) drops to the linear bounded preview."
+   rewrite of a very large file) drops to the linear bounded preview.
+
+   A WHOLE-FILE REWRITE (`write` replacing a file, a full-body `struct_patch` —
+   nothing of the old content survives) renders ONE side only: the new content
+   as `+` lines under a `--- (replaced, N line(s))` marker. Both sides there
+   printed the file twice on every renderer (TUI and companion app read this
+   same `\"diff\"` string), so the fix belongs here, not in the renderers."
   [before after]
   (cond (= before after) nil
         (nil? before) (str/join "\n" (prefixed-diff-lines "+" (str/split-lines (or after ""))))
@@ -4265,12 +4292,13 @@
                  (vec (str/split-lines before))
 
                  b
-                 (vec (str/split-lines after))
+                 (vec (str/split-lines after))]
 
-                 diff-lines
-                 (or (windowed-unified-diff-lines a b) (compact-diff-lines a b))]
-
-                (str/join "\n" (cap-diff-lines diff-lines)))))
+                (if (whole-file-rewrite? a b)
+                  (str/join "\n" (into [(str "--- (replaced, " (count a) " line(s))")]
+                                       (prefixed-diff-lines "+" b)))
+                  (str/join "\n" (cap-diff-lines (or (windowed-unified-diff-lines a b)
+                                                     (compact-diff-lines a b))))))))
 
 (def ^:private fresh-anchor-max-lines
   "Cap on how many post-edit lines a patch/write result hands back as fresh

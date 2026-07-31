@@ -2294,7 +2294,11 @@
         (expect (< (count lines) 50))
         (expect (string/includes? out "@@"))
         (expect (string/includes? out "-line-750"))
-        (expect (string/includes? out "+LINE-750"))))
+        (expect (string/includes? out "+LINE-750"))
+        ;; No `--- before` / `+++ after` file header: every renderer already
+        ;; shows the path and colours lines by their -/+ prefix.
+        (expect (not (string/includes? out "--- before")))
+        (expect (not (string/includes? out "+++ after")))))
   (it "patch diff keeps real hunks for a huge file with scattered edits"
       (let
         [diff-fn
@@ -2346,7 +2350,7 @@
         (expect (< 10 (count (filter #(string/starts-with? % "@@") lines)) 60))
         (expect (string/includes? (last lines) "more hunk(s) omitted"))))
   (it
-    "patch diff handles insert, delete, and all-different cases as bounded previews"
+    "patch diff handles insert, delete, and whole-file rewrites"
     (let
       [diff-fn
        (private-fn "unified-diff-text")
@@ -2378,13 +2382,22 @@
       (expect (string/includes? inserted "+X"))
       (expect (not (string/includes? inserted "-a")))
       (expect (string/includes? deleted "-c"))
-      ;; One oversized hunk is capped INSIDE the hunk, so its head
-      ;; and tail still describe one connected region.
+      ;; A WHOLE-FILE REWRITE (nothing of the old content survives) is ONE
+      ;; sided: printing every old line as `-` right above every new line as
+      ;; `+` showed the file twice and said nothing — everything changed.
+      (expect (string/starts-with? changed "--- (replaced, 300 line(s))"))
+      (expect (string/includes? changed "+other-0"))
+      (expect (not (string/includes? changed "-line-0")))
+      (expect (not (string/includes? changed "@@")))
       (expect (< (count (string/split-lines changed)) 260))
-      (expect (string/includes? changed "line(s) omitted in this hunk"))
-      ;; A full rewrite too expensive for Myers keeps the linear preview.
+      (expect (string/starts-with? rewritten "--- (replaced, 8000 line(s))"))
+      (expect (not (string/includes? rewritten "-line-")))
       (expect (< (count (string/split-lines rewritten)) 260))
-      (expect (not (string/includes? rewritten "@@"))))))
+      (expect (not (string/includes? rewritten "@@")))
+      ;; A partial rewrite still gets real hunks: the shared tail survives.
+      (let [partial-out (diff-fn "a\nb\nc\nd" "X\nY\nc\nd")]
+        (expect (string/includes? partial-out "-a"))
+        (expect (string/includes? partial-out "+X"))))))
 
 (defdescribe
   tool-envelope-test
