@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.15 (2841) — 2026-07-31
+<!-- commit: d15a8b24b9b1cf6a97b25f0e2a3cc03954df4028 -->
+
+- Match the composer strip type ladder and shrink the rule
+- Release notes for 0.1.15 (2839)
+
 ## 0.1.15 (2839) — 2026-07-31
 <!-- commit: 25fa99d8ee45873af76c2d03b0cdce1a46520331 -->
 
