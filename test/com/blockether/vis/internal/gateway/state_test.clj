@@ -963,6 +963,53 @@
              (expect (= "queued" (get (state/get-turn sid "q1") "status")))
              (finally (swap! registry dissoc sid))))))
 
+(defdescribe
+  gateway-model-pin-forwarding-test
+  "The gateway may expose the current pin on its turn record, but must not
+   convert that pin into a model-only engine override. The engine owns resolving
+   the persisted provider+model pair at the instant a turn starts."
+  (it "an immediately accepted turn forwards only an explicit caller model"
+      (let [registry @#'state/registry
+            sid (str "model-pin-accepted-" (java.util.UUID/randomUUID))
+            launched (atom nil)]
+        (try
+          (swap! registry assoc sid {:next-seq 0 :turns {} :turn-order []})
+          (with-redefs-fn {#'lp/by-id (fn [_] {:id sid})
+                           #'state/session-model (fn [_]
+                                                   {:provider "lmstudio"
+                                                    :model "ornith"})
+                           #'state/launch-turn-worker! (fn [& args]
+                                                         (reset! launched (vec args)))}
+            #(state/submit-turn! sid {:request "hello"}))
+          (expect (nil? (get-in @launched [3 :model])))
+          (expect (= "ornith" (get (state/get-turn sid (second @launched)) "model")))
+          (finally
+            (swap! registry dissoc sid)))))
+  (it "a queued turn records the live pin at drain but forwards its raw override"
+      (let [registry @#'state/registry
+            sid (str "model-pin-queued-" (java.util.UUID/randomUUID))
+            launched (atom nil)]
+        (try
+          (swap! registry assoc
+            sid
+            {:next-seq 0
+             :turns {"q1" {:turn_id "q1"
+                            :session_id sid
+                            :status "queued"
+                            :request "hello"
+                            :queued_at 1}}
+             :turn-order ["q1"]})
+          (with-redefs-fn {#'state/session-model (fn [_]
+                                                   {:provider "lmstudio"
+                                                    :model "ornith"})
+                           #'state/launch-turn-worker! (fn [& args]
+                                                         (reset! launched (vec args)))}
+            #(state/drain-idle! sid))
+          (expect (nil? (get-in @launched [3 :model])))
+          (expect (= "ornith" (get (state/get-turn sid "q1") "model")))
+          (finally
+            (swap! registry dissoc sid))))))
+
 (defdescribe cancel-interrupt-order-test
              (it "interrupts live work before waiting on the durable cancel stamp"
                  (let

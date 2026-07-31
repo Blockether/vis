@@ -16,6 +16,7 @@
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.session-model :as session-model]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.toggles :as toggles]
             [lazytest.core :refer [defdescribe describe it expect throws?]]))
@@ -2763,6 +2764,39 @@
       (it "an unknown / nil provider leaves the router untouched"
           (expect (= router (hoist router :not-configured)))
           (expect (= router (hoist router nil)))))))
+
+(defdescribe
+  prepare-turn-model-preference-test
+  (let [prepare #'lp/prepare-turn-context
+        router {:providers [{:id :openai-codex
+                             :models [{:name "shared"} {:name "gpt-explicit"}]}
+                            {:id :lmstudio
+                             :models [{:name "shared"} {:name "ornith"}]}]}
+        env {:db-info ::db
+             :session-id "session-1"
+             :router router}
+        messages [{:role "user" :content "hello"}]]
+    (it "uses a persisted provider and model as one indivisible pin"
+        (with-redefs-fn {#'session-model/model-of (fn [& _]
+                                                    {:provider "lmstudio"
+                                                     :model "ornith"})}
+          #(let [ctx (prepare env messages {})]
+             (expect (= :lmstudio (:root-provider ctx)))
+             (expect (= "ornith" (:root-model ctx)))
+             (expect (= {:provider :lmstudio :model "ornith"}
+                        (:routing ctx))))))
+    (it "does not combine a caller model with the persisted provider"
+        (with-redefs-fn {#'session-model/model-of (fn [& _]
+                                                    {:provider "lmstudio"
+                                                     :model "shared"})}
+          #(let [ctx (prepare env messages {:model "shared"})]
+             ;; Both providers offer this model. An explicit model retains the
+             ;; router's normal provider choice instead of borrowing LM Studio
+             ;; from an unrelated persisted pair.
+             (expect (= :openai-codex (:root-provider ctx)))
+             (expect (= "shared" (:root-model ctx)))
+             (expect (= {:model "shared"}
+                        (:routing ctx))))))))
 
 (defdescribe
   sub-loop!-test

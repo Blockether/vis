@@ -9270,9 +9270,12 @@
        ;; gets forced into svar's `:routing` (forced-routing-for-pref) so the
        ;; pick actually binds — reordering the router vector alone does NOT
        ;; (svar selects by provider :priority, not vector order).
-       session-pref (when (:session-id env)
+       session-pref (when (and (nil? model) (:session-id env))
                       (session-model/model-of (:db-info env) (:session-id env)))
        model (or model (:model session-pref))
+       ;; A persisted provider belongs only to the persisted model it was saved
+       ;; with. Never combine it with an explicit caller model: that creates a
+       ;; synthetic provider/model pair and can silently degrade to config order.
        pref-provider (:provider session-pref)
        ;; The pin the session actually BINDS (provider+model, validated against
        ;; the router). Computed once: it drives BOTH the display/cost root

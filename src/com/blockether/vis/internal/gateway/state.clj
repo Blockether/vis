@@ -2472,8 +2472,9 @@
      [decision
       (volatile! nil)
 
-      ;; Read the session pin HERE, as the turn starts — not at submit. A
-      ;; queued turn inherits the model the session is pinned to NOW.
+      ;; Read the session pin HERE, as the turn starts, to stamp the observable
+      ;; turn record. The worker still receives only the raw caller override;
+      ;; the engine resolves this persisted model together with its provider.
       pinned-model
       (:model (session-model sid))]
 
@@ -2496,7 +2497,7 @@
                          :request request
                          :display-request display_request
                          :messages messages
-                         :model (or model pinned-model)
+                         :model model
                          :reasoning-default reasoning-default
                          :cancel-token token
                          :extra-body extra-body
@@ -3021,7 +3022,7 @@
                                  tid
                                  request
                                  {:messages messages
-                                  :model resolved-model
+                                  :model model
                                   :reasoning-default reasoning-default
                                   :cancel-token (:cancel-token (get-in @registry [sid :turns tid]))
                                   :extra-body extra-body
