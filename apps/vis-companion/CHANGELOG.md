@@ -2,6 +2,17 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.15 (2830) — 2026-07-31
+<!-- commit: dbab3492cd03e2c55a1be61d42a37a88eef3c069 -->
+
+- Footer reasoning chip, landscape safe areas
+- Stop stamping --- before / +++ after on every diff
+- Restore the native builder args that last built green
+- Give the native builder a 22g heap on the swapfile-backed runner
+- Switch the preselected ParallelGC off before enabling G1
+- Overcommit the native builder heap with G1 instead of starving it
+- Release notes for 0.1.15 (2823)
+
 ## 0.1.15 (2823) — 2026-07-31
 <!-- commit: 2626ea8d7835f485bea60d9a79e0babc2e1c0501 -->
 
