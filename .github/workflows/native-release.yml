@@ -72,14 +72,31 @@ jobs:
           # x64 on "GC overhead limit exceeded" 23 m in, arm64 on "Java heap space"
           # 1 h 23 m in. 12 GB is simply no longer enough for this image.
           # v0.1.14 retry (run 30591356567) then proved the OTHER failure mode:
-          # -J-Xmx20g on a 16 GB runner is backed by the swapfile below, and the
-          # builder spent 4 h thrashing without finishing — the job timeout, not
-          # the heap, killed it. So the heap must stay just INSIDE RAM (14 GB of
-          # ~15.6 GB usable, swap only as a cushion), the GC-overhead guard is
-          # switched OFF so a slow-but-progressing analysis is not aborted, and
-          # the job gets a longer clock.
-          - { os: ubuntu-latest, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx14g -J-Xms14g -J-XX:+UseParallelGC -J-XX:-UseGCOverheadLimit -H:DeadlockWatchdogInterval=0' }
-          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-linux-arm64-community, extra_args: '-J-Xmx14g -J-Xms10g -J-XX:+UseParallelGC -J-XX:-UseGCOverheadLimit -H:DeadlockWatchdogInterval=0' }
+          # -J-Xmx20g on a 16 GB runner is backed by the swapfile below, but with
+          # the PARALLEL collector every full GC compacts the WHOLE heap, so the
+          # swapped-out pages are dragged back in on each cycle: 4 h of thrashing
+          # without finishing.
+          # v0.1.14 retry 2 (run 30602521691): -J-Xmx14g -J-Xms14g died with
+          # "OutOfMemoryError: Java heap space" 16 m into [2/8] analysis. So the
+          # LIVE SET of this image's analysis is now > 14 GB and no amount of GC
+          # tuning fits it inside the runner's ~15.6 GB of RAM. Measured on a
+          # 36 GB machine at the same commit, the builder sits at ~16-17 GB RSS
+          # through analysis. The image grew past the runner when GraalPy/Truffle
+          # went 25.1.3 -> 25.2.4 (plus jsvg's Java2D and the bigger tree-sitter
+          # pack); the last green build (run 30353695813, 25.1.3) already spent
+          # 86.7 % of its 106 min in GC at Peak RSS 14.17 GB.
+          # The only configuration left that can work on a free runner therefore
+          # overcommits DELIBERATELY but collects INCREMENTALLY:
+          #   * -J-Xmx18g  — ~2.5 GB past RAM, into the 32 GB swapfile below;
+          #   * -J-Xms6g   — grow into it instead of committing (and touching)
+          #                  every page up front like the failed 20g attempt;
+          #   * -XX:+UseG1GC — region-based, mostly-young collections touch a
+          #                  small part of the heap, so cold old-gen pages can
+          #                  stay in swap instead of being walked every full GC.
+          #   * -XX:-UseGCOverheadLimit — a slow but progressing build must not
+          #                  be aborted; the job clock (350 min) is the guard.
+          - { os: ubuntu-latest, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx18g -J-Xms6g -J-XX:+UseG1GC -J-XX:-UseGCOverheadLimit -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-linux-arm64-community, extra_args: '-J-Xmx18g -J-Xms6g -J-XX:+UseG1GC -J-XX:-UseGCOverheadLimit -H:DeadlockWatchdogInterval=0' }
           # NO macOS job, and that is a hard constraint, not an oversight:
           #   * the only free arm64 macOS runners have 7 GB — less than half of
           #     what the builder needs (v0.1.6/v0.1.8 each burned 4 h there);
