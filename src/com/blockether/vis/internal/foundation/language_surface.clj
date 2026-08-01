@@ -1020,11 +1020,11 @@
      :result
      (str
        "String-keyed object stamped with `op`; null and mode-inapplicable fields may be omitted. "
-       "Contains execution metadata, pass/fail counts and details, output, and timeout/REPL recovery diagnostics.")
+       "May include execution metadata, counts/details, output, timeout, and REPL-recovery diagnostics.")
      :description
-     (str "Run tests through the active language pack. Prefer the smallest target: `cwd` selects "
-          "the project; `namespaces` (or `paths`) loads tests; "
-          "`only`/`filter`/`include`/`exclude` narrow them.")
+     (str
+       "Run active-pack tests. Prefer the smallest target: `cwd` selects the project; "
+       "`namespaces` (else `paths`) loads tests; `only`, `filter`, `include`, and `exclude` narrow them.")
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
      ;; directly in Clojure so the language pack's own timeout budget wins.
@@ -1032,26 +1032,22 @@
                 (run-tests env input))
      :render render-test-result
      :color-role :tool-color/test
-     :schema
-     {:type "object"
-      :properties
-      {"language" {:type "string" :minLength 1 :description "Language pack; REQUIRED."}
-       "namespaces" {:type "array"
-                     :items {:type "string" :minLength 1}
-                     :description
-                     "Test namespaces/modules; OMIT or [] discovers all `*_test` namespaces."}
-       "paths"
-       {:type "array"
-        :items {:type "string" :minLength 1}
-        :description
-        "Dirs/files to discover `*_test`; OMIT or [] uses workspace root; a non-empty miss errors."}
-       "only" {:type "array" :items {:type "string"} :description "Fully-qualified vars."}
-       "include" {:type "array" :items {:type "string"} :description "Required tags."}
-       "exclude" {:type "array" :items {:type "string"} :description "Skipped tags."}
-       "cwd" {:type "string" :description "Project directory; workspace root by default."}
-       "filter" {:type "string" :description "Supported test-name filter."}}
-      :required ["language"]
-      :additionalProperties false}
+     :schema {:type "object"
+              :properties
+              {"language" {:type "string" :minLength 1 :description "REQUIRED pack."}
+               "namespaces" {:type "array"
+                             :items {:type "string" :minLength 1}
+                             :description "Namespaces/modules; OMIT or [] discovers all `*_test`."}
+               "paths" {:type "array"
+                        :items {:type "string" :minLength 1}
+                        :description "Dirs/files; OMIT or [] uses root; a non-empty miss errors."}
+               "only" {:type "array" :items {:type "string"} :description "Fully-qualified vars."}
+               "include" {:type "array" :items {:type "string"} :description "Required tags."}
+               "exclude" {:type "array" :items {:type "string"} :description "Skipped tags."}
+               "cwd" {:type "string" :description "Project dir; workspace root default."}
+               "filter" {:type "string" :description "Test-name filter when supported."}}
+              :required ["language"]
+              :additionalProperties false}
      :inject-env? true
      :tag :mutation}))
 
