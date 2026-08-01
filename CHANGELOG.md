@@ -7,6 +7,292 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.22] - 2026-08-01
+
+### Changed
+- release: v0.1.22
+- feat(companion): label session usage stats as meta rows
+- feat: canonical MCP transports plus video/media attachment support
+- Compress Clojure capability prompt guidance
+- Deduplicate run_tests description against its schema
+- Restore REPL lifecycle ownership wording
+- Tighten REPL facade reference docs
+- Tighten language facade tool descriptions
+- Tighten language facade reference docs
+- Further reduce language capability prompt
+- Reduce language facade schema prose
+- Reduce REPL start reference docs
+- Reduce REPL evaluation reference docs
+- Reduce external REPL reference docs
+- Reduce linter reference docs
+- Reduce test runner reference docs
+- Reduce formatter reference docs
+- Reduce language capability prompt
+- Reduce REPL stop tool surface
+- Reduce formatter tool surface
+- Reduce lint tool surface
+- Reduce external REPL connection surface
+- Reduce REPL evaluation tool surface
+- Reduce test runner tool surface
+- Reduce REPL lifecycle tool surface
+- Reduce delete helper surface
+- Reduce copy helper surface
+- Reduce structural rename tool surface
+- Reduce write tool surface
+- Reduce filesystem tool surface
+- Reduce patch tool surface
+- Reduce cat tool surface
+- Reduce structural node tool surface
+- Reduce structural patch tool surface
+- Reduce struct index tool surface
+- Reduce grep tool surface
+- Reduce Vis docs reference text
+- Improve terminal media support and editor search
+- Reduce introspection reference docs
+- Reduce MCP reference docs
+- Reduce Git reference docs
+- Reduce search reference docs
+- Reduce shell reference docs
+- Reduce Bridge tool discovery docs
+- Reduce search extension discovery docs
+- Reduce Clojure language extension discovery docs
+- Reduce Python language extension discovery docs
+- Reduce Bun language extension discovery docs
+- Reduce introspection extension discovery docs
+- Reduce harness extension discovery docs
+- Reduce Git extension discovery docs
+- Reduce shell extension discovery docs
+- Reduce MCP extension discovery docs
+- Reduce foundation extension discovery docs
+- Reduce YAML extension discovery docs
+- Reduce Nippy extension discovery docs
+- Reduce HTTPX extension discovery docs
+- Reduce requests extension discovery docs
+- Reduce urllib3 extension discovery docs
+- Improve companion, gateway, TUI, and file attributes
+- Reduce attachment extension discovery docs
+- Reduce Ruff extension discovery docs
+- Reduce BeautifulSoup extension discovery docs
+- Reduce TOML extension discovery docs
+- Reduce timezone extension discovery docs
+- Reduce pytest extension discovery docs
+- Reduce NumPy extension discovery docs
+- Reduce tabulate extension discovery docs
+- Reduce pandas extension discovery docs
+- Reduce FontTools extension discovery docs
+- Reduce SQLite extension discovery docs
+- Reduce XlsxWriter extension discovery docs
+- Reduce PPTX extension discovery docs
+- Reduce Paramiko extension discovery docs
+- Reduce Matplotlib extension discovery docs
+- Reduce Pillow extension discovery docs
+- Reduce attachment shim discovery docs
+- Reduce SQLite shim discovery docs
+- Reduce tabulate shim discovery docs
+- Reduce requests shim discovery docs
+- Reduce BeautifulSoup shim discovery docs
+- Reduce urllib3 shim discovery docs
+- Reduce TOML shim discovery docs
+- Reduce PPTX shim discovery docs
+- Reduce YAML shim discovery docs
+- Reduce timezone shim discovery docs
+- Reduce XlsxWriter shim discovery docs
+- Reduce pandas shim discovery docs
+- Reduce HTTPX shim discovery docs
+- Reduce FontTools shim discovery docs
+- Reduce NumPy shim discovery docs
+- Reduce Ruff shim discovery docs
+- Reduce PIL shim discovery docs
+- Reduce Nippy shim discovery docs
+- Reduce matplotlib shim discovery docs
+- Reduce pytest shim discovery docs
+- Reduce Paramiko shim discovery docs
+- Reduce attachment shim tool docs
+- Reduce sandbox discovery tool docs
+- Reduce sandbox helper tool docs
+- Use FFF for directory listings
+- Reduce Bridge tool surfaces
+- Reduce introspection tool surfaces
+- Reduce skill tool surface
+- Reduce Git tool surface
+- Reduce shell tool surface
+- Reduce language facade tool surfaces
+- Reduce node and filesystem tool surfaces
+- Reduce mutation tool surfaces
+- Reduce read tool surfaces
+- Reduce struct index tool surface
+- Reduce session fold tool surface
+- refactor(tools): compact engine native contracts
+- refactor(tools): compact research search contract
+- refactor(tools): compact MCP contracts
+- refactor(tools): compact repl lifecycle contract
+- fix(companion): make iOS release validation authoritative
+- feat(companion): modernize empty session state
+- Improve attachment picker cancellation copy
+- refactor(tools): clarify native tool contracts
+- fix(companion): build iOS releases with Xcode 26
+- fix(companion): install App Store profile in CI
+- fix(companion): install iOS signing identity in CI
+- fix(companion): authenticate Xcode archive export
+- fix(companion): scaffold native projects in clean CI
+- refactor: consolidate session introspection
+- feat(companion): separate application settings
+- docs(companion): document beta as the default Play track
+- fix(companion): recover Play releases without reuploading
+- release: update release notes for v0.1.21
+
+### Package changes
+
+#### com.blockether/vis
+- release: v0.1.22 (c528fe794)
+- feat(companion): label session usage stats as meta rows (63cf04ccb)
+- feat: canonical MCP transports plus video/media attachment support (e2700372f)
+- Compress Clojure capability prompt guidance (6bdb4c566)
+- Deduplicate run_tests description against its schema (d8be51283)
+- Restore REPL lifecycle ownership wording (149421651)
+- Tighten REPL facade reference docs (8f35957da)
+- Tighten language facade tool descriptions (699c68fe7)
+- Tighten language facade reference docs (3467c5928)
+- Further reduce language capability prompt (ff8001bf0)
+- Reduce language facade schema prose (b88d5993b)
+- Reduce REPL start reference docs (1fb581a28)
+- Reduce REPL evaluation reference docs (04fcf5795)
+- Reduce external REPL reference docs (3a7c50a49)
+- Reduce linter reference docs (ee1efe770)
+- Reduce test runner reference docs (3adefde76)
+- Reduce formatter reference docs (5e7d13491)
+- Reduce language capability prompt (07a9b7a18)
+- Reduce REPL stop tool surface (75e8bc4d6)
+- Reduce formatter tool surface (6250424d6)
+- Reduce lint tool surface (e1d11eab0)
+- Reduce external REPL connection surface (689d2245d)
+- Reduce REPL evaluation tool surface (2bb3cce44)
+- Reduce test runner tool surface (0034f6a1f)
+- Reduce REPL lifecycle tool surface (c98e8fe19)
+- Reduce delete helper surface (611a19903)
+- Reduce copy helper surface (8f7e6d014)
+- Reduce structural rename tool surface (bd4db7e04)
+- Reduce write tool surface (d60e8ca32)
+- Reduce filesystem tool surface (e730bf178)
+- Reduce patch tool surface (1032ffef6)
+- Reduce cat tool surface (57a7da25a)
+- Reduce structural node tool surface (63007676a)
+- Reduce structural patch tool surface (0c85444dc)
+- Reduce struct index tool surface (58ec15e2a)
+- Reduce grep tool surface (e3b84ff8f)
+- Reduce Vis docs reference text (5a08ade6c)
+- Improve terminal media support and editor search (732b4477e)
+- Reduce introspection reference docs (b4cbd35a3)
+- Reduce MCP reference docs (51bb0ab51)
+- Reduce Git reference docs (787301526)
+- Reduce shell reference docs (bbe33d429)
+- Reduce introspection extension discovery docs (850c5df7c)
+- Reduce harness extension discovery docs (a0cf048d8)
+- Reduce Git extension discovery docs (d144b5902)
+- Reduce shell extension discovery docs (d0f36b2da)
+- Reduce MCP extension discovery docs (8adca4ac9)
+- Reduce foundation extension discovery docs (1801c2c7a)
+- Reduce YAML extension discovery docs (625b6d197)
+- Reduce Nippy extension discovery docs (d3748d334)
+- Reduce HTTPX extension discovery docs (20e0c5999)
+- Reduce requests extension discovery docs (3a6ffc174)
+- Reduce urllib3 extension discovery docs (296ae56cc)
+- Improve companion, gateway, TUI, and file attributes (930077b92)
+- Reduce attachment extension discovery docs (c158b81bc)
+- Reduce Ruff extension discovery docs (a5db65cf0)
+- Reduce BeautifulSoup extension discovery docs (41482efde)
+- Reduce TOML extension discovery docs (a14ffad21)
+- Reduce timezone extension discovery docs (0d1a96fa8)
+- Reduce pytest extension discovery docs (85d98fc4f)
+- Reduce NumPy extension discovery docs (99a9a7149)
+- Reduce tabulate extension discovery docs (b5fbfeff4)
+- Reduce pandas extension discovery docs (1fc984fe9)
+- Reduce FontTools extension discovery docs (eb6df52d6)
+- Reduce SQLite extension discovery docs (b3c5e48dd)
+- Reduce XlsxWriter extension discovery docs (077db3cea)
+- Reduce PPTX extension discovery docs (8ee540d6f)
+- Reduce Paramiko extension discovery docs (71561ceae)
+- Reduce Matplotlib extension discovery docs (85938d837)
+- Reduce Pillow extension discovery docs (efb74cf56)
+- Reduce attachment shim discovery docs (2f5d49dc7)
+- Reduce SQLite shim discovery docs (1147e2d3c)
+- Reduce tabulate shim discovery docs (cd08f0be7)
+- Reduce requests shim discovery docs (05071d2fe)
+- Reduce BeautifulSoup shim discovery docs (978dfcc80)
+- Reduce urllib3 shim discovery docs (ad1177fa5)
+- Reduce TOML shim discovery docs (b88814452)
+- Reduce PPTX shim discovery docs (be8c505e9)
+- Reduce YAML shim discovery docs (7506d5740)
+- Reduce timezone shim discovery docs (6f7584ffa)
+- Reduce XlsxWriter shim discovery docs (e960ec6b6)
+- Reduce pandas shim discovery docs (b695ada80)
+- Reduce HTTPX shim discovery docs (5d03f9854)
+- Reduce FontTools shim discovery docs (6a9c2f5f4)
+- Reduce NumPy shim discovery docs (d2542eaa3)
+- Reduce Ruff shim discovery docs (67a1a1a34)
+- Reduce PIL shim discovery docs (7689f08fc)
+- Reduce Nippy shim discovery docs (3ac70543d)
+- Reduce matplotlib shim discovery docs (8c339587b)
+- Reduce pytest shim discovery docs (6c189f35e)
+- Reduce Paramiko shim discovery docs (c7326ae5d)
+- Reduce attachment shim tool docs (53fa235d2)
+- Reduce sandbox discovery tool docs (8e0f5ae57)
+- Reduce sandbox helper tool docs (29463d297)
+- Use FFF for directory listings (6e780f83a)
+- Reduce introspection tool surfaces (32fb8690d)
+- Reduce skill tool surface (9a949de58)
+- Reduce Git tool surface (5c643414c)
+- Reduce shell tool surface (e5b2e49a0)
+- Reduce language facade tool surfaces (555fcd1b5)
+- Reduce node and filesystem tool surfaces (7e410a471)
+- Reduce mutation tool surfaces (37c94a04c)
+- Reduce read tool surfaces (fb346b800)
+- Reduce struct index tool surface (a4ce21b57)
+- Reduce session fold tool surface (ca4b5778b)
+- refactor(tools): compact engine native contracts (d3473bfb0)
+- refactor(tools): compact MCP contracts (995d6ae13)
+- refactor(tools): compact repl lifecycle contract (dc89bb6e8)
+- fix(companion): make iOS release validation authoritative (a33c57271)
+- feat(companion): modernize empty session state (b2643e9d6)
+- Improve attachment picker cancellation copy (477eba821)
+- refactor(tools): clarify native tool contracts (0348fe903)
+- fix(companion): build iOS releases with Xcode 26 (2ef9cf6de)
+- fix(companion): install App Store profile in CI (5c05b8615)
+- fix(companion): install iOS signing identity in CI (aa2f43133)
+- fix(companion): authenticate Xcode archive export (62daa768c)
+- fix(companion): scaffold native projects in clean CI (bde4c9cd6)
+- refactor: consolidate session introspection (afbe7def0)
+- feat(companion): separate application settings (2d44ff13f)
+- docs(companion): document beta as the default Play track (f29eafcb9)
+- fix(companion): recover Play releases without reuploading (8775b94b3)
+- release: update release notes for v0.1.21 (7e838249e)
+
+#### com.blockether/vis-channel-tui
+- feat: canonical MCP transports plus video/media attachment support (e2700372f)
+- Improve terminal media support and editor search (732b4477e)
+- Improve companion, gateway, TUI, and file attributes (930077b92)
+
+#### com.blockether/vis-foundation-bridge
+- feat: canonical MCP transports plus video/media attachment support (e2700372f)
+- Reduce Bridge tool discovery docs (fcb8313f7)
+- Reduce Bridge tool surfaces (a27817463)
+
+#### com.blockether/vis-foundation-search
+- Reduce search reference docs (6b2d1c6a9)
+- Reduce search extension discovery docs (36040ee03)
+- refactor(tools): compact research search contract (64d04a84e)
+
+#### com.blockether/vis-language-clojure
+- Reduce Clojure language extension discovery docs (f2e1dc2a2)
+
+#### com.blockether/vis-language-python
+- Reduce Python language extension discovery docs (46de06528)
+
+#### com.blockether/vis-language-typescript-bun
+- Reduce Bun language extension discovery docs (6d25d2ad5)
+
+
+
 ## [v0.1.21] - 2026-08-01
 
 ### Changed
@@ -2061,7 +2347,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.21...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.22...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -2078,3 +2364,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.14]: https://github.com/Blockether/vis/releases/tag/v0.1.14
 [v0.1.20]: https://github.com/Blockether/vis/releases/tag/v0.1.20
 [v0.1.21]: https://github.com/Blockether/vis/releases/tag/v0.1.21
+[v0.1.22]: https://github.com/Blockether/vis/releases/tag/v0.1.22
