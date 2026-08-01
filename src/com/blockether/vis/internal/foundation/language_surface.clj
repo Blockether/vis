@@ -930,7 +930,7 @@
   (dispatch-start-repl! env args))
 
 (defn connect-repl
-  "Attach to an EXTERNAL, ALREADY-RUNNING REPL the user started themselves — repl_connect(language, {\"port\": N, \"host\"?, \"cwd\"?}). Explicit opt-in: vis registers the address as a session REPL resource (eval/test/ctx target it like a managed one) but NEVER spawns, kills, or reaps the process — stopping it merely detaches."
+  "Attach to an external running REPL: `repl_connect(language,{port,host?,cwd?})`. Registers the address as a session resource for eval, tests, and context, but never owns or kills the process; stopping it only detaches."
   [env & args]
   (let
     [[language more]
