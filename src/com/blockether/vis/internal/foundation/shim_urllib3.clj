@@ -30,7 +30,7 @@
      [{:shim/name "urllib3"
        :shim/imports ["urllib3"]
        :shim/description
-       "urllib3-compatible `urllib3` (PoolManager/HTTPResponse/request) wrapping the requests shim. Not supported: retries, connection pooling, and low-level TLS options are best-effort no-ops."
+       "`urllib3` (`PoolManager`, `HTTPResponse`, `request`) over the requests shim. Retries, pooling, and low-level TLS options are best-effort no-ops."
        :shim/source "vis-shims/urllib3.py"}]}))
 
 (vis/register-extension! vis-extension)
