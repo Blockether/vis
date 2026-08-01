@@ -6688,10 +6688,9 @@
      :native-tool? true
      :result
      (str
-       "Object with string key `results` — ONE entry per requested node, in request order. Each entry has "
-       "`path`, `at` (the named-child index path `struct_patch` takes), `kind`, `line`, `end_line`, "
-       "`source` (the node's VERBATIM source code), `sexp`, `named_child_count`, `children`, `can`, and "
-       "`has_error`; an entry whose cursor missed carries `error`/`reason` with the rest nil.")
+       "String-keyed `{results}` with one ordered row per node: `path`, `at` (the named-child path for "
+       "`struct_patch`), `kind`, `line`, `end_line`, verbatim `source`, `sexp`, `named_child_count`, "
+       "`children`, `can`, and `has_error`. Cursor misses carry `error`/`reason`; the rest is nil.")
      :active-fn structural-supported?
      :description
      "Read the SOURCE of nested tree-sitter nodes and navigate them when a named definition is too coarse."
@@ -6715,9 +6714,7 @@
                          :additionalProperties false}]}
         :minItems 1
         :description
-        (str
-          "Nodes to inspect in ONE call. An entry is a path string (that file's root) or an object "
-          "whose own `path`/`at`/`nav`/`anchor` override the shared top-level selectors.")}
+        "Nodes for one call: a path string (file root) or an object whose `path`/`at`/`nav`/`anchor` override shared selectors."}
        "path" {:type "string" :description "Shared default source file for entries that omit one."}
        "at" {:type "array"
              :items {:type "integer" :minimum 0}
@@ -6728,7 +6725,7 @@
        "anchor"
        {:type "string"
         :description
-        "Shared default: a `lineno:hash` anchor (struct_index/cat) entering the zipper at that line's node; alternative to `at`, and `nav` composes on top."}}
+        "Shared `lineno:hash` (struct_index/cat) entering that line's node; alternative to `at`, with `nav` composed."}}
       :additionalProperties false}
      :before-fn (path-protected-before-fn :struct_nodes :file :read nodes-arg-paths)
      :tag :observation
@@ -7385,14 +7382,13 @@
     #'fs-tool
     {:symbol 'fs
      :native-tool? true
-     :result (str
-               "Object discriminated by `action`: copy/move => `{action,src,dest}`; delete => "
-               "`{action,path,is_deleted}`; create_dirs => `{action,path,is_created}`; exists => "
-               "`{action,path,is_existing}`. The batch form (`paths`) answers `{action,paths}` "
-               "where `paths` is one such entry per target, minus `action`, in request order. "
-               "The top-level object also has string `op`; all keys are strings.")
+     :result
+     (str
+       "String-keyed result discriminated by `action`: copy/move `{action,src,dest}`, delete "
+       "`{action,path,is_deleted}`, create_dirs `{action,path,is_created}`, exists `{action,path,is_existing}`. "
+       "Batch `paths` returns `{action,paths}` with one action-less row per target in order. Top-level also has `op`.")
      :description
-     "One confined filesystem tool: `op` picks the verb and which params it reads. delete is destructive and needs explicit user intent (an already-absent path is a no-op, reported as is_deleted false); create_dirs makes missing parents; exists checks without reading."
+     "Confined filesystem tool: `op` selects the verb and params. delete is destructive and needs explicit intent; an absent path is a no-op (`is_deleted` false). create_dirs makes parents; exists checks without reading."
      :render render-fs-result
      :color-role :tool-color/move
      :schema
@@ -7406,7 +7402,7 @@
         :items {:type "string"}
         :minItems 1
         :description
-        "delete / create_dirs / exists: target paths — ALWAYS a list, even for ONE target. Processed in request order; the result carries one entry per path."}
+        "delete/create_dirs/exists targets; always a list, processed in order with one result per path."}
        "src" {:type "string" :description "Source path (copy / move)."}
        "dest" {:type "string" :description "Destination path (copy / move)."}
        "is_overwrite" {:type "boolean"
