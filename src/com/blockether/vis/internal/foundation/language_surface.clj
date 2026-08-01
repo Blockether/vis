@@ -111,21 +111,18 @@
        python  : repl_eval · repl"
   [env]
   (when-let [data (capability-data env)]
-    (str
-      "LANGUAGE TOOLS (active packs; call via the facade, language first):\n"
-      (str/join "\n"
-                (for [[lang tools] data]
-                  (str "  " lang " : " (str/join " · " tools))))
-      (when (contains? data "clojure")
-        (str
-          "\n  clojure REPL test runs reuse the managed REPL and execute its already-loaded Vars;"
-          " they do NOT reload namespaces automatically. After disk edits, explicitly"
-          " `(require 'my.ns :reload)` for every changed production and test namespace before"
-          " running it, or tests may exercise stale code; prefer restarting over `:reload-all`."
-          "\n  clojure lint_code runs TWO providers: clj-kondo static analysis AND `general` —"
-          " the compiler's REFLECTION and BOXED-MATH warnings. So linting the whole project"
-          " (omit code/path/paths) reports reflection + boxed-math findings too; there is no"
-          " separate reflection check to run.")))))
+    (str "LANGUAGE TOOLS (active packs; facade calls take language first):\n"
+         (str/join "\n"
+                   (for [[lang tools] data]
+                     (str "  " lang " : " (str/join " · " tools))))
+         (when (contains? data "clojure")
+           (str "\n  clojure REPL tests reuse the managed REPL and execute its already-loaded Vars;"
+                " they do NOT reload namespaces automatically. After edits, run"
+                " `(require 'my.ns :reload)` for every changed production and test namespace before"
+                " tests, or tests may exercise stale code; prefer restarting over `:reload-all`."
+                "\n  clojure lint_code runs clj-kondo and `general` compiler REFLECTION/BOXED-MATH"
+                " checks; whole-project lint (omit code/path/paths) includes both—no separate"
+                " reflection check.")))))
 
 (defn- language-like? [x] (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x)))
 
