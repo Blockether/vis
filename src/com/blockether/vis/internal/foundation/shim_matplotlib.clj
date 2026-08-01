@@ -1398,7 +1398,7 @@
   (vis/extension
     {:ext/name "foundation-shim-matplotlib"
      :ext/description
-     "Sandbox shim: a matplotlib.pyplot subset (plot/scatter/bar/barh/hist/fill_between/step/pie/boxplot/imshow/hlines/vlines/axhline/axvline + the OO Figure/Axes API with subplots, add_subplot, savefig, suptitle, tight_layout, set_size_inches, twinx; multi-pair plot with Line2D-like handles; axis('off'|[x0,x1,y0,y1]); log scales, markers, dashed styles, hex + named colors, viridis heatmaps, title/labels/grid/legend/text) plus real 3-D axes via mpl_toolkits.mplot3d / projection='3d' (plot_surface, plot_wireframe, contour with offset, 3-D scatter/plot/text, bar3d, view_init/set_zlim/set_zlabel), rendered by a painter's-algorithm camera with shading and colormaps. TWO renderers: a native `imaging` PNG backend and a pure-Python ASCII backend that also projects 3-D into braille. plt.show() is the ONE display call: it renders the figure to a PNG and paints it INLINE in a graphics-capable terminal (Kitty/iTerm2, e.g. Ghostty), automatically falling back to an ASCII plot on text-only terminals; savefig writes a PNG (or ASCII for a '*.txt'/'*.asc'/format='txt' target, honoring width/height/color kwargs). No pip, no native wheel."
+     "Sandbox Matplotlib subset with pyplot/OO Figure-Axes APIs and `mpl_toolkits.mplot3d`: line/scatter/bar/hist/fill/step/pie/box/image plus surface/wireframe/contour/scatter/plot/text/bar3d, styling, labels, legends, subplots, views, and colormaps. Native imaging renders PNG; pure Python renders ASCII/Braille. `show()` displays inline PNG or text fallback; `savefig` writes PNG or txt/asc. No pip/native wheel."
      :ext/version "0.5.0"
      :ext/author "Blockether"
      :ext/owner "vis"
