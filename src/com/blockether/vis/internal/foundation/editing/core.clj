@@ -6096,28 +6096,24 @@
     {:symbol 'write
      :native-tool? true
      :result
-     "One-row array with `path`, `op`, `changed`, `diff`, and optional small-region `anchors` (`{\"lineno:hash\":{\"text\":line}}`) reusable as the next `from_anchor` without rereading."
-     :description (str "Create a new file or intentionally replace an entire clean file. Refuses "
-                       "uncommitted targets unless `is_dirty_ok`.")
+     "One-row array: `path`, `op`, `changed`, `diff`, plus optional small-region `anchors` (`{\"lineno:hash\":{\"text\":line}}`) reusable as the next `from_anchor`."
+     :description "Create or wholly replace a clean file; dirty targets require `is_dirty_ok`."
      :replay
      {:elide-args {"content" 8192} :retry-on #{:dirty} :retry-overrides {"is_dirty_ok" true}}
      :render render-patch-result
      :color-role :tool-color/edit
-     :schema {:type "object"
-              :properties
-              {"path" {:type "string" :description "File path to create or overwrite."}
-               "content" {:type "string" :description "Full file content."}
-               "is_overwrite"
-               {:type "boolean"
-                :description
-                "Overwrite an existing file (default true); false = fail if it exists."}
-               "is_dirty_ok" {:type "boolean"
-                              :description "Allow writing a file with uncommitted git changes."}
-               "expected_mtime" {:type "integer"
-                                 :description
-                                 "Staleness guard: only write if the file's mtime matches this."}}
-              :required ["path" "content"]
-              :additionalProperties false}
+     :schema
+     {:type "object"
+      :properties
+      {"path" {:type "string" :description "Target file path."}
+       "content" {:type "string" :description "Complete file content."}
+       "is_overwrite" {:type "boolean"
+                       :description "Replace an existing target (default true); false refuses it."}
+       "is_dirty_ok" {:type "boolean" :description "Permit overwrite with uncommitted changes."}
+       "expected_mtime" {:type "integer"
+                         :description "Write only when the target mtime equals this."}}
+      :required ["path" "content"]
+      :additionalProperties false}
      :before-fn (plan-gated-before-fn :write :file :write write-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :write :file nil)}))
