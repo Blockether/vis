@@ -5995,15 +5995,15 @@
     {:symbol 'patch
      :native-tool? true
      :result
-     "Array of result objects; each has `path`, `op`, `changed`, `diff`, and — when the rewritten region is small — `anchors` (`{\"lineno:hash\": {\"text\": line}}`) reusable as the next `from_anchor` with no re-read. A file whose delimiters a language pack auto-balanced also carries `repaired` true and an explanatory `note`."
+     "One row per edit: `path`, `op`, `changed`, `diff`, and optional small-region `anchors` (`{\"lineno:hash\":{\"text\":line}}`) reusable as the next `from_anchor` without rereading. Auto-balanced files add `repaired` true and `note`."
      :call (fn [input]
              {:args [(get input "edits")]})
      :description
      (str
-       "Anchor-based TEXT editor: prose, config, unsupported languages, or a precise span inside "
-       "a definition. ATOMIC: one bad edit writes NOTHING; code that will not parse is refused, "
-       "but unbalanced Clojure delimiters are auto-repaired (`repaired`). A write invalidates "
-       "pre-write anchors for each changed file only, anchors for other files remain valid.")
+       "Anchor-based TEXT editor for prose, config, unsupported languages, or a span inside a definition. "
+       "ATOMIC: one bad edit writes nothing. Code that will not parse is refused; unbalanced Clojure "
+       "delimiters are auto-repaired (`repaired`). Writes invalidate pre-write anchors for each changed "
+       "file only; anchors for other files remain valid.")
      :render render-patch-result
      :color-role :tool-color/edit
      :schema
@@ -6037,7 +6037,7 @@
     {:symbol 'write
      :native-tool? true
      :result
-     "Array containing one result object with `path`, `op`, `changed`, `diff`, and — when the rewritten region is small — `anchors` (`{\"lineno:hash\": {\"text\": line}}`) reusable as the next `from_anchor` with no re-read."
+     "One-row array with `path`, `op`, `changed`, `diff`, and optional small-region `anchors` (`{\"lineno:hash\":{\"text\":line}}`) reusable as the next `from_anchor` without rereading."
      :description (str "Create a new file or intentionally replace an entire clean file. Refuses "
                        "uncommitted targets unless `is_dirty_ok`.")
      :replay
@@ -6453,15 +6453,16 @@
      :native-tool? true
      :result
      (str
-       "Array with ONE result object per edit, in request order: `path`, `op`, `changed`, `diff`, and — when the rewritten region is small — `anchors` (`{\"lineno:hash\": {\"text\": line}}`) reusable as the next `from_anchor` with no re-read. "
-       "The `paths` rename answers one row per file, `changed` false plus `error` for a file it could not rewrite.")
+       "One ordered row per edit: `path`, `op`, `changed`, `diff`, and optional small-region `anchors` "
+       "(`{\"lineno:hash\":{\"text\":line}}`) reusable as the next `from_anchor` without rereading. "
+       "A `paths` rename returns one row per file; failures have `changed` false and `error`.")
      :active-fn structural-supported?
      :description
      (str
-       "THE editor for supported code: address a definition by NAME (`target`) — no anchors to "
-       "go stale, no hand-balanced blob — or a node by `at`/`anchor`. Ops text cannot do: "
-       "rename (file or project), doc edits, moves, append_child. Re-parsed on write: code that will not parse "
-       "is REFUSED, unbalanced Clojure delimiters auto-repaired.")
+       "Structural editor for supported code: target a definition by NAME (`target`) without stale anchors "
+       "or blobs, or a node by `at`/`anchor`. Unlike text, it handles file/project rename, docs, moves, and "
+       "append_child. Writes are re-parsed: code that will not parse is REFUSED; unbalanced Clojure "
+       "delimiters auto-repaired.")
      :render render-patch-result
      :color-role :tool-color/edit
      :schema
@@ -6474,23 +6475,22 @@
         :items {:type "string" :minLength 1}
         :minItems 1
         :description
-        "Op \"rename\" only, in place of `path`: rewrite `target` → `code` across these scopes (`[\".\"]` = whole project). Check the blast radius with grep, then struct_index(paths)."}
+        "Rename only, instead of `path`: rewrite `target` to `code` in these scopes (`[\".\"]` = whole project). Check with grep, then struct_index(paths)."}
        "edits"
        {:type "array"
         :minItems 1
         :items {:type "object"}
         :description
-        "ORDERED BATCH: every structural change in ONE call — an entry takes the same keys as a single edit, top-level keys are their defaults (one `path`, many ops — or several files). Applied in order against the file the previous left, never rolled back. OMIT for a single edit."}
+        "ORDERED BATCH: entries use single-edit keys; top-level keys are defaults (one path/many ops or several files). Applied sequentially, never rolled back. Omit for one edit."}
        "op"
        {:type "string"
         :enum ["replace" "delete" "insert_before" "insert_after" "append" "add_doc" "replace_doc"
                "replace_node" "rename" "move_before" "move_after" "append_child" "prepend_child"]
         :description
-        "Edit operation. append means end-of-file; append_child/prepend_child accept a definition target or a node path/anchor."}
-       "target"
-       {:type "string"
-        :description
-        "Definition NAME to locate; also accepted by append_child/prepend_child to enter that definition."}
+        "Operation; append is end-of-file. append_child/prepend_child take a definition or node path/anchor."}
+       "target" {:type "string"
+                 :description
+                 "Definition NAME; append_child/prepend_child also use it to enter the definition."}
        "code" {:type "string"
                :description "Replacement/insertion source (or the new name for rename)."}
        "kind" {:type "string"
@@ -6500,7 +6500,7 @@
        "anchor"
        {:type "string"
         :description
-        "Target selector: for move_before/move_after the def NAME to move next to; for every other op a `lineno:hash` row (struct_index/cat) entering the zipper at that line's node (composes with `nav`)."}
+        "Selector: for move_before/move_after, the adjacent def NAME; otherwise a `lineno:hash` row (struct_index/cat) entering its node. Composes with `nav`."}
        "at" {:type "array"
              :items {:type "integer" :minimum 0}
              :description
