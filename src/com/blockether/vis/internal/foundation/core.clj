@@ -83,7 +83,7 @@
   (vis/extension
     {:ext/name "foundation-core"
      :ext/description
-     "Foundation kernel (bare Python functions): language facade (format_code/lint_code/run_tests/repl_eval/repl), file I/O (cat/grep/patch/struct_index/struct_patch/write/fs), session workspace/VCS, project shape (repositories/languages/monorepo), main_agent_instructions, and vis_docs (vis's embedded self-documentation). Session introspection (session_state/sessions) ships separately as `foundation-introspection`, behind the `introspection` toggle. Sandbox symbol introspection is an engine system call (doc / apropos), not a tool. Answers are plain markdown strings — no DSL."
+     "Foundation kernel: language facade; file and structural editing; session workspace/VCS and project-shape helpers; `main_agent_instructions`; embedded `vis_docs`. Session introspection lives in `foundation-introspection` behind its toggle; sandbox `doc`/`apropos` are engine calls. Bare Python functions return plain Markdown."
      :ext/version "0.7.0"
      :ext/author "Blockether"
      :ext/owner "vis"
