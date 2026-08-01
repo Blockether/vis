@@ -23,7 +23,7 @@
   (vis/extension
     {:ext/name "foundation-shim-tabulate"
      :ext/description
-     "Sandbox shim: a `tabulate`-compatible module (from tabulate import tabulate) implemented in PURE Python. Renders list-of-lists / list-of-dicts / dict-of-lists / DataFrame as plain/simple/github/pipe/grid/fancy_grid/rst/tsv/html tables with alignment and floatfmt. No pip, no native wheel, no host bridge. A correctness-focused subset."
+     "Sandbox pure-Python `tabulate` subset for lists, dicts, and DataFrames: plain/simple/GitHub/pipe/grid/fancy_grid/rst/tsv/html tables, alignment, and floatfmt. No pip/wheel/host bridge."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
