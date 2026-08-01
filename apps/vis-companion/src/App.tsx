@@ -3,11 +3,12 @@ import type { GatewayConn } from './lib/types';
 import { type Compat, compatOf } from './lib/compat';
 import { GatewayClient, ROUTER_TTL_MS } from './lib/gateway';
 import {
-  getActiveConnection,
+  getPrimaryConnection,
   loadConnections,
   loadSubscribedSessions,
   rememberSubscribedSession,
   setActiveUrl,
+  setPrimaryUrl,
   switchConnectionUrl,
   upsertConnection,
   removeConnection,
@@ -17,11 +18,11 @@ import { onWake } from './lib/wake';
 import { SessionSubscriptionHub } from './lib/subscriptions';
 import { parsePairing } from './lib/pairing';
 import { onPairingLink } from './lib/deeplink';
-import { applyGatewayTheme, resolveLocalTheme, resolveTheme } from './lib/theme';
+import { applyTheme, resolveLocalTheme } from './lib/theme';
 import { getThemePref } from './lib/storage';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
-import { GatewaySettingsDialog } from './screens/SettingsScreen';
+import { ApplicationSettingsDialog, GatewaySettingsDialog } from './screens/SettingsScreen';
 import { SessionScreen } from './screens/SessionScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
 import { parseRoute, parseSessionDeepLink, sessionHash, tabHash } from './lib/router';
@@ -54,9 +55,11 @@ const BOOT_REVEAL_MS = 3_000;
 export function App() {
   const [conns, setConns] = useState<GatewayConn[]>([]);
   const [active, setActive] = useState<GatewayConn | null>(null);
+  const [primary, setPrimary] = useState<GatewayConn | null>(null);
   const [tab, setTab] = useState<Tab>('sessions');
   const [openTarget, setOpenTarget] = useState<{ conn: GatewayConn; sid: string; fresh?: boolean } | null>(null);
   const [settingsTarget, setSettingsTarget] = useState<GatewayConn | null>(null);
+  const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   // The settings dialog's REMOUNT identity is the machine you opened, captured
   // once — never its current URL. Switching address rewrites `settingsTarget.url`,
   // and keying the dialog on that tore it down and rebuilt it: the entry
@@ -108,8 +111,13 @@ export function App() {
   );
 
   const refresh = useCallback(async () => {
-    setConns(await loadConnections());
-    setActive(await getActiveConnection());
+    const [connections, primaryConnection] = await Promise.all([
+      loadConnections(),
+      getPrimaryConnection(),
+    ]);
+    setConns(connections);
+    setPrimary(primaryConnection);
+    setActive(primaryConnection);
   }, []);
 
   const [recoveryNonce, setRecoveryNonce] = useState(0);
@@ -121,22 +129,18 @@ export function App() {
   const addConnection = useCallback(
     async (conn: GatewayConn, makeActive = true) => {
       const next = await upsertConnection(conn);
-      if (makeActive) await setActiveUrl(conn.url);
+      if (next.length === 1) {
+        await Promise.all([setPrimaryUrl(conn.url), setActiveUrl(conn.url)]);
+        setPrimary(conn);
+      }
       setConns(next);
       setOffline(null);
-      setActive(await getActiveConnection());
+      setActive(makeActive ? conn : (await getPrimaryConnection()));
       if (makeActive) setTab('sessions');
     },
     [],
   );
 
-  const selectConnection = useCallback(async (url: string) => {
-    await setActiveUrl(url);
-    setActive(await getActiveConnection());
-    setOpenTarget(null);
-    setOffline(null);
-    setTab('sessions');
-  }, []);
 
   // The tap must paint the session on the frame it happens on. Remembering the
   // active gateway and the watch list are Capacitor Preferences writes — bridge
@@ -148,7 +152,6 @@ export function App() {
     setActive(conn);
     setOpenTarget({ conn, sid, fresh });
     setSubscribedIds((ids) => (ids.has(sid) ? ids : new Set([sid, ...ids])));
-    void setActiveUrl(conn.url);
     void rememberSubscribedSession(conn.url, sid)
       .then((ids) => setSubscribedIds(new Set(ids)))
       .catch(() => undefined);
@@ -302,11 +305,10 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [refresh]);
 
-  // Paint the app-local theme (default light) immediately on mount, before any
-  // gateway connects and regardless of a stale browser-cached stylesheet. The
-  // gateway effect below re-resolves once a connection's palette is available.
+  // Paint the app-local theme immediately on mount. Appearance never waits for,
+  // reads from, or writes to a gateway.
   useEffect(() => {
-    void getThemePref().then((pref) => applyGatewayTheme(resolveLocalTheme(pref)));
+    void getThemePref().then((pref) => applyTheme(resolveLocalTheme(pref)));
   }, []);
 
   // Deep-linked pairing: vis://gateway?url=…&token=…
@@ -329,18 +331,6 @@ export function App() {
     }).then((d) => (dispose = d));
     return () => dispose();
   }, [addConnection]);
-
-  // The gateway owns the set of themes and their exact colors; the app pins its
-  // own local preference on top (defaults to light) without mutating the shared
-  // TUI/gateway theme.
-  useEffect(() => {
-    if (!active) return;
-    const ctrl = new AbortController();
-    void Promise.all([new GatewayClient(active).theme(ctrl.signal), getThemePref()])
-      .then(([theme, pref]) => applyGatewayTheme(resolveTheme(theme, pref)))
-      .catch(() => undefined);
-    return () => ctrl.abort();
-  }, [active]);
 
   // Precache the provider/model fleet. `/v1/router` costs the daemon a live
   // auth + limits probe per provider, so warming it at connect time (and once
@@ -535,7 +525,7 @@ export function App() {
         const next = await loadConnections();
         if (cancelled) return;
         setConns(next);
-        setActive(await getActiveConnection());
+        setActive(await getPrimaryConnection());
       }
     })();
     return () => {
@@ -582,13 +572,21 @@ export function App() {
 
   return (
     <Shell>
-      {!openTarget && <Header tab={hasConn ? tab : 'connect'} hasConn={hasConn} onTab={setTab} />}
+      {!openTarget && (
+        <Header
+          tab={hasConn ? tab : 'connect'}
+          hasConn={hasConn}
+          onTab={setTab}
+          onAppSettings={() => setAppSettingsOpen(true)}
+        />
+      )}
 
       <main className={`min-h-0 flex-1 overflow-x-hidden overscroll-contain ${openTarget ? 'overflow-hidden' : 'overflow-y-auto'}`}>
         {!hasConn || tab === 'connect' ? (
           <ConnectScreen
             conns={conns}
             active={active}
+            primary={primary}
             onAdd={addConnection}
             onSettings={openSettings}
             offlineError={blocked ? offline : null}
@@ -635,8 +633,15 @@ export function App() {
           key={settingsKey}
           client={settingsClient}
           gateway={settingsTarget}
-          isActive={settingsTarget.url === active?.url}
-          onActivate={() => void selectConnection(settingsTarget.url)}
+          isPrimary={settingsTarget.url === primary?.url}
+          onMakePrimary={async () => {
+            await Promise.all([setPrimaryUrl(settingsTarget.url), setActiveUrl(settingsTarget.url)]);
+            setPrimary(settingsTarget);
+            setActive(settingsTarget);
+            setOpenTarget(null);
+            setOffline(null);
+            setTab('sessions');
+          }}
           onRename={async (label) => {
             const updated = { ...settingsTarget, label };
             await upsertConnection(updated);
@@ -667,29 +672,36 @@ export function App() {
           onClose={() => setSettingsTarget(null)}
         />
       )}
+      {appSettingsOpen && <ApplicationSettingsDialog onClose={() => setAppSettingsOpen(false)} />}
     </Shell>
   );
 }
 
-function Header({ tab, hasConn, onTab }: { tab: Tab; hasConn: boolean; onTab: (tab: Tab) => void }) {
+function Header({
+  tab,
+  hasConn,
+  onTab,
+  onAppSettings,
+}: {
+  tab: Tab;
+  hasConn: boolean;
+  onTab: (tab: Tab) => void;
+  onAppSettings: () => void;
+}) {
   return (
     <header className="relative z-30 shrink-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
-      <div className="mx-auto flex h-12 w-full max-w-[1400px] items-center justify-between pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
+      <div className="mx-auto flex h-12 w-full max-w-[1400px] items-center pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
         <div className="flex items-center gap-2.5" aria-label="Vis">
           <img src="/vis-logo.png" alt="" className="h-[18px] w-5 object-contain" />
           <span className="font-mono text-title font-black tracking-[0.18em] text-white">VIS</span>
         </div>
-        <nav className="hidden h-full items-stretch sm:flex" aria-label="Primary navigation">
+        <nav className="mx-auto hidden h-full items-stretch sm:flex" aria-label="Primary navigation">
           {(hasConn ? (['sessions', 'connect'] as Tab[]) : (['connect'] as Tab[])).map((item) => (
             <button
               type="button"
               key={item}
               onClick={() => onTab(item)}
-              className={`relative flex min-w-28 items-center justify-center gap-2 px-4 font-mono text-meta font-bold uppercase tracking-[0.1em] transition-[color,background-color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${
-                tab === item
-                  ? 'bg-panel text-white after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:bg-accent'
-                  : 'text-dialog-hint hover:bg-hover hover:text-white'
-              }`}
+              className={`relative flex min-w-28 items-center justify-center gap-2 px-4 font-mono text-meta font-bold uppercase tracking-[0.1em] transition-[color,background-color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent ${tab === item ? 'bg-panel text-white after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:bg-accent' : 'text-dialog-hint hover:bg-hover hover:text-white'}`}
               aria-current={tab === item ? 'page' : undefined}
             >
               <NavIcon id={item} />
@@ -697,6 +709,14 @@ function Header({ tab, hasConn, onTab }: { tab: Tab; hasConn: boolean; onTab: (t
             </button>
           ))}
         </nav>
+        <button
+          type="button"
+          onClick={onAppSettings}
+          className="ml-auto grid min-h-10 min-w-10 place-items-center font-mono text-title text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+          aria-label="Open application settings"
+        >
+          ⚙
+        </button>
       </div>
     </header>
   );

@@ -9,6 +9,7 @@ import { Banner, Button, Input } from '../components/ui';
 interface Props {
   conns: GatewayConn[];
   active: GatewayConn | null;
+  primary: GatewayConn | null;
   onAdd: (conn: GatewayConn, makeActive?: boolean) => Promise<void>;
   onSettings: (conn: GatewayConn) => void;
   /** Why the active gateway was dropped, when it stopped answering. */
@@ -64,6 +65,7 @@ async function probeOnce(conn: GatewayConn): Promise<{ state: GwState; why?: str
 export function ConnectScreen({
   conns,
   active,
+  primary,
   onAdd,
   onSettings,
   offlineError,
@@ -248,6 +250,7 @@ export function ConnectScreen({
           <div className="divide-y divide-dialog-edge border-t border-dialog-edge">
             {conns.map((conn) => {
               const selected = active?.url === conn.url;
+              const isPrimary = primary?.url === conn.url;
               const hv = healthView(health[conn.url]);
               return (
                 <button
@@ -270,9 +273,14 @@ export function ConnectScreen({
                       <span className="truncate font-mono text-body font-bold text-white">
                         {conn.label ?? hostOf(conn.url)}
                       </span>
-                      {selected && (
+                      {isPrimary && (
                         <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
-                          Active
+                          Primary
+                        </span>
+                      )}
+                      {selected && (
+                        <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-dialog-hint">
+                          Current
                         </span>
                       )}
                     </span>

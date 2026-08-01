@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { GatewayClient, GatewayError } from '../lib/gateway';
 import type {
   GatewayConn,
-  GatewayTheme,
   PushDevice,
   PushStatus,
   ThemePref,
@@ -19,8 +18,14 @@ import {
   pushPlatform,
   type PushPermission,
 } from '../lib/push';
-import { applyGatewayTheme, resolveTheme } from '../lib/theme';
-import { DEFAULT_SESSION_PAGE_SIZE, getSessionsPerPage, getThemePref, setSessionsPerPage, setThemePref } from '../lib/storage';
+import { applyTheme, resolveLocalTheme } from '../lib/theme';
+import {
+  DEFAULT_SESSION_PAGE_SIZE,
+  getSessionsPerPage,
+  getThemePref,
+  setSessionsPerPage,
+  setThemePref,
+} from '../lib/storage';
 import { Banner, Button, Input } from '../components/ui';
 import { REACH_HINT, REACH_LABEL, bestAddress, hostOf, mergeAddresses, reachOf } from '../lib/endpoints';
 import { onWake } from '../lib/wake';
@@ -39,8 +44,8 @@ import {
 interface Props {
   client: GatewayClient;
   gateway: GatewayConn;
-  isActive: boolean;
-  onActivate?: () => void;
+  isPrimary: boolean;
+  onMakePrimary?: () => void | Promise<void>;
   onRename?: (label: string | undefined) => void | Promise<void>;
   onRemove?: () => void | Promise<void>;
   onSelectAddress?: (url: string, pinned: boolean) => void | Promise<void>;
@@ -50,8 +55,8 @@ interface Props {
 export function GatewaySettingsDialog({
   client,
   gateway,
-  isActive,
-  onActivate,
+  isPrimary,
+  onMakePrimary,
   onRename,
   onRemove,
   onSelectAddress,
@@ -62,9 +67,6 @@ export function GatewaySettingsDialog({
   const [groups, setGroups] = useState<ToggleGroup[] | null>(
     () => client.cachedSettings()?.groups ?? null,
   );
-  const [theme, setTheme] = useState<GatewayTheme | null>(null);
-  const [pref, setPref] = useState<ThemePref>('light');
-  const [pageSize, setPageSize] = useState(DEFAULT_SESSION_PAGE_SIZE);
   const [err, setErr] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [unreachable, setUnreachable] = useState(false);
@@ -84,19 +86,6 @@ export function GatewaySettingsDialog({
         setUnreachable(false);
         setUnauthorized(false);
         setGroups(settings.groups ?? []);
-        try {
-          const activeTheme = await client.theme();
-          const themePref = await getThemePref();
-          if (signal?.aborted) return;
-          setTheme(activeTheme);
-          setPref(themePref);
-          setPageSize(await getSessionsPerPage());
-          if (isActive) applyGatewayTheme(resolveTheme(activeTheme, themePref));
-        } catch (e) {
-          if (signal?.aborted) return;
-          setTheme(null);
-          setErr(`Theme sync unavailable: ${(e as Error).message}`);
-        }
       } catch (e) {
         if (signal?.aborted) return;
         // A token-gated gateway that's actually up answers /healthz (so the list
@@ -115,7 +104,7 @@ export function GatewaySettingsDialog({
         setGroups(null);
       }
     },
-    [client, isActive],
+    [client],
   );
 
   useEffect(() => {
@@ -144,30 +133,6 @@ export function GatewaySettingsDialog({
     );
   }
 
-  async function chooseTheme(next: ThemePref) {
-    setPending(`theme:${next}`);
-    try {
-      await setThemePref(next);
-      setPref(next);
-      if (isActive && theme) applyGatewayTheme(resolveTheme(theme, next));
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setPending(null);
-    }
-  }
-
-  async function choosePageSize(next: number) {
-    setPending(`pageSize:${next}`);
-    try {
-      await setSessionsPerPage(next);
-      setPageSize(next);
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setPending(null);
-    }
-  }
 
   async function flip(toggle: Toggle) {
     setPending(toggle.id);
@@ -196,8 +161,8 @@ export function GatewaySettingsDialog({
     ? { dot: '○', label: 'Offline', tone: 'text-err' }
     : unauthorized
       ? { dot: '●', label: 'Unauthorized', tone: 'text-warn-strong' }
-      : isActive
-        ? { dot: '●', label: 'Active', tone: 'text-ok' }
+      : isPrimary
+        ? { dot: '●', label: 'Primary', tone: 'text-ok' }
         : { dot: '○', label: 'Saved', tone: 'text-dialog-hint' };
 
   return (
@@ -235,8 +200,8 @@ export function GatewaySettingsDialog({
 
         <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
           <p className="text-ui text-dialog-hint">
-            Providers, notifications and appearance live on the machine — shared with
-            its TUI and every other client.
+            These settings are stored by this gateway and shared with its TUI and every
+            other client.
           </p>
         </div>
 
@@ -282,14 +247,14 @@ export function GatewaySettingsDialog({
               </p>
 
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-dialog-edge pt-2">
-                {!isActive && (
+                {!isPrimary && (
                   <Button
                     onClick={() => {
-                      onActivate?.();
+                      void onMakePrimary?.();
                       onClose();
                     }}
                   >
-                    Use this machine
+                    Make primary
                   </Button>
                 )}
 
@@ -330,106 +295,6 @@ export function GatewaySettingsDialog({
           {!unreachable && !unauthorized && <ProvidersPanel client={client} />}
 
           {!unreachable && !unauthorized && <NotificationsPanel client={client} />}
-
-          {!unreachable && !unauthorized && theme && (
-            <SettingsPanel
-              title="Theme"
-              description="How the app looks on this device. Follow machine mirrors whatever the gateway is set to."
-              meta={pref === 'gateway' ? `machine · ${theme.display_name}` : 'saved on this device'}
-            >
-              {(() => {
-                const resolved = resolveTheme(theme, pref);
-                const options: { key: ThemePref; name: string; sub: string }[] = [
-                  {
-                    key: 'gateway',
-                    name: 'Follow machine',
-                    sub: theme.display_name,
-                  },
-                  ...theme.themes.map((t) => ({
-                    key: t.id,
-                    name: t.display_name,
-                    sub: t.mode,
-                  })),
-                ];
-                return (
-                  <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-2">
-                    {options.map((choice) => {
-                      const selected =
-                        choice.key === pref ||
-                        (choice.key !== 'gateway' &&
-                          pref !== 'gateway' &&
-                          choice.key === resolved.id);
-                      return (
-                        <button
-                          type="button"
-                          key={choice.key}
-                          disabled={pending?.startsWith('theme:') ?? false}
-                          onClick={() => chooseTheme(choice.key)}
-                          className={`flex min-h-10 min-w-0 items-center justify-between gap-3 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-9 ${
-                            selected
-                              ? 'bg-accent text-accent-foreground'
-                              : 'bg-input text-white hover:bg-hover'
-                          }`}
-                          aria-pressed={selected}
-                        >
-                          <span className="min-w-0">
-                            <span className="block truncate font-mono text-ui font-bold">
-                              {choice.name}
-                            </span>
-                            <span className="block font-mono text-chip uppercase tracking-wider opacity-65">
-                              {choice.sub}
-                            </span>
-                          </span>
-                          <span
-                            className="shrink-0 font-mono text-meta font-black"
-                            aria-hidden="true"
-                          >
-                            {selected ? '●' : '○'}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
-            </SettingsPanel>
-          )}
-
-          <SettingsPanel
-            title="Sessions per project"
-            description="How many sessions each project lists before paging. Collapsed projects show this many live sessions; expanding pages the rest in steps of the same size."
-            meta="saved on this device"
-          >
-            <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-3">
-              {[
-                { size: 5, label: 'compact' },
-                { size: 10, label: 'balanced' },
-                { size: 15, label: 'detailed' },
-              ].map(({ size, label }) => {
-                const selected = size === pageSize;
-                return (
-                  <button
-                    type="button"
-                    key={size}
-                    disabled={pending?.startsWith('pageSize:') ?? false}
-                    onClick={() => void choosePageSize(size)}
-                    className={`flex min-h-10 min-w-0 items-center justify-between gap-2 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-9 ${
-                      selected ? 'bg-accent text-accent-foreground' : 'bg-input text-white hover:bg-hover'
-                    }`}
-                    aria-pressed={selected}
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate font-mono text-ui font-bold">{size}</span>
-                      <span className="block font-mono text-chip uppercase tracking-wider opacity-65">{label}</span>
-                    </span>
-                    <span className="shrink-0 font-mono text-meta font-black" aria-hidden="true">
-                      {selected ? '●' : '○'}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </SettingsPanel>
 
           {unreachable ? (
             <SettingsPanel title="Settings">
@@ -572,6 +437,149 @@ export function GatewaySettingsDialog({
             {settingCount} {settingCount === 1 ? 'option' : 'options'}
           </span>
         </footer>
+      </section>
+    </div>
+  );
+}
+
+/** Settings owned by this companion installation, never by a gateway. */
+export function ApplicationSettingsDialog({ onClose }: { onClose: () => void }) {
+  const [pref, setPref] = useState<ThemePref>('light');
+  const [pageSize, setPageSize] = useState(DEFAULT_SESSION_PAGE_SIZE);
+  const [pending, setPending] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    void Promise.all([getThemePref(), getSessionsPerPage()]).then(([theme, sessions]) => {
+      setPref(theme);
+      setPageSize(sessions);
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  async function chooseTheme(next: ThemePref) {
+    setPending(`theme:${next}`);
+    try {
+      await setThemePref(next);
+      setPref(next);
+      applyTheme(resolveLocalTheme(next));
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function choosePageSize(next: number) {
+    setPending(`pageSize:${next}`);
+    try {
+      await setSessionsPerPage(next);
+      setPageSize(next);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-ink/85 p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:p-5"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        className="flex h-[92%] max-h-[calc(100%-env(safe-area-inset-top))] w-full max-w-xl flex-col overflow-hidden border-x border-t border-dialog-edge bg-panel shadow-none transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-6 starting:opacity-0 motion-reduce:transition-none sm:h-auto sm:max-h-full sm:border sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:starting:translate-y-2"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="application-settings-title"
+      >
+        <header className="flex min-h-12 shrink-0 items-center bg-dialog-title text-dialog-title-foreground">
+          <div className="min-w-0 flex-1 px-3 py-2 sm:px-4">
+            <h2 id="application-settings-title" className="font-mono text-body font-black uppercase tracking-[0.12em]">
+              Application settings
+            </h2>
+            <p className="font-mono text-meta opacity-65">This device</p>
+          </div>
+          <button
+            type="button"
+            className="grid min-w-10 self-stretch place-items-center border-l border-dialog-title-foreground/20 font-mono text-title text-dialog-title-foreground/70 transition-colors hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none"
+            onClick={onClose}
+            aria-label="Close application settings"
+          >
+            ✕
+          </button>
+        </header>
+
+        <div className="shrink-0 border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
+          <p className="text-ui text-dialog-hint">
+            These choices affect this copy of Vis only. They are never sent to a gateway.
+          </p>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-3 sm:p-4">
+          {err && <Banner kind="err">{err}</Banner>}
+          <SettingsPanel title="Theme" description="How this application looks on this device." meta="saved on this device">
+            <div className="grid grid-cols-2 gap-px bg-dialog-edge">
+              {(['light', 'dark'] as const).map((choice) => {
+                const selected = pref === choice;
+                return (
+                  <button
+                    type="button"
+                    key={choice}
+                    disabled={pending?.startsWith('theme:') ?? false}
+                    onClick={() => void chooseTheme(choice)}
+                    className={`flex min-h-10 items-center justify-between gap-3 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-9 ${selected ? 'bg-accent text-accent-foreground' : 'bg-input text-white hover:bg-hover'}`}
+                    aria-pressed={selected}
+                  >
+                    <span className="font-mono text-ui font-bold capitalize">{choice}</span>
+                    <span className="font-mono text-meta font-black" aria-hidden="true">{selected ? '●' : '○'}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </SettingsPanel>
+
+          <SettingsPanel
+            title="Sessions per project"
+            description="How many sessions each project lists before paging. Collapsed projects show this many live sessions; expanding pages the rest in steps of the same size."
+            meta="saved on this device"
+          >
+            <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-3">
+              {[
+                { size: 5, label: 'compact' },
+                { size: 10, label: 'balanced' },
+                { size: 15, label: 'detailed' },
+              ].map(({ size, label }) => {
+                const selected = size === pageSize;
+                return (
+                  <button
+                    type="button"
+                    key={size}
+                    disabled={pending?.startsWith('pageSize:') ?? false}
+                    onClick={() => void choosePageSize(size)}
+                    className={`flex min-h-10 min-w-0 items-center justify-between gap-2 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-9 ${selected ? 'bg-accent text-accent-foreground' : 'bg-input text-white hover:bg-hover'}`}
+                    aria-pressed={selected}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate font-mono text-ui font-bold">{size}</span>
+                      <span className="block font-mono text-chip uppercase tracking-wider opacity-65">{label}</span>
+                    </span>
+                    <span className="shrink-0 font-mono text-meta font-black" aria-hidden="true">{selected ? '●' : '○'}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </SettingsPanel>
+        </div>
       </section>
     </div>
   );

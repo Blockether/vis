@@ -10,10 +10,10 @@ import type { GatewayConn, ThemePref } from './types';
 
 const CONNS_KEY = 'vis.connections';
 const ACTIVE_KEY = 'vis.activeConnection';
+const PRIMARY_KEY = 'vis.primaryConnection';
 const THEME_PREF_KEY = 'vis.themePref';
 
-// The companion defaults to the light theme regardless of what a gateway/TUI
-// persists, and remembers the user's own choice locally across reloads.
+// Appearance belongs to this application installation, never a gateway.
 const DEFAULT_THEME_PREF: ThemePref = 'light';
 
 function localGet(key: string): string | null {
@@ -84,8 +84,8 @@ export async function upsertConnection(conn: GatewayConn): Promise<GatewayConn[]
 export async function removeConnection(url: string): Promise<GatewayConn[]> {
   const conns = (await loadConnections()).filter((c) => c.url !== url);
   await saveConnections(conns);
-  const active = await getActiveUrl();
-  if (active === url) await setActiveUrl(conns[0]?.url ?? null);
+  if ((await getActiveUrl()) === url) await setActiveUrl(conns[0]?.url ?? null);
+  if ((await getPrimaryUrl()) === url) await setPrimaryUrl(conns[0]?.url ?? null);
   return conns;
 }
 
@@ -94,9 +94,9 @@ export async function removeConnection(url: string): Promise<GatewayConn[]> {
  *
  * A connection is keyed by URL, so switching to the Tailscale address must
  * REWRITE the entry rather than add a second machine: the token, label, id and
- * known alternates travel with it, the active pointer follows, and the
- * per-gateway subscribed-session list is re-keyed so live sessions survive the
- * move. Returns the new list.
+ * known alternates travel with it, both the current and primary pointers follow,
+ * and the per-gateway subscribed-session list is re-keyed so live sessions survive
+ * the move. Returns the new list.
  */
 export async function switchConnectionUrl(
   from: string,
@@ -111,6 +111,7 @@ export async function switchConnectionUrl(
   rest.splice(Math.min(idx, rest.length), 0, moved);
   await saveConnections(rest);
   if ((await getActiveUrl()) === from) await setActiveUrl(to);
+  if ((await getPrimaryUrl()) === from) await setPrimaryUrl(to);
   const store = await loadSubscriptionStore();
   if (store[from]) {
     store[to] = Array.from(new Set([...(store[to] ?? []), ...store[from]])).slice(
@@ -137,11 +138,33 @@ export async function getActiveConnection(): Promise<GatewayConn | null> {
   const conns = await loadConnections();
   return conns.find((c) => c.url === url) ?? null;
 }
+/** The default gateway opened when the app starts. Exactly one saved gateway is primary. */
+export async function getPrimaryUrl(): Promise<string | null> {
+  return getRaw(PRIMARY_KEY);
+}
 
-/** The app-local theme preference. Defaults to the light theme. */
+export async function setPrimaryUrl(url: string | null): Promise<void> {
+  await setRaw(PRIMARY_KEY, url ?? '');
+}
+
+/**
+ * Resolve the app's primary gateway, migrating the pre-primary active selection
+ * (and finally the first saved gateway) so existing installations keep a default.
+ */
+export async function getPrimaryConnection(): Promise<GatewayConn | null> {
+  const conns = await loadConnections();
+  if (conns.length === 0) return null;
+  const stored = await getPrimaryUrl();
+  const legacy = await getActiveUrl();
+  const primary = conns.find((c) => c.url === stored || c.url === legacy) ?? conns[0];
+  if (primary.url !== stored) await setPrimaryUrl(primary.url);
+  return primary;
+}
+
+/** The app-local theme preference. Invalid legacy gateway-theme choices reset to light. */
 export async function getThemePref(): Promise<ThemePref> {
   const raw = await getRaw(THEME_PREF_KEY);
-  return (raw ?? DEFAULT_THEME_PREF) as ThemePref;
+  return raw === 'dark' ? 'dark' : DEFAULT_THEME_PREF;
 }
 
 export async function setThemePref(pref: ThemePref): Promise<void> {
