@@ -24,6 +24,11 @@ jobs:
           git fetch --tags --no-recurse-submodules origin
           git fetch --deepen=200 origin main
 
+      # Jars deployed to Clojars are built on the SAME locked JDK as everything
+      # else (GraalVM CE 25.1.3, .graalvm-version) — the action also refuses a
+      # half-bumped/unlocked pin before anything is published.
+      - uses: ./.github/actions/setup-graalvm-25
+
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest

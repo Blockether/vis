@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.20 (2856) — 2026-08-01
+<!-- commit: 66b0c31d8faee8c348f30a412c520b826579c506 -->
+
+- Ship viewport speedups and accumulated runtime work
+- Release notes for 0.1.19 (2854)
+
 ## 0.1.19 (2854) — 2026-08-01
 <!-- commit: da7516494469a10de4d4becab81f330722c792a1 -->
 

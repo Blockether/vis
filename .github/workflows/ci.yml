@@ -12,7 +12,9 @@ concurrency:
 
 jobs:
   # Full test suite on Linux + macOS only. vis embeds GraalPy (Truffle) + rift
-  # FFM, so tests run on Oracle GraalVM 25 (the runtime the app targets).
+  # FFM, so tests run on the pinned GraalVM CE 25.1.3 (.graalvm-version, LOCKED —
+  # not upgradable) via ./.github/actions/setup-graalvm-25, i.e. the exact JDK the
+  # native binary is built with. Never Oracle GraalVM (GFTC) and never a stock JDK.
   # fail-fast false so each OS reports independently. Windows is not supported.
   tests:
     name: tests / ${{ matrix.os }}
@@ -165,4 +167,9 @@ jobs:
           key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
       - name: AOT-compile all namespaces (uberjar)
+        env:
+          # The action above already installed the pinned CE. If build.clj still sees
+          # the wrong JDK, that is a BROKEN SETUP — fail loudly instead of silently
+          # SDKMAN-installing a second GraalVM inside the runner.
+          VIS_AUTO_INSTALL_GRAALVM: "0"
         run: clojure -T:build uber

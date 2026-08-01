@@ -127,6 +127,10 @@ jobs:
       - name: Build native image
         env:
           VIS_NATIVE_EXTRA_ARGS: ${{ matrix.extra_args }}
+          # setup-graalvm-25 installed the LOCKED pin (25.1.3). A mismatch here means
+          # the setup step is broken; fail fast rather than SDKMAN-installing a JDK
+          # in the middle of a 2 h release build.
+          VIS_AUTO_INSTALL_GRAALVM: "0"
         run: clojure -T:build native
       - name: Stage asset
         shell: bash
