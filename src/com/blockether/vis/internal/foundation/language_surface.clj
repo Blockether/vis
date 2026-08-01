@@ -1087,8 +1087,9 @@
      :description
      (str
        "REPL lifecycle. Read `session[\"resources\"][\"repls\"][language][cwd]` first: reuse `up`; "
-       "recheck `starting`; start absent/down/failed; restart unresponsive; status reports that cwd; "
-       "stop your managed REPL; connect attaches external by port and stop only detaches.")
+       "recheck `starting`; start absent/down/failed; restart unresponsive; \"status\" reports that "
+       "directory's lifecycle state; \"stop\" ends a managed REPL; connect attaches an external "
+       "REPL by port and then only detaches it.")
      :call {:lead-opt "language" :rest :always}
      :render render-repl-start-result
      :color-role :tool-color/shell
@@ -1135,7 +1136,7 @@
     {:symbol 'repl_stop
      :native-tool? false
      :description
-     "After verification, stop your managed REPL by exact id. External resources only detach; processes are never killed."
+     "After verification, stop by exact id the managed REPL you started. External REPLs are only detached, never killed."
      ;; repl_stop(id) — one positional id. (lint_code intentionally has NO
      ;; :call: its fn takes the whole input dict, so the generic form fits.)
      :call {:pos ["id"]}
