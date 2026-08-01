@@ -371,35 +371,35 @@
 
 (def
   ^{:doc
-    "List the Model Context Protocol servers declared in ~/.vis/state.yml (:mcp :servers) with their connection status. Returns {\"servers\": [{\"name\": S, \"transport\": \"stdio\"|\"http\", \"connected\": bool, \"enabled\": bool, \"tools\": N (when connected), \"command\"/\"url\": S}]}. Connecting happens lazily on mcp__tools/mcp__call, or explicitly via mcp__connect."
+    "List configured MCP servers and status: {\"servers\": [{\"name\": S, \"transport\": \"stdio\"|\"http\", \"connected\": bool, \"enabled\": bool, \"tools\": N (when connected), \"command\"/\"url\": S}]}. Connections are lazy via mcp__tools/mcp__call, or explicit via mcp__connect. Config: ~/.vis/state.yml :mcp :servers."
     :arglists '([])}
   mcp-servers
   mcp-servers-impl)
 
 (def
   ^{:doc
-    "List a server's tools. mcp__tools(server) connects to the configured server if needed, then returns {\"server\": S, \"tools\": [{\"name\": S, \"description\": S, \"input_schema\": <JSON schema dict>}]}. Use the input_schema to shape the args for mcp__call."
+    "Connect if needed and list a server's tools: {\"server\": S, \"tools\": [{\"name\": S, \"description\": S, \"input_schema\": <JSON schema dict>}]}. Use input_schema for mcp__call args."
     :arglists '([server])}
   mcp-tools
   mcp-tools-impl)
 
 (def
   ^{:doc
-    "Call a tool on an MCP server. mcp__call(server, tool, args) connects if needed and invokes `tool` with `args` (a dict matching that tool's input_schema; omit or {} for no args). Returns {\"server\": S, \"tool\": S, \"content\": [<MCP content blocks>], \"is_error\": bool}. Read text blocks via content[i][\"text\"]."
+    "Connect if needed and invoke `tool` with `args` matching its input_schema (omit or {} for none). Returns {\"server\": S, \"tool\": S, \"content\": [<MCP content blocks>], \"is_error\": bool}; text is at content[i][\"text\"]."
     :arglists '([server tool] [server tool args])}
   mcp-call
   mcp-call-impl)
 
 (def
   ^{:doc
-    "Explicitly connect a configured MCP server into the daemon-wide pool (usually unnecessary because mcp__tools/mcp__call auto-connect, and every /reload reconciles the pool from config). Returns {\"server\": S, \"connected\": bool, \"tools\": N}."
+    "Connect a configured server into the daemon-wide pool. Usually unnecessary: mcp__tools/mcp__call connect lazily and /reload reconciles config. Returns {\"server\": S, \"connected\": bool, \"tools\": N}."
     :arglists '([server])}
   mcp-connect
   mcp-connect-impl)
 
 (def
   ^{:doc
-    "Disconnect an MCP server from the daemon-wide pool: closes the connection and, for stdio, terminates the child process. Returns {\"server\": S, \"result\": \"disconnected\"|\"not_connected\"}. On the next /reload (or when config still lists the server) the pool reconciles and may reconnect."
+    "Disconnect from the daemon-wide pool, closing the connection and any stdio child. Returns {\"server\": S, \"result\": \"disconnected\"|\"not_connected\"}. A later /reload may reconnect configured servers."
     :arglists '([server])}
   mcp-disconnect
   mcp-disconnect-impl)
