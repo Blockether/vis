@@ -510,7 +510,7 @@
   (vis/extension
     {:ext/name "foundation-shim-paramiko"
      :ext/description
-     "Sandbox shim: a paramiko-compatible SSH2 module (SSHClient/exec_command/open_sftp/SFTPClient get/put/listdir/stat/open/mkdir/rename/RSAKey+Ed25519Key key generation and loading/AutoAddPolicy/SSHException tree/Transport, plus the server-side API surface: ServerInterface/SubsystemHandler/SFTPServer/SFTPServerInterface/SFTPHandle + AUTH_*/OPEN_*/SFTP_* constants) backed by the pure-Java mwiede JSch fork. GraalPy has no native cryptography/cffi, so CPython paramiko can't install; this makes `import paramiko` work. No pip, no native wheel, no host binary."
+     "Sandbox Paramiko-compatible SSH2 over pure-Java JSch: SSHClient exec/SFTP, RSA/DSS/ECDSA/Ed25519 keys, Transport, and server APIs/constants. Real-socket `start_server` uses Apache MINA SSHD for reverse `tcpip-forward` with ServerInterface auth/approval; no `invoke_shell`. Works without cryptography/cffi, pip, wheel, or host binary."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
