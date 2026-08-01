@@ -2033,7 +2033,7 @@
   (vis/extension
     {:ext/name "foundation-search"
      :ext/description
-     "Live research bindings: native `search` (web | code | papers), plus sandbox verbs search_web/search_code/search_papers/download_code. Exa, GitHub Code Search/codeload, and arXiv. Bound when `web_search` is ON."
+     "Exa, GitHub Code Search/codeload, and arXiv research: native `search` (web/code/papers); sandbox `search_web`, `search_code`, `search_papers`, and `download_code`. Requires `web_search`."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
