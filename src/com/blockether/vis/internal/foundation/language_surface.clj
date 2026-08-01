@@ -922,8 +922,7 @@
   (dispatch! env :repl-eval-fn args))
 
 (defn start-repl
-  "Start or restart a language REPL resource. ALWAYS pass the language FIRST —
-   repl(language, {op, cwd, id, ...}); `op` defaults to `start`."
+  "Start or restart a language REPL resource: `repl(language,{op,cwd,id,...})`. Pass `language` first; `op` defaults to `start`."
   [env & args]
   (dispatch-start-repl! env args))
 
