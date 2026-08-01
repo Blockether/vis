@@ -35,7 +35,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { publishBundle, tracks as readTracks } from './play.mjs';
+import { promoteBundle, publishBundle, tracks as readTracks } from './play.mjs';
 import { buildNotes } from './release-notes.mjs';
 import { syncPackageVersion } from './version.mjs';
 
@@ -97,10 +97,35 @@ const versionName = syncPackageVersion();
 const versionCode = flag('build') ?? capture('git', ['rev-list', '--count', 'HEAD']);
 if (!/^\d+$/.test(versionCode)) die(`version code must be a positive integer, got "${versionCode}"`);
 
-const track = flag('track') ?? 'internal';
+const reuseExisting = has('reuse-existing');
+if (reuseExisting && !flag('build')) die('--reuse-existing requires an explicit --build <versionCode>');
+
+const track = flag('track') ?? 'beta';
 if (!['internal', 'alpha', 'beta', 'production'].includes(track)) die(`unknown track "${track}" (internal | alpha | beta | production)`);
 
 console.log(`\nVis Companion ${versionName} (${versionCode}) → Play ${track}\n`);
+
+// Release notes come first so an empty/broken changelog fails before a long build or Play edit.
+// Play caps release notes at 500 characters per language (App Store Connect allows 4000).
+const notes = has('no-notes') ? { text: '' } : buildNotes({ version: versionName, build: versionCode, write: !has('no-changelog') });
+if (notes.text) console.log(`\n· release notes:\n${notes.text}\n`);
+
+if (reuseExisting) {
+  if (!serviceAccount) die('no Play service account — `npm run secrets play <service-account.json>`');
+  const res = await promoteBundle({
+    serviceAccount,
+    packageName,
+    versionCode,
+    track,
+    releaseName: `${versionName} (${versionCode})`,
+    notes: notes.text,
+    userFraction: flag('rollout'),
+    draft: has('draft'),
+    log: (m) => console.log(m),
+  });
+  console.log(`\n✓ existing ${versionName} (${res.versionCode}) is on the ${track} track [${res.status}].\n`);
+  process.exit(0);
+}
 
 // ── build ─────────────────────────────────────────────────────────────────────────────
 
@@ -124,10 +149,6 @@ if (!existsSync(androidDir)) {
 // stamps the signing config + versions into the generated Gradle project.
 run('node', [join(appDir, 'scripts', 'android-prepare.mjs'), '--build', versionCode]);
 
-// Release notes come first so an empty/broken changelog fails before a long Gradle run.
-// Play caps release notes at 500 characters per language (App Store Connect allows 4000).
-const notes = has('no-notes') ? { text: '' } : buildNotes({ version: versionName, build: versionCode, write: !has('no-changelog') });
-if (notes.text) console.log(`\n· release notes:\n${notes.text}\n`);
 
 // Picking the JDK is not optional bookkeeping — three separate failures live here, and all
 // three only bite the RELEASE build, long after a debug run looked fine:

@@ -123,6 +123,54 @@ export const publishBundle = async ({
   }
 };
 
+/**
+ * Roll an already-uploaded bundle onto another track without re-uploading its versionCode.
+ * This is the safe recovery path after a successful upload landed on the wrong track.
+ */
+export const promoteBundle = async ({
+  serviceAccount,
+  packageName,
+  versionCode,
+  track = 'beta',
+  releaseName,
+  notes,
+  locale = 'en-US',
+  userFraction,
+  draft = false,
+  log = console.log,
+}) => {
+  if (!/^\d+$/.test(String(versionCode))) throw new Error(`versionCode must be a positive integer, got "${versionCode}"`);
+
+  const { token, account } = await playToken(serviceAccount);
+  log(`· authenticated as ${account}`);
+
+  const edit = await call(token, 'POST', `/applications/${packageName}/edits`);
+  log(`· edit ${edit.id}`);
+
+  let committed = false;
+  try {
+    const status = draft ? 'draft' : userFraction ? 'inProgress' : 'completed';
+    const release = {
+      name: releaseName ?? String(versionCode),
+      versionCodes: [String(versionCode)],
+      status,
+      ...(userFraction && !draft ? { userFraction: Number(userFraction) } : {}),
+      ...(notes?.trim() ? { releaseNotes: [{ language: locale, text: notes.trim().slice(0, 500) }] } : {}),
+    };
+    await call(token, 'PUT', `/applications/${packageName}/edits/${edit.id}/tracks/${track}`, { body: { track, releases: [release] } });
+    log(`· existing versionCode ${versionCode} → track ${track} (${status})`);
+
+    await call(token, 'POST', `/applications/${packageName}/edits/${edit.id}:commit`);
+    committed = true;
+    return { ok: true, versionCode: String(versionCode), track, status, editId: edit.id };
+  } finally {
+    if (!committed) {
+      await call(token, 'DELETE', `/applications/${packageName}/edits/${edit.id}`).catch(() => {});
+      log('· edit rolled back (nothing was published)');
+    }
+  }
+};
+
 /** Read back what each track currently serves — the post-release proof, and a dry-run probe. */
 export const tracks = async ({ serviceAccount, packageName }) => {
   const { token } = await playToken(serviceAccount);
