@@ -67,7 +67,8 @@ jobs:
   ios:
     # A tag ships to TestFlight; a manual run only when iOS was asked for.
     if: ${{ github.event_name == 'push' || inputs.platforms != 'android' }}
-    runs-on: macos-15
+    # App Store Connect requires apps uploaded after April 2026 to use the iOS 26 SDK.
+    runs-on: macos-26
     timeout-minutes: 90
     steps:
       # Version code is `git rev-list --count HEAD`, so a shallow clone would produce a
