@@ -138,19 +138,22 @@ export const distribute = async ({
   publicLinkLimit,
   review = true,
   meta = {},
-  timeoutMs = 30 * 60 * 1000,
+  timeoutMs = 60 * 60 * 1000,
   log = (m) => console.log(`· ${m}`),
 }) => {
   if (!keyId || !issuerId || !keyPem) return { ok: false, reason: 'no App Store Connect API key (npm run secrets asc …)' };
-  const token = ascToken({ keyId, issuerId, keyPem });
+  const credentials = { keyId, issuerId, keyPem };
+  let token = ascToken(credentials);
   try {
     const appId = await appIdFor(token, bundleId);
     if (!appId) return { ok: false, reason: `no app with bundle id ${bundleId} in this API key's team` };
 
     // A build must be VALID before it can be reviewed or linked; PROCESSING is rejected.
-    const found = await waitForBuild(token, { appId, build, timeoutMs, requireValid: true, log });
+    // Apple's JWTs expire after 20 minutes, while build ingestion can take much longer.
+    const found = await waitForBuild(() => ascToken(credentials), { appId, build, timeoutMs, requireValid: true, log });
     if (!found?.id) return { ok: false, reason: `build ${build} not visible in App Store Connect yet` };
     if (found.state !== 'VALID') return { ok: false, reason: `build ${build} is still ${found.state} — re-run with --build ${build} once it is VALID` };
+    token = ascToken(credentials);
 
     // Apple validates the beta metadata against the app's PRIMARY locale, not en-US: with only an
     // en-US localization on an en-GB app, `betaAppReviewSubmissions` fails with the misleading
@@ -226,7 +229,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
     publicLink: !has('no-public-link'),
     publicLinkLimit: flag('limit') ? Number(flag('limit')) : undefined,
     review: !has('no-review'),
-    timeoutMs: Number(flag('timeout') ?? 30 * 60 * 1000),
+    timeoutMs: Number(flag('timeout') ?? 60 * 60 * 1000),
     meta: {
       feedbackEmail: flag('feedback-email'),
       description: flag('description'),

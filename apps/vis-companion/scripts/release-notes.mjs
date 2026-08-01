@@ -150,18 +150,19 @@ export const publishNotes = async ({ keyId, issuerId, keyPem, bundleId, version,
   if (!notes?.trim()) return { ok: false, reason: 'no notes' };
   if (!keyId || !issuerId || !keyPem) return { ok: false, reason: 'no App Store Connect API key' };
 
-  const token = ascToken({ keyId, issuerId, keyPem });
+  const credentials = { keyId, issuerId, keyPem };
+  let token = ascToken(credentials);
 
   // Every failure here is reportable, never fatal: the build is already uploaded and the
   // notes are already in CHANGELOG.md, so a bad token must not take the release down.
   try {
-
     const appId = await appIdFor(token, bundleId);
     if (!appId) return { ok: false, reason: `no app with bundle id ${bundleId}` };
 
-    const found = await waitForBuild(token, { appId, build, timeoutMs, log: (m) => log(`· ${m}`) });
+    const found = await waitForBuild(() => ascToken(credentials), { appId, build, timeoutMs, log: (m) => log(`· ${m}`) });
     const buildId = found?.id;
     if (!buildId) return { ok: false, reason: `build ${build} not visible in App Store Connect yet` };
+    token = ascToken(credentials);
 
     const existing = await asc(token, 'GET', `/v1/builds/${buildId}/betaBuildLocalizations?limit=50`);
     const mine = existing.data?.find((l) => l.attributes?.locale === locale);

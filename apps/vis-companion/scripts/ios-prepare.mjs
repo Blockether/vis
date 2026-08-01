@@ -35,6 +35,8 @@ const CUSTOM_CLASS = 'VisBridgeViewController';
 const appDir = join(root, 'ios', 'App', 'App');
 const delegate = join(appDir, 'AppDelegate.swift');
 const storyboard = join(appDir, 'Base.lproj', 'Main.storyboard');
+const infoPlist = join(appDir, 'Info.plist');
+const bundleId = JSON.parse(readFileSync(join(root, 'capacitor.config.json'), 'utf8')).appId;
 
 const die = (msg) => {
   console.error(`\n\u2717 ${msg}\n`);
@@ -69,16 +71,105 @@ if (!boardOk && cleanedBoard === currentBoard) {
   die(`Main.storyboard references ${CUSTOM_CLASS} in a shape this script cannot rewrite`);
 }
 
+// ── 3. capabilities that Capacitor's generated Info.plist does not carry ──────
+//
+// `ios/` is gitignored and CI creates it from scratch. Every runtime-sensitive
+// plist entry therefore belongs here, not in a hand-edited local Xcode project.
+const plistEntries = [
+  [
+    'UIBackgroundModes',
+    `\t<key>UIBackgroundModes</key>
+\t<array>
+\t\t<string>audio</string>
+\t</array>`,
+  ],
+  [
+    'NSAppTransportSecurity',
+    `\t<key>NSAppTransportSecurity</key>
+\t<dict>
+\t\t<key>NSAllowsArbitraryLoadsInWebContent</key>
+\t\t<true/>
+\t\t<key>NSAllowsLocalNetworking</key>
+\t\t<true/>
+\t</dict>`,
+  ],
+  [
+    'NSLocalNetworkUsageDescription',
+    `\t<key>NSLocalNetworkUsageDescription</key>
+\t<string>Vis connects to your gateway running on your local network, Tailscale, or a tunnel.</string>`,
+  ],
+  [
+    'NSCameraUsageDescription',
+    `\t<key>NSCameraUsageDescription</key>
+\t<string>Scan a gateway pairing QR code to connect Vis.</string>`,
+  ],
+  [
+    'NSMicrophoneUsageDescription',
+    `\t<key>NSMicrophoneUsageDescription</key>
+\t<string>Dictate messages to Vis by voice.</string>`,
+  ],
+  [
+    'NSPhotoLibraryUsageDescription',
+    `\t<key>NSPhotoLibraryUsageDescription</key>
+\t<string>Attach images from your photo library to a Vis conversation.</string>`,
+  ],
+  [
+    'NSPhotoLibraryAddUsageDescription',
+    `\t<key>NSPhotoLibraryAddUsageDescription</key>
+\t<string>Save images shared from a Vis conversation.</string>`,
+  ],
+  [
+    'ITSAppUsesNonExemptEncryption',
+    `\t<key>ITSAppUsesNonExemptEncryption</key>
+\t<false/>`,
+  ],
+  [
+    'CFBundleURLTypes',
+    `\t<key>CFBundleURLTypes</key>
+\t<array>
+\t\t<dict>
+\t\t\t<key>CFBundleURLName</key>
+\t\t\t<string>${bundleId}</string>
+\t\t\t<key>CFBundleTypeRole</key>
+\t\t\t<string>Editor</string>
+\t\t\t<key>CFBundleURLSchemes</key>
+\t\t\t<array>
+\t\t\t\t<string>vis</string>
+\t\t\t</array>
+\t\t</dict>
+\t</array>`,
+  ],
+];
+
+const currentPlist = readFileSync(infoPlist, 'utf8');
+const missingPlistEntries = plistEntries.filter(([key]) => !currentPlist.includes(`<key>${key}</key>`));
+const plistOk = missingPlistEntries.length === 0;
+let preparedPlist = currentPlist;
+if (!plistOk) {
+  const at = preparedPlist.lastIndexOf('</dict>');
+  if (at < 0) die('Info.plist has no root </dict>');
+  const additions = `${missingPlistEntries.map(([, xml]) => xml).join('\n')}\n`;
+  preparedPlist = preparedPlist.slice(0, at) + additions + preparedPlist.slice(at);
+}
+
 if (check) {
-  if (delegateOk && boardOk) {
-    console.log('\u00b7 ios: stock Capacitor host');
+  if (delegateOk && boardOk && plistOk) {
+    console.log('· ios: stock Capacitor host with required app capabilities');
     process.exit(0);
   }
-  die('ios: stale viewport bridge — run `node scripts/ios-prepare.mjs`');
+  const missing = missingPlistEntries.map(([key]) => key).join(', ');
+  die(
+    !delegateOk || !boardOk
+      ? 'ios: stale viewport bridge — run `node scripts/ios-prepare.mjs`'
+      : `ios: Info.plist is missing ${missing} — run \`node scripts/ios-prepare.mjs\``,
+  );
 }
 
 if (!delegateOk) writeFileSync(delegate, cleanedDelegate);
 if (!boardOk) writeFileSync(storyboard, cleanedBoard);
+if (!plistOk) writeFileSync(infoPlist, preparedPlist);
 console.log(
-  `\u00b7 ios: ${delegateOk && boardOk ? 'already stock Capacitor' : 'removed the viewport bridge (AppDelegate.swift + Main.storyboard)'}`,
+  `· ios: ${delegateOk && boardOk ? 'stock Capacitor host' : 'removed the viewport bridge'}; ${
+    plistOk ? 'app capabilities already present' : `stamped ${missingPlistEntries.map(([key]) => key).join(', ')}`
+  }`,
 );

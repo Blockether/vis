@@ -67,8 +67,9 @@ export const appIdFor = async (token, bundleId) => {
 export const waitForBuild = async (token, { appId, build, timeoutMs = 15 * 60 * 1000, requireValid = false, log = () => {} }) => {
   const query = `/v1/builds?filter[app]=${appId}&filter[version]=${encodeURIComponent(build)}&limit=1`;
   const deadline = Date.now() + timeoutMs;
+  const bearer = () => (typeof token === 'function' ? token() : token);
   for (;;) {
-    const found = (await asc(token, 'GET', query)).data?.[0];
+    const found = (await asc(bearer(), 'GET', query)).data?.[0];
     const state = found?.attributes?.processingState;
     if (found && (!requireValid || state === 'VALID')) return { id: found.id, state };
     if (found && (state === 'INVALID' || state === 'FAILED')) {

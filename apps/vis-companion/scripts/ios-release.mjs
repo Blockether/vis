@@ -390,14 +390,16 @@ if (has('no-upload')) {
 }
 
 if (hasApiKey) {
-  // Explicit API key: works headless / on CI, never prompts for 2FA.
-  run('xcrun', ['altool', '--upload-app', '-t', 'ios', '-f', ipa, '--apiKey', keyId, '--apiIssuer', issuerId], {
+  // `--wait` makes altool report App Store processing failures (missing privacy
+  // declarations, invalid entitlements, and similar) instead of returning a false
+  // green as soon as the bytes arrive.
+  run('xcrun', ['altool', '--upload-package', ipa, '--wait', '--api-key', keyId, '--api-issuer', issuerId], {
     env: { ...process.env, API_PRIVATE_KEYS_DIR: dirname(resolve(keyPath)) },
   });
 } else if (secret('VIS_ASC_APPLE_ID', 'apple_id') && secret('VIS_ASC_APP_PASSWORD', 'app_password')) {
   run(
     'xcrun',
-    ['altool', '--upload-app', '-t', 'ios', '-f', ipa, '-u', secret('VIS_ASC_APPLE_ID', 'apple_id'), '-p', '@env:VIS_ASC_APP_PASSWORD'],
+    ['altool', '--upload-package', ipa, '--wait', '-u', secret('VIS_ASC_APPLE_ID', 'apple_id'), '-p', '@env:VIS_ASC_APP_PASSWORD'],
     // Through the environment, never argv: an app-specific password on a command
     // line is readable by every process on the machine.
     { env: { ...process.env, VIS_ASC_APP_PASSWORD: secret('VIS_ASC_APP_PASSWORD', 'app_password') } },
@@ -425,44 +427,53 @@ if (hasApiKey) {
 }
 
 console.log(
-  `\n✓ uploaded ${marketingVersion} (${buildNumber}) to App Store Connect.\n` +
-    '  Processing takes a few minutes; then it appears in TestFlight.\n',
+  `\n✓ uploaded and processed ${marketingVersion} (${buildNumber}) in App Store Connect.\n`,
 );
 
 // TestFlight shows "What to Test" to every tester on the update card, so the changelog
 // must ride along with the build. The build only exists in App Store Connect AFTER
 // processing, hence the poll inside publishNotes.
-if (!has('no-notes')) {
+const wantsPublicDistribution = has('public') || Boolean(flag('group'));
+const publishWhatToTest = async (timeoutMs) => {
+  if (has('no-notes')) return true;
   if (!notes.text) {
     console.log('· no release notes to publish (nothing quotable since the last entry)');
-  } else if (!keyId || !issuerId || !(keyPem || process.env.VIS_ASC_KEY_PATH)) {
+    return true;
+  }
+  if (!keyId || !issuerId || !(keyPem || process.env.VIS_ASC_KEY_PATH)) {
     console.log(
       '· no App Store Connect API key — What to Test not published.\n' +
         `  Notes are in ${join(appDir, 'CHANGELOG.md')}; paste them into TestFlight ▸ the build ▸ What to Test,\n` +
         '  or store a key (`npm run secrets`) and run `npm run release:notes`.',
     );
-  } else {
-    const res = await publishNotes({
-      keyId,
-      issuerId,
-      keyPem: keyPem ?? readFileSync(process.env.VIS_ASC_KEY_PATH, 'utf8'),
-      bundleId,
-      version: marketingVersion,
-      build: buildNumber,
-      notes: notes.text,
-      timeoutMs: Number(flag('notes-timeout') ?? 15 * 60 * 1000),
-      log: (m) => console.log(`· ${m}`),
-    });
-    if (res.ok) console.log(`\n✓ TestFlight "What to Test" set for build ${buildNumber}.\n`);
-    else console.log(`\n! notes not published: ${res.reason}\n  They are in CHANGELOG.md — paste them in App Store Connect.\n`);
+    return false;
   }
+
+  const res = await publishNotes({
+    keyId,
+    issuerId,
+    keyPem: keyPem ?? readFileSync(process.env.VIS_ASC_KEY_PATH, 'utf8'),
+    bundleId,
+    version: marketingVersion,
+    build: buildNumber,
+    notes: notes.text,
+    timeoutMs,
+    log: (m) => console.log(`· ${m}`),
+  });
+  if (res.ok) console.log(`\n✓ TestFlight "What to Test" set for build ${buildNumber}.\n`);
+  else console.log(`\n! notes not published: ${res.reason}\n  They are in CHANGELOG.md — paste them in App Store Connect.\n`);
+  return res.ok;
+};
+
+if (!wantsPublicDistribution) {
+  await publishWhatToTest(Number(flag('notes-timeout') ?? 15 * 60 * 1000));
 }
 
 // PUBLIC TestFlight. Off by default because it costs a Beta App Review round trip and
 // exposes the build outside the team — both things a routine internal upload must not do
 // implicitly. `--public` (or `--group <name>`) opts in; everything it needs is already in
 // scope, so this is one call, not a second pipeline.
-if (has('public') || flag('group')) {
+if (wantsPublicDistribution) {
   const res = await distribute({
     keyId,
     issuerId,
@@ -471,11 +482,15 @@ if (has('public') || flag('group')) {
     build: buildNumber,
     group: flag('group') ?? 'Public',
     review: !has('no-review'),
-    timeoutMs: Number(flag('public-timeout') ?? 30 * 60 * 1000),
+    timeoutMs: Number(flag('public-timeout') ?? 60 * 60 * 1000),
   });
-  if (res.ok) {
-    console.log(`\n✓ build ${buildNumber} is with public TestFlight.${res.publicLink ? `\n  Join link: ${res.publicLink}` : ''}\n`);
-  } else {
-    console.log(`\n! public distribution incomplete: ${res.reason}\n  The build IS uploaded; re-run just this step with:  npm run release:testflight -- --build ${buildNumber}\n`);
+  if (!res.ok) {
+    die(`public distribution incomplete: ${res.reason}\nThe build is uploaded; recover with: npm run release:testflight -- --build ${buildNumber}`);
+  }
+  console.log(`\n✓ build ${buildNumber} is with public TestFlight.${res.publicLink ? `\n  Join link: ${res.publicLink}` : ''}\n`);
+
+  const notesOk = await publishWhatToTest(Number(flag('notes-timeout') ?? 2 * 60 * 1000));
+  if (!notesOk && !has('no-notes')) {
+    die(`TestFlight release notes were not published for build ${buildNumber}`);
   }
 }
