@@ -1014,8 +1014,8 @@
        "May include execution metadata, counts/details, output, timeout, and REPL-recovery diagnostics.")
      :description
      (str
-       "Run active-pack tests. Prefer the smallest target: `cwd` selects the project; "
-       "`namespaces` (else `paths`) loads tests; `only`, `filter`, `include`, and `exclude` narrow them.")
+       "Run pack tests. Prefer the smallest target: `cwd` picks the project; `namespaces` (else `paths`) "
+       "loads tests; `only`, `filter`, `include`, and `exclude` narrow them.")
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
      ;; directly in Clojure so the language pack's own timeout budget wins.
@@ -1051,7 +1051,7 @@
                "Pack-defined string-keyed object stamped with `op`; fields may be absent. Clojure: "
                "`code,repl,value/values,out,err,status,ns,ms,timed_out,ex,root_ex`; Python/Bun: "
                "`code,ok,out,err,value,data,type,exc`. No UI `transcript` or `content`.")
-     :description "Evaluate in an `up` project REPL; use `repl` for lifecycle changes."
+     :description "Eval in an `up` project REPL; use `repl` for lifecycle."
      :call {:lead-opt "language" :rest :always}
      ;; repl_eval's own `timeout_ms` can exceed the generic Python eval
      ;; watchdog (DEFAULT_EVAL_TIMEOUT_MS, 120s); dispatch it directly in
@@ -1086,10 +1086,9 @@
        "`{result,id,message}`.")
      :description
      (str
-       "The REPL lifecycle tool. First read `session[\"resources\"][\"repls\"][language][cwd]`: reuse `up`; "
-       "recheck `starting`; \"start\" for absent/down/failed; \"restart\" if unresponsive; \"status\" reports "
-       "that directory's lifecycle state. \"stop\" ends a managed REPL you started. \"connect\" attaches "
-       "external by port; stop only detaches.")
+       "REPL lifecycle. Read `session[\"resources\"][\"repls\"][language][cwd]` first: reuse `up`; "
+       "recheck `starting`; start absent/down/failed; restart unresponsive; status reports that cwd; "
+       "stop your managed REPL; connect attaches external by port and stop only detaches.")
      :call {:lead-opt "language" :rest :always}
      :render render-repl-start-result
      :color-role :tool-color/shell
@@ -1115,7 +1114,7 @@
     {:symbol 'repl_connect
      :native-tool? false
      :description
-     "Attach an external, already-running REPL. Vis registers it but never owns or kills its process; stopping only detaches."
+     "Attach an external running REPL; Vis registers it but never owns or kills it, so stop only detaches."
      :call {:lead-opt "language" :rest :always}
      :render render-repl-start-result
      :color-role :tool-color/shell
@@ -1136,7 +1135,7 @@
     {:symbol 'repl_stop
      :native-tool? false
      :description
-     "After verifying, stop a managed REPL you started by exact id. External resources are detached; processes are never killed."
+     "After verification, stop your managed REPL by exact id. External resources only detach; processes are never killed."
      ;; repl_stop(id) — one positional id. (lint_code intentionally has NO
      ;; :call: its fn takes the whole input dict, so the generic form fits.)
      :call {:pos ["id"]}
