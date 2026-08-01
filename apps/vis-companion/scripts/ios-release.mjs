@@ -57,6 +57,10 @@ const keychain = (service, account) => {
 const secret = (envName, account) => process.env[envName]?.trim() || keychain('vis-ios', account);
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+const appBundleId = JSON.parse(readFileSync(join(appDir, 'capacitor.config.json'), 'utf8')).appId;
+const provisioningProfileName = process.env.VIS_IOS_PROVISIONING_PROFILE_NAME?.trim();
+
 const iosDir = join(appDir, 'ios');
 const projectDir = join(iosDir, 'App');
 const exportOptions = join(iosDir, 'ExportOptions.plist');
@@ -103,6 +107,16 @@ if (needsIosScaffold) {
 }
 
 // ios/ is gitignored, so a freshly generated project has no export options.
+const manualSigningXml = provisioningProfileName
+  ? `\t<key>signingCertificate</key>
+\t<string>iOS Distribution</string>
+\t<key>provisioningProfiles</key>
+\t<dict>
+\t\t<key>${appBundleId}</key>
+\t\t<string>${provisioningProfileName}</string>
+\t</dict>
+`
+  : '';
 if (!existsSync(exportOptions)) {
   writeFileSync(
     exportOptions,
@@ -117,8 +131,8 @@ if (!existsSync(exportOptions)) {
 \t<key>teamID</key>
 \t<string>${teamId}</string>
 \t<key>signingStyle</key>
-\t<string>automatic</string>
-\t<key>stripSwiftSymbols</key>
+\t<string>${provisioningProfileName ? 'manual' : 'automatic'}</string>
+${manualSigningXml}\t<key>stripSwiftSymbols</key>
 \t<true/>
 \t<key>uploadSymbols</key>
 \t<true/>
@@ -361,8 +375,7 @@ run(
     exportOptions,
     '-exportPath',
     ipaDir,
-    '-allowProvisioningUpdates',
-    ...authenticationArgs,
+    ...(provisioningProfileName ? [] : ['-allowProvisioningUpdates', ...authenticationArgs]),
   ],
   { cwd: projectDir },
 );
