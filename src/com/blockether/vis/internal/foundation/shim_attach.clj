@@ -183,7 +183,7 @@
   (vis/extension
     {:ext/name "foundation-shim-attach"
      :ext/description
-     "Sandbox shim: vis_attach(path) / vis_attach_bytes(data, filename) — persist any artifact a tool produces (image/csv/json/pdf/wav/…) as a durable session_iteration_attachment DB row, captured at the source with no stdout parsing. Survives restart; image/* media-types replay to vision models cross-turn."
+     "Sandbox `vis_attach(path)`/`vis_attach_bytes(data, filename)`: persists any artifact as a durable session attachment without stdout parsing. Survives restart; `image/*` replays to vision models across turns."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
