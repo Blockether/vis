@@ -288,12 +288,18 @@
 
 .shell-viewport {
   height: var(--shell-height, 100dvh);
+}
+/* The shell is translated only while the layout viewport is scrolled to reveal a
+   focused field (web/Android fallback). Native iOS disables that scroll, so the shell
+   never shifts — and a *permanent* transform here would promote the entire app to its
+   own composited layer, which then has to be re-rastered on every frame of a `height`
+   transition and of a rotation reflow. Keeping transform off the idle shell leaves the
+   keyboard rise and the orientation flip on the cheap layout-only path. */
+html.shell-shifted .shell-viewport {
   transform: translateY(var(--shell-y, 0px));
 }
 html.shell-animating .shell-viewport {
-  transition:
-    height 250ms cubic-bezier(0.17, 0.59, 0.4, 0.77),
-    transform 250ms cubic-bezier(0.17, 0.59, 0.4, 0.77);
+  transition: height 250ms cubic-bezier(0.17, 0.59, 0.4, 0.77);
 }
 
 @layer base {

@@ -19,7 +19,7 @@ import {
  * iOS animates its keyboard over 0.25s on UIKit's own curve, and `keyboardWillShow`
  * fires BEFORE that animation starts. The shell matches that movement purely in CSS
  * — `html.shell-animating .shell-viewport` in `index.css` runs the same 250ms curve
- * on `height`/`transform` — so no React render sits between the OS announcing the
+ * on `height` — so no React render sits between the OS announcing the
  * keyboard and the transition starting. This module only toggles that class; it
  * carries neither the duration nor the curve itself.
  */
@@ -331,10 +331,11 @@ export function shellViewportHeight(): number {
 }
 
 /**
- * The shell's geometry, written to `:root` as `--shell-height` / `--shell-y` plus an
- * `html.shell-animating` class, so the fixed shell — and any overlay of class
- * `shell-viewport` — tracks the keyboard through CSS alone (see `index.css`). A null
- * height is the unpinned, plain `100dvh` box.
+ * The shell's geometry, written to `:root` as `--shell-height` / `--shell-y`, plus an
+ * `html.shell-animating` class for the keyboard's transition and an `html.shell-shifted`
+ * class that gates the (rare) layout-viewport shift, so the fixed shell — and any overlay
+ * of class `shell-viewport` — tracks the keyboard through CSS alone (see `index.css`).
+ * A null height is the unpinned, plain `100dvh` box.
  */
 let shellHeightWritten: number | null | undefined;
 let shellTopWritten = 0;
@@ -344,6 +345,10 @@ function writeShell(height: number | null, top: number): void {
   shellHeightWritten = height;
   shellTopWritten = top;
   const root = document.documentElement;
+  // `shell-shifted` gates the `transform` rule in `index.css`. Native iOS never
+  // scrolls the layout viewport, so `top` stays `0` and the shell keeps no transform
+  // at all — keeping it off the compositor (see `index.css`).
+  root.classList.toggle('shell-shifted', top !== 0);
   if (height === null) {
     root.style.removeProperty('--shell-height');
     root.style.removeProperty('--shell-y');
