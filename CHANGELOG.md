@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.21] - 2026-08-01
+
+### Changed
+- docs(companion): release notes for 0.1.21 (2861)
+- feat: unify releases and harden live companion behavior
+- release: update version files for v0.1.20, bump to next dev version
+
+### Package changes
+
+#### com.blockether/vis
+- docs(companion): release notes for 0.1.21 (2861) (51c1fce7d)
+- feat: unify releases and harden live companion behavior (52953cd36)
+- release: update version files for v0.1.20, bump to next dev version (d6930850e)
+
+#### com.blockether/vis-channel-tui
+- feat: unify releases and harden live companion behavior (52953cd36)
+
+
+
 ## [v0.1.20] - 2026-08-01
 
 ### Changed
@@ -2042,7 +2061,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.20...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.21...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -2058,3 +2077,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.13]: https://github.com/Blockether/vis/releases/tag/v0.1.13
 [v0.1.14]: https://github.com/Blockether/vis/releases/tag/v0.1.14
 [v0.1.20]: https://github.com/Blockether/vis/releases/tag/v0.1.20
+[v0.1.21]: https://github.com/Blockether/vis/releases/tag/v0.1.21
