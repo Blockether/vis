@@ -897,7 +897,7 @@
   (dispatch! env :lint-fn args))
 
 (defn run-tests
-  "Run tests using a language extension. ALWAYS pass the language FIRST — run_tests(language, arg). `arg` selects what to run: a namespace/module string (e.g. run_tests(\"clojure\", \"my.app.core-test\")), or a dict — {\"namespaces\": [\"a-test\" \"b-test\"]} to run several, {\"paths\": [\"test\" ...]} to discover *_test namespaces under dirs/files, plus optional {\"only\": [...] :include/:exclude [tags]} selectors. Every selector is PLURAL — always a list, even for one entry. Omit arg to run the whole suite."
+  "Run through a language pack: `run_tests(language,arg)`. `arg` is a namespace/module string or map: `namespaces`/`paths` lists choose what loads or discovers; `only`, `include`, and `exclude` lists narrow tests; `cwd` chooses the project; `filter` narrows names when supported. Every selector is a list, even one. Omit `arg` for the whole suite."
   [env & args]
   ;; Park outside the generic 30s native wall. Language packs own the test budget.
   (let [started-at (System/nanoTime)]
