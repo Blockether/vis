@@ -22,7 +22,7 @@
   (vis/extension
     {:ext/name "foundation-shim-httpx"
      :ext/description
-     "Sandbox shim: an `httpx`-compatible module (import httpx / httpx.get / httpx.Client / await httpx.AsyncClient) implemented as a thin sync+async wrapper over the requests shim. No pip, no native wheel, no host bridge."
+     "Sandbox `httpx` subset (`httpx.get`, `Client`, async `AsyncClient`) wrapping requests. No pip/wheel/host bridge."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
