@@ -24,9 +24,10 @@ const SESSION_LIST_EVENTS = new Set([
 // this is treated as lost.
 const STALE_POLL_MS = 20_000;
 
-// Each project is a collapsible section: collapsed shows only its live sessions
-// (capped), expanded pages its history in place — so the DOM is bounded without a
-// global window over the whole fleet.
+// Each project is a collapsible section: collapsed shows its live sessions plus any
+// that stopped being live within the last hour (capped), expanded pages the rest of
+// its history in place — so the DOM is bounded without a global window over the fleet.
+const RECENT_WINDOW_MS = 60 * 60 * 1000;
 
 // Same frames as the session transcript's spinner and the TUI's
 // `paint-content-loading!` — one vocabulary for "working" across the product.
@@ -53,6 +54,18 @@ function useSessionsPerPage(): number {
     };
   }, []);
   return pageSize;
+}
+
+// `Date.now()` that advances on an interval, so time-windowed filters age out on
+// their own without a manual refresh. Keep the interval coarse (>= 1s): each tick
+// recomputes everything that depends on it.
+function useNow(intervalMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), intervalMs);
+    return () => window.clearInterval(timer);
+  }, [intervalMs]);
+  return now;
 }
 
 interface Props {
@@ -622,13 +635,22 @@ const ProjectGroup = memo(function ProjectGroup({
   const liveCount = liveSessions.length;
   const isOpen = expanded || forceExpand;
 
-  // Expanded pages its own history in place; collapsing exposes only the live few.
+  // A coarse clock ages the recency window: once a session is more than an hour past
+  // its last activity it leaves the collapsed peek on its own, no refresh needed.
+  const now = useNow(RECENT_WINDOW_MS / 60);
+  const collapsedSessions = useMemo(
+    () => sessions.filter((session) => sessionFresh(session, now)),
+    [sessions, now],
+  );
+
+  // Expanded pages its own history in place; collapsing exposes the live few plus any
+  // session active within the last hour.
   const [shown, setShown] = useState(pageSize);
   useEffect(() => {
     setShown(pageSize);
   }, [pageSize]);
 
-  const rows = isOpen ? sessions.slice(0, shown) : liveSessions.slice(0, pageSize);
+  const rows = isOpen ? sessions.slice(0, shown) : collapsedSessions.slice(0, pageSize);
   const remaining = isOpen ? Math.max(0, sessions.length - shown) : 0;
 
   return (
@@ -971,6 +993,15 @@ function projectRoot(sessions: Session[]): string {
 
 function sessionIsLive(session: Session): boolean {
   return session.live ?? session.status === 'running';
+}
+
+function sessionFresh(session: Session, now: number): boolean {
+  // Live sessions are always shown collapsed; a session that STOPPED being live still
+  // lingers for one hour so it doesn't vanish the instant it goes idle. Uses the same
+  // timestamp chain the row displays, so "fresh" == "its clock reads < 1h ago".
+  if (sessionIsLive(session)) return true;
+  const millis = dateMillis(session.modified_at ?? session.last_active_at ?? session.created_at);
+  return millis > 0 && now - millis <= RECENT_WINDOW_MS;
 }
 
 function statusLabel(session: Session): string {
