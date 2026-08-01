@@ -1056,13 +1056,11 @@
     #'repl-eval
     {:symbol 'repl_eval
      :native-tool? true
-     :result
-     (str
-       "Pack-defined string-keyed object stamped with `op`; fields may be absent. Clojure: `code`, "
-       "`repl`, `value`/`values`, `out`, `err`, `status`, `ns`, `ms`, `timed_out`, `ex`, `root_ex`; "
-       "Python/Bun: `code`, `ok`, `out`, `err`, `value`, `data`, `type`, `exc`. No UI "
-       "`transcript`/`content`.")
-     :description "Evaluate source in an `up` REPL; use `repl` for lifecycle changes."
+     :result (str
+               "Pack-defined string-keyed object stamped with `op`; fields may be absent. Clojure: "
+               "`code,repl,value/values,out,err,status,ns,ms,timed_out,ex,root_ex`; Python/Bun: "
+               "`code,ok,out,err,value,data,type,exc`. No UI `transcript` or `content`.")
+     :description "Evaluate in an `up` project REPL; use `repl` for lifecycle changes."
      :call {:lead-opt "language" :rest :always}
      ;; repl_eval's own `timeout_ms` can exceed the generic Python eval
      ;; watchdog (DEFAULT_EVAL_TIMEOUT_MS, 120s); dispatch it directly in
@@ -1073,13 +1071,12 @@
      :render render-repl-eval-result
      :color-role :tool-color/shell
      :schema {:type "object"
-              :properties
-              {"language" {:type "string" :minLength 1 :description "Language pack; REQUIRED."}
-               "code" {:type "string" :minLength 1 :description "Source."}
-               "id" {:type "string" :minLength 1 :description "REPL resource id."}
-               "cwd" {:type "string" :description "Project directory; workspace root by default."}
-               "timeout_ms"
-               {:type "integer" :minimum 1 :description "Milliseconds; default 30000."}}
+              :properties {"language" {:type "string" :minLength 1 :description "REQUIRED pack."}
+                           "code" {:type "string" :minLength 1 :description "Source."}
+                           "id" {:type "string" :minLength 1 :description "REPL resource id."}
+                           "cwd" {:type "string" :description "Project dir; root default."}
+                           "timeout_ms"
+                           {:type "integer" :minimum 1 :description "Milliseconds; default 30000."}}
               :required ["language" "code"]
               :additionalProperties false}
      :inject-env? true
