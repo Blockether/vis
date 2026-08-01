@@ -964,14 +964,14 @@
      :schema
      {:type "object"
       :properties
-      {"language" {:type "string" :minLength 1 :description "Pack."}
-       "code" {:type "string" :description "Source."}
+      {"language" {:type "string" :minLength 1}
+       "code" {:type "string"}
        "paths"
        {:type "array"
         :items {:type "string" :minLength 1}
         :minItems 1
         :description
-        "Directories recursively format source; exclusive with `code`; OMIT both for default paths."}}
+        "Directories recursively; exclusive with `code`; OMIT both for default source paths."}}
       :required []
       :additionalProperties false}
      :inject-env? true
@@ -991,8 +991,8 @@
      :render render-lint-result
      :color-role :tool-color/read
      :schema {:type "object"
-              :properties {"language" {:type "string" :minLength 1 :description "Pack."}
-                           "code" {:type "string" :description "Source; not with `paths`."}
+              :properties {"language" {:type "string" :minLength 1}
+                           "code" {:type "string" :description "Source; exclusive with `paths`."}
                            "paths" {:type "array"
                                     :items {:type "string" :minLength 1}
                                     :minItems 1
@@ -1024,18 +1024,18 @@
      :color-role :tool-color/test
      :schema {:type "object"
               :properties
-              {"language" {:type "string" :minLength 1 :description "REQUIRED pack."}
+              {"language" {:type "string" :minLength 1}
                "namespaces" {:type "array"
                              :items {:type "string" :minLength 1}
-                             :description "Namespaces/modules; OMIT or [] discovers all `*_test`."}
+                             :description "Modules; OMIT/[] discovers all `*_test`."}
                "paths" {:type "array"
                         :items {:type "string" :minLength 1}
-                        :description "Dirs/files; OMIT or [] uses root; a non-empty miss errors."}
-               "only" {:type "array" :items {:type "string"} :description "Fully-qualified vars."}
+                        :description "Dirs/files; OMIT/[] uses root; non-empty miss errors."}
+               "only" {:type "array" :items {:type "string"} :description "Qualified vars."}
                "include" {:type "array" :items {:type "string"} :description "Required tags."}
                "exclude" {:type "array" :items {:type "string"} :description "Skipped tags."}
-               "cwd" {:type "string" :description "Project dir; workspace root default."}
-               "filter" {:type "string" :description "Test-name filter when supported."}}
+               "cwd" {:type "string" :description "Project dir; root default."}
+               "filter" {:type "string" :description "Name filter if supported."}}
               :required ["language"]
               :additionalProperties false}
      :inject-env? true
@@ -1061,12 +1061,12 @@
      :render render-repl-eval-result
      :color-role :tool-color/shell
      :schema {:type "object"
-              :properties {"language" {:type "string" :minLength 1 :description "REQUIRED pack."}
-                           "code" {:type "string" :minLength 1 :description "Source."}
-                           "id" {:type "string" :minLength 1 :description "REPL resource id."}
+              :properties {"language" {:type "string" :minLength 1}
+                           "code" {:type "string" :minLength 1}
+                           "id" {:type "string" :minLength 1 :description "REPL id."}
                            "cwd" {:type "string" :description "Project dir; root default."}
                            "timeout_ms"
-                           {:type "integer" :minimum 1 :description "Milliseconds; default 30000."}}
+                           {:type "integer" :minimum 1 :description "ms; default 30000."}}
               :required ["language" "code"]
               :additionalProperties false}
      :inject-env? true
@@ -1094,16 +1094,15 @@
      :color-role :tool-color/shell
      :schema {:type "object"
               :properties
-              {"language" {:type "string" :minLength 1 :description "Pack; REQUIRED first."}
+              {"language" {:type "string" :minLength 1}
                "op" {:type "string"
                      :enum ["start" "restart" "connect" "stop" "status"]
-                     :description "Op; default `start`."}
-               "id" {:type "string" :minLength 1 :description "Exact id; stop."}
-               "cwd"
-               {:type "string" :minLength 1 :description "Directory (`.` default); connect key."}
+                     :description "Default `start`."}
+               "id" {:type "string" :minLength 1 :description "Exact id for stop."}
+               "cwd" {:type "string" :minLength 1 :description "Dir (`.` default); connect key."}
                "port" {:type "integer" :description "Connect port."}
-               "host" {:type "string" :description "Connect host (localhost)."}
-               "aliases" {:type "array" :items {:type "string"} :description "Build aliases."}}
+               "host" {:type "string" :description "Connect host; localhost default."}
+               "aliases" {:type "array" :items {:type "string"}}}
               :required ["language"]
               :additionalProperties false}
      :inject-env? true
@@ -1121,14 +1120,10 @@
      :color-role :tool-color/shell
      :schema {:type "object"
               :properties
-              {"language" {:type "string" :minLength 1 :description "REQUIRED first: pack."}
-               "port" {:type "integer"
-                       :minimum 1
-                       :maximum 65535
-                       :description "Already-running external REPL port."}
-               "host" {:type "string" :description "Host (localhost default)."}
-               "cwd" {:type "string"
-                      :description "Served project dir (workspace root default); keys attachment."}}
+              {"language" {:type "string" :minLength 1}
+               "port" {:type "integer" :minimum 1 :maximum 65535 :description "External REPL port."}
+               "host" {:type "string" :description "Host; localhost default."}
+               "cwd" {:type "string" :description "Project dir; root default; attachment key."}}
               :required ["language" "port"]
               :additionalProperties false}
      :inject-env? true
@@ -1147,8 +1142,7 @@
      :render render-repl-stop-result
      :color-role :tool-color/delete
      :schema {:type "object"
-              :properties {"id"
-                           {:type "string" :minLength 1 :description "Exact REPL resource id."}}
+              :properties {"id" {:type "string" :minLength 1 :description "Exact resource id."}}
               :required ["id"]
               :additionalProperties false}
      :inject-env? true
