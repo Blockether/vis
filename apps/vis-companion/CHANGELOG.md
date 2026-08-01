@@ -2,6 +2,11 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.19 (2854) — 2026-08-01
+<!-- commit: da7516494469a10de4d4becab81f330722c792a1 -->
+
+- Expandable session stats and drafts grouped under their project
+
 ## 0.1.19 (2853) — 2026-08-01
 <!-- commit: 91170014c043b6acf3a1821f6a4a91924bc5f030 -->
 
