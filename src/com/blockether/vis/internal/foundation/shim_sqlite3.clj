@@ -292,7 +292,7 @@
   (vis/extension
     {:ext/name "foundation-shim-sqlite3"
      :ext/description
-     "Sandbox shim: a DB-API 2.0 `sqlite3` module (connect/cursor/execute/executemany/executescript/fetchone/fetchmany/fetchall/commit/rollback/Row factory/named+qmark params/blob round-trip/IntegrityError+OperationalError/total_changes/context-manager) backed by the JVM xerial sqlite-jdbc driver. GraalPy has no _sqlite3 native ext; this makes `import sqlite3` work. No pip, no new dependency."
+     "Sandbox DB-API 2.0 `sqlite3` over JVM xerial sqlite-jdbc: connections/cursors, execute variants, fetch, transactions/context manager, Row, named/qmark params, blobs, errors, and `total_changes`. Replaces unavailable GraalPy `_sqlite3`; no pip/new dependency. Bind values: int/float/str/None only."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
