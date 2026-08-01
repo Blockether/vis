@@ -47,7 +47,7 @@
   (vis/extension
     {:ext/name "foundation-shim-yaml"
      :ext/description
-     "Sandbox shim: a PyYAML-compatible `yaml` module (import yaml / yaml.safe_load) backed by the pure-Clojure YAMLStar 1.2 loader. No pip, no native wheel."
+     "Sandbox PyYAML `yaml` load/dump subset (including `safe_load` and `*_all`) via pure-Clojure YAMLStar 1.2. No pip/wheel."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
