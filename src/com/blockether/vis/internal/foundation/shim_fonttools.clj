@@ -38,7 +38,7 @@
   (vis/extension
     {:ext/name "foundation-shim-fonttools"
      :ext/description
-     "Sandbox shim: WOFF2 -> TTF via `fontTools.ttLib.woff2.decompress` and `brotli.decompress` (import fontTools / import brotli). Backed by the vendored pure-Python brotlidecpy Brotli decoder (MIT) and an inlined WOFF2 reader; lets PIL render brand fonts shipped as .woff2. No pip, no native wheel, no host bridge. decompress-only (no brotli.compress), WOFF2-only, not the full fontTools API."
+     "Sandbox `fontTools`/`brotli` subset: WOFF2→TTF (`fontTools.ttLib.woff2.decompress`) and Brotli decompression (`brotli.decompress`) via vendored MIT pure-Python brotlidecpy and an inlined WOFF2 reader, enabling PIL WOFF2 fonts. No pip/wheel/host bridge; decompression only."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
