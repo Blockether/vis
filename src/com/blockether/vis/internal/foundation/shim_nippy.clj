@@ -107,7 +107,7 @@
   (vis/extension
     {:ext/name "foundation-shim-nippy"
      :ext/description
-     "Sandbox shim: nippy_decode(bytes) / nippy_encode(value), plus nippy.decode/encode, backed by Vis's JVM Nippy codec for persistence BLOB inspection."
+     "Sandbox JVM Nippy codec: `nippy_decode`/`nippy_encode` and `nippy.decode`/`encode` for persistence BLOBs."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
