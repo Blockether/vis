@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.terminal-image-test
   (:require [clojure.string :as str]
+            [com.blockether.imaging :as img]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -48,13 +49,11 @@
              (it
                "transcodes a JPEG file into a downscaled PNG base64 payload"
                (let
-                 [img
-                  (java.awt.image.BufferedImage. 400 300 java.awt.image.BufferedImage/TYPE_INT_RGB)
-
-                  tmp
+                 [tmp
                   (java.io.File/createTempFile "vis-timg" ".jpg")]
 
-                 (try (javax.imageio.ImageIO/write img "jpg" tmp)
+                 (try (with-open [src (img/blank 400 300 "red")]
+                        (img/save! src tmp {:format :jpeg}))
                       (let
                         [b64
                          (timg/transcode->png-base64 (.getAbsolutePath tmp) {:cols 20 :rows 10})
@@ -64,7 +63,11 @@
 
                         (expect (string? b64))
                         ;; PNG magic 0x89 'P' 'N' 'G'
-                        (expect (= [-119 80 78 71] (map #(aget ^bytes bytes %) (range 4)))))
+                        (expect (= [-119 80 78 71] (map #(aget ^bytes bytes %) (range 4))))
+                        ;; 20 cols x 9px = 180 wide box; the 400x300 source must shrink.
+                        (let [{:keys [width height]} (img/probe bytes)]
+                          (expect (<= width 180))
+                          (expect (<= height 180))))
                       (finally (.delete tmp))))))
 
 (defdescribe kitty-encoding-test

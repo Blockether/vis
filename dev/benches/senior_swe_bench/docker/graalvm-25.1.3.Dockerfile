@@ -1,6 +1,6 @@
 FROM debian:bookworm-slim
 
-ARG GRAALVM_URL=https://github.com/graalvm/graalvm-ce-builds/releases/download/graal-25.2.4/graalvm-community-jdk-25i2-25.0.4_linux-aarch64_bin.tar.gz
+ARG GRAALVM_URL=https://github.com/graalvm/graalvm-ce-builds/releases/download/graal-25.1.3/graalvm-community-jdk-25i1-25.0.3_linux-aarch64_bin.tar.gz
 ARG CLOJURE_INSTALL_URL=https://download.clojure.org/install/linux-install-1.12.1.1550.sh
 
 RUN apt-get update \

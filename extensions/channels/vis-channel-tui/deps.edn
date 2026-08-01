@@ -61,14 +61,41 @@
         ;;      joinedLine, and boxedLine build `─`, `──┬──`, and `┌──┐` strings in
         ;;      Java StringBuilder code so TUI tables/dialog separators don't rebuild
         ;;      hot chrome through Clojure seq helpers every paint.
+        ;;  14. Native TTY control (vis.36): com.googlecode.lanterna.terminal.ansi.TTYDeviceControl
+        ;;      — termios + ioctl(TIOCGWINSZ) through the java.lang.foreign (FFM) API. Since
+        ;;      vis.37 the fork is compiled at release 25 with NO multi-release layering: FFM is
+        ;;      the only implementation, matching vis's own GraalVM CE 25 baseline. UnixTerminal
+        ;;      no longer forks /bin/stty six times per acquire/restore, and the window size
+        ;;      comes from ONE ioctl instead of the ANSI "park the cursor at 5000,5000 and parse
+        ;;      the reply" round-trip (which silently degrades to 80x24). Every call falls back
+        ;;      to stty on failure; force the old path with
+        ;;      -Dcom.googlecode.lanterna.terminal.UnixTerminal.nativeTTY=false.
+        ;;      Needs --enable-native-access=ALL-UNNAMED on the JVM (see the root deps.edn
+        ;;      aliases) and, in the native image, the foreign downcall descriptors registered
+        ;;      by com.blockether.vis.internal.nativeimage's Feature.
+        ;;  15. No Swing/AWT terminal emulator (vis.38): the whole
+        ;;      com.googlecode.lanterna.terminal.swing package (SwingTerminalFrame,
+        ;;      AWTTerminalFrame, the emulator palettes/font configs — 17 classes) is
+        ;;      DELETED, and DefaultTerminalFactory only ever builds a text terminal
+        ;;      (its emulator switches are kept as no-ops). vis never opens a GUI window;
+        ;;      this removes any path by which AWT/Swing could become reachable from the
+        ;;      TUI in the native image.
+        ;;  16. ZERO java.desktop (vis.39): the last two AWT users are gone —
+        ;;      TerminalImage's ImageIO/Graphics2D PNG transcode (now done in Clojure
+        ;;      over com.blockether/imaging, which is why the class exposes
+        ;;      cellWidth/cellHeight) and TextColor's deprecated `toColor()`
+        ;;      java.awt.Color helper. `requires static java.desktop` is dropped from
+        ;;      module-info, and the jar contains no java/awt or javax/swing reference
+        ;;      at all — vis's native image no longer needs the java.desktop module.
         ;; Drop-in replacement — same com.googlecode.lanterna.* package namespace.
         ;; Retire when upstream ships equivalent fixes.
-        com.blockether/lanterna {:mvn/version "3.1.5-vis.35"}
+        com.blockether/lanterna {:mvn/version "3.1.5-vis.39"}
         ;; Pure-Java H.264/MP4 encoder for the headless session `cinema` export
-        ;; (channel-tui.cinema). No native deps — AWTSequenceEncoder lives in
-        ;; jcodec-javase. Only pulled in when the TUI jar is present.
-        org.jcodec/jcodec {:mvn/version "0.2.5"}
-        org.jcodec/jcodec-javase {:mvn/version "0.2.5"}}
+        ;; (channel-tui.cinema). CORE ONLY: frames are rendered by
+        ;; com.blockether/imaging and handed over as jcodec RGB `Picture`s, so the
+        ;; java.desktop-bound `jcodec-javase` (AWTSequenceEncoder/AWTUtil) is gone.
+        ;; No native deps. Only pulled in when the TUI jar is present.
+        org.jcodec/jcodec {:mvn/version "0.2.5"}}
  :aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
                                ;; Used by `render_bench_test.clj` for the inline
                                ;; Markdown hot-path microbenchmarks. Test-only;

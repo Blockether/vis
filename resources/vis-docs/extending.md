@@ -476,10 +476,14 @@ every `sub_loop` fork) and loaded lazily on first import:
 - Globals, no import needed — `vis_attach` / `vis_attachments` /
   `vis_read_attachment` and `nippy_encode` / `nippy_decode`.
 
-`matplotlib` renders through a Java2D PNG backend: `plt.show()` paints the
+`matplotlib` renders through a native `imaging` PNG backend: `plt.show()` paints the
 figure inline in a graphics-capable terminal (Kitty/iTerm2, e.g. Ghostty) and
 falls back to an ASCII plot on text-only terminals; `savefig` writes a PNG (or
 `*.txt`/`*.asc`/`format='txt'` ASCII, honoring `width`/`height`/`color`).
+`mpl_toolkits.mplot3d` / `projection='3d'` is real: `plot_surface`,
+`plot_wireframe`, `contour(offset=…)`, 3-D `scatter`/`plot`/`text`, `bar3d` and
+`view_init` go through a painter's-algorithm camera with shading and colormaps,
+and the ASCII backend projects the same scene into braille.
 `subprocess`, `os.system` and `os.popen` are bridged onto the `shell` tool.
 
 These are compatibility subsets, not the full PyPI packages — enough for
@@ -627,7 +631,7 @@ Python module into every sandbox (the main session and every `sub_loop` fork):
 the familiar Python API is a thin façade whose real work is DELEGATED across the
 boundary to Clojure/JVM callables you supply. This is exactly how `import yaml`
 (backed by the pure-Clojure YAMLStar loader) and `import matplotlib.pyplot`
-(backed by a Java2D PNG renderer) work — both ship as built-in shim extensions
+(backed by a native imaging PNG renderer) work — both ship as built-in shim extensions
 (`foundation.shim-yaml`, `foundation.shim-matplotlib`), and the engine installs
 them through the SAME generic path any extension uses.
 

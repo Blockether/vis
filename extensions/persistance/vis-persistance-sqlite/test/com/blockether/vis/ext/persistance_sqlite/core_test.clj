@@ -506,6 +506,45 @@
                  (finally (vis/db-dispose-connection! s2))))
           (finally (fs/delete-tree root))))))
 
+(defdescribe
+  migration-additive-column-top-up-test
+  (it "a store created by an OLDER canonical V1 gains the new V1 columns on reopen"
+      (let
+        [root
+         (fs/create-temp-dir {:prefix "vis-topup-"})
+
+         dir
+         (str (fs/path root "store"))
+
+         s1
+         (vis/db-create-connection! dir)]
+
+        (try
+          (expect (contains? (table-columns s1 "session_attachment") "is_display_only"))
+          ;; Rewind this store to an OLDER shape of the same canonical V1: the
+          ;; table exists, its Flyway history is intact, but it predates the
+          ;; columns V1 has grown since. That is exactly what a `~/.vis` database
+          ;; created before the in-place V1 edit looks like.
+          (jdbc/execute! (:datasource s1) ["DROP TABLE session_attachment"])
+          (jdbc/execute! (:datasource s1)
+                         ["CREATE TABLE session_attachment (id TEXT PRIMARY KEY NOT NULL)"])
+          (jdbc/execute! (:datasource s1) ["CREATE TABLE topup_probe (id INTEGER)"])
+          (jdbc/execute! (:datasource s1) ["INSERT INTO topup_probe (id) VALUES (7)"])
+          (vis/db-dispose-connection! s1)
+          (let [s2 (vis/db-create-connection! dir)]
+            (try
+              (let [cols (table-columns s2 "session_attachment")]
+                ;; Defaulted / nullable columns are added back from V1's own DDL.
+                (expect (contains? cols "is_display_only"))
+                (expect (contains? cols "kind"))
+                (expect (contains? cols "tool_call_id"))
+                ;; NOT NULL without a DEFAULT is not addable in SQLite: left alone
+                ;; rather than failing the open.
+                (expect (not (contains? cols "media_type"))))
+              ;; Purely additive: unrelated tables and rows are untouched.
+              (expect (= 1 (raw-count s2 :topup_probe)))
+              (finally (vis/db-dispose-connection! s2))))
+          (finally (fs/delete-tree root))))))
 
 (def ^:private multiprocess-child-code
   "(require '[com.blockether.vis.core :as vis])
@@ -2888,3 +2927,68 @@
                       force)]
         (expect (= message restored))
         (expect (= {"type" "user-data" "snake_case" 1} (get-in restored [:content 1 :input])))))))
+
+(defdescribe
+  attachment-display-only-round-trip-test
+  (it
+    "the display-only flag survives storage for BOTH turn and iteration attachments, and defaults to false"
+    (let
+      [s
+       (h/store)
+
+       cid
+       (h/store-session! s {:channel :cli})
+
+       png
+       (byte-array (map unchecked-byte [0x89 0x50 0x4e 0x47 5 5 5]))
+
+       b64
+       (.encodeToString (java.util.Base64/getEncoder) png)
+
+       ;; INBOUND user image the caller never wants re-uploaded.
+       tid
+       (vis/db-store-session-turn!
+         s
+         {:parent-session-id cid
+          :user-request "keep this local"
+          :attachments
+          [{:media-type "image/png"
+            :base64 b64
+            :filename "secret.png"
+            :size (alength png)
+            :is-display-only true}
+           {:media-type "image/png" :base64 b64 :filename "public.png" :size (alength png)}]})
+
+       user-atts
+       (vis/db-list-turn-attachments s tid)
+
+       iid
+       (h/store-iteration!
+         s
+         {:session-turn-id tid
+          :status :done
+          :code "vis_attach_bytes(png, 'fig.png', display_only=True)"
+          :attachments
+          [{:tool-call-id "call_A"
+            :media-type "image/png"
+            :base64 b64
+            :filename "fig.png"
+            :size (alength png)
+            :is-display-only true}
+           {:tool-call-id "call_A" :media-type "image/png" :base64 b64 :filename "sent.png"}]})
+
+       tool-atts
+       (vis/db-list-iteration-attachments s iid)]
+
+      ;; Flag round-trips as a boolean, per row, in both tables' worth of rows.
+      (expect (= {"secret.png" true "public.png" false}
+                 (into {} (map (juxt :filename :is-display-only)) user-atts)))
+      (expect (= {"fig.png" true "sent.png" false}
+                 (into {} (map (juxt :filename :is-display-only)) tool-atts)))
+      ;; Bare-id read-back (the vis_reinspect_attachment path) sees it too.
+      (expect (true? (:is-display-only (vis/db-read-attachment
+                                         s
+                                         (:id (first (filter #(= "secret.png" (:filename %))
+                                                             user-atts)))))))
+      ;; Bytes are still stored: display-only withholds the wire block, not the data.
+      (expect (every? #(= b64 (:base64 %)) (concat user-atts tool-atts))))))

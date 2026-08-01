@@ -66,7 +66,7 @@ await struct_patch({
 })
 ```
 
-The same editor supports named-definition moves, docs, nested child insertion, and unique sub-expression replacement. For a project-wide rename, read the blast radius with `struct_index({"name": "handle_click"})` — every use, definitions marked — then `struct_patch({"paths": ["."], "op": "rename", "target": "handle_click", "code": "handle_tap"})`.
+The same editor supports named-definition moves, docs, nested child insertion, and unique sub-expression replacement. For a project-wide rename, first `grep` the identifier, then pass its candidate file paths to `struct_index({"paths": [...], "include_occurrences": true})` to inspect declarations and occurrence blast radius before calling `struct_patch({"paths": ["."], "op": "rename", "target": "handle_click", "code": "handle_tap"}).
 
 Use anchored `patch` for prose or unsupported code. Use `write` only to create a file or intentionally replace a clean whole file.
 

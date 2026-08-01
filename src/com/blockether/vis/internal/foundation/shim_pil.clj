@@ -1,7 +1,9 @@
 (ns com.blockether.vis.internal.foundation.shim-pil
   "Built-in sandbox SHIM: a Pillow (PIL)-compatible `PIL` package for the model's
-   Python sandbox, backed by the JVM's Java2D / ImageIO image stack. No CPython
-   Pillow wheel ships in the sandbox; this extension contributes a
+   Python sandbox, backed by the `com.blockether/imaging` FFM stack (Rust
+   `image` + `resvg` + `tiny-skia`). NOTHING here touches `java.desktop`: no
+   CPython Pillow wheel ships in the sandbox, and no Java2D/ImageIO either; this
+   extension contributes a
    `:ext/sandbox-shims` entry that `env-python/build-agent-context` installs into
    every sandbox Context (main + every `sub_loop` fork): the host bridge callables
    are wired onto the globals, then the Python preamble publishes a `PIL` package
@@ -9,42 +11,53 @@
    `ImageEnhance`, `ImageChops`, `ImageFont`, `ImageMath` submodules) into
    `sys.modules` (so `from PIL import Image` works) and staples them onto builtins.
 
-   Images live HOST-side as `BufferedImage`s in a per-JVM registry keyed by an
-   integer handle; the Python `Image` object is a thin handle wrapper. All pixel
-   ops, drawing, filtering, geometry and codec work happen on the JVM; only small
-   metadata vectors and base64 blobs cross the strings-only boundary. Mirrors the
-   `shim-matplotlib` Java2D approach and reuses `mpl-capture/record-attachment!`
-   so `Image.show()` surfaces the image inline as a session attachment."
+   Images live HOST-side as `Raster`s -- a plain packed-0xAARRGGBB `int[]` plus
+   width/height -- in a per-JVM registry keyed by an integer handle; the Python
+   `Image` object is a thin handle wrapper. All pixel ops, drawing, filtering,
+   geometry and codec work happen on the host; only small metadata vectors and
+   base64 blobs cross the strings-only boundary. Codecs, resampling, rotation and
+   vector drawing go through `com.blockether.imaging`; per-pixel algorithms stay
+   in Clojure over the raster. Reuses `mpl-capture/record-attachment!` so
+   `Image.show()` surfaces the image inline as a session attachment."
   (:require [clojure.string :as str]
+            [com.blockether.imaging :as im]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.awt-boot :as awt-boot]
+            [com.blockether.vis.internal.foundation.gif :as gif]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture])
-  (:import [java.awt AlphaComposite BasicStroke Color Font RenderingHints]
-           [java.awt.image BufferedImage]
-           [java.io ByteArrayInputStream ByteArrayOutputStream]
-           [java.util Arrays Base64]
-           [javax.imageio ImageIO]))
-
-;; Java2D must run headless in a server JVM (no display, no Dock icon on macOS)
-;; AND in a native binary, where a build-time `setProperty` does not survive to
-;; runtime -- `awt-boot/ensure!` (forced by `pil-envelope`) is what actually
-;; arms this at runtime; these two only cover a JVM require of this namespace.
-(System/setProperty "java.awt.headless" "true")
-
-(System/setProperty "apple.awt.UIElement" "true")
+  (:import [java.util Base64]))
 
 ;; ---------------------------------------------------------------------------
-;; Host-side image registry: handle (long) -> {:img BufferedImage :mode String}.
-;; The Python Image is just a handle; the pixels stay on the JVM.
+;; Host-side image registry: handle (long) -> {:img Raster :mode String}.
+;; The Python Image is just a handle; the pixels stay on the host.
 ;; ---------------------------------------------------------------------------
 
 (defonce ^:private registry (atom {}))
 
 (defonce ^:private counter (atom 0))
 
+;; ---------------------------------------------------------------------------
+;; The raster. `getRGB`/`setRGB`/`getWidth`/`getHeight` keep exactly the
+;; BufferedImage shape the pixel algorithms below were written against:
+;; `getRGB` hands back an UNSIGNED packed 0xAARRGGBB value, and `amask` forces
+;; alpha to 255 for the opaque modes, mirroring TYPE_INT_RGB.
+;; ---------------------------------------------------------------------------
+
+(definterface IRaster
+              (^long getWidth [])
+              (^long getHeight [])
+              (^long getRGB [^long x ^long y])
+              (setRGB [^long x ^long y ^long v]))
+
+(deftype Raster [^ints px ^long w ^long h ^long amask]
+  IRaster
+    (getWidth [_] w)
+    (getHeight [_] h)
+    (getRGB [_ x y] (bit-or amask (bit-and 0xffffffff (aget px (int (+ (* y w) x))))))
+    (setRGB [_ x y v] (aset px (int (+ (* y w) x)) (unchecked-int v)) nil))
+
 (defn- put-img!
   "Register `img` under mode string, returning its new integer handle."
-  [^BufferedImage img mode]
+  [^Raster img mode]
   (let [h (swap! counter inc)]
     (swap! registry assoc h {:img img :mode mode})
     h))
@@ -54,8 +67,7 @@
 (defn- free-img! [h] (swap! registry dissoc (long h)) nil)
 
 ;; ---------------------------------------------------------------------------
-;; Pixel / colour helpers. Pixels are handled as packed 0xAARRGGBB ints via
-;; getRGB/setRGB, which works uniformly across TYPE_INT_ARGB / RGB / BYTE_GRAY.
+;; Pixel / colour helpers. Pixels are handled as packed 0xAARRGGBB longs.
 ;; ---------------------------------------------------------------------------
 
 (defn- ch ^long [^long p ^long sh] (bit-and (bit-shift-right p sh) 0xff))
@@ -71,67 +83,198 @@
 
 (defn- gray-argb ^long [v] (argb 255 v v v))
 
-(defn- mode->type
-  ^long [mode]
-  (case (str mode)
-    ;; Grayscale-family modes are stored as TYPE_INT_RGB with the gray value
-    ;; replicated across R/G/B, NOT TYPE_BYTE_GRAY: the latter uses a LINEAR
-    ;; grayscale color space, so setRGB/getRGB would gamma-convert and an 'L'
-    ;; pixel would not round-trip its sRGB byte value.
-    ("1" "L" "I" "F" "P")
-    BufferedImage/TYPE_INT_RGB
+(defn- alpha-mode?
+  "Modes stored WITH an alpha channel. Grayscale-family modes keep the gray value
+   replicated across R/G/B at full alpha, so an 'L' pixel round-trips its sRGB
+   byte value untouched."
+  [mode]
+  (contains? #{"RGBA" "LA"} (str mode)))
 
-    ("RGBA" "LA")
-    BufferedImage/TYPE_INT_ARGB
+(defn- new-raster
+  "A blank raster for `mode`: transparent for the alpha modes, opaque black
+   otherwise -- the same starting state `new BufferedImage(...)` used to give."
+  ^Raster [mode w h]
+  (let
+    [w
+     (long w)
 
-    BufferedImage/TYPE_INT_RGB))
+     h
+     (long h)
 
-(defn- new-buffered ^BufferedImage [mode w h] (BufferedImage. (int w) (int h) (mode->type mode)))
+     a?
+     (alpha-mode? mode)]
 
-(defn- ->color
-  ^Color [c mode]
-  (cond (nil? c) (if (contains? #{"RGBA" "LA"} (str mode)) (Color. 0 0 0 0) Color/BLACK)
-        (number? c) (let [v (int c)]
-                      (Color. v v v))
-        (sequential? c)
+    (Raster. (int-array (* w h) (if a? (int 0) (unchecked-int 0xff000000)))
+             w
+             h
+             (if a? 0 0xff000000))))
+
+(def ^:private encodable-formats
+  "Formats `imaging` can write. Anything else is a PIL-visible error."
+  #{"png" "jpeg" "webp" "gif" "bmp" "tiff" "ico" "qoi" "pnm" "tga" "exr" "ff"})
+
+(defn- has-alpha?
+  "True when this raster carries a real alpha channel (an `alpha-mode?` raster)."
+  [^Raster r]
+  (zero? (.amask r)))
+
+(defn- ->argb
+  "PIL colour spec -> packed 0xAARRGGBB."
+  ^long [c mode]
+  (cond (nil? c) (if (alpha-mode? mode) (argb 0 0 0 0) (argb 255 0 0 0))
+        (number? c) (let [v (long c)]
+                      (argb 255 v v v))
+        (sequential? c) (let
+                          [v
+                           (mapv long c)
+
+                           [r g b a]
+                           v]
+
+                          (case (count v)
+                            1
+                            (argb 255 r r r)
+
+                            (if a (argb a r g b) (argb 255 r g b))))
+        :else (argb 255 0 0 0)))
+
+(defn- ->hex
+  "Packed 0xAARRGGBB -> the `#rrggbbaa` string `imaging`'s draw ops take."
+  ^String [^long p]
+  (format "#%02x%02x%02x%02x" (ch p 16) (ch p 8) (ch p 0) (ch p 24)))
+
+(defn- ->img
+  "A live `imaging` image holding this raster's pixels (straight RGBA8)."
+  [^Raster r]
+  (let
+    [w
+     (.getWidth r)
+
+     h
+     (.getHeight r)
+
+     b
+     (byte-array (* 4 w h))]
+
+    (dotimes [y h]
+      (dotimes [x w]
         (let
-          [v
-           (mapv int c)
+          [p (.getRGB r x y)
+           o (* 4 (+ (* y w) x))]
 
-           [r g b a]
-           v]
+          (aset-byte b o (unchecked-byte (ch p 16)))
+          (aset-byte b (+ o 1) (unchecked-byte (ch p 8)))
+          (aset-byte b (+ o 2) (unchecked-byte (ch p 0)))
+          (aset-byte b (+ o 3) (unchecked-byte (ch p 24))))))
+    (im/from-pixels b w h)))
 
-          (case (count v)
-            1
-            (Color. (int r) (int r) (int r))
+(defn- raster->rgba
+  "A raster's pixels as straight RGBA8 rows (the cdylib's GIF frame shape)." ; the cdylib owns palette quantization now, so animation frames cross as full-canvas RGBA8.
+  ^bytes [^Raster r]
+  (let
+    [w
+     (.getWidth r)
 
-            (if a (Color. (int r) (int g) (int b) (int a)) (Color. (int r) (int g) (int b)))))
-        :else Color/BLACK))
+     h
+     (.getHeight r)
+
+     b
+     (byte-array (* 4 w h))]
+
+    (dotimes [y h]
+      (dotimes [x w]
+        (let
+          [p (.getRGB r x y)
+           o (* 4 (+ (* y w) x))]
+
+          (aset-byte b o (unchecked-byte (ch p 16)))
+          (aset-byte b (+ o 1) (unchecked-byte (ch p 8)))
+          (aset-byte b (+ o 2) (unchecked-byte (ch p 0)))
+          (aset-byte b (+ o 3) (unchecked-byte (ch p 24))))))
+    b))
+
+(defn- ->raster
+  "An `imaging` image's pixels as a raster in `mode`."
+  ^Raster [img mode]
+  (let
+    [w
+     (im/width img)
+
+     h
+     (im/height img)
+
+     ^bytes b
+     (im/pixels img)
+
+     out
+     (new-raster mode w h)]
+
+    (dotimes [y h]
+      (dotimes [x w]
+        (let [o (* 4 (+ (* y w) x))]
+          (.setRGB out
+                   x
+                   y
+                   (argb (bit-and (aget b (+ o 3)) 0xff)
+                         (bit-and (aget b o) 0xff)
+                         (bit-and (aget b (+ o 1)) 0xff)
+                         (bit-and (aget b (+ o 2)) 0xff))))))
+    out))
 
 (defn- img->mode
-  [^BufferedImage img]
-  (cond (= (.getType img) BufferedImage/TYPE_BYTE_GRAY) "L"
-        (.. img getColorModel hasAlpha) "RGBA"
-        :else "RGB"))
+  "Pillow's `mode` for a just-opened file.
+
+   Grayscale-ness comes from `imaging/probe`, which reports the SOURCE colour
+   type: the decoded handle is always RGBA8 and cannot tell an 'L' PNG from a
+   colour one. 16-bit and float sources map onto their 8-bit family (a raster
+   stores one byte per channel) and indexed sources report what they expand
+   into.
+
+   Transparency, in contrast, comes from the PIXELS and not from the header's
+   channel count: this shim always encodes an RGBA raster, so every file it
+   writes carries an alpha channel and a saved 'RGB' image has to open as 'RGB'
+   again. An unreadable header just means not-grayscale."
+  [^bytes b img]
+  (let
+    [{:keys [is-grayscale]}
+     (try (im/probe b) (catch Throwable _ nil))
+
+     alpha?
+     (not (:is-opaque (im/info img)))]
+
+    (if is-grayscale (if alpha? "LA" "L") (if alpha? "RGBA" "RGB"))))
 
 (defn- meta-of
   [h]
-  (let [{:keys [^BufferedImage img mode]} (entry h)]
+  (let [{:keys [^Raster img mode]} (entry h)]
     [(long h) (.getWidth img) (.getHeight img) mode]))
 
 (defn- flatten-rgb
-  ^BufferedImage [^BufferedImage src]
+  "Composite onto opaque white -- what the alpha-less codecs (JPEG, BMP) need."
+  ^Raster [^Raster src]
   (let
-    [out
-     (BufferedImage. (.getWidth src) (.getHeight src) BufferedImage/TYPE_INT_RGB)
+    [w
+     (.getWidth src)
 
-     g
-     (.createGraphics out)]
+     h
+     (.getHeight src)
 
-    (.setColor g Color/WHITE)
-    (.fillRect g 0 0 (.getWidth src) (.getHeight src))
-    (.drawImage g src 0 0 nil)
-    (.dispose g)
+     out
+     (new-raster "RGB" w h)]
+
+    (dotimes [y h]
+      (dotimes [x w]
+        (let
+          [p (.getRGB src x y)
+           a (/ (ch p 24) 255.0)]
+
+          (.setRGB out
+                   x
+                   y
+                   (argb 255
+                         (clamp255 (+ (* (ch p 16) a) (* 255.0 (- 1.0 a))))
+                         (clamp255 (+ (* (ch p 8) a) (* 255.0 (- 1.0 a))))
+                         (clamp255 (+ (* (ch p 0) a) (* 255.0 (- 1.0 a)))))))))
     out))
 
 ;; ---------------------------------------------------------------------------
@@ -141,20 +284,75 @@
 
 (defn- op-new
   [mode w h fill]
-  (let
-    [img
-     (new-buffered mode w h)
-
-     g
-     (.createGraphics img)]
-
+  (let [img (new-raster mode w h)]
     (when (some? fill)
-      (.setComposite g AlphaComposite/Src)
-      (.setColor g (->color fill mode))
-      (.fillRect g 0 0 (int w) (int h)))
-    (.dispose g)
+      (let [p (->argb fill mode)]
+        (dotimes [y (long h)]
+          (dotimes [x (long w)]
+            (.setRGB img x y p)))))
     (put-img! img (str mode))
     (meta-of @counter)))
+
+(def ^:private max-decode-bytes
+  "Ceiling on the RGBA8 buffer ONE decode may allocate: 512 MiB, the `image`
+   crate's own `Limits::max_alloc` default. Checked from the HEADER --
+   `imaging/probe` reads dimensions WITHOUT decoding -- so a file whose pixels
+   cannot fit reports its real size instead of the decoder's misleading
+   `cannot identify image file`."
+  (* 512 1024 1024))
+
+(defn- guard-decodable!
+  "Throw a truthful `image too large` before an oversized decode is attempted."
+  [probe]
+  (let
+    [w
+     (long (:width probe 0))
+
+     h
+     (long (:height probe 0))
+
+     need
+     (* w h 4)]
+
+    (when (> need max-decode-bytes)
+      (throw
+        (ex-info
+          (format
+            "image too large to decode: %dx%d needs %.0f MiB of RGBA pixels, over the %d MiB decoder limit"
+            w
+            h
+            (/ (double need) 1048576.0)
+            (long (/ max-decode-bytes 1048576)))
+          {:width w :height h :bytes need :limit max-decode-bytes})))))
+
+(defn- frame-raster
+  "A decoded GIF frame's full-canvas ARGB pixels as a raster + its Pillow mode."
+  [^ints argb ^long w ^long h]
+  (let
+    [opaque? (loop [i 0]
+               (cond (>= i (alength argb)) true
+                     (not= 255 (bit-and 0xff (bit-shift-right (aget argb i) 24))) false
+                     :else (recur (inc i))))]
+    [(Raster. (aclone argb) w h (if opaque? 0xff000000 0)) (if opaque? "RGB" "RGBA")]))
+
+(defn- open-animation
+  "Register a decoded multi-frame GIF: the handle holds frame 0 and the entry
+   keeps every frame, so `seek` can swap them in without re-decoding."
+  [{:keys [width height loop-count frames]}]
+  (let
+    [[img mode]
+     (frame-raster (:argb (first frames)) (long width) (long height))
+
+     h
+     (put-img! img mode)]
+
+    (swap! registry update
+      h
+      assoc
+      :frames (mapv #(select-keys % [:argb :delay-ms :disposal]) frames)
+      :frame 0
+      :loop-count loop-count)
+    (meta-of h)))
 
 (defn- op-open
   [b64]
@@ -162,26 +360,60 @@
     [bytes
      (.decode (Base64/getDecoder) ^String b64)
 
-     img
-     (ImageIO/read (ByteArrayInputStream. bytes))]
+     _
+     (guard-decodable! (try (im/probe bytes) (catch Throwable _ nil)))
 
-    (when (nil? img) (throw (ex-info "cannot identify image file" {})))
-    (let
-      [mode
-       (img->mode img)
+     anim
+     (when (gif/gif? bytes) (try (gif/decode bytes) (catch Throwable _ nil)))]
 
-       h
-       (put-img! img mode)]
+    (if (seq (:frames anim))
+      (open-animation anim)
+      (let [img (try (im/decode bytes) (catch Throwable _ nil))]
+        (when (nil? img) (throw (ex-info "cannot identify image file" {})))
+        (let
+          [mode (img->mode bytes img)
+           h (put-img! (->raster img mode) mode)]
 
-      (meta-of h))))
+          (im/close! img)
+          (meta-of h))))))
 
-(defn- op-save
-  [h fmt]
+(defn- op-frames
+  "Animation metadata for the Python side: [n-frames loop-count delays-ms].
+   `loop-count` is -1 when the file carries no NETSCAPE loop block."
+  [h]
+  (let [{:keys [frames loop-count]} (entry h)]
+    [(max 1 (count frames)) (long (or loop-count -1)) (mapv #(long (or (:delay-ms %) 0)) frames)]))
+
+(defn- op-seek
+  "Make frame `n` the current one, in place (Pillow's `Image.seek`)."
+  [h n]
   (let
-    [{:keys [^BufferedImage img]}
+    [{:keys [frames]}
      (entry h)
 
-     fmt
+     n
+     (long n)]
+
+    (when-not (and (seq frames) (<= 0 n) (< n (count frames)))
+      (throw (ex-info "attempt to seek beyond the last frame" {:frame n})))
+    (let
+      [{:keys [^ints argb]}
+       (nth frames n)
+
+       ^Raster cur
+       (:img (entry h))
+
+       [img mode]
+       (frame-raster argb (.getWidth cur) (.getHeight cur))]
+
+      (swap! registry update (long h) assoc :img img :mode mode :frame n)
+      (meta-of h))))
+
+(defn- normalise-format
+  "A Pillow format name -> the `imaging` codec key, or a PIL-visible error."
+  [fmt]
+  (let
+    [fmt
      (str/lower-case (or fmt "png"))
 
      fmt
@@ -189,38 +421,63 @@
        "jpg"
        "jpeg"
 
-       fmt)
+       fmt)]
+
+    (when-not (contains? encodable-formats fmt)
+      (throw (ex-info (str "no image writer for format " fmt) {})))
+    fmt))
+
+(defn- optimised
+  "Pillow's `optimize=True`, honoured for real: hand the ENCODED bytes to the
+   imaging library's format-specific optimisers (oxipng's filter/colour-type
+   search for PNG, jpegtran-style lossless metadata stripping for JPEG,
+   gifsicle's differencing re-encoder for GIF). Lossless — the pixels come back
+   bit-identical — and never bigger, so a format with no optimiser is a no-op."
+  ^bytes [^bytes data]
+  (try (im/optimize data) (catch Throwable _ data)))
+
+(defn- op-save
+  "Encode one image. `quality` is Pillow's 1-100 lossy quality (JPEG, WebP);
+   nil keeps the codec default, and the lossless codecs ignore it. `optimize`
+   is Pillow's flag of the same name: a second, LOSSLESS pass through the
+   format's real optimiser."
+  [h fmt quality optimize]
+  (let
+    [{:keys [^Raster img]}
+     (entry h)
+
+     fmt
+     (normalise-format fmt)
 
      img
-     (if (and (#{"jpeg" "bmp"} fmt) (.. img getColorModel hasAlpha)) (flatten-rgb img) img)
+     (if (and (#{"jpeg" "bmp"} fmt) (has-alpha? img)) (flatten-rgb img) img)
 
-     baos
-     (ByteArrayOutputStream.)
+     q
+     (when (number? quality) (min 100 (max 1 (long quality))))
 
-     ok
-     (ImageIO/write img fmt baos)]
+     src
+     (->img img)
 
-    (when-not ok (throw (ex-info (str "no image writer for format " fmt) {})))
-    (.encodeToString (Base64/getEncoder) (.toByteArray baos))))
+     ^bytes raw
+     (try (if q (im/encode src (keyword fmt) q) (im/encode src (keyword fmt)))
+          (finally (im/close! src)))]
+
+    (.encodeToString (Base64/getEncoder) (if optimize (optimised raw) raw))))
 
 (defn- op-save-temp
   [h fmt]
   (let
-    [{:keys [^BufferedImage img]}
+    [{:keys [^Raster img]}
      (entry h)
 
      fmt
      (str/lower-case (or fmt "png"))
 
      norm
-     (case fmt
-       "jpg"
-       "jpeg"
-
-       fmt)
+     (normalise-format fmt)
 
      b64
-     (op-save h fmt)
+     (op-save h fmt nil false)
 
      bytes
      (.decode (Base64/getDecoder) ^String b64)
@@ -239,53 +496,58 @@
 (defn- op-copy
   [h]
   (let
-    [{:keys [^BufferedImage img mode]}
+    [{:keys [^Raster img mode palette indices transparent]}
      (entry h)
 
+     w
+     (.getWidth img)
+
+     hh
+     (.getHeight img)
+
      out
-     (new-buffered mode (.getWidth img) (.getHeight img))
+     (new-raster mode w hh)]
 
-     g
-     (.createGraphics out)]
+    (dotimes [y hh]
+      (dotimes [x w]
+        (.setRGB out x y (.getRGB img x y))))
+    (let [nh (put-img! out mode)]
+      ;; a P image copies its palette with it -- `getpalette` on the copy has to
+      ;; answer the same table Pillow's does.
+      (when palette
+        (swap! registry update nh assoc :palette palette :indices indices :transparent transparent))
+      (meta-of nh))))
 
-    (.setComposite g AlphaComposite/Src)
-    (.drawImage g img 0 0 nil)
-    (.dispose g)
-    (meta-of (put-img! out mode))))
-
-(defn- resample->hint
+(defn- resample->filter
+  "PIL resample constant -> an `imaging` resampling filter."
   [r]
   (case (int r)
     0
-    RenderingHints/VALUE_INTERPOLATION_NEAREST_NEIGHBOR
+    :nearest
 
     2
-    RenderingHints/VALUE_INTERPOLATION_BILINEAR
+    :triangle
 
-    RenderingHints/VALUE_INTERPOLATION_BICUBIC))
+    :catmull-rom))
 
 (defn- op-resize
   [h w h2 resample]
   (let
-    [{:keys [^BufferedImage img mode]}
+    [{:keys [^Raster img mode]}
      (entry h)
 
+     src
+     (->img img)
+
      out
-     (new-buffered mode w h2)
+     (im/resize src (int w) (int h2) (resample->filter resample))]
 
-     g
-     (.createGraphics out)]
-
-    (.setComposite g AlphaComposite/Src)
-    (.setRenderingHint g RenderingHints/KEY_INTERPOLATION (resample->hint resample))
-    (.drawImage g img 0 0 (int w) (int h2) nil)
-    (.dispose g)
-    (meta-of (put-img! out mode))))
+    (try (meta-of (put-img! (->raster out mode) mode)) (finally (im/close! src) (im/close! out)))))
 
 (defn- op-crop
   [h l t r b]
   (let
-    [{:keys [^BufferedImage img mode]}
+    [{:keys [^Raster img mode]}
      (entry h)
 
      w
@@ -294,122 +556,274 @@
      hh
      (max 1 (- (int b) (int t)))
 
+     iw
+     (.getWidth img)
+
+     ih
+     (.getHeight img)
+
      out
-     (new-buffered mode w hh)
+     (new-raster mode w hh)]
 
-     g
-     (.createGraphics out)]
+    (dotimes [y hh]
+      (dotimes [x w]
+        (let
+          [sx (+ x (int l))
+           sy (+ y (int t))]
 
-    (.setComposite g AlphaComposite/Src)
-    (.drawImage g img (- (int l)) (- (int t)) nil)
-    (.dispose g)
+          (when (and (>= sx 0) (< sx iw) (>= sy 0) (< sy ih))
+            (.setRGB out x y (.getRGB img sx sy))))))
     (meta-of (put-img! out mode))))
 
 (defn- op-rotate
   [h angle expand fillc]
   (let
-    [{:keys [^BufferedImage img mode]}
+    [{:keys [^Raster img mode]}
      (entry h)
 
-     w
-     (.getWidth img)
-
-     hh
-     (.getHeight img)
-
-     rad
-     (Math/toRadians (double angle))
-
-     cos
-     (Math/abs (Math/cos rad))
-
-     sin
-     (Math/abs (Math/sin rad))
-
-     nw
-     (if expand (long (Math/round (+ (* w cos) (* hh sin)))) w)
-
-     nh
-     (if expand (long (Math/round (+ (* w sin) (* hh cos)))) hh)
+     src
+     (->img img)
 
      out
-     (new-buffered mode nw nh)
+     (im/rotate src
+                (double angle)
+                {:expand (boolean expand) :background (->hex (->argb fillc mode))})]
 
-     g
-     (.createGraphics out)]
-
-    (when (some? fillc) (.setColor g (->color fillc mode)) (.fillRect g 0 0 (int nw) (int nh)))
-    (.setRenderingHint g
-                       RenderingHints/KEY_INTERPOLATION
-                       RenderingHints/VALUE_INTERPOLATION_BILINEAR)
-    (.translate g (/ (double nw) 2.0) (/ (double nh) 2.0))
-    (.rotate g (- rad))
-    (.translate g (/ (- w) 2.0) (/ (- hh) 2.0))
-    (.drawImage g img 0 0 nil)
-    (.dispose g)
-    (meta-of (put-img! out mode))))
+    (try (meta-of (put-img! (->raster out mode) mode)) (finally (im/close! src) (im/close! out)))))
 
 (defn- op-transpose
+  "PIL `Image.transpose`: every flip and quarter turn is `imaging`'s own
+   `flip`/`rotate` (counter-clockwise, like PIL), and the two diagonal methods
+   compose the pair — no pixel loop of ours."
   [h method]
   (let
-    [{:keys [^BufferedImage img mode]}
+    [{:keys [^Raster img mode]}
      (entry h)
 
-     w
-     (.getWidth img)
+     step
+     (fn [im op]
+       (let [out (if (keyword? op) (im/flip im op) (im/rotate im (double op) {:expand true}))]
+         (im/close! im)
+         out))
 
-     hh
-     (.getHeight img)
+     ops
+     (case (int method)
+       0
+       [:horizontal]
 
-     m
-     (int method)
+       1
+       [:vertical]
 
-     [nw nh]
-     (case m
-       (2 4 5 6)
-       [hh w]
+       2
+       [90]
 
-       [w hh])
+       3
+       [180]
+
+       4
+       [270]
+
+       5
+       [90 :vertical]
+
+       6
+       [270 :vertical]
+
+       [])
 
      out
-     (new-buffered mode nw nh)]
+     (reduce step (->img img) ops)]
 
-    (dotimes [y hh]
-      (dotimes [x w]
-        (let
-          [p (.getRGB img x y)
-           [nx ny] (case m
-                     0
-                     [(- w 1 x) y]
-
-                     1
-                     [x (- hh 1 y)]
-
-                     3
-                     [(- w 1 x) (- hh 1 y)]
-
-                     2
-                     [y (- w 1 x)]
-
-                     4
-                     [(- hh 1 y) x]
-
-                     5
-                     [y x]
-
-                     6
-                     [(- hh 1 y) (- w 1 x)]
-
-                     [x y])]
-
-          (.setRGB out (int nx) (int ny) p))))
-    (meta-of (put-img! out mode))))
+    (try (meta-of (put-img! (->raster out mode) mode)) (finally (im/close! out)))))
 
 (defn- lum ^long [^long p] (clamp255 (+ (* 0.299 (ch p 16)) (* 0.587 (ch p 8)) (* 0.114 (ch p 0)))))
 
+;; ---------------------------------------------------------------------------
+;; Palette ("P") images. A P raster keeps the QUANTISED RGB in its pixels, so
+;; every downstream op and codec just works; the registry entry additionally
+;; carries `:palette` (packed 0xRRGGBB per index) and `:indices` (one byte per
+;; pixel) -- what `getpalette`, `getpixel`, `tobytes` and the GIF writer report.
+;; ---------------------------------------------------------------------------
+
+
+
+
+
+
+(defn- quantize-raster
+  "Median-cut `src` down to at most `ncolors` colours.
+
+   Returns `{:img :palette :indices :transparent}`: `:img` is a raster holding
+   the quantised colours (transparent where the source was), `:palette` an int[]
+   of packed 0xRRGGBB, `:indices` one byte per pixel. When the source has
+   see-through pixels one palette slot is reserved for them, exactly as a GIF
+   transparent index. `dither?` adds Floyd-Steinberg error diffusion --
+   Pillow's default for `convert(\"P\")`.
+
+   The median cut, the nearest-colour search and the error diffusion are
+   `imaging/quantize` (Rust) -- the SAME palette engine behind `imaging/optimize`'s
+   lossy PNG and GIF paths, so a shim palette and a written GIF cannot drift
+   apart. Only the packing into a PIL raster is done here."
+  [^Raster src ^long ncolors dither?]
+  (let
+    [w
+     (.getWidth src)
+
+     hh
+     (.getHeight src)
+
+     img
+     (->img src)]
+
+    (try (let
+           [{:keys [palette indices transparent ^bytes rgba]}
+            (im/quantize img {:colors ncolors :dither (boolean dither?)})
+
+            out
+            (new-raster "P" w hh)]
+
+           (dotimes [y hh]
+             (dotimes [x w]
+               (let
+                 [o (* 4 (+ (* y w) x))
+                  a (bit-and (aget rgba (+ o 3)) 0xff)]
+
+                 (.setRGB out
+                          x
+                          y
+                          (if (< a 128)
+                            0
+                            (argb 255
+                                  (bit-and (aget rgba o) 0xff)
+                                  (bit-and (aget rgba (+ o 1)) 0xff)
+                                  (bit-and (aget rgba (+ o 2)) 0xff)))))))
+           {:img out :palette (int-array palette) :indices indices :transparent transparent})
+         (finally (im/close! img)))))
+
+(defn- put-palette-img!
+  "Register a quantisation result as one P image, palette and all."
+  [{:keys [img palette indices transparent]}]
+  (let [h (put-img! img "P")]
+    (swap! registry update h assoc :palette palette :indices indices :transparent transparent)
+    h))
+
+(defn- op-quantize
+  [h colors dither]
+  (let [{:keys [^Raster img]} (entry h)]
+    (meta-of (put-palette-img! (quantize-raster img (long (or colors 256)) (boolean dither))))))
+
+(defn- op-getpalette
+  "The image's palette as Pillow's flat [r g b r g b ...], or nil when it has none."
+  [h]
+  (when-let [^ints pal (:palette (entry h))]
+    (vec (mapcat (fn [c]
+                   [(ch c 16) (ch c 8) (ch c 0)])
+                 pal))))
+
+(defn- op-putpalette
+  "Install a flat [r g b ...] palette IN PLACE (Pillow mutates the image and
+   switches it to mode P): the pixels become the colours their index selects, so
+   a later save or convert shows the new table."
+  [h data]
+  (let
+    [{:keys [^Raster img ^bytes indices]}
+     (entry h)
+
+     pal
+     (int-array (map (fn [[r g b]]
+                       (bit-or (bit-shift-left (bit-and (long r) 255) 16)
+                               (bit-shift-left (bit-and (long g) 255) 8)
+                               (bit-and (long b) 255)))
+                     (partition 3 3 [0 0] (map long data))))
+
+     w
+     (.getWidth img)
+
+     hh
+     (.getHeight img)
+
+     ind
+     (or indices (byte-array (* w hh)))]
+
+    (when (zero? (alength pal)) (throw (ex-info "palette must hold at least one RGB triple" {})))
+    (dotimes [y hh]
+      (dotimes [x w]
+        (let
+          [i (+ (* y w) x)
+           idx (if indices
+                 (bit-and (aget ind i) 255)
+                 ;; an L / 1 raster indexes the new table by its gray value
+                 (ch (.getRGB img x y) 16))
+           idx (min idx (dec (alength pal)))
+           c (aget pal (int idx))]
+
+          (aset ind i (unchecked-byte idx))
+          (.setRGB img x y (argb 255 (ch c 16) (ch c 8) (ch c 0))))))
+    (swap! registry update (long h) assoc :mode "P" :palette pal :indices ind :transparent nil)
+    (meta-of h)))
+
+(defn- op-save-all
+  "Write `handles` as ONE multi-frame file. GIF is the only multi-frame writer
+   here, so anything else is a PIL-visible error rather than an animation that
+   silently collapses to its first frame."
+  [handles fmt duration loop-count optimize]
+  (let
+    [fmt
+     (normalise-format fmt)
+
+     _
+     (when-not (= fmt "gif")
+       (throw (ex-info (str "save_all/append_images is only supported for GIF here, not "
+                            (str/upper-case fmt))
+                       {})))
+
+     hs
+     (mapv long handles)
+
+     rasters
+     (mapv (fn [h]
+             (:img (entry h)))
+           hs)
+
+     ^Raster r0
+     (first rasters)
+
+     w
+     (.getWidth r0)
+
+     hh
+     (.getHeight r0)
+
+     _
+     (when-not (every? (fn [^Raster r]
+                         (and (= w (.getWidth r)) (= hh (.getHeight r))))
+                       rasters)
+       (throw (ex-info "every frame of an animation must have the same size" {})))
+
+     delays
+     (if (sequential? duration)
+       (mapv #(long (or % 0)) duration)
+       (repeat (count rasters) (long (or duration 0))))
+
+     frames
+     (mapv (fn [^Raster r d]
+             ;; the cdylib owns palette quantization, LZW and disposal now, so each
+             ;; frame crosses as a full-canvas straight-RGBA8 buffer + its delay.
+             {:delay-ms d :rgba (raster->rgba r)})
+           rasters
+           delays)
+
+     ^bytes raw
+     (gif/encode {:width w
+                  :height hh
+                  :loop-count (when (some? loop-count) (long loop-count))
+                  :frames frames})]
+
+    (.encodeToString (Base64/getEncoder) (if optimize (optimised raw) raw))))
+
 (defn- op-convert
   [h target]
-  (let [{:keys [^BufferedImage img mode]} (entry h)]
+  (let [{:keys [^Raster img mode]} (entry h)]
     (if (= mode (str target))
       (op-copy h)
       (let
@@ -418,17 +832,22 @@
          target (str target)]
 
         (case target
+          ;; P: an adaptive median-cut palette (Pillow's default here is the web
+          ;; palette; an adaptive one is both closer to `quantize` and better).
+          "P"
+          (meta-of (put-palette-img! (quantize-raster img 256 true)))
+
           ;; sRGB-space luminance (Pillow's ITU-R 601-2), computed per pixel —
           ;; NOT Java2D's linear-space drawImage conversion.
-          ("L" "I" "F" "P")
-          (let [out (new-buffered "L" w hh)]
+          ("L" "I" "F")
+          (let [out (new-raster "L" w hh)]
             (dotimes [y hh]
               (dotimes [x w]
                 (.setRGB out x y (unchecked-int (gray-argb (lum (.getRGB img x y)))))))
             (meta-of (put-img! out target)))
 
           "1"
-          (let [out (new-buffered "1" w hh)]
+          (let [out (new-raster "1" w hh)]
             (dotimes [y hh]
               (dotimes [x w]
                 (let [v (if (>= (lum (.getRGB img x y)) 128) 255 0)]
@@ -436,7 +855,7 @@
             (meta-of (put-img! out "1")))
 
           "LA"
-          (let [out (new-buffered "LA" w hh)]
+          (let [out (new-raster "LA" w hh)]
             (dotimes [y hh]
               (dotimes [x w]
                 (let
@@ -447,32 +866,32 @@
             (meta-of (put-img! out "LA")))
 
           ;; RGB / RGBA: a straight channel copy (drawImage preserves sRGB).
-          (let
-            [out (new-buffered target w hh)
-             g (.createGraphics out)]
-
-            (.setComposite g AlphaComposite/Src)
-            (.drawImage g img 0 0 nil)
-            (.dispose g)
+          (let [out (new-raster target w hh)]
+            (dotimes [y hh]
+              (dotimes [x w]
+                (.setRGB out x y (.getRGB img x y))))
             (meta-of (put-img! out target))))))))
 
 (defn- op-getpixel
   [h x y]
   (let
-    [{:keys [^BufferedImage img mode]}
+    [{:keys [^Raster img mode ^bytes indices]}
      (entry h)
 
      p
      (.getRGB img (int x) (int y))]
 
-    (case (str mode)
-      ("L" "1" "I" "F" "P")
-      (ch p 16)
+    (if (and (= "P" (str mode)) indices)
+      ;; a P pixel is its PALETTE INDEX, not the colour that index resolves to.
+      (bit-and (long (aget indices (+ (* (long y) (.getWidth img)) (long x)))) 0xFF)
+      (case (str mode)
+        ("L" "1" "I" "F" "P")
+        (ch p 16)
 
-      ("RGBA" "LA")
-      [(ch p 16) (ch p 8) (ch p 0) (ch p 24)]
+        ("RGBA" "LA")
+        [(ch p 16) (ch p 8) (ch p 0) (ch p 24)]
 
-      [(ch p 16) (ch p 8) (ch p 0)])))
+        [(ch p 16) (ch p 8) (ch p 0)]))))
 
 (defn- color->argb
   ^long [c _mode]
@@ -499,7 +918,7 @@
 
 (defn- op-putpixel
   [h x y c]
-  (let [{:keys [^BufferedImage img]} (entry h)]
+  (let [{:keys [^Raster img]} (entry h)]
     (.setRGB img (int x) (int y) (unchecked-int (color->argb c nil)))
     nil))
 
@@ -519,10 +938,10 @@
      {s :img}
      (entry src)
 
-     ^BufferedImage d
+     ^Raster d
      d
 
-     ^BufferedImage s
+     ^Raster s
      s
 
      x
@@ -554,7 +973,7 @@
 
           (when (and (>= dx 0) (< dx dw) (>= dy 0) (< dy dh))
             (if mimg
-              (let [mp (ch (.getRGB ^BufferedImage mimg i j) 0)]
+              (let [mp (ch (.getRGB ^Raster mimg i j) 0)]
                 (cond (>= mp 255) (.setRGB d dx dy (.getRGB s i j))
                       (pos? mp) (.setRGB d
                                          dx
@@ -568,7 +987,7 @@
 (defn- op-getbbox
   [h]
   (let
-    [{:keys [^BufferedImage img mode]}
+    [{:keys [^Raster img mode]}
      (entry h)
 
      w
@@ -612,7 +1031,7 @@
 (defn- op-histogram
   [h]
   (let
-    [{:keys [^BufferedImage img mode]}
+    [{:keys [^Raster img mode]}
      (entry h)
 
      w
@@ -651,7 +1070,7 @@
 (defn- op-tobytes
   [h]
   (let
-    [{:keys [^BufferedImage img mode]}
+    [{:keys [^Raster img mode ^bytes indices]}
      (entry h)
 
      w
@@ -673,26 +1092,29 @@
      buf
      (byte-array (* w hh bpp))]
 
-    (dotimes [y hh]
-      (dotimes [x w]
-        (let
-          [p (.getRGB img x y)
-           i (* (+ (* y w) x) bpp)]
+    (if (and (= "P" (str mode)) indices (= (alength indices) (* w hh)))
+      ;; a P image's bytes ARE its palette indices.
+      (.encodeToString (Base64/getEncoder) ^bytes indices)
+      (do (dotimes [y hh]
+            (dotimes [x w]
+              (let
+                [p (.getRGB img x y)
+                 i (* (+ (* y w) x) bpp)]
 
-          (case bpp
-            1
-            (aset buf i (unchecked-byte (ch p 16)))
+                (case bpp
+                  1
+                  (aset buf i (unchecked-byte (ch p 16)))
 
-            4
-            (do (aset buf i (unchecked-byte (ch p 16)))
-                (aset buf (+ i 1) (unchecked-byte (ch p 8)))
-                (aset buf (+ i 2) (unchecked-byte (ch p 0)))
-                (aset buf (+ i 3) (unchecked-byte (ch p 24))))
+                  4
+                  (do (aset buf i (unchecked-byte (ch p 16)))
+                      (aset buf (+ i 1) (unchecked-byte (ch p 8)))
+                      (aset buf (+ i 2) (unchecked-byte (ch p 0)))
+                      (aset buf (+ i 3) (unchecked-byte (ch p 24))))
 
-            (do (aset buf i (unchecked-byte (ch p 16)))
-                (aset buf (+ i 1) (unchecked-byte (ch p 8)))
-                (aset buf (+ i 2) (unchecked-byte (ch p 0))))))))
-    (.encodeToString (Base64/getEncoder) buf)))
+                  (do (aset buf i (unchecked-byte (ch p 16)))
+                      (aset buf (+ i 1) (unchecked-byte (ch p 8)))
+                      (aset buf (+ i 2) (unchecked-byte (ch p 0))))))))
+          (.encodeToString (Base64/getEncoder) buf)))))
 
 (defn- op-frombytes
   [mode w h b64]
@@ -714,7 +1136,7 @@
        3)
 
      out
-     (new-buffered mode w h)]
+     (new-raster mode w h)]
 
     (dotimes [y h]
       (dotimes [x w]
@@ -739,7 +1161,7 @@
 (defn- op-point
   [h lut]
   (let
-    [{:keys [^BufferedImage img mode]}
+    [{:keys [^Raster img mode]}
      (entry h)
 
      w
@@ -752,7 +1174,7 @@
      (int-array (map int lut))
 
      out
-     (new-buffered mode w hh)]
+     (new-raster mode w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
@@ -765,118 +1187,46 @@
     (meta-of (put-img! out mode))))
 
 (defn- op-conv
+  "PIL `ImageFilter.Kernel`: the convolution is `imaging/convolve` — edge
+   clamping, `scale`/`offset` arithmetic and the alpha carry all live there."
   [h size kernel scale offset]
   (let
-    [{:keys [^BufferedImage img mode]}
+    [{:keys [^Raster img mode]}
      (entry h)
 
-     w
-     (.getWidth img)
-
-     hh
-     (.getHeight img)
-
-     k
-     (int size)
-
-     half
-     (quot k 2)
-
-     ker
-     (double-array (map double kernel))
-
-     sc
-     (let [s (double scale)]
-       (if (zero? s) 1.0 s))
-
-     off
-     (double offset)
+     src
+     (->img img)
 
      out
-     (new-buffered mode w hh)]
+     (im/convolve src
+                  (int size)
+                  (mapv double kernel)
+                  {:scale (double scale) :offset (double offset)})]
 
-    (dotimes [y hh]
-      (dotimes [x w]
-        (let [acc (double-array 3)]
-          (dotimes [ky k]
-            (dotimes [kx k]
-              (let
-                [sx (min (- w 1) (max 0 (+ x (- kx half))))
-                 sy (min (- hh 1) (max 0 (+ y (- ky half))))
-                 p (.getRGB img sx sy)
-                 wgt (aget ker (+ (* ky k) kx))]
-
-                (aset acc 0 (+ (aget acc 0) (* wgt (ch p 16))))
-                (aset acc 1 (+ (aget acc 1) (* wgt (ch p 8))))
-                (aset acc 2 (+ (aget acc 2) (* wgt (ch p 0)))))))
-          (.setRGB out
-                   x
-                   y
-                   (unchecked-int (argb (ch (.getRGB img x y) 24)
-                                        (clamp255 (+ off (/ (aget acc 0) sc)))
-                                        (clamp255 (+ off (/ (aget acc 1) sc)))
-                                        (clamp255 (+ off (/ (aget acc 2) sc)))))))))
-    (meta-of (put-img! out mode))))
+    (try (meta-of (put-img! (->raster out mode) mode)) (finally (im/close! src) (im/close! out)))))
 
 (defn- op-rank
+  "PIL's rank family (`RankFilter`, `MinFilter`, `MedianFilter`, `MaxFilter`):
+   `imaging/rank-filter` sorts every channel over the k x k window and keeps the
+   `rank`-th smallest."
   [h size rank]
   (let
-    [{:keys [^BufferedImage img mode]}
+    [{:keys [^Raster img mode]}
      (entry h)
 
-     w
-     (.getWidth img)
-
-     hh
-     (.getHeight img)
-
-     k
-     (int size)
-
-     half
-     (quot k 2)
-
      n
-     (* k k)
+     (* (long size) (long size))
 
-     rank
-     (int (min (dec n) (max 0 (long rank))))
+     r
+     (min (dec n) (max 0 (long rank)))
+
+     src
+     (->img img)
 
      out
-     (new-buffered mode w hh)]
+     (im/rank-filter src (int size) r)]
 
-    (dotimes [y hh]
-      (dotimes [x w]
-        (let
-          [rs (int-array n)
-           gs (int-array n)
-           bs (int-array n)
-           as (int-array n)
-           c (int-array 1)]
-
-          (dotimes [ky k]
-            (dotimes [kx k]
-              (let
-                [sx (min (- w 1) (max 0 (+ x (- kx half))))
-                 sy (min (- hh 1) (max 0 (+ y (- ky half))))
-                 p (.getRGB img sx sy)
-                 i (aget c 0)]
-
-                (aset rs i (int (ch p 16)))
-                (aset gs i (int (ch p 8)))
-                (aset bs i (int (ch p 0)))
-                (aset as i (int (ch p 24)))
-                (aset c 0 (inc i)))))
-          (Arrays/sort rs)
-          (Arrays/sort gs)
-          (Arrays/sort bs)
-          (Arrays/sort as)
-          (.setRGB out
-                   x
-                   y
-                   (unchecked-int
-                     (argb (aget as rank) (aget rs rank) (aget gs rank) (aget bs rank)))))))
-    (meta-of (put-img! out mode))))
+    (try (meta-of (put-img! (->raster out mode) mode)) (finally (im/close! src) (im/close! out)))))
 
 (defn- op-blend
   [ha hb t]
@@ -887,10 +1237,10 @@
      {b :img}
      (entry hb)
 
-     ^BufferedImage a
+     ^Raster a
      a
 
-     ^BufferedImage b
+     ^Raster b
      b
 
      t
@@ -903,7 +1253,7 @@
      (.getHeight a)
 
      out
-     (new-buffered ma w hh)]
+     (new-raster ma w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
@@ -922,13 +1272,13 @@
      {m :img}
      (entry hmask)
 
-     ^BufferedImage a
+     ^Raster a
      a
 
-     ^BufferedImage b
+     ^Raster b
      b
 
-     ^BufferedImage m
+     ^Raster m
      m
 
      w
@@ -938,7 +1288,7 @@
      (.getHeight a)
 
      out
-     (new-buffered ma w hh)]
+     (new-raster ma w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
@@ -1038,10 +1388,10 @@
      {b :img}
      (entry hb)
 
-     ^BufferedImage a
+     ^Raster a
      a
 
-     ^BufferedImage b
+     ^Raster b
      b
 
      w
@@ -1051,7 +1401,7 @@
      (.getHeight a)
 
      out
-     (new-buffered ma w hh)]
+     (new-raster ma w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
@@ -1071,7 +1421,7 @@
 (defn- op-split
   [h]
   (let
-    [{:keys [^BufferedImage img mode]}
+    [{:keys [^Raster img mode]}
      (entry h)
 
      w
@@ -1091,7 +1441,7 @@
        [16 8 0])]
 
     (mapv (fn [sh]
-            (let [out (new-buffered "L" w hh)]
+            (let [out (new-raster "L" w hh)]
               (dotimes [y hh]
                 (dotimes [x w]
                   (.setRGB out x y (unchecked-int (gray-argb (ch (.getRGB img x y) sh))))))
@@ -1107,7 +1457,7 @@
      imgs
      (mapv #(:img (entry %)) handles)
 
-     ^BufferedImage f
+     ^Raster f
      (first imgs)
 
      w
@@ -1117,12 +1467,12 @@
      (.getHeight f)
 
      out
-     (new-buffered mode w hh)]
+     (new-raster mode w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
         (let
-          [vals (mapv #(ch (.getRGB ^BufferedImage % x y) 0) imgs)
+          [vals (mapv #(ch (.getRGB ^Raster % x y) 0) imgs)
            [r g b a] vals]
 
           (.setRGB out
@@ -1142,7 +1492,7 @@
   "Roll `img` by (dx, dy) with wraparound (ImageChops.offset)."
   [h dx dy]
   (let
-    [{:keys [^BufferedImage img mode]}
+    [{:keys [^Raster img mode]}
      (entry h)
 
      w
@@ -1158,7 +1508,7 @@
      (long dy)
 
      out
-     (new-buffered mode w hh)]
+     (new-raster mode w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
@@ -1175,10 +1525,10 @@
      {s :img}
      (entry hsrc)
 
-     ^BufferedImage d
+     ^Raster d
      d
 
-     ^BufferedImage s
+     ^Raster s
      s
 
      dx
@@ -1200,7 +1550,7 @@
      (.getHeight s)
 
      out
-     (new-buffered "RGBA" w hh)]
+     (new-raster "RGBA" w hh)]
 
     (dotimes [y hh]
       (dotimes [x w]
@@ -1239,7 +1589,7 @@
    Out-of-bounds samples take `fillc`. Nearest-neighbour (PIL's AFFINE default)."
   [h ow oh method coeffs fillc]
   (let
-    [{:keys [^BufferedImage img mode]}
+    [{:keys [^Raster img mode]}
      (entry h)
 
      ow
@@ -1261,13 +1611,10 @@
      (= (str method) "PERSPECTIVE")
 
      out
-     (new-buffered mode ow oh)
-
-     ^Color fc
-     (->color fillc mode)
+     (new-raster mode ow oh)
 
      fill-argb
-     (.getRGB fc)]
+     (->argb fillc mode)]
 
     (dotimes [y oh]
       (dotimes [x ow]
@@ -1289,14 +1636,85 @@
 ;; arc start/end. Colours are resolved Python-side via ImageColor.
 ;; ---------------------------------------------------------------------------
 
+(def ^:private sans-family
+  "The one font `imaging` renders text with (embedded; no system font lookup)."
+  "Noto Sans")
+
+(defn- draw-into!
+  "Run a batch of `imaging` draw ops against this raster, IN PLACE. Vector
+   drawing lives in the cdylib (tiny-skia), so the raster round-trips through a
+   live image for the duration of the batch."
+  [^Raster r ops]
+  (let [src (->img r)]
+    (try (im/draw! src (vec ops))
+         (let
+           [out (->raster src (if (has-alpha? r) "RGBA" "RGB"))
+            w (.getWidth r)
+            h (.getHeight r)]
+
+           (dotimes [y h]
+             (dotimes [x w]
+               (.setRGB r x y (.getRGB out x y)))))
+         (finally (im/close! src)))
+    nil))
+
+(defn- arc-path
+  "SVG path data for a PIL arc/chord/pieslice over the bounding box
+   [x0 y0 x1 y1]. PIL angles are degrees CLOCKWISE from 3 o'clock, which is what
+   screen-space `(cos a, sin a)` already gives with y pointing down."
+  [kind x0 y0 x1 y1 start end]
+  (let
+    [cx
+     (/ (+ (double x0) (double x1)) 2.0)
+
+     cy
+     (/ (+ (double y0) (double y1)) 2.0)
+
+     rx
+     (/ (- (double x1) (double x0)) 2.0)
+
+     ry
+     (/ (- (double y1) (double y0)) 2.0)
+
+     sweep
+     (min 360.0 (max 0.0 (- (double end) (double start))))
+
+     pt
+     (fn [^double a]
+       [(+ cx (* rx (Math/cos (Math/toRadians a)))) (+ cy (* ry (Math/sin (Math/toRadians a))))])
+
+     [sx sy]
+     (pt (double start))
+
+     ;; A single SVG arc cannot span a full turn: split it in two.
+     [mx my]
+     (pt (+ start (/ sweep 2.0)))
+
+     [ex ey]
+     (pt (+ start sweep))
+
+     laf
+     (if (> sweep 180.0) 1 0)
+
+     body
+     (if (>= sweep 359.999)
+       (format "M %s %s A %s %s 0 1 1 %s %s A %s %s 0 1 1 %s %s" sx sy rx ry mx my rx ry ex ey)
+       (format "M %s %s A %s %s 0 %s 1 %s %s" sx sy rx ry laf ex ey))]
+
+    (case kind
+      "pieslice"
+      (str (format "M %s %s L %s %s" cx cy sx sy) (subs body (count (format "M %s %s" sx sy))) " Z")
+
+      "chord"
+      (str body " Z")
+
+      body)))
+
 (defn- op-draw
   [h op xy opts]
   (let
-    [{:keys [^BufferedImage img]}
+    [{:keys [^Raster img]}
      (entry h)
-
-     g
-     (.createGraphics img)
 
      pts
      (mapv double xy)
@@ -1308,153 +1726,149 @@
      (get opts "outline")
 
      width
-     (int (or (get opts "width") 1))]
+     (int (or (get opts "width") 1))
 
-    (.setRenderingHint g RenderingHints/KEY_ANTIALIASING RenderingHints/VALUE_ANTIALIAS_ON)
-    (.setStroke g (BasicStroke. (float (max 1 width))))
-    (case (str op)
-      "point"
-      (when (some? fill)
-        (.setColor g (->color fill "RGB"))
-        (doseq [[x y] (partition 2 pts)]
-          (.fillRect g (int x) (int y) 1 1)))
+     fc
+     (when (some? fill) (->hex (->argb fill "RGB")))
 
-      "line"
-      (when (some? fill)
-        (.setColor g (->color fill "RGB"))
-        (doseq [[[x1 y1] [x2 y2]] (partition 2 1 (partition 2 pts))]
-          (.drawLine g (int x1) (int y1) (int x2) (int y2))))
+     oc
+     (when (some? outline) (->hex (->argb outline "RGB")))
 
-      "rectangle"
-      (let
-        [[x0 y0 x1 y1]
-         pts
+     stroke
+     (fn [c]
+       {:stroke c :stroke-width (max 1 width) :cap :butt :join :miter})
 
-         rx
-         (int (min (double x0) (double x1)))
+     ops
+     (case (str op)
+       "point"
+       (when fc
+         (mapv (fn [[x y]]
+                 {:op :rect :x x :y y :w 1 :h 1 :fill fc})
+               (partition 2 pts)))
 
-         ry
-         (int (min (double y0) (double y1)))
+       "line"
+       (when fc
+         ;; +0.5 puts an odd-width stroke on the pixel CENTRE line, so a
+         ;; horizontal/vertical 1px line lands crisp instead of half-covering
+         ;; two rows the way a boundary-aligned path would.
+         (let [o (if (odd? (max 1 width)) 0.5 0.0)]
+           [(merge {:op :polyline
+                    :points (mapv (fn [[x y]]
+                                    [(+ (double x) o) (+ (double y) o)])
+                                  (partition 2 pts))}
+                   (stroke fc))]))
 
-         rw
-         (int (Math/abs (- (double x1) (double x0))))
+       "rectangle"
+       (let
+         [[x0 y0 x1 y1]
+          pts
 
-         rh
-         (int (Math/abs (- (double y1) (double y0))))]
+          rx
+          (min (double x0) (double x1))
 
-        (when (some? fill) (.setColor g (->color fill "RGB")) (.fillRect g rx ry (inc rw) (inc rh)))
-        (when (some? outline) (.setColor g (->color outline "RGB")) (.drawRect g rx ry rw rh)))
+          ry
+          (min (double y0) (double y1))
 
-      "ellipse"
-      (let
-        [[x0 y0 x1 y1]
-         pts
+          rw
+          (Math/abs (- (double x1) (double x0)))
 
-         w
-         (int (- (double x1) (double x0)))
+          rh
+          (Math/abs (- (double y1) (double y0)))]
 
-         hh
-         (int (- (double y1) (double y0)))]
+         (cond-> []
+           fc
+           (conj {:op :rect :x rx :y ry :w (inc rw) :h (inc rh) :fill fc})
 
-        (when (some? fill)
-          (.setColor g (->color fill "RGB"))
-          (.fillOval g (int x0) (int y0) (inc w) (inc hh)))
-        (when (some? outline)
-          (.setColor g (->color outline "RGB"))
-          (.drawOval g (int x0) (int y0) w hh)))
+           oc
+           (conj (merge {:op :rect :x (+ rx 0.5) :y (+ ry 0.5) :w (max 1.0 rw) :h (max 1.0 rh)}
+                        (stroke oc)))))
 
-      "polygon"
-      (let
-        [n
-         (int (/ (count pts) 2))
+       "ellipse"
+       (let
+         [[x0 y0 x1 y1]
+          pts
 
-         xs
-         (int-array (map int (take-nth 2 pts)))
+          w
+          (- (double x1) (double x0))
 
-         ys
-         (int-array (map int (take-nth 2 (rest pts))))]
+          hh
+          (- (double y1) (double y0))]
 
-        (when (some? fill) (.setColor g (->color fill "RGB")) (.fillPolygon g xs ys n))
-        (when (some? outline) (.setColor g (->color outline "RGB")) (.drawPolygon g xs ys n)))
+         (cond-> []
+           fc
+           (conj {:op :ellipse
+                  :cx (+ (double x0) (/ (inc w) 2.0))
+                  :cy (+ (double y0) (/ (inc hh) 2.0))
+                  :rx (/ (inc w) 2.0)
+                  :ry (/ (inc hh) 2.0)
+                  :fill fc})
 
-      ("arc" "chord" "pieslice")
-      (let
-        [[x0 y0 x1 y1]
-         pts
+           oc
+           (conj (merge {:op :ellipse
+                         :cx (+ (double x0) (/ w 2.0))
+                         :cy (+ (double y0) (/ hh 2.0))
+                         :rx (max 0.5 (/ w 2.0))
+                         :ry (max 0.5 (/ hh 2.0))}
+                        (stroke oc)))))
 
-         start
-         (double (or (get opts "start") 0))
+       "polygon"
+       (let [poly (mapv vec (partition 2 pts))]
+         (cond-> []
+           fc
+           (conj {:op :polygon :points poly :close true :fill fc})
 
-         end
-         (double (or (get opts "end") 0))
+           oc
+           (conj (merge {:op :polygon :points poly :close true} (stroke oc)))))
 
-         kind
-         (case (str op)
-           "arc"
-           java.awt.geom.Arc2D/OPEN
+       ("arc" "chord" "pieslice")
+       (let
+         [[x0 y0 x1 y1]
+          pts
 
-           "chord"
-           java.awt.geom.Arc2D/CHORD
+          d
+          (arc-path (str op)
+                    x0
+                    y0
+                    x1
+                    y1
+                    (double (or (get opts "start") 0))
+                    (double (or (get opts "end") 0)))
 
-           java.awt.geom.Arc2D/PIE)
+          line-c
+          (or oc (when (= (str op) "arc") fc))]
 
-         arc
-         (java.awt.geom.Arc2D$Double. (double x0)
-                                      (double y0)
-                                      (- (double x1) (double x0))
-                                      (- (double y1) (double y0))
-                                      (- start)
-                                      (- (- end start))
-                                      kind)]
+         (cond-> []
+           (and fc (not= (str op) "arc"))
+           (conj {:op :path :d d :fill fc})
 
-        (when (and (some? fill) (not= (str op) "arc"))
-          (.setColor g (->color fill "RGB"))
-          (.fill g arc))
-        (let [oc (or outline (when (= (str op) "arc") fill))]
-          (when (some? oc) (.setColor g (->color oc "RGB")) (.draw g arc))))
+           line-c
+           (conj (merge {:op :path :d d} (stroke line-c)))))
 
-      "text"
-      (let
-        [[x y]
-         pts
+       "text"
+       (let
+         [[x y]
+          pts
 
-         s
-         (str (get opts "text"))
+          size
+          (double (or (get opts "font_size") 12))]
 
-         size
-         (int (or (get opts "font_size") 12))]
+         [{:op :text
+           :text (str (get opts "text"))
+           :x x
+           :y (+ (double y) (Math/round (* 0.8 size)))
+           :size size
+           :family sans-family
+           :fill (or fc (->hex (->argb [0 0 0] "RGB")))}])
 
-        (.setFont g (Font. "SansSerif" Font/PLAIN size))
-        (.setColor g (->color (or fill [0 0 0]) "RGB"))
-        (let [fm (.getFontMetrics g)]
-          (.drawString g s (int x) (int (+ (double y) (.getAscent fm))))))
+       nil)]
 
-      nil)
-    (.dispose g)
+    (when (seq ops) (draw-into! img ops))
     nil))
 
 (defn- op-textbbox
   [text size]
-  (let
-    [img
-     (BufferedImage. 1 1 BufferedImage/TYPE_INT_RGB)
-
-     g
-     (.createGraphics img)]
-
-    (.setFont g (Font. "SansSerif" Font/PLAIN (int size)))
-    (let
-      [fm
-       (.getFontMetrics g)
-
-       w
-       (.stringWidth fm (str text))
-
-       hh
-       (.getHeight fm)]
-
-      (.dispose g)
-      [0 0 w hh])))
+  (let [m (im/text-measure {:text (str text) :size (double size) :family sans-family})]
+    [0 0 (long (Math/ceil (double (:width m 0)))) (long (Math/round (* 1.2 (double size))))]))
 
 ;; ---------------------------------------------------------------------------
 ;; Bridge: name -> Clojure fn. Wrapped by `wrap-ifn` at install time (positional
@@ -1464,23 +1878,34 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- pil-envelope
-  ;; `awt-boot/ensure!` is forced HERE because every host image op funnels
-  ;; through this envelope: in a native image the headless/font bootstrap has to
-  ;; run at runtime before the first Graphics2D call, or Java2D dies with
-  ;; NoClassDefFoundError java/awt/event/InputEvent.
+  ;; Every host image op funnels through this envelope; failures come back to
+  ;; Python as [false message] rather than a JVM stack trace.
   [f]
-  (try (awt-boot/ensure!) [true (f)] (catch Throwable t [false (str (or (.getMessage t) t))])))
+  (try [true (f)] (catch Throwable t [false (str (or (.getMessage t) t))])))
 
 (defn- pil-bridge-bindings
-  "Host callables (Java2D / ImageIO) the PIL shim delegates to. All image ops go
+  "Host callables (imaging-backed) the PIL shim delegates to. All image ops go
    through here; the Python side only holds integer handles + base64 blobs."
   []
   {"__vis_pil_new__" (fn [mode w h fill]
                        (pil-envelope #(op-new mode (long w) (long h) fill)))
    "__vis_pil_open__" (fn [b64]
                         (pil-envelope #(op-open b64)))
-   "__vis_pil_save__" (fn [h fmt]
-                        (pil-envelope #(op-save h fmt)))
+   "__vis_pil_save__" (fn [h fmt quality optimize]
+                        (pil-envelope #(op-save h fmt quality (boolean optimize))))
+   "__vis_pil_save_all__" (fn [hs fmt duration loop-count optimize]
+                            (pil-envelope
+                              #(op-save-all hs fmt duration loop-count (boolean optimize))))
+   "__vis_pil_frames__" (fn [h]
+                          (pil-envelope #(op-frames h)))
+   "__vis_pil_seek__" (fn [h n]
+                        (pil-envelope #(op-seek h (long n))))
+   "__vis_pil_quantize__" (fn [h colors dither]
+                            (pil-envelope #(op-quantize h colors dither)))
+   "__vis_pil_getpalette__" (fn [h]
+                              (pil-envelope #(op-getpalette h)))
+   "__vis_pil_putpalette__" (fn [h data]
+                              (pil-envelope #(op-putpalette h data)))
    "__vis_pil_save_temp__" (fn [h fmt]
                              (pil-envelope #(op-save-temp h fmt)))
    "__vis_pil_meta__" (fn [h]
@@ -1546,7 +1971,7 @@
   (vis/extension
     {:ext/name "foundation-shim-pil"
      :ext/description
-     "Sandbox shim: a broad Pillow (PIL) surface (PIL.Image with new/open/save/copy/resize/thumbnail/reduce/crop/rotate/transpose/transform(AFFINE/EXTENT/PERSPECTIVE/QUAD/MESH)/convert/quantize/paste/alpha_composite/getpixel/putpixel/point/split/merge/getbbox/getcolors/getextrema/histogram/entropy/getprojection/tobytes/frombytes/getdata/putdata/getchannel/putalpha/get-put-palette/seek/tell/n_frames + module new/open/blend/composite/alpha_composite/eval/merge/fromarray/frombytes/linear_gradient/radial_gradient/effect_noise/effect_mandelbrot; ImageDraw point/line/rectangle/rounded_rectangle/ellipse/polygon/regular_polygon/circle/arc/chord/pieslice/text/multiline_text/textbbox/floodfill; ImageFilter blur/sharpen/edge/emboss/GaussianBlur/BoxBlur/Median/Min/Max/Mode/UnsharpMask/Kernel/Color3DLUT; ImageOps grayscale/invert/mirror/flip/posterize/solarize/autocontrast/equalize/expand/crop/fit/pad/contain/cover/scale/colorize/exif_transpose/deform; ImageColor named+hex+rgb(); ImageEnhance Color/Contrast/Brightness/Sharpness; ImageChops difference/add/subtract/multiply/screen/lighter/darker/add-sub_modulo/logical_*/overlay/soft_light/hard_light/offset/blend/composite; ImageStat mean/median/stddev/var/rms/extrema; ImageMath eval; ImageFont truetype/load_default; plus ImageSequence/ImagePalette/ImageTransform/features/ExifTags/TiffTags) backed by a pure-JVM Java2D/ImageIO renderer. Image.show() surfaces the image inline as a session attachment. No pip, no native wheel."
+     "Sandbox shim: a broad Pillow (PIL) surface (PIL.Image with new/open/save/copy/resize/thumbnail/reduce/crop/rotate/transpose/transform(AFFINE/EXTENT/PERSPECTIVE/QUAD/MESH)/convert/quantize/paste/alpha_composite/getpixel/putpixel/point/split/merge/getbbox/getcolors/getextrema/histogram/entropy/getprojection/tobytes/frombytes/getdata/putdata/getchannel/putalpha/get-put-palette/seek/tell/n_frames + module new/open/blend/composite/alpha_composite/eval/merge/fromarray/frombytes/linear_gradient/radial_gradient/effect_noise/effect_mandelbrot; ImageDraw point/line/rectangle/rounded_rectangle/ellipse/polygon/regular_polygon/circle/arc/chord/pieslice/text/multiline_text/textbbox/floodfill; ImageFilter blur/sharpen/edge/emboss/GaussianBlur/BoxBlur/Median/Min/Max/Mode/UnsharpMask/Kernel/Color3DLUT; ImageOps grayscale/invert/mirror/flip/posterize/solarize/autocontrast/equalize/expand/crop/fit/pad/contain/cover/scale/colorize/exif_transpose/deform; ImageColor named+hex+rgb(); ImageEnhance Color/Contrast/Brightness/Sharpness; ImageChops difference/add/subtract/multiply/screen/lighter/darker/add-sub_modulo/logical_*/overlay/soft_light/hard_light/offset/blend/composite; ImageStat mean/median/stddev/var/rms/extrema; ImageMath eval; ImageFont truetype/load_default; plus ImageSequence/ImagePalette/ImageTransform/features/ExifTags/TiffTags) backed by the com.blockether/imaging FFM renderer (Rust image+tiny-skia, no java.desktop). Animated GIF reads AND writes (seek/n_frames/save(save_all=True, append_images/duration/loop)); JPEG/WebP `quality`; adaptive-palette quantize/get-putpalette; getexif()/_getexif() (JPEG APP1, PNG eXIf, TIFF) plus ImageOps.exif_transpose; an image over 512 MiB of RGBA pixels is refused with a truthful \"image too large\" OSError. Image.show() surfaces the image inline as a session attachment. No pip, no native wheel."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -1556,7 +1981,7 @@
      [{:shim/name "pil"
        :shim/imports ["PIL"]
        :shim/description
-       "Pillow-compatible `PIL` (Image/ImageDraw/ImageFilter/ImageOps/ImageColor/ImageEnhance/ImageChops/ImageFont) backed by JVM Java2D/ImageIO. Not supported: some color-mode conversions and `Image.transform` methods raise `ValueError`."
+       "Pillow-compatible `PIL` (Image/ImageDraw/ImageFilter/ImageOps/ImageColor/ImageEnhance/ImageChops/ImageFont) backed by com.blockether/imaging (Rust image+tiny-skia; no java.desktop). Animated GIF (seek/n_frames/save_all), JPEG/WebP quality, adaptive-palette quantize and getexif are supported; an image over 512 MiB of RGBA pixels is refused with an \"image too large\" OSError. Not supported: some color-mode conversions and `Image.transform` methods raise `ValueError`."
        :shim/bindings pil-bridge-bindings
        :shim/source "vis-shims/pil.py"}]}))
 

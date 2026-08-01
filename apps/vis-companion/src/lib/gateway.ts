@@ -283,6 +283,36 @@ function sameJson(a: unknown, b: unknown): boolean {
  * liveness refetch costs no re-render instead of re-parsing every markdown
  * block in the history.
  */
+/**
+ * One page of the session list, pinned to the exact rows its ETag was issued for.
+ *
+ * The gateway hashes `[total offset limit rows]` into the validator, so a 304
+ * revalidates the whole record — the counts may be reused, not just the rows.
+ */
+type SessionsWindow = {
+  etag: string;
+  /** The gateway's digest of the ORDERING this window was cut from. */
+  order: string;
+  rows: Session[];
+  total: number;
+  hasMore: boolean;
+};
+
+/**
+ * Session-list page size. Measured on a 448-session gateway: the whole list is
+ * ~326 ms / 315 KB to build and send, one 100-row window ~71 ms / 69 KB. The
+ * first window is already more rows than any screen can show, so the list paints
+ * at the cost of the window and the remainder streams in behind it.
+ */
+const SESSIONS_PAGE = 100;
+
+/**
+ * Header stamping the session ordering a window was cut from (`server.clj`).
+ * Sent on 200 AND 304, so a walk can tell whether the fleet was re-ranked under
+ * it without giving up the 304s that make the walk cheap.
+ */
+const SESSIONS_ORDER_HEADER = 'X-Vis-Sessions-Order';
+
 function reconcileRows<T>(previous: T[] | null, next: T[]): T[] {
   if (!previous) return next;
   let changed = previous.length !== next.length;
@@ -397,6 +427,17 @@ export class GatewayClient {
   // that is on screen must never be the one handed back to the collector.
   private readonly attachmentHolds = new Map<string, number>();
   private static readonly ATTACHMENT_URL_CACHE = 24;
+  // Last conditional-GET validators for the session LIST, per gateway: one per
+  // page window, plus the merged array they were built from. Static because the
+  // screens build a throwaway client whenever the connection object changes, and
+  // the snapshot cache it pairs with is module-level too. Pinning by IDENTITY is
+  // what makes it safe: any other code path that rewrites the sessions snapshot
+  // (a local delete, a rename) swaps that array, every pin misses, and the next
+  // poll is an unconditional walk instead of 304s restoring stale rows.
+  private static readonly sessionsValidators = new Map<
+    string,
+    { full: Session[]; windows: Map<number, SessionsWindow> }
+  >();
 
   constructor(conn: GatewayConn) {
     this.base = normalizeBase(conn.url);
@@ -418,13 +459,19 @@ export class GatewayClient {
     return h;
   }
 
-  private async request<T>(
+  /**
+   * One request, reported in full: status and validator, not just the parsed
+   * body. `304 Not Modified` is NOT an error here — it is the success case of a
+   * revalidation, so it returns early, before the body read, with no data.
+   */
+  private async requestFull<T>(
     method: string,
     path: string,
     body?: unknown,
     signal?: AbortSignal,
-  ): Promise<T> {
-    const headers = this.headers();
+    extraHeaders?: Record<string, string>,
+  ): Promise<{ status: number; data: T | undefined; etag: string | null; headers: Headers }> {
+    const headers = this.headers(extraHeaders);
     if (body !== undefined) headers.set('Content-Type', 'application/json');
     // Bound the whole exchange, not just the connect: a resumed request usually
     // parks on the BODY read, with its headers already delivered.
@@ -449,6 +496,8 @@ export class GatewayClient {
           ? new GatewayError(0, `gateway did not answer within ${seconds}s`)
           : new GatewayError(0, `network error: ${(e as Error).message}`);
       }
+      if (res.status === 304)
+        return { status: 304, data: undefined, etag: res.headers.get('ETag'), headers: res.headers };
       let text: string;
       try {
         text = await res.text();
@@ -471,10 +520,24 @@ export class GatewayClient {
           `HTTP ${res.status}`;
         throw new GatewayError(res.status, msg, parsed);
       }
-      return parsed as T;
+      return {
+        status: res.status,
+        data: parsed as T,
+        etag: res.headers.get('ETag'),
+        headers: res.headers,
+      };
     } finally {
       window.clearTimeout(timer);
     }
+  }
+
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    return (await this.requestFull<T>(method, path, body, signal)).data as T;
   }
 
   // ── Health / status ─────────────────────────────────────────────
@@ -1097,15 +1160,150 @@ export class GatewayClient {
     scheduleSnapshotFlush(snapshotStores);
   }
 
-  async listSessions(signal?: AbortSignal): Promise<Session[]> {
-    const res = await this.request<{ sessions: Session[] }>(
-      'GET',
-      '/v1/sessions',
-      undefined,
-      signal,
-    );
-    const rows = reconcileRows(this.cachedSessions(), res.sessions ?? []);
-    writeSnapshot(this.snapshotKey('sessions'), rows);
+  /**
+   * The session list — paged, and revalidated rather than re-downloaded.
+   *
+   * This is the app's most frequent poll and by far its largest payload (~315 KB
+   * across a few hundred sessions). Two things keep it cheap:
+   *
+   * - **Paging.** Only `SESSIONS_PAGE` rows are asked for at a time. The first
+   *   window answers in ~71 ms with more rows than fit on any screen, is handed
+   *   to `onPage` immediately, and the rest of the list drains behind it.
+   * - **Conditional GETs.** Every window carries a weak `ETag`, so an unchanged
+   *   window costs one 304 with an empty body: nothing transferred, nothing
+   *   parsed, nothing reconciled.
+   *
+   * The list is recency-ordered and `total` is part of the validator, so any
+   * arrival, answer, deletion or rename moves the FIRST window. An unchanged head
+   * therefore ends the poll after a single 304 — with the SAME array identity
+   * handed back, which React bails out on, so the list does not even re-render.
+   *
+   * `onPage` only fires on a cold load: with rows already on screen, a partial
+   * list would paint as the list briefly shrinking.
+   */
+  async listSessions(
+    signal?: AbortSignal,
+    onPage?: (rows: Session[]) => void,
+  ): Promise<Session[]> {
+    const key = this.snapshotKey('sessions');
+    const cached = this.cachedSessions();
+    const pinned = GatewayClient.sessionsValidators.get(key);
+    // Only ever ask conditionally when a 304 can actually be ANSWERED from the
+    // rows those validators were issued for.
+    const known =
+      pinned && pinned.full === cached ? pinned.windows : new Map<number, SessionsWindow>();
+
+    const fetchWindow = async (offset: number): Promise<SessionsWindow> => {
+      const pin = known.get(offset);
+      const res = await this.requestFull<{
+        sessions?: Session[];
+        total?: number;
+        has_more?: boolean;
+      }>(
+        'GET',
+        `/v1/sessions?limit=${SESSIONS_PAGE}&offset=${offset}`,
+        undefined,
+        signal,
+        pin ? { 'If-None-Match': pin.etag } : undefined,
+      );
+      // The ordering stamp is read from THIS response, never from the pin: a 304
+      // says these ROWS are unchanged, not that the fleet around them is.
+      const order = res.headers.get(SESSIONS_ORDER_HEADER) ?? '';
+      if (res.status === 304 && pin) return { ...pin, order };
+      const rows = res.data?.sessions ?? [];
+      return {
+        etag: res.etag ?? '',
+        order,
+        rows,
+        total: res.data?.total ?? rows.length,
+        hasMore: Boolean(res.data?.has_more),
+      };
+    };
+
+    const head = await fetchWindow(0);
+    // A revalidated head against a complete cached list is the steady state: stop
+    // here, keep the pins, and hand back the identical array. `rows` identity is
+    // what proves the 304 — the window itself is rebuilt to carry a fresh order.
+    const headPin = known.get(0);
+    if (headPin && head.rows === headPin.rows && cached && cached.length === head.total)
+      return cached;
+
+    const progressive = !cached || cached.length === 0;
+
+    /**
+     * ONE walk over the windows.
+     *
+     * Windows are addressed by their SERVER offset — an index into the gateway's
+     * ORDERING, not into the rows it handed back. The two come apart in two ways:
+     *
+     * - A window can be SHORT (a session deleted between the ordering and the
+     *   decoration of that page), so stepping by rows-received would re-request
+     *   ids already merged. Hence stepping by the page size, with each window's
+     *   landing place in `merged` remembered separately.
+     * - The ordering itself is recomputed per request, so it can MOVE between two
+     *   windows: a session starting a turn jumps to the top of the list and shifts
+     *   everything below it. One shift makes one row arrive twice (a duplicate
+     *   React key) and drops another entirely (a session that vanishes from the
+     *   list) while `merged.length` still equals `total`, so nothing downstream
+     *   can notice. Every window is stamped with the ordering it was cut from,
+     *   which makes exactly that detectable; ids are also de-duplicated here, so
+     *   a gateway too old to send the stamp still cannot produce a duplicate key.
+     */
+    const drain = async (first: SessionsWindow) => {
+      const fetched: { offset: number; start: number; window: SessionsWindow }[] = [];
+      const seen = new Set<string>();
+      let merged: Session[] = [];
+      let torn = false;
+      let dropped = 0;
+      let window = first;
+      let offset = 0;
+      for (;;) {
+        if (window.order !== first.order) torn = true;
+        const fresh: Session[] = [];
+        for (const row of window.rows) {
+          if (seen.has(row.id)) {
+            dropped += 1;
+            continue;
+          }
+          seen.add(row.id);
+          fresh.push(row);
+        }
+        fetched.push({ offset, start: merged.length, window });
+        merged = merged.length ? merged.concat(fresh) : fresh;
+        if (progressive && merged.length) onPage?.(merged);
+        offset += SESSIONS_PAGE;
+        if (!window.hasMore || offset >= window.total) break;
+        window = await fetchWindow(offset);
+        // A window that comes back empty ends the walk rather than looping forever.
+        if (!window.rows.length) break;
+      }
+      return { fetched, merged, torn, dropped };
+    };
+
+    let pass = await drain(head);
+    // A torn walk is a real answer to the wrong question. Ask it again — two
+    // re-rankings landing inside two consecutive walks is rare enough to accept,
+    // and the de-duplicated list below is still coherent when it happens.
+    if (pass.torn) pass = await drain(await fetchWindow(0));
+
+    const rows = reconcileRows(cached, pass.merged);
+    writeSnapshot(key, rows);
+    // Re-pin each window onto the RECONCILED rows, so a later 304 restores the
+    // identities the screen is already rendering instead of the raw wire copies.
+    // A torn or de-duplicated walk pins NOTHING: those windows no longer describe
+    // what the gateway would send, and revalidating against them would keep
+    // restoring a list with a hole in it. Unpinned, the next poll walks for real
+    // and heals — and the steady-state early return above cannot fire either,
+    // because it needs the head pin these lines just refused to write.
+    const windows = new Map<number, SessionsWindow>();
+    if (!pass.torn && pass.dropped === 0) {
+      for (const { offset, start, window } of pass.fetched) {
+        if (!window.etag) continue;
+        windows.set(offset, { ...window, rows: rows.slice(start, start + window.rows.length) });
+      }
+    }
+    if (windows.size) GatewayClient.sessionsValidators.set(key, { full: rows, windows });
+    else GatewayClient.sessionsValidators.delete(key);
     return rows;
   }
 

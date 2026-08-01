@@ -2,12 +2,14 @@
   "The Pillow (PIL)-compat shim installed into every sandbox context via the
    generic sandbox-shim mechanism (`extension/sandbox-shims`): a `PIL` package
    published into `sys.modules` (so `from PIL import Image` works) and backed by
-   a pure-JVM Java2D / ImageIO renderer. All image ops delegate across the
+   the host com.blockether/imaging renderer. All image ops delegate across the
    boundary to the host `__vis_pil_*` callables, keeping the pixels on the JVM."
-  (:require [com.blockether.vis.internal.env-python :as ep]
+  (:require [com.blockether.imaging :as im]
+            [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [org.graalvm.polyglot Context]))
+  (:import [java.util Base64]
+           [org.graalvm.polyglot Context]))
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
 
@@ -18,6 +20,16 @@
   [& body]
   `(let [~(with-meta 'python-context {:tag `Context}) (:python-context @python-context*)]
      ~@body))
+
+(def ^:private gray-png-b64
+  "4x4 8-bit grayscale PNG (colour type 0); pixel (x,y) is 40 + 10*(4y+x)."
+  (str "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAAAAACMmsGiAAAAHElEQVR4nGPQMLJxYwiISs"
+       "ljqGjqmcawYNWWfQA3jAcxBo1JrAAAAABJRU5ErkJggg=="))
+
+(def ^:private gray-alpha-png-b64
+  "3x3 8-bit gray+alpha PNG (colour type 4), every pixel gray 90 at alpha 128."
+  (str "iVBORw0KGgoAAAANSUhEUgAAAAMAAAADCAQAAAD8IX00AAAAD0lEQVR4nGOIagBBBhQKAE"
+       "/jB6sEnE9fAAAAAElFTkSuQmCC"))
 
 (defdescribe
   pil-module-test
@@ -35,7 +47,7 @@
                   (ev python-context
                       "from PIL import Image, ImageDraw\nImage.new('RGB',(2,2)).size == (2,2)")))))
   (it "exposes a version string"
-      (with-python-context (expect (= "10.0-vis-java2d"
+      (with-python-context (expect (= "10.0-vis-imaging"
                                       (ev python-context "__import__('PIL').__version__"))))))
 
 (defdescribe
@@ -62,6 +74,27 @@
                                 "b = io.BytesIO(); src.save(b,'PNG'); b.seek(0)\n"
                                 "op = Image.open(b)\n"
                                 "op.size == (6,6) and op.getpixel((2,2)) == (200,100,50)"))))))
+  (it "open reports a grayscale source as mode L, not RGB"
+      ;; A raster is always RGBA once decoded, so the mode can only come from the
+      ;; SOURCE colour type `imaging/probe` reports. This 4x4 8-bit gray PNG
+      ;; (colour type 0) is the smallest thing that proves it.
+      (with-python-context
+        (expect (true?
+                  (ev python-context
+                      (str "from PIL import Image\nimport io, base64\n"
+                           "raw = base64.b64decode('"
+                           gray-png-b64
+                           "')\n"
+                           "im = Image.open(io.BytesIO(raw))\n"
+                           "im.mode == 'L' and im.size == (4,4) and im.getpixel((1,1)) == 90"))))))
+  (it "open reports a gray+alpha source as mode LA"
+      (with-python-context (expect (true? (ev python-context
+                                              (str "from PIL import Image\nimport io, base64\n"
+                                                   "raw = base64.b64decode('"
+                                                   gray-alpha-png-b64
+                                                   "')\n"
+                                                   "im = Image.open(io.BytesIO(raw))\n"
+                                                   "im.mode == 'LA' and im.size == (3,3)"))))))
   (it "Image.open detects the format; a fresh Image has none"
       (with-python-context
         (expect (true? (ev python-context
@@ -247,3 +280,232 @@
                                               "im = Image.new('RGB',(10,10),(5,5,5))\n"
                                               "ImageOps.crop(im, 2).size == (6,6) and"
                                               " ImageOps.exif_transpose(im).size == (10,10)")))))))
+
+(defdescribe
+  pil-multi-frame-test
+  (it "save_all + append_images writes a real multi-frame GIF"
+      (with-python-context
+        (expect (true?
+                  (ev python-context
+                      (str "from PIL import Image\nimport io\n"
+                           "a = Image.new('RGB',(8,8),(255,0,0))\n"
+                           "b = Image.new('RGB',(8,8),(0,0,255))\n"
+                           "buf = io.BytesIO()\n"
+                           "a.save(buf,'GIF',save_all=True,append_images=[b],duration=120,loop=0)\n"
+                           "g = buf.getvalue()\n" "g[:6] == b'GIF89a' and len(g) > 20"))))))
+  (it "an animated GIF reopens with n_frames / is_animated / seek"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "from PIL import Image\nimport io\n"
+                                "a = Image.new('RGB',(8,8),(255,0,0))\n"
+                                "b = Image.new('RGB',(8,8),(0,0,255))\n"
+                                "buf = io.BytesIO()\n"
+                                "a.save(buf,'GIF',save_all=True,append_images=[b],duration=120)\n"
+                                "im = Image.open(io.BytesIO(buf.getvalue()))\n"
+                                "im.seek(1); second = im.getpixel((4,4))\n"
+                                "im.seek(0); first = im.getpixel((4,4))\n"
+                                "im.n_frames == 2 and im.is_animated and im.format == 'GIF' "
+                                "and first == (255,0,0) and second == (0,0,255) "
+                                "and im.info.get('duration') == 120"))))))
+  (it "a single-frame save stays a still image"
+      (with-python-context (expect (true? (ev python-context
+                                              (str
+                                                "from PIL import Image\nimport io\n"
+                                                "buf = io.BytesIO()\n"
+                                                "Image.new('RGB',(4,4),(1,2,3)).save(buf,'GIF')\n"
+                                                "im = Image.open(io.BytesIO(buf.getvalue()))\n"
+                                                "im.n_frames == 1 and not im.is_animated")))))))
+
+(defdescribe
+  pil-palette-and-quality-test
+  (it "quantize produces mode P with a readable palette"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "from PIL import Image\n"
+                                "q = Image.new('RGB',(8,8),(10,200,30)).quantize(colors=4)\n"
+                                "pal = q.getpalette()\n"
+                                "q.mode == 'P' and pal and len(pal) % 3 == 0 "
+                                "and pal[:3] == [10,200,30] "
+                                "and q.convert('RGB').getpixel((0,0)) == (10,200,30)"))))))
+  (it "putpalette round-trips through getpalette"
+      (with-python-context
+        (expect (= [1 2 3 4 5 6]
+                   (ev python-context
+                       (str "from PIL import Image\n"
+                            "p = Image.new('RGB',(4,4),(0,0,0)).quantize(colors=2)\n"
+                            "p.putpalette([1,2,3,4,5,6])\n" "list(p.getpalette()[:6])"))))))
+  (it "JPEG quality actually changes the encoded size"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "from PIL import Image\nimport io\n"
+                                "src = Image.new('RGB',(64,64),(0,0,0))\n"
+                                "for x in range(64):\n" "    for y in range(64):\n"
+                                "        src.putpixel((x,y), ((x*7)%256,(y*13)%256,(x*y)%256))\n"
+                                "lo = io.BytesIO(); src.save(lo,'JPEG',quality=5)\n"
+                                "hi = io.BytesIO(); src.save(hi,'JPEG',quality=95)\n"
+                                "len(lo.getvalue()) * 2 < len(hi.getvalue())"))))))
+  (it "P-mode quantisation IS com.blockether/imaging's, not an algorithm of ours"
+      (with-python-context
+        (let
+          [[png-b64 palette]
+           (ev python-context
+               (str "from PIL import Image\nimport io, base64\n"
+                    "src = Image.new('RGB',(32,24),(0,0,0))\n"
+                    "for x in range(32):\n" "    for y in range(24):\n"
+                    "        src.putpixel((x,y), ((x*7)%256,(y*11)%256,(x*y)%256))\n"
+                    "buf = io.BytesIO(); src.save(buf,'PNG')\n"
+                    "q = src.quantize(colors=8)\n"
+                    "[base64.b64encode(buf.getvalue()).decode(), list(q.getpalette()[:24])]"))
+
+           png
+           (.decode (Base64/getDecoder) ^String png-b64)]
+
+          (with-open [img (im/decode png)]
+            ;; The shim only packs what the Rust median-cut returns: same bytes in,
+            ;; same palette out. If this drifts, someone re-implemented a quantiser.
+            (expect (= (mapcat (fn [c]
+                                 [(bit-and (bit-shift-right ^long c 16) 0xff)
+                                  (bit-and (bit-shift-right ^long c 8) 0xff)
+                                  (bit-and ^long c 0xff)])
+                               (:palette (im/quantize img {:colors 8})))
+                       (map long palette)))))))
+  (it
+    "ImageFilter IS com.blockether/imaging's convolve and rank filter"
+    (with-python-context
+      (let
+        [[src-b64 blur-b64 med-b64]
+         (ev python-context
+             (str "from PIL import Image, ImageFilter\nimport io, base64\n"
+                  "src = Image.new('RGB',(24,18),(0,0,0))\n"
+                  "for x in range(24):\n" "    for y in range(18):\n"
+                  "        src.putpixel((x,y), ((x*9)%256,(y*13)%256,(x*y)%256))\n" "def enc(im):\n"
+                  "    b = io.BytesIO(); im.save(b,'PNG')\n"
+                  "    return base64.b64encode(b.getvalue()).decode()\n"
+                  "[enc(src), enc(src.filter(ImageFilter.BoxBlur(1))),\n"
+                  " enc(src.filter(ImageFilter.MedianFilter(3)))]"))
+
+         ->img
+         #(im/decode (.decode (Base64/getDecoder) ^String %))]
+
+        (with-open
+          [src
+           (->img src-b64)
+
+           blur
+           (->img blur-b64)
+
+           med
+           (->img med-b64)
+
+           ours-blur
+           (im/convolve src 3 (repeat 9 1.0) {:scale 9.0})
+
+           ours-med
+           (im/rank-filter src 3 :median)]
+
+          ;; Pixel-for-pixel: the shim hands the kernel over and packs the
+          ;; answer back — the neighbourhood maths happens in Rust.
+          (expect (= (seq (im/pixels ours-blur)) (seq (im/pixels blur))))
+          (expect (= (seq (im/pixels ours-med)) (seq (im/pixels med))))))))
+  (it "save(optimize=True) IS com.blockether/imaging's optimizer, losslessly"
+      (with-python-context
+        (let
+          [[plain-b64 opt-b64]
+           (ev python-context
+               (str "from PIL import Image\nimport io, base64\n"
+                    "src = Image.new('RGB',(64,64),(0,0,0))\n" "for x in range(64):\n"
+                    "    for y in range(64):\n"
+                    "        src.putpixel((x,y), ((x*7)%256,(y*5)%256,((x+y)*3)%256))\n"
+                    "def enc(**kw):\n" "    b = io.BytesIO(); src.save(b,'PNG',**kw)\n"
+                    "    return base64.b64encode(b.getvalue()).decode()\n"
+                    "[enc(), enc(optimize=True)]"))
+
+           ^bytes plain
+           (.decode (Base64/getDecoder) ^String plain-b64)
+
+           ^bytes opt
+           (.decode (Base64/getDecoder) ^String opt-b64)]
+
+          ;; Pillow's flag is honoured, not ignored: smaller bytes, the SAME bytes
+          ;; the library's optimizer produces, and the very same picture.
+          (expect (< (alength opt) (alength plain)))
+          (expect (= (seq opt) (seq (im/optimize plain))))
+          (with-open
+            [a
+             (im/decode plain)
+
+             b
+             (im/decode opt)]
+
+            (expect (= (seq (im/pixels a)) (seq (im/pixels b)))))))))
+
+(defdescribe
+  pil-transpose-test
+  (it "Image.transpose is imaging's flip/rotate, with Pillow's own orientations"
+      (with-python-context
+        ;; 3x2 of six distinguishable pixels; every method is asserted against the
+        ;; layout Pillow produces, so a library rotation flipping direction fails here.
+        (expect (= [[[3 2] [70 40 10 160 130 100]] [[3 2] [100 130 160 10 40 70]]
+                    [[2 3] [70 160 40 130 10 100]] [[3 2] [160 130 100 70 40 10]]
+                    [[2 3] [100 10 130 40 160 70]] [[2 3] [10 100 40 130 70 160]]
+                    [[2 3] [160 70 130 40 100 10]]]
+                   (ev python-context
+                       (str
+                         "from PIL import Image\n"
+                         "im = Image.new('RGB',(3,2))\n" "vals = [10,40,70,100,130,160]\n"
+                         "for y in range(2):\n" "    for x in range(3):\n"
+                         "        im.putpixel((x,y), (vals[y*3+x],0,0))\n" "def rows(t):\n"
+                         "    w, h = t.size\n" "    return [list(t.size),\n"
+                         "            [t.getpixel((x,y))[0] for y in range(h) for x in range(w)]]\n"
+                         "[rows(im.transpose(m)) for m in range(7)]")))))))
+
+(defdescribe
+  pil-exif-and-limits-test
+  (it "getexif is a mutable, cached Exif mapping"
+      (with-python-context
+        (expect (true?
+                  (ev python-context
+                      (str "from PIL import Image\n" "im = Image.new('RGB',(4,4),(1,2,3))\n"
+                           "im.getexif()[271] = 'vis'\n"
+                           "im.getexif().get(271) == 'vis' and im.getexif().get(9999) is None"))))))
+  (it "exif_transpose applies orientation 6 and clears the tag"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "from PIL import Image, ImageOps\n"
+                                "im = Image.new('RGB',(4,2),(10,20,30))\n"
+                                "im.info['exif'] = b'\\x00'\n"
+                                "im.getexif()[274] = 6\n" "out = ImageOps.exif_transpose(im)\n"
+                                "out.size == (2,4) and 274 not in out.getexif() "
+                                "and 'exif' not in out.info and im.size == (4,2)"))))))
+  (it "exif_transpose(in_place=True) returns None and rotates the original"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "from PIL import Image, ImageOps\n"
+                                "im = Image.new('RGB',(4,2),(1,2,3))\n" "im.getexif()[274] = 8\n"
+                                "r = ImageOps.exif_transpose(im, in_place=True)\n"
+                                "r is None and im.size == (2,4) and 274 not in im.getexif()"))))))
+  (it "an image with no orientation is copied unchanged"
+      (with-python-context (expect (true? (ev python-context
+                                              (str "from PIL import Image, ImageOps\n"
+                                                   "im = Image.new('RGB',(4,2),(1,2,3))\n"
+                                                   "out = ImageOps.exif_transpose(im)\n"
+                                                   "out is not im and out.size == (4,2) "
+                                                   "and out.getpixel((0,0)) == (1,2,3)"))))))
+  ;; The decoder allocates RGBA8, so 512 MiB is ~134 MP. Guarding on the HEADER
+  ;; keeps the error truthful instead of the image crate's "cannot identify".
+  (it "a header-huge PNG fails with an explicit too-large message"
+      (with-python-context
+        (expect
+          (true?
+            (ev python-context
+                (str
+                  "from PIL import Image\n"
+                  "import io, struct, zlib, binascii\n" "def chunk(t, d):\n"
+                  "    return (struct.pack('>I', len(d)) + t + d\n"
+                  "            + struct.pack('>I', binascii.crc32(t + d) & 0xffffffff))\n"
+                  "ihdr = struct.pack('>IIBBBBB', 20000, 20000, 8, 6, 0, 0, 0)\n"
+                  "png = (b'\\x89PNG\\r\\n\\x1a\\n' + chunk(b'IHDR', ihdr)\n"
+                  "       + chunk(b'IDAT', zlib.compress(b'\\x00' * 10)) + chunk(b'IEND', b''))\n"
+                  "try:\n"
+                  "    Image.open(io.BytesIO(png)); ok = False\n" "except OSError as e:\n"
+                  "    ok = 'too large' in str(e) and '20000x20000' in str(e)\n" "ok")))))))

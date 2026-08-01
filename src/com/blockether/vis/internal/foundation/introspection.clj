@@ -21,7 +21,8 @@
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
-            [com.blockether.vis.internal.extension :as extension]))
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.persistance :as persistance]))
 
 ;; ---------------------------------------------------------------------------
 ;; Channels we know how to enumerate. Derived from the global channel
@@ -436,9 +437,8 @@
       (catch Throwable _ nil))))
 
 ;; ---------------------------------------------------------------------------
-;; Meta fns - each takes `env` as first arg via the shared
-;; `:before-fn` injector below. The agent never sees `env`; it calls
-;; e.g. current-turn snapshot with zero args.
+;; Meta fns take `env` as their first argument via declarative `:inject-env?`.
+;; The agent never sees `env`; it calls e.g. the current-turn snapshot with zero args.
 ;; ---------------------------------------------------------------------------
 
 (defn- foundation-turn [env] (turn-snapshot env))
@@ -704,6 +704,384 @@
       :failures failures
       :next-actions (next-actions failures clusters)})))
 
+(declare safe-call session-envelope)
+
+(defn- usage-tokens
+  [iteration]
+  (let
+    [input
+     (long (or (:input-tokens iteration) 0))
+
+     cached
+     (long (or (:input-cache-read-tokens iteration) 0))]
+
+    {:input input
+     :cached cached
+     :uncached (max 0 (- input cached))
+     :cache-created (long (or (:input-cache-write-tokens iteration) 0))
+     :output (long (or (:output-tokens iteration) 0))
+     :reasoning (long (or (:output-reasoning-tokens iteration) 0))}))
+
+(defn- empty-usage
+  []
+  {:iterations 0
+   :tokens {:input 0 :cached 0 :uncached 0 :cache-created 0 :output 0 :reasoning 0}
+   :cost-usd 0.0})
+
+(defn- add-iteration-usage
+  [total usage]
+  (-> total
+      (update :iterations inc)
+      (update-in [:tokens :input] + (get-in usage [:tokens :input]))
+      (update-in [:tokens :cached] + (get-in usage [:tokens :cached]))
+      (update-in [:tokens :uncached] + (get-in usage [:tokens :uncached]))
+      (update-in [:tokens :cache-created] + (get-in usage [:tokens :cache-created]))
+      (update-in [:tokens :output] + (get-in usage [:tokens :output]))
+      (update-in [:tokens :reasoning] + (get-in usage [:tokens :reasoning]))
+      (update :cost-usd + (:cost-usd usage))))
+
+(defn- tool-call-status
+  [form]
+  (cond (:timeout? form) :timeout
+        (:error form) :error
+        (false? (:success? form)) :error
+        :else :done))
+
+(defn- native-tool-calls
+  [turn iteration]
+  (->> (:forms iteration)
+       (keep-indexed (fn [index form]
+                       (when-let [tool (:vis/tool-name form)]
+                         {:tool (str tool)
+                          :turn (:position turn)
+                          :iteration (:position iteration)
+                          :form (unchecked-inc (long index))
+                          :status (tool-call-status form)
+                          :error (:error form)})))
+       vec))
+
+(defn- tool-outcomes
+  [calls]
+  (reduce (fn [outcomes {:keys [status]}]
+            (update outcomes status (fnil inc 0)))
+          {:done 0 :error 0 :timeout 0}
+          calls))
+
+(defn- tool-failure? [call] (not= :done (:status call)))
+
+(defn- usage-tool-error
+  [{:keys [tool turn iteration form status error]}]
+  {:tool tool
+   :turn turn
+   :iteration iteration
+   :form form
+   :status status
+   :message (preview (or (error-text error)
+                         (when (= :timeout status) "Tool execution timed out")
+                         "Tool reported an unsuccessful result")
+                     300)})
+
+(defn- usage-tool-errors
+  [iterations]
+  (let
+    [errors
+     (->> iterations
+          (mapcat :tool-call-statuses)
+          (filter tool-failure?)
+          vec)
+
+     limit
+     20]
+
+    {:tool-errors (mapv usage-tool-error (take limit errors))
+     :tool-errors-truncated? (> (count errors) limit)}))
+
+(defn- add-tool-usage
+  [total usage]
+  (-> total
+      (update :tool-calls + (:tool-call-count usage))
+      (update :tool-errors + (:tool-error-count usage))
+      (update :tool-outcomes #(merge-with + % (:tool-outcomes usage)))))
+
+(defn- empty-tool-usage [] {:tool-calls 0 :tool-errors 0 :tool-outcomes (tool-outcomes [])})
+
+(defn- usage-total
+  [iterations]
+  (merge (reduce add-iteration-usage (empty-usage) iterations)
+         (reduce add-tool-usage (empty-tool-usage) iterations)))
+
+(defn- public-usage-iteration [usage] (dissoc usage :tool-call-statuses :routing-trace))
+
+(def ^:private routing-event-limit 20)
+
+(defn- route
+  [{:keys [provider model]}]
+  (let
+    [provider
+     (cond (keyword? provider) (name provider)
+           (some? provider) (str provider))
+
+     model
+     (some-> model
+             str
+             not-empty)]
+
+    (when model
+      {:provider (some-> provider
+                         not-empty)
+       :model model})))
+
+(defn- iteration-route
+  "Return a normalized route from either the hydrated routing map or the
+   flattened typed columns used by persisted iteration rows."
+  [iteration route-key]
+  (or (route (get iteration route-key))
+      (let [prefix (name route-key)]
+        (route {:provider (get iteration (keyword (str prefix "-provider")))
+                :model (get iteration (keyword (str prefix "-model")))}))))
+
+(defn- routing-event?
+  [event type]
+  (let
+    [actual
+     (or (:event/type event) (:type event))
+
+     persisted-type
+     (if-let [ns (namespace type)]
+       (str ns "_" (name type))
+       (name type))]
+
+    (or (= type actual)
+        ;; Wire serialization flattens a namespaced keyword's slash into an
+        ;; underscore while retaining the event name's hyphens.
+        (= persisted-type
+           (some-> actual
+                   name)))))
+
+(defn- usage-routing-events
+  [usage]
+  (mapv (fn [event]
+          (cond-> {:turn (:turn usage) :iteration (:iteration usage) :type (:event/type event)}
+            (:status event)
+            (assoc :status (:status event))
+
+            (:reason event)
+            (assoc :reason (:reason event))
+
+            (:attempt event)
+            (assoc :attempt (:attempt event))
+
+            (:retry event)
+            (assoc :retry (:retry event))
+
+            (:delay-ms event)
+            (assoc :delay-ms (:delay-ms event))
+
+            (:backoff-ms event)
+            (assoc :backoff-ms (:backoff-ms event))
+
+            (:error event)
+            (assoc :message
+              (preview (or (error-text (:error event)) "Provider routing failed") 300))))
+        (:routing-trace usage)))
+
+(defn- usage-route-rows
+  [iterations k]
+  (->> iterations
+       (keep (fn [usage]
+               (when-let [r (route (get usage k))]
+                 [r usage])))
+       (reduce (fn [rows [r usage]]
+                 (update rows r #(add-iteration-usage (or % (merge (empty-usage) r)) usage)))
+               {})
+       vals
+       (sort-by (juxt :provider :model))
+       vec))
+
+(defn- usage-routing-transitions
+  [iterations]
+  (->> iterations
+       (keep (fn [usage]
+               (let
+                 [from
+                  (route (:llm-selected usage))
+
+                  to
+                  (route (:llm-actual usage))]
+
+                 (when (and from to (not= from to)) [from to]))))
+       frequencies
+       (map (fn [[[from to] count]]
+              {:from from :to to :count count}))
+       (sort-by #(pr-str [(:from %) (:to %)]))
+       vec))
+
+(defn- usage-routing
+  [iterations]
+  (let
+    [events
+     (vec (mapcat usage-routing-events iterations))
+
+     retries
+     (count (filter #(routing-event? % :llm.routing/provider-retry) events))]
+
+    {:selected (usage-route-rows iterations :llm-selected)
+     :actual (usage-route-rows iterations :llm-actual)
+     :fallbacks (count (filter :llm-fallback? iterations))
+     :retries retries
+     :transitions (usage-routing-transitions iterations)
+     :events (vec (take routing-event-limit events))
+     :events-truncated? (> (long (count events)) (long routing-event-limit))}))
+
+(defn- manual-model-switches
+  [db-info sid]
+  (let
+    [switches (->> (safe-call
+                     #(persistance/db-list-extension-aggregates
+                        db-info
+                        {:extension-id "vis" :kind :session-model-switch :session-soul-id sid})
+                     [])
+                   (keep (fn [{:keys [content created-at]}]
+                           (when (map? content)
+                             (assoc (select-keys content [:from :to :source])
+                               :at-ms (some-> ^java.util.Date created-at
+                                              .getTime)))))
+                   vec)]
+    {:manual-switches (vec (take routing-event-limit switches))
+     :manual-switches-truncated? (> (long (count switches)) (long routing-event-limit))}))
+
+(defn- usage-iteration
+  [turn iteration]
+  (let
+    [calls
+     (native-tool-calls turn iteration)
+
+     outcomes
+     (tool-outcomes calls)
+
+     routing-trace
+     (vec (or (:llm-routing-trace iteration) []))]
+
+    {:turn (:position turn)
+     :iteration (:position iteration)
+     :status (:status iteration)
+     :tokens (usage-tokens iteration)
+     :cost-usd (double (or (:cost-usd iteration) 0.0))
+     :tools (vec (distinct (map :tool calls)))
+     :tool-calls (mapv :tool calls)
+     :tool-call-count (count calls)
+     :tool-error-count (count (filter tool-failure? calls))
+     :tool-outcomes outcomes
+     :llm-selected (iteration-route iteration :llm-selected)
+     :llm-actual (iteration-route iteration :llm-actual)
+     :llm-fallback? (boolean (:llm-fallback? iteration))
+     :provider-retries (count (filter #(routing-event? % :llm.routing/provider-retry)
+                                      routing-trace))
+     ;; These stay private while aggregate rows and bounded samples are derived.
+     :tool-call-statuses calls
+     :routing-trace routing-trace}))
+
+(defn- add-tool-row
+  [summary usage tool calls]
+  (let
+    [summary (or summary
+                 (assoc (empty-usage)
+                   :tool tool
+                   :calls 0
+                   :errors 0
+                   :outcomes (tool-outcomes [])))]
+    (-> (add-iteration-usage summary usage)
+        (update :calls + (count calls))
+        (update :errors + (count (filter tool-failure? calls)))
+        (update :outcomes #(merge-with + % (tool-outcomes calls))))))
+
+(defn- usage-tools
+  "Group model iterations by every native tool they invoked. Usage intentionally
+   overlaps across tools, so grouped rows must not be summed."
+  [iterations]
+  (let
+    [by-tool (reduce (fn [by-tool usage]
+                       (reduce-kv (fn [by-tool tool calls]
+                                    (update by-tool tool #(add-tool-row % usage tool calls)))
+                                  by-tool
+                                  (group-by :tool (:tool-call-statuses usage))))
+                     {}
+                     iterations)]
+    (->> by-tool
+         vals
+         (sort-by :tool)
+         vec)))
+
+(defn- foundation-usage-data
+  "Compact token/cost, tool-outcome, and provider-routing ledger. It deliberately
+   omits messages, code, results, and raw provider payloads."
+  [env session-id]
+  (let
+    [target-id
+     (or session-id (:session-id env))
+
+     data
+     (safe-call #(transcript/transcript (:db-info env) target-id) nil)
+
+     empty-routing
+     (merge (usage-routing []) (manual-model-switches (:db-info env) target-id))]
+
+    (if-not data
+      {:schema-version 1
+       :scope :session-usage
+       :session-id target-id
+       :session nil
+       :totals (assoc (merge (empty-usage) (empty-tool-usage)) :turns 0)
+       :turns []
+       :tools []
+       :tool-errors []
+       :tool-errors-truncated? false
+       :routing empty-routing}
+      (let
+        [turns
+         (mapv (fn [turn]
+                 (let
+                   [iterations
+                    (mapv (partial usage-iteration turn) (:iterations turn))
+
+                    totals
+                    (usage-total iterations)]
+
+                   {:position (:position turn)
+                    :status (:status turn)
+                    :iteration-count (count iterations)
+                    :tokens (:tokens totals)
+                    :cost-usd (:cost-usd totals)
+                    :tool-calls (:tool-calls totals)
+                    :tool-errors (:tool-errors totals)
+                    :tool-outcomes (:tool-outcomes totals)
+                    :iterations iterations}))
+               (:turns data))
+
+         iterations
+         (vec (mapcat :iterations turns))
+
+         {:keys [tool-errors tool-errors-truncated?]}
+         (usage-tool-errors iterations)
+
+         routing
+         (merge (usage-routing iterations) (manual-model-switches (:db-info env) target-id))]
+
+        {:schema-version 1
+         :scope :session-usage
+         :session-id (get-in data [:session :id])
+         :session (select-keys (:session data) [:id :title :channel :provider :model])
+         :totals (assoc (usage-total iterations) :turns (count turns))
+         :turns (mapv #(update % :iterations (partial mapv public-usage-iteration)) turns)
+         :tools (usage-tools iterations)
+         :tool-errors tool-errors
+         :tool-errors-truncated? tool-errors-truncated?
+         :routing routing}))))
+
+(defn- foundation-usage
+  ([env] (foundation-usage env (:session-id env)))
+  ([env session-id] (session-envelope :session-usage (foundation-usage-data env session-id))))
+
 (defn- safe-call
   [f default]
   (try (let [v (f)]
@@ -849,8 +1227,6 @@
 ;; sandbox, since those describe the sandbox itself.
 ;; ---------------------------------------------------------------------------
 
-(defn- inject-environment [env f args] {:env env :fn f :args (into [env] args)})
-
 ;; -- public, doc-bearing aliases -----------------------------------------------
 ;; The underlying defs (`foundation-inspect`, `foundation-report-html`) are
 ;; private and named for clarity inside this ns. Re-export them under their
@@ -870,6 +1246,14 @@ session id."
     :arglists '([] [session-id])}
   session-state
   foundation-inspect)
+
+(def
+  ^{:doc
+    "await session_usage(session_id=None)  # compact token/cost and tool-outcome ledger for the current session
+Returns {\"totals\", \"turns\", \"tools\", \"tool_errors\", \"routing\"} without transcript messages, code, results, or raw provider payloads. Totals, turns, and iterations report input, cached_input, uncached_input, cache_created, output, reasoning, cost_usd, tool_calls, tool_errors, and tool_outcomes. Tool rows include calls, errors, and done/error/timeout outcomes. `tool_errors` contains at most 20 bounded error messages with their tool/turn/iteration/form/status; `tool_errors_truncated` says when more were omitted. `routing` aggregates selected and actual provider/model usage, fallback transitions and retries, bounded provider routing events, and durable manual model switches. Tool rows overlap when one iteration invoked multiple tools: their token/cost columns intentionally overlap, so do not sum the tool rows. Use this instead of exploratory session_state() reads when diagnosing usage."
+    :arglists '([] [session-id])}
+  session-usage
+  foundation-usage)
 
 (def
   ^{:doc
@@ -899,15 +1283,17 @@ not `json.dumps` and slice the raw list (a `[:N]` cut silently drops the session
   sessions
   foundation-sessions)
 
-(def session-state-symbol
-  (vis/symbol #'session-state {:before-fn inject-environment :tag :observation}))
+(def session-state-symbol (vis/symbol #'session-state {:inject-env? true :tag :observation}))
 
 (def session-report-html-symbol
-  (vis/symbol #'session-report-html {:before-fn inject-environment :tag :observation}))
+  (vis/symbol #'session-report-html {:inject-env? true :tag :observation}))
 
-(def sessions-symbol (vis/symbol #'sessions {:before-fn inject-environment :tag :observation}))
+(def sessions-symbol (vis/symbol #'sessions {:inject-env? true :tag :observation}))
 
-(def all-symbols [session-state-symbol session-report-html-symbol sessions-symbol])
+(def session-usage-symbol (vis/symbol #'session-usage {:inject-env? true :tag :observation}))
+
+(def all-symbols
+  [session-state-symbol session-usage-symbol session-report-html-symbol sessions-symbol])
 
 ;; ---------------------------------------------------------------------------
 ;; The introspection extension. Self-inspection (`session_state` / `sessions` /
@@ -918,25 +1304,27 @@ not `json.dumps` and slice the raw list (a `[:N]` cut silently drops the session
 ;; (`toggles: { introspection: true }`) or from the settings dialog.
 ;; ---------------------------------------------------------------------------
 
-(vis/register-toggle! {:id "introspection"
-                       :label "Session introspection"
-                       :description
-                       (str "Let the agent inspect its OWN history: `session_state` / `sessions` / "
-                            "`session_report_html`, plus the gateway event journals under "
-                            "`~/.vis/gateway/events`. OFF by default — enable it for debugging Vis "
-                            "itself, not for ordinary project work.")
-                       :default false
-                       :owner :vis
-                       :persist? true
-                       :group :sandbox})
+(vis/register-toggle!
+  {:id "introspection"
+   :label "Session introspection"
+   :description
+   (str "Let the agent inspect its OWN history: `session_state` / `session_usage` / `sessions` / "
+        "`session_report_html`, plus the gateway event journals under "
+        "`~/.vis/gateway/events`. OFF by default — enable it for debugging Vis "
+        "itself, not for ordinary project work.")
+   :default false
+   :owner :vis
+   :persist? true
+   :group :sandbox})
 
 (def ^:private INTROSPECTION_PROMPT
   (str
     "## Session introspection\n"
     "- Read a session's raw wire history from `~/.vis/gateway/events/<id>.ndjson`; never grep `.`.\n"
+    "- For token/cost/tool-outcome/provider-routing diagnosis, call `await session_usage()` once: it is the compact per-turn, per-iteration, per-tool, and selected-versus-actual provider ledger with bounded tool errors and routing events. Tool rows overlap when an iteration invoked multiple tools; never sum them.\n"
     "- Current conversation: `await session_state()` → `transcript/turns/iterations/blocks`\n"
     "  (`code`/`result`); it is also the recovery path for folded content.\n"
-    "- Another conversation: `await sessions()` for the index, then `await session_state(id)`.\n"
+    "- Another conversation: `await sessions()` for the index, then `await session_usage(id)` or `await session_state(id)`.\n"
     "- Select and filter these structures in `python_execution`; never dump them whole.\n"))
 
 (defn- introspection-prompt [_env] INTROSPECTION_PROMPT)
@@ -945,7 +1333,7 @@ not `json.dumps` and slice the raw list (a `[:N]` cut silently drops the session
   (vis/extension
     {:ext/name "foundation-introspection"
      :ext/description
-     "Session self-introspection: `session_state` (identity, per-turn rollup, failures, diagnosis, full transcript), `sessions` (newest-first index of past conversations) and `session_report_html` (standalone HTML transcript), plus the guidance for reading `~/.vis/gateway/events/<id>.ndjson`. Bound only while the `introspection` toggle is ON (default OFF)."
+     "Session self-introspection: `session_state` (full transcript), `session_usage` (compact per-turn/per-iteration/per-tool token, cost, outcome, bounded error, and provider-routing ledger), `sessions` (newest-first index of past conversations) and `session_report_html` (standalone HTML transcript), plus guidance for reading `~/.vis/gateway/events/<id>.ndjson`. Bound only while the `introspection` toggle is ON (default OFF)."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

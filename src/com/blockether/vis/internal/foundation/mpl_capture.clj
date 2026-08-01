@@ -9,7 +9,7 @@
    `vis-image` fence carrying just that PATH, then at persist time re-parsed the
    fence out of stdout and re-read the (possibly already-gone) file. We control the
    whole boundary, so that round-trip is gone: a producer renders/reads the bytes
-   HOST-side (matplotlib's `__vis_mpl_render_file__` Java2D backend; `vis_attach`'s
+   HOST-side (matplotlib's `__vis_mpl_render_file__` imaging backend; `vis_attach`'s
    sandbox-confined `open`; the outbox filesystem tap in `sandbox-fs`) and, right
    where it already holds the bytes, calls `record-attachment!` (or `record-file!`).
    `run-python-block` binds `*attachment-sink*` to a fresh collector around each
@@ -19,7 +19,7 @@
    ASCII fallback — never persistence.
 
    Deliberately dependency-free (no AWT, no `vis.core`): safe to require from BOTH
-   a render shim and the hot engine loop without dragging Java2D or a require
+   a render shim and the hot engine loop without dragging the imaging renderer or a require
    cycle."
   (:require [clojure.string :as str])
   (:import [java.nio.file Files LinkOption Path]

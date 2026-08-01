@@ -93,7 +93,7 @@
         (expect (extension/envelope-success? result))
         (expect (str/includes? content "\"commands\""))
         (expect (str/includes? content "do not include the executable"))
-        (expect (str/includes? content "await git(...)"))
+        (expect (str/includes? content "await git({"))
         (expect (str/includes? content "\"timed_out\""))))
   (it "every manifest page resolves to non-blank markdown"
       (doseq [{:keys [slug]} (:pages (docs/collect))]

@@ -21,7 +21,8 @@
    Registered unconditionally as a foundation shim (like shim-yaml /
    shim-matplotlib): its `:ext/sandbox-shims` entry autoloads `vis_attach` into
    every sandbox (main + every `sub_loop` fork)."
-  (:require [com.blockether.vis.core :as vis]
+  (:require [com.blockether.imaging :as imaging]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [charred.api :as json]
             [clojure.string :as str]))
@@ -43,74 +44,106 @@
    are written HOST-side (like `__vis_mpl_render_file__`), so inline display works
    even when the sandbox's own Python filesystem is denied. Returns nil for a
    non-image media-type, or when the bytes can't be decoded as an image (e.g. an
-   SVG or a format with no ImageIO reader) — the caller then records the
+   SVG or a format `com.blockether/imaging` cannot probe) — the caller then records the
    attachment with no inline fence and the renderer keeps its text placeholder.
    Never throws: a temp-file/decoding hiccup must not break `vis_attach`."
   [^String media-type ^String b64]
-  (try (when (str/starts-with? (str media-type) "image/")
-         (let
-           [bytes
-            (.decode (java.util.Base64/getDecoder) b64)
+  (try
+    (when (str/starts-with? (str media-type) "image/")
+      (let
+        [bytes
+         (.decode (java.util.Base64/getDecoder) b64)
 
-            img
-            (javax.imageio.ImageIO/read (java.io.ByteArrayInputStream. bytes))]
+         info
+         ;; imaging probes SVG too, but the inline fence is for RASTER bytes a
+         ;; viewer can paint as-is — an SVG stays a text placeholder.
+         (let [i (imaging/probe bytes)]
+           (when-not (= "svg"
+                        (some-> (:format i)
+                                name))
+             i))]
 
-           (when img
-             (let
-               [w
-                (.getWidth img)
+        (when info
+          (let
+            [w
+             (:width info)
 
-                h
-                (.getHeight img)
+             h
+             (:height info)
 
-                ext
-                (or (some-> media-type
-                            (str/split #"/")
-                            second
-                            (str/replace #"[^a-z0-9]" ""))
-                    "img")
+             ext
+             (or (some-> media-type
+                         (str/split #"/")
+                         second
+                         (str/replace #"[^a-z0-9]" ""))
+                 "img")
 
-                f
-                (mpl-capture/display-cache-file "att-" ext bytes)]
+             f
+             (mpl-capture/display-cache-file "att-" ext bytes)]
 
-               [(.getAbsolutePath f) w h]))))
-       (catch Throwable _ nil)))
+            [(.getAbsolutePath f) w h]))))
+    (catch Throwable _ nil)))
+
+(defn- display-only-flag?
+  "Tolerant reading of the shim's `display_only` argument: Python hands the
+   bridge a bool, but a stale or hand-rolled caller may send 0/1 or nil, and a
+   mis-read here would silently start (or stop) sending someone's screenshots."
+  [v]
+  (boolean (and (some? v) (not (false? v)) (not= 0 v) (not= 0.0 v) (not= "" v))))
+
+(defn- record-attachment-call
+  "Body of `__vis_record_attachment__`: validate the already-decided attachment
+   fields and append the map to the active per-block artifact sink."
+  [kind media-type b64 filename size display-only]
+  (attach-envelope
+    #(cond (str/blank? (str b64)) (throw (ex-info "vis_attach: empty payload (no bytes to persist)"
+                                                  {}))
+           (str/blank? (str media-type)) (throw (ex-info "vis_attach: missing media type" {}))
+           (> (long (or size 0)) mpl-capture/max-capture-bytes)
+           (throw (ex-info (str "vis_attach: payload "
+                                (long (or size 0))
+                                " bytes exceeds the "
+                                (quot mpl-capture/max-capture-bytes (* 1024 1024))
+                                " MiB attachment limit")
+                           {}))
+           (nil? mpl-capture/*attachment-sink*)
+           (throw (ex-info (str "vis_attach: no active capture sink — call it inside a "
+                                "python_execution block so the produced artifact can be "
+                                "attached to that iteration")
+                           {}))
+           :else (do (mpl-capture/record-attachment! (cond->
+                                                       {:kind (or (not-empty (str kind)) "file")
+                                                        :media-type (str media-type)
+                                                        :base64 (str b64)
+                                                        :size (long (or size 0))}
+                                                       (not (str/blank? (str filename)))
+                                                       (assoc :filename (str filename))
+
+                                                       (display-only-flag? display-only)
+                                                       (assoc :is-display-only true)))
+                     (image-display-info (str media-type) (str b64))))))
 
 (defn- attach-bridge-bindings
   "Host callable the `vis_attach` shim delegates to. `__vis_record_attachment__`
    takes the already-decided attachment fields (kind / media-type / base64 /
-   filename / size) and appends the map to the active per-block artifact sink via
-   `mpl-capture/record-attachment!`. Returns [true nil] once recorded, or
-   [false message] when there is no active capture sink (called outside a driven
-   `python_execution` block) or a field is missing — surfaced to the model as a
-   `RuntimeError`, never silently dropped."
+   filename / size / display-only) and appends the map to the active per-block
+   artifact sink via `mpl-capture/record-attachment!`. Returns [true nil] once
+   recorded, or [false message] when there is no active capture sink (called
+   outside a driven `python_execution` block) or a field is missing — surfaced
+   to the model as a `RuntimeError`, never silently dropped.
+
+   `display-only` marks an artifact the human should SEE while the model is
+   NOT re-billed for it: an image replays in full on every later request, so
+   `:is-display-only` keeps the bytes stored and rendered but off the wire
+   (`attachments/display-only?`). The 5-arg arity stays, so a shim body
+   embedded by an older build still records."
   []
-  {"__vis_record_attachment__"
-   (fn [kind media-type b64 filename size]
-     (attach-envelope
-       #(cond (str/blank? (str b64))
-              (throw (ex-info "vis_attach: empty payload (no bytes to persist)" {}))
-              (str/blank? (str media-type)) (throw (ex-info "vis_attach: missing media type" {}))
-              (> (long (or size 0)) mpl-capture/max-capture-bytes)
-              (throw (ex-info (str "vis_attach: payload "
-                                   (long (or size 0))
-                                   " bytes exceeds the "
-                                   (quot mpl-capture/max-capture-bytes (* 1024 1024))
-                                   " MiB attachment limit")
-                              {}))
-              (nil? mpl-capture/*attachment-sink*)
-              (throw (ex-info (str "vis_attach: no active capture sink — call it inside a "
-                                   "python_execution block so the produced artifact can be "
-                                   "attached to that iteration")
-                              {}))
-              :else (do (mpl-capture/record-attachment! (cond->
-                                                          {:kind (or (not-empty (str kind)) "file")
-                                                           :media-type (str media-type)
-                                                           :base64 (str b64)
-                                                           :size (long (or size 0))}
-                                                          (not (str/blank? (str filename)))
-                                                          (assoc :filename (str filename))))
-                        (image-display-info (str media-type) (str b64))))))
+  {"__vis_record_attachment__" (fn record-attachment
+                                 ([kind media-type b64 filename size]
+                                  (record-attachment-call kind media-type b64 filename size false))
+                                 ([kind media-type b64 filename size display-only]
+                                  (record-attachment-call kind media-type b64 filename size
+                                    display-only)))
    "__vis_list_attachments__"
    (fn []
      (attach-envelope

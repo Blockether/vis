@@ -618,6 +618,12 @@ CREATE INDEX idx_log_iteration
 -- means a USER image (INBOUND). `source` is DERIVED from that, never stored.
 -- Storage: inline `bytes` now, `storage_uri` reserved for externalization;
 -- exactly one is set.
+--
+-- `is_display_only` marks a row that is stored and rendered for the human but
+-- NEVER turned into a wire image block (the display-only gate in
+-- com.blockether.vis.internal.attachments). The model is told the artifact
+-- exists and can pull it deliberately with `vis_read_attachment` /
+-- `vis_reinspect_attachment`. 0 = a normal, wire-visible attachment.
 -- =============================================================================
 CREATE TABLE session_attachment (
   id                        TEXT PRIMARY KEY NOT NULL,
@@ -635,6 +641,8 @@ CREATE TABLE session_attachment (
   media_type                TEXT NOT NULL,
   filename                  TEXT,
   size_bytes                INTEGER NOT NULL CHECK (size_bytes >= 0),
+  is_display_only           INTEGER NOT NULL DEFAULT 0
+                            CHECK (is_display_only IN (0, 1)),
 
   bytes                     BLOB,
   storage_uri               TEXT,

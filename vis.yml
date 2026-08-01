@@ -42,6 +42,9 @@ workspace:
     - id: svar
       path: ~/svar
       description: Sibling repo — structured LLM output + routing library.
+    - id: clj-imaging
+      path: ~/clj-imaging
+      description: Sibling repo — Blockether AWT-free imaging (decode/encode/transforms/SVG) over a first-party Rust cdylib.
     - id: infrastructure
       path: ~/infrastructure
       description: Blockether Ansible infra — Hetzner servers, Dokku app deploys, SSH-CA, OpenBao secrets.
@@ -61,8 +64,8 @@ workspace:
       description: Extracted tree-sitter native library loaded by structural tools/tests.
       search: false
     - id: graal
-      path: ~/.sdkman/candidates/java/25.2.4-graalce
-      description: GraalVM CE 25.2.4 (SDKMAN, see .graalvm-version) — the jailed JVM reads its runtime dylibs.
+      path: ~/.sdkman/candidates/java/25.1.3-graalce
+      description: GraalVM CE 25.1.3 (SDKMAN, see .graalvm-version) — the jailed JVM reads its runtime dylibs.
       access: read-only
       search: false
     - id: npm
@@ -92,7 +95,7 @@ toggles:
 #   # here is not confined-granted. Access (RW vs read-only) comes from the
 #   # catalog entry above.
 #   filesystem:
-#     allow: [spel, fff, clj-fff, clj-ruff, tree-sitter, tree-sitter-clojure, svar, infrastructure, m2, clojure, clj-tslp, graal, npm]
+#     allow: [spel, fff, clj-fff, clj-ruff, tree-sitter, tree-sitter-clojure, svar, clj-imaging, infrastructure, m2, clojure, clj-tslp, graal, npm]
 #
 #   # Outbound egress allowlist. A bare host also matches its subdomains, so
 #   # `github.com` covers `api.github.com`, and `githubusercontent.com` covers

@@ -4657,11 +4657,11 @@
 ;; -----------------------------------------------------------------------------
 
 (defn- def->wire
-  "One `index/definitions` entry → snake_case wire map. Deliberately the SAME
-   shape as a DEFINITION row from struct_index `name` mode (`kind`/`visibility`/`signature`/
-   `doc`/`anchor`/`end_anchor`) so the two structural lenses read alike — plus the
-   def's `name` (`struct_index` lists many) and nesting `depth` (0 = top-level). Nil
-   fields are dropped to keep the row lean."
+  "One `index/definitions` entry → snake_case wire map. It is the definition row in
+   `struct_index`'s per-file `results` and mirrors the corresponding declaration in
+   its `occurrences` group (`kind`/`visibility`/`signature`/`doc`/`anchor`/
+   `end_anchor`), plus `name` and nesting `depth` (0 = top-level). Nil fields are
+   dropped to keep the row lean."
   [d]
   (cond->
     {"name" (:name d)
@@ -4694,69 +4694,25 @@
     (assoc "wildcard" true)))
 
 (defn- index-one
-  "Structural INDEX of a source file — a Maki-style, line-ranged skeleton via
-   tree-sitter. Read this BEFORE cat: a `<file> · <language> · <N> lines` header,
-   an anchored `imports:` section (the file's require/import deps), then every
-   definition, nested by structure, one per line:
-     <kind> [private] <name>  <signature>  @<start-anchor>..<end-anchor>
-   with the first line of its doc/comment gist on an indented line below (when
-   present) — for JS/TS/TSX that's the leading `//`/JSDoc comment above the def.
-   So you get kind (function/constant/…), a `private` marker only when the def is
-   private (public is the default and stays implicit), the exact name, the
-   arglist, the doc/comment gist, and the full start..end span — WITHOUT reading
-   the body. To read ONE definition's SOURCE, use its anchors — never the whole
-   file: `struct_nodes({\"nodes\": [{\"path\": P, \"anchor\": <start-anchor>}]})` hands
-   back that node's verbatim `source` PLUS its zipper cursor (`at`/`children`/`can`),
-   and cat(path, {\"anchor\": [<start-anchor>, <end-anchor>]}) reads the same span as
-   anchored lines. The <name> is the VERBATIM `struct_patch` target: copy it
-   as-is (it is already clean — no `^:private`/type-hint noise), and pair it with
-   <kind> when two defs
-   share a name.
-     await struct_index(path)
-   Returns {\"skeleton\": \"...\", \"definitions\": [{\"name\",\"kind\",\"visibility\",
-   \"signature\",\"doc\",\"anchor\",\"end_anchor\",\"depth\"} …], \"imports\":
-   [{\"source\",\"alias\",\"items\",\"wildcard\",\"anchor\"} …], \"language\": \"...\",
-   \"line_count\": N}. `definitions` is the machine-addressable data — each row the
-   SAME shape as a `name`-mode definition row (read `anchor`/`end_anchor` as fields,
-   no parsing the skeleton blob). When a language has no structural index yet,
-   returns a note — fall back to cat(path)."
-  [& args]
-  ;; Accept struct_index("x") (positional) AND struct_index({"path":"x"}) — the native
-  ;; tool-call path synthesizes the dict form.
+  "Index one normalized path specification for the paths-only `struct_index` tool.
+   Its result becomes one row in the tool's `results` vector."
+  [spec]
   (let
-    [a
-     (first args)
-
-     path
-     (cond (string? a) a
-           (map? a) (get a "path")
-           :else a)
-
-     ;; Optional 1-based inclusive line windows: `ranges` is a list of [start end]
-     ;; pairs. Each narrows the index to imports + top-level definitions whose span
-     ;; intersects ANY window (children kept). Coerced to longs; a malformed value
-     ;; is dropped (full-file index) rather than fatal.
-     coerce-pair
-     (fn [p]
-       (when (and (sequential? p) (= 2 (count p)))
-         (let [ns (map #(if (number? %) (long %) (parse-long (str %))) p)]
-           (when (every? some? ns) (vec ns)))))
+    [path
+     (get spec "path")
 
      ranges
-     (do (when (and (map? a) (contains? a "range"))
-           (throw (ex-info "struct_index accepts `ranges` only; use {\"ranges\": [[start, end]]}"
-                           {:type :ext.foundation.editing/invalid-index-args :got a})))
-         (let [rs (when (map? a) (get a "ranges"))]
-           (when (sequential? rs) (not-empty (vec (keep coerce-pair rs))))))
+     (get spec "ranges")
 
-     ;; What file-index sees: a collection of [lo hi] windows (or nil).
      windows
-     ranges
+     (when (seq ranges)
+       (mapv (fn [[start end]]
+               [(long start) (long end)])
+             ranges))
 
-     ;; Resolve through safe-path (workspace-cwd confinement) like every other file
-     ;; tool — file-index's internal (slurp path) must NOT see a raw relative
-     ;; path (that resolves against the JVM user.dir, not the workspace root, so a
-     ;; nested `src/foo.clj` 404s while cat finds it).
+     ;; Resolve through safe-path (workspace-cwd confinement) like every other
+     ;; file tool — file-index's internal slurp must not receive a raw relative
+     ;; path, whose base would be the JVM user.dir rather than the workspace.
      f
      (ensure-existing-file! (safe-path path))
 
@@ -4773,8 +4729,8 @@
       {:op :struct_index
        :path path
        :kind :file
-       ;; TOTAL: every branch answers with the SAME key set, nil-filled — an
-       ;; unindexed language is a `note` next to nil structure, not a foreign map.
+       ;; TOTAL: an unindexed language is a note next to nil structure, never a
+       ;; differently shaped response.
        :result (let
                  [base {"skeleton" nil
                         "definitions" []
@@ -4799,34 +4755,65 @@
 (declare occurrences-data symbol-rename-tool)
 
 (defn- index-tool
-  "Index independent source paths with `{\"paths\": [...]}`; results preserve request
-   order. Shared `ranges` apply to every entry, and an entry may instead be
-   `{\"path\": \"…\", \"ranges\": [[start, end]]}` to scope EACH file differently."
-  [& args]
-  (let [a (first args)]
-    (cond (and (= 1 (count args)) (map? a) (contains? a "name"))
-          ;; `name` mode — every OCCURRENCE of one identifier instead of a file
-          ;; index. The definition rows are field-for-field the same as a
-          ;; `definitions` row, so it is the same index answered by identifier.
-          (let [res (occurrences-data (select-keys a ["name" "paths"]))]
-            (tool-success
-              {:op :struct_index :kind :dir :result (:result res) :metadata (:metadata res)}))
-          (and (= 1 (count args)) (map? a) (contains? a "paths"))
-          (let
-            [specs (batch-path-specs "struct_index"
-                                     :ext.foundation.editing/invalid-index-args
-                                     (dissoc a "paths")
-                                     (get a "paths"))]
-            (tool-success {:op :struct_index
-                           :kind :file
-                           :result {"results" (mapv #(:result (index-one %)) specs)}}))
-          (and (= 1 (count args)) (map? a) (not (contains? a "path")))
-          (throw (ex-info
-                   "struct_index needs `paths` (files to index) or `name` (identifier to trace)."
-                   {:type :ext.foundation.editing/invalid-index-args :got a}))
-          ;; Private legacy map/positional calls remain available to Clojure callers;
-          ;; the native schema exposes only the plural `paths` contract above.
-          :else (apply index-one args))))
+  "Index source files with one paths-only contract. Results preserve request order.
+   Set `include_occurrences` to true to additionally trace each declared identifier
+   across the supplied files. Shared ranges apply to every entry, while entry-level
+   ranges scope one file differently."
+  [args]
+  (let
+    [include-occurrences?
+     (true? (get args "include_occurrences"))
+
+     invalid-args?
+     (or (not (map? args))
+         (not (contains? args "paths"))
+         (not-every? #{"paths" "ranges" "include_occurrences"} (keys args))
+         (and (contains? args "include_occurrences")
+              (not (boolean? (get args "include_occurrences"))))
+         (some (fn [entry]
+                 (and (map? entry) (not-every? #{"path" "ranges"} (keys entry))))
+               (get args "paths")))]
+
+    (when invalid-args?
+      (throw
+        (ex-info
+          "struct_index accepts only `paths`, optional `ranges`, and optional boolean `include_occurrences`."
+          {:type :ext.foundation.editing/invalid-index-args :got args})))
+    (let
+      [entries
+       (get args "paths")
+
+       specs
+       (batch-path-specs "struct_index"
+                         :ext.foundation.editing/invalid-index-args
+                         (dissoc args "paths" "include_occurrences")
+                         entries)
+
+       results
+       (mapv #(:result (index-one %)) specs)
+
+       result
+       (cond-> {"results" results}
+         include-occurrences?
+         (assoc "occurrences"
+           (let
+             [paths
+              (->> specs
+                   (map #(get % "path"))
+                   distinct
+                   vec)
+
+              names
+              (->> results
+                   (mapcat #(get % "definitions"))
+                   (keep #(get % "name"))
+                   distinct
+                   vec)]
+
+             (mapv #(occurrences-data % paths) names))))]
+
+      (tool-success {:op :struct_index :kind :file :result result}))))
+
 
 ;; -----------------------------------------------------------------------------
 ;; Native-tool result renderers — `(result → markdown)`. The loop applies these
@@ -5501,40 +5488,53 @@
 (declare render-occurrences-result)
 
 (defn- render-index-result
-  "struct_index → `{:summary :body}`. A single file is a definition table. A batch
-   groups those tables beneath their per-file headlines, preserving request order."
+  "struct_index → `{:summary :body}`. File tables preserve request order. When
+   requested, an occurrences section groups every indexed definition with its
+   syntactic uses."
   [r]
-  (if (contains? r "definition_count")
-    ;; `name` mode answers in the occurrence shape — render it as such.
-    (render-occurrences-result r)
-    (if-let [results (seq (get r "results"))]
-      (let
-        [rendered (mapv render-index-one results)
-         files (count rendered)
-         defs (reduce + (map #(count (get % "definitions")) results))]
+  (if-let [results (seq (get r "results"))]
+    (let
+      [rendered (mapv render-index-one results)
+       occurrences? (contains? r "occurrences")
+       occurrences (when occurrences? (get r "occurrences"))
+       rendered-occurrences (when occurrences? (mapv render-occurrences-result occurrences))
+       files (count rendered)
+       defs (reduce + (map #(count (get % "definitions")) results))]
 
-        {:summary (str (batch-paths-summary (map #(get % "path") results))
-                       " · " files
-                       " file" (when (not= 1 files) "s")
-                       " · " defs
-                       " def" (when (not= 1 defs) "s"))
-         :body (str/join "\n\n"
-                         (map (fn [{:keys [summary body]}]
-                                (str "### " summary (or body "")))
-                              rendered))})
-      (render-index-one r))))
+      {:summary (str (batch-paths-summary (map #(get % "path") results))
+                     " · "
+                     files
+                     " file"
+                     (when (not= 1 files) "s")
+                     " · "
+                     defs
+                     " def"
+                     (when (not= 1 defs) "s")
+                     (when occurrences?
+                       (str " · " (count occurrences)
+                            " occurrence group" (when (not= 1 (count occurrences)) "s"))))
+       :body (str/join "\n\n"
+                       (cond->
+                         (mapv (fn [{:keys [summary body]}]
+                                 (str "### " summary (or body "")))
+                               rendered)
+                         (seq rendered-occurrences)
+                         (conj (str "### Occurrences\n\n"
+                                    (str/join "\n\n"
+                                              (map (fn [{:keys [summary body]}]
+                                                     (str "#### " summary (or body "")))
+                                                   rendered-occurrences))))))})
+    (render-index-one r)))
 
 (defn- render-occurrences-result
-  "struct_index `name` mode → `{:summary :body}`, a definition TABLE grouped PER
-   SYMBOL — the same shape the `paths` mode draws, so both modes of the tool read
-   alike. Headline is `` `name` · K defs · N uses · M files · <scope> ``; <scope>
-   is `project-wide` for the default scan, else `in <paths>`. Each DEFINITION is a
-   table row (name, signature, kind — visibility only when not public — its def
-   site, its use count), immediately followed by one indented row per file that
-   uses it, carrying that file's line numbers. Uses no single definition owns come
-   last as `unowned use` rows. Cells are plain text (the table painter does not
-   render inline markdown) and use anchors are re-sorted by line number, since the
-   wire round-trip does not preserve map order. `r` is wire-shaped:
+  "One `struct_index` occurrence group → `{:summary :body}`, a definition TABLE
+   grouped per declared identifier. Its headline is
+   `` `name` · K defs · N uses · M files · <scope> ``; <scope> is the exact indexed
+   file set. Each DEFINITION is a table row (name, signature, kind — visibility only
+   when not public — definition site, use count), followed by use-site rows. Uses no
+   single definition owns come last as `unowned use` rows. Cells are plain text (the
+   table painter does not render inline markdown) and anchors are re-sorted by line
+   number because wire maps do not preserve source order. `r` is wire-shaped:
    `{:name :symbols [{:kind :visibility :signature :path :anchor :end_anchor
    :use_count :uses [{:path :anchors}]}] :other_uses :count :definition_count}`."
   [r]
@@ -5823,15 +5823,15 @@
      :native-tool? true
      :result
      (str
-       "Object with string key `results`; each item has `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, and `ranges`. "
-       "No source text: a row's SOURCE comes from its `anchor` — `struct_nodes` for the node verbatim plus a zipper cursor, `cat` for its anchored lines. "
-       "With `name` instead it is PER SYMBOL: `name`, `symbols` — one entry per definition (`path`, `anchor`, `end_anchor`, `kind`, `visibility`, `signature`, `use_count`, and its `uses` as `{path, anchors}`) — plus `other_uses` for uses no single definition owns, `count`, `definition_count`, `scanned`, `failed`.")
+       "Object with string key `results` and optional `occurrences`. `results` preserves one item per requested file; each has `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, and `ranges`. "
+       "Set `include_occurrences` to true to include `occurrences`, which has one group per declared identifier: `name`, `symbols` (one entry per definition with `path`, `anchor`, `end_anchor`, `kind`, `visibility`, `signature`, `use_count`, and `uses` as `{path, anchors}`), plus conservative `other_uses`, `count`, `definition_count`, `scanned`, and `failed`. "
+       "No source text: a row's SOURCE comes from its `anchor` — `struct_nodes` for the node verbatim plus a zipper cursor, `cat` for its anchored lines.")
      :active-fn structural-supported?
      :description
      (str
        "Inspect supported source structurally before reading bodies: imports plus a nested definition "
        "skeleton with signatures, doc gists, and fresh start/end anchors for `cat`/`struct_patch`. "
-       "With `name` it instead traces that ONE identifier project-wide — every syntactic use, definitions marked — the blast radius to read before a rename.")
+       "Set `include_occurrences` to true to trace each indexed definition's syntactic occurrences across the supplied files.")
      :render render-index-result
      :color-role :tool-color/read
      :schema
@@ -5854,15 +5854,13 @@
         :minItems 1
         :description
         (str
-          "Exact physical paths from grep/cat/struct_index, copied unchanged — batch every file "
+          "Exact physical source-file paths from grep/cat/struct_index, copied unchanged — batch every file "
           "you need. Shared `ranges` apply to every entry; `{\"path\": \"…\", \"ranges\": [[a, b]]}` "
-          "scopes one file differently. Required unless `name` is given, which uses them only to "
-          "scope the scan (default: whole project).")}
-       "name"
-       {:type "string"
-        :minLength 1
+          "scopes one file differently. Set `include_occurrences` to true to trace each indexed definition across this exact file set.")}
+       "include_occurrences"
+       {:type "boolean"
         :description
-        "Trace THIS identifier instead of indexing files: every use at real identifier boundaries, definitions marked."}
+        "When true, include syntactic occurrence groups for every indexed definition. Omit or set false to return only results."}
        "ranges"
        {:type "array"
         :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
@@ -5870,7 +5868,7 @@
         :description
         (str "[[start, end], …] 1-based inclusive line windows. A definition is kept when its span "
              "intersects ANY window; line_count still reports the whole file.")}}
-      ;; `paths` OR `name` — enforced in the tool, so neither is schema-required.
+      :required ["paths"]
       :additionalProperties false}
      :before-fn (path-protected-before-fn :struct_index :file :read read-arg-paths)
      :tag :observation
@@ -6176,7 +6174,7 @@
      down|d|b up|u|t left|l right|r first last next|n prev|p {child:i}
      {find:\"text\"} {find_kind:\"if_statement\"}. Navigate with struct_nodes(...) first,
      then edit the same path here.
-   Locate targets with struct_index(paths|name) / struct_nodes(nodes).
+   Locate targets with struct_index(paths) / struct_nodes(nodes).
    Returns the [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write."
   [args]
   (let
@@ -6491,7 +6489,7 @@
         :items {:type "string" :minLength 1}
         :minItems 1
         :description
-        "Op \"rename\" only, in place of `path`: rewrite `target` → `code` across these scopes (`[\".\"]` = whole project). Check the blast radius with struct_index(name) first."}
+        "Op \"rename\" only, in place of `path`: rewrite `target` → `code` across these scopes (`[\".\"]` = whole project). Check the blast radius with grep, then struct_index(paths)."}
        "edits"
        {:type "array"
         :minItems 1
@@ -6786,46 +6784,15 @@
         (assoc "end_anchor" (:end-anchor o))))))
 
 (defn- occurrences-data
-  "Every OCCURRENCE of an identifier across the project (or within `paths`), via
-   tree-sitter — real identifier boundaries, never inside a bigger token / string
-   / comment. This BACKS `struct_index` in `name` mode; it is not a tool of its
-   own and returns `{:result :metadata}` for that caller to wrap.
-
-   The answer is grouped PER SYMBOL: `symbols` carries ONE entry per DEFINITION
-   (kind, visibility, signature, doc, path, full span) with the uses attached to
-   it. Attribution is syntactic, never guessed: with a single definition every
-   use is its own; with several, a use is attached to the definition in its own
-   file when that file defines the name exactly once, and otherwise lands in
-   `other_uses`. `definition_count` > 1 therefore means the name is ambiguous —
-   each symbol carries its own path + signature to disambiguate."
-  [spec]
+  "Every syntactic occurrence of one declared identifier across the exact indexed
+   `paths`, grouped per definition. Attribution remains conservative: a sole
+   definition owns every use; otherwise only a file-local unique definition owns
+   its uses, and ambiguous uses remain in `other_uses`."
+  [name paths]
   (let
-    [name
-     (get spec "name")
+    [files
+     (vec paths)
 
-     _
-     (when-not (and (string? name) (not (str/blank? name)))
-       (throw (ex-info "struct_index `name` must be a non-blank identifier."
-                       {:type :ext.foundation.editing/invalid-index-args :name name})))
-
-     paths
-     (let [p (or (get spec "paths") ["."])]
-       (if (string? p) [p] (vec p)))
-
-     ;; rg prefilters the files that mention the name (smart-case would over-
-     ;; match casing, but a definition keeps the name's case, so a case-
-     ;; sensitive identifier still lands among these files); each is parsed.
-     files
-     ;; `name` mode PARSES every matching file, so the rg prefilter must not
-     ;; cap the candidate set at `default-grep-limit` (250) — a large dir /
-     ;; project would silently drop every file past the 250th, contradicting
-     ;; the "Not truncated" contract. Pass an unbounded limit.
-     (vec (or (:files
-                (rg-search
-                  {"query" [name] "is_files_only" true "paths" paths "limit" Integer/MAX_VALUE}))
-              []))
-
-     ;; `per`/`failed` entries are the model-facing result payload — string keys.
      {:keys [per failed]}
      (reduce
        (fn [acc path]
@@ -6844,7 +6811,6 @@
      total
      (reduce + 0 (map #(count (get % "occurrences")) per))
 
-     ;; One row per definition site, in scan order — these become the symbols.
      def-rows
      (vec (for
             [f
@@ -6857,7 +6823,6 @@
 
             (assoc (dissoc o "is_definition") "path" (get f "path"))))
 
-     ;; Uses collapse to one anchor list per file before attribution.
      use-rows
      (vec (for
             [f
@@ -6875,8 +6840,6 @@
      defs-per-file
      (frequencies (map #(get % "path") def-rows))
 
-     ;; The owning definition of a use file, or nil when the name is defined
-     ;; more than once and nothing syntactic decides between them.
      owner
      (fn [use-path]
        (cond (= 1 defs) (first def-rows)
@@ -6898,17 +6861,16 @@
      other-uses
      (vec (get grouped nil))]
 
-    {:result (cond->
-               {"name" name
-                "symbols" symbols
-                "count" total
-                "definition_count" defs
-                "scanned" (count files)
-                "paths" paths
-                "failed" failed}
-               (seq other-uses)
-               (assoc "other_uses" other-uses))
-     :metadata {:name name :paths paths :count total :definition_count defs}}))
+    (cond->
+      {"name" name
+       "symbols" symbols
+       "count" total
+       "definition_count" defs
+       "scanned" (count files)
+       "paths" files
+       "failed" failed}
+      (seq other-uses)
+      (assoc "other_uses" other-uses))))
 
 (defn- symbol-rename-tool
   "Rename identifier `name` → `new_name` across the WHOLE project via tree-sitter
@@ -7003,8 +6965,9 @@
      :description
      (str
        "Rename one identifier across supported project code at syntactic boundaries, with "
-       "each changed file re-parsed. Run `struct_index({name})` first to confirm the blast radius; "
-       "Clojure namespace renames still require moving the defining file.")
+       "each changed file re-parsed. Use grep to find candidate files, then run struct_index with those "
+       "paths to inspect each declaration and its occurrences before renaming. Clojure namespace renames "
+       "still require moving the defining file.")
      :render render-symbol-rename-result
      :color-role :tool-color/edit
      :schema {:type "object"

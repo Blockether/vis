@@ -1,10 +1,10 @@
-# vis sandbox PIL/Pillow-compat shim, backed by the JVM Java2D / ImageIO stack.
+# vis sandbox PIL/Pillow-compat shim, backed by the host com.blockether/imaging renderer.
 #
 # The agent sandbox ships no CPython Pillow wheel. This shim publishes a
 # Pillow-compatible PIL package whose Image/ImageDraw/ImageFilter/ImageOps/
 # ImageColor/ImageEnhance/ImageChops/ImageFont operations DELEGATE to host
 # callables (__vis_pil_*), looked up in globals() at CALL time so the shim is
-# backend-agnostic. Images live host-side as BufferedImages keyed by an integer
+# backend-agnostic. Images live host-side as imaging rasters keyed by an integer
 # handle; the Python Image is a thin wrapper. Published into sys.modules (so
 # `from PIL import Image` works) and stapled onto builtins (so PIL.Image /
 # Image.new work with NO import). Single-quoted string literals throughout so
@@ -12,12 +12,12 @@
 
 
 def __vis_install_pil__():
-    import sys, types, base64, math
+    import sys, types, base64, math, struct
 
     def _H(name, *args):
         fn = globals().get(name)
         if fn is None:
-            raise OSError("vis: the PIL Java2D backend is not bound in this sandbox")
+            raise OSError("vis: the PIL host backend is not bound in this sandbox")
         env = fn(*args)
         if not env[0]:
             raise OSError(str(env[1]))
@@ -212,6 +212,10 @@ def __vis_install_pil__():
             self.info = {}
             self.palette = None
             self.format = None
+            self._pos = 0
+            self._n_frames = 1
+            self._delays = []
+            self._exif = None
 
         @property
         def size(self):
@@ -340,7 +344,8 @@ def __vis_install_pil__():
                     + str(mode)
                     + " not supported"
                 )
-            return _wrap(_H("__vis_pil_convert__", self._handle, str(mode)))
+            out = _wrap(_H("__vis_pil_convert__", self._handle, str(mode)))
+            return _attach_palette(out) if out.mode == "P" else out
 
         def getpixel(self, xy):
             v = _H("__vis_pil_getpixel__", self._handle, int(xy[0]), int(xy[1]))
@@ -379,7 +384,33 @@ def __vis_install_pil__():
                 fmt = name.rsplit(".", 1)[1].upper()
             if not fmt:
                 fmt = "PNG"
-            b64 = _H("__vis_pil_save__", self._handle, fmt)
+            quality = kw.get("quality")
+            optimize = bool(kw.get("optimize"))
+            if isinstance(quality, str):
+                quality = _QUALITY_PRESETS.get(quality.lower())
+            if quality is not None:
+                quality = max(1, min(100, int(quality)))
+            if kw.get("save_all"):
+                # one multi-frame file: this image is frame 0, append_images the rest.
+                handles = [self._handle] + [
+                    im._handle for im in (kw.get("append_images") or [])
+                ]
+                duration = kw.get("duration", self.info.get("duration"))
+                if isinstance(duration, (list, tuple)):
+                    duration = [int(d) for d in duration]
+                elif duration is not None:
+                    duration = int(duration)
+                loop = kw.get("loop", self.info.get("loop"))
+                b64 = _H(
+                    "__vis_pil_save_all__",
+                    handles,
+                    fmt,
+                    duration,
+                    None if loop is None else int(loop),
+                    optimize,
+                )
+            else:
+                b64 = _H("__vis_pil_save__", self._handle, fmt, quality, optimize)
             data = base64.b64decode(b64)
             if isinstance(fp, str):
                 with open(fp, "wb") as f:
@@ -647,22 +678,25 @@ def __vis_install_pil__():
             return [(v, k) for k, v in counts.items()]
 
         def getpalette(self, rawmode="RGB"):
-            pal = getattr(self, "_palette", None)
-            return list(pal) if pal else None
+            pal = _H("__vis_pil_getpalette__", self._handle)
+            pal = _lst(pal) if pal is not None else None
+            return [int(v) for v in pal] if pal else None
 
         def putpalette(self, data, rawmode="RGB"):
-            self._palette = list(data)
-            if self.mode not in ("P", "L"):
-                self.mode = "P"
+            if hasattr(data, "palette"):
+                data = data.palette
+            flat = [int(v) for v in _lst(data)]
+            self._set(_H("__vis_pil_putpalette__", self._handle, flat))
+            self.palette = _Palette("RGB", flat)
 
         def remap_palette(self, dest_map, source_palette=None):
             return self.copy()
 
         def quantize(self, colors=256, method=None, kmeans=0, palette=None, dither=1):
-            try:
-                return self.convert("P")
-            except Exception:
-                return self.copy()
+            out = _wrap(
+                _H("__vis_pil_quantize__", self._handle, int(colors), bool(dither))
+            )
+            return _attach_palette(out)
 
         def apply_transparency(self):
             return None
@@ -674,19 +708,44 @@ def __vis_install_pil__():
             return None
 
         def seek(self, frame):
-            if frame != 0:
+            frame = int(frame)
+            if frame == self.tell():
+                return
+            if frame < 0 or frame >= self.n_frames:
                 raise EOFError("attempt to seek beyond the last frame")
+            self._set(_H("__vis_pil_seek__", self._handle, frame))
+            self._pos = frame
+            delays = getattr(self, "_delays", None)
+            if delays:
+                self.info["duration"] = delays[frame]
 
         def tell(self):
-            return 0
+            return int(getattr(self, "_pos", 0))
 
         @property
         def n_frames(self):
-            return 1
+            return int(getattr(self, "_n_frames", 1) or 1)
 
         @property
         def is_animated(self):
-            return False
+            return self.n_frames > 1
+
+        def getexif(self):
+            ex = getattr(self, "_exif", None)
+            if ex is None:
+                blob = self.info.get("exif") or getattr(self, "_raw", None)
+                top, ifds = _parse_exif_tiff(_exif_tiff_block(blob) or b"")
+                ex = Exif(top, ifds)
+                self._exif = ex
+            return ex
+
+        def _getexif(self):
+            # the legacy accessor is FLAT: sub-IFD tags merged into one dict.
+            ex = self.getexif()
+            merged = dict(ex)
+            for sub in ex._ifds.values():
+                merged.update(sub)
+            return merged or None
 
         def effect_spread(self, distance):
             return self.copy()
@@ -711,6 +770,172 @@ def __vis_install_pil__():
             fill = int(color)
         return _wrap(_H("__vis_pil_new__", str(mode), int(w), int(h), fill))
 
+    # -- palette / quality / Exif helpers ------------------------------------
+    _QUALITY_PRESETS = {
+        "web_low": 10,
+        "web_medium": 30,
+        "web_high": 60,
+        "web_very_high": 85,
+        "web_maximum": 95,
+        "low": 10,
+        "medium": 30,
+        "high": 60,
+        "maximum": 95,
+    }
+
+    def _attach_palette(im):
+        pal = im.getpalette()
+        if pal:
+            im.palette = _Palette("RGB", list(pal))
+        return im
+
+    # type -> (bytes per component, struct code); None means "decode by hand".
+    _EXIF_FMT = {
+        1: (1, "B"),
+        2: (1, None),
+        3: (2, "H"),
+        4: (4, "I"),
+        5: (8, None),
+        6: (1, "b"),
+        7: (1, None),
+        8: (2, "h"),
+        9: (4, "i"),
+        10: (8, None),
+        11: (4, "f"),
+        12: (8, "d"),
+    }
+
+    def _exif_tiff_block(data):
+        """The raw TIFF block carrying an image's Exif, or None: from a JPEG APP1
+        segment, a PNG eXIf chunk, a bare TIFF file, or an already-extracted
+        Exif-prefixed blob (what Pillow keeps in info['exif'])."""
+        if not data:
+            return None
+        data = bytes(data)
+        if data[:6] == b"Exif\x00\x00":
+            return data[6:]
+        if data[:3] == bytes([255, 216, 255]):
+            i, n = 2, len(data)
+            while i + 4 <= n and data[i] == 0xFF:
+                marker = data[i + 1]
+                if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                    i += 2
+                    continue
+                if marker == 0xDA:  # start of scan: no metadata past here
+                    break
+                seglen = (data[i + 2] << 8) | data[i + 3]
+                if seglen < 2:
+                    break
+                seg = data[i + 4 : i + 2 + seglen]
+                if marker == 0xE1 and seg[:6] == b"Exif\x00\x00":
+                    return seg[6:]
+                i += 2 + seglen
+            return None
+        if data[:8] == bytes([137, 80, 78, 71, 13, 10, 26, 10]):
+            i, n = 8, len(data)
+            while i + 8 <= n:
+                ln = int.from_bytes(data[i : i + 4], "big")
+                kind = data[i + 4 : i + 8]
+                if kind == b"eXIf":
+                    return data[i + 8 : i + 8 + ln]
+                if kind == b"IEND":
+                    break
+                i += 12 + ln
+            return None
+        if data[:2] in (b"II", b"MM"):
+            return data
+        return None
+
+    def _exif_value(order, typ, count, raw):
+        if typ == 2:
+            return raw.split(b"\x00")[0].decode("utf-8", "replace")
+        if typ == 7:
+            return bytes(raw)
+        if typ in (5, 10):
+            c = "I" if typ == 5 else "i"
+            nums = struct.unpack(order + c * (2 * count), raw[: 8 * count])
+            vals = tuple(
+                (nums[i * 2] / nums[i * 2 + 1]) if nums[i * 2 + 1] else 0.0
+                for i in range(count)
+            )
+            return vals[0] if count == 1 else vals
+        code = _EXIF_FMT.get(typ, (0, None))[1]
+        if code is None:
+            return bytes(raw)
+        fmt = order + code * count
+        vals = struct.unpack(fmt, raw[: struct.calcsize(fmt)])
+        return vals[0] if count == 1 else vals
+
+    def _parse_exif_tiff(tiff):
+        """(top-level tags, {pointer-tag: sub-IFD tags}) of one Exif TIFF block."""
+        if not tiff or len(tiff) < 8:
+            return {}, {}
+        head = bytes(tiff[:2])
+        order = "<" if head == b"II" else ">" if head == b"MM" else None
+        if order is None or struct.unpack(order + "H", tiff[2:4])[0] != 42:
+            return {}, {}
+        top, ifds, seen = {}, {}, set()
+
+        def rd(off, target, depth):
+            if off <= 0 or off + 2 > len(tiff) or off in seen or depth > 4:
+                return
+            seen.add(off)
+            (count,) = struct.unpack(order + "H", tiff[off : off + 2])
+            p = off + 2
+            for _ in range(count):
+                if p + 12 > len(tiff):
+                    return
+                tag, typ, n = struct.unpack(order + "HHI", tiff[p : p + 8])
+                size = _EXIF_FMT.get(typ, (0, None))[0]
+                p += 12
+                if not size or n > 0x10000:
+                    continue
+                nb = size * n
+                if nb <= 4:
+                    raw = tiff[p - 4 : p - 4 + nb]
+                else:
+                    (vo,) = struct.unpack(order + "I", tiff[p - 4 : p])
+                    raw = tiff[vo : vo + nb]
+                if len(raw) < nb:
+                    continue
+                try:
+                    v = _exif_value(order, typ, n, raw)
+                except Exception:
+                    continue
+                target[tag] = v
+                if tag in (0x8769, 0x8825, 0xA005) and isinstance(v, int):
+                    sub = {}
+                    rd(v, sub, depth + 1)
+                    ifds[tag] = sub
+            if p + 4 <= len(tiff):
+                (nxt,) = struct.unpack(order + "I", tiff[p : p + 4])
+                if nxt:
+                    rd(nxt, target, depth + 1)
+
+        (first,) = struct.unpack(order + "I", tiff[4:8])
+        rd(first, top, 0)
+        return top, ifds
+
+    class Exif(dict):
+        """Pillow's `Image.Exif`: tag -> value, plus `get_ifd` for the sub-IFDs."""
+
+        def __init__(self, top=None, ifds=None):
+            dict.__init__(self, top or {})
+            self._ifds = dict(ifds or {})
+
+        def load(self, data):
+            top, ifds = _parse_exif_tiff(_exif_tiff_block(data) or b"")
+            self.clear()
+            self.update(top)
+            self._ifds = ifds
+            return self
+
+        def get_ifd(self, tag):
+            return dict(self._ifds.get(int(tag), {}))
+
+        def tobytes(self, offset=8):
+            raise NotImplementedError("vis PIL shim: Exif.tobytes() is not supported")
+
     def _sniff_format(data):
         if data[:8] == bytes([137, 80, 78, 71, 13, 10, 26, 10]):
             return "PNG"
@@ -734,9 +959,27 @@ def __vis_install_pil__():
         else:
             with open(fp, "rb") as f:
                 data = f.read()
-        b64 = base64.b64encode(bytes(data)).decode("ascii")
+        raw = bytes(data)
+        b64 = base64.b64encode(raw).decode("ascii")
         _im = _wrap(_H("__vis_pil_open__", b64))
-        _im.format = _sniff_format(bytes(data))
+        _im.format = _sniff_format(raw)
+        _im._raw = raw
+        tiff = _exif_tiff_block(raw)
+        if tiff:
+            _im.info["exif"] = b"Exif\x00\x00" + tiff
+        try:
+            fr = _lst(_H("__vis_pil_frames__", _im._handle))
+        except Exception:
+            fr = None
+        if fr:
+            _im._n_frames = int(fr[0])
+            _im._delays = [int(d) for d in _lst(fr[2])]
+            if fr[1] is not None:
+                _im.info["loop"] = int(fr[1])
+            if _im._delays:
+                _im.info["duration"] = _im._delays[0]
+        if _im.mode == "P":
+            _attach_palette(_im)
         return _im
 
     def frombytes(mode, size, data, decoder_name="raw", *args):
@@ -904,7 +1147,7 @@ def __vis_install_pil__():
     Image_mod.TRANSPOSE = TRANSPOSE
     Image_mod.TRANSVERSE = TRANSVERSE
     Image_mod.Transpose = Transpose
-    Image_mod.__version__ = "10.0-vis-java2d"
+    Image_mod.__version__ = "10.0-vis-imaging"
 
     # -- ImageDraw -----------------------------------------------------------
     class _Draw:
@@ -1617,11 +1860,41 @@ def __vis_install_pil__():
         w, h = image.size
         return image.crop((l, t, w - r, h - b))
 
+    _EXIF_ORIENTATION_OPS = {
+        2: (FLIP_LEFT_RIGHT,),
+        3: (ROTATE_180,),
+        4: (FLIP_TOP_BOTTOM,),
+        5: (FLIP_LEFT_RIGHT, ROTATE_90),
+        6: (ROTATE_270,),
+        7: (FLIP_LEFT_RIGHT, ROTATE_270),
+        8: (ROTATE_90,),
+    }
+
     def _ops_exif_transpose(image, in_place=False):
-        # No EXIF metadata is carried by this shim, so this is an identity op.
+        # Orientation (0x0112) is the one EXIF tag that changes the PIXELS: a
+        # phone photo is stored landscape with "rotate me" attached, so a shim
+        # that ignored it handed the model a sideways picture.
+        ops = _EXIF_ORIENTATION_OPS.get(image.getexif().get(0x0112))
+        out = image
+        for op in ops or ():
+            out = out.transpose(op)
+        if out is image:
+            out = image.copy()
+        # the rotation is now baked in: keep the rest of the EXIF, drop the tag
+        # (and the raw block it would be re-read from) so it cannot apply twice.
+        rest = Exif(
+            {k: v for k, v in image.getexif().items() if k != 0x0112},
+            image.getexif()._ifds,
+        )
+        out._exif = rest
+        out.info = dict(image.info)
+        out.info.pop("exif", None)
         if in_place:
+            image._set([out._handle, out._w, out._h, out.mode])
+            image._exif = rest
+            image.info.pop("exif", None)
             return None
-        return image.copy()
+        return out
 
     def _ops_deform(image, deformer, resample=BICUBIC):
         # Apply a deformer via its getmesh(image) -> [(box, quad), ...] using MESH.
@@ -1830,18 +2103,37 @@ def __vis_install_pil__():
             return self
 
         def __next__(self):
-            if self.pos > 0:
+            try:
+                self.im.seek(self.pos)
+            except EOFError:
                 raise StopIteration
             self.pos += 1
             return self.im
 
         def __getitem__(self, ix):
-            if ix == 0:
-                return self.im
-            raise IndexError("no such frame")
+            try:
+                self.im.seek(int(ix))
+            except EOFError:
+                raise IndexError("no such frame")
+            return self.im
+
+    def _all_frames(im, func=None):
+        ims = list(im) if isinstance(im, (list, tuple)) else [im]
+        out = []
+        for one in ims:
+            start = one.tell()
+            for frame in _SeqIterator(one):
+                snap = frame.copy()
+                out.append(func(snap) if func else snap)
+            try:
+                one.seek(start)
+            except EOFError:
+                pass
+        return out
 
     ImageSequence.Iterator = _SeqIterator
-    ImageSequence.all_frames = lambda im, func=None: [func(im) if func else im]
+    ImageSequence.all_frames = _all_frames
+    Image_mod.Exif = Exif
 
     # -- ImagePalette --------------------------------------------------------
     ImagePalette = types.ModuleType("PIL.ImagePalette")
@@ -1982,8 +2274,10 @@ def __vis_install_pil__():
 
     # -- assemble the PIL package -------------------------------------------
     PIL = types.ModuleType("PIL")
-    PIL.__doc__ = "vis Pillow-compatible shim backed by the JVM Java2D / ImageIO stack."
-    PIL.__version__ = "10.0-vis-java2d"
+    PIL.__doc__ = (
+        "vis Pillow-compatible shim backed by the host com.blockether/imaging renderer."
+    )
+    PIL.__version__ = "10.0-vis-imaging"
     PIL.Image = Image_mod
     PIL.ImageDraw = ImageDraw
     PIL.ImageFilter = ImageFilter

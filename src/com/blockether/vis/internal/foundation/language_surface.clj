@@ -397,8 +397,6 @@
                                                 true
                                                 vec)}}))))
 
-(defn- inject-env [env f args] {:env env :fn f :args (into [env] args)})
-
 ;; =============================================================================
 ;; Native op-card renderers — `:result` → `{:summary :body}`. The result arrives
 ;; string-keyed snake_case (strings-only boundary), the injected env gone.
@@ -969,8 +967,7 @@
        "String-keyed object with `op`; code/single-file results include `changed` and may include "
        "`chars`, `path`, `formatter`, or `repaired`; batch results include `files`, `by-cwd`, "
        "and `formatters`. It never returns formatted source text.")
-     :description
-     "Format code or project files through the active language pack."
+     :description "Format code or project files through the active language pack."
      ;; NAME(language, {payload}) — optional leading `language`, the rest a
      ;; pure options dict (always emitted so the payload stays a map).
      :call {:lead-opt "language" :rest :always}
@@ -984,8 +981,7 @@
                    :description
                    "Language pack (e.g. \"clojure\"); pass it first — inferred when omitted."}
        "code" {:type "string"
-               :description
-               "Source to format, returned as a changed? + char-delta ack."}
+               :description "Source to format, returned as a changed? + char-delta ack."}
        "paths"
        {:type "array"
         :items {:type "string" :minLength 1}
@@ -994,7 +990,7 @@
         "Format these paths IN PLACE. A DIRECTORY is walked RECURSIVELY for source files. Mutually exclusive with `code`; OMIT both to format the workspace's default source paths recursively."}}
       :required []
       :additionalProperties false}
-     :before-fn inject-env
+     :inject-env? true
      :tag :mutation}))
 
 (def lint-symbol
@@ -1020,15 +1016,14 @@
                    "Language pack (e.g. \"clojure\"); pass it first — inferred when omitted."}
        "code" {:type "string"
                :description "Source to lint (returns findings). Mutually exclusive with paths."}
-       "paths"
-       {:type "array"
-        :items {:type "string" :minLength 1}
-        :minItems 1
-        :description
-        "Lint these files/dirs; OMIT to lint the workspace's default source paths."}}
+       "paths" {:type "array"
+                :items {:type "string" :minLength 1}
+                :minItems 1
+                :description
+                "Lint these files/dirs; OMIT to lint the workspace's default source paths."}}
       :required []
       :additionalProperties false}
-     :before-fn inject-env
+     :inject-env? true
      :tag :observation}))
 
 (def test-symbol
@@ -1087,7 +1082,7 @@
                  :description "Test-name filter, for packs that support it (e.g. `bun test -t`)."}}
       :required ["language"]
       :additionalProperties false}
-     :before-fn inject-env
+     :inject-env? true
      :tag :mutation}))
 
 (def repl-eval-symbol
@@ -1101,9 +1096,8 @@
        "`repl`, and available `value`/`values`, `out`, `err`, `status`, `ns`, `ms`, `timed_out`, "
        "`ex`, or `root_ex`; Python/Bun reports `code`, `ok`, `out`, `err`, `value`, `data`, `type`, "
        "and `exc`. Empty fields may be absent. There is no UI-rendered `transcript` or `content` field.")
-     :description (str
-                    "Evaluate code in an `up` project REPL. Use `repl` for any lifecycle "
-                    "change.")
+     :description (str "Evaluate code in an `up` project REPL. Use `repl` for any lifecycle "
+                       "change.")
      :call {:lead-opt "language" :rest :always}
      ;; repl_eval's own `timeout_ms` can exceed the generic Python eval
      ;; watchdog (DEFAULT_EVAL_TIMEOUT_MS, 120s); dispatch it directly in
@@ -1131,7 +1125,7 @@
        {:type "integer" :minimum 1 :description "Eval timeout in milliseconds (default 30000)."}}
       :required ["language" "code"]
       :additionalProperties false}
-     :before-fn inject-env
+     :inject-env? true
      :tag :mutation}))
 
 (def start-repl-symbol
@@ -1168,10 +1162,11 @@
                "id" {:type "string"
                      :minLength 1
                      :description "Lifecycle resource id (stop: the exact REPL to stop)."}
-               "cwd" {:type "string"
-                      :minLength 1
-                      :description
-                      "Directory the REPL serves (connect: the directory the attachment is keyed by)."}
+               "cwd"
+               {:type "string"
+                :minLength 1
+                :description
+                "Directory the REPL serves (connect: the directory the attachment is keyed by)."}
                "port" {:type "integer"
                        :description "connect only: port of the already-running external REPL."}
                "host" {:type "string" :description "connect only: its host (default localhost)."}
@@ -1180,7 +1175,7 @@
                           :description "Build-tool aliases to activate (e.g. deps.edn :dev)."}}
               :required ["language"]
               :additionalProperties false}
-     :before-fn inject-env
+     :inject-env? true
      :tag :mutation}))
 
 (def connect-repl-symbol
@@ -1211,7 +1206,7 @@
         "Project directory this REPL serves (default the workspace root) — the attachment is keyed and addressed by it."}}
       :required ["language" "port"]
       :additionalProperties false}
-     :before-fn inject-env
+     :inject-env? true
      :tag :mutation}))
 
 (def repl-stop-symbol
@@ -1232,7 +1227,7 @@
                                  :description "Session resource id of the REPL to stop."}}
               :required ["id"]
               :additionalProperties false}
-     :before-fn inject-env
+     :inject-env? true
      :tag :mutation}))
 
 (def symbols

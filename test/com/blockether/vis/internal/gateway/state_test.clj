@@ -12,11 +12,44 @@
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.session-model :as smodel]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private tool-error
   {:message "rg spec has unknown keys: spec."
    :data {:phase :python/host :type :vis/tool-failure :symbol :rg}})
+
+(defdescribe session-model-audit-test
+             (it "records changed picker preferences without making audit failure part of selection"
+                 (let
+                   [recorded
+                    (atom nil)
+
+                    before
+                    {:provider "anthropic" :model "claude-5"}
+
+                    after
+                    {:provider "openai" :model "gpt-5"}]
+
+                   (with-redefs
+                     [lp/db-info
+                      (constantly :db)
+
+                      smodel/model-of
+                      (constantly before)
+
+                      smodel/set-model!
+                      (constantly after)
+
+                      smodel/record-switch!
+                      (fn [& args]
+                        (reset! recorded args))
+
+                      state/append-event!
+                      (fn [& _])]
+
+                     (expect (= after (state/set-session-model! "audit-session" "openai" "gpt-5")))
+                     (expect (= [:db "audit-session" before after :gateway] @recorded))))))
 
 (defdescribe
   thinking-newline-normalization-test
@@ -108,7 +141,6 @@
                    (let [turn (first (state/transcript :session-1))]
                      (expect (nil? (get turn "meta_summary")))
                      (expect (nil? (get turn "meta_fallback_note"))))))
-
              (it "ships the footer for a settled turn with the same routing"
                  (with-redefs
                    [persistance/db-list-session-turns
@@ -549,62 +581,57 @@
    the device that sent them: an app restart (or a second device) mid-turn has no
    other source, because the live rail ships byte-free chips and the persisted
    row does not exist until the turn lands."
-  (it
-    "serves an in-flight turn's inline attachments in the canonical wire shape"
-    (let
-      [sid
-       (str (java.util.UUID/randomUUID))
+  (it "serves an in-flight turn's inline attachments in the canonical wire shape"
+      (let
+        [sid
+         (str (java.util.UUID/randomUUID))
 
-       registry
-       @#'state/registry
+         registry
+         @#'state/registry
 
-       saved
-       @registry]
+         saved
+         @registry]
 
-      (try (reset! registry
-                   {sid {:next-seq 0
-                         :turn-order ["t1"]
-                         :turns {"t1" {:turn_id "t1"
-                                       :session_id sid
-                                       :status "running"
-                                       :request "look at this"
-                                       :attachments [{:filename "shot.png"
-                                                      :media-type "image/png"
-                                                      :base64 "QUJD"
-                                                      :size 3}]}}}})
-           (let [rows (state/turn-attachments sid "t1")]
-             (expect (= 1 (count rows)))
-             (expect (= "shot.png" (get (first rows) "filename")))
-             (expect (= "image/png" (get (first rows) "media_type")))
-             (expect (= "QUJD" (get (first rows) "base64"))))
-           (finally (reset! registry saved)))))
-  (it
-    "falls back to the attachment store for a turn that has already landed"
-    (let
-      [sid
-       (str (java.util.UUID/randomUUID))
-
-       registry
-       @#'state/registry
-
-       saved
-       @registry]
-
-      (try (reset! registry {sid {:next-seq 0 :turns {}}})
-           (with-redefs
-             [persistance/db-list-turns-attachments
-              (fn [_ ids]
-                {(str (first ids)) [{:filename "landed.png"
-                                     :media-type "image/png"
-                                     :base64 "REVG"}]})]
-             (let [rows (state/turn-attachments sid "t9")]
+        (try (reset! registry {sid {:next-seq 0
+                                    :turn-order ["t1"]
+                                    :turns {"t1" {:turn_id "t1"
+                                                  :session_id sid
+                                                  :status "running"
+                                                  :request "look at this"
+                                                  :attachments [{:filename "shot.png"
+                                                                 :media-type "image/png"
+                                                                 :base64 "QUJD"
+                                                                 :size 3}]}}}})
+             (let [rows (state/turn-attachments sid "t1")]
                (expect (= 1 (count rows)))
-               (expect (= "landed.png" (get (first rows) "filename")))
-               (expect (= "REVG" (get (first rows) "base64")))))
-           (finally (reset! registry saved)))))
-  (it
-    "is nil for an unknown turn"
-    (expect (nil? (state/turn-attachments (str (java.util.UUID/randomUUID)) "nope")))))
+               (expect (= "shot.png" (get (first rows) "filename")))
+               (expect (= "image/png" (get (first rows) "media_type")))
+               (expect (= "QUJD" (get (first rows) "base64"))))
+             (finally (reset! registry saved)))))
+  (it "falls back to the attachment store for a turn that has already landed"
+      (let
+        [sid
+         (str (java.util.UUID/randomUUID))
+
+         registry
+         @#'state/registry
+
+         saved
+         @registry]
+
+        (try (reset! registry {sid {:next-seq 0 :turns {}}})
+             (with-redefs
+               [persistance/db-list-turns-attachments (fn [_ ids]
+                                                        {(str (first ids)) [{:filename "landed.png"
+                                                                             :media-type "image/png"
+                                                                             :base64 "REVG"}]})]
+               (let [rows (state/turn-attachments sid "t9")]
+                 (expect (= 1 (count rows)))
+                 (expect (= "landed.png" (get (first rows) "filename")))
+                 (expect (= "REVG" (get (first rows) "base64")))))
+             (finally (reset! registry saved)))))
+  (it "is nil for an unknown turn"
+      (expect (nil? (state/turn-attachments (str (java.util.UUID/randomUUID)) "nope")))))
 
 (defdescribe
   transcript-page-test
@@ -969,46 +996,53 @@
    convert that pin into a model-only engine override. The engine owns resolving
    the persisted provider+model pair at the instant a turn starts."
   (it "an immediately accepted turn forwards only an explicit caller model"
-      (let [registry @#'state/registry
-            sid (str "model-pin-accepted-" (java.util.UUID/randomUUID))
-            launched (atom nil)]
-        (try
-          (swap! registry assoc sid {:next-seq 0 :turns {} :turn-order []})
-          (with-redefs-fn {#'lp/by-id (fn [_] {:id sid})
-                           #'state/session-model (fn [_]
-                                                   {:provider "lmstudio"
-                                                    :model "ornith"})
-                           #'state/launch-turn-worker! (fn [& args]
-                                                         (reset! launched (vec args)))}
-            #(state/submit-turn! sid {:request "hello"}))
-          (expect (nil? (get-in @launched [3 :model])))
-          (expect (= "ornith" (get (state/get-turn sid (second @launched)) "model")))
-          (finally
-            (swap! registry dissoc sid)))))
+      (let
+        [registry
+         @#'state/registry
+
+         sid
+         (str "model-pin-accepted-" (java.util.UUID/randomUUID))
+
+         launched
+         (atom nil)]
+
+        (try (swap! registry assoc sid {:next-seq 0 :turns {} :turn-order []})
+             (with-redefs-fn {#'lp/by-id (fn [_]
+                                           {:id sid})
+                              #'state/session-model (fn [_]
+                                                      {:provider "lmstudio" :model "ornith"})
+                              #'state/launch-turn-worker! (fn [& args]
+                                                            (reset! launched (vec args)))}
+               #(state/submit-turn! sid {:request "hello"}))
+             (expect (nil? (get-in @launched [3 :model])))
+             (expect (= "ornith" (get (state/get-turn sid (second @launched)) "model")))
+             (finally (swap! registry dissoc sid)))))
   (it "a queued turn records the live pin at drain but forwards its raw override"
-      (let [registry @#'state/registry
-            sid (str "model-pin-queued-" (java.util.UUID/randomUUID))
-            launched (atom nil)]
-        (try
-          (swap! registry assoc
-            sid
-            {:next-seq 0
-             :turns {"q1" {:turn_id "q1"
-                            :session_id sid
-                            :status "queued"
-                            :request "hello"
-                            :queued_at 1}}
-             :turn-order ["q1"]})
-          (with-redefs-fn {#'state/session-model (fn [_]
-                                                   {:provider "lmstudio"
-                                                    :model "ornith"})
-                           #'state/launch-turn-worker! (fn [& args]
-                                                         (reset! launched (vec args)))}
-            #(state/drain-idle! sid))
-          (expect (nil? (get-in @launched [3 :model])))
-          (expect (= "ornith" (get (state/get-turn sid "q1") "model")))
-          (finally
-            (swap! registry dissoc sid))))))
+      (let
+        [registry
+         @#'state/registry
+
+         sid
+         (str "model-pin-queued-" (java.util.UUID/randomUUID))
+
+         launched
+         (atom nil)]
+
+        (try (swap! registry assoc
+               sid
+               {:next-seq 0
+                :turns
+                {"q1"
+                 {:turn_id "q1" :session_id sid :status "queued" :request "hello" :queued_at 1}}
+                :turn-order ["q1"]})
+             (with-redefs-fn {#'state/session-model (fn [_]
+                                                      {:provider "lmstudio" :model "ornith"})
+                              #'state/launch-turn-worker! (fn [& args]
+                                                            (reset! launched (vec args)))}
+               #(state/drain-idle! sid))
+             (expect (nil? (get-in @launched [3 :model])))
+             (expect (= "ornith" (get (state/get-turn sid "q1") "model")))
+             (finally (swap! registry dissoc sid))))))
 
 (defdescribe cancel-interrupt-order-test
              (it "interrupts live work before waiting on the durable cancel stamp"
@@ -1038,6 +1072,63 @@
                           #(expect (= {:status "cancelling"} (state/cancel-turn! sid tid))))
                         (expect (= [[:cancel :token] [:persist sid]] @order))
                         (finally (swap! registry dissoc sid))))))
+
+(defdescribe turn-terminal-claim-per-run-test
+             ;; A stalled turn is put back on the queue under its ORIGINAL id, so ONE tid
+             ;; can run more than once. The terminal claim used to be a permanent
+             ;; `#{[sid tid]}` entry consumed by the FIRST run, so every terminal path of
+             ;; the retry — both worker arms, the cancel hook and the 30s backstop — became
+             ;; a silent no-op: the session stayed pinned to `:current-turn`, and a user
+             ;; cancel stamped `cancelling_at` that nothing could ever clear, leaving the
+             ;; session "cancelling" for good.
+             (it
+               "grants one terminal per RUN and re-grants it to the retry"
+               (let
+                 [sid
+                  (str "terminal-claim-" (java.util.UUID/randomUUID))
+
+                  tid
+                  "retried"
+
+                  registry
+                  @#'state/registry
+
+                  claim!
+                  #'state/claim-turn-terminal!
+
+                  release!
+                  #'state/release-turn-terminal-claim!
+
+                  first-run
+                  (cancellation/cancellation-token)
+
+                  retry-run
+                  (cancellation/cancellation-token)
+
+                  live!
+                  (fn [token]
+                    (swap! registry assoc
+                      sid
+                      {:current-turn tid
+                       :turns {tid {:turn_id tid :status "running" :cancel-token token}}}))]
+
+                 (try (live! first-run)
+                      ;; one run: exactly one winner, every later path is a no-op
+                      (expect (true? (claim! sid tid first-run)))
+                      (expect (false? (claim! sid tid first-run)))
+                      ;; re-queued for a retry: `re-queue-turn!` releases the spent claim
+                      ;; and drops the spent token
+                      (release! sid tid)
+                      (swap! registry update-in [sid :turns tid] dissoc :cancel-token)
+                      ;; a worker of the SPENT run thawing now must not land on the retry
+                      (expect (false? (claim! sid tid first-run)))
+                      ;; the retry is a new run and lands its own terminal — the cancel
+                      ;; the user asked for finally has somewhere to go
+                      (live! retry-run)
+                      (expect (true? (claim! sid tid retry-run)))
+                      (expect (false? (claim! sid tid retry-run)))
+                      (expect (false? (claim! sid tid first-run)))
+                      (finally (swap! registry dissoc sid) (release! sid tid))))))
 
 (defdescribe
   release-session-busy-test
@@ -2342,13 +2433,18 @@
                  (>= (System/currentTimeMillis) deadline) false
                  :else (do (Thread/sleep 25) (recur))))))]
 
-    (it "claims a turn's ONE terminal landing exactly once"
-        (let [sid (str "claim-" (java.util.UUID/randomUUID))]
-          (expect (true? (claim sid "t1")))
-          (expect (false? (claim sid "t1")))
-          ;; a different turn of the same session is untouched
-          (expect (true? (claim sid "t2")))))
+    (it "claims a turn's ONE terminal landing exactly once per run"
+        (let
+          [sid
+           (str "claim-" (java.util.UUID/randomUUID))
 
+           run
+           (cancellation/cancellation-token)]
+
+          (expect (true? (claim sid "t1" run)))
+          (expect (false? (claim sid "t1" run)))
+          ;; a different turn of the same session is untouched
+          (expect (true? (claim sid "t2" run)))))
     (it "lands the terminal for a cancelled worker that never lands its own"
         (let
           [sid
@@ -2367,10 +2463,13 @@
                ;; await INSIDE with-redefs: the daemon thread reads the lowered
                ;; grace before with-redefs reverts it (alter-var-root is global).
                (with-redefs [state/CANCEL_TERMINAL_GRACE_MS 150]
-                 (backstop sid tid token (fn [& _] (reset! landed true)))
+                 (backstop sid
+                           tid
+                           token
+                           (fn [& _]
+                             (reset! landed true)))
                  (expect (true? (await-flag landed 4000))))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
-
     (it "stays silent once the turn is no longer the session's current turn"
         (let
           [sid
@@ -2386,6 +2485,10 @@
             ;; the worker DID land its terminal and the session moved on
             (swap! registry assoc sid {:next-seq 0 :current-turn "other"})
             (with-redefs [state/CANCEL_TERMINAL_GRACE_MS 150]
-              (backstop sid "t1" token (fn [& _] (reset! landed true)))
+              (backstop sid
+                        "t1"
+                        token
+                        (fn [& _]
+                          (reset! landed true)))
               (expect (false? (await-flag landed 1200))))
             (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))))

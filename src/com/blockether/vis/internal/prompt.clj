@@ -9,6 +9,7 @@
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.agents :as agents]
+            [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.env-python :as env-python]
             [com.blockether.vis.internal.extension :as extension]
@@ -54,13 +55,17 @@
 
 (defn previous-turn-context-block
   "Render prior-turn RESUME entries. Normal entries retain their stable turn
-   number and Q/A/result index. A `:checkpoint?` entry is the sole materialized
-   replacement for all complete turns covered by one broader fold."
+   number and Q/A/result index. Cancelled turns retain settled work plus an
+   explicit model-visible cancellation boundary. A `:checkpoint?` entry is the
+   sole materialized replacement for all complete turns covered by one broader
+   fold."
   [turns]
   (when (seq turns)
     (let
       [render-turn
-       (fn [i {:keys [turn user-request answer interrupted? results checkpoint? turns gist]}]
+       (fn
+         [i
+          {:keys [turn user-request answer interrupted? cancelled? results checkpoint? turns gist]}]
          (if checkpoint?
            (str "# ⋯ folded turn" (when (< 1 (count turns)) "s")
                 " " (str/join ", " turns)
@@ -95,7 +100,13 @@
                                        results))
                         "\n"))
                  (when ans (str "you answered:\n" ans))
-                 (when (and interrupted? (not ans))
+                 (cond
+                   (and cancelled? (not ans))
+                   (str
+                     "<turn_cancelled>The user cancelled this turn. Completed tool calls and their "
+                     "persisted results remain valid; do not repeat settled work. The unfinished edge "
+                     "was aborted. Follow the latest user request.</turn_cancelled>")
+                   (and interrupted? (not ans))
                    "⚠ this turn was INTERRUPTED before it finished — you produced NO answer. The work above is unfinished; continue it."))))))]
       (prompt-block "conversation-so-far" (str/join "\n\n" (keep-indexed render-turn turns))))))
 
@@ -166,18 +177,21 @@
      user-block
      (when initial-user-content (prompt-block "current-user-message" initial-user-content))
 
-     attached-images
-     (if vision? (vec user-images) [])
+     ;; The SEND gate: every image the user attached is re-judged here, on the
+     ;; way out, against THIS turn's target — decoded to prove it is pixels,
+     ;; re-containered when no wire reads its format, refused (with a reason)
+     ;; when it cannot become a picture, and attached to nothing at all when
+     ;; the model has no vision.
+     wired
+     (attachments/wire-images user-images {:vision? vision?})
 
+     attached-images
+     (:attached wired)
+
+     ;; A sniffed-but-unsent image is NAMED with the gate's own reason (size
+     ;; cap, decoder verdict, or no vision) instead of silently vanishing.
      manifest-skipped
-     (if vision?
-       skipped-images
-       (into (vec skipped-images)
-             (map (fn [{:keys [path]}]
-                    {:path path
-                     :reason "the active model has no vision — image not attached"
-                     :readable-blind? true})
-                  user-images)))
+     (into (vec skipped-images) (:skipped wired))
 
      images-block
      (when user-block (attached-images-block attached-images manifest-skipped))

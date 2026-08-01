@@ -2,7 +2,7 @@
   "The matplotlib-compat shim installed into every sandbox context via the
    generic sandbox-shim mechanism (`extension/sandbox-shims`): a minimal
    `matplotlib.pyplot` published into `sys.modules` (so `import matplotlib.pyplot`
-   works) and backed by a pure-JVM Java2D renderer. `savefig` delegates the
+   works) and backed by the native `imaging` renderer. `savefig` delegates the
    accumulated figure across the boundary to the host `__vis_mpl_render__`,
    which returns a PNG the shim writes to a path or file-like buffer."
   (:require [clojure.string :as str]
@@ -64,7 +64,7 @@
                          python-context
                          "import matplotlib.pyplot\nplt is pyplot and plt is matplotlib.pyplot")))))
   (it "exposes a version string"
-      (with-python-context (expect (= "3.0-vis-java2d"
+      (with-python-context (expect (= "3.0-vis-imaging"
                                       (ev python-context "__import__('matplotlib').__version__")))))
   (it "exposes matplotlib.style with a no-op use()"
       (with-python-context
@@ -483,7 +483,7 @@
                 "t, l = plt.xticks()\n"
                 "t == [0.0,1.0,2.0] and l == ['05.01','12.01','19.01']"))))))
   (it
-    "the Java2D renderer draws the explicit labels (PNG differs from the default locator)"
+    "the imaging renderer draws the explicit labels (PNG differs from the default locator)"
     (with-python-context
       (expect
         (true?
@@ -497,3 +497,104 @@
                 "plt.xticks([0,1,2], ['alpha','beta','gamma'])\n"
                 "b = io.BytesIO()\nplt.savefig(b)\n"
                 "len(a.getvalue()) > 0 and a.getvalue() != b.getvalue()")))))))
+
+(defdescribe
+  matplotlib-mplot3d-test
+  (it
+    "projection='3d' returns a real Axes3D and registers mpl_toolkits"
+    (with-python-context
+      (expect
+        (true?
+          (ev python-context
+              (str
+                "import matplotlib.pyplot as plt\nfrom mpl_toolkits.mplot3d import Axes3D\n"
+                "import mpl_toolkits.mplot3d.axes3d as a3\nplt.clf()\n"
+                "ax = plt.figure().add_subplot(111, projection='3d')\n"
+                "ax.name == '3d' and hasattr(ax, 'plot_surface') and plt.gca() is ax"
+                " and Axes3D is not None and hasattr(a3, 'Axes3D')"))))))
+  (it
+    "plot_surface and plot_wireframe render distinct PNGs from the same grid"
+    (with-python-context
+      (expect
+        (true?
+          (ev python-context
+              (str
+                "import matplotlib.pyplot as plt, io\nplt.clf()\n"
+                "X = [[float(j) for j in range(6)] for i in range(6)]\n"
+                "Y = [[float(i) for j in range(6)] for i in range(6)]\n"
+                "Z = [[float(i * j) for j in range(6)] for i in range(6)]\n"
+                "plt.figure().add_subplot(projection='3d').plot_surface(X, Y, Z, cmap='viridis')\n"
+                "a = io.BytesIO()\nplt.savefig(a)\nplt.clf()\n"
+                "plt.figure().add_subplot(projection='3d').plot_wireframe(X, Y, Z)\n"
+                "b = io.BytesIO()\nplt.savefig(b)\n"
+                "list(a.getvalue()[:8]) == [137, 80, 78, 71, 13, 10, 26, 10]"
+                " and len(a.getvalue()) > 0 and a.getvalue() != b.getvalue()"))))))
+  (it
+    "view_init rotates the camera: the same surface renders differently"
+    (with-python-context
+      (expect
+        (true?
+          (ev python-context
+              (str
+                "import matplotlib.pyplot as plt, io\n"
+                "X = [[float(j) for j in range(5)] for i in range(5)]\n"
+                "Y = [[float(i) for j in range(5)] for i in range(5)]\n"
+                "Z = [[float(i + j) for j in range(5)] for i in range(5)]\n"
+                "def shot(elev, azim):\n"
+                "    plt.clf()\n"
+                "    ax = plt.figure().add_subplot(projection='3d')\n"
+                "    ax.plot_surface(X, Y, Z)\n"
+                "    ax.view_init(elev=elev, azim=azim)\n"
+                "    buf = io.BytesIO()\n"
+                "    plt.savefig(buf)\n"
+                "    return buf.getvalue()\n"
+                "shot(30, -60) != shot(72, 15)"))))))
+  (it
+    "1-D x/y broadcast over a 2-D Z the way meshgrid output does"
+    (with-python-context
+      (expect
+        (true?
+          (ev python-context
+              (str
+                "import matplotlib.pyplot as plt, io\nplt.clf()\n"
+                "Z = [[float(i * i + j) for j in range(7)] for i in range(7)]\n"
+                "ax = plt.figure().add_subplot(projection='3d')\n"
+                "ax.plot_surface(list(range(7)), list(range(7)), Z, cmap='plasma')\n"
+                "buf = io.BytesIO()\nplt.savefig(buf)\n"
+                "list(buf.getvalue()[:8]) == [137, 80, 78, 71, 13, 10, 26, 10]"))))))
+  (it
+    "3-D scatter / line / bar3d / contour(offset) all reach the renderer"
+    (with-python-context
+      (expect
+        (true?
+          (ev python-context
+              (str
+                "import matplotlib.pyplot as plt, io\nplt.clf()\n"
+                "X = [[float(j) for j in range(6)] for i in range(6)]\n"
+                "Y = [[float(i) for j in range(6)] for i in range(6)]\n"
+                "Z = [[float(i * j) for j in range(6)] for i in range(6)]\n"
+                "ax = plt.figure().add_subplot(projection='3d')\n"
+                "ax.plot([0, 1, 2], [0, 1, 0], [0, 2, 1], 'r-o', label='path')\n"
+                "ax.scatter([0, 1], [1, 0], [2, 0], c=[0.1, 0.9], cmap='plasma', s=40)\n"
+                "ax.bar3d([0, 1], [0, 1], [0, 0], 0.5, 0.5, [1, 2], color='tab:orange')\n"
+                "cs = ax.contour(X, Y, Z, levels=4, offset=0.0)\n"
+                "ax.set_zlabel('z'); ax.set_zlim(0, 30); ax.text(0, 0, 1, 'here')\n"
+                "buf = io.BytesIO()\nplt.savefig(buf)\n"
+                "len(cs) > 0 and ax.get_zlim() == [0.0, 30.0]"
+                " and list(buf.getvalue()[:8]) == [137, 80, 78, 71, 13, 10, 26, 10]"))))))
+  (it
+    "a 3-D figure also renders to the ASCII target"
+    (with-python-context
+      (expect
+        (let [s (ev python-context
+                    (str
+                      "import matplotlib.pyplot as plt, io\nplt.clf()\n"
+                      "Z = [[float(i * j) for j in range(6)] for i in range(6)]\n"
+                      "ax = plt.figure().add_subplot(projection='3d')\n"
+                      "ax.plot_surface(list(range(6)), list(range(6)), Z, cmap='viridis')\n"
+                      "ax.set_title('mesh')\n"
+                      "buf = io.StringIO()\nplt.savefig(buf, format='txt')\nbuf.getvalue()"))]
+          (and (string? s)
+               (str/includes? s "3-D view")
+               (str/includes? s "mesh")
+               (> (count (str/split-lines s)) 10)))))))

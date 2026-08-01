@@ -5,6 +5,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.env-python :as env-python]
             [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
+            [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.prompt]
             [com.blockether.vis.internal.foundation.core]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -29,19 +30,25 @@
   (it "exposes only the session introspection symbols (symbol docs moved to engine `doc`/`apropos`)"
       (let [symbols (set (map :ext.symbol/symbol introspection/all-symbols))]
         (expect (contains? symbols 'session-state))
+        (expect (contains? symbols 'session-usage))
         (expect (contains? symbols 'session-report-html))
         (expect (contains? symbols 'sessions))
-        (let [session-state-doc (:doc (meta #'introspection/session-state))]
+        (let
+          [session-state-doc (:doc (meta #'introspection/session-state))
+           session-usage-doc (:doc (meta #'introspection/session-usage))]
+
           (expect (str/starts-with?
                     session-state-doc
                     "await session_state(session_id=None)  # current session by default"))
           (expect (re-find #"recovery path for raw folded current-session" session-state-doc))
-          (expect (re-find #"does not undo fold intents or restore them" session-state-doc)))
+          (expect (re-find #"does not undo fold intents or restore them" session-state-doc))
+          (expect (str/starts-with? session-usage-doc "await session_usage(session_id=None)"))
+          (expect (re-find #"Tool rows overlap" session-usage-doc)))
         ;; engine-symbol-* tools were retired in favour of the bare
         ;; `doc` / `apropos` engine system calls.
         (expect (not (contains? symbols 'engine-symbol-documentation)))
         (expect (not (contains? symbols 'engine-symbol-apropos)))
-        (expect (= 3 (count symbols)))))
+        (expect (= 4 (count symbols)))))
   (it "defaults session_state to the current session when no id is passed"
       (let
         [inspect-data
@@ -51,6 +58,171 @@
          (inspect-data {:session-id "current-session" :db-info nil} nil)]
 
         (expect (= "current-session" (:session-id data))))))
+
+(defdescribe
+  session-usage-ledger-test
+  (it
+    "returns compact per-turn, per-iteration, per-tool usage, and bounded tool errors in one read"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let
+          [sid (h/store-session! s {:channel :tui :title "Usage fixture" :model "gpt-4o"})
+           turn (vis/db-store-session-turn!
+                  s
+                  {:parent-session-id sid :user-request "measure" :status :running})
+           _ (h/store-iteration!
+               s
+               {:session-turn-id turn
+                :code "(cat \"fixture\")"
+                :forms
+                [{:vis/tool-name "cat" :success? false :error {:message "fixture is unavailable"}}]
+                :tokens {"input" 100 "output" 20 "reasoning" 3 "cached" 30}
+                :cache-created-tokens 40
+                :cost-usd 0.0042
+                :llm-routing {:selected {:provider :anthropic :model "claude-5"}
+                              :actual {:provider :openai :model "gpt-5"}
+                              :fallback? true
+                              :trace [{:event/type :llm.routing/provider-retry
+                                       :status 503
+                                       :reason :rate-limit
+                                       :attempt 1
+                                       :delay-ms 25}
+                                      {:event/type :llm.routing/provider-fallback :status 503}]}})
+           _ (h/store-iteration! s
+                                 {:session-turn-id turn
+                                  :code "(python_execution \"fixture\")"
+                                  :forms [{:vis/tool-name "cat" :success? true}
+                                          {:vis/tool-name "python_execution" :timeout? true}]
+                                  :tokens {"input" 80 "output" 10 "reasoning" 2 "cached" 20}
+                                  :cache-created-tokens 10
+                                  :cost-usd 0.0021
+                                  :llm-routing {:selected {:provider :openai :model "gpt-5"}
+                                                :actual {:provider :openai :model "gpt-5"}}})
+           _ (vis/db-update-session-turn! s turn {:status :done})
+           _ (persistance/db-create-extension-aggregate!
+               s
+               {:extension-id "vis"
+                :aggregate-key "manual-switch-fixture"
+                :kind :session-model-switch
+                :session-soul-id sid
+                :content {:from {:provider "anthropic" :model "claude-5"}
+                          :to {:provider "openai" :model "gpt-5"}
+                          :source :tui}})
+           usage @#'introspection/foundation-usage
+           ledger (:result (usage {:session-id sid :db-info s} sid))
+           missing-ledger (:result (usage {:session-id "missing" :db-info s} "missing"))
+           turn-row (first (get ledger "turns"))
+           iteration-row (first (get turn-row "iterations"))
+           cat-row (first (filter #(= "cat" (get % "tool")) (get ledger "tools")))
+           python-row (first (filter #(= "python_execution" (get % "tool")) (get ledger "tools")))
+           errors (get ledger "tool_errors")
+           routing (get ledger "routing")
+           selected (get routing "selected")
+           actual (get routing "actual")
+           transition (first (get routing "transitions"))
+           manual-switch (first (get routing "manual_switches"))]
+
+          (expect (= "session_usage" (get ledger "scope")))
+          (expect (= 1 (get-in ledger ["totals" "turns"])))
+          (expect (= 2 (get-in ledger ["totals" "iterations"])))
+          (expect (= 180 (get-in ledger ["totals" "tokens" "input"])))
+          (expect (= 50 (get-in ledger ["totals" "tokens" "cached"])))
+          (expect (= 130 (get-in ledger ["totals" "tokens" "uncached"])))
+          (expect (= 50 (get-in ledger ["totals" "tokens" "cache_created"])))
+          (expect (= 30 (get-in ledger ["totals" "tokens" "output"])))
+          (expect (= 5 (get-in ledger ["totals" "tokens" "reasoning"])))
+          (expect (< (Math/abs (- 0.0063 (double (get-in ledger ["totals" "cost_usd"])))) 1.0E-9))
+          (expect (= 3 (get-in ledger ["totals" "tool_calls"])))
+          (expect (= 2 (get-in ledger ["totals" "tool_errors"])))
+          (expect (= {"done" 1 "error" 1 "timeout" 1} (get-in ledger ["totals" "tool_outcomes"])))
+          ;; Routing reports selected-versus-actual service, fallback/retry detail,
+          ;; and durable manual picker history without prompts or provider payloads.
+          (expect (= 1 (get routing "fallbacks")))
+          (expect (= 1 (get routing "retries")))
+          (expect (= 2 (count (get routing "events"))))
+          (expect (= "llm.routing_provider_retry" (get-in routing ["events" 0 "type"])))
+          (expect (= 25 (get-in routing ["events" 0 "delay_ms"])))
+          (expect (= 2 (get-in actual [0 "iterations"])))
+          (expect (= "openai" (get-in actual [0 "provider"])))
+          (expect (= 1 (get-in selected [0 "iterations"])))
+          (expect (= {"provider" "anthropic" "model" "claude-5"} (get transition "from")))
+          (expect (= {"provider" "openai" "model" "gpt-5"} (get transition "to")))
+          (expect (= 1 (get transition "count")))
+          (expect (= "tui" (get manual-switch "source")))
+          (expect (integer? (get manual-switch "at_ms")))
+          ;; Turn totals make per-turn comparisons one read; they must equal the only turn.
+          (expect (= 2 (get turn-row "iteration_count")))
+          (expect (= 180 (get-in turn-row ["tokens" "input"])))
+          (expect (= 50 (get-in turn-row ["tokens" "cached"])))
+          (expect (= 130 (get-in turn-row ["tokens" "uncached"])))
+          (expect (< (Math/abs (- 0.0063 (double (get turn-row "cost_usd")))) 1.0E-9))
+          (expect (= 3 (get turn-row "tool_calls")))
+          (expect (= 2 (get turn-row "tool_errors")))
+          ;; Per-iteration data retains usage and outcome counts, but never raw errors.
+          (expect (= 1 (get iteration-row "tool_call_count")))
+          (expect (= 1 (get iteration-row "tool_error_count")))
+          (expect (= {"done" 0 "error" 1 "timeout" 0} (get iteration-row "tool_outcomes")))
+          (expect (not (contains? iteration-row "tool_call_statuses")))
+          ;; Tool rows overlap by iteration: cat receives both costs, python only its own.
+          (expect (= 2 (get cat-row "calls")))
+          (expect (= 1 (get cat-row "errors")))
+          (expect (= {"done" 1 "error" 1 "timeout" 0} (get cat-row "outcomes")))
+          (expect (= 2 (get cat-row "iterations")))
+          (expect (< (Math/abs (- 0.0063 (double (get cat-row "cost_usd")))) 1.0E-9))
+          (expect (= 1 (get python-row "calls")))
+          (expect (= 1 (get python-row "errors")))
+          (expect (= {"done" 0 "error" 0 "timeout" 1} (get python-row "outcomes")))
+          (expect (= 1 (get python-row "iterations")))
+          (expect (= 80 (get-in python-row ["tokens" "input"])))
+          (expect (= 0.0021 (get python-row "cost_usd")))
+          ;; Errors are bounded, positioned, and message-only: no call code or result leaks.
+          (expect (= 2 (count errors)))
+          (expect (= {"tool" "cat"
+                      "turn" 1
+                      "iteration" 1
+                      "form" 1
+                      "status" "error"
+                      "message" "fixture is unavailable"}
+                     (first errors)))
+          (expect (= "timeout" (get (second errors) "status")))
+          (expect (= "Tool execution timed out" (get (second errors) "message")))
+          (expect (false? (get ledger "tool_errors_truncated")))
+          ;; Unknown sessions are a safe, zero-valued ledger rather than an exception.
+          (expect (nil? (get missing-ledger "session")))
+          (expect (= {"iterations" 0
+                      "tokens"
+                      {"input" 0 "cached" 0 "uncached" 0 "cache_created" 0 "output" 0 "reasoning" 0}
+                      "cost_usd" 0.0
+                      "tool_calls" 0
+                      "tool_errors" 0
+                      "tool_outcomes" {"done" 0 "error" 0 "timeout" 0}
+                      "turns" 0}
+                     (get missing-ledger "totals")))
+          (expect (= [] (get missing-ledger "turns")))
+          (expect (= [] (get missing-ledger "tools")))
+          (expect (= [] (get missing-ledger "tool_errors")))
+          (expect (false? (get missing-ledger "tool_errors_truncated"))))
+        (finally (vis/db-dispose-connection! s))))))
+
+(defdescribe session-usage-tool-error-cap-test
+             (it "bounds error samples while reporting their truncation"
+                 (let
+                   [summarize
+                    @#'introspection/usage-tool-errors
+
+                    result
+                    (summarize [{:tool-call-statuses (mapv (fn [index]
+                                                             {:tool "cat"
+                                                              :turn 1
+                                                              :iteration 1
+                                                              :form index
+                                                              :status :error
+                                                              :error {:message "excess error"}})
+                                                           (range 21))}])]
+
+                   (expect (= 20 (count (:tool-errors result))))
+                   (expect (:tool-errors-truncated? result))
+                   (expect (= "excess error" (get-in result [:tool-errors 0 :message]))))))
 
 (defdescribe session-state-envelope-test
              (it "returns a canonical envelope so observed symbol wrapping can unwrap it"
@@ -199,3 +371,9 @@
                              (:ext/engine
                                com.blockether.vis.internal.foundation.core/vis-extension)))]
         (expect (empty? (filter core-symbols introspection/all-symbols))))))
+
+(defdescribe introspection-env-injection-test
+             (it "uses declarative env injection rather than a before middleware shim"
+                 (doseq [symbol introspection/all-symbols]
+                   (expect (true? (:ext.symbol/inject-env? symbol)))
+                   (expect (nil? (:ext.symbol/before-fn symbol))))))

@@ -139,40 +139,136 @@
            (try (.hasError r) (finally (.close r))))
          (finally (.close t)))))
 
+(def ^:private quote-kinds
+  "Literal quote tokens grammars may leave directly under an ERROR when a string
+   consumes the rest of the file."
+  #{"\"" "'" "`" "\"\"\"" "'''"})
+
+(def ^:private delimiter-kinds
+  "Literal syntax delimiters that are actionable when left directly beneath an
+   ERROR node. Keywords and identifiers are deliberately excluded."
+  (into #{"(" ")" "[" "]" "{" "}"} quote-kinds))
+
+(defn- fault-delimiter
+  "The most actionable unpaired delimiter directly inside ERROR node `n`, as
+   {:line :byte-col :kind}, or nil.
+
+   tree-sitter normally re-parents each well-formed sibling as a NAMED child of
+   an ERROR, leaving the delimiter that failed to pair as an unnamed child. A
+   recovery wrapper can contain more than one such delimiter, though: Java, for
+   example, leaves both the class `{` and the actual unterminated string quote
+   beneath one file-wide ERROR. Prefer the last quote (the lexical fault), then
+   the last bracket (the closest structural fault), rather than blaming the
+   first innocent opener at the start of the file."
+  [^Node n]
+  (loop
+    [i
+     0
+
+     quote
+     nil
+
+     bracket
+     nil]
+
+    (if (< i (.childCount n))
+      (if-let [^Node c (.orElse (.child n (int i)) nil)]
+        (let
+          [kind (.kind c)
+           hit? (and (not (.isNamed c)) (contains? delimiter-kinds kind))
+           data (when hit?
+                  (let [^Point sp (.startPosition c)]
+                    {:line (inc (.row sp)) :byte-col (.column sp) :kind kind}))]
+
+          (.close c)
+          (recur (inc i)
+                 (if (and data (contains? quote-kinds kind)) data quote)
+                 (if (and data (not (contains? quote-kinds kind))) data bracket)))
+        (recur (inc i) quote bracket))
+      (or quote bracket))))
+
+(defn- character-column
+  "Convert tree-sitter's 0-based UTF-8 byte column to a user-facing Unicode
+   code-point column on `line`. Parser points always fall on UTF-8 boundaries."
+  ^long [^String line ^long byte-col]
+  (let
+    [^bytes bs
+     (utf8 line)
+
+     end
+     (min (max 0 byte-col) (alength bs))
+
+     ^String prefix
+     (byte-slice bs 0 end)]
+
+    (.codePointCount prefix 0 (.length prefix))))
+
+(defn- source-line
+  "1-based line `line` of `source`, or nil."
+  [^String source ^long line]
+  (let [ls (str/split-lines (str source))]
+    (when (<= 1 line (count ls)) (nth ls (dec line)))))
+
 (defn error-nodes
   "Every ERROR / MISSING node tree-sitter finds in `source` (parsed as `lang`),
-   as [{:line :col :end-line :end-col :kind :missing? :text} …] in document
-   order (1-based line, 0-based col). Empty when the source parses clean or the
-   language can't be parsed. Public so an edit guard can turn a bare
-   \"N syntax error(s)\" rejection into a LOCATED, actionable message — a MISSING
-   node even NAMES the delimiter the parser expected (`:kind` = `]`, `)`, …)."
+   as [{:line :col :byte-col :end-line :end-col :start-byte :end-byte :kind
+   :missing? :text} …] in document order (1-based line, 0-based Unicode
+   code-point col; `:byte-col` preserves tree-sitter's raw UTF-8 column). Empty
+   when the source parses clean or the language can't be parsed. Public so an
+   edit guard can turn a bare \"N syntax error(s)\" rejection into a LOCATED,
+   actionable message — a MISSING node even NAMES the delimiter the parser
+   expected (`:kind` = `]`, `)`, …).
+
+   An ERROR node reports the most actionable UNBALANCED DELIMITER directly inside
+   it, not necessarily the node's own start: an unclosed form can make tree-sitter
+   open one ERROR over the whole file whose start is line 1. Those rows carry
+   `:delimiter` and `:error-line` (where recovery began), and `:text` is the
+   offending LINE. Raw byte spans remain available so a diagnostic can recognize
+   and look through a broad recovery wrapper that contains a more specific ERROR."
   [lang ^String source]
   (if-let [^Tree tree (and lang (parse-tree lang source))]
     (let
       [src-bytes (utf8 source)
        acc (transient [])]
 
-      (try (let [^Node root (.rootNode tree)]
-             (try (letfn [(walk [^Node n]
-                            (when (or (.isError n) (.isMissing n))
-                              (let
-                                [^Point sp (.startPosition n)
-                                 ^Point ep (.endPosition n)]
+      (try
+        (let [^Node root (.rootNode tree)]
+          (try
+            (letfn
+              [(walk [^Node n]
+                 (when (or (.isError n) (.isMissing n))
+                   (let
+                     [^Point sp (.startPosition n)
+                      ^Point ep (.endPosition n)
+                      d (when (.isError n) (fault-delimiter n))
+                      line (long (or (:line d) (inc (.row sp))))
+                      byte-col (long (or (:byte-col d) (.column sp)))
+                      line-text (source-line source line)
+                      col (if line-text (character-column line-text byte-col) byte-col)]
 
-                                (conj! acc
-                                       {:line (inc (.row sp))
-                                        :col (.column sp)
-                                        :end-line (inc (.row ep))
-                                        :end-col (.column ep)
-                                        :kind (.kind n)
-                                        :missing? (.isMissing n)
-                                        :text (byte-slice src-bytes (.startByte n) (.endByte n))})))
-                            (dotimes [i (.childCount n)]
-                              (when-let [^Node c (.orElse (.child n (int i)) nil)]
-                                (try (walk c) (finally (.close c))))))]
-                    (walk root))
-                  (finally (.close root))))
-           (finally (.close tree)))
+                     (conj! acc
+                            (cond->
+                              {:line line
+                               :col col
+                               :byte-col byte-col
+                               :end-line (inc (.row ep))
+                               :end-col (.column ep)
+                               :start-byte (.startByte n)
+                               :end-byte (.endByte n)
+                               :kind (.kind n)
+                               :missing? (.isMissing n)
+                               :text (or (when d line-text)
+                                         (byte-slice src-bytes (.startByte n) (.endByte n)))}
+                              d
+                              (assoc :delimiter
+                                (:kind d) :error-line
+                                (inc (.row sp)))))))
+                 (dotimes [i (.childCount n)]
+                   (when-let [^Node c (.orElse (.child n (int i)) nil)]
+                     (try (walk c) (finally (.close c))))))]
+              (walk root))
+            (finally (.close root))))
+        (finally (.close tree)))
       (persistent! acc))
     []))
 
@@ -261,8 +357,30 @@
         [n
          (count errs)
 
+         ;; A broad recovery ERROR can contain a narrower ERROR. Discard a
+         ;; location-less wrapper. Also discard the characteristic file-wide
+         ;; class/module wrapper: a line-1 bracket around a nested quote error is
+         ;; parser recovery, not evidence that the class opener itself is wrong.
+         ;; Otherwise retain an outer actionable delimiter because it may be the
+         ;; FIRST independent fault (an unclosed form before a later mismatch).
+         diagnostic-broken
+         (remove (fn [outer]
+                   (some (fn [inner]
+                           (and (not (identical? outer inner))
+                                (<= (long (:start-byte outer)) (long (:start-byte inner)))
+                                (>= (long (:end-byte outer)) (long (:end-byte inner)))
+                                (or (< (long (:start-byte outer)) (long (:start-byte inner)))
+                                    (> (long (:end-byte outer)) (long (:end-byte inner))))
+                                (or (nil? (:delimiter outer))
+                                    (and (= 1 (long (:line outer)))
+                                         (= 1 (long (:error-line outer)))
+                                         (not (contains? quote-kinds (:delimiter outer)))
+                                         (contains? quote-kinds (:delimiter inner))))))
+                         broken))
+           broken)
+
          u
-         (first broken)
+         (or (first diagnostic-broken) (first broken))
 
          m
          (first missing)
@@ -270,44 +388,66 @@
          focus
          (or u m)
 
+         quote?
+         (contains? quote-kinds (:delimiter u))
+
+         opener?
+         (contains? #{"(" "[" "{"} (:delimiter u))
+
          ;; One window when both markers are close, two when they are far apart:
          ;; never quote a screen of untouched code between them.
          near?
          (boolean (and u m (<= (abs (- (long (:line m)) (long (:line u)))) 4)))]
 
-        (->> [(if (> n 1)
-                (str n
-                     " parse errors — ONE fault usually CASCADES into the rest,"
-                     " so fix the FIRST, not all "
-                     n
-                     ".")
-                "1 parse error.")
-              (when u
-                (str "  break     line "
-                     (:line u)
-                     " col "
-                     (:col u)
-                     " → `"
-                     (one-line (:text u) 40)
-                     "`"))
-              (when m
-                (str "  expected  a `"
-                     (:kind m)
-                     "` at line "
-                     (:line m)
-                     " col "
-                     (:col m)
-                     " — missing or mismatched there"))
-              (when focus
-                (source-excerpt source
-                                (long (:line focus))
-                                (long (:col focus))
-                                (if near? (long (:line m)) (long (:line focus)))))
-              (when (and u m (not near?))
-                (source-excerpt source (long (:line m)) (long (:col m)) (long (:line m))))
-              (str "  likely    " (syntax-fault-hint lang))]
-             (remove nil?)
-             (str/join "\n"))))))
+        (->>
+          [(if (> n 1)
+             (str n
+                  " parse errors — ONE fault usually CASCADES into the rest,"
+                  " so fix the FIRST, not all "
+                  n
+                  ".")
+             "1 parse error.")
+           (when u
+             (str "  break     line "
+                  (:line u)
+                  " col "
+                  (:col u)
+                  " → `"
+                  (one-line (:text u) 40)
+                  "`"))
+           ;; The delimiter ITSELF, when tree-sitter left one unpaired. The
+           ;; ERROR's own start is only where recovery began, so naming a
+           ;; quote/bracket is the difference between a location and a red
+           ;; herring.
+           (when (:delimiter u)
+             (cond quote? (str "  unclosed  string quote `"
+                               (:delimiter u)
+                               "` opened there — nothing closes it before the end of the file")
+                   opener? (str "  unclosed  `"
+                                (:delimiter u)
+                                "` opened there — nothing closes it before the end of the file")
+                   :else (str
+                           "  unmatched `"
+                           (:delimiter u)
+                           "` there — it closes nothing open (one too many, or the wrong TYPE)")))
+           (when m
+             (str "  expected  a `"
+                  (:kind m)
+                  "` at line "
+                  (:line m)
+                  " col "
+                  (:col m)
+                  " — missing or mismatched there"))
+           (when focus
+             (source-excerpt source
+                             (long (:line focus))
+                             (long (:col focus))
+                             (if near? (long (:line m)) (long (:line focus)))))
+           (when (and u m (not near?))
+             (source-excerpt source (long (:line m)) (long (:col m)) (long (:line m))))
+           (str "  likely    " (syntax-fault-hint lang))]
+          (remove nil?)
+          (str/join "\n"))))))
 
 (defn- node-data
   "Plain-data view of `n` (+ its immediate named children when `children?`).

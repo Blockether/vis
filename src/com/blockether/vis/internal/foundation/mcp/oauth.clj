@@ -25,11 +25,11 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
+            [com.blockether.vis.internal.external-opener :as external-opener]
             [com.blockether.vis.internal.oauth :as oauth]
             [taoensso.telemere :as tel])
   (:import
     (com.sun.net.httpserver HttpHandler HttpServer)
-    (java.awt Desktop Desktop$Action)
     (java.net InetSocketAddress URI URLDecoder URLEncoder)
     (java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse$BodyHandlers)
     (java.security MessageDigest SecureRandom)
@@ -199,9 +199,11 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- open-browser!
+  "Best-effort hand-off of `url` to the host OS opener (`open` / `xdg-open` /
+   `cmd /c start`). Uses the same spawner as every other external link in vis,
+   so there is no `java.awt.Desktop` and no `java.desktop` module involved."
   [^String url]
-  (try (let [dt (Desktop/getDesktop)]
-         (when (.isSupported dt Desktop$Action/BROWSE) (.browse dt (URI/create url)) true))
+  (try (= :ok (:status (external-opener/open! url)))
        (catch Throwable _ false)))
 
 (defn- await-loopback-code!

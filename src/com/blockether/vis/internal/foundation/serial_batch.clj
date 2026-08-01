@@ -14,7 +14,8 @@
      empty batch and (deliberately) a SET: an unordered collection cannot
      describe a strictly ordered batch.
    - [[run-serial]] — run in input order, every result at its input position.
-   - [[result]] — the `{\"commands\" [...]}` envelope both tools return.
+   - [[result]] — the `{\"commands\" [...]}` key both tools answer with: `git`
+     returns it alone, `shell` merges it onto its own total result shape.
    - [[card]] — one expandable op-card, `### n. <summary>` per command.
 
    The wire key is `commands` for BOTH tools, so a batch reads the same whether
@@ -33,13 +34,21 @@
   {:type "array" :minItems 1 :items items :description description})
 
 (defn ordered
-  "`commands` as a vector, in input order. Throws for `tool` when the value is
-   not an ordered collection (a set or map has no input order and must never be
-   silently sequenced) or when the batch is empty."
+  "`commands` as a vector, in input order. `commands` is ALWAYS an ARRAY: one
+   command is a batch of ONE (`[\"ls\"]`), never a bare string — a string is
+   refused BY TYPE so there is a single shape to write, to read back and to
+   render. Throws for `tool` when the value is a string, when it is not an
+   ordered collection (a set or a map has no input order and must never be
+   silently sequenced), or when the batch is empty."
   [tool commands]
+  (when (string? commands)
+    (throw (ex-info (str tool
+                         " commands is ALWAYS an ARRAY, never a bare string:"
+                         " wrap one command as a batch of one, [\"" commands "\"].")
+                    {:type ::bad-commands :tool tool})))
   (when-not (or (sequential? commands) (instance? java.util.List commands))
     (throw (ex-info (str tool
-                         " commands must be an ORDERED list; a set or a map has no input order.")
+                         " commands must be an ORDERED array; a set or a map has no input order.")
                     {:type ::bad-commands :tool tool})))
   (let [v (vec commands)]
     (when (empty? v)
@@ -68,14 +77,20 @@
            commands)))
 
 (defn result
-  "The batch envelope both tools return: `{\"commands\" [per-command result …]}`."
+  "The batch's own key: `{\"commands\" [per-command result …]}`, in input order.
+   `git` returns exactly this; `shell` MERGES it onto its one total result shape.
+   NEITHER tool has a lone-command shape: one command is a batch
+   of one, so `commands` is where a command's own output always is."
   [results]
   {commands-key results})
 
 (defn batch?
-  "Is `r` a batch result rather than a single-command one?"
+  "Did `r` actually run commands — does it carry entries? Emptiness, not absence,
+   is the test: both tools carry `commands` on EVERY result, so a stage that ran
+   no command of its own (a shell lifecycle op) leaves it empty instead of
+   answering with a second envelope."
   [r]
-  (contains? r commands-key))
+  (boolean (seq (get r commands-key))))
 
 (defn failed?
   "Did one command entry fail — a timeout, or a non-zero exit?"

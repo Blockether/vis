@@ -1,9 +1,10 @@
 # ruff configuration for the Python that ships INSIDE vis.
 #
 # The only Python in this repository is the sandbox shim layer
-# (`resources/vis-shims/*.py`, embedded into the native image) plus the Python
-# language pack's fixtures. It runs on GraalPy, which is CPython 3.11
-# compatible — hence `target-version`.
+# (`resources/vis-shims/*.py`), the runtime helper bodies slurped into the model
+# sandbox (`resources/vis-python/*.py`) — both embedded into the native image —
+# plus the Python language pack's fixtures. It runs on GraalPy, which is
+# CPython 3.11 compatible — hence `target-version`.
 #
 # This file is what `format_code` / `lint_code` for Python discover: the packs
 # call ruff IN-PROCESS (com.blockether/ruff) and let ruff resolve the nearest
@@ -43,6 +44,18 @@ ignore = [
 "**/vis-shims/*.py" = [
   "F401", "F811", "F821", "E402", "E741", "B904", "B905", "UP004",
   "E401", "E731", "I001", "B007", "B023", "F841", "UP", "C4",
+]
+
+# Runtime helper bodies (`resources/vis-python/*.py`) have the same shape as
+# shims — they are eval'd into the sandbox in full and reach for the same
+# host-injected `__vis_*__` globals the Clojure side binds at context creation
+# (`__vis_par__`, `__vis_load_shim__`, `__vis_allowed_domains__`, ...), none of
+# which ruff can see (F821). They are densely compacted one-liners the async
+# runtime relies on (E7/E401/I001/C4/UP), and intentionally GraalPy-3.11 shaped.
+# Same contract as shims: real breakage (E9/F6/F7/F82) still fails here.
+"**/vis-python/*.py" = [
+  "F821", "E401", "E402", "E701", "E702", "E731", "I001", "B007", "B023",
+  "B904", "B905", "F841", "UP", "C4",
 ]
 
 [format]

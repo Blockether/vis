@@ -302,6 +302,11 @@
                    (prompt/assemble-stable-prompt-messages env {:active-extensions active})
                    (expect (= 1 @calls)))))
 
+;; 1x1 red PNG — REAL pixels: the send gate decodes every image block it emits,
+;; so a fake base64 payload is (correctly) refused and never reaches the wire.
+(def ^:private tiny-png-b64
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
 (defdescribe
   assemble-initial-messages-images-test
   "Image attachments turn the initial user message multimodal."
@@ -326,7 +331,7 @@
                                             :initial-user-content "what is on /tmp/shot.png?"
                                             :user-images [{:path "/tmp/shot.png"
                                                            :media-type "image/png"
-                                                           :base64 "aGVsbG8="
+                                                           :base64 tiny-png-b64
                                                            :size 5
                                                            :size-label "5B"}]
                                             :skipped-images
@@ -344,13 +349,41 @@
         ;; image block first (svar/user contract), text block last
         (expect (= "image_url" (:type (first blocks))))
         (expect (str/includes? (get-in (first blocks) [:image_url :url])
-                               "data:image/png;base64,aGVsbG8="))
+                               (str "data:image/png;base64," tiny-png-b64)))
         (let [text (:text (last blocks))]
           (expect (str/includes? text "CURRENT-USER-MESSAGE"))
           (expect (str/includes? text "ATTACHED-IMAGES"))
-          (expect (str/includes? text "/tmp/shot.png (image/png, 5B)"))
+          (expect (str/includes? text "/tmp/shot.png (image/png,"))
           (expect (str/includes? text "NOT attached"))
           (expect (str/includes? text "/tmp/huge.png")))))
+  (it "drops an image no decoder can read and NAMES it instead of sending a 400"
+      ;; A perfect PNG signature + IHDR over an unreadable stream: wire-legal to
+      ;; any sniff, and a `Could not process image` 400 that would replay on
+      ;; every later turn of the session.
+      (let
+        [corrupt
+         (.encodeToString (java.util.Base64/getEncoder)
+                          (byte-array (concat (take 33
+                                                    (.decode (java.util.Base64/getDecoder)
+                                                             ^String tiny-png-b64))
+                                              (repeat 24 0))))
+
+         msgs
+         (prompt/assemble-initial-messages {:stable-prompt-messages []
+                                            :initial-user-content "look"
+                                            :user-images [{:path "/tmp/dot.png"
+                                                           :media-type "image/png"
+                                                           :base64 corrupt
+                                                           :size 57
+                                                           :size-label "57B"}]})
+
+         user
+         (last msgs)]
+
+        (expect (string? (:content user)))
+        (expect (str/includes? (:content user) "NOT attached"))
+        (expect (str/includes? (:content user) "/tmp/dot.png"))
+        (expect (str/includes? (:content user) "could not be decoded"))))
   (it "omits image blocks for a text-only model and demotes them to the manifest"
       (let
         [msgs
@@ -385,43 +418,54 @@
         (expect (= 1 (count msgs)))
         (expect (= "system" (:role (first msgs)))))))
 
-(defdescribe resume-message-cache-stability-test
-             (it "appends each completed turn as its own stable message"
-                 (let
-                   [entry
-                    (fn [n]
-                      {:turn n :user-request (str "q" n) :answer (str "a" n) :results []})
+(defdescribe
+  resume-message-cache-stability-test
+  (it "appends each completed turn as its own stable message"
+      (let
+        [entry
+         (fn [n]
+           {:turn n :user-request (str "q" n) :answer (str "a" n) :results []})
 
-                    assemble
-                    (fn [prior current turn]
-                      (prompt/assemble-initial-messages
-                        {:stable-prompt-messages [{:role "system" :content "stable"}]
-                         :previous-turn-context prior
-                         :turn-context (str "session[\"turn\"] = " turn)
-                         :initial-user-content current}))
+         assemble
+         (fn [prior current turn]
+           (prompt/assemble-initial-messages {:stable-prompt-messages [{:role "system"
+                                                                        :content "stable"}]
+                                              :previous-turn-context prior
+                                              :turn-context (str "session[\"turn\"] = " turn)
+                                              :initial-user-content current}))
 
-                    t3
-                    (assemble [(entry 1) (entry 2)] "q3" 3)
+         t3
+         (assemble [(entry 1) (entry 2)] "q3" 3)
 
-                    t4
-                    (assemble [(entry 1) (entry 2) (entry 3)] "q4" 4)]
+         t4
+         (assemble [(entry 1) (entry 2) (entry 3)] "q4" 4)]
 
-                   (expect (= (vec (butlast t3)) (subvec t4 0 (dec (count t3)))))
-                   (expect (str/includes? (:content (last t4)) ";; -- TURN-SYSTEM-CONTEXT --"))
-                   (expect (str/includes? (:content (last t4)) "session[\"turn\"] = 4"))))
-             (it "renders one checkpoint message without covered Q/A"
-                 (let
-                   [messages
-                    (prompt/assemble-initial-messages
-                      {:previous-turn-context
-                       [{:checkpoint? true :turns [1 2] :gist "durable state"}]
-                       :turn-context "session[\"turn\"] = 3"
-                       :initial-user-content "continue"})
+        (expect (= (vec (butlast t3)) (subvec t4 0 (dec (count t3)))))
+        (expect (str/includes? (:content (last t4)) ";; -- TURN-SYSTEM-CONTEXT --"))
+        (expect (str/includes? (:content (last t4)) "session[\"turn\"] = 4"))))
+  (it "renders one checkpoint message without covered Q/A"
+      (let
+        [messages
+         (prompt/assemble-initial-messages {:previous-turn-context
+                                            [{:checkpoint? true :turns [1 2] :gist "durable state"}]
+                                            :turn-context "session[\"turn\"] = 3"
+                                            :initial-user-content "continue"})
 
-                    prior
-                    (:content (first messages))]
+         prior
+         (:content (first messages))]
 
-                   (expect (= 2 (count messages)))
-                   (expect (str/includes? prior "folded turns 1, 2"))
-                   (expect (str/includes? prior "durable state"))
-                   (expect (not (str/includes? prior "user asked:"))))))
+        (expect (= 2 (count messages)))
+        (expect (str/includes? prior "folded turns 1, 2"))
+        (expect (str/includes? prior "durable state"))
+        (expect (not (str/includes? prior "user asked:")))))
+  (it "renders cancelled work as settled history with a model-visible abort marker"
+      (let
+        [block (prompt/previous-turn-context-block [{:turn 1
+                                                     :user-request "inspect and fix"
+                                                     :cancelled? true
+                                                     :results [{:scope "t1/i1/f1"
+                                                                :src "cat(src)"}]}])]
+        (expect (str/includes? block "cat(src)"))
+        (expect (str/includes? block "<turn_cancelled>"))
+        (expect (str/includes? block "persisted results remain valid; do not repeat settled work"))
+        (expect (not (str/includes? block "INTERRUPTED before it finished"))))))

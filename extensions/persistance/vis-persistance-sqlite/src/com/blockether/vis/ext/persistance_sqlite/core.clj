@@ -194,7 +194,9 @@
 ;; `resources/db/sqlite/migration/`. We only point Flyway at that
 ;; classpath location. No schema DDL or repair DDL lives in Clojure.
 ;; The runner repairs drifted checksums and history left by V2+ files that were
-;; consolidated back into the single canonical V1; it never recreates the DB.
+;; consolidated back into the single canonical V1, and additively tops up columns
+;; a store created by an older canonical V1 is missing (the DDL text still comes
+;; from V1__schema.sql); it never recreates the DB.
 ;; =============================================================================
 
 (def ^:private MIGRATIONS "classpath:db/sqlite/migration")
@@ -1385,6 +1387,137 @@
              first-request
              (assoc :first-request first-request))))))))
 
+(defn- session-usage-scope
+  "Honeysql `[from join where]` fragments selecting the CURRENT chain of the
+   session soul `soul-id-s`: every turn soul across the session's states, each
+   pinned to its HIGHEST `session_turn_state.version`. Retried/superseded turn
+   versions are excluded, so a usage rollup counts what the transcript shows
+   rather than every attempt ever written."
+  [soul-id-s]
+  [[[:session_turn_state :sts]]
+   [[:session_turn_soul :ts] [:= :ts.id :sts.session_turn_soul_id] [:session_state :ss]
+    [:= :ss.id :ts.session_state_id]]
+   [:and [:= :ss.session_soul_id soul-id-s]
+    [:= :sts.version
+     {:select [[[:max :s2.version]]]
+      :from [[:session_turn_state :s2]]
+      :where [:= :s2.session_turn_soul_id :sts.session_turn_soul_id]}]]])
+
+(defn db-session-usage-stats
+  "ONE session's whole-life USAGE rollup, or nil when the session has no turns:
+
+   `{:turn-count :iteration-count :duration-ms :input-tokens
+     :input-regular-tokens :input-cache-write-tokens :input-cache-read-tokens
+     :output-tokens :output-reasoning-tokens :cost-usd :first-turn-at
+     :last-turn-at :provider :model :tool-call-count :fold-count :top-tools}`
+
+   Token/cost/iteration facts are SQL aggregates over the turn-state rollups
+   (`session_turn_state`), which the turn writer already maintains — no
+   iteration scan. Tool and fold counts have no column: they live inside each
+   iteration's nippy `tool_calls` BLOB, so those are decoded in bounded chunks
+   and counted by `:vis/tool-name` (a fold is the `session_fold` tool). That
+   decode is why this is an ON-DEMAND single-session read and never part of
+   `list-sessions`.
+
+   `:top-tools` is `[{:name s :count n}]`, busiest first, folds excluded."
+  [db-info session-id]
+  (when (and (ds db-info) session-id)
+    (let
+      [soul-id-s
+       (->ref session-id)
+
+       [from join where]
+       (session-usage-scope soul-id-s)
+
+       agg
+       (query-one! db-info
+                   {:select [[[:count :sts.id] :turns] [[:sum :sts.iteration_count] :iterations]
+                             [[:sum :sts.duration_ms] :duration_ms]
+                             [[:sum :sts.input_tokens] :input_tokens]
+                             [[:sum :sts.input_regular_tokens] :input_regular_tokens]
+                             [[:sum :sts.input_cache_write_tokens] :input_cache_write_tokens]
+                             [[:sum :sts.input_cache_read_tokens] :input_cache_read_tokens]
+                             [[:sum :sts.output_tokens] :output_tokens]
+                             [[:sum :sts.output_reasoning_tokens] :output_reasoning_tokens]
+                             [[:sum :sts.total_cost_usd] :cost_usd]
+                             [[:min :ts.created_at] :first_at] [[:max :ts.created_at] :last_at]]
+                    :from from
+                    :join join
+                    :where where})]
+
+      (when (pos? (long (or (:turns agg) 0)))
+        (let
+          [latest
+           (query-one! db-info
+                       {:select [:sts.llm_root_provider :sts.llm_root_model]
+                        :from from
+                        :join join
+                        :where where
+                        :order-by [[:ts.created_at :desc]]
+                        :limit 1})
+
+           ;; Ids first, blobs in chunks: an oversized session never pulls its
+           ;; whole tool-call history across the JDBC boundary at once.
+           iter-ids
+           (mapv :id
+                 (query! db-info
+                         {:select [:qti.id]
+                          :from [[:session_turn_iteration :qti]]
+                          :join (into [[:session_turn_state :sts]
+                                       [:= :sts.id :qti.session_turn_state_id]]
+                                      join)
+                          :where (conj where [:<> :qti.tool_calls nil])}))
+
+           counts
+           (reduce (fn [acc chunk]
+                     (reduce (fn [acc* row]
+                               (reduce (fn [a form]
+                                         (let [n (str (:vis/tool-name form))]
+                                           (if (str/blank? n) a (update a n (fnil inc 0)))))
+                                       acc*
+                                       (<-blob (:tool_calls row))))
+                             acc
+                             (query! db-info
+                                     {:select [:qti.tool_calls]
+                                      :from [[:session_turn_iteration :qti]]
+                                      :where [:and [:in :qti.id (vec chunk)]
+                                              [:<> :qti.tool_calls nil]]})))
+                   {}
+                   (partition-all 200 iter-ids))
+
+           folds
+           (long (get counts "session_fold" 0))]
+
+          (cond->
+            {:turn-count (long (or (:turns agg) 0))
+             :iteration-count (long (or (:iterations agg) 0))
+             :duration-ms (long (or (:duration_ms agg) 0))
+             :input-tokens (long (or (:input_tokens agg) 0))
+             :input-regular-tokens (long (or (:input_regular_tokens agg) 0))
+             :input-cache-write-tokens (long (or (:input_cache_write_tokens agg) 0))
+             :input-cache-read-tokens (long (or (:input_cache_read_tokens agg) 0))
+             :output-tokens (long (or (:output_tokens agg) 0))
+             :output-reasoning-tokens (long (or (:output_reasoning_tokens agg) 0))
+             :cost-usd (double (or (:cost_usd agg) 0))
+             :tool-call-count (long (reduce + 0 (vals counts)))
+             :fold-count folds
+             :top-tools (into []
+                              (comp (remove #(= "session_fold" (key %)))
+                                    (map (fn [[n c]]
+                                           {:name n :count (long c)})))
+                              (sort-by (comp - val) counts))}
+            (:first_at agg)
+            (assoc :first-turn-at (long (:first_at agg)))
+
+            (:last_at agg)
+            (assoc :last-turn-at (long (:last_at agg)))
+
+            (:llm_root_provider latest)
+            (assoc :provider (str (:llm_root_provider latest)))
+
+            (:llm_root_model latest)
+            (assoc :model (str (:llm_root_model latest)))))))))
+
 (defn db-find-session-by-external
   [db-info channel external-id]
   (when (and (ds db-info) external-id)
@@ -2080,6 +2213,7 @@
                                             "image")
                                   :media_type (str (:media-type att))
                                   :filename (:filename att)
+                                  :is_display_only (if (:is-display-only att) 1 0)
                                   :created_at now}
                                  payload)]}))))
 
@@ -2165,6 +2299,9 @@
      :kind (:kind row)
      :media-type (:media_type row)
      :filename (:filename row)
+     ;; DISPLAY-ONLY: stored + rendered, never a wire image block. Read back as a
+     ;; real boolean so the send-time gate never has to reason about 0/1.
+     :is-display-only (= 1 (long (or (:is_display_only row) 0)))
      :storage-uri (:storage_uri row)
      :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
      :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}))
@@ -2619,6 +2756,7 @@
                                               "image")
                                     :media_type (str (:media-type att))
                                     :filename (:filename att)
+                                    :is_display_only (if (:is-display-only att) 1 0)
                                     :created_at now}
                                    payload)]})))))
 

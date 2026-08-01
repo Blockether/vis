@@ -3065,11 +3065,10 @@
         (expect (string/includes? index-paths-description "grep/cat/struct_index"))
         (expect (not (contains? (:properties index-schema) "path")))
         (expect (not (contains? (:properties cat-schema) "path")))
-        ;; struct_index takes EITHER `paths` (structure) or `name`
-        ;; (occurrences), so neither is schema-required; the tool
-        ;; itself rejects a call carrying neither.
-        (expect (nil? (:required index-schema)))
-        (expect (contains? (:properties index-schema) "name"))
+        ;; struct_index has ONE paths-only mode; occurrence analysis is opt-in.
+        (expect (= ["paths"] (:required index-schema)))
+        (expect (= "boolean" (get-in index-schema [:properties "include_occurrences" :type])))
+        (expect (not (contains? (:properties index-schema) "name")))
         (expect (= ["paths"] (:required cat-schema)))
         (expect (= 4 (:maxProperties cat-schema)))
         (expect (string/includes? cat-paths-description "Exact physical"))
@@ -3095,14 +3094,15 @@
         (let
           [dir (temp-dir-path "outline-nested/src")
            _ (spit (fs/file (str dir "/foo.clj")) "(ns foo)\n(defn bar [x] (+ x 1))\n")
-           r (index-tool (str (temp-root) "/outline-nested/src/foo.clj"))]
+           r (index-tool {"paths" [(str (temp-root) "/outline-nested/src/foo.clj")]})
+           entry (get-in r [:result "results" 0])]
 
           (expect (:success? r))
-          (expect (clojure.string/includes? (str (get-in r [:result "skeleton"])) "bar"))
+          (expect (clojure.string/includes? (str (get entry "skeleton")) "bar"))
           ;; the STRUCTURED sibling: machine-addressable definitions (no skeleton parsing),
           ;; each row the same shape as an occurrences def — name/kind/anchor/end_anchor.
           (let
-            [defs (get-in r [:result "definitions"])
+            [defs (get entry "definitions")
              bar (first (filter #(= "bar" (get % "name")) defs))]
 
             (expect (vector? defs))
@@ -3112,7 +3112,7 @@
             (expect (string? (get bar "end_anchor")))
             (expect (= 0 (get bar "depth"))))))
     (it "REFUSES a path that escapes the workspace (proves safe-path confinement)"
-        (expect (true? (try (index-tool "/etc/hosts")
+        (expect (true? (try (index-tool {"paths" ["/etc/hosts"]})
                             false
                             (catch clojure.lang.ExceptionInfo _ true)))))))
 
@@ -3420,84 +3420,81 @@
         (expect (throws? clojure.lang.ExceptionInfo #(nodes {"nodes" [{"nav" ["down"]}]}))))))
 
 (defdescribe
-  name-mode-index-e2e-test
-  "struct_index in `name` mode (not just the structural fn): rg prefilter →
-   per-file parse → def-marked result envelope, over real files on disk."
-  (let
-    [idx
-     (private-fn "index-tool")
-
-     occ
-     #(idx {"name" %})]
-
+  unified-index-occurrences-e2e-test
+  "struct_index traces each declared identifier across the supplied files only when
+   `include_occurrences` is true."
+  (let [idx (private-fn "index-tool")]
     (it
-      "traces a symbol across real files: marks the def (kind/signature), lists uses"
+      "indexes files and groups each definition with its uses when requested"
       (let
-        [_
-         (temp-dir-path "occ")
-
-         f1
-         (str (temp-root) "/occ/lib.clj")
-
-         f2
-         (str (temp-root) "/occ/use.clj")]
+        [_ (temp-dir-path "occ")
+         f1 (str (temp-root) "/occ/lib.clj")
+         f2 (str (temp-root) "/occ/use.clj")]
 
         (spit (fs/file f1) "(defn widget [x] (inc x))\n")
         (spit (fs/file f2) "(ns u)\n(println (widget 1))\n(println (widget 2))\n")
-        (with-redefs [editing/rg-search (constantly {:files [f1 f2]})]
-          (let
-            [r (occ "widget")
-             res (:result r)
-             syms (get res "symbols")
-             s (first syms)
-             uses (get s "uses")]
-
-            (expect (:success? r))
-            (expect (= 3 (get res "count"))) ;; 1 def + 2 uses
-            (expect (= 1 (get res "definition_count")))
-            ;; PER SYMBOL: one entry per definition, uses hanging off it
-            (expect (= 1 (count syms)))
-            (expect (= "widget" (get s "name")))
-            (expect (= "fn" (get s "kind")))
-            (expect (= "[x]" (get s "signature")))
-            (expect (= f1 (get s "path")))
-            (expect (get s "anchor"))
-            ;; a definition row is no longer flagged — being IN `symbols` says it
-            (expect (not (contains? s "is_definition")))
-            ;; the sole definition owns every use, grouped by file
-            (expect (= 2 (get s "use_count")))
-            (expect (= [f2] (mapv #(get % "path") uses)))
-            (expect (= 2 (count (get (first uses) "anchors"))))
-            ;; a use is ANCHORS-ONLY — the `lineno:hash` anchor IS the sole
-            ;; position; no redundant line/column/byte (unbounded, they'd bloat
-            ;; the wire until it clips mid-object)
-            (expect (= #{"path" "anchors"} (set (keys (first uses)))))
-            (expect (every? string? (get (first uses) "anchors")))
-            ;; nothing left over: one definition attaches everything
-            (expect (not (contains? res "other_uses")))
-            (expect (nil? (get res "files")))))))
-    (it "a name with no definition on disk yields definition_count 0"
         (let
-          [_
-           (temp-dir-path "occ2")
+          [r (idx {"paths" [f1 f2] "include_occurrences" true})
+           res (:result r)
+           groups (get res "occurrences")
+           widget (first (filter #(= "widget" (get % "name")) groups))
+           syms (get widget "symbols")
+           s (first syms)
+           uses (get s "uses")]
 
-           f
-           (str (temp-root) "/occ2/u.clj")]
+          (expect (:success? r))
+          (expect (= [f1 f2] (mapv #(get % "path") (get res "results"))))
+          (expect (= ["widget" "u"] (mapv #(get % "name") groups)))
+          (expect (= 3 (get widget "count"))) ;; 1 def + 2 uses
+          (expect (= 1 (get widget "definition_count")))
+          (expect (= 1 (count syms)))
+          (expect (= "widget" (get s "name")))
+          (expect (= "fn" (get s "kind")))
+          (expect (= "[x]" (get s "signature")))
+          (expect (= f1 (get s "path")))
+          (expect (get s "anchor"))
+          (expect (not (contains? s "is_definition")))
+          (expect (= 2 (get s "use_count")))
+          (expect (= [f2] (mapv #(get % "path") uses)))
+          (expect (= 2 (count (get (first uses) "anchors"))))
+          (expect (= #{"path" "anchors"} (set (keys (first uses)))))
+          (expect (every? string? (get (first uses) "anchors")))
+          (expect (not (contains? widget "other_uses"))))))
+    (it "omits occurrences unless explicitly requested"
+        (let
+          [_ (temp-dir-path "occ-omitted")
+           f (str (temp-root) "/occ-omitted/lib.clj")]
 
-          (spit (fs/file f) "(ns u)\n(println (widget 1))\n") ;; used, never defined here
-          (with-redefs [editing/rg-search (constantly {:files [f]})]
-            (let [res (:result (occ "widget"))]
-              (expect (= 0 (get res "definition_count")))
-              (expect (empty? (get res "symbols")))
-              ;; no definition to attach them to — the uses surface as `other_uses`
-              (expect (= [f] (mapv #(get % "path") (get res "other_uses"))))
-              (expect (pos? (get res "count")))))))))
+          (spit (fs/file f) "(defn widget [x] (inc x))\n")
+          (doseq [args [{"paths" [f]} {"paths" [f] "include_occurrences" false}]]
+            (let [result (:result (idx args))]
+              (expect (contains? result "results"))
+              (expect (not (contains? result "occurrences")))))))
+    (it "deduplicates occurrence scans while preserving duplicate result rows"
+        (let
+          [_ (temp-dir-path "occ-duplicates")
+           f (str (temp-root) "/occ-duplicates/lib.clj")]
+
+          (spit (fs/file f) "(defn widget [x] (widget x))\n")
+          (let
+            [result (:result (idx {"paths" [f f] "include_occurrences" true}))
+             widget (first (filter #(= "widget" (get % "name")) (get result "occurrences")))]
+
+            (expect (= [f f] (mapv #(get % "path") (get result "results"))))
+            (expect (= 2 (get widget "count")))
+            (expect (= 1 (get widget "definition_count")))
+            (expect (= 1 (get widget "scanned")))
+            (expect (= 1 (count (get widget "symbols")))))))
+    (it "rejects removed selector shapes and a non-boolean occurrence flag"
+        (doseq
+          [args [{"name" "widget"} {"path" "widget.clj"} "widget.clj"
+                 {"paths" ["widget.clj"] "include_occurrences" "yes"}]]
+          (expect (throws? clojure.lang.ExceptionInfo #(idx args)))))))
 
 (defdescribe
   merged-symbol-entry-points-test
-  "`struct_occurrences` is GONE (tracing a name is `struct_index(name)`) and
-   `struct_rename` is no longer advertised (renaming project-wide is
-   `struct_patch(paths, op \"rename\")`, still a Python-callable symbol)."
+  "Occurrence grouping backs the one paths-only struct_index mode; `struct_rename`
+   remains unadvertised (project-wide renaming is `struct_patch(paths, op \"rename\")`)."
   (let
     [idx
      (private-fn "index-tool")
@@ -3505,36 +3502,10 @@
      sp
      (private-fn "struct-patch-tool")]
 
-    (it "struct_index with `name` returns the occurrences envelope"
-        (let
-          [_
-           (temp-dir-path "idxname")
-
-           f1
-           (str (temp-root) "/idxname/lib.clj")
-
-           f2
-           (str (temp-root) "/idxname/use.clj")]
-
-          (spit (fs/file f1) "(defn widget [x] (inc x))\n")
-          (spit (fs/file f2) "(ns u)\n(println (widget 1))\n")
-          (with-redefs [editing/rg-search (constantly {:files [f1 f2]})]
-            (let
-              [r (idx {"name" "widget"})
-               res (:result r)]
-
-              (expect (:success? r))
-              (expect (= :struct_index (:symbol r)))
-              (expect (= "widget" (get res "name")))
-              (expect (= 2 (get res "count")))
-              (expect (= 1 (get res "definition_count")))))))
     (it
       "an ambiguous name groups PER SYMBOL and parks the rest in other_uses"
       (let
-        [occ2
-         (private-fn "occurrences-data")
-
-         _
+        [_
          (temp-dir-path "idxamb")
 
          a
@@ -3552,10 +3523,13 @@
         (spit (fs/file c) "(ns c)\n(gizmo 9)\n(gizmo 8)\n")
         (with-redefs [editing/rg-search (constantly {:files [a b c]})]
           (let
-            [res (:result (occ2 {"name" "gizmo"}))
-             syms (get res "symbols")]
+            [r (idx {"paths" [a b c] "include_occurrences" true})
+             res (:result r)
+             gizmo (first (filter #(= "gizmo" (get % "name")) (get res "occurrences")))
+             syms (get gizmo "symbols")]
 
-            (expect (= 2 (get res "definition_count")))
+            (expect (:success? r))
+            (expect (= 2 (get gizmo "definition_count")))
             (expect (= 2 (count syms)))
             ;; each definition keeps its own path + signature to disambiguate
             (expect (= [a b] (mapv #(get % "path") syms)))
@@ -3567,12 +3541,12 @@
                                (mapv #(get % "path") (get s "uses")))
                              syms)))
             ;; the third file defines nothing, so ownership is NOT guessed
-            (expect (= [c] (mapv #(get % "path") (get res "other_uses"))))
-            (expect (= 2 (count (get (first (get res "other_uses")) "anchors"))))))))
+            (expect (= [c] (mapv #(get % "path") (get gizmo "other_uses"))))
+            (expect (= 2 (count (get (first (get gizmo "other_uses")) "anchors"))))))))
     (it "the card renders a table: one row per symbol, its use sites beneath"
         (let
           [render
-           (private-fn "render-index-result")
+           (private-fn "render-occurrences-result")
 
            {:keys [summary body]}
            (render {"name" "gizmo"
@@ -3596,7 +3570,7 @@
     (it "uses no definition owns are their own table rows, and anchors sort by line"
         (let
           [render
-           (private-fn "render-index-result")
+           (private-fn "render-occurrences-result")
 
            {:keys [body]}
            (render {"name" "gizmo"
@@ -3607,7 +3581,7 @@
                     "other_uses" [{"path" "src/c.clj" "anchors" ["9:ddd" "4:ccc"]}]})]
 
           (expect (clojure.string/includes? body "· src/c.clj | — | unowned use | 4, 9 | 2 |"))))
-    (it "struct_index without `paths` and without `name` is refused"
+    (it "struct_index without `paths` is refused"
         (expect (throws? clojure.lang.ExceptionInfo #(idx {}))))
     (it "struct_patch with `paths` + op `rename` renames across files"
         (let
@@ -3637,34 +3611,35 @@
         (expect (throws? clojure.lang.ExceptionInfo
                          #(sp {"paths" ["src"] "op" "delete" "target" "x"}))))
     (it "struct_occurrences is gone entirely; struct_rename is merely unadvertised"
-        ;; No `struct_occurrences` symbol is exported at all any more — `name` mode
-        ;; of struct_index is the ONE entry point (a stale Var can survive a REPL
-        ;; :reload, so assert on the exported symbol list, not `resolve`).
+        ;; No `struct_occurrences` symbol is exported: occurrence analysis is an
+        ;; explicit struct_index option (a stale Var can survive a REPL :reload, so
+        ;; assert on the exported symbol list, not `resolve`).
         (expect (not-any? #(= 'struct_occurrences (:ext.symbol/symbol %))
                           (editing/available-editing-symbols)))
         (expect (false? (boolean (:ext.symbol/native-tool? @#'editing/symbol-rename-symbol)))))))
 
 (defdescribe
   index-tool-e2e-test
-  "The `index` TOOL over a real file — positional AND the dict form the native
-   tool-call path synthesizes (`index({\"path\": …})`)."
+  "The paths-only `struct_index` tool indexes a real file and returns its row in
+   the ordered batch result without occurrence analysis by default."
   (let [index (private-fn "index-tool")]
-    (it "positional and dict forms both return the same skeleton"
+    (it "returns the requested file's structural row without occurrences by default"
         (let
           [_ (temp-dir-path "outl")
            f (str (temp-root) "/outl/m.clj")]
 
           (spit (fs/file f) "(defn add [a b] (+ a b))\n(defn sub [a b] (- a b))\n")
           (let
-            [r1 (index f) ;; index("m.clj")
-             r2 (index {"path" f})]
+            [r (index {"paths" [f]})
+             result (:result r)
+             entry (get-in result ["results" 0])]
 
-            ;; index({"path": "m.clj"}) — native shape
-            (expect (:success? r1))
-            (expect (:success? r2))
-            (expect (clojure.string/includes? (get-in r1 [:result "skeleton"]) "add"))
-            (expect (clojure.string/includes? (get-in r1 [:result "skeleton"]) "sub"))
-            (expect (= (get-in r1 [:result "skeleton"]) (get-in r2 [:result "skeleton"]))))))))
+            (expect (:success? r))
+            (expect (= f (get entry "path")))
+            (expect (clojure.string/includes? (get entry "skeleton") "add"))
+            (expect (clojure.string/includes? (get entry "skeleton") "sub"))
+            (expect (= ["add" "sub"] (mapv #(get % "name") (get entry "definitions"))))
+            (expect (not (contains? result "occurrences"))))))))
 
 (defdescribe
   index-tool-range-test
@@ -3676,7 +3651,7 @@
 
      names
      (fn [r]
-       (mapv #(get % "name") (get-in r [:result "definitions"])))]
+       (mapv #(get % "name") (get-in r [:result "results" 0 "definitions"])))]
 
     (it "ranges handles one or several windows and is echoed consistently"
         (let
@@ -3689,24 +3664,26 @@
           (spit (fs/file f) "(defn a [] 1)\n(defn b [] 2)\n(defn c [] 3)\n")
           (let
             [whole
-             (index {"path" f})
+             (index {"paths" [f]})
 
              one
-             (index {"path" f "ranges" [[2 2]]})
+             (index {"paths" [{"path" f "ranges" [[2 2]]}]})
 
              multi
-             (index {"path" f "ranges" [[1 1] [3 3]]})]
+             (index {"paths" [{"path" f "ranges" [[1 1] [3 3]]}]})]
 
             (expect (= ["a" "b" "c"] (names whole)))
             (expect (= ["b"] (names one)))
-            (expect (= [[2 2]] (get-in one [:result "ranges"])))
-            (expect (not (contains? (:result one) "range")))
+            (expect (= [[2 2]] (get-in one [:result "results" 0 "ranges"])))
+            (expect (not (contains? (get-in one [:result "results" 0]) "range")))
             (expect (= ["a" "c"] (names multi)))
-            (expect (= [[1 1] [3 3]] (get-in multi [:result "ranges"])))
-            (expect (not (contains? (:result multi) "range")))
-            (expect (= 3 (get-in whole [:result "line_count"])))
-            (expect (= 3 (get-in multi [:result "line_count"])))
-            (expect (throws? clojure.lang.ExceptionInfo #(index {"path" f "range" [2 2]}))))))
+            (expect (= [[1 1] [3 3]] (get-in multi [:result "results" 0 "ranges"])))
+            (expect (not (contains? (get-in multi [:result "results" 0]) "range")))
+            (expect (= 3 (get-in whole [:result "results" 0 "line_count"])))
+            (expect (= 3 (get-in multi [:result "results" 0 "line_count"])))
+            (expect (throws? clojure.lang.ExceptionInfo #(index {})))
+            (expect (throws? clojure.lang.ExceptionInfo
+                             #(index {"paths" [{"path" f "range" [2 2]}]}))))))
     (it "the render summary surfaces the narrowing window(s)"
         (let
           [render

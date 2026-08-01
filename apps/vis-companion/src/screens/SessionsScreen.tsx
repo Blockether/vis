@@ -89,8 +89,6 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
   const [transcriptMatches, setTranscriptMatches] = useState<Map<string, SessionMatch> | null>(null);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const [refreshPhase, setRefreshPhase] = useState<'idle' | 'busy' | 'done'>('idle');
-  const refreshDoneTimer = useRef<number | null>(null);
   const pollStartedAt = useRef<number | null>(null);
   // Swipe-revealed row actions. One dialog serves both: renaming asks for the new
   // title, deleting asks for consent — a destructive tap two pixels from a thumb
@@ -136,12 +134,17 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
         pollStartedAt.current = Date.now();
       }
       try {
-        const next = await (clientRef.current ?? new GatewayClient(connection)).listSessions(signal);
+        const client = clientRef.current ?? new GatewayClient(connection);
+        // Paint the first page the moment it lands instead of waiting for the whole
+        // fleet to drain. Only ever called on a cold load (see `listSessions`).
+        const next = await client.listSessions(signal, (partial) => {
+          if (signal?.aborted) return;
+          setSessions((current) => reconcileSessions(current, partial));
+        });
         if (!signal?.aborted) {
-          // Anchor EVERY reload, not just background polls: a manual refresh can
-          // reorder rows too, and without the anchor the tap yanks the list under
-          // the thumb. The layout effect below no-ops at the top of the list, so
-          // the first paint is unaffected.
+          // Anchor EVERY reload: the 10s poll can reorder rows under a reading
+          // thumb. The layout effect below no-ops at the top of the list, so the
+          // first paint is unaffected.
           refreshAnchorRef.current = visibleListAnchor(listRef.current);
           setSessions((current) => reconcileSessions(current, next));
           setLoadError(null);
@@ -153,34 +156,6 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
       } finally {
         if (background) pollStartedAt.current = null;
       }
-    },
-    [],
-  );
-
-  // A manual refresh has to PROVE it ran: the list usually comes back identical,
-  // so with no busy/settled signal the tap reads as a dead button.
-  const manualRefresh = useCallback(async () => {
-    if (refreshDoneTimer.current !== null) {
-      window.clearTimeout(refreshDoneTimer.current);
-      refreshDoneTimer.current = null;
-    }
-    setRefreshPhase('busy');
-    const startedAt = Date.now();
-    await load();
-    // Floor the spinner: a fast LAN round trip would otherwise flash for one frame
-    // and look like nothing happened at all.
-    const remaining = 450 - (Date.now() - startedAt);
-    if (remaining > 0) await new Promise((resolve) => window.setTimeout(resolve, remaining));
-    setRefreshPhase('done');
-    refreshDoneTimer.current = window.setTimeout(() => {
-      refreshDoneTimer.current = null;
-      setRefreshPhase('idle');
-    }, 1_800);
-  }, [load]);
-
-  useEffect(
-    () => () => {
-      if (refreshDoneTimer.current !== null) window.clearTimeout(refreshDoneTimer.current);
     },
     [],
   );
@@ -198,7 +173,12 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
     if (cached) setSessions(cached);
     if ((sessions === null && !cached) || !active) void load(controller.signal);
     else void load(controller.signal, true);
-    const timer = window.setInterval(refreshLiveStates, 5_500);
+    // 10s: slow enough to stay cheap, fast enough that a phone picked up mid-turn
+    // shows the truth. Cheap on BOTH ends — an unchanged fleet comes back as a 304
+    // with no body (see `GatewayClient.listSessions`), and `load(_, true)` drops a
+    // tick that fires while the previous one is still in flight instead of queueing
+    // it. Hidden tabs poll not at all.
+    const timer = window.setInterval(refreshLiveStates, 10_000);
     // Waking is the one moment the rows are guaranteed stale, and a suspended
     // poll may still be latched: drop the latch, then refresh.
     const stopWake = onWake(() => {
@@ -417,49 +397,19 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
                       </span>
                     )}
                     {/* No refresh status here on purpose. This line is `flex-wrap`,
-                        so appending "· refreshing..." / "· updated just now" could
-                        rewrap it onto a second line and shove the whole list down —
-                        and the phrases differ in width, so it jumped twice per tap.
-                        The button below owns that signal at a fixed width. */}
+                        so appending "· refreshing..." could rewrap it onto a second
+                        line and shove the whole list down. The list revalidates
+                        itself every 10s, on wake and on fleet events — there is no
+                        manual refresh left to report. */}
                   </>
                 )}
               </p>
             </div>
-            {/* Hierarchy, not symmetry. These two sat in an equal-width `grid-cols-2`
-                with a 4px gap, so a bordered Refresh was padded out to the size of the
-                solid New session and the pair read as two rival boxes glued together.
-                Each button now sizes to its own content, Refresh is the `quiet` variant
-                (frame on hover only) and the solid amber is the single primary. */}
+            {/* One action, one weight. Refresh used to sit here as a second, quieter
+                button; the list now revalidates itself on a timer, and a control whose
+                honest label is almost always "already up to date" is noise beside the
+                only thing a user actually comes here to do. */}
             <div className="flex shrink-0 items-center gap-2">
-              <Button
-                variant="quiet"
-                className="min-h-6 px-1.5 py-0.5 font-mono text-chip sm:min-h-6"
-                disabled={refreshPhase === 'busy'}
-                onClick={() => void manualRefresh()}
-              >
-                {/* Spinner and all three labels share ONE grid cell, so the button is
-                    sized once by its widest state and never resizes mid-refresh. The
-                    header row is `justify-between`, so every pixel this control gains
-                    is a pixel taken from the project counts on the left. */}
-                <span className="grid justify-items-center">
-                  <span aria-hidden className="invisible col-start-1 row-start-1 inline-flex items-center gap-1">
-                    <span className="size-2.5" />
-                    Refreshing
-                  </span>
-                  <span
-                    aria-live="polite"
-                    className={`col-start-1 row-start-1 inline-flex items-center gap-1 ${refreshPhase === 'done' ? 'font-bold text-ok' : ''}`}
-                  >
-                    {refreshPhase === 'busy' && (
-                      <span
-                        aria-hidden
-                        className="size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent motion-reduce:animate-none"
-                      />
-                    )}
-                    {refreshPhase === 'done' ? 'Updated' : refreshPhase === 'busy' ? 'Refreshing' : 'Refresh'}
-                  </span>
-                </span>
-              </Button>
               <Button
                 variant="solid"
                 className="min-h-6 px-2 py-0.5 font-mono text-chip sm:min-h-6"
@@ -799,7 +749,7 @@ const SessionRow = memo(function SessionRow({
         </button>
         <button
           type="button"
-          className="group flex min-h-14 min-w-0 flex-1 items-start py-2.5 pr-3 text-left transition-colors duration-150 hover:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:min-h-12 sm:py-2 sm:pr-4"
+          className="group flex min-h-14 min-w-0 flex-1 items-start py-2.5 pl-2 pr-3 text-left transition-colors duration-150 hover:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:min-h-12 sm:py-2 sm:pr-4"
           data-session-id={session.id}
           onClick={() => void onOpen(conn, session.id)}
         >
@@ -887,7 +837,7 @@ function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }
   const tools = usage?.top_tools ?? [];
 
   return (
-    <div className="border-t border-dialog-edge bg-panel-2 px-3 py-2.5 pl-8 sm:pl-11 sm:pr-4">
+    <div className="border-t border-dialog-edge bg-panel-2 py-2.5 pl-10 pr-3 sm:pl-11 sm:pr-4">
       {phase === 'loading' && (
         <p className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
           Reading usage…
@@ -1281,7 +1231,7 @@ function MatchPreview({ match, needle }: { match: SessionMatch; needle: string }
         ].filter((h) => h.snippet.length > 0);
   if (rows.length === 0) return null;
   return (
-    <div className="border-t border-dialog-edge bg-ink/30 px-3 py-1.5 sm:px-10">
+    <div className="border-t border-dialog-edge bg-ink/30 py-1.5 pl-10 pr-3 sm:pl-11 sm:pr-4">
       <div className="divide-y divide-dialog-edge/70">
         {rows.map((hit, index) => (
           <div

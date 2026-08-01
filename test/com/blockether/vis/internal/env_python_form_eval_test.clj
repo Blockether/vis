@@ -260,9 +260,11 @@
           (expect (nil? (:error r2)))
           (expect (= "patched" (:result r2)))))
     (it "a READ before the shadowing assignment still sees the tool"
-        (let [r (ep/run-python-block (mk)
-                                     "before = await patch({'path': 'x'})\npatch = 'shadow'\nprint(before, patch)"
-                                     "t1/i1")]
+        (let
+          [r (ep/run-python-block
+               (mk)
+               "before = await patch({'path': 'x'})\npatch = 'shadow'\nprint(before, patch)"
+               "t1/i1")]
           (expect (nil? (:error r)))
           (expect (str/includes? (str (:stdout r)) "patched shadow"))))
     (it "allows ordinary variables while still awaiting protected tools"
@@ -350,7 +352,253 @@ await patch({'path': css})" "t1/i1")]
         (ep/run-python-block ctx "kept_v = 41")
         (let [r2 (ep/run-python-block ctx "print(kept_v + 1)")]
           (expect (nil? (:error r2)))
-          (expect (= "42" (clojure.string/trim (str (:stdout r2)))))))))
+          (expect (= "42" (clojure.string/trim (str (:stdout r2))))))))
+  ;; MODULE SCOPE is not the top-level statement list: `if`/`for`/`with`/`try`
+  ;; bodies execute in the SAME scope, so a name they bind is a module global in
+  ;; real Python and must survive the block here too.
+  (it "a variable bound INSIDE an if/for/with/try body persists into the next block"
+      (let [ctx (:python-context (ep/create-python-context {}))]
+        (ep/run-python-block ctx
+                             (str "import io\n"
+                                  "if True:\n    in_if = 1\n"
+                                  "for _i in range(1):\n    in_for = 2\n"
+                                  "with io.StringIO('s') as fh:\n    in_with = fh.read()\n"
+                                  "try:\n    in_try = 4\nexcept Exception:\n    pass\n")
+                             "t1/i1")
+        (let [r (ep/run-python-block ctx "print(in_if, in_for, in_with, in_try)" "t1/i2")]
+          (expect (nil? (:error r)))
+          (expect (= "1 2 s 4" (clojure.string/trim (str (:stdout r))))))))
+  ;; The reported failure: `hk` assigned inside `async with` vanished before the
+  ;; next block, which then died with a bare NameError.
+  (it "a variable bound inside a `with` in an AWAIT-bearing block persists"
+      (let
+        [ctx (:python-context (ep/create-python-context {'echo (fn [x]
+                                                                 (str "<" x ">"))}))]
+        (ep/run-python-block
+          ctx
+          (str "import io\n" "with io.StringIO('x') as fh:\n" "    hk = await echo(fh.read())\n")
+          "t1/i1")
+        (let [r (ep/run-python-block ctx "hk" "t1/i2")]
+          (expect (nil? (:error r)))
+          (expect (= "<x>" (:result r))))))
+  ;; A `with` TARGET is still transient scratch: it must NOT go durable, so it
+  ;; can never clobber a protected tool name.
+  (it "a `with` target that shadows a tool name stays block-local"
+      (let
+        [ctx (:python-context (ep/create-python-context {'patch (fn [& _]
+                                                                  "patched")}))]
+        (ep/run-python-block
+          ctx
+          (str "import io\n" "with io.StringIO('s') as patch:\n" "    got = patch.read()\n")
+          "t1/i1")
+        (let [r (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
+          (expect (nil? (:error r)))
+          (expect (= "patched" (:result r))))))
+  ;; A walrus binds in the ENCLOSING scope from wherever it appears — an `if`
+  ;; test, a comprehension, a call argument — so it is a module global too.
+  (it "a walrus binding in an if test / comprehension persists"
+      (let [ctx (:python-context (ep/create-python-context {}))]
+        (ep/run-python-block ctx
+                             (str "if (wal := 5) > 1:\n    pass\n"
+                                  "sq = [dbl := i * 2 for i in range(3)]\n")
+                             "t1/i1")
+        (let [r (ep/run-python-block ctx "print(wal, dbl)" "t1/i2")]
+          (expect (nil? (:error r)))
+          (expect (= "5 4" (str/trim (str (:stdout r))))))))
+  ;; `del x` on a module global must delete the GLOBAL. Treated as a frame local
+  ;; it raised UnboundLocalError on a name that was plainly there.
+  (it "`del` removes a module global instead of raising UnboundLocalError"
+      (let [ctx (:python-context (ep/create-python-context {}))]
+        (ep/run-python-block ctx "gone = 1" "t1/i1")
+        (let [r (ep/run-python-block ctx "del gone\nprint('gone' in globals())" "t1/i2")]
+          (expect (nil? (:error r)))
+          (expect (= "False" (str/trim (str (:stdout r))))))))
+  ;; `for` / `with` / `except` / `case` targets are bindings like any other: real
+  ;; module scope keeps them alive after the statement.
+  (it "`for` / `with` / `match` targets persist like module bindings"
+      (let [ctx (:python-context (ep/create-python-context {}))]
+        (ep/run-python-block ctx
+                             (str "import io\n" "for line in ['a']:\n    pass\n"
+                                  "with io.StringIO('s') as fh:\n    pass\n"
+                                  "match [1, 2]:\n    case [lo, hi]:\n        pass\n")
+                             "t1/i1")
+        (let [r (ep/run-python-block ctx "print(line, fh.closed, lo, hi)" "t1/i2")]
+          (expect (nil? (:error r)))
+          (expect (= "a True 1 2" (str/trim (str (:stdout r))))))))
+  ;; Durable targets still cannot clobber a tool: a protected name is shadowed
+  ;; block-locally instead of being declared global.
+  (it "a `for` target that shadows a tool name stays block-local"
+      (let
+        [ctx (:python-context (ep/create-python-context {'patch (fn [& _]
+                                                                  "patched")}))]
+        (ep/run-python-block ctx "for patch in [1, 2]:\n    pass" "t1/i1")
+        (let [r (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
+          (expect (nil? (:error r)))
+          (expect (= "patched" (:result r))))))
+  ;; `from mod import *` is a SyntaxError INSIDE a function, and every block is
+  ;; wrapped in one — GraalPy raised that on a source-less synthesized module,
+  ;; which the host could not even render (bare UnsupportedOperationException).
+  (it "`from mod import *` binds module names without clobbering a tool"
+      (let
+        [ctx (:python-context (ep/create-python-context {'dumps (fn [& _]
+                                                                  "tool-dumps")}))]
+        (ep/run-python-block ctx "from math import *\nfrom json import *" "t1/i1")
+        (let [r (ep/run-python-block ctx "print(int(pi), dumps('x'))" "t1/i2")]
+          (expect (nil? (:error r)))
+          (expect (= "3 tool-dumps" (str/trim (str (:stdout r))))))))
+  ;; At module level `exec('x = 1')` binds a global and `locals() is globals()`.
+  (it "module-level `exec` / `locals()` act on the session globals"
+      (let [ctx (:python-context (ep/create-python-context {}))]
+        (let
+          [r
+           (ep/run-python-block ctx "exec('made = 7')\nprint(made, locals() is globals())" "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= "7 True" (str/trim (str (:stdout r))))))
+        (let [r (ep/run-python-block ctx "print(made)" "t1/i2")]
+          (expect (= "7" (str/trim (str (:stdout r))))))))
+  ;; Function scope is untouched: an `exec` inside a def still writes to a
+  ;; throwaway locals mapping, exactly like CPython.
+  (it "`exec` inside a def keeps real function-scope semantics"
+      (let
+        [ctx
+         (:python-context (ep/create-python-context {}))
+
+         r
+         (ep/run-python-block ctx
+                              (str "def f():\n"
+                                   "    exec('inner = 1')\n" "    try:\n"
+                                   "        return inner\n" "    except NameError:\n"
+                                   "        return 'unbound'\n" "print(f())\n")
+                              "t1/i1")]
+
+        (expect (nil? (:error r)))
+        (expect (= "unbound" (str/trim (str (:stdout r)))))))
+  ;; A compile error on the SYNTHESIZED module has no source text; re-raised from
+  ;; the preamble it renders as a normal Python error at the boundary.
+  (it "a compile error on the wrapped module surfaces as a Python error"
+      (let
+        [r (ep/run-python-block (:python-context (ep/create-python-context {}))
+                                "nonlocal nope"
+                                "t1/i1")]
+        (expect (some? (:error r)))
+        (expect (str/includes? (str (:message (:error r))) "nonlocal"))))
+  ;; MODULE-SCOPE ANNOTATIONS. `x: int = 5` under the wrapper's `global x` is
+  ;; "annotated name 'x' can't be global" in CPython; the AnnFix pass rewrites it
+  ;; to a plain assignment plus the `__annotations__` record a module keeps.
+  (it "an annotated module-level assignment binds and records its annotation"
+      (let [ctx (:python-context (ep/create-python-context {}))]
+        (let [r (ep/run-python-block
+                  ctx
+                  (str "ann_x: int = 5\n" "ann_y: str\n"
+                       "print(ann_x, __annotations__['ann_x'] is int, 'ann_y' in globals())")
+                  "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= "5 True False" (str/trim (str (:stdout r))))))
+        (let [r (ep/run-python-block ctx "print(ann_x + 1)" "t1/i2")]
+          (expect (= "6" (str/trim (str (:stdout r))))))))
+  ;; `from __future__ import ...` is only legal as the FIRST statement of a module,
+  ;; so the wrapper made every future import a SyntaxError. The flags are stripped
+  ;; and OR'd into compile() instead — here PEP 563 stores annotations unevaluated.
+  (it "`from __future__ import annotations` compiles and applies its flag"
+      (let [r (ep/run-python-block
+                (:python-context (ep/create-python-context {}))
+                (str "from __future__ import annotations\n" "fut_v: int = 3\n"
+                     "print(fut_v, repr(__annotations__['fut_v']))")
+                "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "3 'int'" (str/trim (str (:stdout r)))))))
+  ;; A top-level `return` used to end the block silently (the wrapper is a
+  ;; function), and a top-level `yield` turned it into an async generator whose
+  ;; body never ran. Both are SyntaxErrors in a real module.
+  (it "a top-level `return` is a SyntaxError, not a silently truncated block"
+      (let [r (ep/run-python-block (:python-context (ep/create-python-context {}))
+                                   "print('a')\nreturn 5"
+                                   "t1/i1")]
+        (expect (some? (:error r)))
+        (expect (str/includes? (str (:message (:error r))) "'return' outside function"))))
+  ;; AUTO-SETTLE must not touch a generator: it only drives OUR deferred tool
+  ;; thunks. Driving anything with `.send` exhausted the generator and bound None.
+  (it "a generator binding is not driven to exhaustion by the auto-settle"
+      (let [ctx (:python-context (ep/create-python-context {}))]
+        (ep/run-python-block ctx "gen = (i for i in range(3))" "t1/i1")
+        (let [r (ep/run-python-block ctx "print(list(gen))" "t1/i2")]
+          (expect (nil? (:error r)))
+          (expect (= "[0, 1, 2]" (str/trim (str (:stdout r))))))))
+  ;; GraalPy compiles `await` inside a lambda into an UNCATCHABLE host fault (a
+  ;; null-sourceRange NullPointerException), so `except SyntaxError` around
+  ;; compile() never sees it. Reject it up front with CPython's own message.
+  (it "`await` inside a lambda is a normal SyntaxError, not an engine fault"
+      (let [r (ep/run-python-block (:python-context (ep/create-python-context {}))
+                                   "f = lambda: await g()"
+                                   "t1/i1")
+            msg (str (:message (:error r)))]
+        (expect (some? (:error r)))
+        (expect (str/includes? msg "'await' outside async function"))
+        (expect (not (str/includes? msg "NullPointerException")))
+        (expect (= :python/syntax (:phase (:data (:error r)))))))
+  ;; Same class of trap: a bare starred target died with a raw
+  ;; `UnsupportedOperationException: StoreVisitor: Starred`.
+  (it "a bare starred assignment target is a SyntaxError, not a host fault"
+      (let [ctx (:python-context (ep/create-python-context {}))
+            r (ep/run-python-block ctx "*only = [1]" "t1/i1")
+            msg (str (:message (:error r)))]
+        (expect (some? (:error r)))
+        (expect (str/includes? msg "starred assignment target must be in a list or tuple"))
+        (expect (not (str/includes? msg "UnsupportedOperationException")))
+        ;; the legal forms still work
+        (let [ok (ep/run-python-block ctx "p, *q = [1, 2, 3]\nprint(p, q)" "t1/i2")]
+          (expect (nil? (:error ok)))
+          (expect (= "1 [2, 3]" (str/trim (str (:stdout ok))))))))
+  ;; A compile-phase SyntaxError is re-raised from the preamble, so its POSITION
+  ;; must come from the exception itself — otherwise the boundary reports a
+  ;; preamble line the user never wrote.
+  (it "a compile-phase SyntaxError points at the USER's line"
+      (let [r (ep/run-python-block (:python-context (ep/create-python-context {}))
+                                   "x = 1\ndef f():\n    return await g()"
+                                   "t1/i1")]
+        (expect (= 3 (:line (:data (:error r)))))
+        (expect (str/includes? (str (:message (:error r))) "3:     return await g()"))))
+  ;; `globals().clear()` (or deleting an engine-owned name) is legal Python and
+  ;; used to KILL the session: the host then called a null `__vis_run_async__` and
+  ;; every later block died with a bare NullPointerException.
+  (it "a block that wipes the globals does not kill the interpreter"
+      (let [ctx (:python-context (ep/create-python-context {}))]
+        (ep/run-python-block ctx "globals().clear()" "t1/i1")
+        (let [r (ep/run-python-block ctx "print('alive')" "t1/i2")]
+          (expect (nil? (:error r)))
+          (expect (= "alive" (str/trim (str (:stdout r))))))
+        (let [r (ep/run-python-block ctx "zz = 5\nprint(zz + 1)" "t1/i3")]
+          (expect (= "6" (str/trim (str (:stdout r))))))))
+  (it "deleting the engine's own runtime name reinstalls it instead of wedging"
+      (let [ctx (:python-context (ep/create-python-context {}))]
+        (ep/run-python-block ctx "del __vis_run_async__" "t1/i1")
+        (let [r (ep/run-python-block ctx "print('still here')" "t1/i2")]
+          (expect (nil? (:error r)))
+          ;; re-install must not double-wrap `print` into infinite recursion
+          (expect (= "still here" (str/trim (str (:stdout r))))))))
+  ;; Engine helpers (`__vis_settle__`, `__vis_Call__` …) live only in globals, so a
+  ;; legal mid-block `globals().clear()` / `del __vis_settle__` used to make the
+  ;; REST OF THE SAME BLOCK die with a bogus tool-is-inactive NameError. CPython
+  ;; survives it (a frame captures its builtins); pinning the helpers into builtins
+  ;; gives them the same survival rule as `print`.
+  (it "a mid-block globals().clear() does not break the rest of the same block"
+      (let [r (ep/run-python-block (:python-context (ep/create-python-context {}))
+                                   "import sys\nglobals().clear()\nprint('recovered')"
+                                   "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "recovered" (str/trim (str (:stdout r)))))))
+  (it "deleting one engine helper mid-block keeps the rest of the block alive"
+      (let [r (ep/run-python-block (:python-context (ep/create-python-context {}))
+                                   "del __vis_settle__\nprint(1 + 1)"
+                                   "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "2" (str/trim (str (:stdout r)))))))
+  (it "a print after a globals().clear() in the same block still works"
+      (let [r (ep/run-python-block (:python-context (ep/create-python-context {}))
+                                   "print('a')\nglobals().clear()\nprint('b')"
+                                   "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "a\nb" (str/trim (str (:stdout r))))))))
 
 (defdescribe
   async-runtime-test

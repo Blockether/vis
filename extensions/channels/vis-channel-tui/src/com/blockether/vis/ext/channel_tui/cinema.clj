@@ -4,9 +4,10 @@
    Lanterna `VirtualTerminal` — no TTY needed), and encodes the captured frames
    to `.mp4`:
 
-     pure-JVM H.264 via jcodec's `AWTSequenceEncoder` (each frame rendered to a
-     `BufferedImage` with Java2D). Pixel-exact because WE draw the glyphs — no
-     external player font drift. No native deps, GraalVM-friendly.
+     pure-JVM H.264 via jcodec's `SequenceEncoder`, fed RGB `Picture`s whose
+     glyphs are rasterised by `com.blockether.imaging` (FFM, embedded Noto Sans
+     Mono). Pixel-exact because WE draw the glyphs — no external player font
+     drift, no `java.desktop`.
 
    The replay is HUMANIZED rather than a flat scroll-through: every disclosure
    COLLAPSED, the session is re-enacted turn by turn as if it were happening
@@ -18,16 +19,17 @@
    The heavy TUI stack (`screen`, Lanterna) is reached via `requiring-resolve`
    so merely loading this namespace stays cheap."
   (:require [clojure.string :as str]
+            [com.blockether.imaging :as img]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.theme :as tui-theme]
             [com.blockether.vis.internal.theme :as theme])
-  (:import [com.googlecode.lanterna TerminalSize SGR]
+  (:import [com.googlecode.lanterna TerminalSize SGR TextColor]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]
-           [java.awt Color Font RenderingHints]
-           [java.awt.image BufferedImage]
-           [java.io File]))
+           [java.io File]
+           [org.jcodec.api SequenceEncoder]
+           [org.jcodec.common.model ColorSpace Picture]))
 
 ;; ── Tunables ────────────────────────────────────────────────────────────────
 
@@ -109,7 +111,7 @@
   []
   (requiring-resolve 'com.blockether.vis.core/gateway-session-workspace))
 
-(defn- rgb [^java.awt.Color color] [(.getRed color) (.getGreen color) (.getBlue color)])
+(defn- rgb [^TextColor color] [(.getRed color) (.getGreen color) (.getBlue color)])
 
 (defn- capture-grid
   "Snapshot the Lanterna back-buffer as a rows×cols vector of cell maps carrying
@@ -491,116 +493,124 @@
 
 ;; ── MP4 (jcodec) emitter ────────────────────────────────────────────────────
 
-(defn- awt-color ^Color [[r g b]] (Color. (int r) (int g) (int b)))
+(defn- hex-color
+  "`[r g b]` as the `#rrggbbaa` string the imaging draw ops take."
+  ^String [[r g b]]
+  (format "#%02x%02x%02xff" (int r) (int g) (int b)))
 
 (defn- even2 ^long [^long v] (if (odd? v) (inc v) v))
 
 (defn- io-file ^File [x] (if (instance? File x) x (File. (str x))))
 
-(defn- grid->image
-  "Render one captured grid to a BufferedImage with Java2D. `cw`/`ch` are cell
-   pixel dimensions, `font`/`bold-font` the mono glyph fonts, `ascent` the
-   baseline offset."
-  ^BufferedImage [grid cols rows cw ch font bold-font ascent]
-  (let
-    [cols
-     (long cols)
+(def ^:private mono-family
+  "The mono face EMBEDDED in the imaging cdylib — never a system font, so a
+   screencast renders identically on every machine and inside the native image."
+  "Noto Sans Mono")
 
-     rows
-     (long rows)
+(defn- cell-metrics
+  "Mono cell geometry for `size`, measured through imaging's shaper.
 
-     cw
-     (long cw)
-
-     ch
-     (long ch)
-
-     ascent
-     (long ascent)
-
-     w
-     (even2 (* cols cw))
-
-     h
-     (even2 (* rows ch))
-
-     img
-     (BufferedImage. w h BufferedImage/TYPE_INT_RGB)
-
-     g
-     (.createGraphics img)]
-
-    (.setRenderingHint g
-                       RenderingHints/KEY_TEXT_ANTIALIASING
-                       RenderingHints/VALUE_TEXT_ANTIALIAS_ON)
-    (.setRenderingHint g RenderingHints/KEY_RENDERING RenderingHints/VALUE_RENDER_QUALITY)
-    (doseq
-      [[y row]
-       (map-indexed vector grid)
-
-       [x c]
-       (map-indexed vector row)]
-
-      (let
-        [px
-         (* (long x) cw)
-
-         py
-         (* (long y) ch)]
-
-        (.setColor g (awt-color (:bg c)))
-        (.fillRect g px py cw ch)
-        (let [ch* (:ch c)]
-          (when (and ch* (pos? (count (str/trim ch*))))
-            (.setFont g (if (:bold c) bold-font font))
-            (.setColor g (awt-color (:fg c)))
-            (.drawString g ^String ch* (int px) (int (+ py ascent)))))))
-    (.dispose g)
-    img))
-
-(defn- mono-fonts
+   `:letter-spacing` is the sub-pixel slack between the font's real advance and
+   the integer cell width: with it, every glyph of a merged text run lands
+   exactly on its column, so a 120-column line cannot drift."
   [^long size]
-  (let [base (Font. Font/MONOSPACED Font/PLAIN (int size))]
-    {:font base :bold (.deriveFont base Font/BOLD)}))
+  (let [m   (img/text-measure {:text "M" :size size :family mono-family})
+        adv (double (:width m))
+        cw  (max 1 (Math/round adv))]
+    {:cw cw
+     :ch (max 1 (Math/round (double (:height m))))
+     :ascent (Math/round (- (double (:y m))))
+     :letter-spacing (- cw adv)}))
+
+(defn- narrow?
+  "True for a single-cell glyph we may merge into a run. Wide/combining/multi-char
+   cells are drawn on their own so their advance cannot shift the rest of the row."
+  [^String s]
+  (and (= 1 (.length s)) (< (int (.charAt s 0)) 0x1100)))
+
+(defn- text-runs
+  "Split one captured row into `{:x :style :text}` runs of consecutive cells that
+   share fg + bold — one draw op instead of one per column."
+  [row]
+  (loop [cells (map-indexed vector row) out []]
+    (if-let [[i c] (first cells)]
+      (let [ch    (or (:ch c) " ")
+            style [(:fg c) (boolean (:bold c))]]
+        (if (narrow? ch)
+          (let [run (take-while (fn [[_ d]] (and (narrow? (or (:ch d) " "))
+                                                 (= style [(:fg d) (boolean (:bold d))])))
+                                (rest cells))]
+            (recur (drop (inc (count run)) cells)
+                   (conj out {:x i :style style
+                              :text (apply str ch (map (fn [[_ d]] (or (:ch d) " ")) run))})))
+          (recur (rest cells) (conj out {:x i :style style :text ch}))))
+      out)))
+
+(defn- grid->ops
+  "Vector drawing ops for one captured grid: background rectangles (runs of equal
+   bg merged) then the glyph runs."
+  [grid cw ch ascent size letter-spacing]
+  (into []
+        (mapcat
+         (fn [[y row]]
+           (let [py (* (long y) (long ch))]
+             (concat
+              (for [g (partition-by (comp :bg second) (map-indexed vector row))
+                    :let [x (ffirst g)]]
+                {:op :rect :x (* (long x) (long cw)) :y py :w (* (count g) (long cw)) :h ch
+                 :fill (hex-color (:bg (second (first g))))})
+              (for [{:keys [x style text]} (text-runs row)
+                    :when (pos? (count (str/trim text)))
+                    :let [[fg bold] style]]
+                {:op :text :text text
+                 :x (* (long x) (long cw)) :y (+ py (long ascent))
+                 :fill (hex-color fg)
+                 :size size :family mono-family
+                 :weight (if bold 700 400)
+                 :letter-spacing letter-spacing}))))
+         (map-indexed vector grid))))
+
+(defn- grid->picture
+  "Render one captured grid into a jcodec RGB `Picture` — imaging does the glyph
+   rasterisation, then the straight RGBA rows are packed into jcodec's
+   interleaved, -128-biased RGB plane. No `BufferedImage` anywhere."
+  ^Picture [grid cols rows cw ch ascent size letter-spacing]
+  (let [w   (even2 (* (long cols) (long cw)))
+        h   (even2 (* (long rows) (long ch)))
+        pic (Picture/create (int w) (int h) ColorSpace/RGB)
+        dst ^bytes (aget ^"[[B" (.getData pic) 0)]
+    (with-open [im (img/blank w h "black")]
+      (img/draw! im (grid->ops grid cw ch ascent size letter-spacing))
+            (let [src ^bytes (img/pixels im)
+            n   (* (long w) (long h))]
+        ;; RGBA8 -> jcodec's interleaved RGB plane, whose samples are biased by
+        ;; -128; on bytes that bias is exactly a flip of the sign bit.
+        (loop [i 0 s 0 d 0]
+          (when (< i n)
+            (aset dst d (unchecked-byte (bit-xor (aget src s) 0x80)))
+            (aset dst (unchecked-inc d) (unchecked-byte (bit-xor (aget src (unchecked-inc s)) 0x80)))
+            (aset dst (unchecked-add d 2) (unchecked-byte (bit-xor (aget src (unchecked-add s 2)) 0x80)))
+            (recur (unchecked-inc i) (unchecked-add s 4) (unchecked-add d 3))))))
+    pic))
 
 (defn frames->mp4!
-  "Encode a `session->frames` result to `out` (an MP4 File/path) via jcodec's
-   pure-Java `AWTSequenceEncoder`. Returns the output File."
+  "Encode a `session->frames` result to `out` (an MP4 File/path) with jcodec's
+   pure-Java H.264 `SequenceEncoder`, fed RGB `Picture`s rendered by imaging.
+   Returns the output File."
   [{:keys [cols rows frames]} out {:keys [font-size fps] :or {font-size 18 fps 8}}]
   (let
     [out-file
      (io-file out)
 
-     {:keys [font bold]}
-     (mono-fonts font-size)
-
-     ;; Measure the mono cell from a throwaway image's FontMetrics.
-     probe
-     (.createGraphics (BufferedImage. 8 8 BufferedImage/TYPE_INT_RGB))
-
-     _
-     (.setFont probe font)
-
-     fm
-     (.getFontMetrics probe)
-
-     cw
-     (max 1 (.charWidth fm \M))
-
-     ch
-     (max 1 (.getHeight fm))
-
-     ascent
-     (.getAscent fm)
-
-     _
-     (.dispose probe)
+     {:keys [cw ch ascent letter-spacing]}
+     (cell-metrics font-size)
 
      enc
-     (org.jcodec.api.awt.AWTSequenceEncoder/createSequenceEncoder out-file (int fps))]
+     (SequenceEncoder/createSequenceEncoder out-file (int fps))]
 
     (try (doseq [f frames]
-           (.encodeImage enc (grid->image (:grid f) cols rows cw ch font bold ascent)))
+           (.encodeNativeFrame enc (grid->picture (:grid f) cols rows cw ch ascent
+                                                  font-size (double letter-spacing))))
          (.finish enc)
          (finally (try (.finish enc) (catch Throwable _ nil))))
     out-file))

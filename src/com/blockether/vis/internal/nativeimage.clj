@@ -82,7 +82,72 @@
 
 (defn -afterRegistration [_ _])
 
-(defn -duringSetup [_ _])
+(defn -duringSetup
+  [_ _]
+  ;; FFM downcall stubs for lanterna's native TTY control
+  ;; (com.googlecode.lanterna.terminal.ansi.TTYDeviceControl, java.lang.foreign):
+  ;; termios + ioctl(TIOCGWINSZ) instead of forking
+  ;; /bin/stty. A native image can only make a downcall whose FunctionDescriptor
+  ;; was registered at BUILD time — without this the binary raises
+  ;; MissingForeignRegistrationError, which lanterna catches and silently
+  ;; degrades back to stty. Registering here keeps the fast path in the binary.
+  (try
+    (let [layouts
+          (fn ^"[Ljava.lang.foreign.MemoryLayout;" [ls]
+            (into-array java.lang.foreign.MemoryLayout ls))
+
+          descriptor
+          (fn [args]
+            (java.lang.foreign.FunctionDescriptor/of
+              java.lang.foreign.ValueLayout/JAVA_INT
+              (layouts args)))
+
+          ;; REFLECTIVE on purpose. `RuntimeForeignAccess` is @Platforms(HOSTED_ONLY):
+          ;; it exists in the image BUILDER, never in the image. graal-build-time
+          ;; initializes every Clojure namespace at build time, so this Feature's
+          ;; Vars land in the image heap and the analysis PARSES this fn as
+          ;; application code — a static reference then aborts the build with
+          ;; "Type is not available in this platform:
+          ;; org.graalvm.nativeimage.hosted.RuntimeForeignAccess". Looking the
+          ;; class up by name keeps the build-time call working and leaves the
+          ;; parsed method free of the hosted type.
+          register!
+          (fn [desc & options]
+            (let [k (Class/forName "org.graalvm.nativeimage.hosted.RuntimeForeignAccess")
+                  m (->> (.getMethods k)
+                         (filter (fn [^java.lang.reflect.Method mm]
+                                   (and (= "registerForDowncall" (.getName mm))
+                                        (= 2 (alength (.getParameterTypes mm))))))
+                         first)
+                  _ (when-not m
+                      (throw (ex-info (str "no registerForDowncall/2 on " k " - had "
+                                           (mapv str (.getMethods k)))
+                                      {})))
+                  opt-t (.getComponentType ^Class (aget (.getParameterTypes ^java.lang.reflect.Method m) 1))]
+              (.invoke ^java.lang.reflect.Method m nil
+                       (into-array Object [desc (into-array opt-t options)]))))]
+
+      ;; open(const char*, int) / close(int)
+      (register! (descriptor [java.lang.foreign.ValueLayout/ADDRESS
+                              java.lang.foreign.ValueLayout/JAVA_INT]))
+      (register! (descriptor [java.lang.foreign.ValueLayout/JAVA_INT]))
+      ;; tcgetattr(int, struct termios*) / tcsetattr(int, int, const struct termios*)
+      (register! (descriptor [java.lang.foreign.ValueLayout/JAVA_INT
+                              java.lang.foreign.ValueLayout/ADDRESS]))
+      (register! (descriptor [java.lang.foreign.ValueLayout/JAVA_INT
+                              java.lang.foreign.ValueLayout/JAVA_INT
+                              java.lang.foreign.ValueLayout/ADDRESS]))
+      ;; ioctl(int, unsigned long, ...) — variadic from argument index 2, which is
+      ;; how the winsize pointer must be passed on Apple silicon.
+      (register! (descriptor [java.lang.foreign.ValueLayout/JAVA_INT
+                              java.lang.foreign.ValueLayout/JAVA_LONG
+                              java.lang.foreign.ValueLayout/ADDRESS])
+                 (java.lang.foreign.Linker$Option/firstVariadicArg 2))
+      (println "[vis/native-image] registered 5 FFM downcalls for native TTY control"))
+    (catch Throwable t
+      ;; Older builder without RuntimeForeignAccess, or FFM support switched off:
+      ;; the TUI still works, it just forks stty like it always did.
+      (println "[vis/native-image] FFM downcall registration skipped -" (.getMessage t)))))
 
 (defn -duringAnalysis [_ _])
 

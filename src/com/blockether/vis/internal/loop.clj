@@ -804,7 +804,8 @@
                                        :kind (:kind a)
                                        :size (:size a)
                                        :position (:position a)
-                                       :tool-call-id (:tool-call-id a)}
+                                       :tool-call-id (:tool-call-id a)
+                                       :is-display-only (boolean (:is-display-only a))}
                                       (= :tool (:source a))
                                       (assoc :iteration-id (:iteration-id a))
 
@@ -1969,6 +1970,16 @@
                              name))
                  (:forms iteration))))
 
+(def ^:private terminal-incomplete-turn-statuses #{:interrupted :error :cancelled})
+
+(def ^:private interrupted-turn-statuses #{:interrupted :error})
+
+(defn- terminal-incomplete-turn-status?
+  [status]
+  (contains? terminal-incomplete-turn-statuses status))
+
+(defn- interrupted-turn-status? [status] (contains? interrupted-turn-statuses status))
+
 (defn- previous-turn-context
   "Prior provider-visible turns as an append-only RESUME sequence, compacted by
    the persisted fold ledger. Q/A removal keys off EXPLICIT whole-turn intent
@@ -1984,7 +1995,9 @@
    cannot leave older Q/A or breadcrumbs beside the checkpoint.
 
    Synthetic slash turns remain local-only. Oldest→newest; current/running turns
-   are excluded; nil when no provider-visible representation remains."
+   are excluded. Cancelled/error/interrupted turns remain even without an answer
+   so settled work and the unfinished boundary survive; nil when no
+   provider-visible representation remains."
   [environment current-turn-id]
   (try
     (when-let [session-id (:session-id environment)]
@@ -2000,26 +2013,28 @@
                                           answer-markdown
                                           str
                                           str/trim))
-                             (contains? #{:interrupted :error} (:status turn)))))
+                             (terminal-incomplete-turn-status? (:status turn)))))
          turns (filter include? (persistance/db-list-session-turns d session-id))
          turn-data
          (into []
-               (keep (fn [turn]
-                       (let
-                         [iterations
-                          (->> (try (persistance/db-list-session-turn-iterations d (:id turn))
-                                    (catch Throwable _ []))
-                               (filter #(= :done (:status %)))
-                               vec)]
-                         (when-not (some user-slash-iteration? iterations)
-                           (let [forms (vec (mapcat :forms iterations))]
-                             {:turn (long (or (:position turn) 0))
-                              :user-request (:user-request turn)
-                              :answer (when-not (contains? #{:interrupted :error} (:status turn))
-                                        (answer-markdown (:content turn)))
-                              :interrupted? (contains? #{:interrupted :error} (:status turn))
-                              :forms forms
-                              :iter-scopes (into #{} (keep #(iter-of-scope (:scope %))) forms)})))))
+               (keep
+                 (fn [turn]
+                   (let
+                     [iterations (->> (try (persistance/db-list-session-turn-iterations d
+                                                                                        (:id turn))
+                                           (catch Throwable _ []))
+                                      (filter #(= :done (:status %)))
+                                      vec)]
+                     (when-not (some user-slash-iteration? iterations)
+                       (let [forms (vec (mapcat :forms iterations))]
+                         {:turn (long (or (:position turn) 0))
+                          :user-request (:user-request turn)
+                          :answer (when-not (terminal-incomplete-turn-status? (:status turn))
+                                    (answer-markdown (:content turn)))
+                          :interrupted? (interrupted-turn-status? (:status turn))
+                          :cancelled? (= :cancelled (:status turn))
+                          :forms forms
+                          :iter-scopes (into #{} (keep #(iter-of-scope (:scope %))) forms)})))))
                turns)
          ;; Q/A recap weight per turn (~tokens, chars/4 — the SAME estimator as
          ;; `engine_iter_weights`): stamped on the ctx so `session_fold`'s ack and
@@ -2055,42 +2070,47 @@
                                           resolved)))]
 
         (some->>
-          (reduce (fn [out {:keys [turn user-request answer interrupted? forms iter-scopes] :as td}]
-                    (if-let [summary (covering-summary td)]
-                      (if (seq iter-scopes)
-                        ;; The trailer's apply-summaries path owns the ONE durable
-                        ;; breadcrumb (anchored at this turn's folded iterations).
-                        ;; Removing the complete Q/A representation here avoids
-                        ;; echoing that checkpoint in a second wire location.
-                        out
-                        ;; No done iterations → no trailer anchor exists anywhere.
-                        ;; Materialize the checkpoint HERE so the fold never
-                        ;; erases a turn without a visible tombstone. Consecutive
-                        ;; turns covered by the SAME summary share one entry.
-                        (let [prev (peek out)]
-                          (if (and (:checkpoint? prev) (identical? (:summary prev) summary))
-                            (conj (pop out) (update prev :turns conj turn))
-                            (conj out
-                                  {:checkpoint? true
-                                   :summary summary
-                                   :turns [turn]
-                                   :gist (or (some-> (get summary "gist")
-                                                     str
-                                                     str/trim
-                                                     not-empty)
-                                             (str
-                                               "(dropped — raw turn data remains in session storage"
-                                               (when (toggles/enabled? "introspection")
-                                                 "; recover via `await session_state()`")
-                                               ")"))}))))
+          (reduce
+            (fn
+              [out
+               {:keys [turn user-request answer interrupted? cancelled? forms iter-scopes] :as td}]
+              (if-let [summary (covering-summary td)]
+                (if (seq iter-scopes)
+                  ;; The trailer's apply-summaries path owns the ONE durable
+                  ;; breadcrumb (anchored at this turn's folded iterations).
+                  ;; Removing the complete Q/A representation here avoids
+                  ;; echoing that checkpoint in a second wire location.
+                  out
+                  ;; No done iterations → no trailer anchor exists anywhere.
+                  ;; Materialize the checkpoint HERE so the fold never
+                  ;; erases a turn without a visible tombstone. Consecutive
+                  ;; turns covered by the SAME summary share one entry.
+                  (let [prev (peek out)]
+                    (if (and (:checkpoint? prev) (identical? (:summary prev) summary))
+                      (conj (pop out) (update prev :turns conj turn))
                       (conj out
-                            {:turn turn
-                             :user-request user-request
-                             :answer answer
-                             :interrupted? interrupted?
-                             :results (vec (take 40 (prior-turn-scope-index forms resolved)))})))
-                  []
-                  turn-data)
+                            {:checkpoint? true
+                             :summary summary
+                             :turns [turn]
+                             :gist (or (some-> (get summary "gist")
+                                               str
+                                               str/trim
+                                               not-empty)
+                                       (str "(dropped — raw turn data remains in session storage"
+                                            (when (toggles/enabled? "introspection")
+                                              "; recover via `await session_state()`")
+                                            ")"))}))))
+                (conj out
+                      (cond->
+                        {:turn turn
+                         :user-request user-request
+                         :answer answer
+                         :interrupted? interrupted?
+                         :results (vec (take 40 (prior-turn-scope-index forms resolved)))}
+                        cancelled?
+                        (assoc :cancelled? true)))))
+            []
+            turn-data)
           not-empty
           (mapv #(dissoc % :summary)))))
     (catch Throwable t
@@ -4427,32 +4447,126 @@
   (contains? (:capabilities (svar-router/infer-model-metadata {:name (str (:model target))}))
              :vision))
 
-(defn- image-attachment?
-  "True when a stored iteration attachment is an image a vision provider will
-   actually ACCEPT. A generic `vis_attach` artifact (csv/json/pdf/wav/…) is DB-
-   and display-only, and so is an `image/svg+xml` figure or a BMP: handing one
-   over as an `image_url` block is a hard 400 (`the image data you provided does
-   not represent a valid image`) which repeats on EVERY later turn, because
-   attachments replay — one such row otherwise kills the whole session. Hence
-   the exact provider-accepted set, never the coarse `image/` prefix and never a
-   blank media-type (unverifiable bytes the block would label `image/png`)."
-  [{:keys [media-type]}]
-  (attachments/provider-image-media-type? media-type))
+(defn- wire-image-attachment
+  "One stored iteration attachment as the wire will carry it, or nil.
 
-(defn- iteration-image-message
-  "A `{:role \"user\"}` message carrying every IMAGE a prior iteration's tool
-   calls produced (matplotlib figures, `vis_attach`ed images), as canonical
-   `image_url` blocks — the vision replay of generated artifacts, sourced from
-   the iteration's persisted `:attachments` (non-image artifacts are skipped —
-   see `image-attachment?`). nil when the iteration produced no images. Emitted
-   as its OWN message right AFTER the iteration's `<results>` so an image never
-   sits between an assistant `tool_use` and its answering `tool_result` (which
-   would break tool-call adjacency on the OpenAI chat wire)."
+   The whole verdict lives in `attachments/wire-image` (the ONE send-time image
+   gate): a generic `vis_attach` artifact (csv/json/pdf/wav/…) is DB- and
+   display-only, an `image/svg+xml` figure or a BMP is re-containered to PNG,
+   and a payload the decoder cannot turn into pixels — a corrupt raster whose
+   header sniffs perfectly — is DROPPED. Dropping matters more here than
+   anywhere: handing such a row over as an `image_url` block is a hard 400 that
+   repeats on EVERY later turn, because attachments replay, so one bad row
+   otherwise kills the whole session for good. Judged on the way out, it costs
+   that one figure and the session lives.
+
+   A row the producer marked DISPLAY-ONLY never even reaches the decoder: it
+   was recorded for the human, and its bytes are not this model's business."
+  [attachment]
+  (when-not (attachments/display-only? attachment)
+    (let [wired (attachments/wire-image attachment)]
+      (when (:base64 wired) wired))))
+
+(defn- iteration-wired-images
+  "Every IMAGE a prior iteration's tool calls produced (matplotlib figures,
+   `vis_attach`ed images, plus anything `vis_reinspect_attachment` re-queued),
+   each already across the send-time gate (see `wire-image-attachment`) and so
+   carrying verified pixels in a container the wire accepts."
   [iter-rec]
-  (when-let
-    [imgs (seq (filter image-attachment?
-                       (concat (:attachments iter-rec) (:reinspect-attachments iter-rec))))]
-    {:role "user" :content (mapv attachment->image-block imgs)}))
+  (vec (keep wire-image-attachment
+             (concat (:attachments iter-rec) (:reinspect-attachments iter-rec)))))
+
+(def ^:private max-replay-image-bytes
+  "Base64 budget for ALL produced images replayed in ONE request.
+
+   Multimodal history is not a reference: every prior figure is re-uploaded, in
+   full, on every single request for the rest of the session. Unbudgeted that
+   grows without bound until the provider rejects the request outright — and
+   then EVERY later turn fails too, including plain text ones, because the same
+   oversized history is rebuilt each time. A session must not be able to brick
+   itself by plotting one figure too many, so the newest images ride and the
+   older ones step off (and are NAMED, see `dropped-images-note`)."
+  (* 8 1024 1024))
+
+(def ^:private max-replay-images
+  "Hard count ceiling for replayed images, independent of bytes: many small
+   figures still cost real vision tokens on every request."
+  16)
+
+(defn- replay-image-plan
+  "Decide, for ONE request, which produced images still ride and which step off.
+
+   Newest-first greedy fill of [[max-replay-image-bytes]] / [[max-replay-images]]:
+   the freshest figure is the one the model is actually reasoning about, and the
+   oldest are the ones a summary already covers. The single newest image is
+   ALWAYS kept, even alone over budget — a request that shows the model nothing
+   is worse than a large one. `:collapsed?` iterations are skipped outright:
+   `session_fold` already removed their whole pair.
+
+   Pure. Returns `{pos {:images [...] :dropped [...]}}` keyed by trailer
+   position, so each iteration's verdict lands in ITS place in the transcript."
+  [entries]
+  (first
+    (reduce (fn [[plan used-bytes used-count] [pos iter-rec]]
+              (let [imgs (when-not (:collapsed? iter-rec) (iteration-wired-images iter-rec))]
+                (if (empty? imgs)
+                  [plan used-bytes used-count]
+                  (let
+                    [[kept dropped b c]
+                     (reduce (fn [[kept dropped b c] img]
+                               (let [sz (long (count (str (:base64 img))))]
+                                 (if (or (zero? (long c))
+                                         (and (<= (+ (long b) sz) (long max-replay-image-bytes))
+                                              (< (long c) (long max-replay-images))))
+                                   [(conj kept img) dropped (+ (long b) sz) (inc (long c))]
+                                   [kept (conj dropped img) b c])))
+                             [[] [] used-bytes used-count]
+                             imgs)]
+                    [(assoc plan pos {:images kept :dropped dropped}) b c]))))
+            [{} 0 0]
+            ;; newest first: recency wins the budget, distance pays for it
+            (reverse (vec entries)))))
+
+(defn- attachment-recovery-label
+  "How the model names a dropped image when asking for it back — its stored
+   attachment id when there is one, otherwise the filename it was given."
+  [attachment]
+  (or (not-empty (str (:id attachment))) (not-empty (str (:filename attachment))) "image"))
+
+(defn- dropped-images-note
+  "Plain-text stand-in for images this request could not afford, or nil.
+
+   An image that silently disappears from the history is a model hallucinating
+   about pixels it can no longer see. Naming the rows — with the id that brings
+   one BACK — turns a byte-budget decision into an ordinary tool call."
+  [dropped]
+  (when (seq dropped)
+    {:role "user"
+     :content (str "["
+                   (count dropped)
+                   " image(s) from this step are stored but NOT in this request"
+                   " (image replay budget): " (str/join ", "
+                                                        (map attachment-recovery-label dropped))
+                   ". Call vis_reinspect_attachment(\"<id>\") to put one back on the next request,"
+                   " or vis_read_attachment(\"<id>\") to open its bytes in Python.]")}))
+
+(defn- iteration-image-messages
+  "The messages one prior iteration contributes AFTER its `<results>`: a
+   `{:role \"user\"}` message of canonical `image_url` blocks for the images that
+   fit this request's budget, then a note naming any that did not. Possibly
+   empty; always a VECTOR, so callers splice rather than branch.
+
+   Emitted as its OWN message right AFTER the iteration's `<results>` so an
+   image never sits between an assistant `tool_use` and its answering
+   `tool_result` (which would break tool-call adjacency on the OpenAI chat
+   wire)."
+  [{:keys [images dropped]}]
+  (cond-> []
+    (seq images)
+    (conj {:role "user" :content (mapv attachment->image-block images)})
+
+    (seq dropped)
+    (conj (dropped-images-note dropped))))
 
 (defn- conversation-suffix
   "Append-only conversation suffix for the current turn: each prior iteration
@@ -4472,11 +4586,19 @@
    (or nothing but thinking), its results degrade to a PLAIN TEXT user
    message (a tool_result with no answering tool_use is a wire error).
 
-   Cross-turn seeds (`:preserved-thinking/replay? false`) stay fully
-   excluded — their content already rides the frozen prior-turn rendering.
+   Cross-turn seeds (`:preserved-thinking/replay? false`) from completed turns
+   stay fully excluded because their answer/recap already carries the outcome.
+   Seeds from terminal incomplete turns replay only their settled results as
+   plain text (never opaque thinking or orphaned tool_result blocks), preserving
+   cancellation/error continuity without duplicating successful-turn evidence.
 
    Compatible entries route through `preserved-thinking-replay-messages`
-   so the oversized-chain telemetry stays."
+   so the oversized-chain telemetry stays.
+
+   Produced IMAGES replay under a per-request budget (`replay-image-plan`):
+   images are re-uploaded in full on every request, so an unbounded history
+   eventually exceeds the provider's request limit and breaks every later
+   turn. Newest wins; older ones are named instead of sent."
   [trailer-iters target & [replay-policies]]
   (let
     [iters
@@ -4489,7 +4611,12 @@
      ;; text-only model gets the fence's summary/ASCII already carried in
      ;; the results text, never image blocks it can't consume.
      vision?
-     (target-supports-vision? target)]
+     (target-supports-vision? target)
+
+     ;; ONE newest-first pass over the whole trailer, so the byte budget is
+     ;; decided for the request as a whole rather than per iteration.
+     image-plan
+     (when vision? (replay-image-plan iters))]
 
     (vec
       (mapcat
@@ -4498,20 +4625,19 @@
             [results
              (iteration-results-message iter-rec replay-policies)
 
-             ;; Image artifacts this iteration produced, as their OWN user
-             ;; message appended AFTER the results (keeps tool_use/tool_result
-             ;; adjacency intact). nil for text targets or image-less iters.
+             ;; Image artifacts this iteration produced, as their OWN
+             ;; message(s) appended AFTER the results (keeps tool_use/tool_result
+             ;; adjacency intact). Empty for text targets, image-less iters, and
+             ;; iterations the budget pushed out (which contribute a note).
              img
-             (when vision? (iteration-image-message iter-rec))
+             (when vision? (iteration-image-messages (get image-plan pos)))
 
              compacted-call
              (compactable-native-call iter-rec replay-policies)
 
              +img
              (fn [msgs]
-               (cond-> (vec msgs)
-                 img
-                 (conj img)))]
+               (into (vec msgs) img))]
 
             (cond
               ;; Collapse WINS over provenance: a `session_fold`/`session_drop`
@@ -4524,14 +4650,18 @@
               ;; image; otherwise a prior-turn figure would be byte-immune to
               ;; compaction and re-billed to the vision model every turn.
               (:collapsed? iter-rec) (if results [results] [])
-              ;; Cross-turn seed (NOT collapsed): opted out of THINKING/results
-              ;; replay (its evidence lives in the frozen prior-turn context, so
-              ;; emitting text here would double-render it). Produced IMAGE
-              ;; artifacts are the exception: their bytes were NEVER wired to any
-              ;; prior turn, so a vision model can only see a prior figure if we
-              ;; emit it now — the standalone `img` message (no thinking, no
-              ;; results).
-              (false? (:preserved-thinking/replay? iter-rec)) (if img [img] [])
+              ;; Cross-turn seed (NOT collapsed): never replay opaque thinking.
+              ;; A terminal incomplete turn has no reliable answer summary, so
+              ;; preserve its settled outputs as ordinary text; removing
+              ;; :tool-calls prevents orphaned tool_result blocks. Successful
+              ;; turns already carry their outcome in the prior-turn recap and
+              ;; continue to emit only any previously-unwired image artifacts.
+              (false? (:preserved-thinking/replay? iter-rec))
+              (if (terminal-incomplete-turn-status? (:cross-turn/turn-status iter-rec))
+                (if-let [textual (iteration-results-message (dissoc iter-rec :tool-calls))]
+                  (+img [textual])
+                  (vec img))
+                (vec img))
               ;; Policy-owned large arguments: replace the completed native
               ;; protocol pair with ordinary text. Signed/provider-owned blocks
               ;; remain immutable; retryable failures reuse stored args by id.
@@ -7530,8 +7660,9 @@
               iters (->> queries
                          (remove #(= (str (:id %)) current-turn-id-str))
                          (mapcat (fn [q]
-                                   (try (persistance/db-list-session-turn-iterations d (:id q))
-                                        (catch Throwable _ []))))
+                                   (map #(assoc % :cross-turn/turn-status (:status q))
+                                        (try (persistance/db-list-session-turn-iterations d (:id q))
+                                             (catch Throwable _ [])))))
                          (filter #(= :done (:status %)))
                          ;; Slash commands are local control-plane events. Keep
                          ;; their rows for transcript/audit, never provider replay.
@@ -7569,6 +7700,9 @@
                        ;; (see the `replay? false` branch of `conversation-suffix`),
                        ;; even though the assistant/thinking chain is dropped.
                        :attachments (attachment-storage/hydrate-all (get iters-atts (str (:id it))))
+                       ;; The owning turn's terminal status decides whether settled
+                       ;; outputs need continuity replay on later requests.
+                       :cross-turn/turn-status (:cross-turn/turn-status it)
                        :preserved-thinking/replay? false}])
                    iters)))
          (catch Throwable t
@@ -8944,7 +9078,12 @@
      envelope
      (when enabled?
        (try (let [shell-fn (requiring-resolve 'com.blockether.vis.internal.foundation.shell/shell)]
-              (if (= kind :bg) (shell-fn env cmd {"op" "background" "id" id}) (shell-fn env cmd)))
+              (shell-fn env
+                        (cond-> {"commands" [cmd]}
+                          (= kind :bg)
+                          (assoc "op"
+                            "background" "id"
+                            id))))
             (catch Throwable t
               (tel/log! {:level :warn :id ::bang-run-threw :data {:cmd cmd :error (ex-message t)}})
               {:result nil :error {:message (or (ex-message t) (str t))}})))
@@ -8985,10 +9124,13 @@
 
      block
      (cond->
-       {:code
-        (if (= kind :bg)
-          (str "await shell(" (pr-str cmd) ", {\"op\": \"background\", \"id\": " (pr-str id) "})")
-          (str "await shell(" (pr-str cmd) ")"))
+       {:code (if (= kind :bg)
+                (str "await shell({\"commands\": ["
+                     (pr-str cmd)
+                     "], \"op\": \"background\", \"id\": "
+                     (pr-str id)
+                     "})")
+                (str "await shell({\"commands\": [" (pr-str cmd) "]})"))
         :svar/tool-call-id (str "bang-" (subs (str (java.util.UUID/randomUUID)) 0 8))
         :vis/tool-name tool-name
         :tool-color-role (get color-roles tool-name)

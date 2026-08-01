@@ -8,7 +8,7 @@
 # no ASR model. `docker run` is the whole install.
 #
 # Stages:
-#   jdk      — GraalVM CE 25.2.4 (see .graalvm-version), shared by build+runtime.
+#   jdk      — GraalVM CE 25.1.3 (see .graalvm-version), shared by build+runtime.
 #   builder  — clojure CLI + `clojure -T:build native`, produces target/vis.
 #   model    — the Parakeet ASR model, fetched once into its own cache layer.
 #   browsers — spel (Playwright) + its browser bundles, in its own layer.

@@ -9,7 +9,7 @@
 #   * Oracle GraalVM: builds fine but relicenses the shipped binary under GFTC —
 #     the exact thing audit/README.md §4.1 says we do not do;
 #   * a NEAR version (CE 25.0.2, CE 25.1.1): Truffle/SVM hard-refuse the
-#     org.graalvm.* 25.2.4 jars pinned in deps.edn, mid-build or mid-boot.
+#     org.graalvm.* 25.1.3 jars pinned in deps.edn, mid-build or mid-boot.
 # So: one pinned edition+version, one check, one installer, used by CI, the
 # Dockerfile, build.clj and humans.
 #
@@ -55,6 +55,17 @@ say() { echo "$*" >&2; }
 # humans all pass through, so it enforces the whole pin, everywhere.
 check_pins() {
   local bad=0 v
+  # ── The pin is LOCKED (see .graalvm-version) ───────────────────────────────
+  # 25.1.3, nothing higher: 25.2.x's points-to analysis never converges on this
+  # tree and OOMs the builder at every heap size. The lock is ENFORCED here
+  # rather than trusted to a comment, because every build path passes through
+  # this script.
+  if [ "${GRAAL_PIN_LOCKED:-}" = "true" ] && [ "$GRAAL_VERSION" != "${GRAAL_MAX_VERSION:-}" ]; then
+    say "  ✗ .graalvm-version is LOCKED at ${GRAAL_MAX_VERSION:-<unset>} (NOT UPGRADABLE),"
+    say "    but GRAAL_VERSION=${GRAAL_VERSION}. Move GRAAL_MAX_VERSION deliberately"
+    say "    (or set GRAAL_PIN_LOCKED=\"false\") — see .graalvm-version."
+    exit 1
+  fi
   if [ -f "${repo_root}/deps.edn" ]; then
     while read -r v; do
       [ "$v" = "$GRAAL_VERSION" ] || {
@@ -79,7 +90,7 @@ check_pins() {
 check_pins
 # `[ … ] && { … }` would trip `set -e` on the false branch — use a plain if.
 if [ "$pins_only" = 1 ]; then
-  say "✓ pins agree with .graalvm-version (${GRAAL_EDITION} ${GRAAL_VERSION})"
+  say "✓ pins agree with .graalvm-version (${GRAAL_EDITION} ${GRAAL_VERSION}${GRAAL_PIN_LOCKED:+, LOCKED — not upgradable})"
   exit 0
 fi
 

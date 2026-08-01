@@ -70,218 +70,16 @@
 ;; =============================================================================
 
 (def ^:no-doc bootstrap-python
-  "import sys as _vis_sys, types as _vis_types
+  "The `vis` module bootstrap. Evaluated in each extension context BEFORE the
+   extension file: it builds a real `vis` module (registered in `sys.modules`, so
+   `import vis` works) whose functions live in the module's own namespace, while
+   the extension file's globals stay clean. Host callbacks (`__vis_host_*`, bound
+   as polyglot members before this runs) are handed in through the module dict.
 
-_vis_body = '''
-import inspect
-
-_registration = {'spec': None}
-
-def extension(name=None, description=None, version=None, kind=None, alias=None,
-              activation=None, symbols=None, prompt=None, slash_commands=None,
-              op_hooks=None, ctx=None, providers=None, network_filters=None):
-    if _registration['spec'] is not None:
-        raise ValueError('vis.extension() may only be called once per file')
-    if not name or not isinstance(name, str):
-        raise ValueError('vis.extension(...) requires name=<non-empty string>')
-    if not description or not isinstance(description, str):
-        raise ValueError('vis.extension(...) requires description=<non-empty string>')
-    if symbols and not alias:
-        raise ValueError('vis.extension(...) requires alias=<string> when symbols= is declared')
-    if ctx is not None and not callable(ctx):
-        raise ValueError('vis.extension(...) ctx= must be a callable (env) -> dict of session contributions')
-    _registration['spec'] = {
-        'name': name, 'description': description, 'version': version,
-        'kind': kind, 'alias': alias, 'activation': activation,
-        'symbols': list(symbols or []), 'prompt': prompt,
-        'slash_commands': list(slash_commands or []),
-        'op_hooks': list(op_hooks or []), 'ctx': ctx,
-        'providers': list(providers or []),
-        'network_filters': list(network_filters or []),
-    }
-
-def symbol(fn, name=None, tag='observation', is_hidden=False, schema=None,
-           description=None, result=None, is_native_tool=False, render=None,
-           color_role=None):
-    if not callable(fn):
-        raise ValueError('vis.symbol(fn, ...) requires a callable')
-    if tag not in ('observation', 'mutation'):
-        raise ValueError('vis.symbol tag must be observation or mutation, got %r' % (tag,))
-    doc = inspect.getdoc(fn)
-    if not doc or not doc.strip():
-        raise ValueError('vis.symbol: %s needs a docstring - it becomes the model-facing doc()'
-                         % (getattr(fn, '__name__', '?'),))
-    params, varargs = [], False
-    for p in inspect.signature(fn).parameters.values():
-        if p.kind == inspect.Parameter.VAR_POSITIONAL:
-            varargs = True
-        elif p.kind in (inspect.Parameter.POSITIONAL_ONLY,
-                        inspect.Parameter.POSITIONAL_OR_KEYWORD):
-            params.append(p.name)
-    label = name or getattr(fn, '__name__', '?')
-    is_native = bool(is_native_tool) or schema is not None
-    if is_native:
-        if not isinstance(schema, dict):
-            raise ValueError('vis.symbol: native tool %s requires schema=<JSON Schema dict>'
-                             % (label,))
-        if schema.get('type') != 'object':
-            raise ValueError('vis.symbol: native tool %s schema root must be type object'
-                             % (label,))
-        for union in ('oneOf', 'anyOf', 'allOf'):
-            if union in schema:
-                raise ValueError('vis.symbol: native tool %s schema root must not use %s; '
-                                 'nested property unions are allowed' % (label, union))
-        for slot, text in (('description', description), ('result', result)):
-            if not text or not isinstance(text, str) or not text.strip():
-                raise ValueError('vis.symbol: native tool %s requires %s=<non-empty string>'
-                                 % (label, slot))
-            if 'Raw result:' in text:
-                raise ValueError('vis.symbol: %s= must not carry the reserved label '
-                                 'Raw result: - put the bare contract in result=' % (slot,))
-    elif description is not None or result is not None:
-        raise ValueError('vis.symbol: description=/result= describe a NATIVE tool; '
-                         'pass schema= as well (%s)' % (label,))
-    if render is not None and not callable(render):
-        raise ValueError('vis.symbol render= must be a callable (result) -> dict with '
-                         'summary and optional body')
-    if color_role is not None and not isinstance(color_role, str):
-        raise ValueError('vis.symbol color_role= must be a string, e.g. search')
-    return {'marker': 'symbol', 'fn': fn, 'name': name or fn.__name__, 'tag': tag,
-            'hidden': bool(is_hidden), 'is_native_tool': is_native,
-            'schema': schema, 'description': description, 'result': result,
-            'render': render, 'color_role': color_role,
-            'doc': doc, 'params': params, 'varargs': varargs}
-
-def slash(name, run, doc=None, usage=None):
-    if not name or not isinstance(name, str):
-        raise ValueError('vis.slash(name, run, ...) requires name=<non-empty string>')
-    if not callable(run):
-        raise ValueError('vis.slash(name, run, ...) requires a callable run')
-    return {'marker': 'slash', 'name': name, 'run': run, 'doc': doc, 'usage': usage}
-
-def op_hook(ops, fn, phase='before'):
-    if phase not in ('before', 'after'):
-        raise ValueError('vis.op_hook phase must be before or after, got %r' % (phase,))
-    if not callable(fn):
-        raise ValueError('vis.op_hook(ops, fn, ...) requires a callable fn')
-    ops = [str(o) for o in (ops or [])]
-    if not ops:
-        raise ValueError('vis.op_hook requires a non-empty ops list')
-    return {'marker': 'op_hook', 'ops': ops, 'fn': fn, 'phase': phase}
-
-def network_filter(fn):
-    if not callable(fn):
-        raise ValueError('vis.network_filter(fn) requires a callable')
-    return {'marker': 'network_filter', 'fn': fn}
-
-def provider(id, label, preset=None, get_token_fn=None, detect_fn=None,
-             status_fn=None, logout_fn=None, limits_fn=None, refresh_token_fn=None,
-             auth_fn=None, auth_prompt_fn=None, enrich_models_fn=None,
-             on_selected_fn=None):
-    if not id or not isinstance(id, str):
-        raise ValueError('vis.provider(...) requires id=<non-empty string>')
-    if not label or not isinstance(label, str):
-        raise ValueError('vis.provider(...) requires label=<non-empty string>')
-    for slot, f in (('get_token_fn', get_token_fn), ('detect_fn', detect_fn),
-                    ('status_fn', status_fn), ('logout_fn', logout_fn),
-                    ('limits_fn', limits_fn), ('refresh_token_fn', refresh_token_fn),
-                    ('auth_fn', auth_fn), ('auth_prompt_fn', auth_prompt_fn),
-                    ('enrich_models_fn', enrich_models_fn),
-                    ('on_selected_fn', on_selected_fn)):
-        if f is not None and not callable(f):
-            raise ValueError('vis.provider %s= must be callable or None' % (slot,))
-    return {'marker': 'provider', 'id': id, 'label': label,
-            'preset': dict(preset or {}), 'get_token_fn': get_token_fn,
-            'detect_fn': detect_fn, 'status_fn': status_fn, 'logout_fn': logout_fn,
-            'limits_fn': limits_fn, 'refresh_token_fn': refresh_token_fn,
-            'auth_fn': auth_fn, 'auth_prompt_fn': auth_prompt_fn,
-            'enrich_models_fn': enrich_models_fn, 'on_selected_fn': on_selected_fn}
-
-def ok(title, body=None, data=None):
-    return {'marker': 'slash_result', 'status': 'ok', 'title': str(title),
-            'body': body, 'data': data}
-
-def err(title, body=None, data=None):
-    return {'marker': 'slash_result', 'status': 'error', 'title': str(title),
-            'body': body, 'data': data}
-
-def block(reason):
-    return {'marker': 'block', 'reason': str(reason)}
-
-def strings_of(value):
-    out = []
-    def walk(v):
-        if isinstance(v, str):
-            out.append(v)
-        elif isinstance(v, dict):
-            for k, x in v.items():
-                walk(k)
-                walk(x)
-        elif isinstance(v, (list, tuple, set)):
-            for x in v:
-                walk(x)
-    walk(value)
-    return out
-
-class _State:
-    def get(self, key, default=None):
-        v = _host['state_get'](str(key))
-        return default if v is None else v
-    def __getitem__(self, key):
-        v = _host['state_get'](str(key))
-        if v is None:
-            raise KeyError(key)
-        return v
-    def __setitem__(self, key, value):
-        _host['state_put'](str(key), value)
-    def __delitem__(self, key):
-        _host['state_del'](str(key))
-    def __contains__(self, key):
-        return _host['state_get'](str(key)) is not None
-
-state = _State()
-
-def log(level, msg):
-    _host['log'](str(level), str(msg))
-
-def notify(text, level='info'):
-    _host['notify'](str(text), str(level))
-
-def shell(cmd=None, opts=None):
-    # ONE place for whatever is fed to a shell: `cmd` - a string for one command,
-    # an ordered list of strings for a strictly serial batch, or (op 'send') the
-    # keystrokes typed into a live shell. There is no second carrier.
-    if isinstance(opts, dict) and ('cmd' in opts or 'commands' in opts or 'text' in opts):
-        raise TypeError('shell takes its command(s) as the first argument, never in opts')
-    if cmd is None:
-        payload = None
-    elif isinstance(cmd, str):
-        payload = str(cmd)
-    elif isinstance(cmd, (list, tuple)):
-        payload = [str(c) for c in cmd]
-    else:
-        raise TypeError('shell commands must be a string or an ordered list of strings')
-    return _host['jailed_shell'](payload, opts)
-
-# Compatibility for extensions written before the public `vis.shell` spelling.
-jailed_shell = shell
-'''
-
-_vis_mod = _vis_types.ModuleType('vis')
-_vis_mod.__dict__['_host'] = {
-    'state_get': __vis_host_state_get__,
-    'state_put': __vis_host_state_put__,
-    'state_del': __vis_host_state_del__,
-    'log': __vis_host_log__,
-'notify': __vis_host_notify__,
-    'jailed_shell': __vis_host_jailed_shell__,
-}
-exec(compile(_vis_body, '<vis-bootstrap>', 'exec'), _vis_mod.__dict__)
-_vis_sys.modules['vis'] = _vis_mod
-
-def __vis_registration__():
-    return _vis_sys.modules['vis'].__dict__['_registration']['spec']
-")
+   The Python body is a real, lintable `.py` file under `vis-python/`, slurped
+   from the classpath and embedded in the native image by build.clj's
+   `-H:IncludeResources=vis-python/.*` (see `env-python/runtime-python-src`)."
+  (env/runtime-python-src "vis-python/extension_bootstrap.py"))
 
 ;; =============================================================================
 ;; Marshalling helpers
@@ -366,8 +164,10 @@ def __vis_registration__():
 
 (def ^:private extension-posix-python
   ;; Keep the Python compatibility layer in its resource file, never as a
-  ;; Clojure string. The native build embeds `vis-shims/.*`.
-  (slurp (io/resource "vis-shims/posix.py")))
+  ;; Clojure string. The native build embeds `vis-shims/.*`. Read through the
+  ;; ONE shared reader (`env/runtime-python-src`) so a resource missing from the
+  ;; image fails LOUDLY here instead of eval'ing a silent `nil` body.
+  (env/runtime-python-src "vis-shims/posix.py"))
 
 (defn ^:no-doc build-context
   "Build one Python extension context. Native process creation stays disabled;
@@ -428,11 +228,12 @@ def __vis_registration__():
                     nil)))
     (.putMember g
                 "__vis_host_jailed_shell__"
-                (->executable (fn [command opts]
+                ;; Public extension calls use exactly one options map, identical
+                ;; to the native shell tool: {"commands": ["…"]}.
+                (->executable (fn [opts]
                                 ((requiring-resolve
                                    'com.blockether.vis.internal.foundation.shell/jailed-shell)
                                   extension/*current-environment*
-                                  command
                                   opts))))))
 
 ;; =============================================================================

@@ -5,6 +5,9 @@
   :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}
                  org.apache.commons/commons-compress {:mvn/version "1.28.0"}
                  slipset/deps-deploy {:mvn/version "0.2.5"}}
+          ;; SLF4J 2.x prints an SLF4J(I) provider banner on every build JVM start
+          ;; (tools.deps pulls slf4j-nop). WARN verbosity silences it.
+          :jvm-opts ["-Dslf4j.internal.verbosity=WARN"]
           :ns-default build}
   :clj-watson {:main-opts ["-m" "clj-watson.cli"]
                :replace-deps {io.github.clj-holmes/clj-watson
@@ -33,8 +36,8 @@
     "extensions/languages/vis-language-typescript-bun/test"
     "extensions/workspaces/vis-workspace-rift/test"]
    :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
-              "--enable-preview" "--sun-misc-unsafe-memory-access=allow" "-Djava.awt.headless=true"
-              "-Dapple.awt.UIElement=true" "-Dvis.drafts.dir=target/vis-drafts-test"]
+              "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
+              "-Dvis.drafts.dir=target/vis-drafts-test"]
    :main-opts ["-m" "lazytest.main" "--dir" "test" "--dir"
                "extensions/persistance/vis-persistance-sqlite/test" "--dir"
                "extensions/providers/vis-provider-github-copilot/test" "--dir"
@@ -83,8 +86,7 @@
                    ;; win is lower retained heap, not fewer GCs. G1 is JDK 21's
                    ;; default GC, so this is active without an explicit
                    ;; -XX:+UseG1GC.
-                   "-XX:+UseStringDeduplication" "-Djava.awt.headless=true"
-                   "-Dapple.awt.UIElement=true"]
+                   "-XX:+UseStringDeduplication"]
         :main-opts ["-m" "com.blockether.vis.core"]}}
  :deps
  {com.blockether/vis-persistance-sqlite {:local/root
@@ -107,9 +109,16 @@
   com.blockether/vis-language-typescript-bun {:local/root
                                               "extensions/languages/vis-language-typescript-bun"}
   com.blockether/vis-workspace-rift {:local/root "extensions/workspaces/vis-workspace-rift"}
-  com.blockether/svar {:mvn/version "0.7.91"}
+  com.blockether/svar {:mvn/version "0.7.93"}
   com.blockether/anomaly {:mvn/version "1.0.1"}
-  org.clojure/tools.deps {:mvn/version "0.31.1638"}
+  ;; Runtime downloader for the per-platform FFM native jars (fff/ruff/imaging/
+  ;; tree-sitter) on the plain-JVM path — never used by the native binary.
+  ;; EXCLUDE the S3 transporter: it exists only for `s3://` maven repos (vis has
+  ;; none) and it is the sole reason com.cognitect.aws/{api,s3,endpoints} + their
+  ;; slf4j/jackson tail get resolved, downloaded and logged during every cold CI
+  ;; native build — and they are not native-image-safe.
+  org.clojure/tools.deps {:mvn/version "0.31.1638"
+                          :exclusions [org.clojure/tools.deps.maven-s3-transporter]}
   org.commonmark/commonmark {:mvn/version "0.29.0"}
   org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.29.0"}
   org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.29.0"}
@@ -117,16 +126,24 @@
   babashka/process {:mvn/version "0.6.25"}
   babashka/fs {:mvn/version "0.5.34"}
   io.github.java-diff-utils/java-diff-utils {:mvn/version "4.17"}
-  ;; Pure-Java2D SVG renderer. Providers accept only JPEG/PNG/GIF/WebP, so an
-  ;; attached vector (matplotlib savefig, a dropped icon) is rasterized here
-  ;; instead of being dropped; native-image friendly, no Batik/XML stack.
-  com.github.weisj/jsvg {:mvn/version "2.1.0"}
+  ;; Imaging WITHOUT `java.desktop`: decode/encode, transforms, vector drawing,
+  ;; text, SVG rasterisation and plotting, in-process over a first-party Rust
+  ;; cdylib (image + resvg/tiny-skia) through the JDK Foreign Function & Memory
+  ;; API. This is what replaced AWT/Java2D/ImageIO/jsvg everywhere in vis — no
+  ;; vis code touches `java.awt`/`javax.imageio` any more, so there is no
+  ;; headless bootstrap, no fontconfig, and SVG rasterisation finally works in
+  ;; the macOS binary. Fonts are embedded in the cdylib (four Noto faces).
+  ;; `java.desktop` itself is still loaded, and that is FINE: mic capture uses
+  ;; `javax.sound.sampled` (the JDK's only microphone API), and two third-party,
+  ;; non-graphical users pull it too — Apache POI (value classes in xlsx/pptx
+  ;; writing) and next.jdbc's `clojure.java.data` (`java.beans.Introspector`).
+  com.blockether/imaging {:mvn/version "0.1.4"}
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
-  com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.34"}
-  com.blockether/ruff {:mvn/version "0.3.2"}
+  com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.36"}
+  com.blockether/ruff {:mvn/version "0.3.3"}
   org.clojure/core.memoize {:mvn/version "1.2.281"}
-  com.blockether/fff {:mvn/version "0.12.0"}
+  com.blockether/fff {:mvn/version "0.12.1"}
   com.taoensso/telemere {:mvn/version "1.2.1"}
   ;; Version MUST match com.taoensso/telemere.
   com.taoensso/telemere-slf4j {:mvn/version "1.2.1"}
@@ -134,10 +151,10 @@
   metosin/malli {:mvn/version "0.20.1"}
   ;; GraalPy/Truffle/SVM refuse mismatched versions — bump these four together
   ;; with the setup-graalvm-25 action's pinned version.
-  org.graalvm.polyglot/polyglot {:mvn/version "25.2.4"}
-  org.graalvm.python/python-language {:mvn/version "25.2.4"}
-  org.graalvm.python/python-resources {:mvn/version "25.2.4"}
-  org.graalvm.truffle/truffle-runtime {:mvn/version "25.2.4"}
+  org.graalvm.polyglot/polyglot {:mvn/version "25.1.3"}
+  org.graalvm.python/python-language {:mvn/version "25.1.3"}
+  org.graalvm.python/python-resources {:mvn/version "25.1.3"}
+  org.graalvm.truffle/truffle-runtime {:mvn/version "25.1.3"}
   com.cnuernber/charred {:mvn/version "1.041"}
   org.flatland/ordered {:mvn/version "1.15.12"}
   org.yamlstar/yamlstar {:mvn/version "0.1.17"}

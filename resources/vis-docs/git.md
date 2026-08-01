@@ -30,6 +30,10 @@ Arguments are literal tokens, so spaces stay safe:
 }
 ```
 
+In `python_execution`, `git` also takes exactly one options map. A one-command batch is
+`await git({"commands": [["status", "--short"]]})`; never pass a bare string or an
+argument array positionally.
+
 Commands run serially in the given order. This makes a mutation sequence such
 as `add` then `commit` reliable. A non-zero exit is result data, not a tool
 transport failure: inspect it and expect later commands in the same batch to
@@ -38,9 +42,11 @@ still run.
 `git` IS a user of the `shell` tool: every command runs through the shell's own
 runner, so it inherits one working directory (`cwd`), one process jail, one
 capped capture and one timeout. It takes the same `commands` key, in the same
-input order, and returns the same `{"commands": [...]}` envelope. Only the item
-shape differs, and it has to: a git item is an argv list (no shell, nothing to
-quote), a shell item is one `bash -lc` command line.
+input order, and answers under the same `commands` result key. Two things
+differ, and have to: a git item is an argv list (no shell, nothing to quote)
+while a shell item is one `bash -lc` command line, and `shell` answers with its
+ONE total result shape (top-level summary plus `commands`), where `git` returns
+`{"commands": [...]}` alone.
 
 ## Python sandbox call
 
@@ -48,17 +54,19 @@ The same engine-bound tool is available in `python_execution`. Await it and
 read ordinary Python dict/list data:
 
 ```python
-result = await git([
-    ["status", "--short"],
-    ["diff", "--stat"],
-])
+result = await git({
+    "commands": [
+        ["status", "--short"],
+        ["diff", "--stat"],
+    ],
+})
 
 for command in result["commands"]:
     if command["exit"] != 0:
         print(command["args"], command["stderr"])
 ```
 
-`await git(...)` is the canonical form. It returns one object with a
+`await git({...})` is the canonical form. It returns one object with a
 `"commands"` list in request order. Every command entry has these keys:
 
 | Key | Meaning |

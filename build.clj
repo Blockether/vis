@@ -364,7 +364,18 @@
   and `bin/require-graalvm`'s `check_pins` are the same gate; this is the host /
   CI gate so `clojure -T:build native` can never build on a drifted pin."
   []
-  (when-let [{:strs [GRAAL_VERSION]} @graal-pin]
+  (when-let [{:strs [GRAAL_VERSION GRAAL_MAX_VERSION GRAAL_PIN_LOCKED]} @graal-pin]
+    ;; The pin is LOCKED: 25.1.3, nothing higher. 25.2.x's points-to analysis
+    ;; never converges on this tree and OOMs the builder at every heap size, so
+    ;; a bump is refused here rather than six minutes into `native`.
+    (when (and (= "true" GRAAL_PIN_LOCKED)
+               (not= GRAAL_VERSION GRAAL_MAX_VERSION))
+      (throw (ex-info (str ".graalvm-version is LOCKED at "
+                           (or GRAAL_MAX_VERSION "<unset>")
+                           " (NOT UPGRADABLE), but GRAAL_VERSION=" GRAAL_VERSION
+                           ".\n  Move GRAAL_MAX_VERSION deliberately, or set "
+                           "GRAAL_PIN_LOCKED=\"false\" — see .graalvm-version.")
+                      {:locked GRAAL_MAX_VERSION :got GRAAL_VERSION})))
     (let
       [bad (into []
                  (comp (filter #(str/includes? (str %) "org.graalvm."))
@@ -446,6 +457,11 @@
      (b/process {:command-args args
                  :env {"JAVA_HOME" home
                        "GRAALVM_HOME" home
+                       ;; The clojure CLI prefers JAVA_CMD over JAVA_HOME, and
+                       ;; `bin/vis` exports it — without pinning it here the child
+                       ;; silently starts on the INHERITED JDK and dies on the
+                       ;; hard refusal below (VIS_GRAALVM_SWITCHED already set).
+                       "JAVA_CMD" (str home "/bin/java")
                        "PATH"
                        (str home "/bin" java.io.File/pathSeparator (or (System/getenv "PATH") ""))
                        "VIS_GRAALVM_SWITCHED" "1"}})]
@@ -462,7 +478,7 @@
    usually minutes into the image build.
 
    `java.vendor.version` is the one property that separates all three
-   (\"GraalVM CE 25.2.4+7.1\" vs \"Oracle GraalVM 25.2.4+7.1\" vs \"Temurin-25…\").
+   (\"GraalVM CE 25.1.3+9.1\" vs \"Oracle GraalVM 25.1.3+9.1\" vs \"Temurin-25…\").
 
    Wrong JVM, in order: already installed → re-exec the task under it;
    not installed → install the pin with `bin/require-graalvm --install`, then
@@ -874,6 +890,7 @@
      {'com.blockether/fff (str "fff-native-" tok)
       'com.blockether/rift (str "rift-native-" tok)
       'com.blockether/ruff (str "ruff-native-" tok)
+      'com.blockether/imaging (str "imaging-native-" tok)
       'com.blockether/tree-sitter-language-pack (str "tree-sitter-language-pack-native-"
                                                      (pack-native-token))}
 
@@ -932,20 +949,28 @@
     [jars
      (->> (:classpath-roots basis)
           (filter #(str/ends-with? % ".jar"))
-          ;; Drop the tools.deps runtime download-fallback (+ its
+          ;; Drop the tools.deps runtime download-fallback (+ any
           ;; cognitect.aws S3 transporter tail) from the NATIVE classpath
           ;; ONLY. A native image bundles/locates natives explicitly and
           ;; never downloads — and cognitect.aws is not native-image-safe
           ;; (objects land in the image heap → build failure). The plain-JVM
           ;; classpath (deps.edn) keeps tools.deps so download still works.
+          ;; deps.edn now also :exclusions the maven-s3-transporter, so the aws
+          ;; jars are never resolved, downloaded or logged in the first place;
+          ;; the pattern stays as belt-and-braces against a transitive re-entry.
           ;; NOTE the AWS-scoped `/com/cognitect/aws/` (NOT /com/cognitect/):
           ;; the broad form also stripped cognitect/transit-clj, which
           ;; clj-kondo.impl.cache requires — that silently failed the whole
           ;; clj-kondo build-time preload chain and left the language-clojure
           ;; extension UNBOUND in the native binary.
+          ;; The whole tools.deps TAIL goes with it: tools.deps.edn and the
+          ;; Apache maven-resolver stack are reachable only FROM tools.deps, so
+          ;; once it is gone they are ~15 dead jars the image builder would
+          ;; still scan and build-time-initialize. slf4j-api deliberately STAYS
+          ;; (telemere-slf4j binds it).
           (remove
             #(re-find
-               #"/org/clojure/tools\.deps/|/tools\.deps\.maven-s3-transporter/|/com/cognitect/aws/"
+               #"/org/clojure/tools\.deps/|/org/clojure/tools\.deps\.edn/|/tools\.deps\.maven-s3-transporter/|/com/cognitect/aws/|/org/apache/maven/"
                %)))]
     (->> (concat jars (native-lib-jars basis))
          (into [native-class-dir])
@@ -1012,6 +1037,24 @@
      [t-os t-arch]
      (truffle-platform-tokens)
 
+     ;; ── Builder JVM heap ────────────────────────────────────────────────
+     ;; The points-to analysis live set for this image peaks around 12 GiB.
+     ;; native-image's DEFAULT is 80% of physical RAM, which on a 36 GB Mac
+     ;; means the builder is free to page: the old generation fills, full GCs
+     ;; take over and the build dies with an OOM after ~20 wasted minutes
+     ;; (GraalVM 25.2.x makes this dramatically worse — see .graalvm-version).
+     ;; So pin a deterministic, RAM-clamped ceiling instead of inheriting the
+     ;; machine's size; VIS_NATIVE_EXTRA_ARGS is spliced LAST and overrides it.
+     total-ram
+     (try
+       (.getTotalMemorySize
+        ^com.sun.management.OperatingSystemMXBean
+        (java.lang.management.ManagementFactory/getOperatingSystemMXBean))
+       (catch Throwable _ 0))
+
+     heap-gib (max 6 (min 18 (long (/ (* 0.6 (double total-ram)) 1073741824.0))))
+     init-gib (max 2 (quot heap-gib 3))
+
      ;; Extra native-image args spliced from the environment (space-separated).
      ;; Lets CI tune the builder JVM per-runner (e.g. -J-Xmx6g -J-Xms2g to fit a
      ;; RAM-constrained free macOS runner, overriding GraalPy's bundled -Xms14g
@@ -1024,6 +1067,13 @@
 
     (cond->
       ["-cp" (native-classpath basis) "-o" native-bin
+       ;; Restricted native access (java.lang.foreign): lanterna's TTYDeviceControl
+       ;; drives the TTY with termios/ioctl downcalls instead of forking /bin/stty.
+       ;; Without this the JDK prints a 4-line "restricted method" warning on the
+       ;; first paint — and a future JDK blocks the call outright. The downcall
+       ;; DESCRIPTORS themselves are registered in the build Feature
+       ;; (com.blockether.vis.internal.nativeimage/-duringSetup).
+       "--enable-native-access=ALL-UNNAMED"
        "-H:IncludeResources=META-INF/vis-extension/.*" "-H:IncludeResources=.*\\.edn$"
        ;; the build-written `vis/VERSION` (git sha) read by `vis --version`
        "-H:IncludeResources=vis/VERSION"
@@ -1139,6 +1189,11 @@
       :always
       (conj (str "-H:IncludeResources=native/" tok "/.*")
             (str "-H:IncludeResources=ai/onnxruntime/native/" tok "/[^/]*$"))
+
+      ;; Builder heap ceiling (see total-ram above); VIS_NATIVE_EXTRA_ARGS,
+      ;; spliced right after, can still override both -J flags.
+      :always
+      (conj (str "-J-Xmx" heap-gib "g") (str "-J-Xms" init-gib "g"))
 
       (seq extra)
       (into extra)

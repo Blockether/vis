@@ -508,6 +508,8 @@
   ([db-info] ((deref (resolve-impl db-info 'db-session-turn-stats)) db-info))
   ([db-info session-id] ((deref (resolve-impl db-info 'db-session-turn-stats)) db-info session-id)))
 
+(defdelegate db-session-usage-stats [db-info session-id])
+
 (defdelegate db-retry-session-turn! [db-info session-turn-soul-id opts])
 
 (defdelegate db-list-session-turn-states [db-info session-turn-id])

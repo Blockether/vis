@@ -3198,14 +3198,20 @@
 (def ^:private declared-import-roots-src
   "Python source of the packaging-metadata reader, embedded in the native image
    by build.clj's `-H:IncludeResources=vis-python/.*`."
-  (delay (some-> (io/resource "vis-python/import_roots.py") slurp)))
+  (delay (some-> (io/resource "vis-python/import_roots.py")
+                 slurp)))
 
 (defn- resolve-import-root
   "`path` as a `java.io.File`: absolute entries stand alone, relative ones
    resolve against `dir`, and a leading `~` expands to the home directory."
   ^java.io.File [^String dir ^String path]
-  (let [expanded (paths/expand-home path)
-        f (io/file expanded)]
+  (let
+    [expanded
+     (paths/expand-home path)
+
+     f
+     (io/file expanded)]
+
     (if (.isAbsolute f) f (io/file dir expanded))))
 
 (defn- existing-import-roots
@@ -3240,14 +3246,13 @@
 
     (try (.eval ctx "python" ^String @declared-import-roots-src)
          (.putMember bindings arg dir)
-         (let [^org.graalvm.polyglot.Value roots
-               (.eval ctx "python" (str entry "(globals()[" (pr-str arg) "])"))]
-           (mapv #(.asString (.getArrayElement roots (long %)))
-                 (range (.getArraySize roots))))
+         (let
+           [^org.graalvm.polyglot.Value roots
+            (.eval ctx "python" (str entry "(globals()[" (pr-str arg) "])"))]
+           (mapv #(.asString (.getArrayElement roots (long %))) (range (.getArraySize roots))))
          (catch Throwable _ [])
          ;; The CLI interpreter is the human's own scope -- leave nothing behind.
-         (finally (.removeMember bindings arg)
-                  (.removeMember bindings entry)))))
+         (finally (.removeMember bindings arg) (.removeMember bindings entry)))))
 
 (defn- configured-import-roots
   "Import roots the user declared in merged config as `python.source_paths` --
@@ -3261,9 +3266,10 @@
    degrades to nothing rather than breaking `vis python`."
   [^String dir]
   (try (let [configured (get-in (config/load-config-raw) ["python" "source_paths"])]
-         (existing-import-roots dir (cond (string? configured) [configured]
-                                          (sequential? configured) configured
-                                          :else nil)))
+         (existing-import-roots dir
+                                (cond (string? configured) [configured]
+                                      (sequential? configured) configured
+                                      :else nil)))
        (catch Throwable _ [])))
 
 (defn- python-project-import-roots
@@ -3467,32 +3473,7 @@
    entry point (`console_main`/`main`, called with `sys.argv[1:]`) IS the module's
    `__main__`. Everything else (real stdlib modules and packages on disk) falls
    through to `runpy` with CPython semantics."
-  "import sys as _sys
-
-def __vis_run_module__(name):
-    import importlib, runpy
-    mod = None
-    try:
-        mod = importlib.import_module(name)
-    except ImportError:
-        mod = None
-    if mod is not None and getattr(mod, '__file__', None) is None:
-        entry = getattr(mod, 'console_main', None) or getattr(mod, 'main', None)
-        if callable(entry):
-            try:
-                rc = entry(_sys.argv[1:])
-            except SystemExit as _e:
-                rc = _e.code
-            return 0 if rc is None else (rc if isinstance(rc, int) else 1)
-    try:
-        runpy.run_module(name, run_name='__main__', alter_sys=True)
-        return 0
-    except SystemExit as _e:
-        return 0 if _e.code is None else (_e.code if isinstance(_e.code, int) else 1)
-    except ImportError:
-        _sys.stdout.write('vis python: No module named ' + str(name) + chr(10))
-        return 1
-")
+  (env/runtime-python-src "vis-python/module_runner.py"))
 
 (defn- run-python-module!
   "Run `MODULE` as `__main__` in `ctx` (`vis python -m MODULE`), rendering its
@@ -4001,7 +3982,8 @@ def __vis_run_module__(name):
 
 (def ^:private DEFAULT_DOC
   (str
-    "Vis - a coding agent that edits, runs and verifies code in your repo, with a persistent sandboxed Python REPL.\n" "\n"
+    "Vis - a coding agent that edits, runs and verifies code in your repo, with a persistent sandboxed Python REPL.\n"
+    "\n"
     "USAGE\n" "  vis [FLAGS] \"prompt\"          Run one-shot agent work.\n"
     "  vis [FLAGS]                    Show this help.\n"
     "  vis <command> [args...]        Run a command.\n"

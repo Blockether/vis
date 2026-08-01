@@ -69,7 +69,7 @@
                           ;; `java.vendor.version` is the only property that
                           ;; separates GraalVM CE from Oracle GraalVM and from a
                           ;; stock JDK, and the only one that carries the Graal
-                          ;; train version ("GraalVM CE 25.2.4+7.1") rather than
+                          ;; train version ("GraalVM CE 25.1.3+9.1") rather than
                           ;; the JDK base version it was cut from (25.0.4).
                           ;; `.graalvm-version` pins exactly this string, so this
                           ;; is what a doctor report must show.

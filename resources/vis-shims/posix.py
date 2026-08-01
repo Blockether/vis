@@ -32,7 +32,7 @@ def __vis_install_posix_compat__():
     def _shell():
         # Extension contexts expose `vis.shell` instead of native process
         # access. Agent sandboxes keep their ordinary `shell` tool. Both paths
-        # use the same `(cmd, opts)` lifecycle grammar.
+        # use the same one-options-map lifecycle grammar.
         fn = globals().get("shell")
         if fn is None:
             vis = sys.modules.get("vis")
@@ -45,8 +45,9 @@ def __vis_install_posix_compat__():
         return (lambda *a, **k: settle(fn(*a, **k))) if settle else fn
 
     def _to_cmd(args, shell):
-        # A string is taken verbatim (the `bash -lc` line). A list/tuple is
-        # quoted+joined so argv-style calls run safely under the shell tool.
+        # Build the ONE display line for the command. A string is taken verbatim
+        # (the `bash -lc` line); a list/tuple is quoted+joined so argv-style calls
+        # run safely through the shell tool, whose input is one direct string.
         if isinstance(args, (list, tuple)):
             return " ".join(shlex.quote(str(a)) for a in args)
         return str(args)
@@ -127,17 +128,27 @@ def __vis_install_posix_compat__():
             opts["timeout_secs"] = int(timeout)
         if cwd is not None:
             opts["cwd"] = str(cwd)
-        r = sr(cmd, opts) if opts else sr(cmd)
-        if r.get("timed_out"):
+        # Shell has one public call shape: one map carrying a batch of lines.
+        request = dict(opts)
+        request["commands"] = [cmd]
+        r = sr(request)
+        # A run is ALWAYS a batch, so this one command's own stdout/stderr/exit
+        # is its entry in "commands"; the top level only summarises the group.
+        cmds = r.get("commands") or []
+        # A run is ALWAYS a batch, so the one command's own stdout/stderr/exit is
+        # its first entry — the top level carries NO cmd/stdout/stderr/timed_out
+        # of its own, so there is exactly one place each is read from.
+        c = cmds[0] if cmds else {}
+        if c.get("timed_out"):
             raise TimeoutExpired(
                 cmd,
-                r.get("timeout_secs", timeout),
-                r.get("stdout", ""),
-                r.get("stderr", ""),
+                c.get("timeout_secs") or timeout,
+                c.get("stdout") or "",
+                c.get("stderr") or "",
             )
-        rc = r.get("exit")
-        out = r.get("stdout", "")
-        err = r.get("stderr", "")
+        rc = c.get("exit")
+        out = c.get("stdout") or ""
+        err = c.get("stderr") or ""
         as_text = text if universal_newlines is None else universal_newlines
         if as_text is False:
             out = out.encode("utf-8", "replace")
@@ -187,13 +198,15 @@ def __vis_install_posix_compat__():
             opts = {"op": "background", "id": self._id}
             if cwd is not None:
                 opts["cwd"] = str(cwd)
-            reg = sb(_to_cmd(args, shell), opts)
+            request = dict(opts)
+            request["commands"] = [_to_cmd(args, shell)]
+            reg = sb(request)
             self.pid = reg.get("pid")
             self.returncode = None
 
         def _logs(self):
             sl = _shell()
-            return sl(None, {"op": "logs", "id": self._id})
+            return sl({"op": "logs", "id": self._id})
 
         def poll(self):
             r = self._logs()
@@ -212,12 +225,12 @@ def __vis_install_posix_compat__():
         def communicate(self, input=None, timeout=None):
             self.wait(timeout)
             r = self._logs()
-            out = "\n".join(t for _, t in r.get("lines", []))
+            out = "\n".join(str(l) for l in r.get("lines", []))
             return (out, "")
 
         def terminate(self):
             ss = _shell()
-            ss(None, {"op": "stop", "id": self._id})
+            ss({"op": "stop", "id": self._id})
             self.returncode = self.returncode if self.returncode is not None else -15
 
         kill = terminate

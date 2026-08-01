@@ -649,3 +649,9 @@
                      (expect (= "snippet — clean" summary))
                      (expect (str/includes? body "snippet:"))
                      (expect (str/includes? body "(defn answer [] 42)"))))))
+
+(defdescribe language-surface-env-injection-test
+             (it "uses declarative env injection rather than a before middleware shim"
+                 (doseq [symbol language-surface/symbols]
+                   (expect (true? (:ext.symbol/inject-env? symbol)))
+                   (expect (nil? (:ext.symbol/before-fn symbol))))))

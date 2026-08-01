@@ -5,6 +5,7 @@
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.foundation.editing.core :as ed]
             [com.blockether.vis.internal.foundation.shell :as sh]
@@ -1062,7 +1063,32 @@
                                                              [{"scopes" #{"t1"}
                                                                "issued_turn" 2
                                                                "gist" "folded prior turn"}]})}
-                                           "t2"))))))
+                                           "t2")))))
+  (it "carries cancelled turns with settled work and an explicit cancellation boundary"
+  (with-redefs
+    [persistance/db-list-session-turns
+     (constantly [{:id "t1"
+                   :status :cancelled
+                   :position 1
+                   :user-request "inspect and fix"}
+                  {:id "t2" :status :running :position 2 :user-request "continue"}])
+
+     persistance/db-list-session-turn-iterations
+     (constantly [{:status :done
+                   :position 1
+                   :forms [{:scope "t1/i1/f1" :src "cat(src)" :result {:path "src"}}]}
+                  {:status :running
+                   :position 2
+                   :forms [{:scope "t1/i2/f1" :src "patch(src)"}]}])]
+
+    (expect (= [{:turn 1
+                 :user-request "inspect and fix"
+                 :answer nil
+                 :interrupted? false
+                 :cancelled? true
+                 :results [{:scope "t1/i1/f1" :src "cat(src)"}]}]
+               (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
+                                      "t2"))))))
 
 (defdescribe previous-request-usage-test
              (it "loads latest persisted request before current turn for iter-1 utilization"
@@ -1715,7 +1741,7 @@
                      (expect (= "user" (:role results)))
                      (expect (string? (:content results)))
                      (expect (str/includes? (:content results) "item_count")))))
-             (it "still excludes cross-turn seeds entirely"
+             (it "still excludes successful cross-turn seeds entirely"
                  (let
                    [target
                     {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
@@ -1723,7 +1749,58 @@
                     suffix
                     (conversation-suffix [(stub-tool-iter {:id 1 :replay? false})] target)]
 
-                   (expect (empty? suffix)))))
+                   (expect (empty? suffix))))
+             (it "replays terminal-incomplete cross-turn results as plain text without orphaned tool_result blocks"
+                 (let
+                   [target
+                    {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+
+                    [pos rec]
+                    (stub-tool-iter {:id 1 :replay? false})
+
+                    suffix
+                    (conversation-suffix [[pos (assoc rec :cross-turn/turn-status :cancelled)]]
+                                         target)]
+
+                   (expect (= 1 (count suffix)))
+                   (let [[results] suffix]
+                     (expect (= "user" (:role results)))
+                     (expect (string? (:content results)))
+                     (expect (str/includes? (:content results) "item_count"))
+                     (expect (not (vector? (:content results))))))))
+
+(defdescribe
+  cancellation-continuity-provider-messages-test
+  (it "assembles the cancelled request, abort boundary, settled call, and settled output without a tool protocol orphan"
+      (let
+        [target
+         {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+
+         initial
+         (prompt/assemble-initial-messages
+           {:previous-turn-context [{:turn 1
+                                     :user-request "inspect and fix"
+                                     :cancelled? true
+                                     :results [{:scope "t1/i1/f1" :src "cat(src)"}]}]
+            :turn-context "session[\"turn\"] = 2"
+            :initial-user-content "continue"})
+
+         [pos rec]
+         (stub-tool-iter {:id 1 :replay? false})
+
+         messages
+         (into initial
+               (conversation-suffix
+                 [[pos (assoc rec :cross-turn/turn-status :cancelled)]]
+                 target))]
+
+        (expect (= 3 (count messages)))
+        (expect (str/includes? (:content (first messages)) "inspect and fix"))
+        (expect (str/includes? (:content (first messages)) "cat(src)"))
+        (expect (str/includes? (:content (first messages)) "<turn_cancelled>"))
+        (expect (str/includes? (:content (second messages)) "continue"))
+        (expect (string? (:content (last messages))))
+        (expect (str/includes? (:content (last messages)) "item_count")))))
 
 (defdescribe
   large-write-replay-compaction-test
@@ -1835,6 +1912,12 @@
         (expect (str/includes? (:error (resolve-retry prior policies {"tool_call_id" "missing"}))
                                "cannot find")))))
 
+;; 1x1 red PNG — REAL pixels. Every image block the loop emits is decoded at
+;; SEND time, so a placeholder payload is (correctly) refused and never reaches
+;; a provider.
+(def ^:private replay-png-b64
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
 (defdescribe
   conversation-suffix-image-replay-test
   ;; Generated figures (matplotlib plt.show()) an iteration's tool call
@@ -1842,7 +1925,11 @@
   ;; their OWN vision user message AFTER the <results> — but ONLY when the
   ;; target model advertises :vision.
   (let
-    [att {:tool-call-id "tc-1" :media-type "image/png" :base64 "QUJD" :filename "plot.png" :size 3}]
+    [att {:tool-call-id "tc-1"
+          :media-type "image/png"
+          :base64 replay-png-b64
+          :filename "plot.png"
+          :size 67}]
     (it "appends a vision user message with the image AFTER results"
         (let
           [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
@@ -1854,7 +1941,7 @@
           (let [img (last suffix)]
             (expect (= "user" (:role img)))
             (expect (= ["image_url"] (mapv :type (:content img))))
-            (expect (= "data:image/png;base64,QUJD"
+            (expect (= (str "data:image/png;base64," replay-png-b64)
                        (-> img
                            :content
                            first
@@ -1888,34 +1975,61 @@
           (expect (= 3 (count suffix)))
           (expect (= "user" (:role img)))
           (expect (= ["image_url"] (mapv :type (:content img))))
-          (expect (= "data:image/png;base64,QUJD"
+          (expect (= (str "data:image/png;base64," replay-png-b64)
                      (-> img
                          :content
                          first
                          :image_url
                          :url)))))
-    (it "skips an SVG figure — a format no vision provider decodes"
-        ;; The session killer: an `image/svg+xml` (or BMP) attachment satisfies a
-        ;; coarse `image/` prefix test, so it rode as an image block and the
-        ;; provider answered 400 (\"does not represent a valid image\") on EVERY
-        ;; later turn, because attachments replay — the session never recovers.
+    (it "rasterizes an SVG figure to PNG on the way out"
+        ;; No wire reads markup, so the vector is converted at SEND time — the
+        ;; stored attachment stays SVG and is re-judged on every later turn.
         (let
           [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
            svg {:tool-call-id "tc-3"
                 :media-type "image/svg+xml"
-                :base64 "PHN2Zz48L3N2Zz4="
+                :base64 (.encodeToString
+                          (java.util.Base64/getEncoder)
+                          (.getBytes
+                            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\"><rect width=\"16\" height=\"16\" fill=\"#333\"/></svg>"
+                            "UTF-8"))
                 :filename "fig.svg"
-                :size 11
                 :kind "image"}
-           bmp (assoc svg
-                 :media-type "image/bmp"
-                 :filename "fig.bmp")
-           blank (assoc svg
-                   :media-type ""
-                   :filename "fig")
-           only-bad (conversation-suffix [(stub-tool-iter {:id 1 :attachments [svg bmp blank]})]
+           suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [svg]})] target)]
+
+          (expect (= 3 (count suffix)))
+          (expect (str/starts-with? (get-in (last suffix) [:content 0 :image_url :url])
+                                    "data:image/png;base64,"))))
+    (it "skips what cannot become a picture at all"
+        ;; The session killer: an attachment that merely SAYS `image/…` used to
+        ;; satisfy a coarse media-type test, so unrenderable markup, a corrupt
+        ;; raster or an unverifiable blank type rode as an image block and the
+        ;; provider answered 400 on EVERY later turn, because attachments replay
+        ;; — the session never recovered. Now the bytes must decode here.
+        (let
+          [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+           broken-svg {:tool-call-id "tc-3"
+                       :media-type "image/svg+xml"
+                       :base64 (.encodeToString (java.util.Base64/getEncoder)
+                                                (.getBytes "not an image at all" "UTF-8"))
+                       :filename "fig.svg"
+                       :kind "image"}
+           ;; a perfect PNG signature + IHDR over an unreadable stream
+           corrupt (assoc broken-svg
+                     :media-type "image/png"
+                     :filename "dot.png"
+                     :base64 (.encodeToString
+                               (java.util.Base64/getEncoder)
+                               (byte-array
+                                 (concat (take 33
+                                               (.decode (java.util.Base64/getDecoder)
+                                                        ^String replay-png-b64))
+                                         (repeat 24 0)))))
+           blank (assoc broken-svg :media-type "" :filename "fig")
+           only-bad (conversation-suffix [(stub-tool-iter {:id 1
+                                                           :attachments [broken-svg corrupt blank]})]
                                          target)
-           mixed (conversation-suffix [(stub-tool-iter {:id 1 :attachments [svg att]})] target)]
+           mixed (conversation-suffix [(stub-tool-iter {:id 1 :attachments [corrupt att]})] target)]
 
           ;; nothing replayable left → no vision message at all
           (expect (= 2 (count only-bad)))
@@ -1923,9 +2037,9 @@
                               (and (vector? (:content m))
                                    (some #(= "image_url" (:type %)) (:content m))))
                             only-bad))
-          ;; the PNG beside it still rides, alone
+          ;; the good PNG beside it still rides, alone
           (expect (= 3 (count mixed)))
-          (expect (= ["data:image/png;base64,QUJD"]
+          (expect (= [(str "data:image/png;base64," replay-png-b64)]
                      (mapv #(get-in % [:image_url :url]) (:content (last mixed)))))))
     (it "drops the image when session_fold collapsed the iteration"
         ;; The invariant: a figure's vision visibility TRACKS its iteration's
@@ -1969,6 +2083,70 @@
            suffix (conversation-suffix [(stub-tool-iter {:id 1})] target)]
 
           (expect (= 2 (count suffix)))))))
+
+(defdescribe
+  conversation-suffix-image-budget-test
+  "An image is never REFERENCED by a later request, it is re-uploaded in full on
+   every one of them — so an unbudgeted trailer eventually exceeds the provider's
+   request limit and then EVERY turn fails, text-only ones included. Newest
+   images ride; the rest are NAMED, with the id that brings them back."
+  (let
+    [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
+     att (fn [id]
+           {:id (str "att-" id)
+            :tool-call-id (str "tc-" id)
+            :media-type "image/png"
+            :base64 replay-png-b64
+            :filename (str "plot-" id ".png")
+            :size 67})
+     trailer (fn []
+               (mapv (fn [id] (stub-tool-iter {:id id :attachments [(att id)]})) [1 2 3]))
+     image-msgs (fn [suffix]
+                  (filterv #(and (vector? (:content %))
+                                 (some (fn [b] (= "image_url" (:type b))) (:content %)))
+                           suffix))
+     notes (fn [suffix]
+             (filterv #(re-find #"vis_reinspect_attachment" (str (:content %))) suffix))]
+
+    (it "replays every image when the budget is not under pressure"
+        (let [suffix (conversation-suffix (trailer) target)]
+          (expect (= 3 (count (image-msgs suffix))))
+          (expect (empty? (notes suffix)))))
+    (it "keeps the NEWEST image and names the older ones once the COUNT budget is spent"
+        (with-redefs-fn {#'lp/max-replay-images 1}
+          (fn []
+            (let [suffix (conversation-suffix (trailer) target)
+                  dropped (str/join " " (map (comp str :content) (notes suffix)))]
+              (expect (= 1 (count (image-msgs suffix))))
+              (expect (= 2 (count (notes suffix))))
+              ;; the freshest figure is the one the model is reasoning about
+              (expect (= ["image_url"] (mapv :type (:content (last suffix)))))
+              (expect (str/includes? dropped "att-1"))
+              (expect (str/includes? dropped "att-2"))
+              (expect (not (str/includes? dropped "att-3")))))))
+    (it "never starves the model: the newest image rides even alone over the BYTE budget"
+        (with-redefs-fn {#'lp/max-replay-image-bytes 1}
+          (fn []
+            (let [suffix (conversation-suffix (trailer) target)]
+              (expect (= 1 (count (image-msgs suffix))))
+              (expect (= 2 (count (notes suffix))))))))
+    (it "spends nothing on a text-only target — no images, and no notes about them"
+        (with-redefs-fn {#'lp/max-replay-images 1}
+          (fn []
+            (let [suffix (conversation-suffix (trailer) {:provider :zai-coding-plan
+                                                        :model "glm-5-turbo"})]
+              (expect (empty? (image-msgs suffix)))
+              (expect (empty? (notes suffix)))))))
+    (it "keeps a DISPLAY-ONLY artifact out of the budget and off the wire entirely"
+        (let [suffix (conversation-suffix
+                       [(stub-tool-iter {:id 1
+                                         :attachments [(assoc (att 1) :is-display-only true)]})]
+                       target)]
+          ;; stored + displayed, but never an image block and never a budget note:
+          ;; the caller already decided the model does not need these pixels.
+          (expect (= 2 (count suffix)))
+          (expect (empty? (image-msgs suffix)))
+          (expect (empty? (notes suffix)))))))
 
 ;; multi-fence-hint / attach-multi-fence-hint / empty-code-error-with-observation
 ;; tests removed: those fns were deleted with the fenced-era machinery (lenient
@@ -2198,7 +2376,7 @@
                  (expect (= 190000
                             (eval-timeout-ms-for-code
                               120000
-                              "await shell(\"clojure -M:test\", {\"timeout_secs\": 180})")))
+                              "await shell({\"commands\": [\"clojure -M:test\"], \"timeout_secs\": 180})")))
                  (expect (= 310000
                             (eval-timeout-ms-for-code
                               120000
@@ -3606,15 +3784,20 @@
         (expect (= {:pos ["path"]} (get real-call-shapes "file_exists")))
         (expect (fn? (get real-call-shapes "patch")))
         ;; lint_code takes a whole dict → it declares NO :call and uses the default.
-        (expect (nil? (get real-call-shapes "lint_code"))))
+        (expect (nil? (get real-call-shapes "lint_code")))
+        ;; Shell and Git are one-map calls too; neither may grow a positional shape.
+        (expect (nil? (get real-call-shapes "shell")))
+        (expect (nil? (get real-call-shapes "git"))))
     (it "a tool with NO :call gets the generic whole-dict call"
         (expect (= "rg({\"query\": [\"x\"]})" (synth {:name "rg" :input {"query" ["x"]}})))
         (expect (= "grep({\"query\": \"x\"})" (synth {:name "grep" :input {"query" "x"}})))
-        (expect (= "struct_index({\"name\": \"foo\"})"
-                   (synth {:name "struct_index" :input {"name" "foo"}})))
         (expect (= "struct_index({\"paths\": [\"src/x.clj\"]})"
                    (synth {:name "struct_index" :input {"paths" ["src/x.clj"]}})))
-        (expect (= "lint_code({\"code\": \"x\"})" (synth {:name "lint_code" :input {"code" "x"}}))))
+        (expect (= "lint_code({\"code\": \"x\"})" (synth {:name "lint_code" :input {"code" "x"}})))
+        (expect (= "shell({\"commands\": [\"ls\"]})"
+                   (synth {:name "shell" :input {"commands" ["ls"]}})))
+        (expect (= "git({\"commands\": [[\"status\", \"--short\"]]})"
+                   (synth {:name "git" :input {"commands" [["status" "--short"]]}}))))
     (it "python_execution still passes the model's code through"
         (expect (= "print(1)" (synth {:name "python_execution" :input {"code" "print(1)"}}))))
     (it
@@ -3653,17 +3836,16 @@
       (expect (= "copy(\"a\", \"b\")" (synth {:name "copy" :input {"src" "a" "dest" "b"}})))
       (expect (= "copy(\"a\", \"b\", {\"is_overwrite\": True})"
                  (synth {:name "copy" :input {"src" "a" "dest" "b" "is_overwrite" true}})))
-      (expect (= "shell(\"ls\", {\"timeout_secs\": 30})"
-                 (synth {:name "shell" :input {"cmd" "ls" "timeout_secs" 30}}))))
+      (expect (= "shell({\"commands\": [\"ls\"], \"timeout_secs\": 30})"
+                 (synth {:name "shell" :input {"commands" ["ls"] "timeout_secs" 30}}))))
     (it "all-positional + optional-trailing-positional shapes"
         (expect (= "move(\"a\", \"b\")" (synth {:name "move" :input {"src" "a" "dest" "b"}})))
         (expect (= "delete(\"p\")" (synth {:name "delete" :input {"path" "p"}})))
         (expect (= "create_dirs(\"d\")" (synth {:name "create_dirs" :input {"path" "d"}})))
         (expect (= "file_exists(\"d\")" (synth {:name "file_exists" :input {"path" "d"}})))
-        ;; ONE `shell` tool: every op synthesizes through the same lone-positional
-        ;; `cmd` shape, with the rest riding the trailing opts dict.
-        (expect (= "shell(\"sleep 1\", {\"id\": \"x\", \"op\": \"background\"})"
-                   (synth {:name "shell" :input {"id" "x" "cmd" "sleep 1" "op" "background"}})))
+        ;; Shell always receives its complete request as one map.
+        (expect (= "shell({\"id\": \"x\", \"commands\": [\"sleep 1\"], \"op\": \"background\"})"
+                   (synth {:name "shell" :input {"id" "x" "commands" ["sleep 1"] "op" "background"}})))
         (expect (= "shell({\"id\": \"x\", \"n\": 50, \"op\": \"logs\"})"
                    (synth {:name "shell" :input {"id" "x" "n" 50 "op" "logs"}})))
         (expect (= "struct_rename(\"a\", \"b\")"
@@ -4770,16 +4952,22 @@
 (defdescribe attachment-reinspection-wire-test
              (it "renders a reinspection image as a canonical vision message"
                  (let
-                   [image-message
-                    (deref #'lp/iteration-image-message)
+                   [wired-images
+                    (deref #'lp/iteration-wired-images)
+
+                    image-messages
+                    (deref #'lp/iteration-image-messages)
 
                     msg
-                    (image-message {:reinspect-attachments
-                                    [{:id "att-1" :media-type "image/png" :base64 "UE5H"}]})]
+                    (first (image-messages
+                             {:images (wired-images {:reinspect-attachments
+                                                     [{:id "att-1"
+                                                       :media-type "image/png"
+                                                       :base64 replay-png-b64}]})}))]
 
                    (expect (= "user" (:role msg)))
                    (expect (= "image_url" (get-in msg [:content 0 :type])))
-                   (expect (= "data:image/png;base64,UE5H"
+                   (expect (= (str "data:image/png;base64," replay-png-b64)
                               (get-in msg [:content 0 :image_url :url]))))))
 
 (def ^:private env-gap-router-error (deref #'lp/env-gap-router-error))

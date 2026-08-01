@@ -1,16 +1,8 @@
 def __vis_install_xlsxwriter__():
-    import sys, types, base64, datetime
+    import sys, types, base64, datetime, io
 
     _bi = sys.modules["builtins"]
-    _new = __vis_xlsx_new__
-    _add_sheet = __vis_xlsx_add_sheet__
-    _add_format = __vis_xlsx_add_format__
-    _write = __vis_xlsx_write__
-    _url = __vis_xlsx_url__
-    _merge = __vis_xlsx_merge__
-    _set_col = __vis_xlsx_set_column__
-    _set_row = __vis_xlsx_set_row__
-    _close = __vis_xlsx_close__
+    _build = __vis_xlsx_build__
 
     class XlsxWriterException(Exception):
         pass
@@ -57,14 +49,26 @@ def __vis_install_xlsxwriter__():
             return ("formula", s)
         return ("string", s)
 
+    def _blob(source, options=None):
+        """Image bytes from `image_data` (a file-like buffer) or a filename."""
+        data = (options or {}).get("image_data")
+        if data is not None:
+            raw = data.getvalue() if hasattr(data, "getvalue") else data.read()
+        elif hasattr(source, "read"):
+            raw = source.read()
+        elif isinstance(source, (bytes, bytearray)):
+            raw = bytes(source)
+        else:
+            with open(source, "rb") as fh:
+                raw = fh.read()
+        return base64.b64encode(bytes(raw)).decode("ascii")
+
     class Format:
         def __init__(self, props=None):
             self._props = dict(props or {})
-            self._id = None
 
         def set_properties(self, props):
             self._props.update(props or {})
-            self._id = None
 
         def __getattr__(self, name):
             if name.startswith("set_"):
@@ -72,17 +76,31 @@ def __vis_install_xlsxwriter__():
 
                 def setter(value=True):
                     self._props[key] = value
-                    self._id = None
 
                 return setter
             raise AttributeError(name)
+
+    def _fmt(fmt):
+        if fmt is None:
+            return None
+        if isinstance(fmt, dict):
+            return dict(fmt) or None
+        props = dict(getattr(fmt, "_props", {}) or {})
+        return props or None
 
     class Worksheet:
         def __init__(self, wb, index, name):
             self._wb = wb
             self.index = index
             self.name = name
+            self._cells = []
+            self._columns = []
+            self._rows = []
+            self._merges = []
+            self._images = []
+            self._spec = {}
 
+        # -- addressing ----------------------------------------------------
         def _rc(self, args):
             args = list(args)
             if args and isinstance(args[0], str) and _looks_cell(args[0]):
@@ -90,13 +108,16 @@ def __vis_install_xlsxwriter__():
                 return r, c, args[1:]
             return args[0], args[1], args[2:]
 
-        def _put(self, r, c, kind, val, fmt):
-            ok, res = _write(
-                self._wb._h, self.index, r, c, kind, val, self._wb._fmt_id(fmt)
-            )
-            _raise(ok, res)
+        def _put(self, r, c, kind, val, fmt, **extra):
+            cell = {"row": int(r), "col": int(c), "type": kind, "value": val}
+            props = _fmt(fmt)
+            if props:
+                cell["format"] = props
+            cell.update(extra)
+            self._cells.append(cell)
             return 0
 
+        # -- writing -------------------------------------------------------
         def write(self, *args):
             r, c, rest = self._rc(args)
             data = rest[0] if rest else None
@@ -134,9 +155,13 @@ def __vis_install_xlsxwriter__():
 
         def write_formula(self, *args):
             r, c, rest = self._rc(args)
-            return self._put(
-                r, c, "formula", str(rest[0]), rest[1] if len(rest) > 1 else None
-            )
+            fmt = rest[1] if len(rest) > 1 else None
+            result = rest[2] if len(rest) > 2 else None
+            extra = {} if result is None else {"result": result}
+            return self._put(r, c, "formula", str(rest[0]), fmt, **extra)
+
+        write_array_formula = write_formula
+        write_dynamic_array_formula = write_formula
 
         def write_datetime(self, *args):
             r, c, rest = self._rc(args)
@@ -154,11 +179,33 @@ def __vis_install_xlsxwriter__():
             fmt = rest[1] if len(rest) > 1 else None
             string = rest[2] if len(rest) > 2 else None
             tip = rest[3] if len(rest) > 3 else None
-            ok, res = _url(
-                self._wb._h, self.index, r, c, url, string, tip, self._wb._fmt_id(fmt)
-            )
-            _raise(ok, res)
-            return 0
+            extra = {}
+            if string is not None:
+                extra["text"] = str(string)
+            if tip is not None:
+                extra["tip"] = str(tip)
+            return self._put(r, c, "url", url, fmt, **extra)
+
+        def write_rich_string(self, *args):
+            """`write_rich_string(row, col, *fragments[, cell_format])`."""
+            r, c, rest = self._rc(args)
+            rest = list(rest)
+            cell_fmt = None
+            if len(rest) > 1 and not isinstance(rest[-1], str):
+                cell_fmt = rest.pop()
+            runs = []
+            pending = None
+            for part in rest:
+                if isinstance(part, str):
+                    run = {"text": part}
+                    props = _fmt(pending)
+                    if props:
+                        run["format"] = props
+                    runs.append(run)
+                    pending = None
+                else:
+                    pending = part
+            return self._put(r, c, "rich", "", cell_fmt, runs=runs)
 
         def write_row(self, *args):
             r, c, rest = self._rc(args)
@@ -176,6 +223,7 @@ def __vis_install_xlsxwriter__():
                 self.write(r + i, c, v, fmt)
             return 0
 
+        # -- layout --------------------------------------------------------
         def merge_range(self, *args):
             args = list(args)
             if args and isinstance(args[0], str):
@@ -189,18 +237,20 @@ def __vis_install_xlsxwriter__():
             data = rest[0] if rest else None
             fmt = rest[1] if len(rest) > 1 else None
             kind, val = _detect(data)
-            ok, res = _merge(
-                self._wb._h,
-                self.index,
-                r1,
-                c1,
-                r2,
-                c2,
-                kind,
-                val,
-                self._wb._fmt_id(fmt),
-            )
-            _raise(ok, res)
+            merge = {
+                "first_row": int(r1),
+                "first_col": int(c1),
+                "last_row": int(r2),
+                "last_col": int(c2),
+                "text": "" if data is None else str(data),
+            }
+            props = _fmt(fmt)
+            if props:
+                merge["format"] = props
+            self._merges.append(merge)
+            # A merge writes its own top-left text; a number/date keeps its type.
+            if kind in ("number", "boolean", "datetime", "formula"):
+                self._put(r1, c1, kind, val, fmt)
             return 0
 
         def set_column(self, *args):
@@ -216,72 +266,178 @@ def __vis_install_xlsxwriter__():
             width = rest[0] if rest else None
             cell_format = rest[1] if len(rest) > 1 else None
             options = rest[2] if len(rest) > 2 else None
-            hidden = bool(options.get("hidden")) if options else False
-            ok, res = _set_col(
-                self._wb._h,
-                self.index,
-                first_col,
-                last_col,
-                width,
-                self._wb._fmt_id(cell_format),
-                hidden,
-            )
-            _raise(ok, res)
+            col = {"first": int(first_col), "last": int(last_col)}
+            if width is not None:
+                col["width"] = float(width)
+            props = _fmt(cell_format)
+            if props:
+                col["format"] = props
+            if options and options.get("hidden"):
+                col["hidden"] = True
+            self._columns.append(col)
             return 0
 
+        def set_column_pixels(self, *args):
+            args = list(args)
+            if len(args) > 2 and args[2] is not None:
+                args[2] = float(args[2]) / 7.0
+            return self.set_column(*args)
+
         def set_row(self, row, height=None, cell_format=None, options=None):
-            hidden = bool(options.get("hidden")) if options else False
-            ok, res = _set_row(
-                self._wb._h,
-                self.index,
-                row,
-                height,
-                self._wb._fmt_id(cell_format),
-                hidden,
-            )
-            _raise(ok, res)
+            entry = {"index": int(row)}
+            if height is not None:
+                entry["height"] = float(height)
+            props = _fmt(cell_format)
+            if props:
+                entry["format"] = props
+            if options and options.get("hidden"):
+                entry["hidden"] = True
+            self._rows.append(entry)
             return 0
+
+        def set_row_pixels(self, row, height=None, cell_format=None, options=None):
+            h = None if height is None else float(height) * 0.75
+            return self.set_row(row, h, cell_format, options)
 
         def set_default_row(self, *a, **k):
             return 0
 
-        def freeze_panes(self, *a, **k):
+        def freeze_panes(self, *args):
+            if args and isinstance(args[0], str):
+                row, col = _cell_to_rowcol(args[0])
+            else:
+                row = args[0] if args else 0
+                col = args[1] if len(args) > 1 else 0
+            self._spec["freeze"] = [int(row), int(col)]
             return 0
+
+        split_panes = freeze_panes
 
         def autofit(self, *a, **k):
+            self._spec["autofit"] = True
             return 0
 
-        def activate(self):
+        def autofilter(self, *args):
+            if args and isinstance(args[0], str):
+                a, b = args[0].split(":")
+                r1, c1 = _cell_to_rowcol(a)
+                r2, c2 = _cell_to_rowcol(b)
+            else:
+                r1, c1, r2, c2 = args[0], args[1], args[2], args[3]
+            self._spec["autofilter"] = {
+                "first_row": int(r1),
+                "first_col": int(c1),
+                "last_row": int(r2),
+                "last_col": int(c2),
+            }
             return 0
+
+        def insert_image(self, *args):
+            r, c, rest = self._rc(args)
+            source = rest[0] if rest else None
+            options = rest[1] if len(rest) > 1 else None
+            options = options or {}
+            image = {"row": int(r), "col": int(c), "data": _blob(source, options)}
+            if options.get("x_scale") is not None:
+                image["scale_x"] = float(options["x_scale"])
+            if options.get("y_scale") is not None:
+                image["scale_y"] = float(options["y_scale"])
+            if options.get("x_offset"):
+                image["x_offset"] = int(options["x_offset"])
+            if options.get("y_offset"):
+                image["y_offset"] = int(options["y_offset"])
+            if options.get("description"):
+                image["alt_text"] = str(options["description"])
+            self._images.append(image)
+            return 0
+
+        embed_image = insert_image
+
+        def activate(self):
+            self._spec["active"] = True
+            return 0
+
+        def select(self):
+            self._spec["selected"] = True
+            return 0
+
+        def hide(self):
+            self._spec["hidden"] = True
+            return 0
+
+        def set_tab_color(self, color):
+            self._spec["tab_color"] = color
+            return 0
+
+        def hide_gridlines(self, option=1):
+            self._spec["hide_gridlines"] = int(option)
+            return 0
+
+        def protect(self, *a, **k):
+            self._spec["protect"] = True
+            return 0
+
+        def set_zoom(self, zoom=100):
+            self._spec["zoom"] = int(zoom)
+            return 0
+
+        def set_landscape(self):
+            self._spec["landscape"] = True
+            return 0
+
+        def set_portrait(self):
+            self._spec["landscape"] = False
+            return 0
+
+        def __getattr__(self, name):
+            # Page-setup and print options vis does not model: accept and ignore.
+            if name.startswith(("set_", "print_", "fit_", "repeat_", "center_")):
+
+                def noop(*a, **k):
+                    return 0
+
+                return noop
+            raise AttributeError(name)
+
+        def _to_spec(self):
+            spec = dict(self._spec)
+            spec["name"] = self.name
+            if self._columns:
+                spec["columns"] = self._columns
+            if self._rows:
+                spec["rows"] = self._rows
+            if self._cells:
+                spec["cells"] = self._cells
+            if self._merges:
+                spec["merges"] = self._merges
+            if self._images:
+                spec["images"] = self._images
+            return spec
 
     class Workbook:
         def __init__(self, filename=None, options=None):
-            ok, h = _new()
-            _raise(ok, h)
-            self._h = h
             self.filename = filename
+            self.options = dict(options or {})
             self._closed = False
             self.worksheets_objs = []
             self.data = None
+            self._properties = {}
 
         def add_worksheet(self, name=None):
-            ok, res = _add_sheet(self._h, name)
-            _raise(ok, res)
-            ws = Worksheet(self, res["index"], res["name"])
+            index = len(self.worksheets_objs)
+            if name is None:
+                name = "Sheet%d" % (index + 1)
+            name = str(name)
+            if any(ws.name == name for ws in self.worksheets_objs):
+                raise XlsxWriterException("Duplicate worksheet name: %r" % name)
+            ws = Worksheet(self, index, name)
             self.worksheets_objs.append(ws)
             return ws
 
+        add_chartsheet = add_worksheet
+
         def add_format(self, properties=None):
             return Format(properties)
-
-        def _fmt_id(self, fmt):
-            if fmt is None:
-                return -1
-            if fmt._id is None:
-                ok, fid = _add_format(self._h, fmt._props)
-                _raise(ok, fid)
-                fmt._id = fid
-            return fmt._id
 
         def worksheets(self):
             return list(self.worksheets_objs)
@@ -292,16 +448,28 @@ def __vis_install_xlsxwriter__():
                     return ws
             return None
 
+        def set_properties(self, properties=None, **kwargs):
+            self._properties.update(properties or {})
+            self._properties.update(kwargs)
+            return 0
+
         def define_name(self, *a, **k):
             return 0
 
-        def set_properties(self, *a, **k):
+        def set_size(self, *a, **k):
             return 0
 
         def close(self):
             if self._closed:
                 return
-            ok, b64 = _close(self._h)
+            spec = {"sheets": [ws._to_spec() for ws in self.worksheets_objs]}
+            if not spec["sheets"]:
+                spec["sheets"] = [{"name": "Sheet1"}]
+            if self._properties:
+                spec["properties"] = {
+                    k: v for k, v in self._properties.items() if v is not None
+                }
+            ok, b64 = _build(spec)
             _raise(ok, b64)
             self._closed = True
             data = base64.b64decode(b64)
@@ -369,6 +537,8 @@ def __vis_install_xlsxwriter__():
         _bi.xlsxwriter = mod
     except Exception:
         pass
+
+    _ = io
 
 
 __vis_install_xlsxwriter__()

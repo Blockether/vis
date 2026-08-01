@@ -1283,7 +1283,91 @@
                                            :workspace-id (get body "workspace_id")
                                            :root (get body "root")}))))
 
-(defn- list-sessions-handler [_] (json-response {:sessions (state/list-sessions)}))
+(def ^:private sessions-order-header
+  "Response header carrying `state/list-sessions-page`'s ordering digest.
+
+   Deliberately a HEADER and not a body field: the ordering moves whenever ANY
+   session anywhere in the fleet is touched, while a given window's rows usually
+   do not. In the payload it would land inside `sessions-etag` and turn every
+   unrelated change into a full re-download of every window; as a header it also
+   rides along on the 304 that keeps those windows free."
+  "X-Vis-Sessions-Order")
+
+(defn- sessions-etag
+  "Conditional-GET validator for a session-list ANSWER: SHA-256 over the rows
+   MINUS `server_time_ms`, together with the window frame (total/offset/limit)
+   that identifies WHICH answer they are.
+
+   `server_time_ms` is a per-request clock sample (`state/soul` takes it fresh on
+   every call), so hashing it would make every poll a guaranteed miss and no
+   client could ever revalidate. WEAK (`W/`) for exactly that reason: the bytes
+   may differ between two answers, the CONTENT a client renders cannot."
+  ^String [payload]
+  (let
+    [stable
+     (wire/json-str [(:total payload)
+                     (:offset payload)
+                     (:limit payload)
+                     (mapv #(dissoc % "server_time_ms") (:sessions payload))])
+
+     raw
+     (.digest (MessageDigest/getInstance "SHA-256") (.getBytes stable StandardCharsets/UTF_8))]
+
+    (str "W/\"" (subs (.formatHex (java.util.HexFormat/of) ^bytes raw) 0 32) "\"")))
+
+(defn- list-sessions-handler
+  "GET /v1/sessions[?limit=&offset=] — sessions in navigator order, WINDOWED on
+   request, with a validator so a poller can revalidate instead of re-downloading.
+
+   Without `limit` this is still the whole fleet, so every existing client keeps
+   working. With it, the reply carries `total` / `offset` / `limit` / `has_more`
+   and the gateway only decorates the rows it returns: the ordering is derived
+   from cheap facts (see `state/list-sessions-page`), so a 100-row first page of
+   a 448-session store costs roughly a fifth of the ~257ms full build and a fifth
+   of its ~300KB — the app paints its first screen without waiting for the tail.
+
+   The companion refreshes this on a timer and the payload is BIG while the
+   content is identical until a turn moves. With `If-None-Match` the steady state
+   collapses to a 304 with no body: nothing transferred, nothing parsed, nothing
+   reconciled, nothing repainted. A window param that is PRESENT but unparsable
+   is a 400, never a silent fallback to the full fleet."
+  [request]
+  (let
+    [given?
+     (fn [k] (some? (get-in request [:query-params k])))
+
+     limit
+     (query-long request "limit")
+
+     offset
+     (query-long request "offset")]
+
+    (if (or (and (given? "limit") (nil? limit)) (and (given? "offset") (nil? offset)))
+      (error-response 400 :invalid-window "limit and offset must be integers")
+      (let
+        [page
+         (state/list-sessions-page :all {:limit limit :offset offset})
+
+         payload
+         {:sessions (:sessions page)
+          :total (:total page)
+          :offset (:offset page)
+          :limit (:limit page)
+          :has-more (:has-more page)}
+
+         etag
+         (sessions-etag payload)
+
+         ;; Same ordering digest on 200 and 304 alike: a client draining several
+         ;; windows compares them to see whether the fleet was re-ranked under it
+         ;; mid-walk (see `state/list-sessions-page`), and a revalidated window
+         ;; that answers 304 must not leave that comparison blind.
+         base
+         {"ETag" etag "Cache-Control" "no-cache" sessions-order-header (:order-digest page)}]
+
+        (if (= etag (get-in request [:headers "if-none-match"]))
+          {:status 304 :headers base :body nil}
+          (update (json-response payload) :headers merge base))))))
 
 (defn- search-sessions-handler
   "GET /v1/sessions/actions/search?q=&channel= — soul-id STRINGS whose transcript (user
@@ -1898,6 +1982,16 @@
             (json-response {:model (state/session-model sid)}))))
     (session-404 (get-in request [:path-params :sid]))))
 
+(defn- usage-handler
+  "GET the whole-session usage rollup (turns, iterations, tool calls, folds,
+   token split, cache hit rate, cost). ON-DEMAND only: it decodes every
+   iteration's tool-call BLOB to count tools, so it is never folded into
+   `list-sessions`. `{\"usage\" nil}` for a session with no turns yet."
+  [request]
+  (if-let [sid (path-sid request)]
+    (json-response {:usage (state/session-usage-info sid)})
+    (session-404 (get-in request [:path-params :sid]))))
+
 (defn- workspace-handler
   [request]
   (if-let [sid (path-sid request)]
@@ -2450,6 +2544,11 @@
       {"Access-Control-Allow-Methods" cors-allow-methods
        "Access-Control-Allow-Headers" (or req-headers
                                           "Authorization, Content-Type, X-Vis-Gateway-Secret")
+       ;; Without this a browser fetch can read the BODY but not the `ETag`
+       ;; header, so the app could never send `If-None-Match` and every session
+       ;; list poll would re-download the whole fleet. The session-list ordering
+       ;; digest is read the same way, and on 304s where there is no body at all.
+       "Access-Control-Expose-Headers" (str "ETag, " sessions-order-header)
        "Access-Control-Max-Age" "600"
        "Vary" "Origin"}
       origin
@@ -2536,6 +2635,7 @@
         [(sid-route "/resources/logs") {:get resource-logs-handler}]
         [(sid-route "/iterations/:iid/attachments/:idx") {:get attachment-bytes-handler}]
         [(sid-route "/model") {:get session-model-handler :patch set-session-model-handler}]
+        [(sid-route "/usage") {:get usage-handler}]
         [(sid-route "/workspace") {:get workspace-handler}]
         [(sid-route "/workspace/root") {:patch change-root-handler}]
         [(sid-route "/workspace/drafts") {:get drafts-handler :post create-draft-handler}]

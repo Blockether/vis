@@ -97,7 +97,7 @@
           (expect (= :success (:status result)))
           (expect (= :complete (:prior-outcome result)))
           ;; The op-card renders as the answer bubble.
-          (expect (str/includes? (:answer result) "$ echo hi-from-bang"))
+          (expect (str/includes? (:answer result) "echo hi-from-bang"))
           (expect (str/includes? (:answer result) "hi-from-bang"))
           ;; The raw command is the persisted turn request.
           (expect (= "!echo hi-from-bang" (:user-request (first turns))))
@@ -106,8 +106,9 @@
           (expect (= 1 (count turns)))
           (expect (= :user-shell (:tag form)))
           (expect (= "shell" (:vis/tool-name form)))
-          (expect (= "await shell(\"echo hi-from-bang\")" (:src form)))
-          (expect (= "hi-from-bang\n" (get (:result form) "stdout")))
+          (expect (= "await shell({\"commands\": [\"echo hi-from-bang\"]})" (:src form)))
+          ;; a run is ALWAYS a batch: the command's own output is its entry
+          (expect (= "hi-from-bang\n" (get (first (get (:result form) "commands")) "stdout")))
           (expect (= 0 (get (:result form) "exit"))))))))
 
 (defdescribe run-turn-bang-disabled-test

@@ -25,7 +25,7 @@ import { GatewaySettingsDialog } from './screens/SettingsScreen';
 import { SessionScreen } from './screens/SessionScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
 import { parseRoute, parseSessionDeepLink, sessionHash, tabHash } from './lib/router';
-import { ShellStyleContext, useVisualViewportShell } from './lib/viewport';
+import { useVisualViewportShell } from './lib/viewport';
 import { App as CapacitorApp } from '@capacitor/app';
 import {
   acquirePushToken,
@@ -750,19 +750,18 @@ function Splash() {
 }
 
 function Shell({ children }: { children: ReactNode }) {
-  // Owns the visual-viewport pin so a keyboard/rotation frame re-renders ONLY this root,
-  // not the screens inside it. `children` is a stable element reference created by <App>,
-  // so when this re-renders React bails the whole subtree out — while the context value
-  // still propagates to fixed overlays (the paste editor) that call useShellStyle().
-  const shellStyle = useVisualViewportShell();
+  // Keep the shell in the page's layout layer: absolute positioning avoids the
+  // lagging fixed WebKit layer during rotation. The viewport hook mutates only
+  // this root's geometry synchronously, without a React render between focus
+  // and the composer moving above the keyboard.
+  const shellRef = useRef<HTMLDivElement>(null);
+  useVisualViewportShell(shellRef);
   return (
-    <ShellStyleContext.Provider value={shellStyle}>
-      <div
-        className="isolate fixed inset-x-0 top-0 flex h-dvh min-h-0 flex-col overflow-hidden bg-ink text-body"
-        style={shellStyle}
-      >
-        {children}
-      </div>
-    </ShellStyleContext.Provider>
+    <div
+      ref={shellRef}
+      className="isolate absolute inset-0 flex h-full min-h-0 flex-col overflow-hidden bg-ink text-body"
+    >
+      {children}
+    </div>
   );
 }

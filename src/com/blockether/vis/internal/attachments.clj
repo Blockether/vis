@@ -13,19 +13,30 @@
    is sniffed from magic bytes (pi-parity: jpeg / non-animated png / gif /
    webp / bmp) or, for SVG, from the markup head — never trusted from the
    extension alone.
-   A container no provider accepts (BMP, SVG) is CONVERTED into one that is
-   (see `image-convert`) — same picture, different wrapper. Nothing is
-   downscaled and nothing is re-compressed: bytes are attached and replayed
-   exactly as the user supplied them, and a file over `max-image-bytes` is
-   skipped with a reason the prompt assembler surfaces. Where AWT/ImageIO is
-   unavailable (GraalVM native-image on macOS) conversion is unavailable too,
-   and such a file is skipped rather than shipped as a guaranteed 400."
+
+   Storing and SENDING are deliberately separate concerns:
+
+     * STORE — the original bytes under their sniffed container, nothing
+       converted, nothing downscaled, nothing re-compressed. What the user
+       supplied is what the session keeps, and a file over `max-image-bytes`
+       is skipped with a reason the prompt assembler surfaces.
+     * SEND — [[wire-image]] is the one gate every image crosses on its way to
+       a provider: it decodes the payload to prove it is pixels, re-containers
+       what no wire accepts (BMP/SVG -> PNG via `image-convert`, on
+       `com.blockether/imaging`, so it behaves identically in the native image)
+       and REFUSES what it cannot turn into a picture.
+
+   The split is what makes a bad attachment survivable. Attachments replay on
+   every later turn, so a row blessed once on the way IN is shipped forever —
+   one corrupt PNG that way is a permanent provider 400. Judged on the way OUT,
+   the same row is simply dropped and the session keeps working."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.image-convert :as image-convert]
             [com.blockether.vis.internal.paths :as paths])
   (:import [java.io File RandomAccessFile]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files]
+           [java.security MessageDigest]
            [java.util Base64]))
 
 ;; =============================================================================
@@ -184,18 +195,6 @@
   [media-type]
   (str media-type " is not a provider-supported image format (JPEG, PNG, GIF, WebP)"))
 
-(defn- provider-safe-payload
-  "`[bytes media-type]` a provider will accept: the payload UNTOUCHED when its
-   container already is one of [[provider-image-media-types]], otherwise the
-   same picture re-containered (BMP -> PNG, SVG -> rendered PNG). nil when the
-   bytes cannot be turned into pixels (no ImageIO reader, conversion disabled)
-   — the caller must then SKIP them rather than ship an image block the
-   provider refuses."
-  [^bytes data media-type]
-  (if (provider-image-media-type? media-type)
-    [data media-type]
-    (when-let [t (image-convert/to-provider-safe data media-type)]
-      (when (provider-image-media-type? (:media-type t)) [(:bytes t) (:media-type t)]))))
 
 (defn- sniff-file-mime
   "Read the file head and sniff its MIME type. nil on any read failure."
@@ -322,39 +321,43 @@
    :reason
    (str (size-label (.length f)) " exceeds the " (size-label max-bytes) " attachment limit")})
 
-(defn- attach-file
-  "Read one image file and, when its container is not provider-accepted,
-   re-container it (see `image-convert`). Pixels are never resampled and bytes
-   are never re-compressed.
+(defn- storable-limit
+  "Byte ceiling for STORING one attachment of `media-type`. A container the wire
+   takes verbatim must already fit the per-image cap. A container that is
+   rasterized on the way OUT (BMP, SVG) is allowed `oversize-rescue-factor` x
+   that, because rendering it routinely lands far under the cap — and the cap
+   that decides is the one applied to the bytes that actually go on the wire
+   (see [[wire-image]])."
+  ^long [media-type ^long max-bytes]
+  (if (provider-image-media-type? media-type) max-bytes (* oversize-rescue-factor max-bytes)))
 
-   Returns the attachment map, or `{:reason <why>}` when the file cannot be
-   attached (still over `max-bytes`, or a format no provider takes)."
+(defn- attach-file
+  "Read one image file and keep it EXACTLY as it sits on disk: original bytes,
+   sniffed media type, no conversion, no resample, no re-compression.
+
+   Container adaptation (BMP/SVG -> PNG) and decode verification happen at SEND
+   time (see [[wire-image]]), never here: a stored row must not be frozen into
+   one provider's shape, and a row that turns out to be unsendable has to be
+   droppable on the way out — a bad row baked into the DB replays forever.
+
+   Returns the attachment map, or `{:reason <why>}` when the file is too big to
+   store (see [[storable-limit]])."
   [^File f mime ^long max-bytes]
   (let
     [raw
      (Files/readAllBytes (.toPath f))
 
-     safe
-     (provider-safe-payload raw mime)]
+     size
+     (alength raw)]
 
-    (if-not safe
-      {:reason (unsupported-media-reason mime)}
-      (let
-        [[^bytes data media-type]
-         safe
-
-         size
-         (alength data)]
-
-        (if (> size max-bytes)
-          {:reason
-           (str (size-label size) " exceeds the " (size-label max-bytes) " attachment limit")}
-          {:path (.getAbsolutePath f)
-           :filename (.getName f)
-           :media-type media-type
-           :base64 (.encodeToString (Base64/getEncoder) data)
-           :size size
-           :size-label (size-label size)})))))
+    (if (> size (storable-limit mime max-bytes))
+      {:reason (str (size-label size) " exceeds the " (size-label max-bytes) " attachment limit")}
+      {:path (.getAbsolutePath f)
+       :filename (.getName f)
+       :media-type mime
+       :base64 (.encodeToString (Base64/getEncoder) raw)
+       :size size
+       :size-label (size-label size)})))
 
 (defn- resolved-image-files
   "Ordered, de-duped `[canonical-path File]` pairs for every path-shaped
@@ -456,9 +459,13 @@
    rather than as filesystem paths. Each entry is `{:base64 :filename :media-type?}`;
    the base64 may be a bare payload or a `data:...;base64,` URL. Decodes each,
    sniffs the MIME from magic bytes (the declared `:media-type` is NEVER trusted),
-   enforces the same per-image and count caps as [[collect-user-images]], and
-   returns the same `{:attached [...] :skipped [...]}` shape so the assemble seam
-   treats disk-scanned and inline images uniformly. Never throws."
+   enforces the same caps as [[collect-user-images]], and returns the same
+   `{:attached [...] :skipped [...]}` shape so the assemble seam treats
+   disk-scanned and inline images uniformly. Never throws.
+
+   Like [[collect-user-images]] it stores the ORIGINAL payload under its SNIFFED
+   container and converts nothing: what a provider will accept is only knowable
+   at SEND time, against that turn's model (see [[wire-image]])."
   ([attachments] (prepare-inline-attachments attachments {}))
   ([attachments
     {:keys [max-bytes max-images] :or {max-bytes max-image-bytes max-images max-image-count}}]
@@ -466,48 +473,32 @@
      (fn [acc att]
        (try
          (let
-           [base64
-            (or (:base64 att) (get att "base64"))
-
-            filename
-            (or (:filename att) (get att "filename"))
-
-            ^String payload
-            (strip-data-url-prefix (str base64))
-
-            raw
-            (.decode (Base64/getDecoder) payload)
+           [^String payload
+            (strip-data-url-prefix (str (or (:base64 att) (get att "base64"))))
 
             label
-            (or (not-empty (str filename)) "image")
+            (or (not-empty (str (or (:filename att) (get att "filename")))) "image")
 
-            sniffed
-            (detect-image-mime raw)
-
-            safe
-            (when sniffed (provider-safe-payload raw sniffed))
-
-            ^bytes data
-            (or (first safe) raw)
-
-            size
-            (alength data)
+            ^bytes raw
+            (.decode (Base64/getDecoder) payload)
 
             mime
-            (or (second safe) sniffed)]
+            (detect-image-mime raw)
 
-           (cond (nil? sniffed)
+            size
+            (alength raw)]
+
+           (cond (nil? mime)
                  (update acc :skipped conj {:path label :reason "not a supported still image"})
-                 (nil? safe)
-                 (update acc :skipped conj {:path label :reason (unsupported-media-reason mime)})
-                 (> size (long max-bytes)) (update acc
-                                                   :skipped
-                                                   conj
-                                                   {:path label
-                                                    :reason (str (size-label size)
-                                                                 " exceeds the "
-                                                                 (size-label max-bytes)
-                                                                 " attachment limit")})
+                 (> size (storable-limit mime (long max-bytes)))
+                 (update acc
+                         :skipped
+                         conj
+                         {:path label
+                          :reason (str (size-label size)
+                                       " exceeds the "
+                                       (size-label max-bytes)
+                                       " attachment limit")})
                  (>= (count (:attached acc)) (long max-images))
                  (update acc
                          :skipped
@@ -521,7 +512,7 @@
                                {:path label
                                 :filename label
                                 :media-type mime
-                                :base64 (.encodeToString (Base64/getEncoder) data)
+                                :base64 payload
                                 :size size
                                 :size-label (size-label size)})))
          (catch Throwable _ acc)))
@@ -572,3 +563,228 @@
    mutated; callers keep it for re-send/edit so the paths still re-attach."
   [text]
   (not-empty (str/trim (str/replace (text->inline-chips text) #"\s+" " "))))
+
+;; =============================================================================
+;; Send-time wire gate
+;; =============================================================================
+
+(def ^:private no-vision-reason
+  "Why an image the user really attached is nevertheless not on the wire."
+  "the active model has no vision — image not attached")
+
+(def ^:private display-only-reason
+  "Why an image that decoded perfectly is nevertheless not on the wire."
+  "attached display-only — image kept on disk, not sent to the model")
+
+(defn display-only?
+  "True when this attachment was recorded DISPLAY-ONLY: shown in the UI and
+   stored in the session DB, but deliberately never rendered as an image block.
+
+   The escape hatch for the one thing multimodal replay cannot undo — an image
+   replays IN FULL on every later request, so a screenshot the model does not
+   actually need is re-billed forever. `vis_attach(..., display_only=True)`
+   stamps `:is-display-only`, and the send-time gate routes the row to
+   `:skipped` + `:readable-blind?` instead: the model is TOLD the file exists
+   and can open the bytes on demand (`vis_read_attachment`) or ask for it back
+   with `vis_reinspect_attachment`."
+  [attachment]
+  (true? (:is-display-only attachment)))
+
+(defn- image-candidate?
+  "True when an attachment CLAIMS a still image and is therefore worth decoding
+   at send time. A generic `vis_attach` artifact (csv/json/pdf/wav/…) is DB- and
+   display-only and must never cost a base64 decode on every turn, and a BLANK
+   media type never counts: unverifiable bytes an image block would have to
+   label `image/png` are exactly the thing that bricks a session."
+  [media-type]
+  (let [mt (str/lower-case (str/trim (str media-type)))]
+    (and (not (str/blank? mt))
+         (or (str/starts-with? mt "image/") (image-convert/svg-media-type? mt)))))
+
+(def ^:private wire-cache-max-entries "Distinct payloads whose send verdict is remembered." 64)
+
+(def ^:private wire-cache-max-bytes
+  "Total base64 the verdict cache may hold. Only CONVERTED payloads cost
+   anything: a payload that went out untouched is remembered as a verdict alone
+   and re-uses the caller's own string."
+  (* 48 1024 1024))
+
+(defonce ^:private wire-cache
+  ;; {:order <insertion queue of keys> :entries {k verdict} :bytes <cached b64>}
+  ;; Attachments REPLAY on every later turn, so an uncached gate would re-decode
+  ;; (and re-rasterize) every figure in the session on every single request.
+  ;; Content-keyed, so eviction only ever costs a recompute, never correctness.
+  (atom {:order clojure.lang.PersistentQueue/EMPTY :entries {} :bytes 0}))
+
+(defn- content-key
+  "Cache key: the payload's own content, plus everything the verdict depends on."
+  [^String payload media-type ^long max-bytes]
+  (let
+    [md
+     (MessageDigest/getInstance "SHA-256")
+
+     digest
+     (.digest md (.getBytes payload StandardCharsets/UTF_8))]
+
+    (str (.encodeToString (Base64/getUrlEncoder) digest) "|" media-type "|" max-bytes)))
+
+(defn- cache-put!
+  [k verdict]
+  (swap! wire-cache (fn [cache]
+                      (loop
+                        [order
+                         (conj (:order cache) k)
+
+                         entries
+                         (assoc (:entries cache) k verdict)
+
+                         total
+                         (+ (long (:bytes cache)) (long (count (str (:base64 verdict)))))]
+
+                        (if (and (seq order)
+                                 (or (> (count entries) (long wire-cache-max-entries))
+                                     (> total (long wire-cache-max-bytes))))
+                          (let [oldest (peek order)]
+                            (recur (pop order)
+                                   (dissoc entries oldest)
+                                   (- total
+                                      (long (count (str (get-in entries [oldest :base64])))))))
+                          {:order order :entries entries :bytes total}))))
+  verdict)
+
+(defn- wire-verdict
+  "The send verdict for ONE payload, uncached.
+
+   `{:media-type <mt> :size <n>}` — send the caller's own base64, untouched.
+   `{:media-type <mt> :size <n> :base64 <b64>}` — send THIS instead (converted).
+   `{:reason <why>}` — do not send it, and tell whoever asks why."
+  [^String payload declared ^long max-bytes]
+  (let [raw (try (.decode (Base64/getDecoder) payload) (catch Throwable _ nil))]
+    (if (or (nil? raw) (zero? (alength ^bytes raw)))
+      {:reason "the attachment carries no readable image bytes"}
+      (let
+        [;; The BYTES decide the container; a declared type is a claim, and the
+         ;; sniff covers everything vis stores. A type the sniff does not know
+         ;; (tiff, heic, an inline upload's own label) still reaches the decoder
+         ;; below, which sniffs for itself.
+         mt (or (detect-image-mime raw) declared)
+         safe (image-convert/to-provider-safe raw mt)
+         ;; Over the cap is NOT the same as unsendable. The real optimisers get
+         ;; one shot at it (lossless first, then the imaging library's own
+         ;; ladder) instead of the picture being dropped; a payload that already
+         ;; fits comes back IDENTICAL, so nothing under the cap is re-encoded.
+         fitted (some-> ^bytes (:bytes safe)
+                        (image-convert/fit-within max-bytes))]
+
+        (cond
+          ;; Conversion unavailable (a build with no imaging cdylib): a container
+          ;; the wire already accepts still goes out unverified — best effort
+          ;; beats a blind turn — and nothing else can be made sendable at all.
+          (nil? safe) (if (provider-image-media-type? mt)
+                        {:media-type mt :size (alength ^bytes raw)}
+                        {:reason (unsupported-media-reason mt)})
+          (not (provider-image-media-type? (:media-type safe)))
+          {:reason (or (:reason safe) (unsupported-media-reason mt))}
+          (> (alength ^bytes fitted) max-bytes) {:reason (str (size-label (alength ^bytes fitted))
+                                                              " exceeds the "
+                                                              (size-label max-bytes)
+                                                              " attachment limit")}
+          ;; Byte-identical: the payload was already wire-safe AND decoded, so
+          ;; the caller's base64 is reused rather than re-encoded.
+          (identical? fitted raw) {:media-type (:media-type safe) :size (alength ^bytes raw)}
+          :else {:media-type (or (detect-image-mime fitted) (:media-type safe))
+                 :size (alength ^bytes fitted)
+                 :base64 (.encodeToString (Base64/getEncoder) ^bytes fitted)})))))
+
+(defn wire-image
+  "ONE stored attachment as the wire will actually carry it — the single gate
+   every image crosses on its way to a provider, applied at SEND time.
+
+   Send time is the only correct layer. Storage is permanent and providers are
+   not: the model that will read a row is unknown when the row is written, an
+   attachment REPLAYS on every later turn, and a payload converted (or blessed)
+   on the way IN can never be reconsidered — which is exactly how one corrupt
+   83-byte PNG, wire-legal by media type and garbage in its `IDAT`, bricked a
+   whole session with a permanent `Could not process image` 400. Here the same
+   row is re-judged every turn, so a bad one is DROPPED instead of fatal and the
+   session heals itself.
+
+   Every container is handled in one place:
+     * JPEG / PNG / GIF / WebP — decoded to prove they are pixels, then sent
+       BYTE-IDENTICAL (a header sniff is not a picture)
+     * SVG / SVGZ            — rasterized to PNG (no wire reads markup)
+     * BMP, TIFF, anything else the decoder reads — re-containered to PNG
+     * HEIC/AVIF, a corrupt raster, an image past the decoder's limits —
+       refused, with the decoder's own words
+     * anything over `max-bytes` — OPTIMIZED first (the imaging library's
+       oxipng / jpegtran / gifsicle pass, then its bounded ladder) and refused
+       only when even that does not fit
+     * a non-image artifact (csv/pdf/wav/…) — nil: not an image, not a failure
+
+   Returns the attachment with `:media-type`/`:base64`/`:size`/`:size-label`
+   replaced by the WIRE payload, `{:path :filename :reason}` when it cannot be
+   sent, or nil when it is not an image at all. Never throws."
+  ([attachment] (wire-image attachment {}))
+  ([{:keys [media-type base64] :as attachment} {:keys [max-bytes] :or {max-bytes max-image-bytes}}]
+   (let
+     [declared
+      (str/lower-case (str/trim (str media-type)))
+
+      payload
+      (strip-data-url-prefix (str base64))]
+
+     (when (and (image-candidate? declared) (not (str/blank? payload)))
+       (let
+         [k
+          (content-key payload declared (long max-bytes))
+
+          verdict
+          (or (get-in @wire-cache [:entries k])
+              (cache-put! k (wire-verdict payload declared (long max-bytes))))]
+
+         (if (:reason verdict)
+           (assoc (select-keys attachment [:path :filename]) :reason (:reason verdict))
+           (let [size (long (:size verdict))]
+             (assoc attachment
+               :media-type (:media-type verdict)
+               :base64 (or (:base64 verdict) payload)
+               :size size
+               :size-label (size-label size)))))))))
+
+(defn wire-images
+  "[[wire-image]] over a whole user message's attachments, keeping the
+   `{:attached [...] :skipped [{:path :reason}]}` shape the prompt manifest
+   speaks — so an image that could not be sent is NAMED to the model instead of
+   vanishing.
+
+   `:vision?` false (a text-only target: Copilot without vision, glm-5-turbo,
+   deepseek …) attaches nothing and marks every image `:readable-blind?`: the
+   files are real and on disk, so the manifest can tell the model to open them
+   with an imaging library instead of hunting for blocks that are not there.
+
+   A DISPLAY-ONLY row ([[display-only?]]) takes that same blind path even on a
+   vision model, and is checked FIRST: the caller asked for the bytes to stay
+   off the wire, and that beats every capability question."
+  ([images] (wire-images images {}))
+  ([images {:keys [vision?] :or {vision? true} :as opts}]
+   (reduce
+     (fn [acc {:keys [path filename media-type] :as att}]
+       (let [label (or (not-empty (str path)) (not-empty (str filename)) "image")]
+         (cond
+           (display-only? att) (update
+                                 acc
+                                 :skipped
+                                 conj
+                                 {:path label :reason display-only-reason :readable-blind? true})
+           (not vision?)
+           (update acc :skipped conj {:path label :reason no-vision-reason :readable-blind? true})
+           :else
+           (let [wired (wire-image att opts)]
+             (cond (nil? wired) (update acc
+                                        :skipped
+                                        conj
+                                        {:path label :reason (unsupported-media-reason media-type)})
+                   (:reason wired) (update acc :skipped conj {:path label :reason (:reason wired)})
+                   :else (update acc :attached conj wired))))))
+     {:attached [] :skipped []}
+     (or images []))))

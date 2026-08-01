@@ -10,41 +10,31 @@
    meant four call shapes and four result shapes for what is a single process
    lifecycle. One tool, one `op` grammar, one TOTAL result map:
 
-   1. RUN (default) `await shell(cmd)` / `await shell(cmd, opts)` — `bash -lc` in the
+   1. RUN (default) `await shell({\"commands\": [\"ls\"]})` — `bash -lc` in the
       workspace root, waits up to a timeout. Output is bounded at READ time to a
       head+tail budget per stream, so only the MIDDLE of a huge stream is
       dropped, never its start or end (a chatty-then-killed command cannot
       balloon the heap). A non-zero exit is DATA the model reads, not an error.
 
-   2. BACKGROUND `await shell(cmd, {\"op\": \"background\", \"id\": \"dev\"})` — an `id`
-      makes it background (the op may stay implicit): spawned under a REAL pty,
-      its merged output pumped into a bounded ring buffer, registered as a session
-      RESOURCE in `internal.resources` (footer count, F4 dialog, `resources` ctx
-      block). Prefer this for long builds, test suites, servers, watchers, and
-      interactive commands; reserve run for short bounded work.
+   2. BACKGROUND `await shell({\"commands\": [\"npm run dev\"], \"op\": \"background\", \"id\": \"dev\"})`
+      — an `id` makes it background (the op may stay implicit): spawned under a
+      REAL pty, its merged output pumped into a bounded ring buffer, registered
+      as a session RESOURCE. Prefer this for long builds, test suites, servers,
+      watchers, and interactive commands; reserve run for short bounded work.
 
-   3. LOGS / SEND / STOP `await shell({\"op\": \"logs\", \"id\": \"dev\"})` — tail the ring
-      buffer, type into the pty, or kill the tree and drop the resource. Shell stop
-      and `await resource_stop(id)` land on the same `resources/stop!`. An EXITED process
-      is not auto-pruned, so its output and exit code stay readable until it is
-      stopped.
+   3. LOGS / SEND / STOP `await shell({\"op\": \"logs\", \"id\": \"dev\"})` — tail
+      the ring buffer, type `{\"text\": \"…\"}` into the pty, or kill the tree.
 
-   What is fed to a shell has exactly TWO carriers, and they never overlap: the
-   first positional argument `cmd` is ALWAYS one command line (or, under `send`,
-   the exact keystrokes typed into a live pty), and `commands` is a strictly
-   ordered batch of such lines — the same key, in the same input order, that
-   `git` takes, defined once in `foundation.serial-batch` and reused by both.
-   There is no third carrier (no `text`), and a batch is never disguised as a
-   positional, so the payload can never be said twice. Resource IDs also have
-   ONE spelling: `id` inside the options map for background/logs/send/stop, and
-   a backgrounded batch takes ONE id for the whole group — it is a script, not
-   N shells. Native JSON carries the positional as the `cmd` string property;
-   the symbol's `:call` shape converts that transport field to the Python
-   positional before dispatch.
+   EVERY public call takes exactly one map. Process commands are its non-empty
+   `commands` string array; command strings and command arrays are never
+   positional. `text` is the map field only for `send` keystrokes. Resource IDs
+   live in that same map for background/logs/send/stop.
 
-   Every op answers with the SAME key set (`shell-result-base`): keys a stage
-   does not fill are nil / false / 0 instead of absent, so model Python indexes
-   any field without a KeyError.
+   Every op answers with the SAME key set (`shell-result-base`): keys a stage does
+   not fill are nil / false / 0 / [] instead of absent, so model Python indexes any
+   field without a KeyError. A run always has one result entry under `commands`,
+   containing each command line and its bytes.
+
 
    The `shell` toggle is registered HERE, extension-owned under the vis namespace."
   (:require [clojure.java.io :as io]
@@ -291,10 +281,9 @@
      ;; A STRING is ONE `bash -lc` line. A SEQUENTIAL is a literal argv run with no
      ;; shell at all — nothing to quote, nothing to interpret — which is how `git`
      ;; rides this same spawn/jail/capture machinery.
-     (process-jail/wrap-argv (if (sequential? cmd)
-                               (mapv str cmd)
-                               [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)])
-                             policy)
+     (process-jail/wrap-argv
+       (if (sequential? cmd) (mapv str cmd) [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)])
+       policy)
 
      pb
      (ProcessBuilder. args)]
@@ -389,7 +378,7 @@
   nil)
 
 ;; =============================================================================
-;; SYNC run — Python sandbox: `await shell(cmd)`
+;; SYNC run — Python sandbox: `await shell({"commands": ["ls"]})`
 ;; =============================================================================
 
 (defn- clamp-timeout-secs
@@ -401,32 +390,40 @@
       (min (long max-timeout-secs))))
 
 (def ^:private shell-result-base
-  "TOTAL key set of EVERY `shell` result — one tool, ONE result shape. `stage`
-   names the stage that produced it (run / background / logs / send / stop); the keys
-   that stage does not fill keep these neutral values instead of vanishing, so ordinary
-   model Python (`r[\"exit\"]`, `r[\"lines\"]`) can never KeyError on a shell result.
+  "TOTAL key set of EVERY `shell` result — one tool, ONE result shape, and no
+   second envelope anywhere: a serial `commands` batch answers THIS SAME map,
+   filling `commands` with one full entry per command. `stage` names the stage
+   that produced it (run / background / logs / send / stop); the keys that stage
+   does not fill keep these neutral values instead of vanishing, so ordinary
+   model Python (`r[\"exit\"]`, `r[\"lines\"]`, `r[\"commands\"]`) can never KeyError
+   on a shell result — and never has to branch on which shape came back.
+
+   There is deliberately NO `cmd` and NO `stdout`/`stderr` key here. A command
+   line, and the bytes it emitted, belong to the COMMAND: they live on its
+   [[command-result]] entry under `commands`, the one place either is ever found.
+   The top level only summarises the group, which is why `started`, `exit`,
+   `timed_out` and `duration_ms` are aggregates and never a second copy.
 
    NOT `\"op\"`: the extension boundary stamps `\"op\"` on EVERY tool result with the
    tool's own origin (always \"shell\" here) — tool-specific stage detail must use a
    different key, exactly as `stamp-public-result-op` requires."
   {"stage" nil
    "id" nil
-   "cmd" nil
    "cwd" nil
-   ;; run
-   ;; True only after the child process was spawned. A batch can therefore tell a
+   ;; The commands THIS result is about, in input order, one full entry each: a
+   ;; run's own per-command results (a lone command is a batch of ONE), or the
+   ;; lines a background group was started with. Never bare strings, and empty
+   ;; only when the stage genuinely has no command left (a stopped shell whose
+   ;; registry entry is already gone).
+   batch/commands-key []
+   ;; run — GROUP summary of those entries, never a copy of their output.
+   ;; `started` is true only once EVERY child was spawned, so a batch can tell a
    ;; command that never started apart from one that ran and failed/timed out.
    "started" false
-   "stdout" nil
-   "stderr" nil
    "exit" nil
    "duration_ms" nil
    "timed_out" false
    "timeout_secs" nil
-   "stdout_truncated" false
-   "stderr_truncated" false
-   "stdout_omitted_chars" 0
-   "stderr_omitted_chars" 0
    ;; background lifecycle
    "pid" nil
    "status" nil
@@ -448,40 +445,95 @@
   [op m]
   (assoc (merge shell-result-base m) "stage" op))
 
+(def ^:private command-result-base
+  "TOTAL key set of ONE entry under `commands` — the only place a command line
+   and its output ever live. Every command answers this same map whether it ran
+   alone, as one line of a ten-line batch, or as a line of a backgrounded script,
+   so `r[\"commands\"][i][\"stdout\"]` is the ONE read for a command's output and
+   there is no lone-command variant to tell apart."
+  {"cmd" nil
+   "cwd" nil
+   ;; True only after the child process was spawned, so a command that never
+   ;; started stays distinguishable from one that ran and failed/timed out.
+   "started" false
+   "stdout" nil
+   "stderr" nil
+   "exit" nil
+   "duration_ms" nil
+   "timed_out" false
+   "timeout_secs" nil
+   ;; A truncated stream has an inline \"…[N chars omitted]…\" marker spliced into
+   ;; its MIDDLE, so it is no longer valid JSON/parseable — the count says exactly
+   ;; how much is gone.
+   "stdout_truncated" false
+   "stderr_truncated" false
+   "stdout_omitted_chars" 0
+   "stderr_omitted_chars" 0
+   ;; Why a command produced no process at all (its dir refused, unspawnable).
+   "status" nil
+   "note" nil})
+
+(defn- command-result
+  "ONE command's own total entry: its fields merged onto [[command-result-base]]."
+  [m]
+  (merge command-result-base m))
+
 (defn- shell-run-impl
+  "Run ONE command and answer its own [[command-result]] entry — never a tool
+   result: what the tool answers with is always the batch that OWNS this entry
+   (`shell-batch-impl`), so a command's line and output have exactly one home.
+
+   `cmd` is either one bash line (a string) or a literal argv (a sequential,
+   used by `git`). The echoed `cmd` is always the display string."
   ([env cmd] (shell-run-impl env cmd nil))
   ([env cmd opts]
-   ;; `cmd` is either one bash line (a string) or a literal argv (a sequential,
-   ;; used by `git`). The echoed `cmd` is always the display string.
-   (let [argv (when (sequential? cmd) (mapv str cmd))
-         cmd (if argv (str/join " " argv) (str cmd))]
+   (let
+     [argv
+      (when (sequential? cmd) (mapv str cmd))
+
+      cmd
+      (if argv (str/join " " argv) (str cmd))]
+
      (when (str/blank? cmd)
-       (throw (ex-info (str "shell needs a non-blank command — pass it as the lone positional"
-                            " or as {\"cmd\": \"…\"} in the options map.")
+       (throw (ex-info (str "shell needs a non-blank command — pass it as `commands`,"
+                            " the first argument.")
                        {:type ::blank-command})))
      (let
-       [timeout-secs (clamp-timeout-secs (get opts "timeout_secs"))
-        dir (resolve-dir (assoc (or opts {}) ::environment env))
-        t0 (now-ms)
-        p (spawn! (or argv cmd) dir false (jail-policy env))
-        empty-tail {:text "" :truncated false :omitted 0}
+       [timeout-secs
+        (clamp-timeout-secs (get opts "timeout_secs"))
+
+        dir
+        (resolve-dir (assoc (or opts {}) ::environment env))
+
+        t0
+        (now-ms)
+
+        p
+        (spawn! (or argv cmd) dir false (jail-policy env))
+
+        empty-tail
+        {:text "" :truncated false :omitted 0}
+
         ;; Separate reader futures per stream — avoids the classic full-pipe
         ;; deadlock on chatty commands. `read-capped` bounds memory to the
         ;; head+tail budget per stream at READ time (dropping only the MIDDLE
         ;; of a huge stream, not its start), so a megabyte-then-killed command
         ;; can't balloon the heap yet the opening context survives.
-        out-f (future (read-capped (io/reader (.getInputStream p))
-                                   max-sync-head-chars
-                                   max-sync-tail-chars))
-        err-f (future (read-capped (io/reader (.getErrorStream p))
-                                   max-sync-head-chars
-                                   max-sync-tail-chars))
-        finished? (try (.waitFor p timeout-secs TimeUnit/SECONDS)
-                       (catch InterruptedException ie
-                         ;; Turn cancellation: kill the spawned tree before
-                         ;; the interrupt propagates to the loop.
-                         (kill-tree! p)
-                         (throw ie)))]
+        out-f
+        (future
+          (read-capped (io/reader (.getInputStream p)) max-sync-head-chars max-sync-tail-chars))
+
+        err-f
+        (future
+          (read-capped (io/reader (.getErrorStream p)) max-sync-head-chars max-sync-tail-chars))
+
+        finished?
+        (try (.waitFor p timeout-secs TimeUnit/SECONDS)
+             (catch InterruptedException ie
+               ;; Turn cancellation: kill the spawned tree before
+               ;; the interrupt propagates to the loop.
+               (kill-tree! p)
+               (throw ie)))]
 
        (when-not finished?
          (kill-tree! p)
@@ -490,48 +542,74 @@
          (doseq [^java.io.InputStream s [(.getInputStream p) (.getErrorStream p)]]
            (try (.close s) (catch Throwable _ nil))))
        (let
-         [out (deref out-f 5000 empty-tail)
-          err (deref err-f 5000 empty-tail)
-          exit (when finished? (.exitValue p))
-          t1 (now-ms)]
+         [out
+          (deref out-f 5000 empty-tail)
 
-         (extension/success
-           ;; TOTAL result shape (`shell-result`). The old "lean" map dropped a key
-           ;; whenever it carried no signal, so ordinary model Python (`r["stderr"]`,
-           ;; `r["timed_out"]`) died with a bare `KeyError` — read as "the tool
-           ;; broke", retried with cosmetic variations, and spun.
-           {:result (shell-result "run"
-                                  {"cmd" cmd
-                                   ;; The child exists: this is intentionally distinct from a
-                                   ;; batch entry whose launch failed before it could run.
-                                   "started" true
-                                   ;; A relative `cwd` is `/`-separated on every OS.
-                                   "cwd" (paths/unixify (.getPath dir))
-                                   "stdout" (lf (:text out))
-                                   "stderr" (lf (:text err))
-                                   "exit" exit
-                                   "duration_ms" (- t1 t0)
-                                   "timed_out" (not finished?)
-                                   "timeout_secs" timeout-secs
-                                   ;; A truncated stream has an inline "…[N chars omitted]…"
-                                   ;; marker spliced into its MIDDLE, so it is no longer valid
-                                   ;; JSON/parseable — the count says exactly how much is gone.
-                                   "stdout_truncated" (boolean (:truncated out))
-                                   "stderr_truncated" (boolean (:truncated err))
-                                   "stdout_omitted_chars" (long (or (:omitted out) 0))
-                                   "stderr_omitted_chars" (long (or (:omitted err) 0))})
-            :op :shell
-            :metadata {:command cmd
-                       :exit exit
-                       :timed-out? (not finished?)
-                       :started-at-ms t0
-                       :finished-at-ms t1
-                       :duration-ms (- t1 t0)}}))))))
+          err
+          (deref err-f 5000 empty-tail)
+
+          exit
+          (when finished? (.exitValue p))
+
+          t1
+          (now-ms)]
+
+         (command-result
+           ;; TOTAL entry shape (`command-result-base`). The old "lean" map dropped a
+           ;; key whenever it carried no signal, so ordinary model Python
+           ;; (`c["stderr"]`, `c["timed_out"]`) died with a bare `KeyError` — read as
+           ;; "the tool broke", retried with cosmetic variations, and spun.
+           {"cmd" cmd
+            ;; The child exists: this is intentionally distinct from a batch entry
+            ;; whose launch failed before it could run.
+            "started" true
+            ;; A relative `cwd` is `/`-separated on every OS.
+            "cwd" (paths/unixify (.getPath dir))
+            "stdout" (lf (:text out))
+            "stderr" (lf (:text err))
+            "exit" exit
+            "duration_ms" (- t1 t0)
+            "timed_out" (not finished?)
+            "timeout_secs" timeout-secs
+            "stdout_truncated" (boolean (:truncated out))
+            "stderr_truncated" (boolean (:truncated err))
+            "stdout_omitted_chars" (long (or (:omitted out) 0))
+            "stderr_omitted_chars" (long (or (:omitted err) 0))}))))))
+
+(defn- batch-exit
+  "ONE exit code for a whole batch: the FIRST non-zero exit — the command an `&&`
+   chain would have stopped at — else the last command's own exit. nil only when
+   no command produced an exit at all (nothing started, or the last one was
+   killed on its timeout)."
+  [results]
+  (or (some (fn [r]
+              (let [exit (get r "exit")]
+                (when (and exit (not (zero? (long exit)))) exit)))
+            results)
+      (get (last results) "exit")))
+
+(defn- batch-note
+  "The group's `note`: how many commands ran, and where their output is — always
+   `commands`, whether the caller sent one line or ten."
+  [^long n]
+  (str n
+       (if (= 1 n) " command ran" " commands ran in order")
+       "; each command's own cmd, stdout, stderr and exit is its entry in"
+       " \"commands\"."))
 
 (defn- shell-batch-impl
-  "Run non-empty `commands` strictly in input order: each bounded foreground
-   shell call finishes before the next begins. Same ordered-batch machinery
-   (`serial-batch`) the `git` tool runs its own `commands` through."
+  "Run `commands` strictly in input order: each bounded foreground shell call
+   finishes before the next begins. Same ordered-batch machinery
+   (`serial-batch`) the `git` tool runs its own `commands` through.
+
+   EVERY bounded run lands here — a lone command is a batch of ONE, exactly as
+   `git` has no single-command shape either. The answer is ONE ordinary shell
+   result, never a second envelope: the total `shell-result` map, whose
+   `commands` carries each command's own full entry in input order while the
+   top-level `cwd`/`started`/`exit`/`timed_out`/`duration_ms` SUMMARISE the group.
+   Nothing is echoed twice: the result has no top-level `cmd` (the commands are
+   `commands`) and no top-level `stdout`/`stderr` (the bytes stay with the command
+   that emitted them), and `note` says exactly that in the data."
   [env commands opts]
   (let
     [commands
@@ -548,20 +626,32 @@
 
      results
      (batch/run-serial commands
-                       #(:result (shell-run-impl env % opts))
+                       #(shell-run-impl env % opts)
                        ;; An infrastructure failure (for example ProcessBuilder refusing
                        ;; its dir) must not erase the completed entries nor make later
                        ;; commands ambiguous. Keep the input-position result and continue.
                        (fn [command ^Exception e]
-                         (shell-result "run"
-                                       {"cmd" command
-                                        "status" "not started"
-                                        "note" (or (.getMessage e) (.getName (class e)))})))]
+                         (command-result {"cmd" command
+                                          "status" "not started"
+                                          "note" (or (.getMessage e) (.getName (class e)))})))]
 
-    (extension/success {:result (batch/result results) :op :shell})))
+    (extension/success {:result
+                        (shell-result
+                          "run"
+                          (merge {"cwd" (some #(get % "cwd") results)
+                                  ;; Started only when EVERY child was spawned, so a
+                                  ;; launch failure anywhere stays visible at the top.
+                                  "started" (every? #(get % "started") results)
+                                  "exit" (batch-exit results)
+                                  "duration_ms" (reduce + 0 (keep #(get % "duration_ms") results))
+                                  "timed_out" (boolean (some #(get % "timed_out") results))
+                                  "timeout_secs" (clamp-timeout-secs (get opts "timeout_secs"))
+                                  "note" (batch-note (count results))}
+                                 (batch/result results)))
+                        :op :shell})))
 
 ;; =============================================================================
-;; BACKGROUND — Python sandbox: `await shell(cmd, {"op": "background", "id": …})`
+;; BACKGROUND — Python sandbox: `await shell({"commands": ["npm run dev"], "op": "background", "id": …})`
 ;; =============================================================================
 
 (defonce ^:private bg-procs
@@ -664,7 +754,13 @@
    TOTAL base. `op` names the stage that produced the result, so the card renderer
    — and model Python — reads ONE declared field instead of sniffing which keys
    happen to exist. `exit` nil while running, `attach`/`socket` nil when no attach
-   bridge was opened, `cmd`/`cwd`/`pid` nil only once the entry itself is gone."
+   bridge was opened, `commands`/`cwd`/`pid` empty or nil only once the entry
+   itself is gone.
+
+   The shell's own command lines ride the SAME `commands` key a run answers with,
+   one [[command-result]] entry each: a background group IS its script, so
+   `commands` is where its lines are and the result never echoes them under a
+   second name."
   [op id entry]
   (let
     [exit
@@ -676,7 +772,8 @@
 
     (shell-result op
                   {"id" id
-                   "cmd" (:cmd entry)
+                   batch/commands-key (mapv #(command-result {"cmd" % "started" true})
+                                            (:commands entry))
                    "cwd" (:dir entry)
                    "pid" (:pid (:proc entry))
                    "started" true
@@ -690,7 +787,7 @@
   "Spawn a NEW background PTY under `id`. Callers guarantee no LIVE entry holds
    the id (`shell-bg-impl` owns that check); an exited-but-unread entry under
    the same id is replaced, discarding its retained logs by intent."
-  [env id cmd opts]
+  [env id commands opts]
   (let
     [session
      (:session-id env)
@@ -698,14 +795,20 @@
      id
      (str id)
 
-     cmd
-     (str cmd)]
+     commands
+     (vec commands)
+
+     ;; ONE background shell runs the WHOLE ordered group, so the lines become one
+     ;; script for the pty. The lines themselves stay in `commands` on the entry —
+     ;; this joined form is only what the process is fed and what a card displays.
+     script
+     (str/join "\n" commands)]
 
     (when (str/blank? id)
       (throw (ex-info "The shell background op needs a non-blank resource id ({\"id\": …})."
                       {:type ::blank-id})))
-    (when (str/blank? cmd)
-      (throw (ex-info "The shell background op needs a non-blank command as its first argument."
+    (when (str/blank? script)
+      (throw (ex-info "The shell background op needs its `commands` as the first argument."
                       {:type ::blank-command})))
     (when (bg-entry session id) (resources/unregister! session id) (drop-bg-entry! session id))
     (let
@@ -713,7 +816,7 @@
        (resolve-dir (assoc (or opts {}) ::environment env))
 
        p
-       (pty-spawn! cmd dir (jail-policy env))
+       (pty-spawn! script dir (jail-policy env))
 
        buffer
        (atom {:lines [] :next-seq 1 :dropped 0})
@@ -759,14 +862,15 @@
          :stopped? stopped?
          :send (:send p)
          :bridge bridge
-         :cmd cmd
+         :commands commands
+         :script script
          :dir (.getPath dir)
          :started-at t0})
       (resources/register! session
                            {:id id
                             :kind :shell
-                            :label (one-line cmd 48)
-                            :detail cmd
+                            :label (one-line script 48)
+                            :detail script
                             :pid (:pid p)
                             :owner "foundation-shell"
                             :status :running}
@@ -815,10 +919,10 @@
                    "note" nil)
          :op :shell
          :metadata
-         {:command cmd :pid (:pid p) :started-at-ms t0 :finished-at-ms t0 :duration-ms 0}}))))
+         {:command script :pid (:pid p) :started-at-ms t0 :finished-at-ms t0 :duration-ms 0}}))))
 
 (defn- shell-bg-impl
-  "`await shell(cmd, {\"op\": \"background\", \"id\": id})` — IDEMPOTENT on a live id.
+  "`await shell({\"commands\": [\"npm run dev\"], \"op\": \"background\", \"id\": id})` — IDEMPOTENT on a live id.
 
    Re-using an id whose process is still running used to THROW. That reads as a
    plain tool failure: a model that already started the shell (or that lost the
@@ -827,7 +931,7 @@
    `already_running` with its pid/uptime and the `logs` handle, so \"start it\" is
    answered by \"it IS started, here is how to watch it\". No second process is
    spawned; a genuinely fresh one needs a `stop` op first."
-  [env id cmd opts]
+  [env id commands opts]
   (let
     [session
      (:session-id env)
@@ -855,24 +959,24 @@
              id
              "\"})."))
          :op :shell
-         :metadata {:command (:cmd live)
+         :metadata {:command (:script live)
                     :pid (:pid (:proc live))
                     :started-at-ms (:started-at live)
                     :finished-at-ms (now-ms)
                     :duration-ms 0}})
       (if-let
-        [cmd (some-> cmd
-                     str
-                     str/trim
-                     not-empty)]
-        (shell-bg-spawn! env id cmd opts)
+        [commands (some->> commands
+                           (map str)
+                           (remove str/blank?)
+                           seq
+                           vec)]
+        (shell-bg-spawn! env id commands opts)
         (throw (ex-info (str "No background shell '"
                              id
                              "' is running, so it must be STARTED:"
-                             " pass the command as the FIRST argument \u2014 await shell(cmd,"
-                             " {\"op\": \"background\", \"id\": \""
+                             " pass {\"commands\": [\"…\"], \"op\": \"background\", \"id\": \""
                              id
-                             "\"}).")
+                             "\"} as one shell map.")
                         {:type ::missing-command :op "background" :id id}))))))
 
 (defn- shell-logs-impl
@@ -889,12 +993,13 @@
       (bg-entry session id)]
 
      (when-not entry
-       (throw (ex-info (str "No background shell '"
-                            id
-                            "' in this session — start one with"
-                            " await shell(cmd, {\"op\": \"background\", \"id\": id});"
-                            " live ids are listed in resources.")
-                       {:type ::unknown-bg-id :id id})))
+       (throw (ex-info
+                (str "No background shell '"
+                     id
+                     "' in this session — start one with"
+                     " await shell({\"commands\": [\"…\"], \"op\": \"background\", \"id\": id});"
+                     " live ids are listed in resources.")
+                {:type ::unknown-bg-id :id id})))
      (let
        [n
         (-> (long (or (->pos-long n "n") default-log-tail))
@@ -979,17 +1084,17 @@
       (bg-entry session id)
 
       enter?
-      (let [e (first (remove nil? (map #(get opts %)
-                                       ["is_enter" :is_enter "enter" :enter])))]
+      (let [e (first (remove nil? (map #(get opts %) ["is_enter" :is_enter "enter" :enter])))]
         (if (nil? e) true (boolean e)))]
 
      (when-not entry
-       (throw (ex-info (str "No background shell '"
-                            id
-                            "' in this session — start one with"
-                            " await shell(cmd, {\"op\": \"background\", \"id\": id});"
-                            " live ids are listed in resources.")
-                       {:type ::unknown-bg-id :id id})))
+       (throw (ex-info
+                (str "No background shell '"
+                     id
+                     "' in this session — start one with"
+                     " await shell({\"commands\": [\"…\"], \"op\": \"background\", \"id\": id});"
+                     " live ids are listed in resources.")
+                {:type ::unknown-bg-id :id id})))
      (when-not ((:alive? (:proc entry)))
        (throw (ex-info (str "Background shell '" id
                             "' has exited — nothing to send"
@@ -1013,7 +1118,7 @@
                              {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}}))))))
 
 ;; -----------------------------------------------------------------------------
-;; ONE lifecycle entry point — Python: `await shell(cmd, opts)` / `await shell({"op": …, "id": …})`
+;; ONE lifecycle entry point — Python: `await shell({\"commands\": [\"ls\"]})`
 ;; -----------------------------------------------------------------------------
 
 (defn- opts-arg?
@@ -1074,217 +1179,137 @@
                         {:id id :started-at-ms t :finished-at-ms (now-ms) :duration-ms 0}})))
 
 (defn shell-dispatch
-  "One shell lifecycle grammar plus serial bounded batches."
-  ([env] (shell-dispatch env nil nil))
-  ([env a] (if (opts-arg? a) (shell-dispatch env nil a) (shell-dispatch env a nil)))
-  ([env command opts]
-   (let
-     [opts
-      ;; EMPTY IS ABSENT, before anything is interpreted. Schema-filling callers
-      ;; materialise EVERY declared property at once — `""` for each string they
-      ;; are not using — and nothing downstream can act on an empty value, so drop
-      ;; those keys here instead of letting each check re-discover it.
-      ;; `false` and `0` are real answers and are kept.
-      (into {}
-            (remove (fn [[_ v]]
-                      (or (nil? v) (and (string? v) (str/blank? v)) (and (coll? v) (empty? v)))))
-            (cond (nil? opts) {}
-                  (map? opts) opts
-                  :else (into {} opts)))
+  "One shell lifecycle grammar. Every public call takes exactly one options map;
+   process commands are the `commands` string array in that map."
+  [env opts]
+  (when-not (opts-arg? opts)
+    (throw (ex-info "shell takes one options map, e.g. await shell({\"commands\": [\"ls\"]})."
+                    {:type ::bad-options})))
+  (let
+    [opts
+     (into {}
+           (remove (fn [[_ v]]
+                     (or (nil? v) (and (string? v) (str/blank? v)) (and (coll? v) (empty? v)))))
+           opts)
 
-      ;; ONE SHAPE PER CARRIER, and neither carries the other. The FIRST
-      ;; POSITIONAL is always exactly one command line — or, under `send`, the
-      ;; keystrokes. A strictly ordered BATCH is `commands`, spelled and shaped
-      ;; exactly as `git` spells it, so nothing has to be disambiguated by type:
-      ;; there is no string-or-array positional any more.
-      _
-      (doseq [k ["cmd" "text"]]
-        (when (or (contains? opts k) (contains? opts (keyword k)))
-          (throw
-            (ex-info
-              (str "shell takes what it feeds a shell as the FIRST POSITIONAL argument, never a \""
-                   k
-                   "\" option: await shell(\"ls\") for one command, "
-                   "await shell({\"commands\": [\"a\", \"b\"]}) for a strictly ordered batch, "
-                   "await shell(\"y\", {\"op\": \"send\", \"id\": id}) to type into a live shell.")
-              {:type ::mapped-command :option k}))))
+     commands
+     (opt opts :commands)
 
-      ;; A collection positional is the OLD batch spelling. Java collections
-      ;; cross the Python boundary too, and none of them is a command line.
-      _
-      (when (and (some? command)
-                 (not (string? command))
-                 (or (coll? command) (instance? java.util.Collection command)))
-        (throw (ex-info (str "shell runs an ordered batch from {\"commands\": [\"a\", \"b\"]}, like git \u2014"
-                             " the first positional argument is ONE command line.")
-                        {:type ::bad-commands})))
+     text
+     (opt opts :text)
 
-      ;; The ordered batch, validated exactly like git's: an ordered, non-empty
-      ;; collection (a set has no input order and is refused).
-      commands
-      (some->> (opt opts :commands)
-               (batch/ordered "shell"))
+     _
+     (when (some? (opt opts :cmd))
+       (throw (ex-info "shell has no `cmd` option — put bash lines in {\"commands\": [...]}."
+                       {:type ::legacy-command-carrier})))
 
-      ;; The `send` payload is the RAW positional. Keystrokes are routinely
-      ;; whitespace or control characters (a bare Enter, C-c, Esc), so the
-      ;; trimming that turns a schema-filled empty string into \"no command\" must
-      ;; NOT touch what gets typed into a live pty.
-      raw-command
-      (some-> command
-              str)
+     id
+     (some-> (opt opts :id)
+             str
+             str/trim
+             not-empty)
 
-      ;; Blank is absent for the single positional too, so a schema-filled empty
-      ;; is simply no command rather than a mysterious conflict.
-      command
-      (some-> command
-              str
-              str/trim
-              not-empty)
+     op
+     (or (some-> (opt opts :op)
+                 str
+                 str/trim
+                 str/lower-case
+                 not-empty)
+         (if id "background" "run"))
 
-      _
-      (when (and commands command)
-        (throw (ex-info (str "shell got both a positional command and a `commands` batch \u2014 pass"
-                             " ONE of them: the positional runs a single line, `commands` runs the"
-                             " whole ordered group.")
-                        {:type ::mapped-command :option "commands"})))
+     checked-commands
+     (fn []
+       (let [lines (batch/ordered "shell" commands)]
+         (when-not (every? string? lines)
+           (throw (ex-info "shell commands must be strings — one bash -lc command line each."
+                           {:type ::bad-commands})))
+         (when (some str/blank? lines)
+           (throw (ex-info "shell commands must not contain blank commands."
+                           {:type ::blank-command})))
+         lines))
 
-      id
-      (some-> (opt opts :id)
-              str
-              str/trim
-              not-empty)
+     valid-commands
+     (when (some? commands) (checked-commands))
 
-      op
-      (or (some-> (opt opts :op)
-                  str
-                  str/trim
-                  str/lower-case
-                  not-empty)
-          (if id "background" "run"))
+     need-commands
+     (fn []
+       (or valid-commands
+           (throw (ex-info
+                    (str "shell op \"" op "\" needs {\"commands\": [\"…\"]} in its options map.")
+                    {:type ::missing-command :op op}))))
 
-      ;; A batch is a sequence of bounded runs (`run`) or ONE background shell
-      ;; running the whole group under one id (`background`); the checks live
-      ;; with the dispatch below.
+     need-id
+     (fn []
+       (or id
+           (throw (ex-info (str "shell op \""
+                                op
+                                "\" needs {\"id\": \"…\"}; live ids are listed in resources.")
+                           {:type ::missing-id :op op}))))
 
-      need-command
-      (fn []
-        (or
-          command
-          (throw
-            (ex-info
-              (str
-                "shell op \""
-                op
-                "\" needs the command as its first argument. In python_execution use await shell(cmd, opts).")
-              {:type ::missing-command :op op}))))
+     reject-commands
+     (fn []
+       (when (some? commands)
+         (throw (ex-info (str "shell op \"" op "\" takes no commands — it acts on {\"id\": \"…\"}.")
+                         {:type ::unexpected-commands :op op}))))
 
-      ;; `send` carries its keystrokes in the SAME one place as every other op:
-      ;; the first positional, UNTRIMMED — a control character (C-c, Esc), a
-      ;; leading space or a bare newline is exactly what an interactive program
-      ;; waits for. With `is_enter` on (the default) an EMPTY payload is legitimate
-      ;; too: it is the commonest keystroke of all, a bare Enter. Only "nothing to
-      ;; type at all" — empty payload with is_enter explicitly false — is an error.
-      enter?
-      (let [e (let [v (opt opts :is_enter)] (if (nil? v) (opt opts :enter) v))]
-        (if (nil? e) true (boolean e)))
+     reject-text
+     (fn []
+       (when (some? text)
+         (throw (ex-info (str "shell op \"" op "\" takes no text payload.")
+                         {:type ::unexpected-text :op op}))))
 
-      need-payload
-      (fn []
-        (let [payload (or raw-command "")]
-          (if (and (not enter?) (empty? payload))
-            (throw
-              (ex-info
-                (str "shell op \"send\" with {\"is_enter\": false} types nothing: pass the keystrokes "
-                     "as the first argument \u2014 await shell(\"y\", {\"op\": \"send\", \"id\": \""
-                     (or id "\u2026")
-                     "\"}).")
-                {:type ::missing-command :op op}))
-            payload)))
+     need-text
+     (fn []
+       (cond (nil? text) ""
+             (string? text) text
+             :else (throw (ex-info "shell `text` must be a string." {:type ::bad-text}))))]
 
-      need-id
-      (fn []
-        (or id
-            (throw
-              (ex-info
-                (str
-                  "shell op \""
-                  op
-                  "\" needs {\"id\": \"…\"} in the options map; live ids are listed in resources.")
-                {:type ::missing-id :op op}))))
+    (case op
+      "run"
+      (do (reject-text) (shell-batch-impl env (need-commands) opts))
 
-      reject-command
-      (fn []
-        (when command
-          (throw (ex-info (str "shell op \""
-                               op
-                               "\" reads nothing from the first argument \u2014 it acts on"
-                               " the background shell named by {\"id\": \"\u2026\"}. Drop \""
-                               command
-                               "\", or pass it as {\"id\": \""
-                               command
-                               "\"} if that is the id.")
-                          {:type ::positional-id :op op :id command}))))]
+      "background"
+      (do (reject-text) (shell-bg-impl env (need-id) valid-commands opts))
 
-     (if commands
-       ;; The WHOLE ordered group, one way or the other: bounded serial runs with
-       ;; a per-command result, or ONE background shell whose pty runs the group
-       ;; as a script — so `logs`, `send` and `stop` act on the whole group under
-       ;; a single id instead of N ids nobody asked for.
-       (case op
-         "run"
-         (shell-batch-impl env commands opts)
+      "logs"
+      (do (reject-commands) (reject-text) (shell-logs-impl env (need-id) (opt opts :n)))
 
-         "background"
-         (shell-bg-impl env (need-id) (str/join "\n" commands) opts)
+      "send"
+      (do (reject-commands) (shell-send-impl env (need-id) (need-text) opts))
 
-         (throw (ex-info (str "shell op \""
-                              op
-                              "\" acts on ONE live shell, not on a `commands` batch \u2014 use \"run\" for"
-                              " bounded serial results, or \"background\" with an id to run the whole"
-                              " group in one shell (then logs/send/stop that id).")
-                         {:type ::batch-option :options ["op"]})))
-       (case op
-         "run"
-         (shell-run-impl env (need-command) opts)
+      "stop"
+      (do (reject-commands) (reject-text) (shell-stop-impl env (need-id)))
 
-         "background"
-         (shell-bg-impl env (need-id) command opts)
-
-         "logs"
-         (do (reject-command) (shell-logs-impl env (need-id) (opt opts :n)))
-
-         "send"
-         (shell-send-impl env (need-id) (need-payload) opts)
-
-         "stop"
-         (do (reject-command) (shell-stop-impl env (need-id)))
-
-         (throw (ex-info
-                  (str "Unknown shell op "
-                       (pr-str op)
-                       " — use \"run\" (default), \"background\", \"logs\", \"send\" or \"stop\".")
-                  {:type ::unknown-op :op op})))))))
+      (throw (ex-info (str
+                        "Unknown shell op "
+                        (pr-str op)
+                        " — use \"run\" (default), \"background\", \"logs\", \"send\" or \"stop\".")
+                      {:type ::unknown-op :op op})))))
 
 (defn run-argv
   "Run ONE literal argv through the SAME bounded machinery `shell` runs its own
    commands with: cwd authorization, process-jail policy, head+tail capped
-   capture, timeout and kill-tree. Returns the raw shell result map.
+   capture, timeout and kill-tree. Returns that command's own total entry — the
+   SAME `command-result` map (`cmd`, `stdout`, `stderr`, `exit`, `duration_ms`,
+   `timed_out`, truncation flags) `shell` puts under `commands`, so there is one
+   command shape for both tools and no envelope to unwrap.
 
    No shell is involved — each element reaches the process verbatim, so nothing
    needs quoting. The `git` tool is a USER of this: every git command is a
    bounded shell command, so both tools share one runner, one jail and one
    capture policy."
   ([env argv] (run-argv env argv nil))
-  ([env argv opts] (:result (shell-run-impl env (vec argv) opts))))
+  ([env argv opts] (shell-run-impl env (vec argv) opts)))
 
 (defn jailed-shell
-  "Run a Python extension command through the invoking session's jailed shell.
-   Uses the same lifecycle grammar and process-jail policy as `shell`."
-  [env command opts]
+  "Run a Python extension's shell request through the invoking session's jail.
+   The only public form is `vis.shell({\"commands\": [\"ls\"]})`; it shares
+   the same one-map grammar as the native shell tool."
+  [env opts]
   (when-not (:session-id env)
     (throw (ex-info "jailed_shell is available only while handling a session"
                     {:type ::no-session})))
-  (shell-dispatch env command opts))
+  (shell-dispatch env opts))
 
 
 ;; =============================================================================
@@ -1295,14 +1320,6 @@
   "Human call name from an op keyword: :shell -> \"shell\"."
   [op]
   (if (namespace op) (str (namespace op) "_" (name op)) (name op)))
-
-(defn- shell-gate-before-fn
-  "Inject `env` as the impl's first arg (the model never sees it). Availability is
-   gated by the `shell` toggle at the extension boundary; once bound, the OS process
-   jail is the containment layer."
-  [_op]
-  (fn [env f args]
-    {:env env :fn f :args (into [env] args)}))
 
 (defn- shell-on-error
   "Failure envelope for thrown impl errors; mirrors editing's interrupted-vs-
@@ -1338,27 +1355,25 @@
 
 (def
   ^{:doc
-    "In `python_execution`, await every call:
-await shell(\"git status\")
-await shell({\"commands\": [\"npm ci\", \"npm run build\"], \"cwd\": \"web\"})
+    "In `python_execution`, await every call with ONE map:
+await shell({\"commands\": [\"git status\"]})
+await shell({\"commands\": [\"npm run build\"], \"cwd\": \"web\"})
 await shell({\"commands\": [\"npm ci\", \"npm test\"], \"op\": \"background\", \"id\": \"ci\"})
-await shell(\"npm run build\", {\"op\": \"background\", \"id\": \"build\", \"cwd\": \"web\"})
-await shell(\"npm run dev\", {\"op\": \"background\", \"id\": \"dev-server\"})
-await shell({\"op\": \"logs\", \"id\": \"dev-server\", \"n\": 500})
-await shell(\"y\", {\"op\": \"send\", \"id\": \"dev-server\"})
-await shell({\"op\": \"stop\", \"id\": \"dev-server\"})
+await shell({\"op\": \"logs\", \"id\": \"ci\", \"n\": 500})
+await shell({\"op\": \"send\", \"id\": \"ci\", \"text\": \"y\"})
+await shell({\"op\": \"stop\", \"id\": \"ci\"})
 
-THE one shell tool. What you feed a shell has TWO carriers and they never overlap: the first positional argument is ONE command line (or the keystrokes `send` types into a live one), and `commands` is a strictly ordered batch of such lines — the SAME key and shape `git` takes, so there is nothing to disambiguate between the two tools. There is no `text` option. Resource ids also have one spelling: `\"id\"` in the options map for background/logs/send/stop. op defaults to \"run\", or to \"background\" when an id is present.
+THE one shell tool. EVERY call takes exactly one map: process commands are the non-empty `commands` string array; never pass a command string or array positionally. `text` is only the keystrokes for `send`. op defaults to \"run\", or to \"background\" when an id is present.
+
 Stages:
-  run — bash -lc in the workspace root; blocks until the command exits. Reserve it for short bounded commands. opts: timeout_secs (default 120, max 600), dir. A non-zero exit is DATA to read, not a tool failure. With `commands` the lines run strictly in order, each finishing before the next starts, sharing dir/timeout_secs, and the result is {\"commands\": [result, …]} in input order — a command that never started is marked \"started\": false, so a launch failure stays distinct from a non-zero exit.
-  background — returns immediately with no timeout and makes the shell an OWNED session resource under id. PREFER it for commands that may take a while: builds, test suites, daemons, watchers, and interactive work. Poll with logs instead of blocking a run call. Re-starting a LIVE id does NOT spawn a second process and is not an error: you get that shell back with \"already_running\": true. Reusing an EXITED id discards its retained logs. With `commands` the group is ONE resource, not N shells: the lines are joined into a single script under that id, so logs/send/stop act over the whole group.
+  run — bash -lc in the workspace root; blocks until commands exit. Reserve it for short bounded work. opts: timeout_secs (default 120, max 600), cwd. A non-zero exit is DATA to read, not a tool failure.
+  background — returns immediately with no timeout and makes the shell an OWNED session resource under id. PREFER it for commands that may take a while: builds, test suites, daemons, watchers, and interactive work. Poll with logs instead of blocking a run call.
   logs — last 200 lines, or n up to 2000.
-  send — types the FIRST POSITIONAL into the pty stdin (`await shell(\"y\", {\"op\": \"send\", \"id\": id})`); it is never trimmed, so control characters and a bare newline arrive intact. is_enter (default true) appends the newline that SUBMITS the line.
+  send — types `text` into the pty stdin; it is never trimmed, so control characters and a bare newline arrive intact. is_enter (default true) appends the newline that SUBMITS the line.
   stop — kill the process tree, discard retained logs, and drop the session resource. Uses the same stop path as resource_stop.
-EVERY op returns the SAME keys — {\"stage\", \"id\", \"cmd\", \"cwd\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\", \"timed_out\", \"timeout_secs\", \"stdout_truncated\", \"stderr_truncated\", \"stdout_omitted_chars\", \"stderr_omitted_chars\", \"pid\", \"status\", \"uptime_ms\", \"attach\", \"socket\", \"already_running\", \"note\", \"lines\", \"line_count\", \"dropped\", \"sent\", \"stopped\"} — always present, None/false/0 rather than missing, with \"stage\" naming the op that ran (r[\"op\"] is the tool origin every native result carries, always \"shell\").
-Gotcha: oversized run output is truncated in the MIDDLE with an inline \"…[N chars omitted]…\" marker, so a truncated stream is NOT parseable — check \"stdout_truncated\" before json.loads(r[\"stdout\"]) and re-run with a narrower or aggregated command.
-Gotcha: logs returns \"lines\" as plain STRINGS and NOTHING else carries that tail — print it with `print(\"\\n\".join(r[\"lines\"]))`, filter it with `any(\"ERROR\" in l for l in r[\"lines\"])`; shown count is len(lines), \"line_count\" is total-ever. (The RESULT key \"text\" echoes what send typed; it is output, never an input option.) Only a RUNNING shell accepts send. A step only a HUMAN can finish (browser OAuth, a device-code prompt) can't be typed by the agent — tell the user to run `vis extension shell attach <id>` in their own terminal, then detach with Ctrl-] (the child keeps running); the result carries the exact `attach` command."
-    :arglists '([cmd] [cmd opts] [opts])}
+
+EVERY call returns the SAME keys — {\"stage\", \"id\", \"cwd\", \"commands\", \"started\", \"exit\", \"duration_ms\", \"timed_out\", \"timeout_secs\", \"pid\", \"status\", \"uptime_ms\", \"attach\", \"socket\", \"already_running\", \"note\", \"lines\", \"line_count\", \"dropped\", \"sent\", \"text\", \"keys\", \"stopped\"}. A run has one full entry under result `commands`; lifecycle stages leave it empty."
+    :arglists '([opts])}
   shell
   shell-dispatch)
 
@@ -1388,6 +1403,17 @@ Gotcha: logs returns \"lines\" as plain STRINGS and NOTHING else carries that ta
           (str/replace #"\s+" " ")
           str/trim
           not-empty))
+
+(defn- result-script
+  "The command lines a background/lifecycle result was started with, joined as one
+   display string. They live under `commands` (one entry per line, never under a
+   top-level `cmd`), so a card renders them from the ONE place they exist."
+  [r]
+  (some->> (get r batch/commands-key)
+           seq
+           (map #(get % "cmd"))
+           (str/join "\n")
+           not-empty))
 
 (defn- clip-chip
   "Clip a single-line preview with an ellipsis so shell commands cannot blow out
@@ -1610,7 +1636,7 @@ Gotcha: logs returns \"lines\" as plain STRINGS and NOTHING else carries that ta
                 ["already_running" (when (get r "already_running") "true")]])
 
      body
-     (->> [(shell-section "COMMAND" (format-shell-command (get r "cmd")) "bash")
+     (->> [(shell-section "COMMAND" (format-shell-command (result-script r)) "bash")
            (shell-section "STATUS" details) (shell-section "NOTE" (get r "note"))]
           (remove nil?)
           (str/join "\n\n"))]
@@ -1705,7 +1731,7 @@ Gotcha: logs returns \"lines\" as plain STRINGS and NOTHING else carries that ta
   {:summary (str "✕ background `" (get r "id") "` stopped")
    :body (shell-section "STATUS"
                         (kv-lines [["id" (get r "id")] ["status" "stopped"] ["pid" (get r "pid")]
-                                   ["cmd" (shell-one-line (get r "cmd"))]
+                                   ["cmd" (shell-one-line (result-script r))]
                                    ["uptime" (duration-label (get r "uptime_ms"))]]))})
 
 (defn- shell-batch-tally
@@ -1713,8 +1739,13 @@ Gotcha: logs returns \"lines\" as plain STRINGS and NOTHING else carries that ta
    starts (its dir refused, the process unspawnable), which git's simpler
    succeeded/failed split cannot express — hence a shell-specific tally."
   [results]
-  (let [started (count (filter #(get % "started") results))
-        failures (count (filter #(and (get % "started") (batch/failed? %)) results))]
+  (let
+    [started
+     (count (filter #(get % "started") results))
+
+     failures
+     (count (filter #(and (get % "started") (batch/failed? %)) results))]
+
     (str started
          " ran, "
          (- (count results) started)
@@ -1725,34 +1756,45 @@ Gotcha: logs returns \"lines\" as plain STRINGS and NOTHING else carries that ta
          " failed")))
 
 (defn- render-shell-batch-result
-  "Render serial bounded commands as one expandable card, preserving each result.
-   The card layout itself is `serial-batch/card`, shared with `git`."
+  "Render the commands a run executed, preserving each result. ONE command — the
+   overwhelmingly common run — renders as its own REPL-style card: the batch is
+   the SHAPE, not a rendering, and a single command deserves no card numbering.
+   Several commands share `serial-batch/card` with `git`."
   [r]
-  (batch/card {:icon "$"
-               :noun "shell"
-               :results (get r batch/commands-key)
-               :render-one render-shell-run-result
-               :tally-fn shell-batch-tally}))
+  (let [results (vec (get r batch/commands-key))]
+    (if (= 1 (count results))
+      (render-shell-run-result (first results))
+      (batch/card {:icon "$"
+                   :noun "shell"
+                   :results results
+                   :render-one render-shell-run-result
+                   :tally-fn shell-batch-tally}))))
 
 (defn- render-shell-result
-  "Render one lifecycle result or a serial commands batch."
+  "Render one shell result. `stage` is ALWAYS stamped, so dispatch on it first: a
+   `run` is its commands (a batch), every lifecycle stage is its own card. Neither
+   branch sniffs keys, and the legacy fallback only renders results old enough to
+   pre-date `stage` (persisted events from a prior version)."
   [r]
-  (if (batch/batch? r)
+  (case (str (get r "stage"))
+    "run"
     (render-shell-batch-result r)
-    (case (str (get r "stage"))
-      "run"
-      (render-shell-run-result r)
 
-      "logs"
-      (render-shell-logs-result r)
+    "logs"
+    (render-shell-logs-result r)
 
-      "send"
-      (render-shell-send-result r)
+    "send"
+    (render-shell-send-result r)
 
-      "stop"
-      (render-shell-stop-result r)
+    "stop"
+    (render-shell-stop-result r)
 
-      (render-shell-bg-result r))))
+    "background"
+    (render-shell-bg-result r)
+
+    ;; Legacy: a result without `stage` (pre-canonicalisation) — only ever a run or
+    ;; a background, distinguished by whether it actually carries command entries.
+    (if (batch/batch? r) (render-shell-batch-result r) (render-shell-bg-result r))))
 
 ;; =============================================================================
 ;; Symbols + prompt + extension. ONE builtin symbol — `shell` — bound bare in the
@@ -1765,42 +1807,33 @@ Gotcha: logs returns \"lines\" as plain STRINGS and NOTHING else carries that ta
     {:symbol 'shell
      :native-tool? true
      :result
-     "A regular call returns the fixed-key shell result. A `commands` batch returns {\"commands\" [shell-result, …]} in input order — git's envelope — each keeping `started`, stdout/stderr and exit, so a launch failure stays distinct from a command failure. Backgrounding a batch answers ONE result for the group."
+     "ONE shape for every call. A run has one command entry under `commands`; the top level summarises it."
      :name "shell"
      :description
      (str
-       "THE one shell tool — bounded run, strictly ordered batch, background, logs, send, stop. `op` defaults to \"run\", or \"background\" with an `id`. "
-       "PREFER background for builds, tests, servers, watchers, or interactive work; poll with \"logs\". Reserve run for one short command, `commands` for short serial work. "
-       "\"send\" types into a live shell's pty; \"stop\" kills it. \"background\" on a LIVE id returns that same shell (`already_running`) and needs no `cmd`. "
-       "Live ids are in `session[\"resources\"]`. Huge run output is truncated MID-stream — check `stdout_truncated` before parsing it. "
-       "`logs` hands back the tail ONCE as `lines` (plain strings). In "
-       "`python_execution` await `shell`.")
-     ;; Python's shell call shape keeps cmd positional, while native JSON necessarily carries `cmd` as
-     ;; a property. The call shape converts that transport field to the positional;
-     ;; every remaining property, including `id`, stays in the options map.
-     :call {:opt-pos ["cmd"] :rest :opt}
+       "THE one shell tool — bounded run, background, logs, send, stop. EVERY call takes one options map: "
+       "await shell({\"commands\": [\"ls\"]}). Never pass a command string or an array as a positional argument. "
+       "`op` defaults to \"run\", or \"background\" with an `id`. PREFER background for builds, tests, servers, watchers, or interactive work; poll with \"logs\". "
+       "`send` types map `text` into a live shell's pty; `stop` kills it. `background` on a LIVE id returns that same shell (`already_running`) and needs no commands. "
+       "Live ids are in `session[\"resources\"]`. A run's output is in `r[\"commands\"][0]`; huge output is truncated MID-stream — check `stdout_truncated` before parsing it. "
+       "`logs` hands back the tail ONCE as `lines` (plain strings). In `python_execution` await `shell`.")
      :render render-shell-result
      :color-role :tool-color/shell
      :schema
      {:type "object"
       :properties
-      {"cmd"
-       {:type "string"
-        :description
-        "ONE command line (bash -lc, workspace root); in Python the first positional argument. Under `op` \"send\" it is typed into the pty verbatim — never trimmed, an EMPTY string a bare Enter. Omit for `logs`/`stop` and when `commands` carries the work."}
-       batch/commands-key
+      {"commands"
        (batch/commands-property
-         {:items {:type "string" :minLength 1}
+         {:items {:type "string"}
           :description
-          "A strictly ordered batch of command lines — git's own key and shape. Each is one `bash -lc` line, the batch shares `cwd`/`timeout_secs`, and results come back in input order. With an `id` the whole group backgrounds as ONE script, so `logs`/`send`/`stop` act over the group."})
+          "Ordered bash -lc command lines. Required for run and a new background shell; one command is [\"ls\"]. Every shell command call is this one options map — never a positional string or array."})
        "op" {:type "string"
              :enum ["run" "background" "logs" "send" "stop"]
              :description "Operation (default \"run\", or \"background\" when an `id` is given)."}
        "id" {:type "string"
              :minLength 1
              :description
-             (str "Background shell resource id — the SAME id for background / logs / send / "
-                  "stop. In Python it stays in the options map, never positional.")}
+             "Background shell resource id — the same id for background / logs / send / stop."}
        "timeout_secs" {:type "integer"
                        :minimum 1
                        :maximum 600
@@ -1813,11 +1846,14 @@ Gotcha: logs returns \"lines\" as plain STRINGS and NOTHING else carries that ta
             :minimum 1
             :maximum 2000
             :description "logs only: tail the last n lines (default 200, max 2000)."}
-       ;; No `text` property: the send payload IS `cmd`, the one positional.
+       "text"
+       {:type "string"
+        :description
+        "send only: exact keystrokes to write to the live pty; this remains in the one options map."}
        "is_enter" {:type "boolean"
                    :description "send only: append a newline to SUBMIT the line (default true)."}}
       :additionalProperties false}
-     :before-fn (shell-gate-before-fn :shell)
+     :inject-env? true
      :tag :mutation
      :on-error-fn (shell-on-error :shell)}))
 

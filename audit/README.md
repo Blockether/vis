@@ -97,10 +97,10 @@ license on the distributed binary**.
 
 | Layer | What it is | Coordinates / tool | License | Redistribution *for a fee* |
 |---|---|---|---|---|
-| **Embedded runtime** | GraalPy + Truffle/Polyglot, baked into the binary as the agent's sandboxed Python substrate | `org.graalvm.python/*`, `org.graalvm.polyglot/polyglot`, `org.graalvm.truffle/truffle-runtime` `25.2.4` (Maven Central) | **UPL-1.0** (+ MIT + PSF for the bundled CPython stdlib) | **Permitted** — UPL is a permissive, BSD-style license |
-| **Build tool** | The `native-image` compiler that AOT-compiles vis into the standalone binary (`clojure -T:build native`) | **GraalVM Community Edition (CE) for JDK 25.2.4**, installed from the pinned `graalvm-ce-builds` asset via `.github/actions/setup-graalvm-25` (every CI + native-release workflow) | **GPL-2.0 with Classpath Exception** | **Permitted** — the Classpath Exception frees the output binary |
+| **Embedded runtime** | GraalPy + Truffle/Polyglot, baked into the binary as the agent's sandboxed Python substrate | `org.graalvm.python/*`, `org.graalvm.polyglot/polyglot`, `org.graalvm.truffle/truffle-runtime` `25.1.3` (Maven Central) | **UPL-1.0** (+ MIT + PSF for the bundled CPython stdlib) | **Permitted** — UPL is a permissive, BSD-style license |
+| **Build tool** | The `native-image` compiler that AOT-compiles vis into the standalone binary (`clojure -T:build native`) | **GraalVM Community Edition (CE) for JDK 25.1.3**, installed from the pinned `graalvm-ce-builds` asset via `.github/actions/setup-graalvm-25` (every CI + native-release workflow) | **GPL-2.0 with Classpath Exception** | **Permitted** — the Classpath Exception frees the output binary |
 
-**Which GraalVM we support.** The release build uses **GraalVM CE 25.2.4**
+**Which GraalVM we support.** The release build uses **GraalVM CE 25.1.3**
 only (the pinned `graalvm-ce-builds` asset). Oracle GraalVM is **not** used in
 any build. The `native-image` compiler is **GPL-2.0 with the Classpath
 Exception** (the OpenJDK license): the Exception exempts the tool's *output* —
@@ -178,6 +178,7 @@ _Shipped binary runtime — the `vis` CLI, agent loop, HTTP gateway, sandbox._
 | `babashka/process` | `0.6.25` | EPL-1.0 | 23 KB | 3rd-party |
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
 | `com.blockether/fff` | `0.12.0` | MIT | 11 KB | Blockether (in-house) |
+| `com.blockether/imaging` | `0.1.3` | MIT | 16 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.3.2` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.91` | Apache-2.0 | 499 KB | Blockether (in-house) |
 | `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.34` | MIT | 167 KB | Blockether (in-house) |
@@ -185,7 +186,6 @@ _Shipped binary runtime — the `vis` CLI, agent loop, HTTP gateway, sandbox._
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
 | `com.github.liquidz/antq` | `RELEASE` | (floating) | — | 3rd-party |
 | `com.github.mwiede/jsch` | `2.28.5` | BSD | 696 KB | 3rd-party |
-| `com.github.weisj/jsvg` | `2.1.0` | MIT | 766 KB | 3rd-party |
 | `com.google.zxing/core` | `3.5.4` | Apache-2.0 | 596 KB | 3rd-party |
 | `com.taoensso/nippy` | `3.8.0` | EPL-1.0 | 52 KB | 3rd-party |
 | `com.taoensso/telemere` | `1.2.1` | EPL-1.0 | 59 KB | 3rd-party |
@@ -213,10 +213,10 @@ _Shipped binary runtime — the `vis` CLI, agent loop, HTTP gateway, sandbox._
 | `org.eclipse.jetty.ee9/jetty-ee9-servlet` | `12.1.11` | EPL-2.0 | 143 KB | 3rd-party |
 | `org.eclipse.jetty/jetty-server` | `12.1.11` | EPL-2.0 | 689 KB | 3rd-party |
 | `org.flatland/ordered` | `1.15.12` | EPL-1.0 | 14 KB | 3rd-party |
-| `org.graalvm.polyglot/polyglot` | `25.2.4` | UPL-1.0 | 502 KB | 3rd-party |
-| `org.graalvm.python/python-language` | `25.2.4` | UPL-1.0 + MIT + PSF | 88.7 MB | 3rd-party |
-| `org.graalvm.python/python-resources` | `25.2.4` | UPL-1.0 + MIT + PSF | 13.8 MB | 3rd-party |
-| `org.graalvm.truffle/truffle-runtime` | `25.2.4` | UPL-1.0 | 914 KB | 3rd-party |
+| `org.graalvm.polyglot/polyglot` | `25.1.3` | UPL-1.0 | 502 KB | 3rd-party |
+| `org.graalvm.python/python-language` | `25.1.3` | UPL-1.0 + MIT + PSF | 88.7 MB | 3rd-party |
+| `org.graalvm.python/python-resources` | `25.1.3` | UPL-1.0 + MIT + PSF | 13.8 MB | 3rd-party |
+| `org.graalvm.truffle/truffle-runtime` | `25.1.3` | UPL-1.0 | 914 KB | 3rd-party |
 | `org.yamlstar/yamlstar` | `0.1.17` | MIT | 15 KB | 3rd-party |
 | `ring/ring-core` | `1.15.5` | MIT | 34 KB | 3rd-party |
 | `ring/ring-jetty-adapter` | `1.15.5` | MIT | 7 KB | 3rd-party |
@@ -228,10 +228,9 @@ _Terminal UI (Lanterna)._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `com.blockether/lanterna` | `3.1.5-vis.35` | LGPL-3.0 | 599 KB | Blockether (in-house) |
+| `com.blockether/lanterna` | `3.1.5-vis.39` | LGPL-3.0 | 536 KB | Blockether (in-house) |
 | `org.clojure/clojure` | `1.12.5` | EPL-1.0 | 4.0 MB | 3rd-party |
 | `org.jcodec/jcodec` | `0.2.5` | BSD | 2.0 MB | 3rd-party |
-| `org.jcodec/jcodec-javase` | `0.2.5` | BSD | 14 KB | 3rd-party |
 
 ### `vis-foundation-bridge` extension
 
@@ -318,7 +317,7 @@ under **Apache-2.0** — **with the copyleft exception(s) below that need legal 
 > relinking obligations. Action: confirm distribution terms with legal, or keep
 > the owning extension as an optional (droppable) jar rather than baking it into
 > the distributed binary (see §4.3).
-> **WARNING — `com.blockether/lanterna` (`3.1.5-vis.35`) is LGPL-3.0** (copyleft). LGPL is generally fine for dynamic
+> **WARNING — `com.blockether/lanterna` (`3.1.5-vis.38`) is LGPL-3.0** (copyleft). LGPL is generally fine for dynamic
 > linking, but **static linking into the GraalVM native image** can trigger
 > relinking obligations. Action: confirm distribution terms with legal, or keep
 > the owning extension as an optional (droppable) jar rather than baking it into
@@ -395,9 +394,9 @@ Heaviest direct artifacts (>= 1 MB):
 
 | Dependency | Version | Jar size |
 |---|---|---|
-| `org.graalvm.python/python-language` | `25.2.4` | 88.7 MB |
+| `org.graalvm.python/python-language` | `25.1.3` | 88.7 MB |
 | `com.microsoft.onnxruntime/onnxruntime` | `1.28.0` | 41.0 MB |
-| `org.graalvm.python/python-resources` | `25.2.4` | 13.8 MB |
+| `org.graalvm.python/python-resources` | `25.1.3` | 13.8 MB |
 | `org.xerial/sqlite-jdbc` | `3.53.2.1` | 11.4 MB |
 | `org.bouncycastle/bcprov-jdk18on` | `1.85` | 9.8 MB |
 | `com.litongjava/sherpa-onnx-java-api` | `1.0.1` | 7.7 MB |

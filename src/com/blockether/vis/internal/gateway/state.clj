@@ -526,7 +526,11 @@
    preference. Every turn submitted for `sid` routes through it (the engine
    reads it at turn start; `router-for-model` hoists the model, an unknown
    name degrades to the default order). Channel-agnostic: web + TUI + embedded
-   callers all set it here, persisted in the DB and shared across channels."
+   callers all set it here, persisted in the DB and shared across channels.
+
+   A changed manual preference also receives a small durable audit sidecar for
+   `session_usage`; the live `session.model_updated` event remains intentionally
+   non-replayable so old cursor events cannot overwrite a newer preference."
   [sid provider model]
   ;; `fresh-entry`, never a bare zero: an entry seeded at 0 restarts the seq
   ;; counter below a live client's cursor and silently kills its stream.
@@ -539,9 +543,16 @@
             (keyword? %) (name %)
             :else (not-empty (str %)))
 
-     result
-     (smodel/set-model! (lp/db-info) sid provider model)]
+     db
+     (lp/db-info)
 
+     before
+     (smodel/model-of db sid)
+
+     result
+     (smodel/set-model! db sid provider model)]
+
+    (smodel/record-switch! db sid before result :gateway)
     ;; BROADCAST the pick. The store is shared, but every attached channel keeps
     ;; its own display copy (the TUI footer chip, the web rail), and without an
     ;; event a change made in one channel stayed invisible in the others until
@@ -618,6 +629,31 @@
                             ;; colocated it stops every tab switch from recomputing). Cached
                             ;; per repo root, so repeated fetches never re-walk a warm root.
                             :git (git/workspace-status (:root ws))})))
+       (catch Throwable _ nil)))
+
+(defn session-usage-info
+  "Whole-session USAGE rollup for `sid` in THE canonical string-keyed wire shape
+   `{\"turn_count\" \"iteration_count\" \"tool_call_count\" \"fold_count\"
+   \"top_tools\" \"input_tokens\" \"input_regular_tokens\"
+   \"input_cache_write_tokens\" \"input_cache_read_tokens\" \"output_tokens\"
+   \"output_reasoning_tokens\" \"cache_hit_rate\" \"cost_usd\" \"duration_ms\"
+   \"first_turn_at\" \"last_turn_at\" \"provider\" \"model\"}`, or nil when the
+   session has no turns yet.
+
+   `cache_hit_rate` is derived HERE, once, so every channel reads the same
+   number instead of three clients each dividing differently: cached input over
+   TOTAL input (`input_tokens` is the total; the three detail columns are its
+   subsets). Never throws."
+  [sid]
+  (try (when-let [db (lp/db-info)]
+         (when-let [u (persistance/db-session-usage-stats db sid)]
+           (let
+             [input (long (or (:input-tokens u) 0))
+              cached (long (or (:input-cache-read-tokens u) 0))]
+
+             (wire/canonical (cond-> u
+                               (pos? input)
+                               (assoc :cache-hit-rate (double (/ cached input))))))))
        (catch Throwable _ nil)))
 
 (defn change-root!
@@ -1230,9 +1266,9 @@
   [sid tid]
   (when (and sid tid)
     (or (seq (wire/canonical (vec (get-in @registry [sid :turns tid :attachments]))))
-        (try (seq (wire/canonical
-                   (vec (get (persistance/db-list-turns-attachments (lp/db-info) [tid])
-                             (str tid)))))
+        (try (seq (wire/canonical (vec (get (persistance/db-list-turns-attachments (lp/db-info)
+                                                                                   [tid])
+                                            (str tid)))))
              (catch Throwable _ nil)))))
 
 (def ^:private persisted-status->wire
@@ -1502,7 +1538,9 @@
      ;; so ask the negative question: only a row the engine still has in flight
      ;; is withheld.
      in-flight?
-     (contains? in-flight-turn-statuses (some-> (:status turn) name))
+     (contains? in-flight-turn-statuses
+                (some-> (:status turn)
+                        name))
 
      meta-summary
      (when-not in-flight? (fmt/meta-summary-line meta-source))
@@ -1924,19 +1962,75 @@
     nil))
 
 (defonce ^:private turn-terminal-claims
-  ;; `[sid tid]` pairs whose ONE terminal landing has been claimed.
-  (java.util.concurrent.ConcurrentHashMap/newKeySet))
+  ;; `[sid tid]` -> the claim key of the RUN that owns that turn's one terminal
+  ;; landing. Deliberately not a plain set of `[sid tid]`: one tid can run more
+  ;; than once — a stalled or transiently-failed turn is put back on the queue
+  ;; under its ORIGINAL id by `re-queue-turn!` and drained again — and a set
+  ;; entry left behind by the previous run made EVERY terminal path of the retry
+  ;; a silent no-op. The session then stayed pinned to `:current-turn` forever:
+  ;; the worker could not land, the cancel hook could not land, the 30s backstop
+  ;; could not land, so a user cancel did nothing at all and the UI sat in
+  ;; "cancelling" for good.
+  (java.util.concurrent.ConcurrentHashMap.))
+
+(defn- turn-terminal-claim-key
+  "Identity of ONE run of a turn. Every launch mints a fresh cancellation token
+   (`drain-next-queued!`, `submit-turn!`), so the token's flag atom identifies
+   the run; a token-less turn falls back to a shared sentinel."
+  [cancel-token]
+  (or (cancellation/cancellation-atom cancel-token) ::untokened-turn))
+
+(defn- current-turn-run?
+  "True when `cancel-token` belongs to the turn's LIVE run. `re-queue-turn!` is
+   the only thing that drops a turn's `:cancel-token`, so a worker that thaws
+   after its run was re-queued fails this check and can no longer land a
+   terminal over the run that replaced it. A turn that is no longer in the
+   registry cannot pin a session, so it is treated as live."
+  [sid tid cancel-token]
+  (if-let [turn (get-in @registry [sid :turns tid])]
+    (= (turn-terminal-claim-key cancel-token) (turn-terminal-claim-key (:cancel-token turn)))
+    true))
 
 (defn- claim-turn-terminal!
-  "Claim the RIGHT to land `tid`'s terminal record + event. True exactly once.
+  "Claim the RIGHT to land `tid`'s terminal record + event. True exactly once
+   per RUN of the turn.
 
    Every path that finishes a turn (the worker's success and failure arms, the
    permit-denied cancel, the post-cancel backstop) goes through here, so a turn
    can never emit two terminals and — more importantly — a worker WEDGED between
    the engine unwinding and its terminal append can be overtaken: the backstop
-   lands the terminal, and if the worker ever thaws its landing is a no-op."
+   lands the terminal, and if the worker ever thaws its landing is a no-op.
+
+   A RETRY of the same tid is a NEW run and gets its own claim — the previous
+   run's key is CAS-replaced — because a stalled turn is re-queued under its
+   ORIGINAL id. Only the run that is current per the registry may take over."
+  [sid tid cancel-token]
+  (if-not (current-turn-run? sid tid cancel-token)
+    false
+    (let
+      [^java.util.concurrent.ConcurrentHashMap claims
+       turn-terminal-claims
+
+       k
+       [sid tid]
+
+       claim
+       (turn-terminal-claim-key cancel-token)
+
+       prev
+       (.putIfAbsent claims k claim)]
+
+      (cond (nil? prev) true
+            (= prev claim) false
+            :else (.replace claims k prev claim)))))
+
+(defn- release-turn-terminal-claim!
+  "Forget `tid`'s terminal claim. Called when a turn is put BACK on the queue for
+   a retry, so the retry starts from a clean slate and the spent token is not
+   retained."
   [sid tid]
-  (.add ^java.util.Set turn-terminal-claims [sid tid]))
+  (.remove ^java.util.concurrent.ConcurrentHashMap turn-terminal-claims [sid tid])
+  nil)
 
 (def ^:private CANCEL_TERMINAL_GRACE_MS
   "How long a cancelled turn's worker gets to land its OWN terminal before the
@@ -2173,7 +2267,7 @@
           :error (when failure-code failure-text)
           :completed_at (System/currentTimeMillis)}]
 
-        (when (claim-turn-terminal! sid tid)
+        (when (claim-turn-terminal! sid tid cancel-token)
           (finish-turn! sid tid patch)
           (record-metrics! sid result)
           (close-blocks! @open-blocks)
@@ -2250,7 +2344,7 @@
           (if user-cancel?
             (tel/log! :info ["gateway: turn cancelled by user" tid])
             (tel/log! :error ["gateway: turn worker failed" tid err]))
-          (when (claim-turn-terminal! sid tid)
+          (when (claim-turn-terminal! sid tid cancel-token)
             (finish-turn!
               sid
               tid
@@ -2298,7 +2392,7 @@
    Claims the turn's ONE terminal, so it is a no-op when the worker already
    landed (or is about to land) its own."
   [sid tid cancel-token]
-  (when (claim-turn-terminal! sid tid)
+  (when (claim-turn-terminal! sid tid cancel-token)
     (finish-turn!
       sid
       tid
@@ -2616,6 +2710,9 @@
    keeps its original front slot in `:turn-order`, so `next-drainable-turn`
    re-selects it ahead of the rest of the backlog. No-op when the turn is gone."
   [sid tid]
+  ;; The retry is a NEW run of this tid and must be able to land its own
+  ;; terminal; the previous run's claim would otherwise gag it forever.
+  (release-turn-terminal-claim! sid tid)
   (swap! registry update
     sid
     (fn [entry]
@@ -3720,53 +3817,90 @@
 
 (defn- session-summary-extras
   "Bulk summary decorations for `list-sessions`: per-session `turn_count` +
-   `modified_at` (ONE grouped `db-session-turn-stats` query for the whole
-   store) and a lean `workspace` map ({root repo_root label fork_ms}) — the
-   facts the TUI session picker previously fetched with TWO HTTP round-trips
-   PER session (109 sequential calls / ~7.5s at 54 sessions). Deliberately NO
-   git status here: that stays in the per-session `session-workspace-info`."
-  [souls]
-  (let
-    [db
-     (try (lp/db-info) (catch Throwable _ nil))
+   `modified_at` (from the ONE grouped `db-session-turn-stats` query `stats`
+   already holds for the whole store) and a lean `workspace` map
+   ({root repo_root label fork_ms is_draft}) — facts the TUI session picker
+   previously fetched with TWO HTTP round-trips PER session (109 sequential
+   calls / ~7.5s at 54 sessions). Deliberately NO git status here: that stays in
+   the per-session `session-workspace-info`.
 
-     stats
-     (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {})]
+   `db` and `stats` are passed IN because the caller has already paid for both:
+   this runs over a PAGE, and re-querying per page would put the whole-store
+   scan back on every window."
+  [souls db stats]
+  (mapv (fn [s]
+          (let
+            [st
+             (get stats (str (get s "id")))
 
-    (mapv (fn [s]
-            (let
-              [st
-               (get stats (str (get s "id")))
+             ws
+             (when db
+               (try (when-let [w (resolve-workspace db (get s "id"))]
+                      (wire/canonical {:root (:root w)
+                                       :repo-root (:repo-root w)
+                                       :label (:label w)
+                                       :fork-ms (:fork-ms w)
+                                       ;; A DRAFT is a per-session clone under
+                                       ;; ~/.vis/drafts/<repo>/<label>; without this flag a
+                                       ;; client cannot tell its `root` from a real project
+                                       ;; root and groups every draft as its own project.
+                                       ;; Clients group by `repo_root`, badge on `is_draft`.
+                                       :is-draft (boolean (workspace/draft? w))}))
+                    (catch Throwable _ nil)))]
 
-               ws
-               (when db
-                 (try (when-let [w (resolve-workspace db (get s "id"))]
-                        (wire/canonical {:root (:root w)
-                                         :repo-root (:repo-root w)
-                                         :label (:label w)
-                                         :fork-ms (:fork-ms w)}))
-                      (catch Throwable _ nil)))]
+            (cond-> (assoc s "turn_count" (long (or (:turn-count st) 0)))
+              (:latest-turn-at st)
+              (assoc "modified_at" (:latest-turn-at st))
 
-              (cond-> (assoc s "turn_count" (long (or (:turn-count st) 0)))
-                (:latest-turn-at st)
-                (assoc "modified_at" (:latest-turn-at st))
+              (session-opening-line (:first-request st))
+              (assoc "first_request" (session-opening-line (:first-request st)))
 
-                (session-opening-line (:first-request st))
-                (assoc "first_request" (session-opening-line (:first-request st)))
+              ws
+              (assoc "workspace" ws))))
+        souls))
 
-                ws
-                (assoc "workspace" ws))))
-          souls)))
+;; Times reach this namespace as ms longs, `Instant`s or legacy `java.util.Date`s
+;; depending on which store they came from; ordering must not care which.
+(defn- ->epoch-ms
+  ^long [value]
+  (cond (number? value) (long value)
+        (instance? java.time.Instant value) (.toEpochMilli ^java.time.Instant value)
+        (instance? java.util.Date value) (.getTime ^java.util.Date value)
+        :else 0))
 
 (defn- session-recency-ms
   [session]
-  (let
-    [value
-     (or (get session "modified_at") (get session "last_active_at") (get session "created_at"))]
-    (cond (number? value) (long value)
-          (instance? java.time.Instant value) (.toEpochMilli ^java.time.Instant value)
-          (instance? java.util.Date value) (.getTime ^java.util.Date value)
-          :else 0)))
+  (->epoch-ms (or (get session "modified_at")
+                  (get session "last_active_at")
+                  (get session "created_at"))))
+
+(defn- record-recency-ms
+  "`session-recency-ms` for an UNDECORATED session: the same three sources
+   (`latest-turn-at` from the grouped stats, the registry's `last-active`, the
+   record's `created-at`) that `soul` copies into `modified_at`/`last_active_at`/
+   `created_at`, read straight from the cheap facts."
+  ^long [record entry st]
+  (->epoch-ms (or (:latest-turn-at st) (:last-active entry) (:created-at record))))
+
+(defn- session-order
+  "Session ids for `channel` in navigator order, computed from CHEAP facts only:
+   the persisted record, the live registry and the one grouped turn-stats query.
+
+   It deliberately does NOT touch `soul` or workspace resolution. That
+   per-session decoration is where a listing's time actually goes (measured on a
+   448-session store: 120ms of `soul` + 40ms of workspace lookups inside a 257ms
+   build), so ordering FIRST is the whole reason a page can pay for its own rows
+   instead of the fleet's. Same key as `order-session-summaries`, from the same
+   sources, so the cut is the one a fully decorated sort would have made."
+  [channel stats]
+  (->> (lp/by-channel channel)
+       (sort-by (fn [record]
+                  (let [id (:id record)
+                        entry (get @registry id)]
+                    [(if (:current-turn entry) 0 1)
+                     (unchecked-negate (record-recency-ms record entry (get stats (str id))))
+                     (str id)])))
+       (mapv :id)))
 
 (defn- order-session-summaries
   "Gateway-owned navigator order: live sessions first, then most recently
@@ -3779,10 +3913,70 @@
                    (str (get session "id"))]))
        vec))
 
+(defn list-sessions-page
+  "A WINDOW of `list-sessions`, in the same gateway-owned navigator order:
+   `{:sessions rows :total n :offset o :limit l :order-digest s :has-more bool}`.
+
+   `nil` limit means \"the rest\", so `(list-sessions-page channel nil)` is the
+   whole fleet and older callers keep their full list.
+
+   The window is cut BEFORE decoration: `session-order` ranks every session from
+   cheap facts, and only the ids that survive the cut pay for `soul` + workspace
+   resolution. A 100-row page of a 448-session store therefore costs about a
+   fifth of the full build (~257ms) and a fifth of its ~300KB, which is what
+   makes a polled session list affordable."
+  ([opts] (list-sessions-page :all opts))
+  ([channel {:keys [limit offset]}]
+   (let
+     [db
+      (try (lp/db-info) (catch Throwable _ nil))
+
+      ;; ONE grouped query serves BOTH the ordering and the page's decorations.
+      stats
+      (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {})
+
+      ordered
+      (session-order channel stats)
+
+      total
+      (count ordered)
+
+      ;; Digest of the ORDERING this window was cut from. Offsets index a list that
+      ;; is RECOMPUTED per request — a session starting a turn jumps into the live
+      ;; bucket at the top and shifts every window below it — so a client paging
+      ;; across such a change merges one row twice (duplicate id) and skips another
+      ;; entirely (a session silently missing from the list), with the merged count
+      ;; still equal to `total` so nothing looks wrong. Stamping the ordering makes
+      ;; that DETECTABLE with no server-side cursor state: two windows carrying
+      ;; different digests were cut from different fleets, and the client re-walks.
+      order-digest
+      (Integer/toUnsignedString (int (hash ordered)) 16)
+
+      from
+      (min total (max 0 (long (or offset 0))))
+
+      window
+      (if (some? limit)
+        (subvec ordered from (min total (+ from (max 0 (long limit)))))
+        (subvec ordered from))
+
+      rows
+      (-> (into [] (keep soul) window)
+          (session-summary-extras db stats)
+          order-session-summaries)]
+
+     {:sessions rows
+      :total total
+      :offset from
+      :limit (some-> limit long)
+      :order-digest order-digest
+      :has-more (< (+ from (count window)) total)})))
+
 (defn list-sessions
   "Wire souls for every persisted session, each decorated with the bulk
    summary facts (`turn_count`, `modified_at`, lean `workspace`) so ONE
-   `GET /v1/sessions` is enough to paint a session picker.
+   `GET /v1/sessions` is enough to paint a session picker. Unwindowed —
+   `list-sessions-page` serves clients that page.
 
    The gateway owns navigator ordering: live sessions first, followed by idle
    sessions in most-recently-active order. Clients must preserve this order.
@@ -3792,12 +3986,7 @@
    channel keyword only when a caller genuinely needs a single-channel
    slice (e.g. resolving a chat by external-id)."
   ([] (list-sessions :all))
-  ([channel]
-   (->> (lp/by-channel channel)
-        (keep (comp soul :id))
-        vec
-        session-summary-extras
-        order-session-summaries)))
+  ([channel] (:sessions (list-sessions-page channel nil))))
 
 (defn search-session-ids
   "Soul-id STRINGS whose TRANSCRIPT (user request + assistant iteration text)

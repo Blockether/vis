@@ -6,7 +6,6 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.process-jail :as process-jail]
-            [com.blockether.vis.internal.foundation.serial-batch :as batch]
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.workspace :as workspace]
@@ -18,9 +17,10 @@
 (def ^:private shell-run* @#'shell/shell-run-impl)
 
 (defn- shell-bg*
-  "Background impl with the options map optional — most cases need no cwd/opts."
+  "Background impl with the options map optional — most cases need no cwd/opts.
+  `cmd` is the ONE-COMMAND SPELLING of the batch, exactly as dispatch admits it."
   ([env id cmd] (shell-bg* env id cmd nil))
-  ([env id cmd opts] (@#'shell/shell-bg-impl env id cmd opts)))
+  ([env id cmd opts] (@#'shell/shell-bg-impl env id [cmd] opts)))
 
 (def ^:private shell-logs* @#'shell/shell-logs-impl)
 
@@ -61,17 +61,10 @@
              (>= i tries) (throw (ex-info "poll exhausted" {:last v}))
              :else (do (Thread/sleep 100) (recur (inc i))))))))
 
-(defdescribe shell-gate-test
-             (it "the before-fn injects env as the impl's first arg (no toggle gate)"
-                 (let
-                   [gate
-                    (@#'shell/shell-gate-before-fn :shell/run)
-
-                    out
-                    (gate {:session-id "t"} identity ["echo hi"])]
-
-                   (expect (not (contains? out :result)))
-                   (expect (= [{:session-id "t"} "echo hi"] (:args out)))))
+(defdescribe shell-env-injection-test
+             (it "uses declarative env injection rather than a before middleware shim"
+                 (expect (true? (:ext.symbol/inject-env? shell/shell-symbol)))
+                 (expect (nil? (:ext.symbol/before-fn shell/shell-symbol))))
              (it "a failing or nil session policy denies spawn instead of failing open"
                  (binding [workspace/*workspace-root* (workspace/trunk-root)]
                    (expect (threw? #(shell-run* {:session-id "t"
@@ -83,9 +76,8 @@
              (it "sandbox false is represented explicitly and still launches unwrapped"
                  (binding [workspace/*workspace-root* (workspace/trunk-root)]
                    (let
-                     [r (:result (shell-run* {:session-id "t"
-                                              :jail-policy-fn (constantly {:disabled? true})}
-                                             "printf explicit-opt-out"))]
+                     [r (shell-run* {:session-id "t" :jail-policy-fn (constantly {:disabled? true})}
+                                    "printf explicit-opt-out")]
                      (expect (= 0 (get r "exit")))
                      (expect (= "explicit-opt-out" (get r "stdout")))))))
 
@@ -95,21 +87,18 @@
       (with-shell-on
         (fn []
           (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let [r (:result (shell-run* {} "echo out; echo err 1>&2; exit 3"))]
+            (let [r (shell-run* {} "echo out; echo err 1>&2; exit 3")]
               (expect (= "out\n" (get r "stdout")))
               (expect (= "err\n" (get r "stderr")))
               (expect (= 3 (get r "exit")))
               (expect (number? (get r "duration_ms")))
-              ;; TOTAL contract: nothing is dropped for carrying no
-              ;; signal, so model Python indexes any field directly.
-              ;; ONE tool: `stage` names the op that produced the result, and the
-              ;; background-only keys ride along nil rather than vanishing. (`op` is
-              ;; the boundary-stamped tool origin, always "shell" — never the stage.)
-              (expect (= "run" (get r "stage")))
-              (expect (nil? (get r "id")))
-              (expect (contains? r "pid"))
-              (expect (= [] (get r "lines")))
-              (expect (false? (get r "stopped")))
+              ;; TOTAL entry contract: every command-result key is present, so model
+              ;; Python indexes any field directly and never branches on which shape
+              ;; came back. The command's own line/output/exit live HERE (not on the
+              ;; envelope); `stage`/`id`/`pid`/`lines`/`stopped` are tool-level keys the
+              ;; `shell-result` envelope adds around the batch, never on a command entry.
+              (expect (true? (get r "started")))
+              (expect (false? (get r "timed_out")))
               (expect (false? (get r "timed_out")))
               (expect (= 120 (get r "timeout_secs")))
               (expect (false? (get r "stdout_truncated")))
@@ -120,52 +109,54 @@
   (it "always carries a TOTAL stderr/exit (empty stderr is \"\", not a missing key) and a real cwd"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         (let [r (:result (shell-run* {} "echo only-out"))]
+                         (let [r (shell-run* {} "echo only-out")]
                            (expect (= "only-out\n" (get r "stdout")))
                            ;; TOTAL shape: model Python indexes r["stderr"]/r["exit"]
                            ;; directly — a missing key used to KeyError and spin.
                            (expect (= "" (get r "stderr")))
                            (expect (contains? r "stderr"))
                            (expect (= 0 (get r "exit"))))
-                         (let [r (:result (shell-run* {} "pwd" {"cwd" "src"}))]
+                         (let [r (shell-run* {} "pwd" {"cwd" "src"})]
                            (expect (string? (get r "cwd")))
                            (expect (str/ends-with? (get r "cwd") "/src")))))))
-  (it "treats a non-zero exit as a SUCCESS envelope (data, not a tool error)"
+  (it "treats a non-zero exit as DATA on the command's own entry (not a tool error)"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         (let [env (shell-run* {} "exit 42")]
-                           (expect (extension/envelope-success? env))
-                           (expect (= 42 (get (:result env) "exit"))))))))
+                         ;; shell-run-impl answers the command's own entry, never a tool
+                         ;; envelope: a non-zero exit is data ON THAT ENTRY, so a model
+                         ;; reading its stdout/stderr/exit never branches on shape.
+                         (let [r (shell-run* {} "exit 42")]
+                           (expect (= 42 (get r "exit")))
+                           (expect (true? (get r "started"))))))))
   (it "kills the process tree on timeout and reports timed_out with nil exit"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
                          (let
                            [t0 (System/currentTimeMillis)
-                            r (:result (shell-run* {} "sleep 30" {"timeout_secs" 1}))
+                            r (shell-run* {} "sleep 30" {"timeout_secs" 1})
                             dt (- (System/currentTimeMillis) t0)]
 
                            (expect (true? (get r "timed_out")))
                            (expect (nil? (get r "exit")))
                            (expect (< dt 15000)))))))
   (it "keeps BOTH the head and the tail of huge output, dropping only the middle"
-      (with-shell-on
-        (fn []
-          (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            ;; ~72k chars of stdout — far over the head+tail budget.
-            (let
-              [r (:result (shell-run* {}
-                                      (str "echo HEAD_MARKER; " "for i in $(seq 1 2000); do "
-                                           "echo 'filler-filler-filler-filler-filler'; done; "
-                                           "echo TAIL_MARKER")))
-               out (get r "stdout")]
+      (with-shell-on (fn []
+                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                         ;; ~72k chars of stdout — far over the head+tail budget.
+                         (let
+                           [r (shell-run* {}
+                                          (str "echo HEAD_MARKER; " "for i in $(seq 1 2000); do "
+                                               "echo 'filler-filler-filler-filler'; done; "
+                                               "echo TAIL_MARKER"))
+                            out (get r "stdout")]
 
-              (expect (true? (get r "stdout_truncated")))
-              ;; the opening line is NO LONGER swallowed (the old tail-only cap ate it)
-              (expect (str/includes? out "HEAD_MARKER"))
-              ;; the closing summary still survives
-              (expect (str/includes? out "TAIL_MARKER"))
-              ;; and the drop is made visible, not silent
-              (expect (str/includes? out "chars omitted")))))))
+                           (expect (true? (get r "stdout_truncated")))
+                           ;; the opening line is NO LONGER swallowed (the old tail-only cap ate it)
+                           (expect (str/includes? out "HEAD_MARKER"))
+                           ;; the closing summary still survives
+                           (expect (str/includes? out "TAIL_MARKER"))
+                           ;; and the drop is made visible, not silent
+                           (expect (str/includes? out "chars omitted")))))))
   (it "honors a timeout above the 120s default (up to the 600s cap)"
       ;; :timeout_secs only ships on a TIMED-OUT result now, so the clamp is
       ;; asserted on the helper directly instead of burning wall-clock.
@@ -177,7 +168,7 @@
   (it "surfaces timeout_secs alongside timed_out on the timeout path"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         (let [r (:result (shell-run* {} "sleep 30" {"timeout_secs" 1}))]
+                         (let [r (shell-run* {} "sleep 30" {"timeout_secs" 1})]
                            (expect (true? (get r "timed_out")))
                            (expect (= 1 (get r "timeout_secs")))
                            ;; "exit" stays PRESENT and nil (Python None) on timeout.
@@ -211,7 +202,7 @@
                 workspace/*filesystem-roots*
                 nil]
 
-               (let [r (:result (shell-run* env "pwd" {"cwd" "../svar"}))]
+               (let [r (shell-run* env "pwd" {"cwd" "../svar"})]
                  (expect (= (.getCanonicalPath sibling) (str/trim (get r "stdout"))))
                  (expect (= (.getCanonicalPath sibling) (get r "cwd")))))
              (finally (io/delete-file sibling true)
@@ -232,7 +223,7 @@
            workspace/*filesystem-roots*
            nil]
 
-          (let [r (:result (shell-run* env "pwd" {"cwd" home}))]
+          (let [r (shell-run* env "pwd" {"cwd" home})]
             (expect (= home (str/trim (get r "stdout"))))
             (expect (= home (get r "cwd")))))))
   (it "accepts the HOME-relative paths advertised in session access"
@@ -251,7 +242,7 @@
            nil]
 
           ;; `cwd` is the ONLY spelling — `~` expands against the home root.
-          (let [r (:result (shell-run* env "pwd" {"cwd" "~"}))]
+          (let [r (shell-run* env "pwd" {"cwd" "~"})]
             (expect (= home (str/trim (get r "stdout"))))
             (expect (= home (get r "cwd")))))))
   (it "accepts an ABSOLUTE cwd that lands inside a workspace root"
@@ -259,7 +250,8 @@
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
                          (let
                            [abs (.getCanonicalPath (java.io.File. (str (workspace/cwd))))
-                            r (:result (shell-run* {} "pwd" {"cwd" abs}))]
+                            r (shell-run* {} "pwd" {"cwd" abs})]
+
                            (expect (string? (get r "cwd")))
                            (expect (= abs (get r "cwd"))))
                          ;; an absolute path OUTSIDE every root is still rejected
@@ -267,8 +259,8 @@
   (it "accepts a float timeout but rejects a non-numeric one with a typed error"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         (expect (extension/envelope-success?
-                                   (shell-run* {} "true" {"timeout_secs" 1.0})))
+                         ;; a float timeout is accepted and the entry runs clean
+                         (expect (= 0 (get (shell-run* {} "true" {"timeout_secs" 1.0}) "exit")))
                          (let
                            [thrown (try (shell-run* {} "true" {"timeout_secs" "30"})
                                         nil
@@ -377,7 +369,7 @@
                      ;; TOTAL contract: every op of the ONE shell tool returns the
                      ;; identity keys, with `stage` naming the op that ran.
                      (expect (= "logs" (get r "stage")))
-                     (expect (= "sleep 60" (get r "cmd")))
+                     (expect (= "sleep 60" (first (map #(get % "cmd") (get r "commands")))))
                      (expect (contains? r "pid"))
                      (expect (contains? r "attach"))
                      (expect (contains? r "socket"))
@@ -389,22 +381,22 @@
                      (expect (nil? (get r "exit"))))
                    (finally (resources/stop-all! sid))))))))
   (it "honors the bg op's cwd and reports it on every stage of that shell"
-      (with-shell-on
-        (fn []
-          (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let
-              [sid "shell-ext-bg-cwd"
-               env {:session-id sid}]
+      (with-shell-on (fn []
+                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                         (let
+                           [sid "shell-ext-bg-cwd"
+                            env {:session-id sid}]
 
-              (try (let [b (:result (shell-bg* env "c" "pwd; sleep 60" {"cwd" "src"}))]
-                     ;; The schema advertises `cwd` for run AND bg; a bg that silently
-                     (poll #(get (:result (shell-logs* env "c")) "lines")
-                           #(str/includes? (str/join "\n" %) "/src")
-                           20)
-                     (let [r (:result (shell-logs* env "c"))]
-                       (expect (= (get b "cwd") (get r "cwd")))
-                       (expect (str/includes? (str/join "\n" (get r "lines")) "/src"))))
-                   (finally (resources/stop-all! sid))))))))
+                           (try (let [b (:result (shell-bg* env "c" "pwd; sleep 60" {"cwd" "src"}))]
+                                  ;; The schema advertises `cwd` for run AND bg; a bg that silently
+                                  (poll #(get (:result (shell-logs* env "c")) "lines")
+                                        #(str/includes? (str/join "\n" %) "/src")
+                                        20)
+                                  (let [r (:result (shell-logs* env "c"))]
+                                    (expect (= (get b "cwd") (get r "cwd")))
+                                    (expect (str/includes? (str/join "\n" (get r "lines"))
+                                                           "/src"))))
+                                (finally (resources/stop-all! sid))))))))
   (it "stops promptly even when the command double-forks a detached daemon"
       (with-shell-on
         (fn []
@@ -466,99 +458,48 @@
 
 (defdescribe
   shell-bg-lifecycle-op-test
-  (it
-    "drives start -> logs -> send -> stop through ONE tool with id in the map"
-    (with-shell-on
-      (fn []
-        (binding [workspace/*workspace-root* (workspace/trunk-root)]
-          (let
-            [sid "shell-ext-ops"
-             env {:session-id sid}]
-
-            (try (let
-                   [start (:result (shell* env
-                                           "read x; echo GOT:$x; sleep 30"
-                                           {"op" "background" "id" "ops"}))]
-                   (expect (= "running" (get start "status")))
-                   (expect (false? (get start "already_running"))))
-                 (let
-                   [logs (:result (poll #(shell* env {"op" "logs" "id" "ops" "n" 5})
-                                        (fn [_]
-                                          true)))]
-                   (expect (= "running" (get logs "status"))))
-                 ;; The keystrokes ride the SAME one positional as a command:
-                 ;; there is no `text` option to say the payload a second way.
-                 (let [sent (:result (shell* env "hello" {"op" "send" "id" "ops"}))]
-                   (expect (= 6 (get sent "sent"))))
-                 ;; An EMPTY payload is the commonest keystroke of all - a bare
-                 ;; Enter - not a missing argument.
-                 (let [nl (:result (shell* env "" {"op" "send" "id" "ops"}))]
-                   (expect (= 1 (get nl "sent")))
-                   (expect (= "\n" (get nl "text"))))
-                 ;; Only "type nothing at all" is an error.
-                 (expect (threw? #(shell* env "" {"op" "send" "id" "ops" "enter" false})))
-                 ;; The retired second carrier is unrepresentable, not merely
-                 ;; discouraged: a `text` option is refused outright.
-                 (expect (threw? #(shell* env {"op" "send" "id" "ops" "text" "y"})))
-                 (expect (threw? #(shell* env "y" {"op" "send" "id" "ops" "text" "y"})))
-                 ;; Keystrokes are NOT trimmed like a command line: a bare control
-                 ;; character (Esc) is delivered as its single byte.
-                 (let [ctrl (:result (shell* env "\u001b" {"op" "send" "id" "ops" "enter" false}))]
-                   (expect (= 1 (get ctrl "sent"))))
-                 (let
-                   [logs (poll #(:result (shell* env {"op" "logs" "id" "ops"}))
-                               #(some (fn [line]
-                                        (str/includes? line "GOT:hello"))
-                                      (get % "lines")))]
-                   (expect (some (fn [line]
-                                   (str/includes? line "GOT:hello"))
-                                 (get logs "lines"))))
-                 ;; Stop uses the same id field and the same registry path as
-                 ;; resource_stop, so the resource really disappears.
-                 (let [stop (:result (shell* env {"op" "stop" "id" "ops"}))]
-                   (expect (= "stopped" (get stop "status")))
-                   (expect (true? (get stop "stopped")))
-                   (expect (empty? (resources/list-resources sid)))
-                   (expect (threw? #(shell* env {"op" "logs" "id" "ops"}))))
-                 (finally (resources/stop-all! sid))))))))
-  (it "makes an id mean background and rejects the retired bg abbreviation"
+  (it "drives start -> logs -> send -> stop through one options map"
       (with-shell-on
         (fn []
           (binding [workspace/*workspace-root* (workspace/trunk-root)]
             (let
-              [sid "shell-ext-ops-args"
+              [sid "shell-ext-ops"
                env {:session-id sid}]
 
-              (try
-                (expect (= "running" (get (:result (shell* env "sleep 30" {"id" "a"})) "status")))
-                ;; The full operation name is allowed but never required: the id is
-                ;; what makes a shell background.
-                (expect (= "running"
-                           (get (:result (shell* env "sleep 30" {"op" "background" "id" "b"}))
-                                "status")))
-                (let
-                  [msg
-                   (try (shell* env "unused" {"op" "bg"}) nil (catch Throwable t (ex-message t)))]
-                  (expect (str/includes? msg "Unknown shell op"))
-                  (expect (str/includes? msg "\"background\"")))
-                (finally (resources/stop-all! sid))))))))
-  (it "stopping an id that was never started is a typed error, not a silent no-op"
-      (expect (threw? #(shell* {:session-id "shell-ext-ops-none"} {"op" "stop" "id" "ghost"})))))
+              (try (let
+                     [start (:result (shell* env
+                                             {"commands" ["read x; echo GOT:$x; sleep 30"]
+                                              "op" "background"
+                                              "id" "ops"}))]
+                     (expect (= "running" (get start "status"))))
+                   (let [logs (:result (shell* env {"op" "logs" "id" "ops" "n" 5}))]
+                     (expect (= "logs" (get logs "stage"))))
+                   (let [sent (:result (shell* env {"op" "send" "id" "ops" "text" "hello"}))]
+                     (expect (= 6 (get sent "sent"))))
+                   (let [stop (:result (shell* env {"op" "stop" "id" "ops"}))]
+                     (expect (= "stopped" (get stop "status"))))
+                   (finally (resources/stop-all! sid)))))))))
 
 (defdescribe shell-argument-contract-test
-             "Commands are positional. Resource ids live only in the options map."
-             (it "rejects a cmd key in the options map"
-                 (expect (threw? #(shell* {} {"cmd" "echo wrong"})))
-                 (expect (threw? #(shell* {} "echo right" {"cmd" "echo wrong"}))))
-             (it "rejects a lifecycle id passed positionally"
-                 (expect (threw?
-                           #(shell* {:session-id "shell-positional-id"} "ghost" {"op" "logs"}))))
-             (it "runs a command from the one canonical positional slot"
+             "Every public shell call is one map; process lines are its commands array."
+             (it "runs from commands and rejects positional or legacy carriers"
                  (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                   (let [r (:result (shell* {} "echo positional"))]
+                   (let
+                     [r (:result (shell* {} {"commands" ["echo mapped"]}))
+                      one (first (get r "commands"))]
+
                      (expect (= "run" (get r "stage")))
-                     (expect (= "echo positional" (get r "cmd")))
-                     (expect (= "positional\n" (get r "stdout")))))))
+                     (expect (= "echo mapped" (get one "cmd")))
+                     (expect (= "mapped\n" (get one "stdout"))))
+                   (expect (threw? #(shell* {} "echo positional")))
+                   (expect (threw? #(shell* {} ["echo positional"])))
+                   (expect (threw? #(shell* {} {"cmd" "echo legacy"})))
+                   (expect (threw? #(shell* {} {"text" "echo wrong"})))))
+             (it "uses text only inside the send map"
+                 (expect (threw?
+                           #(shell* {:session-id "shell-positional-id"} "ghost" {"op" "logs"})))
+                 (expect (threw? #(shell* {:session-id "shell-positional-id"}
+                                          {"op" "send" "id" "ghost" "commands" ["nope"]})))))
 
 (defdescribe
   shell-render-test
@@ -620,7 +561,7 @@
       (let
         [bg
          (render-shell-bg-result {"id" "srv"
-                                  "cmd" "npm run dev"
+                                  "commands" [{"cmd" "npm run dev" "started" true}]
                                   "pid" 123
                                   "status" "running"
                                   "attach" "vis extension shell attach srv"})
@@ -660,131 +601,39 @@
         (expect (= "↵ `ops` sent 0 chars"
                    (:summary (render-shell-send-result {"id" "ops" "sent" 0})))))))
 
-(defdescribe
-  shell-batch-test
-  ;; A batch is `commands`, spelled and shaped exactly as `git` spells it; the
-  ;; positional stays ONE command line, so nothing is disambiguated by type.
-  (it "runs commands strictly in input order, retaining each result after a failure"
-      (binding [workspace/*workspace-root* (workspace/trunk-root)]
-        (let
-          [env (shell* {} {"commands" ["printf first; exit 3" "printf second"]})
-           results (get-in env [:result "commands"])]
-
-          (expect (extension/envelope-success? env))
-          (expect (= ["first" "second"] (mapv #(str/trim (get % "stdout")) results)))
-          (expect (= [true true] (mapv #(get % "started") results)))
-          (expect (= [3 0] (mapv #(get % "exit") results)))
-          (expect (= ["run" "run"] (mapv #(get % "stage") results))))))
-  (it "retains a not-started result at every input position after a launch failure"
-      (binding [workspace/*workspace-root* (workspace/trunk-root)]
-        (let
-          [results (get-in (shell* {} {"commands" ["printf first" "printf second"]
-                                       "cwd" "does-not-exist"})
-                           [:result "commands"])]
-          (expect (= ["printf first" "printf second"] (mapv #(get % "cmd") results)))
-          (expect (= [false false] (mapv #(get % "started") results)))
-          (expect (= ["not started" "not started"] (mapv #(get % "status") results)))
-          (expect (every? #(seq (get % "note")) results)))))
-  (it "waits for each command to complete before starting the next"
-      (binding [workspace/*workspace-root* (workspace/trunk-root)]
-        (let
-          [marker (str "/tmp/vis-shell-batch-" (java.util.UUID/randomUUID))
-           env (shell* {}
-                       {"commands" [(str "sleep 0.15; touch " marker) (str "test -f " marker)
-                                    (str "rm -f " marker)]})]
-
-          (expect (= [0 0 0] (mapv #(get % "exit") (get-in env [:result "commands"])))))))
-  (it "keeps the two carriers apart \u2014 a command is never spelled twice"
-      ;; The conflict that broke real calls stays impossible: the positional is
-      ;; ONE line, `commands` is the batch, and no call may carry both.
-      (expect (threw? #(shell* {} ["printf skipped" "printf also-skipped"])))
-      (expect (threw? #(shell* {} "printf skipped" {"commands" ["printf also-skipped"]})))
-      (expect (threw? #(shell* {} {"cmd" "printf skipped"}))))
-  (it "treats schema-filled blank options as absent instead of a conflict"
-      ;; A native caller that fills EVERY schema property sends id "" and op ""
-      ;; next to the real command; blank is absent, and options a plain run
-      ;; ignores (n, text, enter) must not fail a batch either.
-      (binding [workspace/*workspace-root* (workspace/trunk-root)]
-        (let
-          [env (shell* {}
-                       {"commands" ["printf first" "printf second"]
-                        "id" "" "op" "run" "n" 200 "is_enter" true})]
-          (expect (extension/envelope-success? env))
-          (expect (= ["first" "second"]
-                     (mapv #(str/trim (get % "stdout")) (get-in env [:result "commands"])))))))
-  (it "still runs a lone positional command next to every empty option"
-      (binding [workspace/*workspace-root* (workspace/trunk-root)]
-        (let
-          [env (shell* {} "printf lone" {"id" "" "op" "" "cwd" "" "text" "" "n" 200 "is_enter" true})]
-          (expect (extension/envelope-success? env))
-          (expect (nil? (get-in env [:result "commands"])))
-          (expect (= "lone" (str/trim (get-in env [:result "stdout"])))))))
-  (it "still refuses a batch that names a stage which cannot run one"
-      ;; `run` and `background` are the two stages a group has meaning for;
-      ;; logs/send/stop address an EXISTING resource by id.
-      (expect (threw? #(shell* {} {"commands" ["printf skipped"] "op" "logs"})))
-      (expect (threw? #(shell* {} {"commands" ["printf skipped"] "op" "send" "id" "srv"})))
-      (expect (threw? #(shell* {} {"commands" ["printf skipped"] "op" "stop" "id" "srv"}))))
-  (it "rejects an empty or unordered command collection before spawning"
-      (expect (threw? #(shell* {} {"commands" []})))
-      (expect (threw? #(shell* {} {"commands" #{"printf first" "printf second"}})))))
+(defdescribe shell-batch-test
+             (it "runs the commands array in order and returns one entry per line"
+                 (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                   (let [r (:result (shell* {} {"commands" ["printf first" "printf second"]}))]
+                     (expect (= ["first" "second"]
+                                (mapv #(str/trim (get % "stdout")) (get r "commands")))))))
+             (it "rejects missing, blank, and non-map process requests"
+                 (expect (threw? #(shell* {} {})))
+                 (expect (threw? #(shell* {} {"commands" []})))
+                 (expect (threw? #(shell* {} {"commands" [""]})))
+                 (expect (threw? #(shell* {} ["printf first"])))))
 
 (defdescribe
   shell-native-contract-test
-  (it "advertises exactly ONE native shell tool covering the whole lifecycle"
-      ;; Four names (shell_run / shell_bg / shell_logs / shell_send) for ONE
-      ;; subsystem meant four call shapes, four result shapes and four
-      ;; description budgets for what is a single process lifecycle. The op
-      ;; grammar tells that story once, under one name.
+  (it "advertises exactly one native shell tool covering the lifecycle"
       (expect (= ["shell"]
-                 (->> shell/shell-symbols
-                      (filter :ext.symbol/native-tool?)
-                      (mapv :ext.symbol/name))))
+                 (mapv :ext.symbol/name (filter :ext.symbol/native-tool? shell/shell-symbols))))
       (expect (= 1 (count shell/shell-symbols))))
-  (it "tells the whole lifecycle in ONE compact native description"
-      (let [d (:ext.symbol/description shell/shell-symbol)]
-        (expect (str/includes? d "THE one shell tool"))
-        (expect (str/includes? d "PREFER background"))
-        (expect (str/includes? d "Reserve run for one short command"))
-        (expect (str/includes? d "strictly ordered batch"))
-        (expect (str/includes? d "\"stop\" kills it"))
-        ;; Native JSON carries `cmd`; the Python positional-vs-options-map
-        ;; distinction belongs on the parameters it actually governs.
-        (expect (str/includes? (get-in shell/shell-symbol
-                                       [:ext.symbol/schema :properties "cmd" :description])
-                               "first positional argument"))
-        (expect (str/includes? (get-in shell/shell-symbol
-                                       [:ext.symbol/schema :properties "id" :description])
-                               "options map"))
-        (expect (str/includes? d "session[\"resources\"]"))
-        ;; the truncation warning is the exact gap that let a truncated
-        ;; stdout reach json.loads and read as a tool bug
-        (expect (str/includes? d "stdout_truncated"))
-        ;; one description for five ops still costs less than the four it
-        ;; replaces — but it must not sprawl
-        (expect (< (count d) 1200))))
-  (it "puts every op in the schema, where the model cannot miss it"
-      (let [props (get-in shell/shell-symbol [:ext.symbol/schema :properties])]
-        (expect (= ["run" "background" "logs" "send" "stop"] (get-in props ["op" :enum])))
-        (expect (every? #(contains? props %) ["cmd" "op" "id" "timeout_secs" "cwd" "n" "is_enter"]))
-        ;; The working directory is `cwd`, as in every other tool and as in
-        ;; Python itself; the retired `dir` is neither advertised nor honoured.
-        (expect (not (contains? props "dir")))
-        ;; TWO carriers, no overlap: one command line as the positional `cmd`,
-        ;; the ordered batch as `commands` — git's own key and shape. A `text`
-        ;; property would be a THIRD way to say the same thing.
+  (it "documents and schemas the one-map commands grammar"
+      (let
+        [d
+         (:ext.symbol/description shell/shell-symbol)
+
+         props
+         (get-in shell/shell-symbol [:ext.symbol/schema :properties])]
+
+        (expect (str/includes? d "EVERY call takes one options map"))
+        (expect (str/includes? d "Never pass a command string or an array"))
         (expect (contains? props "commands"))
-        (expect (not (contains? props "text")))
-        ;; the common bounded run keeps its bare one-positional shape
-        (expect (= {:opt-pos ["cmd"] :rest :opt} (:ext.symbol/call shell/shell-symbol)))
-        ;; the positional is a plain string — no string-or-array to disambiguate
-        (expect (= "string" (get-in props ["cmd" :type])))
-        (expect (nil? (get-in props ["cmd" :oneOf])))
-        ;; and the batch is exactly the shape git advertises
-        (expect (= (dissoc (batch/commands-property {:items {:type "string" :minLength 1}
-                                                     :description "x"})
-                           :description)
-                   (dissoc (get props "commands") :description)))))
+        (expect (contains? props "text"))
+        (expect (not (contains? props "cmd")))
+        (expect (= ["run" "background" "logs" "send" "stop"] (get-in props ["op" :enum])))
+        (expect (= "array" (get-in props ["commands" :type])))))
   (it "closes every native shell input schema"
       (doseq [s shell/shell-symbols]
         (expect (false? (get-in s [:ext.symbol/schema :additionalProperties]))))))
@@ -873,14 +722,12 @@
 
 (defdescribe
   python-sandbox-surface-test
-  "ONE bare `shell` global (never separate shell lifecycle globals), the whole op
-   grammar reachable through it from Python, a real `doc('shell')`, and the
-   `shell` toggle actually removing the binding when it is off."
-  (it "binds exactly ONE shell symbol into the sandbox globals, with a doc"
+  "The bare Python global has only the one-map shell grammar."
+  (it "binds exactly one shell symbol into sandbox globals, with a doc"
       (let [bind (extension/builtin-sandbox-bindings (constantly nil))]
         (expect (= ['shell] (sort (filter #(str/includes? (name %) "shell") (keys bind)))))
         (expect (contains? (extension/sandbox-symbol-docs) 'shell))))
-  (it "documents awaited calls, the background preference, and one canonical op name"
+  (it "documents map calls and rejects positional commands"
       (let
         [source-doc
          (:doc (meta #'shell/shell))
@@ -888,52 +735,36 @@
          d
          (str (py (py-ctx {}) "doc('shell')"))]
 
-        (expect (= 9 (count (re-seq #"shell\(" source-doc))))
-        (expect (= (count (re-seq #"shell\(" source-doc))
-                   (count (re-seq #"await shell\(" source-doc))))
-        (expect (not (str/includes? source-doc "shell({\"cmd\"")))
-        (expect (not (str/includes? source-doc "\"op\": \"bg\"")))
-        (expect (str/includes? source-doc "PREFER it for commands that may take a while"))
-        (expect (str/includes? d "first positional argument"))
-        (expect (str/includes? d "stays in the options map"))
-        (expect (str/includes? d "PREFER background"))
-        (expect (str/includes? d "await `shell`"))))
-  (it "runs a command through the bare `shell` global and answers the TOTAL map"
-      (let [c (py-ctx {})]
-        (expect (true? (py c "'shell' in globals() and callable(shell)")))
-        (expect (= ["run" 0 "hi" "shell"]
-                   (py c
-                       (str "r = __vis_settle__(shell('echo hi'))\n"
-                            "[r['stage'], r['exit'], r['stdout'].strip(), r['op']]"))))
-        ;; Keys this stage does not fill are still PRESENT — model Python indexes
-        ;; any documented field without a KeyError.
-        (expect (= []
-                   (py c
-                       (str "[k for k in ['lines','pid','status','sent','stopped','cwd',"
-                            "'timed_out','stderr'] if k not in r]"))))))
-  (it "drives the whole op grammar (background -> logs -> stop) from Python"
-      (let
-        [sid
-         (str "py-shell-" (System/nanoTime))
+        (expect (str/includes? source-doc "await shell({\"commands\": [\"git status\"]})"))
+        (expect (not (str/includes? source-doc "await shell(\"git status\")")))
+        (expect (str/includes? d "`commands`"))))
+  (it
+    "runs and backgrounds commands through the bare shell global using maps"
+    (let
+      [sid
+       (str "py-shell-" (System/nanoTime))
 
-         c
-         (py-ctx {:session-id sid})]
+       c
+       (py-ctx {:session-id sid})]
 
-        (try (expect (= ["background" true "logs" true "stop" true]
-                        (py c
-                            (str "b = __vis_settle__(shell('echo alive; sleep 30',"
-                                 " {'op':'background','id':'pyjob'}))\n"
-                                 "l = __vis_settle__(shell({'op':'logs','id':'pyjob','n':10}))\n"
-                                 "s = __vis_settle__(shell({'op':'stop','id':'pyjob'}))\n"
-                                 "[b['stage'], b['pid'] is not None, l['stage'],"
-                                 " l['line_count'] >= 0, s['stage'], s['stopped']]"))))
-             (finally (resources/stop-all! sid)))))
-  (it "doc('shell') carries the description AND the op/cmd params"
-      (let [d (str (py (py-ctx {}) "doc('shell')"))]
-        (expect (str/includes? d "params:"))
-        (expect (str/includes? d "`op`"))
-        (expect (str/includes? d "`cmd`"))))
-  (it "flipping the `shell` toggle OFF removes the sandbox binding"
+      (try
+        (expect (= ["run" "hi" "echo hi"]
+                   (py c
+                       (str "r = __vis_settle__(shell({'commands':['echo hi']}))\n"
+                            "x = r['commands'][0]\n"
+                            "[r['stage'], x['stdout'].strip(), x['cmd']]"))))
+        (expect
+          (=
+            ["background" "logs" "stop"]
+            (py
+              c
+              (str
+                "b = __vis_settle__(shell({'commands':['echo alive; sleep 30'], 'op':'background', 'id':'pyjob'}))\n"
+                "l = __vis_settle__(shell({'op':'logs','id':'pyjob','n':10}))\n"
+                "s = __vis_settle__(shell({'op':'stop','id':'pyjob'}))\n"
+                "[b['stage'], l['stage'], s['stage']]"))))
+        (finally (resources/stop-all! sid)))))
+  (it "removes the binding when the shell toggle is off"
       (let
         [before
          (toggles/enabled? "shell")
@@ -944,16 +775,36 @@
          env
          {:extensions (atom (vec (extension/registered-extensions)))
           :active-extensions (atom [])
-          :python-context c}
-
-         present?
-         (fn []
-           (boolean (py c "'shell' in globals()")))]
+          :python-context c}]
 
         (try (toggles/set-enabled! "shell" false)
              (lp/sync-active-extension-symbols! env)
-             (expect (false? (present?)))
-             (toggles/set-enabled! "shell" true)
-             (lp/sync-active-extension-symbols! env)
-             (expect (true? (present?)))
-             (finally (toggles/set-enabled! "shell" before))))))
+             (expect (false? (boolean (py c "'shell' in globals()"))))
+             (finally (toggles/set-enabled! "shell" before)))))
+  (it
+    "routes map-only logs and stop calls through the native Python bridge"
+    ;; Regression: a stale positional wrapper invoked shell-dispatch as
+    ;; (env command options), which made these lifecycle maps fail before the
+    ;; dispatcher ran with "Wrong number of args ... shell-dispatch".
+    (let
+      [sid
+       (str "py-shell-lifecycle-" (System/nanoTime))
+
+       c
+       (py-ctx {:session-id sid})]
+
+      (try
+        (expect
+          (=
+            ["background" "logs" "stop"]
+            (py
+              c
+              (str
+                "job = "
+                (pr-str sid)
+                "\n"
+                "b = __vis_settle__(shell({'commands':['echo ready; sleep 30'], 'op':'background', 'id':job}))\n"
+                "l = __vis_settle__(shell({'op':'logs', 'id':job, 'n':1}))\n"
+                "s = __vis_settle__(shell({'op':'stop', 'id':job}))\n"
+                "[b['stage'], l['stage'], s['stage']]"))))
+        (finally (resources/stop-all! sid))))))

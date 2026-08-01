@@ -131,3 +131,18 @@
 
         (swap! flush-futures assoc k f))
       (when model {:provider provider :model model}))))
+
+(defn record-switch!
+  "Persist one manual model-preference transition for the session-usage routing
+   ledger. This is deliberately synchronous and best-effort: preference writes
+   remain debounced, while losing audit telemetry must never reject a picker
+   change. Returns the created sidecar row, or nil when nothing changed/failed."
+  [db-info sid from to source]
+  (when (and db-info sid (not= from to))
+    (try (persistance/db-create-extension-aggregate! db-info
+                                                     {:extension-id "vis"
+                                                      :aggregate-key (str (random-uuid))
+                                                      :kind :session-model-switch
+                                                      :session-soul-id sid
+                                                      :content {:from from :to to :source source}})
+         (catch Throwable _ nil))))

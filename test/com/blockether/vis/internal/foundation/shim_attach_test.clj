@@ -82,7 +82,7 @@
       [pctx
        (ctx-with-root (temp-root))
 
-       ;; a real 1x1 PNG so the host ImageIO decode yields dimensions
+       ;; a real 1x1 PNG so the host image decode yields dimensions
        out
        (block
          pctx
@@ -152,18 +152,23 @@
 
         (expect (= ["a.txt" "b.json"] (mapv :filename (:attachments out))))))
   (it "renders and captures a matplotlib Figure with a positional filename"
-    (let [pctx (ctx-with-root (temp-root))
-          out (block pctx (str "import matplotlib.pyplot as plt\n"
-                               "fig, ax = plt.subplots(figsize=(7, 4))\n"
-                               "ax.plot([0, 1], [0, 1])\n"
-                               "ax.set(title='plot', xlabel='x', ylabel='y')\n"
-                               "vis_attach(fig, 'plot.png')\n"
-                               "plt.close(fig)\n"))
-          [att] (:attachments out)]
-      (expect (nil? (:error out)))
-      (expect (= "plot.png" (:filename att)))
-      (expect (= "image/png" (:media-type att)))
-      (expect (= "image" (:kind att))))))
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
+
+         out
+         (block pctx
+                (str "import matplotlib.pyplot as plt\n" "fig, ax = plt.subplots(figsize=(7, 4))\n"
+                     "ax.plot([0, 1], [0, 1])\n" "ax.set(title='plot', xlabel='x', ylabel='y')\n"
+                     "vis_attach(fig, 'plot.png')\n" "plt.close(fig)\n"))
+
+         [att]
+         (:attachments out)]
+
+        (expect (nil? (:error out)))
+        (expect (= "plot.png" (:filename att)))
+        (expect (= "image/png" (:media-type att)))
+        (expect (= "image" (:kind att))))))
 
 (defdescribe vis-attach-path-test
              (it "reads a confined file from disk and captures it"
@@ -481,3 +486,35 @@
 
         (expect (nil? (:error out)))
         (expect (re-find #"RAISED True" (str (:stdout out)))))))
+
+(defdescribe
+  attach-display-only-test
+  "`display_only=True` is the opt-out for the one cost multimodal history cannot
+   undo: an image is RE-UPLOADED in full on every later request. The flag stamps
+   the recorded row so the send-time gate keeps the bytes stored and displayed
+   but off the wire."
+  (it "stamps :is-display-only on the recorded attachment"
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
+
+         out
+         (block pctx
+                (str "vis_attach_bytes(b'PNGDATA', 'chart.png', media_type='image/png', "
+                     "display_only=True)\n"))]
+
+        (expect (nil? (:error out)))
+        (expect (= 1 (count (:attachments out))))
+        (expect (= "chart.png" (:filename (first (:attachments out)))))
+        (expect (true? (:is-display-only (first (:attachments out)))))))
+  (it "leaves an ordinary attachment unflagged, so replay behaviour is unchanged"
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
+
+         out
+         (block pctx "vis_attach_bytes(b'PNGDATA', 'chart.png', media_type='image/png')\n")]
+
+        (expect (nil? (:error out)))
+        (expect (= 1 (count (:attachments out))))
+        (expect (nil? (:is-display-only (first (:attachments out))))))))

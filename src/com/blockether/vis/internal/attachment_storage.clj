@@ -17,12 +17,20 @@
    download) is fetched at most once by a human, so it is COLD -- a good offload
    candidate past a size floor. A backend may override the predicate wholesale
    via `:storage/offload?`.
-
    Precedence, engine-owned so the loop never learns a storage dialect:
      1. active backend's `:storage/offload?`  (the backend knows its own cost)
      2. else `default-offload?`               (engine default policy)
-     3. no active backend                     -> always inline (zero regression)"
-  (:require [clojure.string :as str])
+     3. no active backend                     -> always inline (zero regression)
+
+   Either way the bytes are COMPACTED first (`image-convert/compact`): a PNG /
+   JPEG / GIF payload is re-compressed LOSSLESSLY -- oxipng, jpegtran-style
+   marker stripping, gifsicle differencing -- before it becomes a BLOB or a
+   backend PUT. That is the only transformation this rail performs, it is
+   verified per payload (strictly smaller AND the same format at the same
+   dimensions and frame count, else the original is kept), and it is why a
+   matplotlib figure costs a fraction of a row."
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.image-convert :as image-convert])
   (:import (java.nio.file Files LinkOption OpenOption Path)
            (java.nio.file.attribute FileAttribute)
            (java.util Base64 UUID)))
@@ -135,14 +143,48 @@
   ^bytes [att]
   (try (.decode (Base64/getDecoder) (str (:base64 att))) (catch Throwable _ nil)))
 
+(def ^:private compactable-media-types
+  "The containers `image-convert/compact` has a REAL optimiser for (oxipng /
+   jpegtran-style stripping / gifsicle differencing). Anything else -- SVG, a
+   PDF, a CSV, a wav -- is stored exactly as it arrived; nothing here guesses."
+  #{"image/png" "image/jpeg" "image/jpg" "image/gif"})
+
+(defn- compacted
+  "Losslessly shrink ONE store-bound attachment's bytes before they become a BLOB
+   or a backend PUT: `:base64` re-encoded from the compacted payload and `:size`
+   corrected to the bytes actually stored (so the offload decision and every
+   size label describe the row that exists). Returns `att` untouched for a
+   non-image, a missing payload, or any payload the optimiser cannot beat.
+   Never throws."
+  [att]
+  (if-not (and (:base64 att)
+               (contains? compactable-media-types (str/lower-case (str (:media-type att)))))
+    att
+    (or (try (when-let [^bytes data (decode-b64 att)]
+               (let [^bytes out (image-convert/compact data)]
+                 (when (< (alength out) (alength data))
+                   (assoc att
+                     :base64 (.encodeToString (Base64/getEncoder) out)
+                     :size (alength out)))))
+             (catch Throwable _ nil))
+        att)))
+
 (defn offload-attachment
-  "Route ONE store-bound attachment map. An inline candidate carries `:base64`.
+  "Route ONE store-bound attachment map. The payload is [[compacted]] first --
+   an image is re-compressed losslessly, everything else passes through. An
+   inline candidate then carries `:base64`.
    When a backend is active AND `offload?` says so, decode + PUT the bytes and
    return the map with `:storage-uri` set (and `:size` fixed to the real byte
-   count) and `:base64` DROPPED; otherwise the map is returned unchanged. NEVER
+   count) and `:base64` DROPPED; otherwise the (compacted) map is returned. NEVER
    throws -- a decode/PUT failure or a non-string URI falls back to inline."
   [att]
-  (let [backend (active-backend)]
+  (let
+    [att
+     (compacted att)
+
+     backend
+     (active-backend)]
+
     (if (and backend (:base64 att) (offload? backend att))
       (or (try (when-let [^bytes data (decode-b64 att)]
                  (let
@@ -167,8 +209,10 @@
    `:attachments`; the in-memory replay copy stays inline (offload only the
    persisted path).
 
-   Attachment bytes are stored VERBATIM: vis neither resamples nor re-encodes
-   what the user attached, so what is replayed is byte-identical to it."
+   Attachment PIXELS are stored verbatim: vis never resamples and never
+   re-encodes what the user attached, so what replays is the same picture bit
+   for bit. Its ENCODING is compacted losslessly on the way in -- see
+   [[com.blockether.vis.internal.image-convert/compact]]."
   [atts]
   (mapv offload-attachment atts))
 

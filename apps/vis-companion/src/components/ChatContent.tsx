@@ -429,6 +429,14 @@ export const Markdown = memo(function Markdown({
   // (`markdown-layout/justify-line-runs` → lanterna `justifyLine`).
   const runningText =
     'hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty text-justify';
+  // A heading inside a tool result card is a STRUCTURAL divider — one file in a
+  // multi-file `cat`, one occurrence in an index, one step in a batch — not a
+  // document hierarchy. The card body is `text-meta` (10px), so `### path · L12-30`
+  // rendered at `text-body`/`text-title` towered over the very rows it labels. Nested
+  // headings therefore step DOWN to the card's own scale and separate by weight,
+  // case and rule instead of by size.
+  const heading = (nestedClass: string, compactClass: string, fullClass: string) =>
+    nested ? nestedClass : compact ? compactClass : fullClass;
   return (
     <div className="min-w-0 break-words [&>:first-child]:mt-0 [&>:last-child]:mb-0">
       <ReactMarkdown
@@ -454,34 +462,34 @@ export const Markdown = memo(function Markdown({
               {inline}
             </code>
           ),
-          h1: ({ children: heading }) => (
-            <h1 className={`${compact ? 'mb-1.5 mt-4 text-subhead' : 'mb-2 mt-6 text-head'} border-b-2 border-answer-edge pb-1 font-semibold tracking-[-0.015em] text-heading-1`}>
-              {heading}
+          h1: ({ children: heading1 }) => (
+            <h1 className={`${heading('mb-1 mt-3 text-ui', 'mb-1.5 mt-4 text-subhead', 'mb-2 mt-6 text-head')} border-b-2 border-answer-edge pb-1 font-semibold tracking-[-0.015em] text-heading-1`}>
+              {heading1}
             </h1>
           ),
-          h2: ({ children: heading }) => (
-            <h2 className={`${compact ? 'mb-1 mt-3.5 text-title' : 'mb-1.5 mt-5 text-subhead'} border-b border-answer-edge pb-0.5 font-semibold tracking-[-0.01em] text-heading-2`}>
-              {heading}
+          h2: ({ children: heading2 }) => (
+            <h2 className={`${heading('mb-1 mt-3 text-ui', 'mb-1 mt-3.5 text-title', 'mb-1.5 mt-5 text-subhead')} border-b border-answer-edge pb-0.5 font-semibold tracking-[-0.01em] text-heading-2`}>
+              {heading2}
             </h2>
           ),
-          h3: ({ children: heading }) => (
-            <h3 className={`${compact ? 'mb-1 mt-3 text-body' : 'mb-1 mt-4 text-title'} font-semibold text-heading-3`}>
-              {heading}
+          h3: ({ children: heading3 }) => (
+            <h3 className={`${heading('mb-0.5 mt-2.5 text-meta', 'mb-1 mt-3 text-body', 'mb-1 mt-4 text-title')} font-semibold text-heading-3`}>
+              {heading3}
             </h3>
           ),
-          h4: ({ children: heading }) => (
-            <h4 className={`${compact ? 'mb-0.5 mt-2.5 text-body' : 'mb-1 mt-3.5 text-body'} font-semibold text-heading-3`}>
-              {heading}
+          h4: ({ children: heading4 }) => (
+            <h4 className={`${heading('mb-0.5 mt-2 text-meta', 'mb-0.5 mt-2.5 text-body', 'mb-1 mt-3.5 text-body')} font-semibold text-heading-3`}>
+              {heading4}
             </h4>
           ),
-          h5: ({ children: heading }) => (
-            <h5 className={`${compact ? 'mb-0.5 mt-2.5 text-ui' : 'mb-1 mt-3 text-ui'} font-semibold text-heading-3`}>
-              {heading}
+          h5: ({ children: heading5 }) => (
+            <h5 className={`${heading('mb-0.5 mt-2 text-chip uppercase tracking-[0.06em]', 'mb-0.5 mt-2.5 text-ui', 'mb-1 mt-3 text-ui')} font-semibold text-heading-3`}>
+              {heading5}
             </h5>
           ),
-          h6: ({ children: heading }) => (
-            <h6 className={`${compact ? 'mb-0.5 mt-2.5 text-meta' : 'mb-1 mt-3 text-meta'} font-semibold uppercase tracking-[0.08em] text-heading-3`}>
-              {heading}
+          h6: ({ children: heading6 }) => (
+            <h6 className={`${heading('mb-0.5 mt-2 text-chip', 'mb-0.5 mt-2.5 text-meta', 'mb-1 mt-3 text-meta')} font-semibold uppercase tracking-[0.08em] text-heading-3`}>
+              {heading6}
             </h6>
           ),
           hr: () => <hr className={`${compact ? 'my-3' : 'my-5'} border-answer-edge`} />,

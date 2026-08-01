@@ -1002,10 +1002,10 @@ vis.extension(
 (defdescribe
   python-extension-process-boundary-test
   (it
-    "routes public vis.shell single and serial commands through the live session jail"
+    "routes public vis.shell commands through the live session jail"
     (with-loaded
       {"jail.py"
-       "import subprocess\nimport vis\ndef run():\n    \"Run through the session jail.\"\n    batch = vis.shell(['echo one', 'echo two'])\n    return [subprocess.run(['echo', 'jailed']).stdout, vis.shell('echo direct')['stdout'], [r['stdout'] for r in batch['commands']], vis.jailed_shell is vis.shell]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+       "import subprocess\nimport vis\ndef run():\n    \"Run through the session jail.\"\n    return [subprocess.run(['echo', 'jailed']).stdout, vis.shell({'commands':['echo mapped']})['commands'][0]['stdout'], vis.jailed_shell is vis.shell]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
       (fn [_ _]
         (let
           [run
@@ -1018,16 +1018,12 @@ vis.extension(
            {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
 
           (with-redefs
-            [shell/jailed-shell (fn [actual-env command opts]
-                                  (swap! seen conj [actual-env command opts])
-                                  (if (sequential? command)
-                                    {"commands" (mapv #(hash-map "stdout" %) command)}
-                                    {"stdout" (str command)}))]
+            [shell/jailed-shell (fn [actual-env opts]
+                                  (swap! seen conj [actual-env opts])
+                                  {"commands" [{"stdout" (first (get opts "commands"))}]})]
             (binding [extension/*current-environment* env]
-              (expect (= ["echo jailed" "echo direct" ["echo one" "echo two"] true]
-                         (:result (run))))
-              (expect (= [[env ["echo one" "echo two"] nil] [env "echo jailed" nil]
-                          [env "echo direct" nil]]
+              (expect (= ["echo jailed" "echo mapped" true] (:result (run))))
+              (expect (= [[env {"commands" ["echo jailed"]}] [env {"commands" ["echo mapped"]}]]
                          @seen)))))))))
 
 (it

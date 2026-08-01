@@ -1,4 +1,4 @@
-# vis sandbox matplotlib-compat shim (Java2D-backed pyplot subset).
+# vis sandbox matplotlib-compat shim (imaging-backed pyplot subset).
 
 
 def __vis_install_matplotlib__():
@@ -33,6 +33,13 @@ def __vis_install_matplotlib__():
                 "width": 640,
                 "height": 480,
                 "axis_off": False,
+                "projection": None,
+                "zlabel": None,
+                "zlim": None,
+                "zticks": None,
+                "elev": None,
+                "azim": None,
+                "ax3d": None,
             }
         )
 
@@ -352,7 +359,7 @@ def __vis_install_matplotlib__():
     _img_seq = [0]
 
     def _emit_image():
-        # Render the current figure to a PNG on the HOST (Java2D) and print a
+        # Render the current figure to a PNG on the HOST (imaging) and print a
         # `vis-image` fence: 5 header lines (summary / path / mime / WxH / size) the
         # channel reads to paint the picture inline, plus the ASCII plot appended as
         # the fallback body for non-graphical terminals. The PNG is written HOST-side
@@ -405,7 +412,7 @@ def __vis_install_matplotlib__():
             return False
 
     def show(*args, **kwargs):
-        # Prefer the Java2D PNG backend: write the figure to a temp file and emit a
+        # Prefer the host imaging PNG backend: write the figure to a temp file and emit a
         # `vis-image` fence so a graphical TUI/web paints it inline, the ASCII plot
         # riding along as the fence's text fallback. No bridge (or a render failure)
         # falls back to printing the ASCII plot straight to stdout, so `plt.show()`
@@ -686,6 +693,18 @@ def __vis_install_matplotlib__():
         def set_yticklabels(self, labels=None, *a, **k):
             return yticks(None, labels)
 
+        def semilogx(self, *a, **k):
+            return semilogx(*a, **k)
+
+        def semilogy(self, *a, **k):
+            return semilogy(*a, **k)
+
+        def loglog(self, *a, **k):
+            return loglog(*a, **k)
+
+        def stackplot(self, *a, **k):
+            return stackplot(*a, **k)
+
     class _Figure(object):
         # Wraps the single global figure state so the OO idiom
         # `fig, ax = plt.subplots(); ...; fig.savefig(...)` works. Every method
@@ -711,16 +730,16 @@ def __vis_install_matplotlib__():
             return None
 
         def add_subplot(self, *a, **k):
-            return _Axes()
+            return _new_axes(*a, **k)
 
         def add_axes(self, *a, **k):
-            return _Axes()
+            return _new_axes(*a, **k)
 
         def gca(self, *a, **k):
-            return _Axes()
+            return gca(*a, **k)
 
-        def colorbar(self, *a, **k):
-            return None
+        def colorbar(self, mappable=None, *a, **k):
+            return _Colorbar(mappable, k.get("label"))
 
         def legend(self, *a, **k):
             return legend(*a, **k)
@@ -731,21 +750,484 @@ def __vis_install_matplotlib__():
         def align_labels(self, *a, **k):
             return None
 
+    class _Colorbar(object):
+        # colorbar() handle. The renderer paints no colour ramp, but the usual
+        # `cb = fig.colorbar(surf); cb.set_label(...)` follow-up must not explode.
+        def __init__(self, mappable=None, label=None):
+            self.mappable = mappable
+            self.ax = None
+            self.label = label
+
+        def set_label(self, s, **k):
+            self.label = str(s)
+            return None
+
+        def set_ticks(self, *a, **k):
+            return None
+
+        def set_ticklabels(self, *a, **k):
+            return None
+
+        def update_normal(self, *a, **k):
+            return None
+
+        def remove(self):
+            return None
+
+    def _projection_of(a, k):
+        # `projection=` arrives as a kwarg, inside `subplot_kw=`, or positionally
+        # in the `add_subplot(111, "3d")` form.
+        p = k.get("projection")
+        if p is None and isinstance(k.get("subplot_kw"), dict):
+            p = k["subplot_kw"].get("projection")
+        if p is None:
+            for v in a:
+                if isinstance(v, str) and v.lower() in ("3d", "polar", "rectilinear"):
+                    p = v
+        return str(p).lower() if p is not None else None
+
+    def _new_axes(*a, **k):
+        return _Axes3D() if _projection_of(a, k) == "3d" else _Axes()
+
     def subplots(nrows=1, ncols=1, figsize=None, dpi=None, **kwargs):
         figure(figsize=figsize, dpi=dpi)
         n = int(nrows) * int(ncols)
+
+        def mk():
+            return _new_axes(**kwargs)
+
         if n <= 1:
-            return _Figure(), _Axes()
-        return _Figure(), [_Axes() for _ in range(n)]
+            return _Figure(), mk()
+        return _Figure(), [mk() for _ in range(n)]
 
     def subplot(*args, **kwargs):
-        return _Axes()
+        return _new_axes(*args, **kwargs)
+
+    def axes(*args, **kwargs):
+        return _new_axes(*args, **kwargs)
 
     def gca(*args, **kwargs):
-        return _Axes()
+        ax = _state.get("ax3d")
+        if ax is not None and _state.get("projection") == "3d":
+            return ax
+        return _new_axes(*args, **kwargs)
 
     def gcf(*args, **kwargs):
         return _Figure()
+
+    # ---- mplot3d ----------------------------------------------------------
+    # A 3-D axes is the SAME global figure state with `projection` flipped to
+    # "3d": the host renderer then normalises the data into a unit cube, rotates
+    # it by (elev, azim), and paints depth-sorted, shaded geometry. Grids travel
+    # as plain lists of lists, so np.meshgrid output works unchanged.
+    def _rows2(v):
+        """A 2-D array-like (meshgrid output, list of lists) as list[list[float]]."""
+        rows = []
+        if v is None:
+            return rows
+        try:
+            items = list(v)
+        except TypeError:
+            return [[float(v)]]
+        for r in items:
+            if hasattr(r, "__iter__") and not isinstance(r, (str, bytes)):
+                rows.append(_nums(r))
+            else:
+                try:
+                    rows.append([float(r)])
+                except Exception:
+                    rows.append([0.0])
+        return rows
+
+    def _mesh(X, Y, zg):
+        """X/Y coerced to Z's shape; a 1-D coordinate array broadcasts like meshgrid."""
+        nr = len(zg)
+        nc = max((len(r) for r in zg), default=0)
+
+        def spread(g, across):
+            flat = [r[0] for r in g] if g and all(len(r) == 1 for r in g) else None
+            if flat is None:
+                return g
+            if across:
+                return [list(flat) for _ in range(nr)]
+            return [[v] * nc for v in flat]
+
+        def fit(g, default):
+            out = []
+            for i in range(nr):
+                r = list(g[i]) if i < len(g) else []
+                r = r + [default(i, j) for j in range(len(r), nc)]
+                out.append([float(v) for v in r[:nc]])
+            return out
+
+        xg = fit(spread(_rows2(X), True), lambda i, j: float(j))
+        yg = fit(spread(_rows2(Y), False), lambda i, j: float(i))
+        return xg, yg
+
+    def _cmap_name(c):
+        return None if c is None else str(getattr(c, "name", c))
+
+    def _grid_series(kind, X, Y, Z, label=None, color=None, cmap=None, edges=True):
+        zg = _rows2(Z)
+        xg, yg = _mesh(X, Y, zg)
+        xs = [v for r in xg for v in r] or [0.0, 1.0]
+        ys = [v for r in yg for v in r] or [0.0, 1.0]
+        s = _add_series(kind, [min(xs), max(xs)], [min(ys), max(ys)], label, color)
+        s["X"] = xg
+        s["Y"] = yg
+        s["Z"] = zg
+        s["cmap"] = _cmap_name(cmap)
+        s["edges"] = bool(edges)
+        _state["projection"] = "3d"
+        return s
+
+    def _points_series(
+        kind,
+        xs,
+        ys,
+        zs,
+        label=None,
+        color=None,
+        marker=None,
+        linestyle=None,
+        cmap=None,
+        c=None,
+        sizes=None,
+        size=None,
+    ):
+        if isinstance(c, str) and color is None:
+            color, c = c, None
+        s = _add_series(kind, xs, ys, label, color, marker=marker, linestyle=linestyle)
+        s["z"] = _nums(zs)
+        s["c"] = _nums(c) if c is not None else None
+        s["cmap"] = _cmap_name(cmap) or ("viridis" if c is not None else None)
+        s["sizes"] = _nums(sizes) if sizes is not None else None
+        s["size"] = float(size) if size is not None else None
+        _state["projection"] = "3d"
+        return s
+
+    def _contour_segments(xg, yg, zg, level):
+        """Marching squares: one level's line segments, at most two per grid cell."""
+        segs = []
+        nr = len(zg)
+        nc = max((len(r) for r in zg), default=0)
+        for i in range(nr - 1):
+            for j in range(nc - 1):
+                cell = ((i, j), (i, j + 1), (i + 1, j + 1), (i + 1, j))
+                hits = []
+                for k in range(4):
+                    ai, aj = cell[k]
+                    bi, bj = cell[(k + 1) % 4]
+                    za = zg[ai][aj]
+                    zb = zg[bi][bj]
+                    if (za < level) == (zb < level):
+                        continue
+                    t = 0.0 if zb == za else (level - za) / (zb - za)
+                    hits.append(
+                        (
+                            xg[ai][aj] + t * (xg[bi][bj] - xg[ai][aj]),
+                            yg[ai][aj] + t * (yg[bi][bj] - yg[ai][aj]),
+                        )
+                    )
+                for k in range(0, len(hits) - 1, 2):
+                    p, q = hits[k], hits[k + 1]
+                    segs.append([p[0], p[1], level, q[0], q[1], level])
+        return segs
+
+    class _Poly3DCollection(object):
+        # Artist handle for `mpl_toolkits.mplot3d.art3d` imports. The 3-D artists
+        # themselves return their accumulated series dict, as imshow() does.
+        def __init__(self, *a, **k):
+            self.series = a[0] if a else None
+
+        def set_label(self, v, **k):
+            if isinstance(self.series, dict):
+                self.series["label"] = v
+            return None
+
+    class _Axes3D(object):
+        """mplot3d-compatible axes: surfaces, wireframes, 3-D lines/scatter, bars,
+        contours, `view_init`, z labels/limits. Every artist appends to the same
+        global figure state with `projection` set to "3d"."""
+
+        name = "3d"
+
+        def __init__(self, fig=None, *a, **k):
+            _state["projection"] = "3d"
+            _state["ax3d"] = self
+            # matplotlib draws the 3-D panes WITH gridlines by default
+            _state["grid"] = True
+
+        def plot_surface(
+            self,
+            X,
+            Y,
+            Z,
+            cmap=None,
+            color=None,
+            label=None,
+            edgecolor=None,
+            linewidth=None,
+            shade=True,
+            **k,
+        ):
+            edges = True
+            if linewidth is not None and float(linewidth) == 0.0:
+                edges = False
+            if isinstance(edgecolor, str) and edgecolor.lower() == "none":
+                edges = False
+            if cmap is None and color is None:
+                cmap = "viridis"
+            return _grid_series(
+                "surface3d", X, Y, Z, label=label, color=color, cmap=cmap, edges=edges
+            )
+
+        def plot_wireframe(self, X, Y, Z, color=None, label=None, **k):
+            return _grid_series("wire3d", X, Y, Z, label=label, color=color)
+
+        def contour(
+            self,
+            X,
+            Y,
+            Z,
+            levels=None,
+            cmap=None,
+            colors=None,
+            offset=None,
+            zdir="z",
+            **k,
+        ):
+            zg = _rows2(Z)
+            xg, yg = _mesh(X, Y, zg)
+            flat = [v for r in zg for v in r] or [0.0, 1.0]
+            lo, hi = min(flat), max(flat)
+            if levels is None or isinstance(levels, int):
+                n = int(levels) if isinstance(levels, int) else 8
+                lv = [lo + (hi - lo) * (i + 1) / (n + 1.0) for i in range(n)]
+            else:
+                lv = [float(v) for v in levels]
+            span = (hi - lo) or 1.0
+            name = _cmap_name(cmap) or "viridis"
+            out = []
+            for v in lv:
+                segs = _contour_segments(xg, yg, zg, v)
+                if not segs:
+                    continue
+                if offset is not None:
+                    z0 = float(offset)
+                    segs = [[a, b, z0, d, e, z0] for a, b, _c, d, e, _f in segs]
+                col = (
+                    colors
+                    if isinstance(colors, str)
+                    else get_cmap(name)._hex((v - lo) / span)
+                )
+                s = _add_series("seg3d", [], [], None, col)
+                s["segs"] = segs
+                s["z"] = []
+                out.append(s)
+            _state["projection"] = "3d"
+            return out
+
+        contour3D = contour
+
+        def scatter(
+            self,
+            xs,
+            ys,
+            zs=None,
+            zdir="z",
+            s=None,
+            c=None,
+            cmap=None,
+            marker=None,
+            color=None,
+            label=None,
+            depthshade=True,
+            **k,
+        ):
+            pts = list(xs)
+            if zs is None:
+                zl = [0.0] * len(pts)
+            elif hasattr(zs, "__len__") and not isinstance(zs, (str, bytes)):
+                zl = zs
+            else:
+                zl = [float(zs)] * len(pts)
+            sizes = s if (s is not None and hasattr(s, "__len__")) else None
+            size = None if sizes is not None else s
+            return _points_series(
+                "scatter3d",
+                pts,
+                ys,
+                zl,
+                label=label,
+                color=color,
+                marker=marker,
+                cmap=cmap,
+                c=c,
+                sizes=sizes,
+                size=size,
+            )
+
+        scatter3D = scatter
+
+        def plot(self, xs, ys, zs=None, *args, **k):
+            fmt = None
+            if isinstance(zs, str):
+                fmt, zs = zs, None
+            for a in args:
+                if isinstance(a, str):
+                    fmt = a
+            color, marker, line = _parse_fmt(fmt)
+            pts = list(xs)
+            if zs is None:
+                zs = [0.0] * len(pts)
+            s = _points_series(
+                "line3d",
+                pts,
+                ys,
+                zs,
+                label=k.get("label"),
+                color=k.get("color", color),
+                marker=k.get("marker", marker),
+                linestyle=k.get("linestyle", line),
+            )
+            return [_Line(s)]
+
+        plot3D = plot
+
+        def bar3d(self, x, y, z, dx, dy, dz, color=None, shade=True, label=None, **k):
+            def col(v, n):
+                if hasattr(v, "__len__") and not isinstance(v, (str, bytes)):
+                    return _nums(v)
+                return [float(v)] * n
+
+            xs = (
+                _nums(x)
+                if (hasattr(x, "__len__") and not isinstance(x, (str, bytes)))
+                else [float(x)]
+            )
+            n = len(xs)
+            s = _add_series(
+                "bar3d", xs, col(y, n), label, color if isinstance(color, str) else None
+            )
+            s["z"] = col(z, n)
+            s["dx"] = col(dx, n)
+            s["dy"] = col(dy, n)
+            s["dz"] = col(dz, n)
+            s["colors"] = (
+                list(color)
+                if (color is not None and not isinstance(color, str))
+                else None
+            )
+            _state["projection"] = "3d"
+            return s
+
+        def text(self, x, y, z, s, **k):
+            _state["annotations"].append(
+                {"x": float(x), "y": float(y), "z": float(z), "text": str(s)}
+            )
+            return None
+
+        text3D = text
+
+        def text2D(self, x, y, s, **k):
+            return None
+
+        def view_init(self, elev=None, azim=None, roll=None, vertical_axis="z", **k):
+            if elev is not None:
+                _state["elev"] = float(elev)
+            if azim is not None:
+                _state["azim"] = float(azim)
+            return None
+
+        def set_title(self, s, **k):
+            title(s)
+
+        def set_xlabel(self, s, **k):
+            xlabel(s)
+
+        def set_ylabel(self, s, **k):
+            ylabel(s)
+
+        def set_zlabel(self, s, **k):
+            _state["zlabel"] = str(s)
+
+        def set_xlim(self, *a, **k):
+            return xlim(*a, **k)
+
+        def set_ylim(self, *a, **k):
+            return ylim(*a, **k)
+
+        def set_zlim(self, lo=None, hi=None, **k):
+            if hi is None and hasattr(lo, "__len__"):
+                lo, hi = lo[0], lo[1]
+            _state["zlim"] = None if lo is None else [float(lo), float(hi)]
+            return _state["zlim"]
+
+        set_xlim3d = set_xlim
+        set_ylim3d = set_ylim
+        set_zlim3d = set_zlim
+
+        def set_xticks(self, *a, **k):
+            return xticks(*a, **k)
+
+        def set_yticks(self, *a, **k):
+            return yticks(*a, **k)
+
+        def set_zticks(self, ticks=None, labels=None, **k):
+            _state["zticks"] = _nums(ticks) if ticks is not None else None
+            return None
+
+        def set(self, **kwargs):
+            for key in ("title", "xlabel", "ylabel", "zlabel", "xlim", "ylim", "zlim"):
+                if key in kwargs:
+                    getattr(self, "set_" + key)(kwargs[key])
+            return self
+
+        def grid(self, b=True, **k):
+            return grid(b)
+
+        def legend(self, *a, **k):
+            return legend(*a, **k)
+
+        def axis(self, *a, **k):
+            return axis(*a, **k)
+
+        def set_axis_off(self):
+            _state["axis_off"] = True
+
+        def set_axis_on(self):
+            _state["axis_off"] = False
+
+        def tick_params(self, *a, **k):
+            return None
+
+        def set_box_aspect(self, *a, **k):
+            return None
+
+        def set_proj_type(self, *a, **k):
+            return None
+
+        def set_facecolor(self, *a, **k):
+            return None
+
+        def set_zscale(self, *a, **k):
+            return None
+
+        def add_collection3d(self, *a, **k):
+            return None
+
+        def mouse_init(self, *a, **k):
+            return None
+
+        def get_xlim(self):
+            return _state.get("xlim") or (0.0, 1.0)
+
+        def get_ylim(self):
+            return _state.get("ylim") or (0.0, 1.0)
+
+        def get_zlim(self):
+            return _state.get("zlim") or (0.0, 1.0)
 
     _TAB10 = [
         (31, 119, 180),
@@ -819,12 +1301,241 @@ def __vis_install_matplotlib__():
     # Braille dot bit for (col in 0..1, row in 0..3) inside one 2x4 cell.
     _BRAILLE = ((0x01, 0x08), (0x02, 0x10), (0x04, 0x20), (0x40, 0x80))
 
+    def _pts3d(s):
+        """Every (x, y, z) a 3-D series occupies - used only for autoscaling."""
+        k = str(s.get("kind"))
+        if k in ("surface3d", "wire3d"):
+            X = s.get("X") or []
+            Y = s.get("Y") or []
+            Z = s.get("Z") or []
+            out = []
+            for i in range(len(Z)):
+                for j in range(len(Z[i])):
+                    if i < len(X) and j < len(X[i]) and i < len(Y) and j < len(Y[i]):
+                        out.append((X[i][j], Y[i][j], Z[i][j]))
+            return out
+        if k == "bar3d":
+            xs = s.get("x") or []
+            ys = s.get("y") or []
+            zs = s.get("z") or []
+            dx = s.get("dx") or []
+            dy = s.get("dy") or []
+            dz = s.get("dz") or []
+            out = []
+            for i in range(len(xs)):
+                out.append((xs[i], ys[i], zs[i]))
+                out.append(
+                    (
+                        xs[i] + (dx[i] if i < len(dx) else 1.0),
+                        ys[i] + (dy[i] if i < len(dy) else 1.0),
+                        zs[i] + (dz[i] if i < len(dz) else 1.0),
+                    )
+                )
+            return out
+        if k == "seg3d":
+            out = []
+            for g in s.get("segs") or []:
+                out.append((g[0], g[1], g[2]))
+                out.append((g[3], g[4], g[5]))
+            return out
+        xs = s.get("x") or []
+        ys = s.get("y") or []
+        zs = s.get("z") or []
+        return [(xs[i], ys[i], zs[i]) for i in range(min(len(xs), len(ys), len(zs)))]
+
+    def _flatten3d(spec):
+        """A 3-D spec projected onto the camera plane as an ordinary 2-D spec.
+
+        Same orthographic camera as the host PNG renderer - data normalised into
+        the unit cube, rotated by `elev`/`azim`, projected onto the camera's
+        right/up basis - so `plt.show()` on a text-only terminal and
+        `savefig('f.txt')` draw the SAME figure the graphics terminal paints,
+        in braille. Surfaces and wireframes become mesh strands (colour-mapped by
+        mean height), bars their visible box edges, contours their segments."""
+        import math
+
+        series = spec.get("series") or []
+        ev = spec.get("elev")
+        av = spec.get("azim")
+        el = math.radians(30.0 if ev is None else float(ev))
+        az = math.radians(-60.0 if av is None else float(av))
+        ca = math.cos(az)
+        sa = math.sin(az)
+        ce = math.cos(el)
+        se = math.sin(el)
+        pts = []
+        for s in series:
+            pts += _pts3d(s)
+        if not pts:
+            pts = [(0.0, 0.0, 0.0), (1.0, 1.0, 1.0)]
+
+        def rng(idx, lim):
+            if lim:
+                lo, hi = float(lim[0]), float(lim[1])
+            else:
+                vals = [float(p[idx]) for p in pts]
+                lo, hi = min(vals), max(vals)
+            if hi - lo < 1e-12:
+                lo, hi = lo - 0.5, hi + 0.5
+            return lo, hi
+
+        x0, x1 = rng(0, spec.get("xlim"))
+        y0, y1 = rng(1, spec.get("ylim"))
+        z0, z1 = rng(2, spec.get("zlim"))
+
+        def prjn(nx, ny, nz):
+            return (
+                -sa * nx + ca * ny,
+                -ca * se * nx - sa * se * ny + ce * nz,
+            )
+
+        def prj(x, y, z):
+            return prjn(
+                (float(x) - x0) / (x1 - x0) - 0.5,
+                (float(y) - y0) / (y1 - y0) - 0.5,
+                (float(z) - z0) / (z1 - z0) - 0.5,
+            )
+
+        out = []
+
+        def add(kind, ps, color=None, label=None, marker=None):
+            if not ps:
+                return
+            out.append(
+                {
+                    "kind": kind,
+                    "x": [p[0] for p in ps],
+                    "y": [p[1] for p in ps],
+                    "color": color,
+                    "label": label,
+                    "marker": marker,
+                }
+            )
+
+        def strand(X, Y, Z, pairs):
+            ps = []
+            zs = []
+            for i, j in pairs:
+                if i < len(Z) and j < len(Z[i]) and i < len(X) and j < len(X[i]):
+                    ps.append(prj(X[i][j], Y[i][j], Z[i][j]))
+                    zs.append(float(Z[i][j]))
+            return ps, zs
+
+        # the cube floor, so the braille projection still reads as a box
+        floor = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
+        add("line", [prjn(a, b, -0.5) for a, b in floor + floor[:1]], "#b8b8b8")
+
+        zspan = (z1 - z0) or 1.0
+        for s in series:
+            k = str(s.get("kind"))
+            col = s.get("color")
+            lbl = s.get("label")
+            if k in ("surface3d", "wire3d"):
+                X = s.get("X") or []
+                Y = s.get("Y") or []
+                Z = s.get("Z") or []
+                nr = len(Z)
+                nc = max([len(r) for r in Z] or [0])
+                cm = get_cmap(s.get("cmap")) if s.get("cmap") else None
+                first = True
+                for i in list(range(0, nr, max(1, nr // 14))) + [nr - 1]:
+                    ps, zs = strand(X, Y, Z, [(i, j) for j in range(nc)])
+                    c = col
+                    if cm is not None and zs:
+                        c = cm._hex((sum(zs) / len(zs) - z0) / zspan)
+                    add("line", ps, c, lbl if first else None)
+                    first = False
+                for j in list(range(0, nc, max(1, nc // 14))) + [nc - 1]:
+                    ps, zs = strand(X, Y, Z, [(i, j) for i in range(nr)])
+                    c = col
+                    if cm is not None and zs:
+                        c = cm._hex((sum(zs) / len(zs) - z0) / zspan)
+                    add("line", ps, c, None)
+            elif k == "scatter3d":
+                xs = s.get("x") or []
+                ys = s.get("y") or []
+                zs = s.get("z") or []
+                n = min(len(xs), len(ys), len(zs))
+                add(
+                    "scatter",
+                    [prj(xs[i], ys[i], zs[i]) for i in range(n)],
+                    col,
+                    lbl,
+                    s.get("marker") or "o",
+                )
+            elif k == "bar3d":
+                xs = s.get("x") or []
+                ys = s.get("y") or []
+                zs = s.get("z") or []
+                dx = s.get("dx") or []
+                dy = s.get("dy") or []
+                dz = s.get("dz") or []
+                cols = s.get("colors")
+                for i in range(len(xs)):
+                    xa = float(xs[i])
+                    ya = float(ys[i])
+                    za = float(zs[i])
+                    xb = xa + float(dx[i] if i < len(dx) else 1.0)
+                    yb = ya + float(dy[i] if i < len(dy) else 1.0)
+                    zb = za + float(dz[i] if i < len(dz) else 1.0)
+                    c = cols[i] if (cols and i < len(cols)) else col
+                    top = [(xa, ya), (xb, ya), (xb, yb), (xa, yb)]
+                    add(
+                        "line",
+                        [prj(a, b, zb) for a, b in top + top[:1]],
+                        c,
+                        lbl if i == 0 else None,
+                    )
+                    for a, b in top:
+                        add("line", [prj(a, b, za), prj(a, b, zb)], c)
+            elif k == "seg3d":
+                for g in s.get("segs") or []:
+                    add("line", [prj(g[0], g[1], g[2]), prj(g[3], g[4], g[5])], col)
+            else:
+                xs = s.get("x") or []
+                ys = s.get("y") or []
+                zs = s.get("z") or []
+                n = min(len(xs), len(ys), len(zs))
+                add(
+                    "line",
+                    [prj(xs[i], ys[i], zs[i]) for i in range(n)],
+                    col,
+                    lbl,
+                    s.get("marker"),
+                )
+
+        box = [
+            prjn(a, b, c) for a in (-0.5, 0.5) for b in (-0.5, 0.5) for c in (-0.5, 0.5)
+        ]
+
+        def deg(v, d):
+            v = d if v is None else float(v)
+            return str(int(v)) if float(v) == int(v) else "%.4g" % v
+
+        return {
+            "width": spec.get("width"),
+            "height": spec.get("height"),
+            "title": spec.get("title"),
+            "xlabel": "3-D view · elev %s° · azim %s°"
+            % (deg(ev, 30.0), deg(av, -60.0)),
+            "ylabel": spec.get("zlabel"),
+            "series": out,
+            "xlim": [min(p[0] for p in box), max(p[0] for p in box)],
+            "ylim": [min(p[1] for p in box), max(p[1] for p in box)],
+            "legend": spec.get("legend"),
+            "grid": False,
+            "annotations": [],
+            "hide_ticks": True,
+        }
+
     def _render_ascii(spec, width=74, height=22, color=False):
         # Pure-Python renderer of the current figure spec - no JVM, no image.
         # Rasterises line/scatter/step/fill/bar/hline/vline into a Unicode
         # BRAILLE canvas (2x4 sub-cell dots => smooth high-res curves) inside a
         # box-drawing frame with y/x tick labels, title, axis labels and a
         # per-series legend. `color=True` adds ANSI truecolor per series.
+        if str(spec.get("projection") or "") == "3d":
+            spec = _flatten3d(spec)
         series = spec.get("series") or []
         title = spec.get("title")
         xlabel = spec.get("xlabel")
@@ -970,7 +1681,7 @@ def __vis_install_matplotlib__():
         def dim(txt):
             return ("\x1b[90m" + txt + "\x1b[0m") if color else txt
 
-        nyt = min(5, Hc)
+        nyt = 0 if spec.get("hide_ticks") else min(5, Hc)
         yticks = {}
         for i in range(nyt):
             t = (i / (nyt - 1)) if nyt > 1 else 0.0
@@ -1000,6 +1711,8 @@ def __vis_install_matplotlib__():
             for i in range(nxt):
                 t = (i / (nxt - 1)) if nxt > 1 else 0.0
                 xt[int(round(t * (Wc - 1)))] = fmt(xmin + t * (xmax - xmin))
+        if spec.get("hide_ticks"):
+            xt = {}
         for col in xt:
             if 0 <= col < Wc:
                 axisrow[col] = "┬"
@@ -1041,12 +1754,18 @@ def __vis_install_matplotlib__():
             "yticks": _state.get("yticks"),
             "xticklabels": _state.get("xticklabels"),
             "yticklabels": _state.get("yticklabels"),
+            "projection": _state.get("projection"),
+            "zlabel": _state.get("zlabel"),
+            "zlim": _state.get("zlim"),
+            "zticks": _state.get("zticks"),
+            "elev": _state.get("elev"),
+            "azim": _state.get("azim"),
             "series": list(_state["series"]),
         }
 
     def savefig(fname, format=None, dpi=None, **kwargs):
         # Text targets (.txt/.asc filename, or format 'ascii'/'txt') get the
-        # pure-Python ASCII render; everything else goes through the Java2D PNG
+        # pure-Python ASCII render; everything else goes through the host imaging PNG
         # backend and writes the returned bytes.
         is_text = str(format).lower() in ("ascii", "txt") or (
             isinstance(fname, str) and fname.lower().endswith((".txt", ".asc"))
@@ -1067,7 +1786,7 @@ def __vis_install_matplotlib__():
         render = globals().get("__vis_mpl_render__")
         if render is None:
             raise RuntimeError(
-                "vis: matplotlib Java2D backend is not bound in this sandbox."
+                "vis: matplotlib imaging backend is not bound in this sandbox."
             )
         env = render(_spec())
         if not env[0]:
@@ -1105,7 +1824,7 @@ def __vis_install_matplotlib__():
 
     def use(backend=None, *a, **k):
         # matplotlib.use(...) — record the requested backend name; the vis shim
-        # always renders through its Java2D backend regardless of the choice.
+        # always renders through its imaging backend regardless of the choice.
         if backend is not None:
             _backend[0] = str(backend)
         return None
@@ -1319,7 +2038,7 @@ def __vis_install_matplotlib__():
         return cm.reversed() if rev else cm
 
     pyplot = types.ModuleType("matplotlib.pyplot")
-    pyplot.__doc__ = "vis Java2D-backed matplotlib.pyplot subset."
+    pyplot.__doc__ = "vis imaging-backed matplotlib.pyplot subset."
     for _fn in (
         figure,
         plot,
@@ -1367,6 +2086,7 @@ def __vis_install_matplotlib__():
         get_cmap,
         subplots,
         subplot,
+        axes,
         gca,
         gcf,
         use,
@@ -1389,6 +2109,7 @@ def __vis_install_matplotlib__():
     ):
         setattr(pyplot, _fn.__name__, _fn)
     pyplot.Axes = _Axes
+    pyplot.Axes3D = _Axes3D
     pyplot.Colormap = _Colormap
     pyplot.rcParams = _rcparams
 
@@ -1416,7 +2137,7 @@ def __vis_install_matplotlib__():
 
     mpl = types.ModuleType("matplotlib")
     mpl.__doc__ = "vis matplotlib-compat shim (no CPython matplotlib wheel)."
-    mpl.__version__ = "3.0-vis-java2d"
+    mpl.__version__ = "3.0-vis-imaging"
     mpl.pyplot = pyplot
     mpl.style = style
     mpl.cm = cm
@@ -1427,10 +2148,38 @@ def __vis_install_matplotlib__():
     mpl.rcdefaults = rcdefaults
     mpl.rcParams = _rcparams
 
+    # mpl_toolkits.mplot3d -- the import path every 3-D example uses. Registered
+    # by this shim (and triggered by importing `mpl_toolkits` itself), so both
+    # `from mpl_toolkits.mplot3d import Axes3D` and a bare
+    # `fig.add_subplot(projection="3d")` work.
+    art3d = types.ModuleType("mpl_toolkits.mplot3d.art3d")
+    art3d.Poly3DCollection = _Poly3DCollection
+    art3d.Line3DCollection = _Poly3DCollection
+    art3d.Path3DCollection = _Poly3DCollection
+
+    axes3d = types.ModuleType("mpl_toolkits.mplot3d.axes3d")
+    axes3d.Axes3D = _Axes3D
+
+    proj3d = types.ModuleType("mpl_toolkits.mplot3d.proj3d")
+
+    mplot3d = types.ModuleType("mpl_toolkits.mplot3d")
+    mplot3d.Axes3D = _Axes3D
+    mplot3d.axes3d = axes3d
+    mplot3d.art3d = art3d
+    mplot3d.proj3d = proj3d
+
+    mpl_toolkits = types.ModuleType("mpl_toolkits")
+    mpl_toolkits.mplot3d = mplot3d
+
     sys.modules["matplotlib"] = mpl
     sys.modules["matplotlib.pyplot"] = pyplot
     sys.modules["matplotlib.style"] = style
     sys.modules["matplotlib.cm"] = cm
+    sys.modules["mpl_toolkits"] = mpl_toolkits
+    sys.modules["mpl_toolkits.mplot3d"] = mplot3d
+    sys.modules["mpl_toolkits.mplot3d.axes3d"] = axes3d
+    sys.modules["mpl_toolkits.mplot3d.art3d"] = art3d
+    sys.modules["mpl_toolkits.mplot3d.proj3d"] = proj3d
 
     # Autoload: staple the module names onto builtins so `matplotlib.pyplot`,
     # a bare `pyplot`, and the conventional `plt` alias all work WITHOUT any
@@ -1441,6 +2190,7 @@ def __vis_install_matplotlib__():
         _b.matplotlib = mpl
         _b.pyplot = pyplot
         _b.plt = pyplot
+        _b.mpl_toolkits = mpl_toolkits
     except Exception:
         pass
 

@@ -34,8 +34,8 @@
     (.setExecutable (io/file bin "vis") true)
     (spit (io/file repo ".graalvm-version")
           (str "GRAAL_EDITION=\"GraalVM CE\"\n"
-               "GRAAL_VERSION=\"25.2.4\"\n"
-               "GRAAL_VENDOR_VERSION=\"GraalVM CE 25.2.4+7.1\"\n"))
+               "GRAAL_VERSION=\"25.1.3\"\n"
+               "GRAAL_VENDOR_VERSION=\"GraalVM CE 25.1.3+9.1\"\n"))
     (write-executable!
       (io/file bin "require-graalvm")
       "#!/usr/bin/env bash\nprintf '%s\\n' \"$VIS_TEST_PINNED_HOME\"\n")
@@ -82,13 +82,13 @@
   jvm-launcher-runtime-test
   (it "replaces a stale mismatched GraalVM inherited from the parent runner"
       (let [{:keys [root pinned-home] :as fixture}
-            (launcher-fixture "GraalVM CE 25.1.3+9.1")]
+            (launcher-fixture "GraalVM CE 25.2.4+7.1")]
         (try
           (let [{:keys [exit output]} (run-launcher fixture)
                 pinned-java (.getAbsolutePath (io/file pinned-home "bin/java"))]
             (expect (= 0 exit))
             (expect (str/includes? output
-                                   "replaced incompatible GraalVM CE 25.1.3+9.1"))
+                                   "replaced incompatible GraalVM CE 25.2.4+7.1"))
             (expect (str/includes? output (str "JAVA_HOME=" (.getAbsolutePath pinned-home))))
             (expect (str/includes? output (str "GRAALVM_HOME="
                                                (.getAbsolutePath pinned-home))))

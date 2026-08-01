@@ -36,12 +36,9 @@ const config: CapacitorConfig = {
   },
   plugins: {
     Keyboard: {
-      // The web layer pins its own shell to the keyboard (see
-      // `src/lib/viewport.ts`). Letting WKWebView resize itself on top of that
-      // is two animations for one keyboard: the native resize lands in coarse
-      // steps, the web pin chases it, and the composer visibly hops on the way
-      // in and on the way out. `none` leaves the webview alone, so
-      // `keyboardWillShow` plus a matching CSS transition is the only movement.
+      // Keep WKWebView full-height. The plugin's `keyboardWillShow` event
+      // supplies the final keyboard height; the shell applies it immediately
+      // instead of adding a second 250 ms web animation after the native delay.
       resize: 'none',
     },
   },

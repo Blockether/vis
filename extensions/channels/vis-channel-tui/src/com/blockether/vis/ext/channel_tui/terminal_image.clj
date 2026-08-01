@@ -14,9 +14,12 @@
    refresh (the screen loop owns that), placed over rows the renderer
    reserved as blanks. Lanterna never sees the graphics bytes, so its cell
    diff stays intact and the image survives subsequent delta frames."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.imaging :as img]
             [com.blockether.vis.internal.attachments :as attach])
-  (:import [com.googlecode.lanterna.terminal.image TerminalImage TerminalImage$Protocol]))
+  (:import [com.googlecode.lanterna.terminal.image TerminalImage TerminalImage$Protocol]
+           [java.util Base64]))
 
 ;; =============================================================================
 ;; Capability detection
@@ -150,27 +153,57 @@
   [path]
   (TerminalImage/readBase64 (str path)))
 
-(defn transcode->png-base64
-  "Decode `path` (any ImageIO-readable format) and re-encode it as a PNG
-   base64 string, downscaled so it fits the `cols`×`rows` cell box in pixels.
-   The Kitty protocol's `f=100` only accepts PNG, so a JPEG/GIF/BMP drop must
-   pass through here first. Uses AWT/ImageIO (JVM-only — unavailable in the
-   macOS native image); returns nil on any failure so callers fall back to a
-   text card."
-  [path {:keys [cols rows]}]
-  (TerminalImage/transcodePngBase64 (str path) (int cols) (int rows)))
+(def ^:private png-transcode-cache
+  "[abs-path mtime size cols rows] -> `{:data :w :h}` for an already box-fitted PNG."
+  (atom {}))
 
 (defn- transcode->png
   "Transcode `path` to a box-fitted PNG, returning `{:data :w :h}` — base64 plus
-   the TRANSMITTED (scaled) PNG's pixel dims — or nil on failure."
+   the TRANSMITTED (scaled) PNG's pixel dims — or nil on failure. Decoding and
+   re-encoding a multi-megapixel JPEG is expensive, so the box-sized PNG is
+   cached by path+mtime+size+box: a scroll that re-emits the image never
+   re-decodes."
   [path {:keys [cols rows]}]
-  (when-let [r (TerminalImage/transcodePng (str path) (int cols) (int rows))]
-    {:data (aget ^objects r 0) :w (aget ^objects r 1) :h (aget ^objects r 2)}))
+  (let [f (io/file (str path))
+        key [(.getAbsolutePath f) (.lastModified f) (.length f) cols rows]]
+    (or (get @png-transcode-cache key)
+        (when-let [r (try
+                       (with-open [src (img/decode f)]
+                         (let [target-w (* (long cols) (long (TerminalImage/cellWidth)))
+                               target-h (* (long rows) (long (TerminalImage/cellHeight)))
+                               iw (img/width src)
+                               ih (img/height src)
+                               scale (min 1.0
+                                          (/ (double target-w) iw)
+                                          (/ (double target-h) ih))]
+                           (if (< scale 1.0)
+                             (let [sw (max 1 (Math/round (* iw scale)))
+                                   sh (max 1 (Math/round (* ih scale)))]
+                               (with-open [scaled (img/resize src sw sh :lanczos3)]
+                                 {:data (.encodeToString (Base64/getEncoder)
+                                                         ^bytes (img/encode scaled :png))
+                                  :w (int sw) :h (int sh)}))
+                             {:data (.encodeToString (Base64/getEncoder)
+                                                     ^bytes (img/encode src :png))
+                              :w (int iw) :h (int ih)})))
+                       (catch Throwable _ nil))]
+          (swap! png-transcode-cache assoc key r)
+          r))))
+
+(defn transcode->png-base64
+  "Decode `path` (any format `com.blockether.imaging` reads) and re-encode it as a
+   PNG base64 string, downscaled so it fits the `cols`×`rows` cell box in pixels.
+   The Kitty protocol's `f=100` only accepts PNG, so a JPEG/GIF/BMP drop must
+   pass through here first. Pure FFM (no java.desktop, works in the native
+   image); returns nil on any failure so callers fall back to a text card."
+  [path box]
+  (:data (transcode->png path box)))
 
 (defn kitty-png
   "PNG base64 + transmitted pixel dims `{:data :w :h}` for the Kitty wire. A PNG
    file rides through verbatim — transmitted at its intrinsic `width`×`height`
-   (and works in the native image too); anything else is transcoded via ImageIO."
+   (and works in the native image too); anything else is decoded and re-encoded
+   as a box-fitted PNG via `com.blockether.imaging`."
   [path mime {:keys [width height] :as box}]
   (if (= mime "image/png")
     (when-let [data (read-base64 path)]

@@ -1,9 +1,10 @@
 (ns com.blockether.vis.internal.pptx-compat-shim-test
   "The pptx (python-pptx) compat shim installed into every sandbox context via
    the generic sandbox-shim mechanism: a `pptx` module published into
-   `sys.modules`, backed by pure-Java Apache POI XSLF (GraalPy can't install the
-   CPython package). Presentations/slides/shapes live host-side by integer
-   handle and the finished file crosses back as base64. These tests exercise the
+   `sys.modules`, backed by the Rust OOXML writer in com.blockether/imaging
+   (GraalPy can't install the CPython package). Presentations/slides/shapes live
+   host-side by integer handle and the finished file crosses back as base64. These
+   tests exercise the
    util helpers + enums and a real round-trip: a deck built through the shim is
    re-opened as a zip and its OOXML parts / text are asserted."
   (:require [com.blockether.vis.internal.env-python :as ep]

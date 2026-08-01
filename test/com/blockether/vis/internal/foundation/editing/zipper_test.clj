@@ -156,4 +156,96 @@
                    (expect (= :syntax-broken (get-in r [:error :reason])))
                    ;; the message now includes a real line/col + the expected delimiter,
                    ;; not just a bare "would introduce a syntax error"
-                   (expect (str/includes? (get-in r [:error :message]) "a `]` at line")))))
+                   (expect (str/includes? (get-in r [:error :message]) "a `]` at line"))))
+             (it "an unclosed form is located at the FORM, not at the file's first line"
+                 ;; tree-sitter opens ONE ERROR node over the whole file when a form is
+                 ;; left unclosed, so the node's own start is line 1 — reporting it sent
+                 ;; every "would break syntax" rejection to the `ns` form instead of to
+                 ;; the edit that broke.
+                 (let
+                   [src
+                    (str "(ns demo.core)\n\n" (apply str (repeat 40 "(defn ok [x] (inc x))\n"))
+                         "(defn boom [x]\n  (let [y (inc x)]\n    {:a y})\n\n"
+                         ;; forms AFTER the unclosed one are what makes tree-sitter
+                         ;; stretch one ERROR node over the whole file
+                         (apply str (repeat 5 "(defn after [x] (dec x))\n")))
+
+                    errs
+                    (zip/error-nodes "clojure" src)
+
+                    d
+                    (zip/describe-syntax-errors "clojure" src)]
+
+                   (expect (= 43 (long (:line (first errs)))))
+                   (expect (= "(" (:delimiter (first errs))))
+                   ;; the ERROR node itself still starts at line 1 — that is the artefact
+                   (expect (= 1 (long (:error-line (first errs)))))
+                   (expect (str/includes? d "break     line 43"))
+                   (expect (str/includes? d "unclosed  `(`"))
+                   (expect (not (str/includes? d "break     line 1 ")))))
+             (it "an earlier actionable outer fault beats a later nested parse error"
+                 ;; The first unclosed form contains the later mismatch in the
+                 ;; recovery tree. A blanket "prefer leaf ERROR" rule blamed line
+                 ;; 8 even though the actionable `(` on line 3 is the first fault.
+                 (let
+                   [src
+                    (str "(ns demo)\n\n" "(defn boom [x]\n  (+ x 1)\n\n"
+                         "(def ok 1)\n\n" "(defn later [x] (+ x 1]))\n")
+
+                    d
+                    (zip/describe-syntax-errors "clojure" src)]
+
+                   (expect (str/includes? d "break     line 3"))
+                   (expect (str/includes? d "unclosed  `(`"))
+                   (expect (not (str/includes? d "break     line 8")))))
+             (it "a stray closing delimiter is named as unmatched"
+                 (let
+                   [d (zip/describe-syntax-errors "clojure" "(def a 1)\n\n(defn f [x] (+ x 1)))\n")]
+                   (expect (str/includes? d "break     line 3"))
+                   (expect (str/includes? d "unmatched `)`"))))
+             (it "an unterminated string is located at its quote, not at a class opener on line 1"
+                 (doseq [[lang return-type] [["java" "String"] ["csharp" "string"]]]
+                   (let
+                     [src (str "class Demo {\n"
+                               (apply str
+                                 (for [i (range 1 10)]
+                                   (str "  int f" i "(int x) { return x + " i "; }\n")))
+                               "  "
+                               return-type
+                               " boom() { return \"unterminated\n"
+                               (apply str
+                                 (for [i (range 10 19)]
+                                   (str "  int f" i "(int x) { return x + " i "; }\n")))
+                               "}\n")
+                      d (zip/describe-syntax-errors lang src)]
+
+                     (expect (str/includes? d "break     line 11"))
+                     (expect (not (str/includes? d "break     line 1 ")))
+                     (expect (str/includes? d "unclosed  string quote `\"`")))))
+             (it "Unicode and CRLF do not shift the reported column or caret"
+                 (let
+                   [src
+                    "class Demo {\r\n  String boom() { String café = \"unterminated\r\n}\r\n"
+
+                    err
+                    (first (zip/error-nodes "java" src))
+
+                    d
+                    (zip/describe-syntax-errors "java" src)
+
+                    lines
+                    (str/split-lines d)
+
+                    code-line
+                    (first (filter #(and (str/includes? % "│") (str/includes? % "café")) lines))
+
+                    caret-line
+                    (first (filter #(str/includes? % "^") lines))]
+
+                   ;; `é` occupies two UTF-8 bytes but one user-facing character column.
+                   (expect (= 2 (long (:line err))))
+                   (expect (= 32 (long (:col err))))
+                   (expect (= 33 (long (:byte-col err))))
+                   (expect (str/includes? d "break     line 2 col 32"))
+                   (expect (= (.indexOf ^String code-line "\"")
+                              (.indexOf ^String caret-line "^"))))))

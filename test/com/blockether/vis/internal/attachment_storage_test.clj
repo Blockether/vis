@@ -6,8 +6,10 @@
    (`hot? AND size` — images stay inline even when big), the write-side
    `offload-attachment` (inline vs external, PUT-failure fallback), the
    read-side `hydrate` (inline untouched, external re-fetched), and the
-   reference `file://` backend round-trip."
-  (:require [com.blockether.vis.internal.attachment-storage :as as]
+   reference `file://` backend round-trip, and the LOSSLESS compaction every
+   store-bound image payload goes through on the way in."
+  (:require [com.blockether.imaging :as imaging]
+            [com.blockether.vis.internal.attachment-storage :as as]
             [lazytest.core :refer [defdescribe describe expect it throws?]])
   (:import (java.nio.file Files)
            (java.nio.file.attribute FileAttribute)
@@ -16,6 +18,10 @@
 (defn- b64 [^String s] (.encodeToString (Base64/getEncoder) (.getBytes s "UTF-8")))
 
 (defn- unb64 [^String s] (String. (.decode (Base64/getDecoder) s) "UTF-8"))
+
+(defn- b64* [^bytes b] (.encodeToString (Base64/getEncoder) b))
+
+(defn- unb64* ^bytes [^String s] (.decode (Base64/getDecoder) s))
 
 (defn- clear-registry!
   []
@@ -231,4 +237,103 @@
              (let [off (as/offload-attachment small-inline)] ; small, but override forces external
                (expect (string? (:storage-uri off)))
                (expect (not (contains? off :base64))))
+             (finally (clear-registry!))))))
+
+(defn- gradient-png
+  "A REAL 300x200 PNG straight out of the imaging encoder — the shape of every
+   figure the sandbox produces (matplotlib/PIL): correct, and fatter than it
+   needs to be."
+  ^bytes []
+  (let [img (imaging/blank 300 200 "white")]
+    (dotimes [x 300]
+      (dotimes [y 200]
+        (imaging/put-pixel! img x y [(mod (* x 7) 256) (mod (* y 11) 256) (mod (+ x y) 256) 255])))
+    (imaging/encode img :png)))
+
+(defn- pixels-of ^bytes [^bytes encoded] (imaging/pixels (imaging/decode encoded)))
+
+(defdescribe
+  storage-compaction-test
+  "What the DB actually keeps. Every image payload bound for the
+   `session_attachment` BLOB (or for a backend PUT) is re-compressed by the
+   imaging library's real optimisers first — oxipng for PNG, jpegtran-style
+   marker stripping for JPEG, gifsicle differencing for GIF. LOSSLESS is the
+   whole contract: fewer bytes, the same picture, so replay and the vision wire
+   see exactly what the producer drew."
+  (describe
+    "inline (the BLOB)"
+    (it "shrinks a store-bound PNG and reports the size actually stored"
+        (let
+          [png
+           (gradient-png)
+
+           att
+           {:kind "image"
+            :media-type "image/png"
+            :filename "fig.png"
+            :size (alength png)
+            :base64 (b64* png)}
+
+           [out]
+           (as/offload-attachments [att])
+
+           stored
+           (unb64* (:base64 out))]
+
+          (expect (< (alength stored) (alength png)))
+          ;; `:size` describes the row that exists, not the payload we were handed —
+          ;; the offload decision and every size label read it.
+          (expect (= (alength stored) (:size out)))
+          ;; Same picture, bit for bit.
+          (expect (java.util.Arrays/equals (pixels-of png) (pixels-of stored)))
+          (expect (= "png" (:format (imaging/probe stored))))
+          (expect (= [300 200] [(:width (imaging/probe stored)) (:height (imaging/probe stored))]))
+          ;; Third decoder (neither our encoder nor our optimiser agreeing with itself).
+          (let [bi (javax.imageio.ImageIO/read (java.io.ByteArrayInputStream. stored))]
+            (expect (= [300 200] [(.getWidth bi) (.getHeight bi)])))))
+    (it "leaves a non-image payload byte-identical"
+        (expect (= small-inline (as/offload-attachment small-inline)))
+        (expect (= big-cold (as/offload-attachment big-cold))))
+    (it "leaves bytes that only CLAIM to be an image untouched"
+        ;; `big-image` is 300 KB of \"p\" labelled image/png: the optimiser cannot read
+        ;; it, and a payload we cannot prove is the same picture is never rewritten.
+        (expect (= big-image (as/offload-attachment big-image))))
+    (it "keeps the original when there is nothing left to win"
+        (let
+          [tight
+           (imaging/optimize (gradient-png))
+
+           att
+           {:kind "image" :media-type "image/png" :size (alength tight) :base64 (b64* tight)}]
+
+          (expect (= att (as/offload-attachment att))))))
+  (describe
+    "external (a backend PUT)"
+    (it "hands the backend the compacted bytes, and hydrate gives the same picture back"
+        (clear-registry!)
+        (try (let
+               [png
+                (gradient-png)
+
+                store
+                (atom {})
+
+                _
+                (as/register-backend! (mem-backend {:store store :offload? (constantly true)}))
+
+                off
+                (as/offload-attachment
+                  {:kind "image" :media-type "image/png" :size (alength png) :base64 (b64* png)})
+
+                ^bytes put
+                (first (vals @store))]
+
+               (expect (string? (:storage-uri off)))
+               (expect (not (contains? off :base64)))
+               (expect (< (alength put) (alength png)))
+               (expect (= (alength put) (:size off)))
+               (expect (java.util.Arrays/equals (pixels-of png) (pixels-of put)))
+               (let [hyd (as/hydrate {:storage-uri (:storage-uri off) :media-type "image/png"})]
+                 (expect (java.util.Arrays/equals (pixels-of png)
+                                                  (pixels-of (unb64* (:base64 hyd)))))))
              (finally (clear-registry!))))))

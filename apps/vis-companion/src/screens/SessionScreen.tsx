@@ -65,7 +65,6 @@ import {
   scrollAnchorFor,
   type ScrollAnchor,
   shellViewportHeight,
-  useShellStyle,
 } from '../lib/viewport';
 import { answeredTurnCount, markSessionRead } from '../lib/unread';
 import { App } from '@capacitor/app';
@@ -102,6 +101,20 @@ interface LiveTurn {
 
 const TERMINAL_EVENTS = new Set(['turn.completed', 'turn.failed', 'turn.cancelled']);
 const LIVE_BODY_THROTTLE_MS = 150;
+
+// A settle's transcript refetch only has to pick up the ONE row the finished
+// turn just persisted, on top of a snapshot that already holds the tail. Four
+// rows cover that with slack (a turn and its neighbours, a queued row that
+// drained meanwhile) at a fraction of a full 24-turn page's bytes and hydration.
+const SETTLE_TAIL_TURNS = 4;
+
+// Backoff between settle's transcript reads while the finished turn's row is
+// still being written. Escalating and early-exiting: the first retry lands long
+// before the old flat 300 ms sleep did, and a slow write (or a fetch that
+// threw) gets four chances across ~1.1 s instead of one, so the 5 s reconcile
+// tick stays a backstop rather than the thing that swaps a finished bubble for
+// its persisted row.
+const SETTLE_RETRY_MS = [70, 150, 300, 600];
 
 // STUCK-turn self-heal. The live bubble settles on the terminal SSE frame; if
 // that single frame is lost (reconnect gap, a backgrounded tab, a stream torn
@@ -826,14 +839,11 @@ function PasteEditor({
   onClose: () => void;
   onSave: () => void;
 }) {
-  // The only fixed overlay that must follow the keyboard. It reads the shell pin through
-  // context (useShellStyle), not a prop, so a keyboard/rotation frame re-renders this
-  // overlay ALONE — not the screen behind it, which bailed out of that render.
-  const shellStyle = useShellStyle();
+  // This overlay lives inside SessionScreen's positioned root, so it follows
+  // the app shell without creating its own fixed WebKit layer.
   return (
     <div
-      className="fixed inset-x-0 top-0 z-50 flex h-dvh items-stretch justify-center bg-ink/85 p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:p-5"
-      style={shellStyle}
+      className="absolute inset-0 z-50 flex h-full items-stretch justify-center bg-ink/85 p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:p-5"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -1079,11 +1089,9 @@ export function SessionScreen({
   // content for editing (the same affordance other agent composers give a collapsed
   // paste). `draft` is the live textarea buffer — `pastes`/`prompt` only move on Save.
   const [editingPaste, setEditingPaste] = useState<{ id: number; draft: string } | null>(null);
-  // That editor is a `fixed` overlay, so it resolves against the LAYOUT viewport — the
-  // one iOS does NOT shrink for the keyboard. Unpinned, the sheet keeps its full box
-  // under the keyboard and only the couple of lines above it stay usable. The app shell
-  // already solves this; the overlay reuses the app shell's pin without mounting
-  // a second global viewport listener.
+  // The paste editor is absolute inside this screen's positioned root, so it
+  // inherits the app shell's keyboard pin without a second viewport listener or
+  // a lagging fixed WebKit layer.
   const [composerNotice, setComposerNotice] = useState<string | null>(null);
   // Seeded from the same cached capabilities as the composer above, so the mic
   // button is there on the first frame instead of arriving a round-trip late.
@@ -1754,7 +1762,15 @@ export function SessionScreen({
         setTurnsFresh(true);
         // Only the very bubble this coverage verdict is about — a turn started
         // since the read must keep streaming.
-        if (covered && (liveTurnRef.current?.id ?? '') === liveId) {
+        //
+        // And never against the turn the GATEWAY says it is running right now: the
+        // transcript verdict is a heuristic (an id that never matches plus a 60 s
+        // created_at window), and right after a queued row drains, the PREVIOUS
+        // turn's freshly persisted row falls inside that window. One tick then
+        // retired a live bubble mid-stream. The registry row is not a heuristic.
+        const gatewayRunningThis =
+          gatewayLive && (next.current_turn_id ?? '') === liveId && liveId !== '';
+        if (covered && !gatewayRunningThis && (liveTurnRef.current?.id ?? '') === liveId) {
           setRunning(false);
           setLiveTurn(null);
           liveTurnRef.current = null;
@@ -2115,7 +2131,26 @@ export function SessionScreen({
   useEffect(() => {
     async function settle(event: SseEvent) {
       const type = event.type;
-      setRunning(false);
+      // WHICH turn this terminal is about, decided BEFORE any await. The gateway
+      // drains the queue the instant a turn ends, so `turn.started` for the next
+      // (auto-sent) row can land inside every gap below — and this function used
+      // to settle whatever bubble it happened to find: it stamped the NEW turn
+      // `completed` (so `reduceLiveEvent`'s "a settled bubble never re-animates"
+      // guard then dropped every one of its deltas) and deleted it outright as
+      // soon as the PREVIOUS turn showed up in the transcript. The queued turn ran
+      // to completion into a bubble nobody was painting: an empty "Vis" until the
+      // whole thing persisted. This is the same rule the reconcile tick already
+      // applies before it clears a bubble.
+      const finishedId = stringField(event, 'turn_id') || liveTurnRef.current?.id || '';
+      // An id-less bubble is OUR optimistic one, i.e. this very turn. Anything
+      // started since carries the gateway's own id, so it can never be mistaken
+      // for the turn that just ended.
+      const ownsTerminal = (turn: LiveTurn | null) =>
+        !!turn && ((turn.id ?? '') === '' || turn.id === finishedId);
+      const finishedStartedAt = ownsTerminal(liveTurnRef.current)
+        ? liveTurnRef.current?.startedAt
+        : undefined;
+      if (!liveTurnRef.current || ownsTerminal(liveTurnRef.current)) setRunning(false);
       // Settle the live bubble ITSELF, synchronously. The transcript refetch below
       // is a network round-trip and may fail outright, and until it lands the
       // bubble still reads `status: 'running'` — spinner up, "Vis is thinking",
@@ -2123,7 +2158,7 @@ export function SessionScreen({
       // The terminal frame IS the end of the turn; that claim needs no transcript.
       // Mirrors the TUI's independent terminal path.
       setLiveTurn((turn) => {
-        if (!turn || turn.status !== 'running') return turn;
+        if (!turn || turn.status !== 'running' || !ownsTerminal(turn)) return turn;
         const failedBlocks = type === 'turn.failed' && Array.isArray(event.content)
           ? (event.content as ContentBlock[])
           : undefined;
@@ -2142,7 +2177,7 @@ export function SessionScreen({
       // Keep the streamed live turn on screen until the finished turn is
       // actually persisted in the transcript, otherwise it vanishes for a frame
       // (the persisted row lags the terminal event) and the view jumps.
-      const finishedId = stringField(event, 'turn_id') || liveTurnRef.current?.id || '';
+      // (`finishedId` / `finishedStartedAt` were captured above, before the awaits.)
       // Fetch the finished transcript WITHOUT touching state, then apply the
       // turns and drop the live bubble in ONE synchronous (React-batched) update.
       // The persisted finished turn carries the engine's row id, not the live
@@ -2156,8 +2191,23 @@ export function SessionScreen({
         .session(sid)
         .then(setSession)
         .catch(() => undefined);
+      // How big a page this settle needs. A full page is 24 turns of hydrated
+      // iterations — hundreds of kilobytes to megabytes on a phone link — and a
+      // settle only has to bring ONE freshly persisted row into view. When the
+      // snapshot we hold already reaches the tail of the session, the newest few
+      // rows adjoin it and `GatewayClient.transcript` merges them onto what is
+      // already rendered. Anything else (cold cache, a window that lags behind
+      // because turns ran while the app was away) takes the full page: a short
+      // page that does NOT adjoin would REPLACE the transcript with those few
+      // rows.
+      const settleLimit = (): number | undefined => {
+        const cached = client.cachedTranscript(sid);
+        if (!cached?.length) return undefined;
+        const held = client.transcriptWindow(sid);
+        return held.offset + cached.length >= held.total ? SETTLE_TAIL_TURNS : undefined;
+      };
       try {
-        next = await client.transcript(sid);
+        next = await client.transcript(sid, undefined, settleLimit());
       } catch {
         next = null;
       }
@@ -2166,12 +2216,25 @@ export function SessionScreen({
           turns,
           preLiveTurnIdsRef.current,
           finishedId,
-          liveTurnRef.current?.startedAt,
+          finishedStartedAt,
         );
-      if (next && !covers(next)) {
-        await new Promise((resolve) => window.setTimeout(resolve, 300));
+      // The persisted row lags the terminal frame by however long the engine's
+      // write takes. Poll for it on a short escalating backoff instead of
+      // sleeping one flat 300 ms and asking once: the common case (the row is
+      // already there a few tens of ms later) swaps the bubble for the real row
+      // ~4x sooner, and a slow write now gets four chances over a longer window
+      // instead of one, so the bubble is handed over on THIS path rather than by
+      // a reconcile tick up to 5 s later.
+      //
+      // A THROWN fetch keeps `next` null, and that must NOT end the loop: a
+      // single offline blip on the first read used to abort settle outright and
+      // leave the finished turn missing from the transcript until a reconcile
+      // tick. Only an answer that actually covers this turn stops the polling.
+      for (const wait of SETTLE_RETRY_MS) {
+        if (next && covers(next)) break;
+        await new Promise((resolve) => window.setTimeout(resolve, wait));
         try {
-          next = await client.transcript(sid);
+          next = await client.transcript(sid, undefined, settleLimit());
         } catch {
           /* keep the earlier snapshot */
         }
@@ -2188,9 +2251,24 @@ export function SessionScreen({
         // Drop the live bubble ONLY against a settled row that carries the
         // answer. Against the still-`running` placeholder (or an id that never
         // matches) this deleted the finished turn outright.
-        if (covers(next)) {
+        // …and only while the bubble on screen is still THIS turn's: a queued row
+        // that drained during the fetch owns the rail now.
+        if (covers(next) && ownsTerminal(liveTurnRef.current)) {
           setLiveTurn(null);
           liveTurnRef.current = null;
+        } else if (covers(next)) {
+          // A queued row drained into the rail while we were fetching. THIS turn's
+          // answer is now persisted, so it is old news for the bubble that is
+          // streaming — fold it into the baseline. The baseline is frozen for as
+          // long as ANY bubble is up (see the mirror effect), so without this the
+          // reconcile tick reads "the live turn has landed" off the PREVIOUS turn's
+          // row (`liveTurnSettledInto`'s 60 s created_at slack accepts it) and
+          // deletes a bubble that is still streaming — the same blank "Vis", one
+          // tick later.
+          preLiveTurnIdsRef.current = new Set([
+            ...preLiveTurnIdsRef.current,
+            ...next.filter((turn) => !isRunningRow(turn)).map(rowId),
+          ]);
         }
       }
       if (type === 'turn.failed') {
@@ -2283,7 +2361,10 @@ export function SessionScreen({
         }
       }
 
-      if (batch.some((event) => event.type === 'turn.started')) setRunning(true);
+      // The composer follows the batch's LAST lifecycle frame, and it is decided
+      // AFTER `settle` below: a terminal and the `turn.started` of the queued row
+      // it drained can share one throttle window, and settle's `setRunning(false)`
+      // must not be the final word when a new turn is already running.
       setLiveTurn((turn) => {
         const reduced = batch.reduce(reduceLiveEvent, turn);
         liveTurnRef.current = reduced;
@@ -2298,6 +2379,15 @@ export function SessionScreen({
         }
       }
       if (terminal) void settle(terminal);
+      let lifecycle: SseEvent | undefined;
+      for (let index = batch.length - 1; index >= 0; index -= 1) {
+        const type = batch[index].type;
+        if (TERMINAL_EVENTS.has(type) || type === 'turn.started') {
+          lifecycle = batch[index];
+          break;
+        }
+      }
+      if (lifecycle?.type === 'turn.started') setRunning(true);
     };
 
     // Liveness watchdog — the transport-independent twin of the TUI's

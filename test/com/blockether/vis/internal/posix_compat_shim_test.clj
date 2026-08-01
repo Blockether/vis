@@ -10,20 +10,40 @@
   (:import [org.graalvm.polyglot Context]))
 
 (defn- fake-shell
-  "Records canonical command/opts calls and returns small lifecycle-shaped results."
+  "Records one-options-map shell calls and returns lifecycle-shaped results."
   [calls]
-  (fn shell ([arg] (if (map? arg) (shell nil arg) (shell arg nil)))
-    ([cmd opts] (swap! calls conj {:cmd cmd :opts opts})
-     (case (get opts "op")
-       "logs"
-       {"status" "running" "exit" nil "lines" []}
+  (fn [opts]
+    (let
+      [cmd
+       (first (or (get opts "commands") (get opts :commands)))
 
-       "stop"
-       {"status" "stopped" "stopped" true}
+       op
+       (or (get opts "op") (get opts :op))]
 
-       (if (str/includes? (str cmd) "boom")
-         {"cmd" cmd "exit" 7 "stdout" "partial\n" "stderr" "boom!\n" "duration_ms" 3}
-         {"cmd" cmd "exit" 0 "stdout" "hello\n" "duration_ms" 2})))))
+      (swap! calls conj {:cmd cmd :opts opts})
+      (case op
+        "logs"
+        {"status" "running" "exit" nil "lines" []}
+
+        "stop"
+        {"status" "stopped" "stopped" true}
+
+        (let [failed? (str/includes? (str cmd) "boom")]
+          {"commands" [(cond->
+                         {"cmd" cmd
+                          "exit" (if failed? 7 0)
+                          "stdout" (if failed? "partial\n" "hello\n")
+                          "stderr" (if failed? "boom!\n" "")
+                          "duration_ms" (if failed? 3 2)
+                          "started" true
+                          "timed_out" false
+                          "timeout_secs" 120
+                          "stdout_truncated" false
+                          "stderr_truncated" false
+                          "stdout_omitted_chars" 0
+                          "stderr_omitted_chars" 0}
+                         (nil? cmd)
+                         (assoc "exit" nil))]})))))
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
 
@@ -45,7 +65,7 @@
           (ev
             python-context
             "r = subprocess.run(['echo','hi'], capture_output=True, text=True)\n[r.returncode, r.stdout]")))
-      ;; argv list was shell-quoted + joined into the command `shell` received
+      ;; argv list was shell-quoted + joined into the direct bash line.
       (expect (= "echo hi" (:cmd (last @calls))))))
   (it
     "passes run options and keeps Popen lifecycle ids inside the options map"

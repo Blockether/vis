@@ -35,47 +35,22 @@
   120)
 
 (defn- now-ms ^long [] (System/currentTimeMillis))
-
-(defn- tokenize
-  "Quote-aware whitespace split of a bare command string, so a human can type
-   `git(\"commit -m 'wip'\")` in the sandbox and still get the message as one
-   token. The model passes a LIST (the native-tool schema is an array), which
-   skips this path entirely — each element is a literal arg, spaces and all."
-  [^String s]
-  (loop
-    [chars
-     (seq s)
-
-     cur
-     (StringBuilder.)
-
-     quote
-     nil
-
-     acc
-     []]
-
-    (if-let [c (first chars)]
-      (cond quote (if (= c quote)
-                    (recur (rest chars) cur nil acc)
-                    (recur (rest chars) (.append cur c) quote acc))
-            (or (= c \") (= c \')) (recur (rest chars) cur c acc)
-            (Character/isWhitespace ^char c)
-            (if (pos? (.length cur))
-              (recur (rest chars) (StringBuilder.) nil (conj acc (str cur)))
-              (recur (rest chars) cur nil acc))
-            :else (recur (rest chars) (.append cur c) quote acc))
-      (if (pos? (.length cur)) (conj acc (str cur)) acc))))
-
 (defn- normalize-args
-  "Coerce the tool's single `args` value into a vector of literal git tokens.
-   A sequential is taken element-by-element (each a literal arg); a string is
-   quote-aware tokenized; a lone scalar becomes a one-element vector."
+  "Coerce ONE element of the `commands` batch into a vector of literal git
+   tokens. `git-impl` admits the schema's ONLY item shape — a sequential of
+   literal args, spaces and all — at the door, so there is no union wider than
+   the tool's own grammar. An empty result is the caller's signal to ask for at
+   least one argument."
   [args]
-  (cond (sequential? args) (into [] (comp (map str) (remove str/blank?)) args)
-        (string? args) (tokenize args)
-        (nil? args) []
-        :else [(str args)]))
+  (if (sequential? args)
+    (into [] (comp (map str) (remove str/blank?)) args)
+    (throw (ex-info (str "git commands must be lists of literal tokens \u2014 "
+                         "one command is a batch of ONE, so pass each as an array, "
+                         "e.g. [[\"status\", \"--short\"]] or [[\"commit\", \"-m\", \"wip\"]]. "
+                         "Got "
+                         (pr-str (type args))
+                         ".")
+                    {:type ::bad-commands :tool "git"}))))
 
 (defn- verbose-add-tokens
   "`git add` is silent by design, so a bare `add` gives no feedback on WHAT it
@@ -106,11 +81,9 @@
           "Every git command needs at least one argument, e.g. [\"status\"] or [\"commit\", \"-m\", \"msg\"]."
           {:type ::no-args})))
     (let
-      [r
-       (shell/run-argv env
-                       (into ["git"] (verbose-add-tokens tokens))
-                       {"timeout_secs" default-timeout-secs})]
-
+      [r (shell/run-argv env
+                         (into ["git"] (verbose-add-tokens tokens))
+                         {"timeout_secs" default-timeout-secs})]
       {"cmd" (str "git " (str/join " " tokens))
        "args" (vec tokens)
        "stdout" (or (get r "stdout") "")
@@ -121,24 +94,30 @@
        "timeout_secs" (or (get r "timeout_secs") default-timeout-secs)})))
 
 (defn- git-impl
-  ([env commands] (git-impl env commands nil))
-  ([env commands _opts]
-   ;; Deliberately serial (`serial-batch/run-serial`, the same runner `shell`
-   ;; uses): a later command may depend on an earlier mutation (`add` →
-   ;; `commit` → `push`). A failed command remains data and never prevents the
-   ;; remaining commands from producing their own total results.
-   (let
-     [commands (batch/ordered "git" commands)
-      t0 (now-ms)
-      results (batch/run-serial commands #(git-command-result env %))
-      t1 (now-ms)]
+  "Run the `commands` array from one options map, preserving its serial order."
+  [env opts]
+  (when-not (map? opts)
+    (throw (ex-info "git takes one options map, e.g. await git({\"commands\": [[\"status\"]]})."
+                    {:type ::bad-options :tool "git"})))
+  (let
+    [commands
+     (batch/ordered "git" (or (get opts "commands") (get opts :commands)))
 
-     (extension/success {:result (batch/result results)
-                         :op :git
-                         :metadata {:command-count (count results)
-                                    :started-at-ms t0
-                                    :finished-at-ms t1
-                                    :duration-ms (- t1 t0)}}))))
+     t0
+     (now-ms)
+
+     results
+     (batch/run-serial commands #(git-command-result env %))
+
+     t1
+     (now-ms)]
+
+    (extension/success {:result (batch/result results)
+                        :op :git
+                        :metadata {:command-count (count results)
+                                   :started-at-ms t0
+                                   :finished-at-ms t1
+                                   :duration-ms (- t1 t0)}})))
 
 ;; =============================================================================
 ;; Render — the op-card for a `git` call: `<args>` headline (with an
@@ -318,31 +297,23 @@
   "Render one expandable result card with each command's own stdout/stderr intact.
    The card layout itself is `serial-batch/card`, shared with `shell`."
   [r]
-  (batch/card {:icon "⎇"
-               :noun "git"
-               :results (get r batch/commands-key)
-               :render-one render-git-result}))
+  (batch/card
+    {:icon "⎇" :noun "git" :results (get r batch/commands-key) :render-one render-git-result}))
 
 ;; =============================================================================
 ;; Symbol + extension. Built-in ⇒ binds BARE as `git` in the sandbox ns.
 ;; =============================================================================
 
-(defn- inject-env [env f args] {:env env :fn f :args (into [env] args)})
 
 (def
   ^{:doc
-    "await git([[\"status\", \"--short\"], [\"diff\", \"--stat\"]])
-await git([[\"add\", \"-A\"], [\"commit\", \"-m\", \"wip: message with spaces\"]])
+    "await git({\"commands\": [[\"status\", \"--short\"], [\"diff\", \"--stat\"]]})
+await git({\"commands\": [[\"add\", \"-A\"], [\"commit\", \"-m\", \"wip: message with spaces\"]]})
 
-Run SERIAL host-Git commands in the workspace root. `commands` is a non-empty LIST
-of non-empty LISTS of literal tokens; each inner element is one git argument, safe
-for commit messages and paths with spaces. Commands run in request order, so later
-mutations see earlier ones. Every command returns exactly `{\"cmd\", \"args\", \"stdout\",
-\"stderr\", \"exit\", \"duration_ms\", \"timed_out\", \"timeout_secs\"}` under
-`{\"commands\" [...]}`. ALL stdout and stderr stay with the command that emitted them.
+Run SERIAL host-Git commands in the workspace root. EVERY call takes exactly one map whose `commands` is a non-empty LIST of non-empty LISTS of literal tokens; each inner element is one git argument, safe for commit messages and paths with spaces. Never pass `commands` as a positional array. Commands run in request order, so later mutations see earlier ones. Every command returns exactly `{\"cmd\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\", \"timed_out\", \"timeout_secs\"}` under `{\"commands\" [...]}`. ALL stdout and stderr stay with the command that emitted them.
 
 Gotcha: a non-zero `exit` is DATA to read, not a tool failure; remaining commands run."
-    :arglists '([commands])}
+    :arglists '([opts])}
   git
   git-impl)
 
@@ -357,11 +328,15 @@ Gotcha: a non-zero `exit` is DATA to read, not a tool failure; remaining command
      :description
      (str
        "Run SERIAL host-Git commands only when `session[\"workspace\"]` lacks needed VCS facts or to act. "
+       "EVERY call takes one map: await git({\"commands\": [[\"status\", \"--short\"]]}). "
        "Each keeps stdout/stderr; non-zero exits are data and later commands run.")
-     :call {:pos ["commands"]}
      :render render-git-batch-result
      :color-role :tool-color/shell
-     :before-fn inject-env
+     ;; Native calls dispatch straight to this two-argument handler. Python keeps
+     ;; the same implementation through :inject-env?, so both paths have exactly
+     ;; `[env opts]` and cannot drift into a third positional argument.
+     :handler git-impl
+     :inject-env? true
      :tag :mutation
      :schema {:type "object"
               :properties
@@ -370,7 +345,8 @@ Gotcha: a non-zero `exit` is DATA to read, not a tool failure; remaining command
                  {:items {:type "array" :minItems 1 :items {:type "string"}}
                   :description
                   (str "Git commands in serial request order; each a list of literal argv tokens"
-                       " with `git` omitted, e.g. `[[\"status\", \"--short\"]]`.")})}
+                       " with `git` omitted, e.g. `[[\"status\", \"--short\"]]`. Pass this in the"
+                       " one options map, never as a positional array.")})}
               :required ["commands"]
               :additionalProperties false}}))
 
