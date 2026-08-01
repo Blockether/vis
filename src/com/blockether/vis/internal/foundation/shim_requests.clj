@@ -34,7 +34,7 @@
      [{:shim/name "requests"
        :shim/imports ["requests"]
        :shim/description
-       "requests-compatible `requests` backed by stdlib urllib (pure Python). Not supported: HTTP/2 or real connection pooling; `HTTPDigestAuth` is an accepted no-op (sends no auth header)."
+       "`requests`-compatible API via pure-Python stdlib urllib. No HTTP/2 or real pooling; `HTTPDigestAuth` is accepted but sends no auth header."
        :shim/source "vis-shims/requests.py"}]}))
 
 (vis/register-extension! vis-extension)
