@@ -26,7 +26,7 @@
   (vis/extension
     {:ext/name "foundation-shim-numpy"
      :ext/description
-     "Sandbox shim: a `numpy`-compatible module (import numpy / numpy.array) implemented in PURE Python (ndarray with broadcasting, reductions, ufuncs, indexing, dot/matmul, linalg norm/det/inv/solve, random) on the stdlib. No pip, no native wheel, no host bridge. A correctness-focused subset, not C-speed numpy."
+     "Sandbox pure-Python `numpy` subset (`numpy.array`): ndarray broadcasting, reductions, ufuncs, indexing, dot/matmul, linalg norm/det/inv/solve, and random. Stdlib only, no pip/wheel/host bridge; correctness-focused, not C-speed."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
