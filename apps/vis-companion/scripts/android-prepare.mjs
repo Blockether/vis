@@ -24,9 +24,10 @@
  *   node scripts/android-prepare.mjs --build 4711
  *   node scripts/android-prepare.mjs --file google-services.json
  *   node scripts/android-prepare.mjs --clean        # shred the materialised keystore
+ *   node scripts/android-prepare.mjs --check        # verify branded launcher assets after sync
  */
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { syncPackageVersion } from './version.mjs';
@@ -81,6 +82,30 @@ if (!existsSync(androidApp)) die('no android/app — run `npm run add:android` f
 const nativeIconAssets = join(root, 'native-assets', 'android', 'res');
 const androidResources = join(androidApp, 'src', 'main', 'res');
 if (!existsSync(nativeIconAssets)) die(`no tracked Android icons at ${nativeIconAssets}`);
+
+const assetFiles = (dir, prefix = '') =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const relative = join(prefix, entry.name);
+    return entry.isDirectory() ? assetFiles(join(dir, entry.name), relative) : [relative];
+  });
+
+const launcherAssets = assetFiles(nativeIconAssets);
+const mismatchedLauncherAssets = () =>
+  launcherAssets.filter((relative) => {
+    const source = join(nativeIconAssets, relative);
+    const target = join(androidResources, relative);
+    return !existsSync(target) || !readFileSync(source).equals(readFileSync(target));
+  });
+
+if (has('check')) {
+  const mismatched = mismatchedLauncherAssets();
+  if (mismatched.length) {
+    die(`Android launcher assets differ from tracked Vis branding: ${mismatched.join(', ')}`);
+  }
+  console.log('✓ launcher icons match tracked Vis branding');
+  process.exit(0);
+}
+
 cpSync(nativeIconAssets, androidResources, { recursive: true, force: true });
 console.log('✓ launcher icons → android/app/src/main/res  (tracked Vis branding)');
 

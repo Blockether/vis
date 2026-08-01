@@ -108,8 +108,7 @@
    on the classpath, which turns every video path here into a graceful no-op
    instead of a load error."
   [sym]
-  (try (requiring-resolve (symbol (str video-ns) (str sym)))
-       (catch Throwable _ nil)))
+  (try (requiring-resolve (symbol (str video-ns) (str sym))) (catch Throwable _ nil)))
 
 (def ^:private v-poster (delay (video-var 'poster)))
 (def ^:private v-probe (delay (video-var 'probe)))
@@ -138,8 +137,9 @@
 
 (defn probe-dimensions
   "Read `path`'s head and sniff its `{:w :h}` pixel dimensions. nil on failure.
-   A VIDEO falls back to the MP4 index, which carries the display size, so a
-   clip can size its cell box without decoding a single picture."
+   A VIDEO is answered by the fork from the MP4 track header (no decode, no
+   native imaging library), and only then by the imaging index — so a clip can
+   size its cell box without touching a single picture."
   [path mime]
   (or (when-let [wh (TerminalImage/probeDimensions (str path) mime)]
         {:w (aget ^ints wh 0) :h (aget ^ints wh 1)})
@@ -179,34 +179,56 @@
    picture."
   [cols rows]
   (let [{:keys [w h]} (cell-pixels)]
-    (max 64
-         (* (long (or cols 80)) (long w))
-         (* (long (or rows 0)) (long h)))))
+    (max 64 (* (long (or cols 80)) (long w)) (* (long (or rows 0)) (long h)))))
 
 ;; =============================================================================
 ;; Escape encoding
 ;; =============================================================================
 
 (defn encode-kitty
-  "Kitty graphics `\\x1b_G` transmit+display sequence for base64 `data`, sized to
+  "Kitty graphics `\\x1b_G` transmit+display sequence for `data`, sized to
    `cols`×`rows` cells. `C=1` keeps the cursor put after placement. When
    `crop-top`/`crop-bottom` (cell rows scrolled past the band's top/bottom edge)
    are positive, only the visible vertical slice is shown at native scale via the
    Kitty source rectangle, sized from the transmitted image's `img-w`×`img-h`
-   pixel dimensions."
-  [^String data {:keys [cols rows crop-top crop-bottom img-w img-h]}]
-  (TerminalImage/encodeKitty data
-                             (int (or cols 0))
-                             (int (or rows 0))
-                             (int (or crop-top 0))
-                             (int (or crop-bottom 0))
-                             (int (or img-w 0))
-                             (int (or img-h 0))))
+   pixel dimensions.
+
+   `data` is a base64 String OR the RAW PNG bytes. Raw bytes are base64'd one
+   chunk at a time straight into the escape by the fork, so the 1.33x base64
+   String never exists — the per-frame path for video playback, where the
+   payload changes every frame and nothing can be cached."
+  [data {:keys [cols rows crop-top crop-bottom img-w img-h]}]
+  (let
+    [c
+     (int (or cols 0))
+
+     r
+     (int (or rows 0))
+
+     ct
+     (int (or crop-top 0))
+
+     cb
+     (int (or crop-bottom 0))
+
+     iw
+     (int (or img-w 0))
+
+     ih
+     (int (or img-h 0))]
+
+    (if (bytes? data)
+      (TerminalImage/encodeKitty ^bytes data c r ct cb iw ih)
+      (TerminalImage/encodeKitty ^String data c r ct cb iw ih))))
 
 (defn encode-iterm2
-  "iTerm2 `\\x1b]1337;File=` inline-image sequence for base64 `data`."
-  [^String data {:keys [cols]}]
-  (TerminalImage/encodeIterm2 data (int (or cols 0))))
+  "iTerm2 `\\x1b]1337;File=` inline-image sequence for `data` (base64 String or
+   RAW image bytes, base64'd into the escape without an intermediate String)."
+  [data {:keys [cols]}]
+  (let [c (int (or cols 0))]
+    (if (bytes? data)
+      (TerminalImage/encodeIterm2 ^bytes data c)
+      (TerminalImage/encodeIterm2 ^String data c))))
 
 (defn read-base64
   "Read `path` and base64-encode its bytes, or nil on failure. Cached by
@@ -215,32 +237,32 @@
   (TerminalImage/readBase64 (str path)))
 
 (def ^:private png-transcode-cache
-  "[abs-path mtime size cols rows] -> `{:data :w :h}` for an already box-fitted PNG."
+  "[abs-path mtime size cols rows] -> `{:data :w :h}` for an already box-fitted PNG,
+   `:data` being the raw PNG bytes."
   (atom {}))
 
 (defn- still->png
-  "Box-fitted PNG `{:data :w :h}` for a STILL image file, or nil."
+  "Box-fitted PNG `{:data :w :h}` for a STILL image file, or nil. `:data` is the
+   RAW PNG bytes: the escape encoders base64 them as they chunk, so encoding one
+   here would only build a 1.33x String for someone else to re-slice."
   [^java.io.File f {:keys [cols rows]}]
-  (try
-    (with-open [src (img/decode f)]
-      (let [target-w (* (long cols) (long (TerminalImage/cellWidth)))
+  (try (with-open [src (img/decode f)]
+         (let
+           [target-w (* (long cols) (long (TerminalImage/cellWidth)))
             target-h (* (long rows) (long (TerminalImage/cellHeight)))
             iw (img/width src)
             ih (img/height src)
-            scale (min 1.0
-                       (/ (double target-w) iw)
-                       (/ (double target-h) ih))]
-        (if (< scale 1.0)
-          (let [sw (max 1 (Math/round (* iw scale)))
+            scale (min 1.0 (/ (double target-w) iw) (/ (double target-h) ih))]
+
+           (if (< scale 1.0)
+             (let
+               [sw (max 1 (Math/round (* iw scale)))
                 sh (max 1 (Math/round (* ih scale)))]
-            (with-open [scaled (img/resize src sw sh :lanczos3)]
-              {:data (.encodeToString (Base64/getEncoder)
-                                      ^bytes (img/encode scaled :png))
-               :w (int sw) :h (int sh)}))
-          {:data (.encodeToString (Base64/getEncoder)
-                                  ^bytes (img/encode src :png))
-           :w (int iw) :h (int ih)})))
-    (catch Throwable _ nil)))
+
+               (with-open [scaled (img/resize src sw sh :lanczos3)]
+                 {:data (img/encode scaled :png) :w (int sw) :h (int sh)}))
+             {:data (img/encode src :png) :w (int iw) :h (int ih)})))
+       (catch Throwable _ nil)))
 
 (defn- video->png
   "Box-fitted PNG `{:data :w :h}` of a clip's FIRST frame — the still a terminal
@@ -250,9 +272,7 @@
   [^java.io.File f {:keys [cols rows]}]
   (when-let [poster @v-poster]
     (try (when-let [{:keys [png width height]} (poster f {:max-dimension (box-pixels cols rows)})]
-           {:data (.encodeToString (Base64/getEncoder) ^bytes png)
-            :w (int width)
-            :h (int height)})
+           {:data png :w (int width) :h (int height)})
          (catch Throwable _ nil))))
 
 (defn- transcode->png
@@ -265,12 +285,15 @@
    MP4) is expensive, so the box-sized PNG is cached by path+mtime+size+box: a
    scroll that re-emits the image never re-decodes."
   [path {:keys [cols rows] :as box}]
-  (let [f (io/file (str path))
-        key [(.getAbsolutePath f) (.lastModified f) (.length f) cols rows]]
+  (let
+    [f
+     (io/file (str path))
+
+     key
+     [(.getAbsolutePath f) (.lastModified f) (.length f) cols rows]]
+
     (or (get @png-transcode-cache key)
-        (when-let [r (if (video-source? f nil)
-                       (video->png f box)
-                       (still->png f box))]
+        (when-let [r (if (video-source? f nil) (video->png f box) (still->png f box))]
           (swap! png-transcode-cache assoc key r)
           r))))
 
@@ -279,16 +302,23 @@
    PNG base64 string, downscaled so it fits the `cols`×`rows` cell box in pixels.
    The Kitty protocol's `f=100` only accepts PNG, so a JPEG/GIF/BMP drop must
    pass through here first. Pure FFM (no java.desktop, works in the native
-   image); returns nil on any failure so callers fall back to a text card."
+   image); returns nil on any failure so callers fall back to a text card.
+
+   Prefer [[transcode->png]] and hand its raw `:data` to the escape encoders:
+   this arity exists for callers that genuinely need the base64 text."
   [path box]
-  (:data (transcode->png path box)))
+  (when-let [{:keys [data]} (transcode->png path box)]
+    (if (bytes? data) (.encodeToString (Base64/getEncoder) ^bytes data) data)))
 
 (defn kitty-png
-  "PNG base64 + transmitted pixel dims `{:data :w :h}` for the Kitty wire. A PNG
+  "PNG payload + transmitted pixel dims `{:data :w :h}` for the Kitty wire. A PNG
    file rides through verbatim — transmitted at its intrinsic `width`×`height`
    (and works in the native image too); anything else is decoded and re-encoded
    as a box-fitted PNG via `com.blockether.imaging`, and a VIDEO becomes its
-   poster frame."
+   poster frame.
+
+   `:data` is base64 text for the verbatim path (the fork caches that read) and
+   RAW PNG bytes for a transcode; every encoder here takes either."
   [path mime {:keys [width height] :as box}]
   (if (= mime "image/png")
     (when-let [data (read-base64 path)]
@@ -317,64 +347,28 @@
       ;; iTerm2 accepts any container format as-is (no source-crop; the fitting
       ;; pass shrinks a bottom-overflowing box instead).
       :iterm2
-      (when-let [data (if (video-source? path mime)
-                        ;; A clip's own bytes are not an image: iTerm2 would draw a
-                        ;; broken download card. Send the poster frame instead.
-                        (:data (transcode->png path box))
-                        (read-base64 path))]
+      (when-let
+        [data (if (video-source? path mime)
+                ;; A clip's own bytes are not an image: iTerm2 would draw a
+                ;; broken download card. Send the poster frame instead.
+                (:data (transcode->png path box))
+                (read-base64 path))]
         (encode-iterm2 data box))
 
       nil)))
 
-(def ^:private kitty-chunk
-  "Kitty caps a single `\\x1b_G` escape's base64 payload at 4096 bytes; longer data
-   rides `m=1`…`m=0` continuation chunks. Mirrors the fork encoder's KITTY_CHUNK."
-  4096)
 
 (defn kitty-transmit
-  "Kitty `a=t` transmit-ONLY sequence: upload base64 PNG `data` under client image
-   id `id` WITHOUT displaying it, chunked into `m=1`…`m=0` pieces like the fork's
-   `encodeKitty`. A later `kitty-place` draws it with NO re-upload — the key to
-   flicker-free scrolling (transmit once, then re-place cheaply)."
-  [^String data id]
-  (let
-    [esc
-     "\u001b"
-
-     n
-     (long (count data))
-
-     chunk
-     (long kitty-chunk)
-
-     control
-     (str "a=t,i=" id ",f=100,q=2")]
-
-    (if (<= n chunk)
-      (str esc "_G" control ";" data esc "\\")
-      (let [sb (StringBuilder.)]
-        (loop
-          [off 0
-           first? true]
-
-          (when (< off n)
-            (let
-              [end (min n (+ off chunk))
-               chunk (subs data off end)
-               last? (>= end n)
-               ctrl (cond first? (str control ",m=1")
-                          last? "m=0"
-                          :else "m=1")]
-
-              (.append sb esc)
-              (.append sb "_G")
-              (.append sb ctrl)
-              (.append sb ";")
-              (.append sb chunk)
-              (.append sb esc)
-              (.append sb "\\")
-              (recur (long end) false))))
-        (.toString sb)))))
+  "Kitty `a=t` transmit-ONLY sequence: upload PNG `data` (base64 String or RAW
+   bytes) under client image id `id` WITHOUT displaying it, chunked into
+   `m=1`…`m=0` pieces by the fork's own encoder. A later `kitty-place` draws it
+   with NO re-upload — the key to flicker-free scrolling (transmit once, then
+   re-place cheaply)."
+  [data id]
+  (let [i (int id)]
+    (if (bytes? data)
+      (TerminalImage/transmitKitty ^bytes data i)
+      (TerminalImage/transmitKitty ^String data i))))
 
 (defn kitty-place
   "Kitty `a=p` placement sequence for an ALREADY-transmitted image `id` at the
@@ -450,18 +444,19 @@
    index, never a decode. nil unless the path really is a readable clip."
   [text workspace-root]
   (when-let [m (re-find video-path-regex (str text))]
-    (let [s (-> (second m)
-                (str/replace "\\ " " ")
-                str/trim)
-          s (if (str/starts-with? s "~")
-              (str (System/getProperty "user.home") (subs s 1))
-              s)
-          f (io/file s)
-          f (if (.isAbsolute f)
-              f
-              (io/file (str (or workspace-root (System/getProperty "user.dir"))) s))]
+    (let
+      [s (-> (second m)
+             (str/replace "\\ " " ")
+             str/trim)
+       s (if (str/starts-with? s "~") (str (System/getProperty "user.home") (subs s 1)) s)
+       f (io/file s)
+       f
+       (if (.isAbsolute f) f (io/file (str (or workspace-root (System/getProperty "user.dir"))) s))]
+
       (when (and (.isFile f) (.canRead f))
-        (when-let [mime (when-let [mt @v-media-type] (mt f))]
+        (when-let
+          [mime (when-let [mt @v-media-type]
+                  (mt f))]
           (let [{:keys [w h]} (or (probe-dimensions (.getAbsolutePath f) mime) {})]
             {:path (.getAbsolutePath f)
              :mime mime
@@ -512,14 +507,20 @@
    "image/jpeg" ".jpg"
    "image/gif" ".gif"
    "image/webp" ".webp"
-   "image/bmp" ".bmp"})
+   "image/bmp" ".bmp"
+   ;; A clip is cached under its OWN extension: the poster path re-decodes the
+   ;; file, and a `.png` named MP4 would be neither playable nor probeable.
+   "video/mp4" ".mp4"
+   "video/quicktime" ".mov"
+   "video/x-m4v" ".m4v"})
 
 (defn materialize-attachment
   "Decode ONE persisted user image attachment (canonical wire map, STRING keys
    `id`/`base64`/`media_type`/`filename`) into a STABLE cache file keyed by its
    row id and return the descriptor a `vis-image` fence needs -
    `{:path :mime :filename :size :size-label :width :height}` - or nil when it is
-   not a usable still image. Idempotent: an already-written cache file is reused,
+   neither a usable still nor a decodable clip. Idempotent: an already-written
+   cache file is reused,
    never rewritten, so a resumed session re-renders the picture from DB-owned
    bytes even after the original source path is gone. Never throws."
   [att]
@@ -531,7 +532,7 @@
        b64
        (str (get att "base64"))]
 
-      (when (and (str/starts-with? media "image/") (not (str/blank? b64)))
+      (when (and (or (str/starts-with? media "image/") (video-mime? media)) (not (str/blank? b64)))
         (let
           [ext
            (get media-type->ext media ".png")

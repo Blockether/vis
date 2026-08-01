@@ -1176,6 +1176,9 @@
                     dir
                     (temp-dir-path "lsbasic")
 
+                    _
+                    (.mkdirs (java.io.File. dir "empty"))
+
                     cat-tool
                     (private-fn "cat-tool")
 
@@ -1184,13 +1187,16 @@
 
                    (expect (= "dir" (get out "type")))
                    (expect (= 1 (get out "depth")))
-                   ;; directories sort before files, each alphabetical
-                   (expect (= ["sub" "a.txt"] (mapv #(get % "name") (get out "entries"))))
+                   ;; directories sort before files, each alphabetical; native mixed
+                   ;; search retains empty directories.
+                   (expect (= ["empty" "sub" "a.txt"]
+                              (mapv #(get % "name") (get out "entries"))))
                    (expect (every? #(contains? % "size") (get out "entries")))
                    ;; Preserve the original listing contract: directory size is its
                    ;; filesystem metadata, not fff's intentionally-zero aggregate.
-                   (expect (= (.length (java.io.File. dir "sub"))
-                              (get (first (get out "entries")) "size")))))
+                   (let [sub (some #(when (= "sub" (get % "name")) %) (get out "entries"))]
+                     (expect (= (.length (java.io.File. dir "sub"))
+                                (get sub "size"))))))
              (it "(cat dir) hides dotfiles + gitignored entries by default; opts widen"
                  (let
                    [_

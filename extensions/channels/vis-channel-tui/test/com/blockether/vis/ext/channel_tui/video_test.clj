@@ -284,3 +284,307 @@
                  (expect (throws? clojure.lang.ExceptionInfo
                                   #(video/playback-sequences (reference-clip)
                                                              {:protocol :kitty :cols 20})))))
+
+;; ── A clip on a STILL-image surface ──────────────────────────────────────────
+;;
+;; Every inline-image surface in the TUI (the Kitty/iTerm2 renderer, the paste
+;; probe, the transcript fence) draws ONE picture. These tests pin the contract
+;; that makes an MP4 usable there — it shows its poster frame — and that getting
+;; that poster costs one keyframe rather than the whole timeline.
+
+(defdescribe video-file-sniffing-test
+             (it "recognises a clip by MAGIC BYTES, not by its name"
+                 (let
+                   [clip
+                    (reference-clip)
+
+                    fake
+                    (File/createTempFile "vis-not-a-movie" ".mp4")]
+
+                   (.deleteOnExit fake)
+                   (spit fake "this is text, not a movie")
+                   (expect (video/video-file? clip))
+                   (expect (= "video/mp4" (video/media-type clip)))
+                   (expect (not (video/video-file? fake)))
+                   (expect (nil? (video/media-type fake)))
+                   (expect (not (video/video-file? (File. "/nope/missing.mp4"))))))
+             (it "labels a QuickTime container from its name once the BYTES agree"
+                 (let
+                   [clip
+                    (reference-clip)
+
+                    mov
+                    (File/createTempFile "vis-video-test" ".mov")]
+
+                   (.deleteOnExit mov)
+                   (java.nio.file.Files/copy (.toPath clip)
+                                             (.toPath mov)
+                                             ^"[Ljava.nio.file.CopyOption;"
+                                             (into-array
+                                               java.nio.file.CopyOption
+                                               [java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
+                   (expect (= "video/quicktime" (video/media-type mov))))))
+
+(defdescribe poster-test
+             (it "is the first picture, decoded ONCE and at draw size"
+                 (let
+                   [clip
+                    (reference-clip)
+
+                    seen
+                    (atom nil)
+
+                    real
+                    video/decode-frames
+
+                    p
+                    (with-redefs
+                      [video/decode-frames (fn [src opts]
+                                             (reset! seen opts)
+                                             (real src opts))]
+                      (video/poster clip {:max-dimension 32}))]
+
+                   ;; The whole point: ONE keyframe at the size it will be drawn,
+                   ;; never the timeline, and encoded by the cdylib rather than
+                   ;; carried over as RGBA. A 240-frame clip must cost the same.
+                   (expect (= {:max-frames 1 :max-dimension 32 :encoding :png} @seen))
+                   ;; PNG magic 0x89 'P' 'N' 'G'
+                   (expect (= [-119 80 78 71] (mapv #(aget ^bytes (:png p) %) (range 4))))
+                   (expect (= {:w (:width p) :h (:height p)}
+                              (timg/image-dimensions (:png p) "image/png")))
+                   (expect (<= (long (:width p)) 32))))
+             (it "keeps the clip's own size when nothing constrains it"
+                 (let [p (video/poster (reference-clip))]
+                   (expect (= clip-w (:width p)))
+                   (expect (= clip-h (:height p))))))
+
+(defdescribe
+  video-in-terminal-image-test
+  (it "Kitty gets a PNG poster for an MP4 — that wire is PNG-only"
+      (let
+        [clip
+         (reference-clip)
+
+         {:keys [data w h]}
+         (timg/kitty-png (.getAbsolutePath clip) "video/mp4" {:cols 20 :rows 10})
+
+         bs
+         ;; RAW PNG bytes, not base64: the fork base64s them as it
+         ;; chunks the escape, so nothing here builds the 1.33x String.
+         data]
+
+        (expect (= [-119 80 78 71] (mapv #(aget ^bytes bs %) (range 4))))
+        (expect (= {:w w :h h} (timg/image-dimensions bs "image/png")))))
+  (it "raw bytes and base64 produce the IDENTICAL escape, in every encoder"
+      (let
+        [bs
+         (:data
+           (timg/kitty-png (.getAbsolutePath (reference-clip)) "video/mp4" {:cols 20 :rows 10}))
+
+         b64
+         (.encodeToString (java.util.Base64/getEncoder) ^bytes bs)]
+
+        ;; The saving is the intermediate String, never the picture:
+        ;; whatever reaches the terminal must be byte-for-byte the same.
+        (expect (= (timg/encode-kitty b64 {:cols 20 :rows 10})
+                   (timg/encode-kitty bs {:cols 20 :rows 10})))
+        (expect (= (timg/kitty-transmit b64 4242) (timg/kitty-transmit bs 4242)))
+        (expect (= (timg/encode-iterm2 b64 {:cols 20}) (timg/encode-iterm2 bs {:cols 20})))))
+  (it "sizes a clip's cell box from the CONTAINER, decoding nothing"
+      (let [clip (reference-clip)]
+        (expect (= {:w clip-w :h clip-h}
+                   (timg/probe-dimensions (.getAbsolutePath clip) "video/mp4")))
+        ;; and with no media type either — a dropped path carries none
+        (expect (= {:w clip-w :h clip-h} (timg/probe-dimensions (.getAbsolutePath clip) nil)))))
+  (it "a dropped clip path probes exactly like a dropped picture"
+      (let
+        [clip
+         (reference-clip)
+
+         d
+         (timg/probe-paste-image (.getAbsolutePath clip) {})]
+
+        (expect (= "video/mp4" (:mime d)))
+        (expect (= [clip-w clip-h] [(:width d) (:height d)]))
+        (expect (= (.getName clip) (:filename d)))
+        (expect (pos? (long (:size d))))))
+  (it "renders in both protocols — iTerm2 gets the poster, never raw MP4 bytes"
+      (let
+        [path
+         (.getAbsolutePath (reference-clip))
+
+         k
+         (with-redefs [timg/images-protocol (constantly :kitty)]
+           (timg/render-sequence path "video/mp4" {:cols 20 :rows 10}))
+
+         i
+         (with-redefs [timg/images-protocol (constantly :iterm2)]
+           (timg/render-sequence path "video/mp4" {:cols 20 :rows 10}))
+
+         payload
+         (.decode (java.util.Base64/getDecoder)
+                  ^String (second (re-find #":([A-Za-z0-9+/=]{16,})" i)))]
+
+        (expect (.contains ^String k "\u001b_G"))
+        (expect (.contains ^String i "\u001b]1337;File="))
+        ;; iTerm2 would happily inline the MP4's own bytes as a broken
+        ;; file card; what it must receive is the decoded poster PNG.
+        (expect (= [-119 80 78 71] (mapv #(aget ^bytes payload %) (range 4)))))))
+
+;; ── Playback cost ────────────────────────────────────────────────────────────
+
+(defdescribe playback-laziness-test
+             (it "encodes a frame only when playback reaches it"
+                 (let
+                   [d
+                    (video/decode-frames (reference-clip))
+
+                    n
+                    (atom 0)
+
+                    real
+                    video/frame->png]
+
+                   (with-redefs
+                     [video/frame->png (fn [f]
+                                         (swap! n inc)
+                                         (real f))]
+                     (let [p (video/playback-sequences d {:protocol :kitty :cols 20})]
+                       ;; nothing is encoded up front...
+                       (expect (zero? @n))
+                       ;; ...the frame COUNT is known without encoding anything...
+                       (expect (= clip-frames (:frame-count p)))
+                       ;; ...and asking for ONE frame encodes exactly one. `map`
+                       ;; would chunk 32 frames ahead, which is tens of megabytes
+                       ;; of base64 and a stall before the first picture appears.
+                       (expect (some? (:escape (first (:frames p)))))
+                       (expect (= 1 @n))
+                       (expect (= clip-frames (count (:frames p))))
+                       (expect (= clip-frames @n)))))))
+
+(defdescribe
+  playback-decode-size-test
+  (it "decodes to the CELL BOX by default, not the clip's full resolution"
+      (let
+        [seen
+         (atom nil)
+
+         real
+         video/decode-frames
+
+         bos
+         (java.io.ByteArrayOutputStream.)]
+
+        (with-redefs
+          [video/decode-frames (fn [src opts]
+                                 (reset! seen opts)
+                                 (real src opts))]
+          (video/play! (reference-clip) {:out bos :protocol :kitty :cols 20 :max-frames 2}))
+        ;; 20 cols x 9px = 180px of terminal; decoding 1080p for that
+        ;; box doubles decode time and sextuples the escape bytes.
+        (expect (= (timg/box-pixels 20 nil) (:max-dimension @seen)))))
+  (it "an explicit :max-dimension always wins"
+      (let
+        [seen
+         (atom nil)
+
+         real
+         video/decode-frames
+
+         bos
+         (java.io.ByteArrayOutputStream.)]
+
+        (with-redefs
+          [video/decode-frames (fn [src opts]
+                                 (reset! seen opts)
+                                 (real src opts))]
+          (video/play! (reference-clip)
+                       {:out bos :protocol :kitty :cols 20 :max-frames 2 :max-dimension 24}))
+        (expect (= 24 (:max-dimension @seen))))))
+
+(defdescribe
+  native-png-frames-test
+  (it
+    "asks the cdylib for PNG frames instead of hauling RGBA over the FFI boundary"
+    (let
+      [clip
+       (reference-clip)
+
+       raw
+       (video/decode-frames clip)
+
+       png
+       (video/decode-frames clip {:encoding :png})
+
+       f
+       (first (:frames png))]
+
+      (expect (= clip-frames (count (:frames png))))
+      ;; The frame carries an ENCODED still, not a canvas...
+      (expect (nil? (:rgba f)))
+      (expect (= [-119 80 78 71] (mapv #(aget ^bytes (:png f) %) (range 4))))
+      ;; ...which `frame->png` hands straight back — no second encode.
+      (expect (identical? (:png f) (video/frame->png f)))
+      ;; RGBA frames still work, and are encoded on demand.
+      (expect (some? (:rgba (first (:frames raw)))))
+      (expect (= [-119 80 78 71]
+                 (mapv #(aget ^bytes (video/frame->png (first (:frames raw))) %) (range 4))))
+      ;; Same picture either way: the escape stream is byte-identical,
+      ;; so the cheap path is a pure saving, not a different image.
+      (expect (= (mapv :escape (:frames (video/playback-sequences raw {:protocol :kitty :cols 20})))
+                 (mapv :escape
+                       (:frames (video/playback-sequences png {:protocol :kitty :cols 20})))))
+      ;; RGBA for this clip is already 5x the PNG; at 720p it is 133 MB
+      ;; against 9 MB, which is the difference between playback fitting
+      ;; in the heap and not.
+      (expect (< (reduce + (map #(count (:png %)) (:frames png)))
+                 (reduce + (map #(count (:rgba %)) (:frames raw))))))))
+
+(defdescribe playback-encoding-default-test
+             (it "play! defaults to the encoded-frame path"
+                 (let
+                   [seen
+                    (atom nil)
+
+                    real
+                    video/decode-frames
+
+                    bos
+                    (java.io.ByteArrayOutputStream.)]
+
+                   (with-redefs
+                     [video/decode-frames (fn [src opts]
+                                            (reset! seen opts)
+                                            (real src opts))]
+                     (video/play! (reference-clip) {:out bos :protocol :kitty :cols 20 :rows 10})
+                     (expect (= :png (:encoding @seen)))
+                     ;; An explicit choice still wins.
+                     (video/play! (reference-clip)
+                                  {:out bos :protocol :kitty :cols 20 :rows 10 :encoding :rgba})
+                     (expect (= :rgba (:encoding @seen)))))))
+
+(defdescribe video-attachment-materialization-test
+             (it "re-renders a persisted clip attachment after a resume"
+                 (let
+                   [clip
+                    (reference-clip)
+
+                    att
+                    {"id" (str "vid-" (System/currentTimeMillis))
+                     "media_type" "video/mp4"
+                     "filename" "clip.mp4"
+                     "base64" (.encodeToString (java.util.Base64/getEncoder)
+                                               (java.nio.file.Files/readAllBytes (.toPath clip)))}
+
+                    d
+                    (timg/materialize-attachment att)]
+
+                   (expect (some? d))
+                   ;; Cached under its OWN extension: a `.png` named MP4 could be
+                   ;; neither probed nor decoded on the next paint.
+                   (expect (.endsWith ^String (:path d) ".mp4"))
+                   (expect (= "video/mp4" (:mime d)))
+                   ;; and it is a real clip on disk, not an opaque blob: the
+                   ;; descriptor carries the size the fence needs to lay out.
+                   (expect (= [clip-w clip-h] [(:width d) (:height d)]))
+                   (expect (= clip-frames (:frames (video/probe (:path d))))))))

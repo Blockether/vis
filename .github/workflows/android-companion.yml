@@ -65,6 +65,9 @@ jobs:
       - name: Prepare generated Android project
         run: node scripts/android-prepare.mjs
 
+      - name: Verify branded Android launcher icons
+        run: node scripts/android-prepare.mjs --check
+
       - name: Assemble debug APK
         working-directory: apps/vis-companion/android
         run: ./gradlew --no-daemon assembleDebug

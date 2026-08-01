@@ -236,12 +236,10 @@
     {"error" (str "No agent named " (pr-str (str nm)) ".") "available" (mapv :name (d/agents))}))
 
 (def ^{:doc (str "await agent(name, prompt)\n"
-                 "Delegate `prompt` to a harness sub-agent as a child loop (names "
-                 "listed in the HARNESS AGENTS prompt block). Child runs isolated; "
-                 "edits merge back.\n"
-                 "Returns {\"agent\", \"task_id\", \"status\", \"answer\", "
-                 "\"changed_files\"}. Unknown name → {\"error\", \"available\": "
-                 "[names]}.\n" "EXPENSIVE (a full child LLM turn) — delegable sub-tasks only.")
+                 "Run a named HARNESS AGENTS sub-agent in an isolated child loop; "
+                 "edits merge back. Returns {\"agent\", \"task_id\", \"status\", "
+                 "\"answer\", \"changed_files\"}. Unknown name: {\"error\", "
+                 "\"available\": [names]}. EXPENSIVE full LLM turn; delegable tasks only.")
        :arglists '([name prompt])}
      agent
   (fn agent-impl [env nm prompt]

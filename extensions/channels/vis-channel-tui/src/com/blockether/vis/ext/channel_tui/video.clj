@@ -161,11 +161,20 @@
      :max-frames     stop after this many KEPT frames (default [[default-max-frames]])
      :stride         keep every Nth frame — 2 halves the frame rate (default 1)
      :max-dimension  downscale each frame so its long edge fits this
+     :encoding       `:rgba` (default) or `:png`
+
+   `:encoding :png` makes the cdylib encode each frame itself and hands back
+   `:png` bytes in place of `:rgba`. That is what both terminal protocols
+   transmit anyway, and it is strictly cheaper: frames cross the FFI boundary
+   base64'd, so a 120-frame 720p clip moves ~9 MB of PNG instead of ~140 MB of
+   RGBA — faster than decoding raw and re-encoding here, and playback then holds
+   megabytes instead of hundreds of them.
 
    Throws `ex-info` with `:reason` `:not-mp4` / `:unsupported-codec` rather than
    returning something subtly wrong."
   ([src] (decode-frames src nil))
-  ([src {:keys [max-frames stride max-dimension] :or {max-frames default-max-frames stride 1}}]
+  ([src
+    {:keys [max-frames stride max-dimension encoding] :or {max-frames default-max-frames stride 1}}]
    (let
      [file
       (io-file src)
@@ -176,11 +185,17 @@
       step
       (max 1 (long stride))
 
+      png?
+      (= :png encoding)
+
       decoded
       (img/decode-video file
                         (cond-> {:max-frames (max 0 (long max-frames)) :stride step}
                           max-dimension
-                          (assoc :max-dimension (long max-dimension))))
+                          (assoc :max-dimension (long max-dimension))
+
+                          png?
+                          (assoc :encoding "png")))
 
       {:keys [width height]}
       decoded]
@@ -194,13 +209,11 @@
       ;; Each frame carries its OWN dims: that keeps a frame self-describing for
       ;; `frame->png` / `playback-sequences`, which would otherwise have to
       ;; thread the clip's size through separately.
-      :frames (mapv (fn [f]
-                      {:index (:index f)
-                       :timestamp-s (:timestamp-s f)
-                       :width width
-                       :height height
-                       :rgba (:data f)})
-                    (:frames decoded))})))
+      :frames
+      (mapv (fn [f]
+              (assoc {:index (:index f) :timestamp-s (:timestamp-s f) :width width :height height}
+                (if png? :png :rgba) (:data f)))
+            (:frames decoded))})))
 
 ;; ── Transcode ───────────────────────────────────────────────────────────────
 
@@ -255,32 +268,51 @@
   9901)
 
 (defn frame->png
-  "ONE `{:width :height :rgba}` frame → PNG bytes, via imaging (no java.desktop)."
-  ^bytes [{:keys [width height ^bytes rgba]}]
-  (with-open [i (img/from-pixels rgba (int width) (int height))]
-    (img/encode i :png)))
+  "ONE decoded frame → PNG bytes, via imaging (no java.desktop).
+
+   A frame decoded with `:encoding :png` already CARRIES its PNG, so this is
+   free for the playback path; an `:rgba` frame is encoded here."
+  ^bytes [{:keys [width height ^bytes rgba ^bytes png]}]
+  (or png
+      (with-open [i (img/from-pixels rgba (int width) (int height))]
+        (img/encode i :png))))
+
+(defn- lazy-escapes
+  "`map`, but ONE element at a time.
+
+   `clojure.core/map` over a vector hands back a CHUNKED seq: asking for frame 0
+   encodes the first THIRTY-TWO frames. At full resolution that is tens of
+   megabytes of base64 and a visible stall before a single picture appears,
+   which defeats the entire point of building the escapes on demand."
+  [f coll]
+  (lazy-seq (when-let [s (seq coll)]
+              (cons (f (first s)) (lazy-escapes f (rest s))))))
 
 (defn poster
   "`{:png <bytes> :width :height}` for ONE frame of `src` — the STILL picture a
    terminal, a paste probe or a transcript fence shows to stand for a clip.
 
-   `:max-frames 1` stops the decoder at the first picture and `:max-dimension`
-   makes it scale during conversion, so this costs a single keyframe at the size
-   you will actually draw (~0.2 s for 1080p, ~0.1 s for 720p) no matter how long
-   the clip runs. Decoding the timeline just to keep frame 0 would cost seconds
-   and hundreds of megabytes of RGBA.
+   `:max-frames 1` stops the decoder at the first picture, `:max-dimension`
+   makes it scale during conversion and `:encoding :png` has the cdylib hand the
+   PNG straight back, so this costs a single keyframe at the size you will
+   actually draw (~0.2 s for 1080p, ~0.1 s for 720p) no matter how long the clip
+   runs. Decoding the timeline just to keep frame 0 would cost seconds and
+   hundreds of megabytes of RGBA.
 
    nil when `src` holds no decodable picture."
   ([src] (poster src nil))
   ([src {:keys [max-dimension]}]
-   (let [{:keys [frames]} (decode-frames src {:max-frames 1 :max-dimension max-dimension})]
+   (let
+     [{:keys [frames]} (decode-frames src
+                                      {:max-frames 1 :max-dimension max-dimension :encoding :png})]
      (when-let [f (first frames)]
        {:png (frame->png f) :width (:width f) :height (:height f)}))))
 
 (defn playback-sequences
   "Turn a [[decode-frames]] result into the terminal byte stream that PLAYS it.
 
-   Returns `{:protocol :cols :rows :frames [{:index :delay-ms :escape}]}`, where
+   Returns `{:protocol :cols :rows :frame-count :frames [{:index :delay-ms
+   :escape}]}`, where
    `:escape` is the full sequence drawing that one frame at the saved cursor
    position and `:delay-ms` is how long to hold it. Concatenating every
    `:escape` with the right pauses between them IS the playback — see [[play!]].
@@ -317,29 +349,28 @@
        ;; caller wait for the LAST frame's encode before the FIRST one can be
        ;; painted. On demand, playback starts after one PNG and each frame is
        ;; encoded while its predecessor is still on screen.
-       :frames (map (fn [f]
-                      {:index (:index f)
-                       :delay-ms delay-ms
-                       :escape
-                       (let [data (.encodeToString (java.util.Base64/getEncoder) (frame->png f))]
-                         (str
-                           ;; Park the cursor back at the clip's top-left every frame so
-                           ;; frame N+1 lands exactly on frame N.
-                           "\u001b8"
-                           (case proto
-                             :kitty
-                             (str (timg/kitty-transmit data image-id)
-                                  (timg/kitty-place {:id image-id
-                                                     :cols cols'
-                                                     :rows rows'
-                                                     :img-w (:width f)
-                                                     :img-h (:height f)}))
+       :frames (lazy-escapes (fn [f]
+                               {:index (:index f)
+                                :delay-ms delay-ms
+                                :escape (let [data (frame->png f)]
+                                          (str
+                                            ;; Park the cursor back at the clip's top-left every frame so
+                                            ;; frame N+1 lands exactly on frame N.
+                                            "\u001b8"
+                                            (case proto
+                                              :kitty
+                                              (str (timg/kitty-transmit data image-id)
+                                                   (timg/kitty-place {:id image-id
+                                                                      :cols cols'
+                                                                      :rows rows'
+                                                                      :img-w (:width f)
+                                                                      :img-h (:height f)}))
 
-                             :iterm2
-                             (timg/encode-iterm2 data {:cols cols'})
+                                              :iterm2
+                                              (timg/encode-iterm2 data {:cols cols'})
 
-                             "")))})
-                    frames)})))
+                                              "")))})
+                             frames)})))
 
 (defn play!
   "Play the MP4 at `src` inline in a graphical terminal — the whole point of this
@@ -356,18 +387,27 @@
 
    Returns `{:frames :protocol :cols :rows}`, or nil when the terminal cannot
    draw inline images (a non-graphical TERM — nothing is written in that case)."
-  [src {:keys [out loops cols rows max-dimension] :or {loops 1} :as opts}]
-  (let [decoded (decode-frames src
-                               (cond-> opts
-                                 ;; Decode straight to the size the terminal will
-                                 ;; DRAW. A 1080p clip in an 80-column window is
-                                 ;; ~6x more pixels than the cells can show: it
-                                 ;; doubles decode time and turns 10 MB of escape
-                                 ;; bytes into 60 MB, all of it discarded by the
-                                 ;; terminal's own downscale. Callers wanting the
-                                 ;; native picture pass `:max-dimension` explicitly.
-                                 (nil? max-dimension)
-                                 (assoc :max-dimension (timg/box-pixels cols rows))))]
+  [src {:keys [out loops cols rows max-dimension encoding] :or {loops 1} :as opts}]
+  (let
+    [decoded (decode-frames src
+                            (cond-> opts
+                              ;; Decode straight to the size the terminal will
+                              ;; DRAW. A 1080p clip in an 80-column window is
+                              ;; ~6x more pixels than the cells can show: it
+                              ;; doubles decode time and turns 10 MB of escape
+                              ;; bytes into 60 MB, all of it discarded by the
+                              ;; terminal's own downscale. Callers wanting the
+                              ;; native picture pass `:max-dimension` explicitly.
+                              (nil? max-dimension)
+                              (assoc :max-dimension (timg/box-pixels cols rows))
+
+                              ;; Let the cdylib encode the frames. PNG is what
+                              ;; both protocols transmit, so decoding to RGBA
+                              ;; first only buys an extra copy: ~140 MB of
+                              ;; base64'd pixels across the FFI boundary and
+                              ;; onto the heap for a 120-frame 720p clip.
+                              (nil? encoding)
+                              (assoc :encoding :png)))]
     (when-let [{:keys [frames protocol cols rows]} (playback-sequences decoded opts)]
       (let
         [^java.io.OutputStream os (or out System/out)

@@ -1298,26 +1298,23 @@
       false)))
 
 (defn- fff-ls-items
-  "Exhaust fff's native file+directory index in bounded pages. The native
-   index includes empty directories, unlike a file-only walk."
+  "Exhaust fff's canonical mixed file-and-directory index.
+
+   fff's native `:page-index` is a record offset despite its name, so advance it
+   by page width. This preserves `cat`'s complete, uncapped directory-listing
+   contract without asking FFM for an unbounded result."
   [idx]
-  (loop
-    [page-index
-     0
-
-     items
-     []]
-
-    (let
-      [{page :items total :total-matched}
-       (fff/search-mixed idx {:query "" :page-index page-index :page-size fff-ls-page-size})
-
-       items
-       (into items page)]
-
+  (loop [offset 0
+         items []]
+    (let [{page :items total :total-matched}
+          (fff/search-mixed idx {:query ""
+                                 :page-index offset
+                                 :page-size fff-ls-page-size})
+          page (or page [])
+          items (into items page)]
       (if (or (empty? page) (>= (long (count items)) (long total)))
         items
-        (recur (unchecked-inc page-index) items)))))
+        (recur (unchecked-add (long offset) (long fff-ls-page-size)) items)))))
 
 (defn- fff-ls-overlay
   "Rebase the global `vis.yml` overlay for an explicitly listed directory.
