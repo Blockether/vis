@@ -1092,14 +1092,11 @@
     (set-python-binding-doc!
       ctx
       'gather
-      "gather(*awaitables) -> list. Concurrently run independent deferred tool calls or awaitables on the bounded host platform pool; results preserve input order. Also accepts one list/tuple. Use `await gather(call1(...), call2(...))`; keep dependent calls sequential. All slots settle before an aggregated failure reports every failing slot index.")
+      "gather(*awaitables) -> list. Concurrently run independent deferred tool calls/awaitables on a bounded host pool; results preserve input order. One list/tuple works. Use `await gather(...)`; keep dependent calls sequential. All settle before failure reports every failing slot index.")
     (set-python-binding-doc!
       ctx
       'session-fold
-      (str
-        "session_fold(target, gist=None) -> str. Collapse SETTLED wire steps into a breadcrumb: any prior turn, PLUS the current turn's already-completed iterations. The live iteration you are emitting right now (and any future step) is not settled and cannot be folded; trim the current turn up to the last finished iteration (e.g. {'through': 'tN/iK'}).\n"
-        "Targets may be step/turn ids or through/from/to/since selectors. Folding changes rendering, not stored history; there is no destructive unfold command. Fold breadcrumbs remain compact and point to `ntr.describe()` rather than repeating result ids or labels. `ntr` never stores a `session_fold` receipt: use it only to recover an individual data-tool result from a folded step. `ntr.describe()` lists labelled results from the latest turn; `ntr[tool_id]` retrieves one such prior native result from storage with no re-run and survives a harness restart. Only if an id is not in the index, walk raw content — `s = await session_state()`, select `s['transcript']['turns']` by numeric `position`, then filter `['iterations'][...]['blocks']` (`code`/`result`). For another conversation, use `await sessions()` then `await session_state(id)`.\n"
-        "Fold of fold: a broader newer fold supersedes fully covered narrower breadcrumbs; equal scopes keep the newer gist. Partial overlaps remain separate."))))
+      "session_fold(target, gist=None) -> str. Collapse SETTLED steps: prior turns and the current turn only through its last completed iteration; live/future steps cannot fold. Targets: step/turn ids or through/from/to/since selectors. Folding changes rendering, not storage; there is no destructive unfold command. `ntr` never stores a `session_fold` receipt. Recover a folded result with `ntr[tool_id]`; if absent, use `s = await session_state()` and filter `['transcript']['turns'][...]['iterations'][...]['blocks']`. A broader newer fold supersedes fully covered breadcrumbs; equal scope keeps newer. Partial overlaps remain separate.")))
 
 
 (def ^:private posix-compat-shim-src
