@@ -322,12 +322,11 @@ Gotcha: a non-zero `exit` is DATA to read, not a tool failure; remaining command
     {:symbol 'git
      :native-tool? true
      :result
-     "Each `commands` entry has `command`, `args`, `stdout`, `stderr`, `exit`, `timed_out`, and `duration_ms`."
+     "Per command: `command`, `args`, `stdout`, `stderr`, `exit`, `timed_out`, `duration_ms`."
      :name "git"
      :description
-     (str
-       "Run SERIAL host-Git commands only when `session[\"workspace\"]` lacks needed VCS facts or to act. "
-       "ONE options map; non-zero exits are data and later commands still run.")
+     (str "Run SERIAL host Git only when `session[\"workspace\"]` lacks VCS facts or to act. "
+          "ONE options map; non-zero exits are data; later commands still run.")
      :render render-git-batch-result
      :color-role :tool-color/shell
      ;; Native calls dispatch straight to this two-argument handler. Python keeps
@@ -336,17 +335,16 @@ Gotcha: a non-zero `exit` is DATA to read, not a tool failure; remaining command
      :handler git-impl
      :inject-env? true
      :tag :mutation
-     :schema
-     {:type "object"
-      :properties
-      {"commands"
-       (batch/commands-property
-         {:items {:type "array" :minItems 1 :items {:type "string"}}
-          :description
-          (str "Serial Git argv lists with `git` omitted, e.g. "
-               "`[[\"status\", \"--short\"]]`; pass ONE options map, never a positional array.")})}
-      :required ["commands"]
-      :additionalProperties false}}))
+     :schema {:type "object"
+              :properties
+              {"commands"
+               (batch/commands-property
+                 {:items {:type "array" :minItems 1 :items {:type "string"}}
+                  :description
+                  (str "Serial argv lists with `git` omitted, e.g. `[[\"status\", \"--short\"]]`; "
+                       "pass ONE options map, never a positional array.")})}
+              :required ["commands"]
+              :additionalProperties false}}))
 
 (def git-symbols [git-symbol])
 
