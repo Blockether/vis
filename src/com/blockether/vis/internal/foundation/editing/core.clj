@@ -605,9 +605,9 @@
        (catch Throwable _ [])))
 
 (defn- read-arg-paths
-  "Extract one `path`, or every path of a `paths` BATCH, from a native read call
-   for protection. A batch entry is either a plain path string or a per-path
-   options object carrying its own `path`."
+  "Extract one `path`, every `files` batch entry, or every `paths` batch entry
+   from a native read call for protection. A batch entry is either a plain path
+   string or a per-file options object carrying its own `path`."
   [args]
   (let
     [a
@@ -617,10 +617,16 @@
      (fn [e]
        (cond (string? e) e
              (map? e) (get e "path")
-             :else nil))]
+             :else nil))
 
-    (cond (map? a) (or (when-let [paths (get a "paths")]
-                         (when (sequential? paths) (vec (keep entry-path paths))))
+     batch-paths
+     (fn [entries]
+       (when (sequential? entries) (vec (keep entry-path entries))))]
+
+    (cond (map? a) (or (some-> (get a "files")
+                               batch-paths)
+                       (some-> (get a "paths")
+                               batch-paths)
                        (when-let [path (get a "path")]
                          [path]))
           (some? a) [a]
@@ -3916,22 +3922,24 @@
                      {:type :ext.foundation.editing/invalid-cat-args :got mode})))))
 
 (defn- cat-tool
-  "Read independent paths with `{\"paths\": [...]}`, answering `{\"results\": [...]}`
-   in request order. Shared options apply to every entry; an entry may instead be
-   `{\"path\": \"…\", \"ranges\": [[start, end]]}` to read a DIFFERENT region per file."
+  "Read independent files with `{\"files\": [...]}`, answering `{\"results\": [...]}`
+   in request order. Shared `ranges` apply to every entry; a `{\"path\": \"…\",
+   \"ranges\": [[start, end]]}` entry scopes one file differently."
   [& args]
   (let [a (first args)]
-    (cond (and (= 1 (count args)) (map? a) (contains? a "paths"))
-          (let
-            [specs (batch-path-specs "cat"
-                                     :ext.foundation.editing/invalid-cat-args
-                                     (dissoc a "paths")
-                                     (get a "paths"))]
-            (tool-success
-              {:op :cat :kind :file :result {"results" (mapv #(:result (cat-one %)) specs)}}))
-          ;; Private legacy map/positional calls remain available to Clojure callers;
-          ;; the native schema exposes only the plural `paths` contract above.
-          :else (apply cat-one args))))
+    (if (and (= 1 (count args)) (map? a) (contains? a "files"))
+      (let
+        [specs (batch-path-specs "cat"
+                                 :ext.foundation.editing/invalid-cat-args
+                                 (dissoc a "files")
+                                 (get a "files"))]
+        (tool-success {:op :cat
+                       :kind :file
+                       :result {"results" (mapv (fn [spec]
+                                                  (:result (cat-one (get spec "path")
+                                                                    (dissoc spec "path"))))
+                                                specs)}}))
+      (apply cat-one args))))
 
 
 (def ^:private ^:const patch-diff-context-lines 3)
@@ -4295,10 +4303,12 @@
                  (vec (str/split-lines after))]
 
                 (if (whole-file-rewrite? a b)
-                  (str/join "\n" (into [(str "--- (replaced, " (count a) " line(s))")]
-                                       (prefixed-diff-lines "+" b)))
-                  (str/join "\n" (cap-diff-lines (or (windowed-unified-diff-lines a b)
-                                                     (compact-diff-lines a b))))))))
+                  (str/join "\n"
+                            (into [(str "--- (replaced, " (count a) " line(s))")]
+                                  (prefixed-diff-lines "+" b)))
+                  (str/join "\n"
+                            (cap-diff-lines (or (windowed-unified-diff-lines a b)
+                                                (compact-diff-lines a b))))))))
 
 (def ^:private fresh-anchor-max-lines
   "Cap on how many post-edit lines a patch/write result hands back as fresh
@@ -5884,55 +5894,34 @@
   "Shape of an `anchor` value: one `lineno:hash` string, or a [from to] pair of them."
   {:oneOf [{:type "string"} {:type "array" :items {:type "string"} :minItems 2 :maxItems 2}]})
 
-(def ^:private cat-path-entry-schema
-  "A per-path object entry in `paths`: the path plus selectors that override the shared ones."
+(def ^:private cat-file-entry-schema
+  "A per-file object entry in `files`: the path plus a `ranges` override."
   {:type "object"
-   :properties
-   {"path" {:type "string" :minLength 1}
-    "ranges" (assoc cat-ranges-schema
-               :description "Windows for THIS path only; overrides the shared `ranges`.")
-    "anchor" (assoc cat-anchor-schema :description "Anchor selector for THIS path only.")
-    "tail" {:type "integer" :minimum 1 :description "Tail for THIS path only."}
-    "depth" {:type "integer" :minimum 1 :description "Listing depth for THIS path only."}
-    "is_hidden" {:type "boolean" :description "Hidden entries for THIS path only."}}
+   :properties {"path" {:type "string" :minLength 1}
+                "ranges" (assoc cat-ranges-schema
+                           :description "THIS file only; overrides shared `ranges`.")}
    :required ["path"]
    :additionalProperties false})
 
-(def ^:private cat-paths-schema
-  "The `paths` argument: bare path strings and/or per-path override objects."
+(def ^:private cat-files-schema
+  "The `files` argument: bare file paths and/or per-file range objects."
   {:type "array"
-   :items {:oneOf [{:type "string" :minLength 1} cat-path-entry-schema]}
+   :items {:oneOf [{:type "string" :minLength 1} cat-file-entry-schema]}
    :minItems 1
    :description
-   (str
-     "Exact physical file/directory paths — batch every region you need into ONE call. A bare "
-     "string takes the shared selectors; `{\"path\": \"…\", \"ranges\": [[a, b]]}` overrides them "
-     "for that file.")})
+   "Exact physical files. Batch all needed regions in one call; strings use shared `ranges`, objects override them."})
 
 (def ^:private cat-schema
-  "`cat`'s JSON Schema: `paths` plus the selectors shared by every bare path in it."
+  "`cat`'s JSON Schema: plural `files` plus optional shared line `ranges`."
   {:type "object"
-   :properties
-   {"paths" cat-paths-schema
-    "ranges" (assoc cat-ranges-schema
-               :description
-               "Optional [[start,end],…] windows (one or more, 1-based and inclusive).")
-    "anchor"
-    (assoc cat-anchor-schema
-      :description
-      "Optional lineno:hash anchor — a string for ONE line, or [from,to] for an inclusive span.")
-    "tail"
-    {:type "integer" :minimum 1 :description "Optional: read the last N lines (omit N → 2000)."}
-    "depth" {:type "integer"
-             :minimum 1
-             :description
-             "Directory listing only: nesting depth (default 1, a shallow one-level listing)."}
-    "is_hidden" {:type "boolean"
-                 :description
-                 "Directory listing only: include dotfiles / hidden entries (default false)."}}
-   :required ["paths"]
+   :properties {"files" cat-files-schema
+                "ranges"
+                (assoc cat-ranges-schema
+                  :description
+                  "Inclusive 1-based `[[start,end],…]` windows shared by bare file entries.")}
+   :required ["files"]
    :additionalProperties false
-   :maxProperties 4})
+   :maxProperties 2})
 
 (def cat-symbol
   (vis/symbol

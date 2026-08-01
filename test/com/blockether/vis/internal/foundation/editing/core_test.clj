@@ -1352,7 +1352,7 @@
         (expect (= [#{"range" "eof" "next_offset" "truncated"}]
                    (distinct (mapv #(set (keys %)) (get out "ranges")))))
         (expect (nil? (get out "next_offset")))))
-  (it "cat accepts the plural paths spec map"
+  (it "cat accepts the plural files spec map"
       (let
         [body
          (string/join "\n" (map #(str "L" %) (range 1 21)))
@@ -1364,7 +1364,7 @@
          (private-fn "cat-tool")
 
          spec
-         (get-in (cat-tool {"paths" [path] "ranges" [[2 4]]}) [:result "results" 0])
+         (get-in (cat-tool {"files" [path] "ranges" [[2 4]]}) [:result "results" 0])
 
          positional
          (-> (cat-tool path {"ranges" [[2 4]]})
@@ -3058,20 +3058,20 @@
          index-paths-description
          (get-in index-schema [:properties "paths" :description])
 
-         cat-paths-description
-         (get-in cat-schema [:properties "paths" :description])]
+         cat-files-description
+         (get-in cat-schema [:properties "files" :description])]
 
         (expect (string/includes? index-paths-description "Exact physical"))
         (expect (string/includes? index-paths-description "grep/cat/struct_index"))
         (expect (not (contains? (:properties index-schema) "path")))
-        (expect (not (contains? (:properties cat-schema) "path")))
+        (expect (not (contains? (:properties cat-schema) "paths")))
         ;; struct_index has ONE paths-only mode; occurrence analysis is opt-in.
         (expect (= ["paths"] (:required index-schema)))
         (expect (= "boolean" (get-in index-schema [:properties "include_occurrences" :type])))
         (expect (not (contains? (:properties index-schema) "name")))
-        (expect (= ["paths"] (:required cat-schema)))
-        (expect (= 4 (:maxProperties cat-schema)))
-        (expect (string/includes? cat-paths-description "Exact physical"))
+        (expect (= ["files"] (:required cat-schema)))
+        (expect (= 2 (:maxProperties cat-schema)))
+        (expect (string/includes? cat-files-description "Exact physical"))
         (expect (not (contains? (:properties cat-schema) "range")))
         (expect (= 2 (get-in cat-schema [:properties "ranges" :items :minItems])))
         (expect (= 2 (get-in cat-schema [:properties "ranges" :items :maxItems])))))
@@ -3773,7 +3773,7 @@
           (spit (fs/file b) "(defn b [] 2)\n")
           (let
             [cat-results
-             (get-in (cat-tool {"paths" [a b] "ranges" [[1 1]]}) [:result "results"])
+             (get-in (cat-tool {"files" [a b] "ranges" [[1 1]]}) [:result "results"])
 
              index-results
              (get-in (index-tool {"paths" [a b]}) [:result "results"])]
@@ -3796,7 +3796,7 @@
           (spit (fs/file b) "b1\nb2\nb3\n")
           (let
             [results
-             (get-in (cat-tool {"paths" [{"path" a "ranges" [[2 2]]} {"path" b "ranges" [[3 3]]}]})
+             (get-in (cat-tool {"files" [{"path" a "ranges" [[2 2]]} {"path" b "ranges" [[3 3]]}]})
                      [:result "results"])
 
              texts
@@ -5600,11 +5600,15 @@
 
 (defdescribe
   plural-only-path-schemas-test
-  "Read/search/fs tools expose ONE plural `paths` contract — never a singular
-   `path` twin beside it — and `paths` entries carry their own per-file windows
-   so several files with DIFFERENT regions are one call."
-  (it "cat/struct_index/grep/fs advertise `paths` and no singular `path`"
-      (doseq [sym [editing/cat-symbol editing/index-symbol editing/grep-symbol editing/fs-symbol]]
+  "`cat` exposes a plural `files` contract; read/search/fs scope contracts use
+   plural `paths`. Neither surface has a singular `path` twin, and batch entries
+   carry their own per-file windows so one call can read different regions."
+  (it "cat advertises `files`; struct_index, grep, and fs advertise `paths`"
+      (let [cat-props (get-in editing/cat-symbol [:ext.symbol/schema :properties])]
+        (expect (contains? cat-props "files"))
+        (expect (nil? (get cat-props "paths")))
+        (expect (nil? (get cat-props "path"))))
+      (doseq [sym [editing/index-symbol editing/grep-symbol editing/fs-symbol]]
         (let [props (get-in sym [:ext.symbol/schema :properties])]
           (expect (contains? props "paths"))
           (expect (nil? (get props "path"))))))
@@ -5618,10 +5622,10 @@
                      (editing/available-editing-symbols))]
         (expect (contains? names "delete"))
         (expect (not (contains? names "delete_if_exists")))))
-  (it "cat/struct_index `paths` entries take per-file `ranges`"
-      (doseq [sym [editing/cat-symbol editing/index-symbol]]
+  (it "cat `files` and struct_index `paths` entries take per-file `ranges`"
+      (doseq [[sym key] [[editing/cat-symbol "files"] [editing/index-symbol "paths"]]]
         (let
-          [entry (->> (get-in sym [:ext.symbol/schema :properties "paths" :items :oneOf])
+          [entry (->> (get-in sym [:ext.symbol/schema :properties key :items :oneOf])
                       (filter #(= "object" (:type %)))
                       first)]
           (expect (some? entry))

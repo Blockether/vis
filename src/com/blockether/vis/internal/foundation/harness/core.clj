@@ -122,15 +122,14 @@
      :tag :observation
      :native-tool? true
      :result (str
-               "Loaded: `{name,description,body,cwd,resources}`. Already active: "
-               "`{name,status,scope,note}`. Unknown name: `{error,available}`. Every branch also "
-               "includes string `op`; all keys are strings.")
+               "Loaded `{name,description,body,cwd,resources}`; active "
+               "`{name,status,scope,note}`; unknown `{error,available}`. Every branch has string "
+               "`op` and string keys.")
      :name "skill"
      :description
-     "Activate one advertised harness skill on demand. Returns the full SKILL.md once while it remains on the live provider tape; repeated calls return a compact already-active receipt. If the body changed or is no longer live, it is returned once again."
+     "Activate an advertised harness skill. Returns full SKILL.md once per live provider tape; repeats get an already-active receipt. Changed or evicted bodies return again."
      :schema {:type "object"
-              :properties {"name" {:type "string"
-                                   :description "Skill name from the HARNESS SKILLS list."}}
+              :properties {"name" {:type "string" :description "Advertised HARNESS SKILLS name."}}
               :required ["name"]
               :additionalProperties false}
      :handler skill-tool
