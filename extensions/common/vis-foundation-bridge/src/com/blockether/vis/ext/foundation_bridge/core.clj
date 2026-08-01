@@ -514,7 +514,7 @@
                      :policy-path policy-path)))))
 
 (defn init
-  "Bootstrap Bridge with `await br_init()`; optional `root` path. Returns existing config when initialized."
+  "`await br_init()` bootstraps Bridge for optional `root`; returns existing config."
   [env & [opts]]
   (stringify-result
     (bridge-tool :br/init
@@ -554,7 +554,7 @@
                           :next-step {:kind :extension-op :op (tool-call "br/check" [])}})))))))
 
 (defn profile
-  "`await br_profile()` returns the active project summary; optional `profile` and `policy` paths."
+  "`await br_profile()` summarizes the active project; accepts `profile`/`policy` paths."
   [env & [opts]]
   (stringify-result
     (bridge-tool
@@ -575,7 +575,7 @@
                :policy-loaded? (boolean policy)})))))))
 
 (defn check
-  "`await br_check()` checks the working snapshot. `is_index` checks the staged candidate; `tree` plus `frontier` pins one; `is_approve` approves a clear candidate. Summarize the canonical result; don't paste it."
+  "`await br_check()` checks the worktree (default), index (`is_index`), or pinned `tree`+`frontier`; `is_approve` approves a clear candidate. Summarize the canonical result; never dump it."
   [env & [opts]]
   (let
     [opts*
@@ -602,7 +602,7 @@
                         (bridge-check env opts*)))))
 
 (defn list-evidence
-  "`await br_list_evidence()` returns the active profile's evidence commands."
+  "`await br_list_evidence()` lists active-profile evidence commands."
   [env & [opts]]
   (stringify-result (bridge-tool
                       :br/list-evidence
@@ -620,7 +620,7 @@
                                :commands (br/list-commands profile)})))))))
 
 (defn run-evidence
-  "`await br_run_evidence(id, opts)` runs one command and writes its receipt. Candidate opts: `is_index` or `tree` plus `frontier`; `is_dry_run` only previews."
+  "`await br_run_evidence(id, opts)` runs one command and records its receipt. Candidate: `is_index` or `tree`+`frontier`; `is_dry_run` previews."
   [env id & [opts]]
   (stringify-result
     (bridge-tool :br/run-evidence
