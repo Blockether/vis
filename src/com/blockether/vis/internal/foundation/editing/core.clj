@@ -6748,12 +6748,12 @@
      :native-tool? true
      :result
      (str
-       "String-keyed `{results}` with one ordered row per node: `path`, `at` (the named-child path for "
-       "`struct_patch`), `kind`, `line`, `end_line`, verbatim `source`, `sexp`, `named_child_count`, "
-       "`children`, `can`, and `has_error`. Cursor misses carry `error`/`reason`; the rest is nil.")
+       "String-keyed `{results}`; one ordered row/node: `path`, `at` (named-child path for `struct_patch`), "
+       "`kind`, `line`, `end_line`, verbatim `source`, `sexp`, `named_child_count`, `children`, `can`, `has_error`. "
+       "Misses add `error`/`reason`; other fields are nil.")
      :active-fn structural-supported?
      :description
-     "Read the SOURCE of nested tree-sitter nodes and navigate them when a named definition is too coarse."
+     "Read nested tree-sitter node SOURCE and navigate when a named definition is too coarse."
      :render render-nodes-result
      :color-role :tool-color/read
      :schema
@@ -6767,25 +6767,24 @@
                          {"path" {:type "string" :minLength 1}
                           "at" {:type "array"
                                 :items {:type "integer" :minimum 0}
-                                :description "Absolute named-child index path for THIS node."}
-                          "nav" {:type "array" :description "Relative cursor moves for THIS node."}
+                                :description "THIS node's absolute named-child index path."}
+                          "nav" {:type "array" :description "THIS node's relative cursor moves."}
                           "anchor" {:type "string"
-                                    :description "`lineno:hash` entry point for THIS node."}}
+                                    :description "`lineno:hash` entry for THIS node."}}
                          :additionalProperties false}]}
         :minItems 1
         :description
-        "Nodes for one call: a path string (file root) or an object whose `path`/`at`/`nav`/`anchor` override shared selectors."}
-       "path" {:type "string" :description "Shared default source file for entries that omit one."}
+        "ONE call's nodes: file-root path or object overriding shared `path`/`at`/`nav`/`anchor`."}
+       "path" {:type "string" :description "Shared source file when an entry omits `path`."}
        "at" {:type "array"
              :items {:type "integer" :minimum 0}
-             :description "Shared default: absolute named-child index path to jump to."}
+             :description "Shared absolute named-child index path."}
        "nav" {:type "array"
-              :description
-              "Shared default: relative cursor moves (strings or {find/child/find_kind} maps)."}
+              :description "Shared relative moves: strings or {find/child/find_kind} maps."}
        "anchor"
        {:type "string"
         :description
-        "Shared `lineno:hash` (struct_index/cat) entering that line's node; alternative to `at`, with `nav` composed."}}
+        "Shared `lineno:hash` from struct_index/cat; enters that line's node instead of `at`, then applies `nav`."}}
       :additionalProperties false}
      :before-fn (path-protected-before-fn :struct_nodes :file :read nodes-arg-paths)
      :tag :observation
