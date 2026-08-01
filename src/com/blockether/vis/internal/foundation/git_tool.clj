@@ -352,7 +352,7 @@ Gotcha: a non-zero `exit` is DATA to read, not a tool failure; remaining command
   (vis/extension
     {:ext/name "foundation-git"
      :ext/description
-     "Single built-in `git` tool: runs SERIAL batches of host-Git argv in the workspace root and returns per-command exit/stdout/stderr. Replaces the JGit-backed git_ surface — the only git is the one on the user's PATH. Activates when the workspace sits inside or contains a repository."
+     "Built-in `git`: serial host-Git argv batches from the workspace root; returns per-command exit/stdout/stderr. Uses PATH `git`, not JGit; active when the workspace is in or contains a repository."
      :ext/version "0.2.0"
      :ext/author "Blockether"
      :ext/owner "vis"
