@@ -24,7 +24,7 @@
   (vis/extension
     {:ext/name "foundation-shim-requests"
      :ext/description
-     "Sandbox shim: a `requests`-compatible module (import requests / requests.get) backed PURELY by the stdlib urllib. No pip, no native wheel, no host bridge — rides the sandbox socket and honours the network guard."
+     "Sandbox pure-stdlib `requests` subset (`requests.get`) over urllib; uses sandbox sockets and network guard. No pip/wheel/host bridge."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
