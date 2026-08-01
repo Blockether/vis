@@ -918,7 +918,7 @@
              envelope))))))
 
 (defn repl-eval
-  "Evaluate code in an already-running project REPL: `repl_eval(language,arg)`. Pass `language` first. `arg` may set `id`/`repl_id`, `cwd` (workspace root by default), and `timeout_ms`."
+  "Eval in an already-running project REPL: `repl_eval(language,arg)`. Pass `language` first; `arg` may set `id`/`repl_id`, `cwd` (root default), and `timeout_ms`."
   [env & args]
   (dispatch! env :repl-eval-fn args))
 
@@ -928,7 +928,7 @@
   (dispatch-start-repl! env args))
 
 (defn connect-repl
-  "Attach to an external running REPL: `repl_connect(language,{port,host?,cwd?})`. Registers the address as a session resource for eval, tests, and context, but never owns or kills the process; stopping it only detaches."
+  "Attach to an external running REPL: `repl_connect(language,{port,host?,cwd?})`. Registers it for eval, tests, and context but never owns or kills its process; stop only detaches."
   [env & args]
   (let
     [[language more]
