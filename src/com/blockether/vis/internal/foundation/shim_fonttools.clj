@@ -48,7 +48,7 @@
      [{:shim/name "fonttools"
        :shim/imports ["brotli" "fontTools"]
        :shim/description
-       "fontTools/brotli WOFF2->TTF subset: fontTools.ttLib.woff2.decompress(input, output) rebuilds a real .ttf from a .woff2 (undoing glyf/loca transforms) and brotli.decompress(bytes) exposes the vendored brotlidecpy Brotli decoder. Not supported: brotli.compress, WOFF1, and the wider fontTools.ttLib.TTFont API."
+       "WOFF2/Brotli subset: `fontTools.ttLib.woff2.decompress(input, output)` builds TTF and reverses glyf/loca transforms; `brotli.decompress(bytes)` uses vendored brotlidecpy. No brotli.compress, WOFF1, TTFont, or wider fontTools APIs."
        :shim/source "vis-shims/fonttools.py"}]}))
 
 (vis/register-extension! vis-extension)
