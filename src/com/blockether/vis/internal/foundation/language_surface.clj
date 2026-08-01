@@ -963,9 +963,10 @@
     {:symbol 'format_code
      :native-tool? true
      :result
-     (str "String-keyed `op` object; code/file: `changed`, optional `chars`, `path`, `formatter`, "
-          "`repaired`; batch: `files`, `by-cwd`, `formatters`. No source text.")
-     :description "Format with the active language pack."
+     (str
+       "String-keyed `op` result. Code/file: `changed` plus optional `chars,path,formatter,repaired`; "
+       "batch: `files,by-cwd,formatters`. No source text.")
+     :description "Format via the active pack."
      ;; NAME(language, {payload}) — optional leading `language`, the rest a
      ;; pure options dict (always emitted so the payload stays a map).
      :call {:lead-opt "language" :rest :always}
@@ -974,14 +975,14 @@
      :schema
      {:type "object"
       :properties
-      {"language" {:type "string" :minLength 1 :description "Language pack."}
+      {"language" {:type "string" :minLength 1 :description "Pack."}
        "code" {:type "string" :description "Source."}
        "paths"
        {:type "array"
         :items {:type "string" :minLength 1}
         :minItems 1
         :description
-        "Paths; directories recursively format source files. Exclusive with `code`; OMIT both for default source paths."}}
+        "Directories recursively format source; exclusive with `code`; OMIT both for default paths."}}
       :required []
       :additionalProperties false}
      :inject-env? true
