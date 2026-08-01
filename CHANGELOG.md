@@ -7,6 +7,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.20] - 2026-08-01
+
+### Changed
+- chore(deps): svar 0.7.95, refresh the audit inventory
+- ci: enforce the locked GraalVM pin across build workflows
+- feat: ship viewport speedups and accumulated runtime work
+- docs(companion): release notes for 0.1.19 (2854)
+- feat(companion): expandable session stats and drafts grouped under their project
+- feat(companion): add image viewer and smooth native viewport
+- docs(companion): release notes for 0.1.18 (2851)
+- perf(companion): keep the app shell off the compositor during keyboard/rotation
+- docs(companion): release notes for 0.1.17 (2849)
+- style(companion): full-bleed paste blocks in user messages
+- perf(companion): drive shell geometry through CSS custom properties
+- docs(companion): release notes for 0.1.16 (2846)
+- feat(companion): show recently-active sessions in collapsed projects
+- docs(companion): release notes for 0.1.15 (2844)
+- perf(companion): isolate shell re-renders from keyboard and rotation frames
+- feat(companion): collapsible projects with per-project paging and richer settings
+- docs(companion): release notes for 0.1.15 (2841)
+- fix(companion): match the composer strip type ladder and shrink the rule
+- docs(companion): release notes for 0.1.15 (2839)
+- feat(companion): glyph-free composer strip and animated reasoning swap
+- docs(companion): release notes for 0.1.15 (2837)
+- fix(routing): preserve pinned provider selection
+- revert(companion): restore the composer strip glyphs
+- revert(companion): bring the glyphs back
+- fix(tui): handle whitespace split across styled runs
+- docs(companion): release notes for 0.1.15 (2832)
+- feat(companion): glyph-free thinking band and model manager
+- docs(companion): release notes for 0.1.15 (2830)
+- feat(companion): footer reasoning chip, landscape safe areas
+- fix(editing): stop stamping --- before / +++ after on every diff
+- fix(ci): restore the native builder args that last built green
+- fix(ci): give the native builder a 22g heap on the swapfile-backed runner
+- fix(ci): switch the preselected ParallelGC off before enabling G1
+- fix(ci): overcommit the native builder heap with G1 instead of starving it
+- docs(companion): release notes for 0.1.15 (2823)
+- test(loop): measure the guest-interrupt CPU delta, not JVM-wide CPU
+- fix(ci): keep the native-image heap inside runner RAM and give it a longer clock
+- fix(ci): give the native-image builder enough heap, and let a dispatch rebuild a tag
+- docs(audit): refresh dependency inventory
+- docs(companion): TestFlight notes for 0.1.14 (2817)
+- release: update version files for v0.1.14, bump to next dev version
+
+### Package changes
+
+#### com.blockether/vis
+- chore(deps): svar 0.7.95, refresh the audit inventory (e9a1a6f84)
+- ci: enforce the locked GraalVM pin across build workflows (0deb9e403)
+- feat: ship viewport speedups and accumulated runtime work (66b0c31d8)
+- docs(companion): release notes for 0.1.19 (2854) (b0f316183)
+- feat(companion): expandable session stats and drafts grouped under their project (da7516494)
+- feat(companion): add image viewer and smooth native viewport (91170014c)
+- docs(companion): release notes for 0.1.18 (2851) (e43ed8bc6)
+- perf(companion): keep the app shell off the compositor during keyboard/rotation (d5f4f08cf)
+- docs(companion): release notes for 0.1.17 (2849) (821f28861)
+- style(companion): full-bleed paste blocks in user messages (e1e9c7743)
+- perf(companion): drive shell geometry through CSS custom properties (c34efdda8)
+- docs(companion): release notes for 0.1.16 (2846) (2815efc72)
+- feat(companion): show recently-active sessions in collapsed projects (68352e07b)
+- docs(companion): release notes for 0.1.15 (2844) (5b8ddeaa4)
+- perf(companion): isolate shell re-renders from keyboard and rotation frames (a70d92516)
+- feat(companion): collapsible projects with per-project paging and richer settings (2d04f57a6)
+- docs(companion): release notes for 0.1.15 (2841) (49276fdf0)
+- fix(companion): match the composer strip type ladder and shrink the rule (d15a8b24b)
+- docs(companion): release notes for 0.1.15 (2839) (d0e0b328d)
+- feat(companion): glyph-free composer strip and animated reasoning swap (25fa99d8e)
+- docs(companion): release notes for 0.1.15 (2837) (bcb1f7cfc)
+- fix(routing): preserve pinned provider selection (2add31771)
+- revert(companion): restore the composer strip glyphs (cf7f968d4)
+- revert(companion): bring the glyphs back (0a8d32b2a)
+- docs(companion): release notes for 0.1.15 (2832) (2519dcd7a)
+- feat(companion): glyph-free thinking band and model manager (012b26d82)
+- docs(companion): release notes for 0.1.15 (2830) (7bd15a8df)
+- feat(companion): footer reasoning chip, landscape safe areas (dbab3492c)
+- fix(editing): stop stamping --- before / +++ after on every diff (f7870f43b)
+- fix(ci): restore the native builder args that last built green (8edf48275)
+- fix(ci): give the native builder a 22g heap on the swapfile-backed runner (fff80c57a)
+- fix(ci): switch the preselected ParallelGC off before enabling G1 (e63b9282a)
+- fix(ci): overcommit the native builder heap with G1 instead of starving it (8ea6b9d15)
+- docs(companion): release notes for 0.1.15 (2823) (c85f7da50)
+- test(loop): measure the guest-interrupt CPU delta, not JVM-wide CPU (2626ea8d7)
+- fix(ci): keep the native-image heap inside runner RAM and give it a longer clock (715cd41e2)
+- fix(ci): give the native-image builder enough heap, and let a dispatch rebuild a tag (eadda4851)
+- docs(audit): refresh dependency inventory (8e2a282f3)
+- docs(companion): TestFlight notes for 0.1.14 (2817) (0738c1822)
+- release: update version files for v0.1.14, bump to next dev version (34f89e45b)
+
+#### com.blockether/vis-channel-tui
+- feat: ship viewport speedups and accumulated runtime work (66b0c31d8)
+- fix(tui): handle whitespace split across styled runs (cdf9bd256)
+
+#### com.blockether/vis-persistance-sqlite
+- feat: ship viewport speedups and accumulated runtime work (66b0c31d8)
+
+
+
 ## [v0.1.14] - 2026-07-30
 
 ### Changed
@@ -1944,7 +2042,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.14...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.20...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -1959,3 +2057,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.12]: https://github.com/Blockether/vis/releases/tag/v0.1.12
 [v0.1.13]: https://github.com/Blockether/vis/releases/tag/v0.1.13
 [v0.1.14]: https://github.com/Blockether/vis/releases/tag/v0.1.14
+[v0.1.20]: https://github.com/Blockether/vis/releases/tag/v0.1.20
