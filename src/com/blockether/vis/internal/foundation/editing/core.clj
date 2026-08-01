@@ -7078,11 +7078,11 @@
      :native-tool? false
      :call {:pos ["path"]}
      :description
-     "Destructively delete one confined file or directory only with explicit user intent; a path that is already absent is a no-op, never an error."
+     "Destructively delete a confined file/directory only with explicit intent; an absent path is a non-error no-op."
      :render render-delete-result
      :color-role :tool-color/delete
      :schema {:type "object"
-              :properties {"path" {:type "string" :description "Path to delete."}}
+              :properties {"path" {:type "string" :description "Target path."}}
               :required ["path"]
               :additionalProperties false}
      :before-fn (path-protected-before-fn :delete :path :write first-arg-paths)
