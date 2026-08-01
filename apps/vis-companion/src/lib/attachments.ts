@@ -21,6 +21,12 @@ const DEFAULT_MEDIA_TYPES = [
   'image/bmp',
 ];
 
+/** Treat an intentional picker dismissal as a normal selection outcome. */
+export function filePickerCancelled(cause: unknown): boolean {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return /cancel|dismiss|abort/iu.test(message);
+}
+
 function blobAsDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

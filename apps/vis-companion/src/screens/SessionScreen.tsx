@@ -13,6 +13,7 @@ import { Banner } from '../components/ui';
 import { ProviderRouterDialog } from './RouterScreen';
 import {
   attachmentsFromFiles,
+  filePickerCancelled,
   pickImageAttachments,
   type PendingAttachment,
 } from '../lib/attachments';
@@ -2803,7 +2804,7 @@ export function SessionScreen({
       setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
       setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
     } catch (cause) {
-      setComposerNotice((cause as Error).message);
+      setComposerNotice(filePickerCancelled(cause) ? 'No files selected.' : (cause as Error).message);
     }
   }
 
