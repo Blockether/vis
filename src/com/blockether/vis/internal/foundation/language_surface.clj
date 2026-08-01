@@ -119,10 +119,10 @@
       (when (contains? data "clojure")
         (str
           "\n  clojure REPL tests reuse the managed REPL and execute its already-loaded Vars;"
-          " they do NOT reload namespaces automatically. After edits, reload"
-          " every changed production and test namespace with `(require 'my.ns :reload)`"
-          " before tests, or tests may exercise stale code; prefer restarting over `:reload-all`."
-          "\n  clojure lint_code runs clj-kondo + `general` compiler REFLECTION/BOXED-MATH checks;"
+          " they do NOT reload namespaces automatically. After edits `(require 'my.ns :reload)`"
+          " every changed production and test namespace, or tests may exercise stale code;"
+          " prefer restarting over `:reload-all`."
+          "\n  clojure lint_code runs clj-kondo + `general` REFLECTION/BOXED-MATH checks;"
           " whole-project lint (omit code/paths) includes both; no separate reflection check.")))))
 
 (defn- language-like? [x] (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x)))
