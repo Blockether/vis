@@ -2,7 +2,7 @@ name: Mobile release
 
 # Ships the Vis Companion app to both public beta channels. A regular Vis
 # `vX.Y.Z` release calls this workflow only after its own release succeeds;
-# app-only rebuilds arrive through the movable `companion-vX.Y.Z` tag. Both
+# app-only rebuilds arrive through immutable `companion-vX.Y.Z-build.N` tags. Both
 # paths must match the repo-root VIS_VERSION exactly.
 #   iOS      → TestFlight, and (with `public`) an external PUBLIC-LINK group after Beta App Review
 #   Android  → Google Play; track `beta` IS the public "Open testing" channel
@@ -89,15 +89,21 @@ jobs:
 
           if [ "${{ github.event_name }}" = push ]; then
             case "$GITHUB_REF_NAME" in
-              v*) EXPECTED="$REGULAR" ;;
-              companion-v*) EXPECTED="companion-v$VERSION" ;;
+              v*)
+                test "$GITHUB_REF_NAME" = "$REGULAR" || {
+                  echo "$GITHUB_REF_NAME does not match VIS_VERSION=$VERSION (expected $REGULAR)" >&2
+                  exit 1
+                }
+                ;;
+              companion-v"$VERSION"-build.*)
+                EXPECTED="companion-v$VERSION-build.$(git rev-list --count HEAD)"
+                test "$GITHUB_REF_NAME" = "$EXPECTED" || {
+                  echo "$GITHUB_REF_NAME does not match the build number at HEAD (expected $EXPECTED)" >&2
+                  exit 1
+                }
+                ;;
               *) echo "Unsupported release tag: $GITHUB_REF_NAME" >&2; exit 1 ;;
             esac
-            test "$GITHUB_REF_NAME" = "$EXPECTED" || {
-              echo "$GITHUB_REF_NAME does not match VIS_VERSION=$VERSION (expected $EXPECTED)" >&2
-              exit 1
-            }
-          fi
 
           git merge-base --is-ancestor "$REGULAR_COMMIT" HEAD || {
             echo "$REGULAR must be an ancestor of this companion release" >&2
@@ -214,15 +220,21 @@ jobs:
 
           if [ "${{ github.event_name }}" = push ]; then
             case "$GITHUB_REF_NAME" in
-              v*) EXPECTED="$REGULAR" ;;
-              companion-v*) EXPECTED="companion-v$VERSION" ;;
+              v*)
+                test "$GITHUB_REF_NAME" = "$REGULAR" || {
+                  echo "$GITHUB_REF_NAME does not match VIS_VERSION=$VERSION (expected $REGULAR)" >&2
+                  exit 1
+                }
+                ;;
+              companion-v"$VERSION"-build.*)
+                EXPECTED="companion-v$VERSION-build.$(git rev-list --count HEAD)"
+                test "$GITHUB_REF_NAME" = "$EXPECTED" || {
+                  echo "$GITHUB_REF_NAME does not match the build number at HEAD (expected $EXPECTED)" >&2
+                  exit 1
+                }
+                ;;
               *) echo "Unsupported release tag: $GITHUB_REF_NAME" >&2; exit 1 ;;
             esac
-            test "$GITHUB_REF_NAME" = "$EXPECTED" || {
-              echo "$GITHUB_REF_NAME does not match VIS_VERSION=$VERSION (expected $EXPECTED)" >&2
-              exit 1
-            }
-          fi
 
           git merge-base --is-ancestor "$REGULAR_COMMIT" HEAD || {
             echo "$REGULAR must be an ancestor of this companion release" >&2

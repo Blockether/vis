@@ -638,12 +638,12 @@
    Unknown/user-owned keys remain strings; no YAML key is passed to `keyword`."
   (merge (into {}
                (map (juxt (comp #(str/replace % "-" "_") name) identity))
-               #{:providers :default-provider :default-model :router :system-prompt :workspace
-                 :enabled :filesystem :jail :network :environment :db-spec :grep :toggles
-                 :tui-settings :mcp :name :context :output-limit :id :api-key :models :base-url
-                 :api-style :compatibility :responses-path :llm-headers :extra-body :rate-limit
-                 :budget :tokens :same-provider-delays-ms :fallback-after-ms :timeout-ms
-                 :ttft-timeout-ms :idle-timeout-ms :semantic-timeout-ms :max-retries
+               #{:providers :default-provider :default-model :fallback-provider :fallback-model
+                 :router :system-prompt :workspace :enabled :filesystem :jail :network :environment
+                 :db-spec :grep :toggles :tui-settings :mcp :name :context :output-limit :id
+                 :api-key :models :base-url :api-style :compatibility :responses-path :llm-headers
+                 :extra-body :rate-limit :budget :tokens :same-provider-delays-ms :fallback-after-ms
+                 :timeout-ms :ttft-timeout-ms :idle-timeout-ms :semantic-timeout-ms :max-retries
                  :initial-delay-ms :max-delay-ms :multiplier :max-tokens :max-cost :pricing
                  :context-limits :output-reserve :failure-threshold :recovery-ms
                  :transient-status-codes :window-ms :cooldown-ms :max-wait-ms :allow-read-write
@@ -1240,7 +1240,12 @@
 
 (defn remove-config-provider!
   "Remove every persisted provider entry for `provider-id` from the string-keyed
-   machine config, preserving unrelated keys."
+   machine config, preserving unrelated keys.
+
+   A FALLBACK tag naming that provider goes with it. Unlike `default_provider`,
+   which degrades to the fleet's first provider, the fallback root is never
+   implicit: a tag left behind names nobody, is invisible to every UI, and
+   silently resurrects the moment that provider is authenticated again."
   ([provider-id] (remove-config-provider! provider-id nil))
   ([provider-id source]
    (let
@@ -1254,13 +1259,37 @@
       (if (keyword? provider-id) (name provider-id) (str provider-id))
 
       providers*
-      (vec (remove #(= provider-id' (get % "id")) providers))]
+      (vec (remove #(= provider-id' (get % "id")) providers))
 
-     (when (not= providers providers*)
-       (save-config!
-         (if (seq providers*) (assoc raw "providers" providers*) (dissoc raw "providers"))
-         source)
-       true))))
+      ;; `fallback_model` may carry the qualified `provider/model` form, which
+      ;; WINS over `fallback_provider` on the read path, so both spellings have
+      ;; to be consulted before deciding whose tag this is.
+      fallback-model
+      (some-> (get raw "fallback_model")
+              str
+              str/trim
+              not-empty)
+
+      tagged-provider
+      (or (when (str/includes? (str fallback-model) "/")
+            (not-empty (str/trim (first (str/split fallback-model #"/" 2)))))
+          (some-> (get raw "fallback_provider")
+                  str
+                  str/trim
+                  not-empty))
+
+      raw*
+      (cond-> raw
+        (seq providers*)
+        (assoc "providers" providers*)
+
+        (empty? providers*)
+        (dissoc "providers")
+
+        (= provider-id' tagged-provider)
+        (dissoc "fallback_provider" "fallback_model"))]
+
+     (when (not= raw raw*) (save-config! raw* source) true))))
 
 (defn resolve-config
   "Resolve provider config: explicit -> merged YAML config.

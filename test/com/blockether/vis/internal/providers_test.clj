@@ -239,3 +239,105 @@
           "vis.yml order is preserved verbatim; catalog-only ids follow, sorted")
       (is (= ["zzz-first" "my-local" "alpha-live"] (providers/configured-model-names provider))
           "configured names come straight off the provider map, in file order"))))
+
+(deftest fallback-selection-is-explicit-and-always-on-another-provider
+  (let
+    [fleet
+     [{:id :openai :models [{:name "gpt-5"}]}
+      {:id :anthropic-coding-plan :models [{:name "claude-opus-4-8"} {:name "claude-fable-5"}]}]
+
+     primary
+     {:provider-id :anthropic-coding-plan :model "claude-fable-5"}
+
+     base
+     {:default-provider "anthropic-coding-plan" :default-model "claude-fable-5" :providers fleet}
+
+     saved
+     (atom nil)]
+
+    (with-redefs [config/load-config (constantly (assoc base
+                                                   :fallback-provider "openai"
+                                                   :fallback-model "gpt-5"))]
+      (is (= {:provider-id :openai :model "gpt-5"} (providers/fallback-selection fleet primary))))
+    (with-redefs [config/load-config (constantly base)]
+      (is (nil? (providers/fallback-selection fleet primary))
+          "an unset tag never invents a second choice"))
+    (with-redefs [config/load-config (constantly (assoc base
+                                                   :fallback-provider "anthropic-coding-plan"
+                                                   :fallback-model "claude-opus-4-8"))]
+      (is (nil? (providers/fallback-selection fleet primary))
+          "a tag on the primary's own provider is no fallback at all"))
+    (with-redefs
+      [providers/picker-fleet
+       (constantly fleet)
+
+       config/load-config
+       (constantly base)
+
+       config/load-global-config-raw
+       (constantly {"default_provider" "anthropic-coding-plan"
+                    "default_model" "claude-fable-5"
+                    "fallback_provider" "stale"
+                    "fallback_model" "stale-1"})
+
+       config/save-config!
+       (fn [wire _]
+         (reset! saved wire))
+
+       config/reload-config!
+       (constantly nil)]
+
+      (is (= {:provider-id :openai :model "gpt-5"}
+             (providers/save-fallback-selection! :openai "gpt-5" :test)))
+      (is (= "openai" (get @saved "fallback_provider")))
+      (is (= "gpt-5" (get @saved "fallback_model")))
+      (is (= "anthropic-coding-plan" (get @saved "default_provider"))
+          "tagging the fallback leaves the primary alone")
+      (is (= :vis/invalid-fallback-provider
+             (try (providers/save-fallback-selection! :anthropic-coding-plan "claude-fable-5" :test)
+                  nil
+                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+          "the primary's own provider is refused")
+      (providers/clear-fallback-selection! :test)
+      (is (nil? (get @saved "fallback_provider")))
+      (is (nil? (get @saved "fallback_model"))))))
+
+(deftest tagging-a-new-primary-drops-a-fallback-that-would-collide-with-it
+  (let
+    [fleet
+     [{:id :openai :models [{:name "gpt-5"}]}
+      {:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}]
+
+     saved
+     (atom nil)]
+
+    (with-redefs
+      [providers/picker-fleet
+       (constantly fleet)
+
+       config/load-config
+       (constantly {:default-provider "anthropic-coding-plan"
+                    :default-model "claude-fable-5"
+                    :fallback-provider "openai"
+                    :fallback-model "gpt-5"
+                    :providers fleet})
+
+       config/load-global-config-raw
+       (constantly {"default_provider" "anthropic-coding-plan"
+                    "default_model" "claude-fable-5"
+                    "fallback_provider" "openai"
+                    "fallback_model" "gpt-5"})
+
+       config/save-config!
+       (fn [wire _]
+         (reset! saved wire))
+
+       config/reload-config!
+       (constantly nil)]
+
+      (is (= {:provider-id :openai :model "gpt-5"}
+             (providers/save-default-selection! :openai "gpt-5" :test)))
+      (is (= "openai" (get @saved "default_provider")))
+      (is (nil? (get @saved "fallback_provider"))
+          "the fallback cannot stay on the provider that just became primary")
+      (is (nil? (get @saved "fallback_model"))))))

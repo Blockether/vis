@@ -154,7 +154,8 @@
              [gateway-provider-status gateway-client/provider-status]
              [gateway-provider-limits gateway-client/provider-limits]
              [gateway-provider-model-options gateway-client/provider-models]
-             [gateway-set-router-default! gateway-client/set-router-default!])
+             [gateway-set-router-default! gateway-client/set-router-default!]
+             [gateway-set-router-fallback! gateway-client/set-router-fallback!])
 
 ;; Provider OAuth, driven ENTIRELY through the daemon. Every channel — TUI, web,
 ;; phone — starts a flow, hands back a redirect URL or polls a device code, and

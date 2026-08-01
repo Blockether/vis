@@ -8,6 +8,8 @@
 (def full-config
   {"default_provider" "anthropic"
    "default_model" "claude"
+   "fallback_provider" "openai"
+   "fallback_model" "gpt"
    "providers" [{"id" "anthropic"
                  "api_key" "secret"
                  "models"
@@ -110,6 +112,8 @@
     (expect (not (config-spec/valid? (assoc full-config "db-spec" {"backend" "sqlite"}))))
     (expect (not (config-spec/valid? (assoc full-config "default_provider" "  "))))
     (expect (not (config-spec/valid? (assoc full-config "default_model" ""))))
+    (expect (not (config-spec/valid? (assoc full-config "fallback_provider" "  "))))
+    (expect (not (config-spec/valid? (assoc full-config "fallback_model" ""))))
     ;; Workspace entries: a rooted path is required and unknown keys are rejected.
     (expect (not (config-spec/valid? (assoc-in full-config
                                        ["workspace" "filesystem"]

@@ -3,9 +3,9 @@
  * Trigger a two-store companion release without inventing an app version.
  *
  * VIS_VERSION is always the marketing version. A regular `vX.Y.Z` tag releases
- * that exact commit automatically. App-only follow-ups keep X.Y.Z and move the
- * single `companion-vX.Y.Z` tag to a newer main commit; the tag push runs the
- * same mobile-release workflow again with a new git-derived store build number.
+ * that exact commit automatically. App-only follow-ups keep X.Y.Z and create an
+ * immutable `companion-vX.Y.Z-build.N` tag, where N is the git-derived store build
+ * number. Each tag push runs the same mobile-release workflow exactly once.
  */
 import { spawnSync } from 'node:child_process';
 
@@ -49,7 +49,8 @@ if (head !== remoteMain) die('local main must exactly match origin/main');
 
 const version = visVersion();
 const regularTag = `v${version}`;
-const companionTag = `companion-v${version}`;
+const build = capture('git', ['rev-list', '--count', 'HEAD']);
+const companionTag = `companion-v${version}-build.${build}`;
 const regularResult = command('git', ['rev-parse', '--verify', `${regularTag}^{commit}`], {
   allowFailure: true,
 });
@@ -61,32 +62,26 @@ if (regularCommit === head) {
   console.log(`Vis version:      ${version}`);
   console.log(`Store build:      ${capture('git', ['rev-list', '--count', 'HEAD'])}`);
   console.log(`Regular release:  ${regularTag} already points at HEAD`);
-  console.log('\n✓ No companion retag needed: the regular Vis release triggers both stores automatically.');
+  console.log('\n✓ No companion tag needed: the regular Vis release triggers both stores automatically.');
   process.exit(0);
 }
 if (command('git', ['merge-base', '--is-ancestor', regularCommit, head], { allowFailure: true }).status !== 0) {
   die(`${regularTag} is not an ancestor of HEAD; VIS_VERSION cannot describe this branch`);
 }
 
-const currentCompanion = command(
-  'git',
-  ['rev-parse', '--verify', `${companionTag}^{commit}`],
-  { allowFailure: true },
-).stdout.trim();
-if (currentCompanion === head) {
-  die(`${companionTag} already points at HEAD; commit a new build before releasing again`);
-}
-
-const build = capture('git', ['rev-list', '--count', 'HEAD']);
 const remoteTagObject = command(
   'git',
   ['ls-remote', '--refs', 'origin', `refs/tags/${companionTag}`],
 ).stdout.trim().split(/\s+/)[0] || '';
+if (remoteTagObject) {
+  die(`${companionTag} already exists on origin; companion release tags are immutable`);
+}
+
 
 console.log(`Vis version:      ${version}`);
 console.log(`Store build:      ${build}`);
 console.log(`Regular release:  ${regularTag} (${regularCommit.slice(0, 10)})`);
-console.log(`Companion trigger:${currentCompanion ? ' retag' : ' create'} ${companionTag} -> ${head.slice(0, 10)}`);
+console.log(`Companion trigger: create ${companionTag} -> ${head.slice(0, 10)}`);
 
 if (dryRun) {
   console.log('\nDry run only; no tag changed.');
@@ -95,18 +90,12 @@ if (dryRun) {
 
 command('git', [
   'tag',
-  '--force',
   '--annotate',
   companionTag,
   head,
   '--message',
   `Release Vis Companion ${version} (${build})`,
 ]);
-const pushArgs = ['push'];
-if (remoteTagObject) {
-  pushArgs.push(`--force-with-lease=refs/tags/${companionTag}:${remoteTagObject}`);
-}
-pushArgs.push('origin', `refs/tags/${companionTag}`);
-command('git', pushArgs);
+command('git', ['push', 'origin', `refs/tags/${companionTag}`]);
 
-console.log(`\n✓ ${companionTag} now triggers iOS + Android from ${head.slice(0, 10)}.`);
+console.log(`\n✓ ${companionTag} triggers iOS + Android from ${head.slice(0, 10)}.`);

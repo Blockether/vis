@@ -192,6 +192,9 @@ export interface RouterProvider {
   models: string[];
   is_default: boolean;
   default_model: string | null;
+  /** The FALLBACK tag — always a different provider than the default one. */
+  is_fallback: boolean;
+  fallback_model: string | null;
   status?: ProviderStatus;
   limits?: ProviderLimits;
 }
@@ -234,7 +237,8 @@ export interface ThemeSummary {
 }
 
 /** App-local appearance choice. It is never read from or written to a gateway. */
-export type ThemePref = 'light' | 'dark';
+/** Id of the app-local palette selected from the paired gateways' theme catalogs. */
+export type ThemePref = string;
 
 export interface GatewayTheme extends ThemeSummary {
   css_vars: Record<string, string>;

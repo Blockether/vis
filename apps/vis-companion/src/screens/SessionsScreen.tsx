@@ -1,4 +1,5 @@
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Banner, Button, DialogFrame, Input } from '../components/ui';
 import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -493,14 +494,14 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
         </footer>
       </div>
 
-      {rowAction && (
+      {rowAction && createPortal(
         <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 pb-[env(safe-area-inset-bottom)] sm:items-center sm:p-6"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]"
           role="presentation"
           onClick={closeRowAction}
         >
           <div
-            className="w-full sm:max-w-md"
+            className="w-full max-w-md"
             role="presentation"
             onClick={(event) => event.stopPropagation()}
           >
@@ -556,7 +557,8 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
               </div>
             </DialogFrame>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </section>
   );

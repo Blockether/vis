@@ -26,7 +26,7 @@
  *   node scripts/android-prepare.mjs --clean        # shred the materialised keystore
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { syncPackageVersion } from './version.mjs';
@@ -75,6 +75,14 @@ if (has('clean')) {
 }
 
 if (!existsSync(androidApp)) die('no android/app — run `npm run add:android` first');
+
+// `android/` is absent in clean CI and Capacitor's fresh scaffold contains its
+// generic launcher. Always overlay the tracked Vis icon set before Gradle runs.
+const nativeIconAssets = join(root, 'native-assets', 'android', 'res');
+const androidResources = join(androidApp, 'src', 'main', 'res');
+if (!existsSync(nativeIconAssets)) die(`no tracked Android icons at ${nativeIconAssets}`);
+cpSync(nativeIconAssets, androidResources, { recursive: true, force: true });
+console.log('✓ launcher icons → android/app/src/main/res  (tracked Vis branding)');
 
 const appId = JSON.parse(readFileSync(resolve(root, 'capacitor.config.json'), 'utf8')).appId;
 

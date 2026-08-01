@@ -546,9 +546,48 @@
   [^long selected ^long current-start ^long content-h ^long total]
   (dlg/visible-window-start selected current-start (card-visible-count content-h) total))
 
+(defn- tagged?
+  "True when `provider` carries the tag in `selection` — either role's
+   provider/model pair. An untagged fleet has no `:provider-id`, and must never
+   match a provider."
+  [provider selection]
+  (boolean (and (some? (:provider-id selection))
+                (same-id? (:id provider) (:provider-id selection)))))
+
+(defn- tags-after-removal
+  "The `{:default … :fallback …}` tag pair after `removed-id` leaves the fleet
+   (`items` is the REMAINING fleet), mirroring what the daemon reports next read.
+
+   The PRIMARY is implicit — the daemon's `default-selection` falls back to the
+   FIRST provider in the fleet — so losing the tagged provider RESEATS it instead
+   of leaving a tag naming nobody. The FALLBACK is never implicit: it is dropped
+   when it named the removed provider, and dropped again when the new implicit
+   primary would collide with it, because the daemon refuses that pair."
+  [items removed-id default-selection fallback-selection]
+  (let
+    [primary
+     (if (same-id? removed-id (:provider-id default-selection))
+       (when-let [next-primary (first items)]
+         {:provider-id (some-> (:id next-primary)
+                               name
+                               keyword)
+          :model (some-> next-primary
+                         :models
+                         first
+                         vis/model-name)})
+       default-selection)
+
+     fallback
+     (when (and (some? (:provider-id fallback-selection))
+                (not (same-id? removed-id (:provider-id fallback-selection)))
+                (not (same-id? (:provider-id primary) (:provider-id fallback-selection))))
+       fallback-selection)]
+
+    {:default primary :fallback fallback}))
+
 (defn- draw-provider-card!
-  "Draw a two-line provider card with the explicit default highlighted."
-  [g left row inner-w _idx selected? provider status limits default-selection]
+  "Draw a two-line provider card with the PRIMARY and FALLBACK tags highlighted."
+  [g left row inner-w _idx selected? provider status limits default-selection fallback-selection]
   ;; Reserve `p/SELECTION_WIDTH` cols at the start of the card row
   ;; for the selection gutter (`>` glyph plus breathing room).
   (let
@@ -566,6 +605,14 @@
                 name)
         (some-> (:provider-id default-selection)
                 name))
+
+     ;; The two tags are mutually exclusive by construction (the daemon
+     ;; refuses a fallback on the primary's provider), but paint DEFAULT
+     ;; first anyway so a stale config can never show both badges.
+     fallback?
+     (and (not default?)
+          (some? (:provider-id fallback-selection))
+          (same-id? (:id provider) (:provider-id fallback-selection)))
 
      text-w
      (max 0 (- inner-w 2 p/SELECTION_WIDTH))
@@ -597,6 +644,9 @@
      default-model
      (:model default-selection)
 
+     fallback-model
+     (:model fallback-selection)
+
      catalog-summary
      (str model-count (if (= 1 model-count) " model available" " models available"))
 
@@ -624,7 +674,13 @@
 
      ;; Layout line 1: label/default badge ... host/status.
      left-part
-     (str (when default? "★ ") (or label "?") (when default? "  DEFAULT"))
+     (str (cond default? "★ "
+                fallback? "☆ "
+                :else "")
+          (or label "?")
+          (cond default? "  DEFAULT"
+                fallback? "  FALLBACK"
+                :else ""))
 
      right-part
      (str host "  ●")]
@@ -677,11 +733,12 @@
             (p/put-str! g
                         text-x
                         (inc row)
-                        (dlg/ellipsize
-                          (str "   "
-                               (if default? (str "★ " default-model "  DEFAULT") catalog-summary)
-                               (when (seq limit-summary) (str " / " limit-summary)))
-                          text-w)))))))
+                        (dlg/ellipsize (str "   "
+                                            (cond default? (str "★ " default-model "  DEFAULT")
+                                                  fallback? (str "☆ " fallback-model "  FALLBACK")
+                                                  :else catalog-summary)
+                                            (when (seq limit-summary) (str " / " limit-summary)))
+                                       text-w)))))))
 
 (defn- remove-provider-by-id [items provider-id] (vec (remove #(= provider-id (:id %)) items)))
 
@@ -787,8 +844,19 @@
       (str/replace #"(?<![A-Za-z0-9])_([^_]+)_(?![A-Za-z0-9])" "$1")))
 
 (defn provider-action-items
+  "Actions for one provider row.
+
+   `is-fallback` (the row already carries the FALLBACK tag) is what adds
+   `:clear-fallback`; `is-default` (the row holds the PRIMARY tag) is what
+   REMOVES `:fallback`. The daemon refuses a fallback naming the primary's own
+   provider, so offering that action on the primary's card is a guaranteed
+   rejection dialog — the web settings panel disables the same button for the
+   same reason. Pass both values to the painter and the key handler or the two
+   menus disagree."
   ([provider] (provider-action-items provider (gateway-provider-status-safe provider)))
-  ([provider status]
+  ([provider status] (provider-action-items provider status false))
+  ([provider status is-fallback] (provider-action-items provider status is-fallback false))
+  ([provider status is-fallback is-default]
    (let
      [registered
       (vis/provider-by-id (:id provider))
@@ -800,6 +868,12 @@
       (if is-authenticated "Re-authenticate" "Authenticate")]
 
      (cond-> [{:id :default :label "Set as Default..." :key \d}]
+       (not is-default)
+       (conj {:id :fallback :label "Set as Fallback..." :key \f})
+
+       is-fallback
+       (conj {:id :clear-fallback :label "Clear Fallback" :key \c})
+
        (provider-supports-auth? provider)
        (conj {:id :authenticate :label auth-label :key \a :force? is-authenticated})
 
@@ -1124,6 +1198,17 @@
                               first
                               vis/model-name))}))
 
+      ;; The FALLBACK tag: a second provider/model root, always on a
+      ;; DIFFERENT provider than the primary (the daemon refuses the
+      ;; primary's own). nil means the fleet carries no fallback.
+      fallback-selection
+      (atom (when-let [pid (:fallback-provider seed)]
+              {:provider-id (keyword (name pid)) :model (:fallback-model seed)}))
+
+      ;; Which tag the `:models` picker is about to write.
+      model-role
+      (atom :primary)
+
       statuses
       (atom (into {}
                   (map (fn [provider]
@@ -1282,7 +1367,8 @@
                                       provider
                                       (get @statuses (:id provider))
                                       (get @limits (:id provider))
-                                      @default-selection)
+                                      @default-selection
+                                      @fallback-selection)
                  (doseq [i (range body-h)]
                    (let
                      [li (+ sc (long i))
@@ -1318,7 +1404,8 @@
                                                 (nth @items idx)
                                                 (get @statuses (:id (nth @items idx)))
                                                 (get @limits (:id (nth @items idx)))
-                                                @default-selection)))))
+                                                @default-selection
+                                                @fallback-selection)))))
          (when (not= @mode :status)
            (scrollbar/draw! g
                             {:col (+ left inner-w)
@@ -1398,7 +1485,13 @@
                     default? (and (string? (:id model))
                                   (same-id? (:id provider) (:provider-id @default-selection))
                                   (= (:id model) (:model @default-selection)))
-                    label (str (:label model) (when default? "  (default)"))
+                    fallback? (and (string? (:id model))
+                                   (tagged? provider @fallback-selection)
+                                   (= (:id model) (:model @fallback-selection)))
+                    label (str (:label model)
+                               (cond default? "  (default)"
+                                     fallback? "  (fallback)"
+                                     :else ""))
                     label (subs label 0 (min (count label) (max 0 (- inner-w 5))))]
 
                    (p/set-colors! g t/dialog-fg t/dialog-bg)
@@ -1414,7 +1507,10 @@
               (nth @items @selected)
 
               actions
-              (provider-action-items provider (get @statuses (:id provider)))
+              (provider-action-items provider
+                                     (get @statuses (:id provider))
+                                     (tagged? provider @fallback-selection)
+                                     (tagged? provider @default-selection))
 
               n
               (count actions)
@@ -1538,20 +1634,44 @@
 
                            (if (= (:id choice) :show-all)
                              (let
-                               [preferred (when (same-id? (:id provider)
-                                                          (:provider-id @default-selection))
-                                            [(:model @default-selection)])]
+                               [current (if (= @model-role :fallback)
+                                          @fallback-selection
+                                          @default-selection)
+                                preferred (when (same-id? (:id provider) (:provider-id current))
+                                            [(:model current)])]
+
                                (reset! model-items (build-model-list provider preferred true))
                                (reset! model-sel 0)
                                (reset! model-scroll 0)
                                (recur))
                              (let
-                               [selection (vis/gateway-set-router-default! (:id provider)
-                                                                           (:id choice))]
-                               (reset! default-selection selection)
-                               (swap! items default-first-providers (:provider-id selection))
-                               (reset! selected 0)
-                               (reset! scroll 0)
+                               [role @model-role
+                                ;; A rejected tag (fallback on the primary's own
+                                ;; provider) is a 400 from the daemon — show its
+                                ;; reason instead of killing the dialog loop.
+                                selection
+                                (try
+                                  (if (= role :fallback)
+                                    (vis/gateway-set-router-fallback! (:id provider) (:id choice))
+                                    (vis/gateway-set-router-default! (:id provider) (:id choice)))
+                                  (catch Exception e
+                                    (dlg/text-view-dialog!
+                                      screen
+                                      (if (= role :fallback) "Fallback rejected" "Default rejected")
+                                      [(or (ex-message e) (str e))])
+                                    ::rejected))]
+
+                               (when-not (= selection ::rejected)
+                                 (if (= role :fallback)
+                                   (reset! fallback-selection selection)
+                                   (do ;; The daemon drops a fallback that collides with
+                                       ;; the new primary's provider — mirror that here.
+                                     (when (tagged? provider @fallback-selection)
+                                       (reset! fallback-selection nil))
+                                     (reset! default-selection selection)
+                                     (swap! items default-first-providers (:provider-id selection))
+                                     (reset! selected 0)
+                                     (reset! scroll 0))))
                                (reset! mode :list)
                                (recur))))
                          :else (recur))))
@@ -1596,20 +1716,37 @@
                  (let
                    [ktype (.getKeyType ^com.googlecode.lanterna.input.KeyStroke key)
                     provider (nth @items @selected)
-                    actions (provider-action-items provider (get @statuses (:id provider)))
+                    actions (provider-action-items provider
+                                                   (get @statuses (:id provider))
+                                                   (tagged? provider @fallback-selection)
+                                                   (tagged? provider @default-selection))
                     n (count actions)
                     run-action!
                     (fn [action]
                       (case (:id action)
-                        :default
+                        (:default :fallback)
                         (let
-                          [preferred (when (same-id? (:id provider)
-                                                     (:provider-id @default-selection))
-                                       [(:model @default-selection)])]
+                          [role (if (= (:id action) :fallback) :fallback :primary)
+                           current (if (= role :fallback) @fallback-selection @default-selection)
+                           preferred (when (same-id? (:id provider) (:provider-id current))
+                                       [(:model current)])]
+
+                          (reset! model-role role)
                           (reset! model-items (build-model-list provider preferred false))
                           (reset! model-sel 0)
                           (reset! model-scroll 0)
                           (reset! mode :models))
+
+                        :clear-fallback
+                        (do (try (vis/gateway-set-router-fallback!)
+                                 (reset! fallback-selection nil)
+                                 (catch Exception e
+                                   ;; Same contract as tagging: a daemon refusal
+                                   ;; explains itself instead of killing the loop.
+                                   (dlg/text-view-dialog! screen
+                                                          "Clear fallback failed"
+                                                          [(or (ex-message e) (str e))])))
+                            (reset! mode :list))
 
                         :authenticate
                         (do (when (authenticate-provider! screen provider (:force? action))
@@ -1638,6 +1775,13 @@
                                                  (swap! items remove-provider-by-id (:id provider))
                                                  (swap! statuses dissoc (:id provider))
                                                  (swap! limits dissoc (:id provider))
+                                                 (let
+                                                   [tags (tags-after-removal @items
+                                                                             (:id provider)
+                                                                             @default-selection
+                                                                             @fallback-selection)]
+                                                   (reset! default-selection (:default tags))
+                                                   (reset! fallback-selection (:fallback tags)))
                                                  (swap! selected
                                                    #(p/clamp % 0 (max 0 (dec (count @items)))))))})
                             (reset! mode :confirm))

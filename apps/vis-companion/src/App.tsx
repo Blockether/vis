@@ -19,7 +19,7 @@ import { SessionSubscriptionHub } from './lib/subscriptions';
 import { parsePairing } from './lib/pairing';
 import { onPairingLink } from './lib/deeplink';
 import { applyTheme, resolveLocalTheme } from './lib/theme';
-import { getThemePref } from './lib/storage';
+import { getThemePalette, getThemePref } from './lib/storage';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
 import { ApplicationSettingsDialog, GatewaySettingsDialog } from './screens/SettingsScreen';
@@ -305,10 +305,12 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [refresh]);
 
-  // Paint the app-local theme immediately on mount. Appearance never waits for,
-  // reads from, or writes to a gateway.
+  // Paint the locally cached palette immediately. The settings dialog refreshes its
+  // catalog from every paired gateway later; startup must never wait on the network.
   useEffect(() => {
-    void getThemePref().then((pref) => applyTheme(resolveLocalTheme(pref)));
+    void Promise.all([getThemePref(), getThemePalette()]).then(([pref, palette]) => {
+      applyTheme(resolveLocalTheme(pref, palette));
+    });
   }, []);
 
   // Deep-linked pairing: vis://gateway?url=…&token=…
@@ -712,7 +714,7 @@ function Header({
         <button
           type="button"
           onClick={onAppSettings}
-          className="ml-auto grid min-h-10 min-w-10 place-items-center font-mono text-title text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+          className="ml-auto grid min-h-12 min-w-12 place-items-center font-mono text-display text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
           aria-label="Open application settings"
         >
           ⚙

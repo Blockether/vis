@@ -1186,7 +1186,11 @@
                    (expect (= 1 (get out "depth")))
                    ;; directories sort before files, each alphabetical
                    (expect (= ["sub" "a.txt"] (mapv #(get % "name") (get out "entries"))))
-                   (expect (every? #(contains? % "size") (get out "entries")))))
+                   (expect (every? #(contains? % "size") (get out "entries")))
+                   ;; Preserve the original listing contract: directory size is its
+                   ;; filesystem metadata, not fff's intentionally-zero aggregate.
+                   (expect (= (.length (java.io.File. dir "sub"))
+                              (get (first (get out "entries")) "size")))))
              (it "(cat dir) hides dotfiles + gitignored entries by default; opts widen"
                  (let
                    [_
@@ -3360,6 +3364,13 @@
                                          "3:cc" {"text" "```"}}}))]
         (expect (clojure.string/starts-with? body "\n````"))
         (expect (clojure.string/ends-with? (clojure.string/trim body) "````"))))))
+
+(defdescribe
+  render-nodes-result-language-test
+  (let [render @#'editing/render-nodes-result]
+    (it "tags structural-node source with its file language"
+        (let [body (:body (render {"results" [{"path" "src/app.clj" "source" "(def x 1)"}]}))]
+          (expect (clojure.string/includes? body "```clojure\n(def x 1)\n```"))))))
 
 ;; ── e2e: REAL tool invocations against REAL temp files ───────────────────────
 

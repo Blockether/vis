@@ -829,14 +829,17 @@
             (is (= [nil "glm-5.2"] @wrote))))))))
 
 (deftest router-handler-assembles-string-keyed-fleet-with-status
-  (testing "GET /v1/router returns every model plus the one explicit default pair"
+  (testing "GET /v1/router returns every model plus the primary and fallback pairs"
     (with-redefs-fn
-      {#'providers/picker-fleet (constantly [{:id :anthropic-coding-plan
-                                              :base-url "https://api.anthropic.com/v1"
-                                              :models [{:name "claude-opus-4-8"}
-                                                       {:name "claude-sonnet-5"}]}])
+      {#'providers/picker-fleet
+       (constantly
+         [{:id :anthropic-coding-plan
+           :base-url "https://api.anthropic.com/v1"
+           :models [{:name "claude-opus-4-8"} {:name "claude-sonnet-5"}]}
+          {:id :zai-coding-plan :base-url "https://api.z.ai/v1" :models [{:name "glm-5.2"}]}])
        #'providers/default-selection (constantly {:provider-id :anthropic-coding-plan
                                                   :model "claude-sonnet-5"})
+       #'providers/fallback-selection (constantly {:provider-id :zai-coding-plan :model "glm-5.2"})
        #'providers/provider-status (constantly {:is-authenticated true :source :auth-file})
        #'providers/provider-limits-safe
        (constantly
@@ -850,7 +853,10 @@
            (get (wire/parse-json (:body resp)) "providers")
 
            p0
-           (first provs)]
+           (first provs)
+
+           p1
+           (second provs)]
 
           (is (= 200 (:status resp)))
           (is (= "anthropic-coding-plan" (get p0 "id")))
@@ -858,6 +864,13 @@
           (is (= ["claude-opus-4-8" "claude-sonnet-5"] (get p0 "models")))
           (is (true? (get p0 "is_default")))
           (is (= "claude-sonnet-5" (get p0 "default_model")))
+          ;; the primary row is NEVER also the fallback row
+          (is (false? (get p0 "is_fallback")))
+          (is (nil? (get p0 "fallback_model")))
+          (is (true? (get p1 "is_fallback")))
+          (is (= "glm-5.2" (get p1 "fallback_model")))
+          (is (false? (get p1 "is_default")))
+          (is (nil? (get p1 "default_model")))
           ;; connection verdict is the snake_case STRING key — no keyword restore
           (is (true? (get-in p0 ["status" "is_authenticated"])))
           (is (= "auth-file" (get-in p0 ["status" "source"])))
@@ -865,30 +878,98 @@
           ;; limits ride embedded, string-keyed too
           (is (= "ok" (get-in p0 ["limits" "status"]))))))))
 
-(deftest router-default-handler-persists-one-pair
+(deftest router-default-handler-tags-primary-and-fallback
   (let
     [saved
      (atom nil)
 
-     request
-     {:body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str {"provider"
-                                                                      "anthropic-coding-plan"
-                                                                      "model" "claude-fable-5"})
-                                                      "UTF-8"))}]
+     cleared
+     (atom 0)
+
+     fleet
+     [{:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}
+      {:id :zai-coding-plan :models [{:name "glm-5.2"}]}]
+
+     body
+     (fn [m]
+       {:body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str m) "UTF-8"))})
+
+     patch!
+     (fn [m]
+       ((rv 'router-default-handler) (body m)))]
 
     (with-redefs
-      [providers/save-default-selection! (fn [provider model source]
-                                           (reset! saved [provider model source])
-                                           {:provider-id :anthropic-coding-plan
-                                            :model "claude-fable-5"})]
-      (let
-        [resp ((rv 'router-default-handler) request)
-         body (wire/parse-json (:body resp))]
+      [providers/picker-fleet
+       (constantly fleet)
 
-        (is (= 200 (:status resp)))
-        (is (= ["anthropic-coding-plan" "claude-fable-5" :gateway] @saved))
-        (is (= "anthropic-coding-plan" (get body "default_provider")))
-        (is (= "claude-fable-5" (get body "default_model")))))))
+       providers/default-selection
+       (constantly {:provider-id :anthropic-coding-plan :model "claude-fable-5"})
+
+       providers/fallback-selection
+       (constantly {:provider-id :zai-coding-plan :model "glm-5.2"})
+
+       providers/save-default-selection!
+       (fn [provider model source]
+         (reset! saved [:primary provider model source])
+         {:provider-id :anthropic-coding-plan :model "claude-fable-5"})
+
+       providers/save-fallback-selection!
+       (fn [provider model source]
+         (reset! saved [:fallback provider model source])
+         {:provider-id :zai-coding-plan :model "glm-5.2"})
+
+       providers/clear-fallback-selection!
+       (fn [_source]
+         (swap! cleared inc)
+         nil)]
+
+      (testing "a roleless PATCH still tags the PRIMARY, and the answer carries BOTH tags"
+        (let
+          [resp
+           (patch! {"provider" "anthropic-coding-plan" "model" "claude-fable-5"})
+
+           out
+           (wire/parse-json (:body resp))]
+
+          (is (= 200 (:status resp)))
+          (is (= [:primary "anthropic-coding-plan" "claude-fable-5" :gateway] @saved))
+          (is (= "anthropic-coding-plan" (get out "default_provider")))
+          (is (= "claude-fable-5" (get out "default_model")))
+          (is (= "zai-coding-plan" (get out "fallback_provider")))
+          (is (= "glm-5.2" (get out "fallback_model")))))
+      (testing "role fallback writes the FALLBACK tag and never touches the primary one"
+        (let [resp (patch! {"provider" "zai-coding-plan" "model" "glm-5.2" "role" " FallBack "})]
+          (is (= 200 (:status resp)))
+          (is (= [:fallback "zai-coding-plan" "glm-5.2" :gateway] @saved))))
+      (testing "a blank fallback CLEARS the tag, while a blank primary stays a 400"
+        (is (= 200 (:status (patch! {"role" "fallback" "model" "  "}))))
+        (is (= 1 @cleared))
+        (is (= 400 (:status (patch! {"model" "   "})))))
+      (testing "an unknown role is refused before anything is written"
+        (reset! saved :untouched)
+        (let
+          [resp
+           (patch! {"provider" "zai-coding-plan" "model" "glm-5.2" "role" "tertiary"})
+
+           err
+           (get (wire/parse-json (:body resp)) "error")]
+
+          (is (= 400 (:status resp)))
+          (is (= "invalid-request" (get err "type")))
+          (is (= :untouched @saved))))
+      (testing "the daemon's refusal — a fallback on the primary's provider — becomes a 400"
+        (with-redefs
+          [providers/save-fallback-selection!
+           (fn [_provider _model _source]
+             (throw (ex-info "the fallback must name a DIFFERENT provider than the primary"
+                             {:type :vis/invalid-fallback-provider})))]
+          (let
+            [resp (patch!
+                    {"provider" "anthropic-coding-plan" "model" "claude-fable-5" "role" "fallback"})
+             err (get (wire/parse-json (:body resp)) "error")]
+
+            (is (= 400 (:status resp)))
+            (is (re-find #"DIFFERENT provider" (get err "message")))))))))
 
 (deftest gateway-prometheus-runtime-metrics-test
   (let

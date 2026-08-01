@@ -2825,10 +2825,10 @@
              (finally (lp/dispose-environment! env))))))
 
 (defdescribe
-  honor-config-primary-test
+  honor-config-roots-test
   (describe
-    "honor-config-primary! — one explicit provider/model pair is the global default"
-    (let [f (var-get #'lp/honor-config-primary!)]
+    "honor-config-roots! — explicit primary/fallback pairs are the router's roots"
+    (let [f (var-get #'lp/honor-config-roots!)]
       (it "honors string-valued defaults without treating provider/model order as configuration"
           (let
             [router {:providers [{:id :zai-coding-plan :models [{:name "glm-5.2"}]}

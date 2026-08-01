@@ -6,15 +6,16 @@
 
 import { Preferences } from '@capacitor/preferences';
 import { bridged } from './bridge';
-import type { GatewayConn, ThemePref } from './types';
+import type { GatewayConn, ThemePref, ThemeSummary } from './types';
 
 const CONNS_KEY = 'vis.connections';
 const ACTIVE_KEY = 'vis.activeConnection';
 const PRIMARY_KEY = 'vis.primaryConnection';
 const THEME_PREF_KEY = 'vis.themePref';
+const THEME_PALETTE_KEY = 'vis.themePalette';
 
 // Appearance belongs to this application installation, never a gateway.
-const DEFAULT_THEME_PREF: ThemePref = 'light';
+const DEFAULT_THEME_PREF: ThemePref = 'blockether-light';
 
 function localGet(key: string): string | null {
   try {
@@ -161,14 +162,36 @@ export async function getPrimaryConnection(): Promise<GatewayConn | null> {
   return primary;
 }
 
-/** The app-local theme preference. Invalid legacy gateway-theme choices reset to light. */
+/** The selected app-local palette, migrated from the old light/dark preference. */
 export async function getThemePref(): Promise<ThemePref> {
   const raw = await getRaw(THEME_PREF_KEY);
-  return raw === 'dark' ? 'dark' : DEFAULT_THEME_PREF;
+  if (raw === 'light') return 'blockether-light';
+  if (raw === 'dark') return 'blockether-dark';
+  return raw?.trim() || DEFAULT_THEME_PREF;
 }
 
 export async function setThemePref(pref: ThemePref): Promise<void> {
   await setRaw(THEME_PREF_KEY, pref);
+}
+
+/** Cache the selected palette so it still paints before any gateway is reachable. */
+export async function getThemePalette(): Promise<ThemeSummary | null> {
+  const raw = await getRaw(THEME_PALETTE_KEY);
+  if (!raw) return null;
+  try {
+    const theme = JSON.parse(raw) as Partial<ThemeSummary>;
+    return typeof theme.id === 'string' &&
+      typeof theme.display_name === 'string' &&
+      (theme.mode === 'light' || theme.mode === 'dark')
+      ? theme as ThemeSummary
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setThemePalette(theme: ThemeSummary): Promise<void> {
+  await setRaw(THEME_PALETTE_KEY, JSON.stringify(theme));
 }
 const SESSIONS_PER_PROJECT_KEY = 'vis.sessionsPerProject';
 export const DEFAULT_SESSION_PAGE_SIZE = 10;

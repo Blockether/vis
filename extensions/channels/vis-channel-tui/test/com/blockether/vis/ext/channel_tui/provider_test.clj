@@ -132,6 +132,47 @@
                               (remove-provider-by-id [{:id :anthropic-coding-plan} {:id :openai}]
                                                      :anthropic-coding-plan))))))
 
+(defdescribe
+  tags-after-removal-test
+  (it
+    "reseats the primary and drops a fallback the removal invalidated"
+    (let
+      [tags-after-removal
+       @#'provider/tags-after-removal
+
+       fleet
+       [{:id :alpha :models [{:name "alpha-1"}]} {:id :beta :models [{:name "beta-1"}]}]]
+
+      ;; Losing an untagged provider leaves both tags exactly as they were.
+      (expect (= {:default {:provider-id :alpha :model "alpha-1"}
+                  :fallback {:provider-id :beta :model "beta-1"}}
+                 (tags-after-removal fleet
+                                     :gamma
+                                     {:provider-id :alpha :model "alpha-1"}
+                                     {:provider-id :beta :model "beta-1"})))
+      ;; Losing the FALLBACK's provider drops the tag; the primary is untouched.
+      (expect (= {:default {:provider-id :alpha :model "alpha-1"} :fallback nil}
+                 (tags-after-removal [{:id :alpha :models [{:name "alpha-1"}]}]
+                                     :beta
+                                     {:provider-id :alpha :model "alpha-1"}
+                                     {:provider-id :beta :model "beta-1"})))
+      ;; Losing the PRIMARY's provider reseats it on the first remaining
+      ;; provider — the same implicit choice the daemon makes.
+      (expect (= {:default {:provider-id :beta :model "beta-1"} :fallback nil}
+                 (tags-after-removal [{:id :beta :models [{:name "beta-1"}]}]
+                                     :alpha
+                                     {:provider-id :alpha :model "alpha-1"}
+                                     nil)))
+      ;; ...and when that reseated primary IS the fallback's provider, the
+      ;; fallback goes too: the daemon refuses both tags on one provider.
+      (expect (= {:default {:provider-id :beta :model "beta-1"} :fallback nil}
+                 (tags-after-removal [{:id :beta :models [{:name "beta-1"}]}]
+                                     :alpha
+                                     {:provider-id :alpha :model "alpha-1"}
+                                     {:provider-id :beta :model "beta-1"})))
+      ;; An empty fleet leaves nothing tagged rather than a dangling provider.
+      (expect (= {:default nil :fallback nil}
+                 (tags-after-removal [] :alpha {:provider-id :alpha :model "alpha-1"} nil))))))
 
 (defdescribe provider-card-scroll-test
              (it "keeps selected provider cards inside a visible scroll window"
@@ -360,28 +401,54 @@
 
 (defdescribe
   provider-action-items-test
-  (it "offers one default action, auth actions for remote providers, and no model configuration"
-      (with-redefs
-        [vis/provider-by-id
-         (fn [provider-id]
-           (case provider-id
-             :openai
-             {:provider/status-fn (constantly {:is-authenticated true})}
+  (it
+    "offers the default + fallback tags, auth actions for remote providers, and no model configuration"
+    (with-redefs
+      [vis/provider-by-id
+       (fn [provider-id]
+         (case provider-id
+           :openai
+           {:provider/status-fn (constantly {:is-authenticated true})}
 
-             :ollama
-             {:provider/status-fn (constantly {:is-authenticated true})}
+           :ollama
+           {:provider/status-fn (constantly {:is-authenticated true})}
 
-             nil))
+           nil))
 
-         vis/gateway-provider-status
-         (fn [provider-id]
-           (if (= :openai provider-id) {"is_authenticated" true} {"is_authenticated" false}))]
+       vis/gateway-provider-status
+       (fn [provider-id]
+         (if (= :openai provider-id) {"is_authenticated" true} {"is_authenticated" false}))]
 
-        (expect (= [:default :authenticate :status :logout]
-                   (mapv :id (provider/provider-action-items {:id :openai :api-key "sk-test"}))))
-        (expect (= ["Set as Default..." "Re-authenticate" "Show Status + Limits" "Log Out"]
-                   (mapv :label (provider/provider-action-items {:id :openai :api-key "sk-test"}))))
-        (expect (= [:default :status] (mapv :id (provider/provider-action-items {:id :ollama})))))))
+      (expect (= [:default :fallback :authenticate :status :logout]
+                 (mapv :id (provider/provider-action-items {:id :openai :api-key "sk-test"}))))
+      (expect (= ["Set as Default..." "Set as Fallback..." "Re-authenticate" "Show Status + Limits"
+                  "Log Out"]
+                 (mapv :label (provider/provider-action-items {:id :openai :api-key "sk-test"}))))
+      ;; Only the row that ALREADY carries the fallback tag can drop it.
+      (expect (= [:default :fallback :clear-fallback :authenticate :status :logout]
+                 (mapv :id
+                       (provider/provider-action-items {:id :openai :api-key "sk-test"}
+                                                       {"is_authenticated" true}
+                                                       true))))
+      (expect (= [:default :fallback :status]
+                 (mapv :id (provider/provider-action-items {:id :ollama}))))
+      ;; The PRIMARY's own card never offers the fallback tag: the daemon refuses
+      ;; a fallback naming the primary's provider, so the action could only ever
+      ;; produce a rejection dialog.
+      (expect (= [:default :authenticate :status :logout]
+                 (mapv :id
+                       (provider/provider-action-items {:id :openai :api-key "sk-test"}
+                                                       {"is_authenticated" true}
+                                                       false
+                                                       true))))
+      ;; A stale config naming ONE provider for both roles still drops `:fallback`
+      ;; while keeping the escape hatch that clears the tag.
+      (expect (= [:default :clear-fallback :authenticate :status :logout]
+                 (mapv :id
+                       (provider/provider-action-items {:id :openai :api-key "sk-test"}
+                                                       {"is_authenticated" true}
+                                                       true
+                                                       true)))))))
 
 (defdescribe
   logout-provider-test
@@ -1077,3 +1144,177 @@
           (expect (nil? (@#'provider/gateway-api-key-login! nil provider)))
           (expect (= 1 (count @popups)))
           (expect (str/includes? (str (:lines (first @popups))) "Authentication failed: boom"))))))
+
+(defn- fallback-dialog-run
+  "Drive the REAL provider dialog to the end: pick the second provider, open its
+   actions, choose `Set as Fallback...`, take the first model. `tag!` stands in
+   for the gateway call, so this exercises the same key path a user walks."
+  [tag!]
+  (let
+    [terminal
+     (DefaultVirtualTerminal. (TerminalSize. 80 30))
+
+     screen
+     (doto (TerminalScreen. terminal) (.startScreen))
+
+     shown
+     (atom [])
+
+     primary
+     (atom nil)
+
+     seed
+     {:default-provider :beta
+      :default-model "beta-default"
+      :providers [{:id :alpha :models [{:name "alpha-1"} {:name "alpha-2"}]}
+                  {:id :beta :models [{:name "beta-default"} {:name "beta-2"}]}]}]
+
+    (try
+      (with-redefs
+        [vis/authenticated-preset-providers
+         (constantly [])
+
+         vis/gateway-provider-status
+         (fn [_]
+           {"is_authenticated" true "is_loading" false})
+
+         vis/gateway-provider-limits
+         (fn [provider-id]
+           {:provider-id provider-id :status :ready :static {} :dynamic {:limits []}})
+
+         vis/worker-future
+         (fn [_ f]
+           (f))
+
+         vis/gateway-provider-model-options
+         (fn [provider-id _]
+           {:models (if (= provider-id :alpha) ["alpha-1" "alpha-2"] ["beta-default" "beta-2"])
+            :hidden-count 0})
+
+         vis/gateway-set-router-default!
+         (fn [provider-id model]
+           (reset! primary {:provider-id provider-id :model model}))
+
+         vis/gateway-set-router-fallback!
+         tag!
+
+         vis/load-config-raw
+         (constantly {})
+
+         vis/configured-providers
+         (constantly [])
+
+         vis/save-config!
+         (constantly nil)
+
+         vis/load-config
+         (constantly seed)
+
+         dlg/text-view-dialog!
+         (fn [_ title lines]
+           (swap! shown conj [title (vec lines)]))
+
+         dlg/select-dialog!
+         (fn [& _]
+           (throw (ex-info "nested model dialog opened" {})))]
+
+        ;; Default :beta sorts first. Down to :alpha, open actions, DOWN past
+        ;; "Set as Default..." onto "Set as Fallback...", take the first model.
+        (doseq
+          [key-type [KeyType/ArrowDown KeyType/Enter KeyType/ArrowDown KeyType/Enter KeyType/Enter
+                     KeyType/Escape KeyType/Escape]]
+          (.addInput terminal (KeyStroke. key-type)))
+        (provider/show-provider-dialog! screen seed)
+        {:shown @shown :primary @primary})
+      (finally (.stopScreen screen)))))
+
+(defdescribe
+  provider-inline-fallback-transient-test
+  (it
+    "tags the FALLBACK pair inline — same dialog, different role, and the primary tag is left alone"
+    (let
+      [tagged
+       (atom nil)
+
+       {:keys [shown primary]}
+       (fallback-dialog-run (fn [provider-id model]
+                              (reset! tagged {:provider-id provider-id :model model})))]
+
+      (expect (= {:provider-id :alpha :model "alpha-1"} @tagged))
+      (expect (nil? primary) "choosing the fallback role must never re-tag the primary")
+      (expect (empty? shown))))
+  (it
+    "a daemon refusal (fallback on the primary's own provider) explains itself instead of killing the dialog"
+    (let
+      [{:keys [shown]} (fallback-dialog-run
+                         (fn [_ _]
+                           (throw (ex-info
+                                    "Fallback provider must differ from the primary provider (beta)"
+                                    {:http-status 400}))))]
+      (expect (= 1 (count shown)))
+      (expect (= "Fallback rejected" (ffirst shown)))
+      (expect (some #(str/includes? % "must differ from the primary provider")
+                    (second (first shown)))))))
+
+(defdescribe
+  provider-card-fallback-badge-test
+  (it
+    "paints the FALLBACK badge on the tagged provider and never on an untagged one"
+    (let
+      [terminal
+       (DefaultVirtualTerminal. (TerminalSize. 80 30))
+
+       screen
+       (doto (TerminalScreen. terminal) (.startScreen))
+
+       draw-card
+       @#'provider/draw-provider-card!
+
+       row-text
+       (fn [^long y]
+         (str/join (for [x (range 80)]
+                     (.getCharacterString (.getBackCharacter screen (int x) (int y))))))
+
+       status
+       {"is_authenticated" true "is_loading" false}
+
+       limits
+       {:status :ready :static {} :dynamic {:limits []}}]
+
+      (try (with-redefs [vis/provider-base-url (constantly "")]
+             (let [g (.newTextGraphics screen)]
+               (draw-card g
+                          0
+                          0
+                          78
+                          0
+                          false
+                          {:id :alpha}
+                          status
+                          limits
+                          {:provider-id :beta :model "beta-default"}
+                          {:provider-id :alpha :model "alpha-1"})
+               (draw-card g
+                          0
+                          4
+                          78
+                          1
+                          false
+                          {:id :beta}
+                          status
+                          limits
+                          {:provider-id :beta :model "beta-default"}
+                          {:provider-id :alpha :model "alpha-1"})))
+           (let
+             [fallback-card
+              (str (row-text 0) (row-text 1) (row-text 2))
+
+              default-card
+              (str (row-text 4) (row-text 5) (row-text 6))]
+
+             (expect (str/includes? fallback-card "FALLBACK"))
+             (expect (str/includes? fallback-card "alpha-1"))
+             (expect (not (str/includes? fallback-card "DEFAULT")))
+             (expect (str/includes? default-card "DEFAULT"))
+             (expect (not (str/includes? default-card "FALLBACK"))))
+           (finally (.stopScreen screen))))))

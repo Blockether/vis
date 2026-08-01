@@ -140,6 +140,84 @@
            (finally (rm-rf! (io/file tmp)))))))
 
 (defdescribe
+  remove-config-provider-test
+  "`remove-config-provider!` is the logout write path. Dropping the provider
+   entry alone is not enough: a FALLBACK tag naming it would stay behind in
+   state.yml. The read path hides such a tag (the provider is no longer in the
+   fleet), so no UI can show or clear it — and it silently resurrects the moment
+   that provider is authenticated again. The tag must go with the provider."
+  (it "drops a flat `fallback_provider`/`fallback_model` tag naming the removal"
+      (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-fb-" (System/nanoTime))]
+        (try (with-redefs
+               [config/config-dir tmp
+                config/state-path (str tmp "/state.yml")
+                config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
+                config/project-root-yaml-paths (constantly [])]
+
+               (config/save-config! {"providers" [{"id" "prov-a" "api_key" "key-a"}
+                                                  {"id" "prov-b" "api_key" "key-b"}]
+                                     "default_provider" "prov-a"
+                                     "fallback_provider" "prov-b"
+                                     "fallback_model" "beta-1"})
+               (expect (config/remove-config-provider! :prov-b))
+               (let [raw (config/load-config-raw)]
+                 (expect (= ["prov-a"] (mapv #(get % "id") (get raw "providers"))))
+                 (expect (nil? (get raw "fallback_provider")))
+                 (expect (nil? (get raw "fallback_model")))
+                 ;; the PRIMARY tag is unrelated and must survive untouched
+                 (expect (= "prov-a" (get raw "default_provider")))))
+             (finally (rm-rf! (io/file tmp))))))
+  (it "drops a qualified `provider/model` fallback tag with no `fallback_provider`"
+      (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-fb-" (System/nanoTime))]
+        (try (with-redefs
+               [config/config-dir tmp
+                config/state-path (str tmp "/state.yml")
+                config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
+                config/project-root-yaml-paths (constantly [])]
+
+               (config/save-config! {"providers" [{"id" "prov-a" "api_key" "key-a"}
+                                                  {"id" "prov-b" "api_key" "key-b"}]
+                                     "fallback_model" "prov-b/beta-1"})
+               (expect (config/remove-config-provider! "prov-b"))
+               (let [raw (config/load-config-raw)]
+                 (expect (nil? (get raw "fallback_model")))))
+             (finally (rm-rf! (io/file tmp))))))
+  (it "keeps a fallback tag that names a DIFFERENT provider"
+      (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-fb-" (System/nanoTime))]
+        (try (with-redefs
+               [config/config-dir tmp
+                config/state-path (str tmp "/state.yml")
+                config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
+                config/project-root-yaml-paths (constantly [])]
+
+               (config/save-config! {"providers" [{"id" "prov-a" "api_key" "key-a"}
+                                                  {"id" "prov-b" "api_key" "key-b"}
+                                                  {"id" "prov-c" "api_key" "key-c"}]
+                                     "fallback_provider" "prov-c"
+                                     "fallback_model" "gamma-1"})
+               (expect (config/remove-config-provider! :prov-b))
+               (let [raw (config/load-config-raw)]
+                 (expect (= ["prov-a" "prov-c"] (mapv #(get % "id") (get raw "providers"))))
+                 (expect (= "prov-c" (get raw "fallback_provider")))
+                 (expect (= "gamma-1" (get raw "fallback_model")))))
+             (finally (rm-rf! (io/file tmp))))))
+  (it "reports no change when the provider is absent and holds no tag"
+      (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-fb-" (System/nanoTime))]
+        (try (with-redefs
+               [config/config-dir tmp
+                config/state-path (str tmp "/state.yml")
+                config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
+                config/project-root-yaml-paths (constantly [])]
+
+               (config/save-config! {"providers" [{"id" "prov-a" "api_key" "key-a"}]
+                                     "fallback_provider" "prov-a"
+                                     "fallback_model" "alpha-1"})
+               (expect (nil? (config/remove-config-provider! :prov-z)))
+               (let [raw (config/load-config-raw)]
+                 (expect (= "prov-a" (get raw "fallback_provider")))))
+             (finally (rm-rf! (io/file tmp)))))))
+
+(defdescribe
   yaml-config-test
   "YAML parsing keeps canonical keys and scalar values as strings; the finite
    internal adapter runs only after validation."

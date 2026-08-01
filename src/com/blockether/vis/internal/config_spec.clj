@@ -258,9 +258,9 @@
   #{"breaker_threshold" "retry_backoff_ms" "halfopen_probe_ms" "retry_after_cap_ms"})
 (def titling-keys #{"mode" "provider" "model"})
 (def config-keys
-  #{"providers" "default_provider" "default_model" "router" "system_prompt" "workspace" "jail"
-    "environment" "db_spec" "grep" "toggles" "tui_settings" "mcp" "python" "message_queue"
-    "titling"})
+  #{"providers" "default_provider" "default_model" "fallback_provider" "fallback_model" "router"
+    "system_prompt" "workspace" "jail" "environment" "db_spec" "grep" "toggles" "tui_settings" "mcp"
+    "python" "message_queue" "titling"})
 
 (def prompt-schema {"text" string? "is_replace" boolean?})
 (s/def ::prompt-map #(closed-map? prompt-schema #{"text"} %))
@@ -347,6 +347,8 @@
   {"providers" (spec-pred ::providers)
    "default_provider" non-blank-string?
    "default_model" non-blank-string?
+   "fallback_provider" non-blank-string?
+   "fallback_model" non-blank-string?
    "router" (spec-pred ::router)
    "system_prompt" (spec-pred ::system-prompt)
    "workspace" (spec-pred ::workspace)

@@ -95,6 +95,41 @@
 ;; Intrinsic pixel-dimension sniffing
 ;; =============================================================================
 
+;; =============================================================================
+;; Video (poster frames) — resolved lazily to break a namespace cycle
+;; =============================================================================
+
+(def ^:private video-ns 'com.blockether.vis.ext.channel-tui.video)
+
+(defn- video-var
+  "One var from `channel-tui.video`, resolved on FIRST use and never at load
+   time: that namespace requires THIS one for the escape encoders, so a static
+   `:require` back would be a compile-time cycle. nil when video support is not
+   on the classpath, which turns every video path here into a graceful no-op
+   instead of a load error."
+  [sym]
+  (try (requiring-resolve (symbol (str video-ns) (str sym)))
+       (catch Throwable _ nil)))
+
+(def ^:private v-poster (delay (video-var 'poster)))
+(def ^:private v-probe (delay (video-var 'probe)))
+(def ^:private v-media-type (delay (video-var 'media-type)))
+(def ^:private v-video-file? (delay (video-var 'video-file?)))
+
+(defn video-mime?
+  "True for a `video/…` media type."
+  [mime]
+  (boolean (and mime (str/starts-with? (str mime) "video/"))))
+
+(defn video-source?
+  "True when `path` is a clip this namespace can draw — by media type when the
+   caller knows one, else by sniffing the file's first 16 bytes (a dropped path
+   carries no mime). Cheap enough to sit on the still-image transcode path."
+  [path mime]
+  (boolean (or (video-mime? mime)
+               (when-let [video-file? @v-video-file?]
+                 (video-file? path)))))
+
 (defn image-dimensions
   "Intrinsic `{:w :h}` pixel size from the leading bytes of an image, or nil."
   [^bytes b mime]
@@ -102,10 +137,16 @@
     {:w (aget ^ints wh 0) :h (aget ^ints wh 1)}))
 
 (defn probe-dimensions
-  "Read `path`'s head and sniff its `{:w :h}` pixel dimensions. nil on failure."
+  "Read `path`'s head and sniff its `{:w :h}` pixel dimensions. nil on failure.
+   A VIDEO falls back to the MP4 index, which carries the display size, so a
+   clip can size its cell box without decoding a single picture."
   [path mime]
-  (when-let [wh (TerminalImage/probeDimensions (str path) mime)]
-    {:w (aget ^ints wh 0) :h (aget ^ints wh 1)}))
+  (or (when-let [wh (TerminalImage/probeDimensions (str path) mime)]
+        {:w (aget ^ints wh 0) :h (aget ^ints wh 1)})
+      (when (video-source? path mime)
+        (when-let [probe @v-probe]
+          (let [{:keys [width height]} (probe path)]
+            (when (and width height) {:w width :h height}))))))
 
 ;; =============================================================================
 ;; Cell-box sizing
@@ -121,6 +162,26 @@
                                (int max-cols)
                                (when max-rows (Integer/valueOf (int max-rows))))]
     {:cols (aget ^ints r 0) :rows (aget ^ints r 1)}))
+
+(defn cell-pixels
+  "The terminal's current CELL size in pixels, `{:w :h}`."
+  []
+  {:w (TerminalImage/cellWidth) :h (TerminalImage/cellHeight)})
+
+(defn box-pixels
+  "Long-edge PIXEL ceiling of a `cols`×`rows` cell box — what to ask a decoder
+   for when the result will be drawn into that box.
+
+   Decoding 1080p for an 80-column window produces about six times the pixels
+   the cells can show: seconds of extra decode and tens of megabytes of extra
+   escape bytes, all of it thrown away by the terminal's own downscale. Reads
+   the LIVE cell metrics, so a HiDPI cell asks for a proportionally sharper
+   picture."
+  [cols rows]
+  (let [{:keys [w h]} (cell-pixels)]
+    (max 64
+         (* (long (or cols 80)) (long w))
+         (* (long (or rows 0)) (long h)))))
 
 ;; =============================================================================
 ;; Escape encoding
@@ -157,36 +218,59 @@
   "[abs-path mtime size cols rows] -> `{:data :w :h}` for an already box-fitted PNG."
   (atom {}))
 
+(defn- still->png
+  "Box-fitted PNG `{:data :w :h}` for a STILL image file, or nil."
+  [^java.io.File f {:keys [cols rows]}]
+  (try
+    (with-open [src (img/decode f)]
+      (let [target-w (* (long cols) (long (TerminalImage/cellWidth)))
+            target-h (* (long rows) (long (TerminalImage/cellHeight)))
+            iw (img/width src)
+            ih (img/height src)
+            scale (min 1.0
+                       (/ (double target-w) iw)
+                       (/ (double target-h) ih))]
+        (if (< scale 1.0)
+          (let [sw (max 1 (Math/round (* iw scale)))
+                sh (max 1 (Math/round (* ih scale)))]
+            (with-open [scaled (img/resize src sw sh :lanczos3)]
+              {:data (.encodeToString (Base64/getEncoder)
+                                      ^bytes (img/encode scaled :png))
+               :w (int sw) :h (int sh)}))
+          {:data (.encodeToString (Base64/getEncoder)
+                                  ^bytes (img/encode src :png))
+           :w (int iw) :h (int ih)})))
+    (catch Throwable _ nil)))
+
+(defn- video->png
+  "Box-fitted PNG `{:data :w :h}` of a clip's FIRST frame — the still a terminal
+   draws for a video. The decoder stops after one picture AND scales while it
+   converts, so the cost is one keyframe at cell-box size however long the clip
+   runs; the cache above then makes every re-emit free."
+  [^java.io.File f {:keys [cols rows]}]
+  (when-let [poster @v-poster]
+    (try (when-let [{:keys [png width height]} (poster f {:max-dimension (box-pixels cols rows)})]
+           {:data (.encodeToString (Base64/getEncoder) ^bytes png)
+            :w (int width)
+            :h (int height)})
+         (catch Throwable _ nil))))
+
 (defn- transcode->png
   "Transcode `path` to a box-fitted PNG, returning `{:data :w :h}` — base64 plus
-   the TRANSMITTED (scaled) PNG's pixel dims — or nil on failure. Decoding and
-   re-encoding a multi-megapixel JPEG is expensive, so the box-sized PNG is
-   cached by path+mtime+size+box: a scroll that re-emits the image never
-   re-decodes."
-  [path {:keys [cols rows]}]
+   the TRANSMITTED (scaled) PNG's pixel dims — or nil on failure. A VIDEO comes
+   back as its poster frame, which is what makes a clip drawable by every
+   still-image surface in the TUI.
+
+   Decoding and re-encoding a multi-megapixel JPEG (or pulling a frame out of an
+   MP4) is expensive, so the box-sized PNG is cached by path+mtime+size+box: a
+   scroll that re-emits the image never re-decodes."
+  [path {:keys [cols rows] :as box}]
   (let [f (io/file (str path))
         key [(.getAbsolutePath f) (.lastModified f) (.length f) cols rows]]
     (or (get @png-transcode-cache key)
-        (when-let [r (try
-                       (with-open [src (img/decode f)]
-                         (let [target-w (* (long cols) (long (TerminalImage/cellWidth)))
-                               target-h (* (long rows) (long (TerminalImage/cellHeight)))
-                               iw (img/width src)
-                               ih (img/height src)
-                               scale (min 1.0
-                                          (/ (double target-w) iw)
-                                          (/ (double target-h) ih))]
-                           (if (< scale 1.0)
-                             (let [sw (max 1 (Math/round (* iw scale)))
-                                   sh (max 1 (Math/round (* ih scale)))]
-                               (with-open [scaled (img/resize src sw sh :lanczos3)]
-                                 {:data (.encodeToString (Base64/getEncoder)
-                                                         ^bytes (img/encode scaled :png))
-                                  :w (int sw) :h (int sh)}))
-                             {:data (.encodeToString (Base64/getEncoder)
-                                                     ^bytes (img/encode src :png))
-                              :w (int iw) :h (int ih)})))
-                       (catch Throwable _ nil))]
+        (when-let [r (if (video-source? f nil)
+                       (video->png f box)
+                       (still->png f box))]
           (swap! png-transcode-cache assoc key r)
           r))))
 
@@ -203,7 +287,8 @@
   "PNG base64 + transmitted pixel dims `{:data :w :h}` for the Kitty wire. A PNG
    file rides through verbatim — transmitted at its intrinsic `width`×`height`
    (and works in the native image too); anything else is decoded and re-encoded
-   as a box-fitted PNG via `com.blockether.imaging`."
+   as a box-fitted PNG via `com.blockether.imaging`, and a VIDEO becomes its
+   poster frame."
   [path mime {:keys [width height] :as box}]
   (if (= mime "image/png")
     (when-let [data (read-base64 path)]
@@ -232,7 +317,11 @@
       ;; iTerm2 accepts any container format as-is (no source-crop; the fitting
       ;; pass shrinks a bottom-overflowing box instead).
       :iterm2
-      (when-let [data (read-base64 path)]
+      (when-let [data (if (video-source? path mime)
+                        ;; A clip's own bytes are not an image: iTerm2 would draw a
+                        ;; broken download card. Send the poster frame instead.
+                        (:data (transcode->png path box))
+                        (read-base64 path))]
         (encode-iterm2 data box))
 
       nil)))
@@ -347,22 +436,59 @@
   [id]
   (str "\u001b_Ga=d,d=I,i=" id ",q=2\u001b\\"))
 
+(def ^:private video-path-regex
+  "A one-line paste whose WHOLE payload is a path to a clip — optionally quoted,
+   `file://`-prefixed, or with shell-escaped spaces, which is what a terminal
+   drag-and-drop actually delivers."
+  #"(?i)^\s*[\"']?(?:file://)?([^\"'\n]+?\.(?:mp4|m4v|mov))[\"']?\s*$")
+
+(defn- video-paste-descriptor
+  "Descriptor for a dropped VIDEO path, in exactly the shape a dropped picture
+   returns, so a clip flows through the same paste → fence → inline-render path.
+   The engine's image scanner deliberately ignores clips (they are not vision-wire
+   attachments), so the TUI resolves them here. Dimensions come from the MP4
+   index, never a decode. nil unless the path really is a readable clip."
+  [text workspace-root]
+  (when-let [m (re-find video-path-regex (str text))]
+    (let [s (-> (second m)
+                (str/replace "\\ " " ")
+                str/trim)
+          s (if (str/starts-with? s "~")
+              (str (System/getProperty "user.home") (subs s 1))
+              s)
+          f (io/file s)
+          f (if (.isAbsolute f)
+              f
+              (io/file (str (or workspace-root (System/getProperty "user.dir"))) s))]
+      (when (and (.isFile f) (.canRead f))
+        (when-let [mime (when-let [mt @v-media-type] (mt f))]
+          (let [{:keys [w h]} (or (probe-dimensions (.getAbsolutePath f) mime) {})]
+            {:path (.getAbsolutePath f)
+             :mime mime
+             :filename (.getName f)
+             :size (.length f)
+             :size-label (attach/size-label (.length f))
+             :width w
+             :height h}))))))
+
 (defn probe-paste-image
   "Detect the FIRST image the pasted `text` points at (a dropped file path).
    Returns `{:path :mime :filename :size :size-label :width :height}` or nil.
+   A dropped MP4/M4V/MOV resolves too — it renders as its poster frame.
    `workspace-root` anchors relative candidates. Never throws."
   [text {:keys [workspace-root]}]
-  (try (when-let
-         [{:keys [path media-type filename size size-label]}
-          (first (attach/scan-image-descriptors text {:workspace-root workspace-root}))]
-         (let [{:keys [w h]} (or (probe-dimensions path media-type) {})]
-           {:path path
-            :mime media-type
-            :filename filename
-            :size size
-            :size-label size-label
-            :width w
-            :height h}))
+  (try (or (when-let
+             [{:keys [path media-type filename size size-label]}
+              (first (attach/scan-image-descriptors text {:workspace-root workspace-root}))]
+             (let [{:keys [w h]} (or (probe-dimensions path media-type) {})]
+               {:path path
+                :mime media-type
+                :filename filename
+                :size size
+                :size-label size-label
+                :width w
+                :height h}))
+           (video-paste-descriptor text workspace-root))
        (catch Throwable _ nil)))
 
 ;; =============================================================================

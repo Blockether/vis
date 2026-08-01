@@ -137,7 +137,7 @@
   ;; `javax.sound.sampled` (the JDK's only microphone API), and two third-party,
   ;; non-graphical users pull it too — Apache POI (value classes in xlsx/pptx
   ;; writing) and next.jdbc's `clojure.java.data` (`java.beans.Introspector`).
-  com.blockether/imaging {:mvn/version "0.1.4"}
+  com.blockether/imaging {:mvn/version "0.1.5"}
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
   com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.36"}

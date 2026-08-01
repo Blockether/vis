@@ -22,7 +22,7 @@
  *   node scripts/ios-prepare.mjs
  *   node scripts/ios-prepare.mjs --check   # exit 1 if the project is still stamped
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,6 +37,11 @@ const delegate = join(appDir, 'AppDelegate.swift');
 const storyboard = join(appDir, 'Base.lproj', 'Main.storyboard');
 const infoPlist = join(appDir, 'Info.plist');
 const bundleId = JSON.parse(readFileSync(join(root, 'capacitor.config.json'), 'utf8')).appId;
+
+const appIconSource = join(root, 'native-assets', 'ios', 'AppIcon-512@2x.png');
+const appIconTarget = join(appDir, 'Assets.xcassets', 'AppIcon.appiconset', 'AppIcon-512@2x.png');
+const appIcon = readFileSync(appIconSource);
+const appIconOk = existsSync(appIconTarget) && readFileSync(appIconTarget).equals(appIcon);
 
 const die = (msg) => {
   console.error(`\n\u2717 ${msg}\n`);
@@ -153,17 +158,21 @@ if (!plistOk) {
 }
 
 if (check) {
-  if (delegateOk && boardOk && plistOk) {
-    console.log('· ios: stock Capacitor host with required app capabilities');
+  if (delegateOk && boardOk && plistOk && appIconOk) {
+    console.log('· ios: stock Capacitor host with required app capabilities and branded icon');
     process.exit(0);
   }
   const missing = missingPlistEntries.map(([key]) => key).join(', ');
   die(
-    !delegateOk || !boardOk
-      ? 'ios: stale viewport bridge — run `node scripts/ios-prepare.mjs`'
-      : `ios: Info.plist is missing ${missing} — run \`node scripts/ios-prepare.mjs\``,
+    !appIconOk
+      ? 'ios: generated AppIcon is not the tracked Vis icon — run `node scripts/ios-prepare.mjs`'
+      : !delegateOk || !boardOk
+        ? 'ios: stale viewport bridge — run `node scripts/ios-prepare.mjs`'
+        : `ios: Info.plist is missing ${missing} — run \`node scripts/ios-prepare.mjs\``,
   );
 }
+
+if (!appIconOk) copyFileSync(appIconSource, appIconTarget);
 
 if (!delegateOk) writeFileSync(delegate, cleanedDelegate);
 if (!boardOk) writeFileSync(storyboard, cleanedBoard);
@@ -171,5 +180,5 @@ if (!plistOk) writeFileSync(infoPlist, preparedPlist);
 console.log(
   `· ios: ${delegateOk && boardOk ? 'stock Capacitor host' : 'removed the viewport bridge'}; ${
     plistOk ? 'app capabilities already present' : `stamped ${missingPlistEntries.map(([key]) => key).join(', ')}`
-  }`,
+  }; ${appIconOk ? 'branded icon already present' : 'stamped branded app icon'}`,
 );

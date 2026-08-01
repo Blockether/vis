@@ -5,6 +5,7 @@ import type {
   PushDevice,
   PushStatus,
   ThemePref,
+  ThemeSummary,
   Toggle,
   ToggleGroup,
 } from '../lib/types';
@@ -18,14 +19,18 @@ import {
   pushPlatform,
   type PushPermission,
 } from '../lib/push';
-import { applyTheme, resolveLocalTheme } from '../lib/theme';
+import { applyTheme, dedupeThemes, resolveLocalTheme } from '../lib/theme';
 import {
   DEFAULT_SESSION_PAGE_SIZE,
   getSessionsPerPage,
+  getThemePalette,
   getThemePref,
+  loadConnections,
   setSessionsPerPage,
+  setThemePalette,
   setThemePref,
 } from '../lib/storage';
+import { BUNDLED_THEMES } from '../lib/palettes';
 import { Banner, Button, Input } from '../components/ui';
 import { REACH_HINT, REACH_LABEL, bestAddress, hostOf, mergeAddresses, reachOf } from '../lib/endpoints';
 import { onWake } from '../lib/wake';
@@ -444,16 +449,42 @@ export function GatewaySettingsDialog({
 
 /** Settings owned by this companion installation, never by a gateway. */
 export function ApplicationSettingsDialog({ onClose }: { onClose: () => void }) {
-  const [pref, setPref] = useState<ThemePref>('light');
+  const [pref, setPref] = useState<ThemePref>('blockether-light');
+  const [themes, setThemes] = useState<ThemeSummary[]>(BUNDLED_THEMES);
   const [pageSize, setPageSize] = useState(DEFAULT_SESSION_PAGE_SIZE);
   const [pending, setPending] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    void Promise.all([getThemePref(), getSessionsPerPage()]).then(([theme, sessions]) => {
+    let cancelled = false;
+    void (async () => {
+      const [theme, sessions, cachedPalette, connections] = await Promise.all([
+        getThemePref(),
+        getSessionsPerPage(),
+        getThemePalette(),
+        loadConnections(),
+      ]);
+      if (cancelled) return;
       setPref(theme);
       setPageSize(sessions);
-    });
+      setThemes(dedupeThemes(cachedPalette ? [cachedPalette] : [], BUNDLED_THEMES));
+
+      // Each gateway advertises its complete catalog. Union every response so a
+      // palette available on any paired machine is selectable here exactly once.
+      const responses = await Promise.allSettled(
+        connections.map((connection) => new GatewayClient(connection).theme()),
+      );
+      if (cancelled) return;
+      const catalogs = responses.flatMap((response) =>
+        response.status === 'fulfilled'
+          ? [[response.value, ...(response.value.themes ?? [])]]
+          : [],
+      );
+      setThemes(dedupeThemes(...catalogs, cachedPalette ? [cachedPalette] : [], BUNDLED_THEMES));
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -464,12 +495,12 @@ export function ApplicationSettingsDialog({ onClose }: { onClose: () => void }) 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  async function chooseTheme(next: ThemePref) {
-    setPending(`theme:${next}`);
+  async function chooseTheme(next: ThemeSummary) {
+    setPending(`theme:${next.id}`);
     try {
-      await setThemePref(next);
-      setPref(next);
-      applyTheme(resolveLocalTheme(next));
+      await Promise.all([setThemePref(next.id), setThemePalette(next)]);
+      setPref(next.id);
+      applyTheme(resolveLocalTheme(next.id, next));
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -527,21 +558,28 @@ export function ApplicationSettingsDialog({ onClose }: { onClose: () => void }) 
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-3 sm:p-4">
           {err && <Banner kind="err">{err}</Banner>}
-          <SettingsPanel title="Theme" description="How this application looks on this device." meta="saved on this device">
-            <div className="grid grid-cols-2 gap-px bg-dialog-edge">
-              {(['light', 'dark'] as const).map((choice) => {
-                const selected = pref === choice;
+          <SettingsPanel
+            title="Theme"
+            description="All themes advertised by your paired gateways. Duplicate theme ids appear once; the choice is saved on this device."
+            meta={`${themes.length} available`}
+          >
+            <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-2">
+              {themes.map((choice) => {
+                const selected = pref === choice.id;
                 return (
                   <button
                     type="button"
-                    key={choice}
+                    key={choice.id}
                     disabled={pending?.startsWith('theme:') ?? false}
                     onClick={() => void chooseTheme(choice)}
                     className={`flex min-h-10 items-center justify-between gap-3 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-45 motion-reduce:transition-none sm:min-h-9 ${selected ? 'bg-accent text-accent-foreground' : 'bg-input text-white hover:bg-hover'}`}
                     aria-pressed={selected}
                   >
-                    <span className="font-mono text-ui font-bold capitalize">{choice}</span>
-                    <span className="font-mono text-meta font-black" aria-hidden="true">{selected ? '●' : '○'}</span>
+                    <span className="min-w-0">
+                      <span className="block truncate font-mono text-ui font-bold">{choice.display_name}</span>
+                      <span className="block font-mono text-chip uppercase tracking-wider opacity-65">{choice.mode}</span>
+                    </span>
+                    <span className="shrink-0 font-mono text-meta font-black" aria-hidden="true">{selected ? '●' : '○'}</span>
                   </button>
                 );
               })}
@@ -601,15 +639,42 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
   const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({});
   const signedIn = providers?.filter(isProviderAuthed).length ?? 0;
 
-  const setDefault = async (providerId: string, model: string) => {
+  const tagModel = async (
+    role: 'default' | 'fallback',
+    providerId: string,
+    model: string,
+  ) => {
     if (!model) return;
-    auth.setPending(`default:${providerId}`);
+    auth.setPending(`${role}:${providerId}`);
     auth.setErr(null);
     auth.setNote(null);
     try {
-      await client.setDefaultModel(providerId, model);
+      if (role === 'fallback') {
+        await client.setFallbackModel(providerId, model);
+      } else {
+        await client.setDefaultModel(providerId, model);
+      }
       await auth.reload(undefined, { force: true });
-      auth.setNote(`Default set to ${providerId} / ${model}.`);
+      auth.setNote(`${role === 'fallback' ? 'Fallback' : 'Default'} set to ${providerId} / ${model}.`);
+    } catch (e) {
+      auth.setErr(e instanceof GatewayError ? e.message : String(e));
+    } finally {
+      auth.setPending(null);
+    }
+  };
+
+  const setDefault = (providerId: string, model: string) => tagModel('default', providerId, model);
+  const setFallback = (providerId: string, model: string) =>
+    tagModel('fallback', providerId, model);
+
+  const clearFallback = async (providerId: string) => {
+    auth.setPending(`fallback:${providerId}`);
+    auth.setErr(null);
+    auth.setNote(null);
+    try {
+      await client.clearFallbackModel();
+      await auth.reload(undefined, { force: true });
+      auth.setNote('Fallback cleared.');
     } catch (e) {
       auth.setErr(e instanceof GatewayError ? e.message : String(e));
     } finally {
@@ -620,7 +685,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
   return (
     <SettingsPanel
       title="Providers"
-      description="Sign in to model providers so this machine can reach them, and set each one's default model."
+      description="Sign in to model providers so this machine can reach them, then tag the default model and a fallback on another provider."
       meta={providers ? `${signedIn}/${providers.length} signed in` : 'checking…'}
     >
       <div className="space-y-2 p-3">
@@ -645,10 +710,21 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
           const authed = isProviderAuthed(provider);
           const limits = providerLimitsLine(provider);
           const open = expanded === provider.id;
-          const orderedModels = preferredModelFirst(provider.models, provider.default_model);
+          const orderedModels = preferredModelFirst(
+            provider.models,
+            provider.default_model ?? provider.fallback_model,
+          );
           const selectedModel =
-            modelDrafts[provider.id] ?? provider.default_model ?? orderedModels[0] ?? '';
+            modelDrafts[provider.id] ??
+            provider.default_model ??
+            provider.fallback_model ??
+            orderedModels[0] ??
+            '';
           const settingDefault = pending === `default:${provider.id}`;
+          const settingFallback = pending === `fallback:${provider.id}`;
+          const tagging = settingDefault || settingFallback;
+          const isDefaultModel = provider.is_default && provider.default_model === selectedModel;
+          const isFallbackModel = provider.is_fallback && provider.fallback_model === selectedModel;
 
           return (
             <div key={provider.id} className="border border-dialog-edge bg-panel-2">
@@ -669,8 +745,10 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                   </span>
                   <span className="block truncate font-mono text-meta text-dialog-hint">
                     {provider.is_default && provider.default_model
-                      ? `${provider.default_model} · ${providerStatusLine(provider)}`
-                      : providerStatusLine(provider)}
+                      ? `${provider.default_model} · default · ${providerStatusLine(provider)}`
+                      : provider.is_fallback && provider.fallback_model
+                        ? `${provider.fallback_model} · fallback · ${providerStatusLine(provider)}`
+                        : providerStatusLine(provider)}
                   </span>
                 </span>
                 <span
@@ -693,19 +771,22 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
 
                   <div className="space-y-2">
                     <label
-                      htmlFor={`default-model-${provider.id}`}
+                      htmlFor={`model-${provider.id}`}
                       className="block font-mono text-meta font-bold text-dialog-hint"
                     >
-                      {settingDefault ? 'Default model · saving…' : 'Default model'}
+                      {settingDefault
+                        ? 'Model · saving default…'
+                        : settingFallback
+                          ? 'Model · saving fallback…'
+                          : 'Model'}
                     </label>
                     <select
-                      id={`default-model-${provider.id}`}
+                      id={`model-${provider.id}`}
                       value={selectedModel}
-                      disabled={provider.models.length === 0 || settingDefault}
+                      disabled={provider.models.length === 0 || tagging}
                       onChange={(event) => {
                         const model = event.target.value;
                         setModelDrafts((drafts) => ({ ...drafts, [provider.id]: model }));
-                        void setDefault(provider.id, model);
                       }}
                       className="min-h-10 w-full min-w-0 border border-dialog-edge bg-input px-3 font-mono text-ui text-white outline-none transition-colors focus:border-accent disabled:opacity-50"
                     >
@@ -715,6 +796,41 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                         </option>
                       ))}
                     </select>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Button
+                        className="flex-1"
+                        variant={isDefaultModel ? 'ghost' : 'solid'}
+                        disabled={!selectedModel || tagging || isDefaultModel}
+                        onClick={() => void setDefault(provider.id, selectedModel)}
+                      >
+                        {isDefaultModel ? 'Default' : 'Set as default'}
+                      </Button>
+                      <Button
+                        className="flex-1"
+                        variant="ghost"
+                        disabled={
+                          !selectedModel || tagging || provider.is_default || isFallbackModel
+                        }
+                        onClick={() => void setFallback(provider.id, selectedModel)}
+                      >
+                        {isFallbackModel ? 'Fallback' : 'Set as fallback'}
+                      </Button>
+                      {provider.is_fallback && (
+                        <Button
+                          className="flex-1"
+                          variant="ghost"
+                          disabled={tagging}
+                          onClick={() => void clearFallback(provider.id)}
+                        >
+                          Clear fallback
+                        </Button>
+                      )}
+                    </div>
+                    <p className="break-words font-mono text-chip text-dialog-hint">
+                      {provider.is_default
+                        ? 'This is the default provider, so it cannot also hold the fallback — tag another provider instead.'
+                        : 'The default runs every turn; the fallback takes over on another provider when it cannot.'}
+                    </p>
                   </div>
 
                   <div className="flex flex-col gap-2 sm:flex-row">

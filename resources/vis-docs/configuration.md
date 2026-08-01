@@ -133,6 +133,22 @@ There is one default in the whole config — one provider and one model — not 
 - Choosing a default never reorders `providers:` — order stays yours (above), the pair is just a pointer into it.
 - Both keys are plain config, so a project `vis.yml` can pin a run's provider/model for a repository, and `--model provider/model` (above) overrides both for one run without persisting anything.
 
+### The fallback selection is a SECOND pair
+
+Two more top-level keys name where Vis goes when the default provider cannot serve the turn — rate-limited, circuit-open, erroring:
+
+```yaml
+fallback_provider: anthropic-coding-plan   # must be a DIFFERENT provider than default_provider
+fallback_model: claude-sonnet-5            # accepts the same `provider/model` form
+```
+
+Same shape and the same resolution rules as the default pair: the model is looked up inside that provider's catalog, a name it does not offer degrades to that provider's first model, and a slash-qualified `fallback_model` carries its own provider.
+
+- **It must be a different provider.** A fallback on the default's own provider is not a fallback at all: the TUI and the companion app both disable the action on the current default's card, the daemon answers `400`, and a config file that tags it anyway is ignored when the router is built.
+- The tagged provider is seated **immediately behind the default** in router priority, so it is the first provider Vis moves to; every other provider keeps its configured order behind the two.
+- The tag lives and dies with its provider: logging that provider out clears the pair, and clearing the fallback from any client drops both keys.
+- Unrelated key, easy to confuse: `router.rate_limit.is_fallback_provider` (below) is the *boolean* deciding whether a rate-limit budget exhaustion may move on at all — it does not name a provider.
+
 ### Model capabilities: chat and vision
 
 Capabilities are per **model**, not per provider, and come from the router's pinned model registry (svar) — the same source as context windows and pricing. Every model has `chat`; `vision` is the one Vis actually gates on.

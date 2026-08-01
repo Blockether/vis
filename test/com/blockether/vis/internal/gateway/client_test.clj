@@ -772,5 +772,63 @@
       (fn []
         (is (= {:provider-id :anthropic-coding-plan :model "claude-fable-5"}
                (client/set-router-default! :anthropic-coding-plan "claude-fable-5")))
-        (is (= ["PATCH" "/v1/router" {"provider" "anthropic-coding-plan" "model" "claude-fable-5"}]
-               @request))))))
+        (is (= ["PATCH" "/v1/router"
+                {"role" "primary" "provider" "anthropic-coding-plan" "model" "claude-fable-5"}]
+               @request)
+            "the primary tag is explicit on the wire, so the daemon never guesses the role")))))
+
+(deftest set-router-fallback-tags-and-clears-the-second-root
+  (testing "a fallback tag rides the SAME route under role=fallback and decodes the fallback_* pair"
+    (let [request (atom nil)]
+      (with-redefs-fn {(rv 'ensure-gateway-serving!) (constantly fake-entry)
+                       (rv 'ensure-client!) (constantly "client-id")
+                       (rv 'send-json-with-entry!) (fn [_ method path body]
+                                                     (reset! request [method path body])
+                                                     {"default_provider" "anthropic-coding-plan"
+                                                      "default_model" "claude-fable-5"
+                                                      "fallback_provider" "zai-coding-plan"
+                                                      "fallback_model" "glm-5.2"})}
+        (fn []
+          (is (= {:provider-id :zai-coding-plan :model "glm-5.2"}
+                 (client/set-router-fallback! :zai-coding-plan "glm-5.2"))
+              "the FALLBACK pair comes back, never the primary one")
+          (is (= ["PATCH" "/v1/router"
+                  {"role" "fallback" "provider" "zai-coding-plan" "model" "glm-5.2"}]
+                 @request))))))
+  (testing "the zero-arity clear sends role=fallback with NO pair and decodes nil"
+    (let [request (atom nil)]
+      (with-redefs-fn {(rv 'ensure-gateway-serving!) (constantly fake-entry)
+                       (rv 'ensure-client!) (constantly "client-id")
+                       (rv 'send-json-with-entry!) (fn [_ method path body]
+                                                     (reset! request [method path body])
+                                                     {"default_provider" "anthropic-coding-plan"
+                                                      "default_model" "claude-fable-5"})}
+        (fn []
+          (is (nil? (client/set-router-fallback!)))
+          (is (= ["PATCH" "/v1/router" {"role" "fallback"}] @request)))))))
+
+(defn- refusal-ex
+  "The ExceptionInfo a refusing daemon produces, with `body` as its raw answer."
+  [status body]
+  (with-redefs-fn {(rv 'gw-send!) (fn [_ _ _ _]
+                                    {:status status :body body})}
+    (fn []
+      (try ((rv 'send-json-with-entry!) fake-entry "PATCH" "/v1/router" {})
+           nil
+           (catch clojure.lang.ExceptionInfo e e)))))
+
+(deftest rejected-requests-surface-the-daemons-own-reason
+  (testing
+    "a 400 whose reason is nested under error.message reaches the caller verbatim, so the TUI dialog explains the refusal instead of printing a bare status"
+    (let
+      [e (refusal-ex 400
+                     (str "{\"error\":{\"message\":\"Fallback provider must differ "
+                          "from the primary provider (anthropic-coding-plan)\"}}"))]
+      (is (some? e))
+      (is (= "Fallback provider must differ from the primary provider (anthropic-coding-plan)"
+             (ex-message e)))
+      (is (= 400 (:http-status (ex-data e))))))
+  (testing "a flat `message` body still wins"
+    (is (= "flat reason" (ex-message (refusal-ex 400 "{\"message\":\"flat reason\"}")))))
+  (testing "a reasonless refusal keeps the bare status text"
+    (is (= "gateway HTTP 503" (ex-message (refusal-ex 503 ""))))))

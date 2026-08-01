@@ -6357,24 +6357,20 @@
                               nil)))))))
          vec)))
 
-(defn- honor-config-primary!
-  "Make the explicit default provider/model pair the router's effective root.
-   Provider/model vector order is otherwise left alone and has no configuration
-   meaning. Configs written before explicit defaults fall back to their former
-   first provider/first model selection.
+(defn- config-root-pair
+  "Resolve ONE `<role>` provider/model tag to `[provider-keyword wanted-model]`,
+   or nil when the role names no provider.
 
-   `default_model` accepts the same `provider/model` form as `--model`; the
-   provider part wins over `default_provider`. Resolution mirrors
-   `providers/default-selection` so the picker and the router can never disagree:
-   once the provider resolves it is promoted even when the model name does not
-   match its catalog, in which case its first model becomes the root."
-  [router config]
+   The model key accepts the same `provider/model` form as `--model`; its
+   provider part wins over the sibling provider key. Resolution mirrors
+   `providers/default-selection` / `providers/fallback-selection` so the picker
+   and the router can never disagree: once the provider resolves it is promoted
+   even when the model name does not match its catalog, in which case its first
+   model becomes that root."
+  [config {:keys [provider-key model-key implicit-provider]}]
   (let
-    [configured
-     (:providers config)
-
-     requested-model
-     (some-> (:default-model config)
+    [requested-model
+     (some-> (get config model-key)
              str
              str/trim
              not-empty)
@@ -6385,42 +6381,90 @@
          (let [idx (long idx)]
            [(keyword (subs requested-model 0 idx)) (not-empty (subs requested-model (inc idx)))])))
 
-     default-provider-value
-     (or (first slash) (:default-provider config) (:id (first configured)))
+     provider-value
+     (or (first slash) (get config provider-key) implicit-provider)
 
-     default-provider
-     (cond (keyword? default-provider-value) default-provider-value
-           (string? default-provider-value) (keyword default-provider-value))
+     provider
+     (cond (keyword? provider-value) provider-value
+           (string? provider-value) (keyword provider-value))
 
      wanted-model
      (or (if slash (second slash) requested-model)
-         ;; Legacy configs carry no explicit model: the configured provider's
-         ;; FIRST model is the selection, exactly as before explicit defaults.
-         (some-> (some #(when (= default-provider (:id %)) %) configured)
+         ;; No explicit model tag: the configured provider's FIRST model is
+         ;; the selection, exactly as when no default was ever picked.
+         (some-> (some #(when (= provider (:id %)) %) (:providers config))
                  :models
                  first
                  config/model-name))]
 
-    (if default-provider
+    (when provider [provider wanted-model])))
+
+(defn- seat-root
+  "Return `provider-entries` with `provider-id` moved to the FRONT and
+   `wanted-model` promoted to its `:root`. nil when that provider — or any model
+   for it — is absent, so the caller can leave the fleet untouched."
+  [provider-entries provider-id wanted-model]
+  (when-let [selected (some #(when (= provider-id (:id %)) %) provider-entries)]
+    (when-let
+      [hit (or (some #(when (= wanted-model (:name %)) %) (:models selected))
+               (first (:models selected)))]
+      (into [(assoc selected
+               :models (into [hit] (remove #(= (:name hit) (:name %))) (:models selected))
+               :root (:name hit))]
+            (remove #(= provider-id (:id %)))
+            provider-entries))))
+
+(defn- reprioritize-providers
+  "Renumber `:priority` from vector position.
+
+   svar bakes `:priority` at `make-router` time from the DECLARED index, and every
+   candidate sort reads that number rather than vector order (see
+   `svar…router/candidate-sort-key`). Reordering the vector alone therefore
+   promotes a provider in name only — unaffordable for the fallback tag, whose
+   whole contract is to be the provider svar picks FIRST once the primary is out."
+  [provider-entries]
+  (into []
+        (map-indexed (fn [idx provider]
+                       (assoc provider :priority (long idx))))
+        provider-entries))
+
+(defn- honor-config-roots!
+  "Make the explicit provider/model tags the router's effective roots: the
+   PRIMARY pair first, the FALLBACK pair — always a DIFFERENT provider — second,
+   every other provider left in its configured order behind them.
+
+   Provider/model vector order is otherwise left alone and has no configuration
+   meaning. A config that tags nothing keeps its first provider/first model
+   selection, and an untagged, unknown or
+   primary-colliding fallback leaves the tail exactly as it was."
+  [router config]
+  (let
+    [primary
+     (config-root-pair config
+                       {:provider-key :default-provider
+                        :model-key :default-model
+                        :implicit-provider (:id (first (:providers config)))})
+
+     fallback
+     (config-root-pair config {:provider-key :fallback-provider :model-key :fallback-model})
+
+     fallback
+     (when (and fallback (not= (first fallback) (first primary))) fallback)]
+
+    (if (or primary fallback)
       (update router
               :providers
               (fn [provider-entries]
                 (let
-                  [selected
-                   (some #(when (= default-provider (:id %)) %) provider-entries)
+                  [seated (cond-> provider-entries
+                            fallback
+                            (as-> entries (or (apply seat-root entries fallback) entries))
 
-                   hit
-                   (or (some #(when (= wanted-model (:name %)) %) (:models selected))
-                       (first (:models selected)))]
-
-                  (if (and selected hit)
-                    (let
-                      [selected*
-                       (assoc selected
-                         :models (into [hit] (remove #(= (:name hit) (:name %)) (:models selected)))
-                         :root (:name hit))]
-                      (into [selected*] (remove #(= default-provider (:id %)) provider-entries)))
-                    provider-entries))))
+                            primary
+                            (as-> entries (or (apply seat-root entries primary) entries)))]
+                  (if (identical? seated provider-entries)
+                    provider-entries
+                    (reprioritize-providers seated)))))
       router)))
 
 (defn- no-providers-cause?
@@ -6478,7 +6522,7 @@
 
          r
          (-> (build-router cfg)
-             (honor-config-primary! cfg))]
+             (honor-config-roots! cfg))]
 
         (reset! router-atom r)
         r)))
@@ -6499,7 +6543,7 @@
   [config]
   (let
     [r (-> (build-router config)
-           (honor-config-primary! config))]
+           (honor-config-roots! config))]
     (reset! router-atom r)
     r))
 

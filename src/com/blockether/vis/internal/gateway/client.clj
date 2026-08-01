@@ -144,12 +144,18 @@
       (long (:status response))
 
       parsed
-      (parse-json-body (:body response))]
+      (parse-json-body (:body response))
+
+      ;; `error-response` nests the reason under `error.message`; older routes
+      ;; answer a flat `message`. Read BOTH, or a rejected request surfaces as a
+      ;; bare "gateway HTTP 400" and the caller's dialog explains nothing.
+      reason
+      (or (get parsed "message") (get-in parsed ["error" "message"]))]
 
      (when (>= status 400)
        (throw (if (= status 401)
                 (ex-info (str "could not authenticate to the gateway (HTTP 401: "
-                              (or (get parsed "message") "unauthorized")
+                              (or reason "unauthorized")
                               "). It is bound to a "
                               "non-loopback host, so a bearer token is required and this "
                               "client did not present a valid one. Run the TUI on the SAME "
@@ -158,7 +164,7 @@
                          (assoc parsed
                            :http-status status
                            :vis/user-error true))
-                (ex-info (or (get parsed "message") (str "gateway HTTP " status))
+                (ex-info (or reason (str "gateway HTTP " status))
                          (assoc parsed :http-status status)))))
      parsed)))
 
@@ -1287,9 +1293,9 @@
     (ensure-client! entry)
     (get (send-json-with-entry! entry "GET" path) "providers")))
 
-(defn set-router-default!
-  "PATCH /v1/router — set the single default provider/model pair."
-  [provider-id model]
+(defn- patch-router!
+  "PATCH /v1/router with `body`, returning the raw snake_case answer (both tags)."
+  [body]
   (let
     [path
      "/v1/router"
@@ -1298,14 +1304,35 @@
      (ensure-gateway-serving! path)]
 
     (ensure-client! entry)
-    (let
-      [response (send-json-with-entry! entry
-                                       "PATCH"
-                                       path
-                                       {"provider" (name provider-id) "model" (str model)})]
-      {:provider-id (some-> (get response "default_provider")
-                            keyword)
-       :model (get response "default_model")})))
+    (send-json-with-entry! entry "PATCH" path body)))
+
+(defn- router-selection
+  "One tag from a `/v1/router` answer as `{:provider-id … :model …}`, nil when the
+   role carries no provider."
+  [response provider-key model-key]
+  (when-let [provider (get response provider-key)]
+    {:provider-id (keyword provider) :model (get response model-key)}))
+
+(defn set-router-default!
+  "PATCH /v1/router — tag the PRIMARY provider/model pair (the router root every
+   turn starts on). Returns `{:provider-id … :model …}`."
+  [provider-id model]
+  (-> (patch-router! {"role" "primary" "provider" (name provider-id) "model" (str model)})
+      (router-selection "default_provider" "default_model")))
+
+(defn set-router-fallback!
+  "PATCH /v1/router — tag the FALLBACK provider/model pair: the router's second
+   root, on a provider the primary does NOT use (the daemon refuses the primary's
+   own with a 400). Zero args, or a nil provider, CLEARS the tag. Returns the
+   resulting `{:provider-id … :model …}`, or nil once cleared."
+  ([] (set-router-fallback! nil nil))
+  ([provider-id model]
+   (-> (patch-router! (cond-> {"role" "fallback"}
+                        provider-id
+                        (assoc "provider"
+                          (name provider-id) "model"
+                          (str model))))
+       (router-selection "fallback_provider" "fallback_model"))))
 
 (defn current-seq [sid] (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/seq")) "seq"))
 

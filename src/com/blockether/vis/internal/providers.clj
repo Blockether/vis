@@ -707,50 +707,101 @@
 
     (into (vec base) extras)))
 
+(defn- split-model-ref
+  "Split a config model reference into `[provider-keyword model-name]`.
+
+   `provider/model` yields both halves and its provider part ALWAYS wins over the
+   sibling `*_provider` key, exactly as `--model` behaves; a bare name yields
+   `[nil name]`; blank or nil yields `[nil nil]`."
+  [requested]
+  (let
+    [requested (some-> requested
+                       str
+                       str/trim
+                       not-empty)]
+    (if-let
+      [idx (some-> requested
+                   (str/index-of "/"))]
+      (let [idx (long idx)]
+        [(keyword (subs requested 0 idx)) (not-empty (subs requested (inc idx)))])
+      [nil requested])))
+
+(defn- provider-model-names
+  "Model names of ONE fleet entry, in catalog order."
+  [provider]
+  (into []
+        (keep #(some-> (config/model-name %)
+                       str
+                       not-empty))
+        (:models provider)))
+
 (defn default-selection
-  "Return the valid default provider/model pair for `fleet`. Explicit config
-   wins; legacy configs fall back to the first provider and its first model."
+  "Return the valid PRIMARY provider/model pair for `fleet`. Explicit config
+   wins; an untagged config falls back to the first provider and its first model."
   ([] (default-selection (picker-fleet)))
   ([fleet]
    (let
      [cfg
       (or (config/load-config) {})
 
-     requested
-     (some-> (:default-model cfg)
-             str
-             str/trim
-             not-empty)
+      ;; `default_model` accepts the same `provider/model` form as `--model`, and
+      ;; its provider part wins — the pair must resolve identically here and in
+      ;; `loop/honor-config-roots!`, or the picker and the router disagree.
+      [slash-provider slash-model]
+      (split-model-ref (:default-model cfg))
 
-     ;; `default_model` accepts the same `provider/model` form as `--model`, and
-     ;; its provider part wins — the pair must resolve identically here and in
-     ;; `loop/honor-config-primary!`, or the picker and the router disagree.
-     slash
-     (when requested
-       (when-let [idx (str/index-of requested "/")]
-         (let [idx (long idx)]
-           [(keyword (subs requested 0 idx)) (not-empty (subs requested (inc idx)))])))
+      requested-provider
+      (or slash-provider
+          (some-> (:default-provider cfg)
+                  keyword))
 
-     requested-provider
-     (or (first slash) (some-> (:default-provider cfg) keyword))
+      selected-provider
+      (or (some #(when (= requested-provider (:id %)) %) fleet) (first fleet))
 
-     selected-provider
-     (or (some #(when (= requested-provider (:id %)) %) fleet) (first fleet))
+      model-names
+      (provider-model-names selected-provider)
 
-     model-names
-     (into []
-           (keep #(some-> (config/model-name %)
-                          str
-                          not-empty))
-           (:models selected-provider))
-
-     requested-model
-     (if slash (second slash) requested)
-
-     selected-model
-     (if (some #{requested-model} model-names) requested-model (first model-names))]
+      selected-model
+      (if (some #{slash-model} model-names) slash-model (first model-names))]
 
      (when (and selected-provider selected-model)
+       {:provider-id (:id selected-provider) :model selected-model}))))
+
+(defn fallback-selection
+  "Return the valid FALLBACK provider/model pair for `fleet`, or nil.
+
+   The fallback is the pair the router drops to when the primary provider cannot
+   serve the turn, so — unlike the primary — it is never implicit: an unset,
+   unknown, or same-provider-as-primary tag resolves to nil rather than inventing
+   a second choice nobody asked for. Only the MODEL is lenient (an unknown model
+   name falls back to the provider's first), mirroring `default-selection`."
+  ([] (fallback-selection (picker-fleet)))
+  ([fleet] (fallback-selection fleet (default-selection fleet)))
+  ([fleet primary]
+   (let
+     [cfg
+      (or (config/load-config) {})
+
+      [slash-provider slash-model]
+      (split-model-ref (:fallback-model cfg))
+
+      requested-provider
+      (or slash-provider
+          (some-> (:fallback-provider cfg)
+                  keyword))
+
+      selected-provider
+      (some #(when (= requested-provider (:id %)) %) fleet)
+
+      model-names
+      (provider-model-names selected-provider)
+
+      selected-model
+      (if (some #{slash-model} model-names) slash-model (first model-names))]
+
+     (when (and selected-provider
+                selected-model
+                (not= (:id selected-provider) (:provider-id primary)))
        {:provider-id (:id selected-provider) :model selected-model}))))
 
 (defn provider-config-with-models
@@ -782,75 +833,141 @@
      (invalidate-configured-providers!)
      providers*)))
 
+(def ^:private selection-keys
+  "Config keys per router-root ROLE. `:primary` is the root every turn starts on;
+   `:fallback` is the second root, and only ever names ANOTHER provider."
+  {:primary {:provider "default_provider" :model "default_model"}
+   :fallback {:provider "fallback_provider" :model "fallback_model"}})
+
+(defn- raw-tagged-provider
+  "The provider a RAW config's `<role>_provider`/`<role>_model` pair names, as a
+   keyword. The `provider/model` form of the model key wins, mirroring the read
+   path in `default-selection`/`fallback-selection`."
+  [raw {provider-key :provider model-key :model}]
+  (let [[slash-provider _] (split-model-ref (get raw model-key))]
+    (or slash-provider
+        (some-> (get raw provider-key)
+                str
+                str/trim
+                not-empty
+                keyword))))
+
+(defn- save-selection!
+  "Validate one provider/model pair against the live fleet and persist it under
+   `role`'s config keys. The selected provider is persisted with its complete
+   model catalog when it was authenticated but not yet configured. Provider/model
+   ordering is not changed.
+
+   The two roles are kept mutually exclusive at the point of intent: `:fallback`
+   REFUSES the provider the primary already names — a same-provider second choice
+   is what svar's own model retry covers, and a fleet whose two tags name one
+   provider has no second opinion left — and a new `:primary` drops a fallback
+   tag that would now collide with it."
+  [role provider-id model source]
+  (let
+    [provider-id*
+     (cond (keyword? provider-id) provider-id
+           (string? provider-id) (keyword provider-id))
+
+     model*
+     (some-> model
+             str
+             str/trim
+             not-empty)
+
+     fleet
+     (picker-fleet)
+
+     selected
+     (some #(when (= provider-id* (:id %)) %) fleet)
+
+     model-names
+     (set (provider-model-names selected))
+
+     primary
+     (:provider-id (default-selection fleet))
+
+     {provider-key :provider model-key :model}
+     (get selection-keys role)]
+
+    (when-not selected (throw (ex-info "Unknown provider" {:provider provider-id})))
+    (when-not (and model* (contains? model-names model*))
+      (throw (ex-info "Unknown model for provider" {:provider provider-id* :model model})))
+    (when (and (= role :fallback) primary (= primary provider-id*))
+      (throw (ex-info
+               (str "Fallback provider must differ from the primary provider (" (name primary) ")")
+               {:type :vis/invalid-fallback-provider :provider provider-id* :primary primary})))
+    ;; The one place an unresolved `${NAME}` IS fatal: the user is explicitly
+    ;; reaching for THIS provider, so the error is actionable rather than
+    ;; collateral. Loading stays lenient (see `config/interpolate-env`); only
+    ;; intent hard-fails.
+    (when-let [env-vars (config/provider-env-gap selected)]
+      (throw (ex-info (config/provider-env-message provider-id* env-vars)
+                      {:type :vis/provider-env-unset :provider provider-id* :env-vars env-vars})))
+    (let
+      [raw
+       (or (config/load-global-config-raw) {})
+
+       current
+       (vec (:providers (config/runtime-config raw)))
+
+       existing
+       (some #(when (= provider-id* (:id %)) %) current)
+
+       selected-config
+       (merge selected existing {:models (:models selected)})
+
+       providers*
+       (if existing
+         (mapv #(if (= provider-id* (:id %)) selected-config %) current)
+         (conj current selected-config))
+
+       raw*
+       (assoc raw
+         "providers" (mapv persisted-provider-config providers*)
+         provider-key (name provider-id*)
+         model-key model*)
+
+       raw*
+       (if (and (= role :primary)
+                (= provider-id* (raw-tagged-provider raw* (:fallback selection-keys))))
+         (apply dissoc raw* (vals (:fallback selection-keys)))
+         raw*)
+
+       selection
+       {:provider-id provider-id* :model model*}]
+
+      (config/save-config! raw* source)
+      (try (config/reload-config!) (catch Throwable _ nil))
+      (invalidate-configured-providers!)
+      selection)))
+
 (defn save-default-selection!
-  "Persist exactly one default provider/model pair. The selected provider is
-   persisted with its complete model catalog when it was authenticated but not
-   yet configured. Provider/model ordering is not changed."
+  "Persist exactly one PRIMARY provider/model pair — the router root every turn
+   starts on. A fallback tag naming the same provider is dropped, so the two tags
+   always name two providers."
   ([provider-id model] (save-default-selection! provider-id model nil))
-  ([provider-id model source]
-   (let
-     [provider-id*
-      (cond (keyword? provider-id) provider-id
-            (string? provider-id) (keyword provider-id))
+  ([provider-id model source] (save-selection! :primary provider-id model source)))
 
-      model*
-      (some-> model
-              str
-              str/trim
-              not-empty)
+(defn save-fallback-selection!
+  "Persist exactly one FALLBACK provider/model pair — the router's SECOND root,
+   used when the primary provider cannot serve the turn. Throws when it names the
+   primary's provider, an unknown provider, or a model that provider does not
+   expose."
+  ([provider-id model] (save-fallback-selection! provider-id model nil))
+  ([provider-id model source] (save-selection! :fallback provider-id model source)))
 
-      fleet
-      (picker-fleet)
-
-      selected
-      (some #(when (= provider-id* (:id %)) %) fleet)
-
-      model-names
-      (into #{}
-            (keep #(some-> (config/model-name %)
-                           str
-                           not-empty))
-            (:models selected))]
-
-     (when-not selected (throw (ex-info "Unknown provider" {:provider provider-id})))
-     (when-not (and model* (contains? model-names model*))
-       (throw (ex-info "Unknown model for provider" {:provider provider-id* :model model})))
-     ;; The one place an unresolved `${NAME}` IS fatal: the user is explicitly
-     ;; reaching for THIS provider, so the error is actionable rather than
-     ;; collateral. Loading stays lenient (see `config/interpolate-env`); only
-     ;; intent hard-fails.
-     (when-let [env-vars (config/provider-env-gap selected)]
-       (throw (ex-info (config/provider-env-message provider-id* env-vars)
-                       {:type :vis/provider-env-unset :provider provider-id* :env-vars env-vars})))
-     (let
-       [raw
-        (or (config/load-global-config-raw) {})
-
-        current
-        (vec (:providers (config/runtime-config raw)))
-
-        existing
-        (some #(when (= provider-id* (:id %)) %) current)
-
-        selected-config
-        (merge selected existing {:models (:models selected)})
-
-        providers*
-        (if existing
-          (mapv #(if (= provider-id* (:id %)) selected-config %) current)
-          (conj current selected-config))
-
-        selection
-        {:provider-id provider-id* :model model*}]
-
-       (config/save-config! (assoc raw
-                              "providers" (mapv persisted-provider-config providers*)
-                              "default_provider" (name provider-id*)
-                              "default_model" model*)
-                            source)
-       (try (config/reload-config!) (catch Throwable _ nil))
-       (invalidate-configured-providers!)
-       selection))))
+(defn clear-fallback-selection!
+  "Drop the fallback tag. The fleet keeps every provider; only the second root
+   goes away, leaving svar's own priority order to decide what follows the
+   primary."
+  ([] (clear-fallback-selection! nil))
+  ([source]
+   (let [raw (or (config/load-global-config-raw) {})]
+     (config/save-config! (apply dissoc raw (vals (:fallback selection-keys))) source)
+     (try (config/reload-config!) (catch Throwable _ nil))
+     (invalidate-configured-providers!)
+     nil)))
 
 (defn add-config-provider!
   "Append a provider config to the persisted fleet (no-op when its id exists)."

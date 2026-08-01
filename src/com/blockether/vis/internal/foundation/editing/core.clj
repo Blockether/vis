@@ -1298,7 +1298,7 @@
       false)))
 
 (defn- fff-ls-items
-  "Exhaust fff's native mixed file+directory index in bounded pages. The native
+  "Exhaust fff's native file+directory index in bounded pages. The native
    index includes empty directories, unlike a file-only walk."
   [idx]
   (loop
@@ -1393,7 +1393,7 @@
                     :entry {"name" (if (neg? slash) path (subs path (inc slash)))
                             "path" (rel-path f)
                             "type" (if directory? "dir" "file")
-                            "size" (long (or size 0))}})))
+                            "size" (if directory? (.length f) (long (or size 0)))}})))
           (group-by :parent))]
 
     (letfn [(children [parent ^long level]
@@ -5840,7 +5840,7 @@
       (str head " · ⚠ " err)
       (str head
            (when (seq moves) (str "\n" "moves: " moves))
-           (when (seq src) (str "\n" (strutil/fenced src)))))))
+           (when (seq src) (str "\n" (strutil/fenced src (index/code-language (get r "path")))))))))
 
 (defn- render-nodes-result
   "struct_nodes → `{:summary :body}`: `<paths> · N nodes`, then ONE source block per

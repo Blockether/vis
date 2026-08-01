@@ -1043,48 +1043,101 @@
     (if (:ok? result) (json-response {:status (:status result)}) (auth-error-response result))))
 
 (defn- router-provider-entry
-  "One row of the unified router payload, including the explicit global default."
-  [provider default]
+  "One row of the unified router payload, carrying both explicit tags: the
+   PRIMARY pair every turn starts on and the FALLBACK pair on another provider."
+  [provider primary fallback]
   (let
     [id
      (:id provider)
 
      is-default
-     (= id (:provider-id default))]
+     (= id (:provider-id primary))
+
+     is-fallback
+     (= id (:provider-id fallback))]
 
     {:id (name id)
      :label (config/display-label id)
      :base-url (or (config/provider-base-url provider) (:base-url provider))
      :models (into [] (keep :name) (:models provider))
      :is-default is-default
-     :default-model (when is-default (:model default))
+     :default-model (when is-default (:model primary))
+     :is-fallback is-fallback
+     :fallback-model (when is-fallback (:model fallback))
      :status (providers/provider-status provider)
      :limits (providers/provider-limits-safe provider)}))
 
+(defn- router-selection-json
+  "Both router tags as one payload, `null` where a role is untagged. Answered by
+   every PATCH so a client repaints without re-reading the catalog."
+  []
+  (let
+    [fleet
+     (providers/picker-fleet)
+
+     primary
+     (providers/default-selection fleet)
+
+     fallback
+     (providers/fallback-selection fleet primary)]
+
+    {:default-provider (some-> (:provider-id primary)
+                               name)
+     :default-model (:model primary)
+     :fallback-provider (some-> (:provider-id fallback)
+                                name)
+     :fallback-model (:model fallback)}))
+
 (defn- router-handler
-  "GET /v1/router — the whole provider catalog and explicit default pair."
+  "GET /v1/router — the whole provider catalog and both explicit tags."
   [_]
   (let
     [fleet
      (providers/picker-fleet)
 
-     default
-     (providers/default-selection fleet)]
+     primary
+     (providers/default-selection fleet)
 
-    (json-response {:providers (mapv #(router-provider-entry % default) fleet)})))
+     fallback
+     (providers/fallback-selection fleet primary)]
+
+    (json-response {:providers (mapv #(router-provider-entry % primary fallback) fleet)})))
 
 (defn- router-default-handler
-  "PATCH /v1/router — set the one default provider/model pair."
+  "PATCH /v1/router — tag one provider/model pair.
+
+   `role` selects the tag: `primary` (the default, and what every client written
+   before roles sends) or `fallback`, which the daemon REFUSES on the primary's
+   own provider. `{\"role\": \"fallback\"}` with no provider and no model clears
+   the fallback. The answer always carries both tags."
   [request]
-  (let [{:strs [provider model]} (body-json request)]
-    (if (or (str/blank? (str provider)) (str/blank? (str model)))
-      (error-response 400 :invalid-request "provider and model must be non-blank strings")
-      (try (let
-             [{:keys [provider-id model]}
-              (providers/save-default-selection! provider model :gateway)]
-             (json-response {:default-provider (name provider-id) :default-model model}))
-           (catch clojure.lang.ExceptionInfo e
-             (error-response 400 :invalid-request (ex-message e)))))))
+  (let
+    [{:strs [provider model role]}
+     (body-json request)
+
+     role
+     (or (some-> role
+                 str
+                 str/trim
+                 str/lower-case
+                 not-empty)
+         "primary")
+
+     is-blank
+     (and (str/blank? (str provider)) (str/blank? (str model)))]
+
+    (cond (not (contains? #{"primary" "fallback"} role))
+          (error-response 400 :invalid-request "role must be \"primary\" or \"fallback\"")
+          (and (= role "fallback") is-blank) (do (providers/clear-fallback-selection! :gateway)
+                                                 (json-response (router-selection-json)))
+          is-blank
+          (error-response 400 :invalid-request "provider and model must be non-blank strings")
+          :else (try (if (= role "fallback")
+                       (providers/save-fallback-selection! provider model :gateway)
+                       (providers/save-default-selection! provider model :gateway))
+                     (json-response (router-selection-json))
+                     (catch clojure.lang.ExceptionInfo e
+                       (error-response 400 :invalid-request (ex-message e)))))))
 
 (defn- toggle-json
   "One settings row as JSON — the wire twin of the server-side
@@ -1305,9 +1358,7 @@
   ^String [payload]
   (let
     [stable
-     (wire/json-str [(:total payload)
-                     (:offset payload)
-                     (:limit payload)
+     (wire/json-str [(:total payload) (:offset payload) (:limit payload)
                      (mapv #(dissoc % "server_time_ms") (:sessions payload))])
 
      raw
@@ -1334,7 +1385,8 @@
   [request]
   (let
     [given?
-     (fn [k] (some? (get-in request [:query-params k])))
+     (fn [k]
+       (some? (get-in request [:query-params k])))
 
      limit
      (query-long request "limit")

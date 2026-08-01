@@ -77,16 +77,16 @@ On the web, scanning falls back to pasting the pairing link.
 
 ## Release the companion app
 
-The repo-root `VIS_VERSION` is the product version for regular Vis, iOS, and Android. A regular `vX.Y.Z` release invokes the mobile workflow only after the regular release succeeds. If app code changes while `VIS_VERSION` remains `X.Y.Z`, any public release command below moves the leased `companion-vX.Y.Z` tag to the newer `main` commit and releases **both** stores with a new git-derived build number:
+The repo-root `VIS_VERSION` is the product version for regular Vis, iOS, and Android. A regular `vX.Y.Z` release invokes the mobile workflow only after the regular release succeeds. If app code changes while `VIS_VERSION` remains `X.Y.Z`, each public release command below creates a distinct immutable `companion-vX.Y.Z-build.N` tag for the current `main` commit, where `N` is the git-derived build number, and releases **both** stores:
 
 ```sh
 npm run release:mobile -- --dry-run
 npm run release:mobile
-npm run release:ios       # same two-store retag orchestrator
-npm run release:android   # same two-store retag orchestrator
+npm run release:ios       # same two-store release-tag orchestrator
+npm run release:android   # same two-store release-tag orchestrator
 ```
 
-Commit and push first. The commands refuse a dirty tree, a non-`main` branch, or a local branch that differs from `origin/main`. If `vX.Y.Z` already points at `HEAD`, no retag occurs because that regular release already owns the app build.
+Commit and push first. The commands refuse a dirty tree, a non-`main` branch, or a local branch that differs from `origin/main`. Companion release tags are immutable and include the unique git-derived build number. If `vX.Y.Z` already points at `HEAD`, no companion tag is created because that regular release already owns the app build.
 
 The low-level one-store commands are only for CI and recovery:
 
@@ -219,17 +219,17 @@ git tag v1.0.2 && git push origin v1.0.2
 ```
 
 For another iOS/Android build while Vis remains `1.0.2`, commit and push the app
-fix and move the one companion rebuild tag through the guarded script:
+fix and create a distinct immutable companion release tag through the guarded script:
 
 ```sh
 npm run release:mobile -- --dry-run
 npm run release:mobile
 ```
 
-That atomically retags `companion-v1.0.2` to current `origin/main`. The tag push
-runs `.github/workflows/mobile-release.yml`, ships iOS to public TestFlight and
-Android to the `beta` track, keeps marketing version `1.0.2`, and gets a new
-store build number from `git rev-list --count HEAD`. A manual **Run workflow**
+That creates an immutable tag such as `companion-v1.0.2-build.2874` for current
+`origin/main`. The tag push runs `.github/workflows/mobile-release.yml`, ships iOS
+to public TestFlight and Android to the `beta` track, keeps marketing version
+`1.0.2`, and gets the same unique store build number from `git rev-list --count HEAD`. A manual **Run workflow**
 can recover one platform. The workflow calls the direct `release:ios` /
 `release:android` scripts with repository secrets, so local and CI build logic
 cannot drift. A platform whose secrets are missing is skipped, not failed.

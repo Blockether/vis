@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.21 (2871) — 2026-08-01
+<!-- commit: 1db0d4f7d66aecc93ba26cae8751d39f925181c5 -->
+
+- Reduce attachment shim tool docs
+- Reduce sandbox discovery tool docs
+- Reduce sandbox helper tool docs
+- Use FFF for directory listings
+- Reduce Bridge tool surfaces
+- Reduce introspection tool surfaces
+- Reduce skill tool surface
+- Reduce Git tool surface
+- Reduce shell tool surface
+- Reduce language facade tool surfaces
+- Reduce node and filesystem tool surfaces
+- Reduce mutation tool surfaces
+- Reduce read tool surfaces
+- Reduce struct index tool surface
+- Reduce session fold tool surface
+- Compact engine native contracts
+- Compact research search contract
+- Compact MCP contracts
+- Compact repl lifecycle contract
+- Modernize empty session state
+
 ## 0.1.21 (2861) — 2026-08-01
 <!-- commit: 52953cd362b54144b18dde9388055588cc2abe7a -->
 

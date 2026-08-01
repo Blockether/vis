@@ -803,8 +803,37 @@ export class GatewayClient {
 
   async setDefaultModel(provider: string, model: string): Promise<void> {
     await this.request<{ default_provider: string; default_model: string }>('PATCH', '/v1/router', {
+      role: 'primary',
       provider,
       model,
+    });
+    this.invalidateRouter();
+  }
+
+  /**
+   * Tag the FALLBACK provider+model: the router's second root, used when the
+   * default one cannot serve the turn. The daemon REFUSES a fallback on the
+   * default's own provider (400) — a fallback is only useful somewhere else.
+   */
+  async setFallbackModel(provider: string, model: string): Promise<void> {
+    await this.request<{ fallback_provider: string; fallback_model: string }>(
+      'PATCH',
+      '/v1/router',
+      {
+        role: 'fallback',
+        provider,
+        model,
+      },
+    );
+    this.invalidateRouter();
+  }
+
+  /** Drop the fallback tag: a blank `provider` on the fallback role clears it. */
+  async clearFallbackModel(): Promise<void> {
+    await this.request<{ fallback_provider: string | null }>('PATCH', '/v1/router', {
+      role: 'fallback',
+      provider: '',
+      model: '',
     });
     this.invalidateRouter();
   }
