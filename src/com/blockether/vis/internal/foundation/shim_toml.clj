@@ -21,7 +21,7 @@
   (vis/extension
     {:ext/name "foundation-shim-toml"
      :ext/description
-     "Sandbox shim: a `toml`-compatible module (import toml). Reading delegates to the stdlib tomllib for a spec-correct parse; writing is a pure-Python serializer (scalars/arrays/inline tables/nested sections/array-of-tables). No pip, no native wheel, no host bridge. A correctness-focused subset."
+     "Sandbox pure-Python `toml` subset: stdlib `tomllib` reading plus writing scalars, arrays, inline tables, nested sections, and arrays of tables. No pip/wheel/host bridge."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
