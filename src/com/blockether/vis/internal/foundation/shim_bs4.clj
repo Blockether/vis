@@ -27,7 +27,7 @@
   (vis/extension
     {:ext/name "foundation-shim-bs4"
      :ext/description
-     "Sandbox shim: a `bs4` (BeautifulSoup)-compatible module (from bs4 import BeautifulSoup) implemented in PURE Python on the stdlib html.parser — find/find_all, CSS .select/.select_one, get_text, sibling/parent navigation, HTML serialization. The natural partner to the requests shim (fetch then parse). No pip, no native wheel, no host bridge."
+     "Sandbox pure-stdlib `bs4`/BeautifulSoup subset: find/find_all, CSS select/select_one, get_text, sibling/parent navigation, and HTML serialization. Uses `html.parser`; pairs with requests for fetch+parse. No pip/wheel/host bridge."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
