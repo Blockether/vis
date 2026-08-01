@@ -6992,22 +6992,21 @@
      ;; Reachable as struct_patch(paths=…, op="rename") on the native surface; kept
      ;; here as a Python-callable function (apropos/doc), off the tool list.
      :native-tool? false
-     :result
-     "Object stamped with string `op`: `{\"files\": [{\"path\": string, \"changed\": true}], \"file_count\": integer, \"failed\": [{\"path\": string, \"error\": string}], \"op\": string}`."
+     :result "String-keyed `{files:[{path,changed:true}], file_count, failed:[{path,error}], op}`."
      :name "struct_rename"
      :call {:pos ["name" "new_name"]}
      :active-fn structural-supported?
      :description
      (str
-       "Rename one identifier across supported project code at syntactic boundaries, with "
-       "each changed file re-parsed. Use grep to find candidate files, then run struct_index with those "
-       "paths to inspect each declaration and its occurrences before renaming. Clojure namespace renames "
-       "still require moving the defining file.")
+       "Rename one identifier at syntactic boundaries across supported project code, re-parsing changed files. "
+       "First grep candidates, then struct_index those paths for declarations/occurrences. Clojure namespace "
+       "renames still require moving the defining file.")
      :render render-symbol-rename-result
      :color-role :tool-color/edit
      :schema {:type "object"
-              :properties {"name" {:type "string" :description "Current identifier / namespace."}
-                           "new_name" {:type "string" :description "New identifier / namespace."}}
+              :properties {"name" {:type "string" :description "Current identifier or namespace."}
+                           "new_name" {:type "string"
+                                       :description "Replacement identifier or namespace."}}
               :required ["name" "new_name"]
               :additionalProperties false}
      :tag :mutation
