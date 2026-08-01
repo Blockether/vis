@@ -33,7 +33,7 @@
   (vis/extension
     {:ext/name "foundation-shim-xlsxwriter"
      :ext/description
-     "Sandbox shim: an xlsxwriter-compatible module (Workbook/add_worksheet/add_format/write/write_string/number/formula/datetime/blank/url/rich_string/row/column, merge_range, set_column/set_row, freeze_panes, autofilter, insert_image, A1 notation, utility helpers) backed by com.blockether/imaging's Rust rust_xlsxwriter writer. GraalPy can't install the CPython package; this makes `import xlsxwriter` produce real .xlsx files with no pip, no native wheel and no JVM document model."
+     "Sandbox XlsxWriter subset backed by com.blockether/imaging's Rust writer: workbooks/worksheets, formats, cell/row/column writes, formulas, dates, URLs, rich strings, ranges, panes, filters, images, and utilities. Produces real `.xlsx` files without pip/native wheel/JVM document model; no streaming, VBA, charts, or data validation."
      :ext/version "0.2.0"
      :ext/author "Blockether"
      :ext/owner "vis"
