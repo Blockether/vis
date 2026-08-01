@@ -6055,36 +6055,35 @@
     {:symbol 'patch
      :native-tool? true
      :result
-     "One row per edit: `path`, `op`, `changed`, `diff`, and optional small-region `anchors` (`{\"lineno:hash\":{\"text\":line}}`) reusable as the next `from_anchor` without rereading. Auto-balanced files add `repaired` true and `note`."
+     "One row/edit: `path`, `op`, `changed`, `diff`; optional small-region `anchors` (`{\"lineno:hash\":{\"text\":line}}`) reusable on the next edit without rereading; auto-balanced files add `repaired` true and `note`."
      :call (fn [input]
              {:args [(get input "edits")]})
      :description
      (str
-       "Anchor-based TEXT editor for prose, config, unsupported languages, or a span inside a definition. "
-       "ATOMIC: one bad edit writes nothing. Code that will not parse is refused; unbalanced Clojure "
-       "delimiters are auto-repaired (`repaired`). Writes invalidate pre-write anchors for each changed "
+       "Anchor-based TEXT editor for prose, config, unsupported languages, or definition spans. "
+       "ATOMIC: one bad edit writes NOTHING. Code that will not parse is refused; unbalanced Clojure "
+       "delimiters are auto-repaired (`repaired`). A write invalidates pre-write anchors for each changed "
        "file only; anchors for other files remain valid.")
      :render render-patch-result
      :color-role :tool-color/edit
-     :schema
-     {:type "object"
-      :properties
-      {"edits"
-       {:type "array"
-        :minItems 1
-        :description "Atomic anchor edits. Every item names its file, so one batch may span files."
-        :items
-        {:type "object"
-         :properties
-         {"path" {:type "string" :minLength 1 :description "File path."}
-          "from_anchor" {:type "string" :minLength 1 :description "lineno:hash from a fresh read."}
-          "to_anchor"
-          {:type "string" :minLength 1 :description "Optional inclusive end anchor for a span."}
-          "replace" {:type "string" :description "Replacement text; empty deletes."}}
-         :required ["path" "from_anchor" "replace"]
-         :additionalProperties false}}}
-      :required ["edits"]
-      :additionalProperties false}
+     :schema {:type "object"
+              :properties
+              {"edits"
+               {:type "array"
+                :minItems 1
+                :description "Atomic anchor edits; each names a file, so a batch may span files."
+                :items
+                {:type "object"
+                 :properties
+                 {"path" {:type "string" :minLength 1 :description "File path."}
+                  "from_anchor" {:type "string" :minLength 1 :description "Fresh-read lineno:hash."}
+                  "to_anchor"
+                  {:type "string" :minLength 1 :description "Optional inclusive span-end anchor."}
+                  "replace" {:type "string" :description "Replacement; empty deletes."}}
+                 :required ["path" "from_anchor" "replace"]
+                 :additionalProperties false}}}
+              :required ["edits"]
+              :additionalProperties false}
      :before-fn (plan-gated-before-fn :patch :file :write patch-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :patch :file nil)}))
