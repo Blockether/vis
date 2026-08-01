@@ -58,8 +58,41 @@ export interface Session {
     repo_root?: string;
     label?: string;
     fork_ms?: number;
+    /**
+     * True when `root` is a DRAFT clone (~/.vis/drafts/<repo>/<label>) rather
+     * than a project root. A draft belongs to `repo_root`; `label` names the
+     * draft, not the project, so neither may be used as a grouping key.
+     */
+    is_draft?: boolean;
   } | null;
   [k: string]: unknown;
+}
+
+/**
+ * GET /v1/sessions/:sid/usage — the whole-life rollup for one session. Fetched
+ * on demand only: the gateway decodes every iteration's tool-call blob to count
+ * tools and folds, so it is deliberately absent from the session list.
+ */
+export interface SessionUsage {
+  turn_count?: number;
+  iteration_count?: number;
+  tool_call_count?: number;
+  fold_count?: number;
+  top_tools?: Array<{ name: string; count: number }>;
+  input_tokens?: number;
+  input_regular_tokens?: number;
+  input_cache_write_tokens?: number;
+  input_cache_read_tokens?: number;
+  output_tokens?: number;
+  output_reasoning_tokens?: number;
+  /** Cached input over TOTAL input, derived gateway-side so every client agrees. */
+  cache_hit_rate?: number;
+  cost_usd?: number;
+  duration_ms?: number;
+  first_turn_at?: number;
+  last_turn_at?: number;
+  provider?: string;
+  model?: string;
 }
 
 export interface SlashCommand {

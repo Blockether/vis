@@ -505,12 +505,20 @@ export const Markdown = memo(function Markdown({
           strong: ({ children: strong }) => <strong className="font-semibold">{strong}</strong>,
           table: ({ children: table }) => (
             <div className={`${compact ? 'my-2' : 'my-3'} max-w-full overflow-x-auto overscroll-x-contain`}>
-              <table className="w-full border-collapse text-ui">{table}</table>
+              {/* The table sits on the SAME step as the surrounding prose — hardcoding
+                  `text-ui` made a tool result's table one step BIGGER than the compact
+                  code blocks (`text-meta`) in the very same card. */}
+              <table className={`w-full border-collapse ${compact ? 'text-meta' : 'text-ui'}`}>{table}</table>
             </div>
           ),
-          td: ({ children: cell }) => <td className="border border-code-edge px-2 py-1.5 text-left">{cell}</td>,
+          // `align-top`: one wrapping cell makes the whole row tall, and middle-aligned
+          // neighbours then float in the middle of that emptiness. Rows read as rows
+          // when every cell starts on the first line.
+          td: ({ children: cell }) => (
+            <td className={`${compact ? 'px-1.5 py-1' : 'px-2 py-1.5'} border border-code-edge text-left align-top`}>{cell}</td>
+          ),
           th: ({ children: cell }) => (
-            <th className="border border-code-edge bg-code px-2 py-1.5 text-left font-semibold">{cell}</th>
+            <th className={`${compact ? 'px-1.5 py-1' : 'px-2 py-1.5'} border border-code-edge bg-code text-left align-top font-semibold`}>{cell}</th>
           ),
           ul: ({ children: list }) => (
             <ul className={`${compact ? 'my-2 pl-5' : 'my-3 pl-6'} list-disc space-y-0.5`}>{list}</ul>
@@ -850,7 +858,10 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
             inside this card and render no chip of their own. */}
         <CopyButton value={body} className="shrink-0" label="Copy result" />
       </summary>
-      <div className={`min-w-0 overflow-hidden border-t border-code-edge bg-result px-3 py-2 text-ui text-code-result ${failed ? 'text-code-error-result' : ''}`}>
+      {/* A tool result is SUBORDINATE to the answer it feeds: its body is `text-meta`
+          (10px), the step its compact code blocks and diffs already render at, so the
+          card is internally uniform and steps down from the answer's `text-ui`. */}
+      <div className={`min-w-0 overflow-hidden border-t border-code-edge bg-result px-2.5 py-1.5 text-meta text-code-result ${failed ? 'text-code-error-result' : ''}`}>
         {failed ? <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-words font-mono text-meta ">{body}</pre> : <Markdown compact nested>{body}</Markdown>}
       </div>
     </details>

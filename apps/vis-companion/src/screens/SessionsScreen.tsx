@@ -2,7 +2,7 @@ import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMem
 import { Banner, Button, DialogFrame, Input } from '../components/ui';
 import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
-import type { GatewayConn, Session } from '../lib/types';
+import type { GatewayConn, Session, SessionUsage } from '../lib/types';
 import { homeifyPath } from '../lib/path';
 import { onWake } from '../lib/wake';
 import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
@@ -385,7 +385,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="font-mono text-body font-bold text-white">Projects</p>
-              <p className="mt-0.5 flex flex-wrap items-center gap-x-1 font-mono text-meta text-dialog-hint">
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-meta text-dialog-hint">
                 {sessions === null ? (
                   <>
                     <SessionsPulse />
@@ -393,20 +393,28 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
                   </>
                 ) : (
                   <>
-                    <span>{totals.projects} {totals.projects === 1 ? 'project' : 'projects'}</span>
-                    <span className="opacity-40">·</span>
-                    <span>{totals.all} {totals.all === 1 ? 'session' : 'sessions'}</span>
-                    <span className="opacity-40">·</span>
-                    <span className={totals.live > 0 ? 'font-bold text-ok' : ''}>
+                    {/* Facts travel as WHOLE units. Every value used to be its own flex
+                        child with a bare `·` child between them, so a wrap left the
+                        separator dangling at the end of the line ("447 sessions ·") and
+                        could strand "●" from its "4 live". Each fact is now nowrap and
+                        the groups are separated by SPACE rather than punctuation, so the
+                        line can only break between facts. */}
+                    <span className="whitespace-nowrap">
+                      {totals.projects} {totals.projects === 1 ? 'project' : 'projects'}
+                      <span className="px-1 opacity-40">·</span>
+                      {totals.all} {totals.all === 1 ? 'session' : 'sessions'}
+                    </span>
+                    <span className={`whitespace-nowrap ${totals.live > 0 ? 'font-bold text-ok' : ''}`}>
                       {totals.live > 0 ? '●' : '○'} {totals.live} live
                     </span>
                     {totals.unread > 0 && (
-                      <>
-                        <span className="opacity-40">·</span>
-                        <span className="font-bold text-accent-ink" role="status" aria-live="polite">
-                          {totals.unread} unread
-                        </span>
-                      </>
+                      <span
+                        className="whitespace-nowrap font-bold text-accent-ink"
+                        role="status"
+                        aria-live="polite"
+                      >
+                        {totals.unread} unread
+                      </span>
                     )}
                     {/* No refresh status here on purpose. This line is `flex-wrap`,
                         so appending "· refreshing..." / "· updated just now" could
@@ -417,10 +425,15 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
                 )}
               </p>
             </div>
-            <div className="grid shrink-0 grid-cols-2 gap-1">
+            {/* Hierarchy, not symmetry. These two sat in an equal-width `grid-cols-2`
+                with a 4px gap, so a bordered Refresh was padded out to the size of the
+                solid New session and the pair read as two rival boxes glued together.
+                Each button now sizes to its own content, Refresh is the `quiet` variant
+                (frame on hover only) and the solid amber is the single primary. */}
+            <div className="flex shrink-0 items-center gap-2">
               <Button
-                variant="ghost"
-                className="min-h-6 px-2 py-0.5 font-mono text-chip sm:min-h-6"
+                variant="quiet"
+                className="min-h-6 px-1.5 py-0.5 font-mono text-chip sm:min-h-6"
                 disabled={refreshPhase === 'busy'}
                 onClick={() => void manualRefresh()}
               >
@@ -744,6 +757,13 @@ const SessionRow = memo(function SessionRow({
   // Turns that finished while this session was closed: the one thing a relative
   // timestamp cannot announce.
   const unread = unreadTurnCount(session);
+  // The left chevron is a real DISCLOSURE, not decoration: it opens this
+  // session's usage rollup in place. It stays a sibling of the open-session
+  // button, never nested inside it, so "tell me more" cannot navigate away.
+  const [statsOpen, setStatsOpen] = useState(false);
+  // A draft is a per-session clone of the project; the row says so instead of
+  // the list inventing a project for it.
+  const draftName = isDraftWorkspace(session) ? session.workspace?.label?.trim() : '';
 
   return (
     <div className="[&+&]:border-t [&+&]:border-dialog-edge">
@@ -765,13 +785,24 @@ const SessionRow = memo(function SessionRow({
           },
         ]}
       >
-      <button
-        type="button"
-        className="group flex min-h-14 w-full items-start gap-2 px-3 py-2.5 text-left transition-colors duration-150 hover:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:min-h-12 sm:px-4 sm:py-2"
-        data-session-id={session.id}
-        onClick={() => void onOpen(conn, session.id)}
-      >
-        <span className="mt-0.5 shrink-0 font-mono text-body text-accent-ink opacity-40 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true">›</span>
+      <div className="flex items-stretch">
+        <button
+          type="button"
+          aria-expanded={statsOpen}
+          aria-label={`${statsOpen ? 'Hide' : 'Show'} details for ${title}`}
+          onClick={() => setStatsOpen((open) => !open)}
+          className={`flex w-8 shrink-0 items-start justify-center pt-2.5 font-mono text-body text-accent-ink transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:w-9 sm:pt-2 ${
+            statsOpen ? 'bg-hover opacity-100' : 'opacity-40 hover:opacity-100'
+          }`}
+        >
+          <span aria-hidden="true">{statsOpen ? '\u2304' : '\u203a'}</span>
+        </button>
+        <button
+          type="button"
+          className="group flex min-h-14 min-w-0 flex-1 items-start py-2.5 pr-3 text-left transition-colors duration-150 hover:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:min-h-12 sm:py-2 sm:pr-4"
+          data-session-id={session.id}
+          onClick={() => void onOpen(conn, session.id)}
+        >
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-start justify-between gap-3">
             <span
@@ -797,6 +828,17 @@ const SessionRow = memo(function SessionRow({
             <span className="text-white/55">{shortId(session.id)}</span>
             <span className="opacity-40" aria-hidden="true">·</span>
             <span>{turns} {turns === 1 ? 'turn' : 'turns'}</span>
+            {draftName !== '' && (
+              <>
+                <span className="opacity-40" aria-hidden="true">·</span>
+                <span
+                  className="inline-flex items-center font-bold uppercase tracking-[0.08em] text-warn-strong"
+                  title={session.workspace?.root}
+                >
+                  draft {draftName || ''}
+                </span>
+              </>
+            )}
             {subscribed && (
               <>
                 <span className="opacity-40" aria-hidden="true">·</span>
@@ -808,12 +850,132 @@ const SessionRow = memo(function SessionRow({
             <span className="ml-auto shrink-0 pl-2" title={formatExact(timestamp)}>{relativeTime(timestamp)}</span>
           </span>
         </span>
-      </button>
+        </button>
+      </div>
       </SwipeActions>
+      {statsOpen && <SessionStats session={session} conn={conn} />}
       {match && <MatchPreview match={match} needle={needle} />}
     </div>
   );
 });
+
+// The expanded half of a session row: everything the list cannot afford to
+// carry for every session at once. `GET /v1/sessions/:sid/usage` decodes each
+// iteration's tool-call blob to count tools and folds, so it is fetched HERE,
+// once, when the row is actually opened — and aborted if the row closes first.
+function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }) {
+  const [usage, setUsage] = useState<SessionUsage | null>(null);
+  const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setPhase('loading');
+    new GatewayClient(conn)
+      .sessionUsage(session.id, controller.signal)
+      .then((next) => {
+        if (controller.signal.aborted) return;
+        setUsage(next);
+        setPhase('ready');
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setPhase('error');
+      });
+    return () => controller.abort();
+  }, [conn, session.id]);
+
+  const cacheHit = usage?.cache_hit_rate;
+  const tools = usage?.top_tools ?? [];
+
+  return (
+    <div className="border-t border-dialog-edge bg-panel-2 px-3 py-2.5 pl-8 sm:pl-11 sm:pr-4">
+      {phase === 'loading' && (
+        <p className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+          Reading usage…
+        </p>
+      )}
+      {phase === 'error' && (
+        <p className="font-mono text-chip uppercase tracking-[0.08em] text-warn-strong">
+          Usage unavailable
+        </p>
+      )}
+      {phase === 'ready' && !usage && (
+        <p className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+          No turns yet
+        </p>
+      )}
+      {phase === 'ready' && usage && (
+        <>
+          <dl className="grid grid-cols-4 gap-x-3 gap-y-2">
+            <Stat label="Turns" value={compactCount(usage.turn_count)} />
+            <Stat label="Iters" value={compactCount(usage.iteration_count)} />
+            <Stat label="Tools" value={compactCount(usage.tool_call_count)} />
+            <Stat label="Folds" value={compactCount(usage.fold_count)} />
+            <Stat label="In" value={compactCount(usage.input_tokens)} />
+            <Stat label="Out" value={compactCount(usage.output_tokens)} />
+            <Stat
+              label="Cache"
+              value={typeof cacheHit === 'number' ? `${Math.round(cacheHit * 100)}%` : '—'}
+            />
+            <Stat label="Cost" value={formatUsd(usage.cost_usd)} />
+          </dl>
+          <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-chip text-dialog-hint">
+            <span className="whitespace-nowrap">{usage.model || 'unknown model'}</span>
+            <span className="whitespace-nowrap">{formatDuration(usage.duration_ms)} of turns</span>
+            {tools.length > 0 && (
+              <span className="min-w-0 truncate">
+                {tools
+                  .slice(0, 3)
+                  .map((tool) => `${tool.name} ${tool.count}`)
+                  .join('  ')}
+              </span>
+            )}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="truncate font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+        {label}
+      </dt>
+      <dd className="truncate font-mono text-meta font-bold tabular-nums text-white">{value}</dd>
+    </div>
+  );
+}
+
+function compactCount(value?: number): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n)) return '—';
+  if (n < 1_000) return String(n);
+  if (n < 1_000_000) return `${(n / 1_000).toFixed(n < 10_000 ? 1 : 0)}k`;
+  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0)}M`;
+  return `${(n / 1_000_000_000).toFixed(1)}B`;
+}
+
+// Sub-cent totals must not read as "$0.00" — a session that cost something is
+// never free.
+function formatUsd(value?: number): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return '$0';
+  if (n < 0.01) return '<$0.01';
+  if (n < 1_000) return `$${n.toFixed(2)}`;
+  return `$${Math.round(n).toLocaleString()}`;
+}
+
+function formatDuration(value?: number): string {
+  const ms = Number(value ?? 0);
+  if (!Number.isFinite(ms) || ms <= 0) return '0s';
+  const seconds = Math.round(ms / 1_000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = seconds / 60;
+  if (minutes < 60) return `${Math.round(minutes)}m`;
+  const hours = minutes / 60;
+  return hours < 24 ? `${hours.toFixed(1)}h` : `${(hours / 24).toFixed(1)}d`;
+}
 
 // The list has nothing to paint yet. Two rules keep this honest:
 //
@@ -977,18 +1139,44 @@ function shortId(id: string): string {
 }
 
 function projectLabel(session: Session): string {
-  const named = session.project_name?.trim() || session.workspace?.label?.trim();
+  // NEVER `workspace.label` for a draft: that is the DRAFT's name, and using it
+  // as the grouping key gave every draft its own bogus top-level "project".
+  const named =
+    session.project_name?.trim() ||
+    (isDraftWorkspace(session) ? '' : session.workspace?.label?.trim());
   if (named) return homeifyPath(named);
-  const root = session.workspace?.root?.replace(/\/+$/, '');
+  const root = projectPath(session);
   if (root) return root.split('/').pop() || homeifyPath(root);
   return 'No project';
 }
 
 function projectRoot(sessions: Session[]): string {
-  const workspace = sessions.find(
-    (session) => session.workspace?.root || session.workspace?.repo_root,
-  )?.workspace;
-  return homeifyPath(workspace?.root || workspace?.repo_root);
+  return homeifyPath(sessions.map(projectPath).find(Boolean));
+}
+
+// A DRAFT is a per-session clone parked at ~/.vis/drafts/<repo>/<label>; it is
+// a workspace of the session, never a project of its own. `is_draft` is the
+// gateway fact (list rows carry it); the path shape is the fallback for a
+// gateway older than the flag, so an out-of-date daemon does not resurrect the
+// one-project-per-draft bug.
+const DRAFT_ROOT = /(^|\/)\.vis\/drafts\//;
+
+function isDraftWorkspace(session: Session): boolean {
+  const workspace = session.workspace;
+  if (!workspace) return false;
+  if (typeof workspace.is_draft === 'boolean') return workspace.is_draft;
+  return DRAFT_ROOT.test(workspace.root ?? '');
+}
+
+// The path a session GROUPS under: the repo it belongs to, which for a draft is
+// `repo_root` and not the clone it happens to be checked out in.
+function projectPath(session: Session): string {
+  const workspace = session.workspace;
+  if (!workspace) return '';
+  const path = isDraftWorkspace(session)
+    ? workspace.repo_root || workspace.root
+    : workspace.root || workspace.repo_root;
+  return path?.replace(/\/+$/, '') || '';
 }
 
 function sessionIsLive(session: Session): boolean {

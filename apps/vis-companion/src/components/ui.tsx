@@ -10,18 +10,26 @@ export function Button({
   className = '',
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: 'solid' | 'ghost' | 'danger';
+  variant?: 'solid' | 'ghost' | 'quiet' | 'danger';
 }) {
+  // Disabled colours live PER VARIANT, not in the base class: `quiet` has to stay
+  // frameless while it is busy, and a shared `disabled:border-edge` would fight it
+  // on equal specificity (whoever Tailwind emits last wins).
+  const dimmed = 'disabled:border-edge disabled:bg-panel-2 disabled:text-muted';
   const styles = {
-    solid: 'border-accent bg-accent text-accent-foreground hover:border-accent/85 hover:bg-accent/85',
-    ghost:
-      'border-edge-strong bg-transparent text-white hover:border-accent hover:bg-hover hover:text-accent-ink',
-    danger: 'border-err/40 bg-err/10 text-err hover:border-err hover:bg-err hover:text-white',
+    solid: `border-accent bg-accent text-accent-foreground hover:border-accent/85 hover:bg-accent/85 ${dimmed}`,
+    ghost: `border-edge-strong bg-transparent text-white hover:border-accent hover:bg-hover hover:text-accent-ink ${dimmed}`,
+    // For a SECONDARY action sitting next to a solid primary: two bordered boxes
+    // side by side read as rivals, so this one keeps the button's box (transparent
+    // border, identical metrics) and only draws a frame on hover/focus.
+    quiet:
+      'border-transparent bg-transparent text-dialog-hint hover:border-edge-strong hover:bg-hover hover:text-accent-ink disabled:border-transparent disabled:bg-transparent disabled:text-muted',
+    danger: `border-err/40 bg-err/10 text-err hover:border-err hover:bg-err hover:text-white ${dimmed}`,
   }[variant];
 
   return (
     <button
-      className={`min-h-7 rounded-none border px-2.5 py-0.5 text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:border-edge disabled:bg-panel-2 disabled:text-muted disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${styles} ${className}`}
+      className={`min-h-7 rounded-none border px-2.5 py-0.5 text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${styles} ${className}`}
       {...props}
     />
   );

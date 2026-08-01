@@ -23,6 +23,7 @@ import type {
   GatewayStatus,
   GatewayTheme,
   Session,
+  SessionUsage,
   SettingsResponse,
   SlashCommand,
   SseEvent,
@@ -1175,6 +1176,22 @@ export class GatewayClient {
     const merged = reconcileRow(this.cachedSession(sid), row);
     writeSnapshot(this.snapshotKey('session', sid), merged);
     return merged;
+  }
+
+  /**
+   * Whole-life usage rollup for ONE session. On-demand only (the gateway has to
+   * decode every iteration's tool-call blob to count tools and folds), so this
+   * is never part of `listSessions` and is not snapshotted: it is fetched when
+   * a row is expanded and is `null` for a session that has no turns yet.
+   */
+  async sessionUsage(sid: string, signal?: AbortSignal): Promise<SessionUsage | null> {
+    const res = await this.request<{ usage: SessionUsage | null }>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/usage`,
+      undefined,
+      signal,
+    );
+    return res.usage ?? null;
   }
 
   async deleteSession(sid: string): Promise<unknown> {

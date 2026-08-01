@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.19 (2853) — 2026-08-01
+<!-- commit: 91170014c043b6acf3a1821f6a4a91924bc5f030 -->
+
+- Add image viewer and smooth native viewport
+- Release notes for 0.1.18 (2851)
+
 ## 0.1.18 (2851) — 2026-08-01
 <!-- commit: d5f4f08cf0cb184cdc2df14da7642baa8ca4b896 -->
 
