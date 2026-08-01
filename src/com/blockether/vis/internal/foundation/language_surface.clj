@@ -1151,16 +1151,15 @@
     {:symbol 'repl_stop
      :native-tool? false
      :description
-     "After verification, stop a managed REPL you started by its exact resource id. An external REPL resource is detached; its process is never killed."
+     "After verifying, stop a managed REPL you started by exact id. External resources are detached; processes are never killed."
      ;; repl_stop(id) — one positional id. (lint_code intentionally has NO
      ;; :call: its fn takes the whole input dict, so the generic form fits.)
      :call {:pos ["id"]}
      :render render-repl-stop-result
      :color-role :tool-color/delete
      :schema {:type "object"
-              :properties {"id" {:type "string"
-                                 :minLength 1
-                                 :description "Session resource id of the REPL to stop."}}
+              :properties {"id"
+                           {:type "string" :minLength 1 :description "Exact REPL resource id."}}
               :required ["id"]
               :additionalProperties false}
      :inject-env? true
