@@ -7441,31 +7441,29 @@
      :native-tool? true
      :result
      (str
-       "String-keyed result discriminated by `action`: copy/move `{action,src,dest}`, delete "
+       "String-keyed, `action`-discriminated result: copy/move `{action,src,dest}`, delete "
        "`{action,path,is_deleted}`, create_dirs `{action,path,is_created}`, exists `{action,path,is_existing}`. "
-       "Batch `paths` returns `{action,paths}` with one action-less row per target in order. Top-level also has `op`.")
+       "Batch `paths`: `{action,paths}` with one ordered action-less row/target. Top level includes `op`.")
      :description
-     "Confined filesystem tool: `op` selects the verb and params. delete is destructive and needs explicit intent; an absent path is a no-op (`is_deleted` false). create_dirs makes parents; exists checks without reading."
+     "Confined filesystem tool; `op` selects verb/params. delete is destructive and needs explicit intent; absent is a no-op (`is_deleted` false). create_dirs makes parents; exists checks without reading."
      :render render-fs-result
      :color-role :tool-color/move
-     :schema
-     {:type "object"
-      :properties
-      {"op" {:type "string"
-             :enum ["copy" "move" "delete" "create_dirs" "exists"]
-             :description "Filesystem operation."}
-       "paths"
-       {:type "array"
-        :items {:type "string"}
-        :minItems 1
-        :description
-        "delete/create_dirs/exists targets; always a list, processed in order with one result per path."}
-       "src" {:type "string" :description "Source path (copy / move)."}
-       "dest" {:type "string" :description "Destination path (copy / move)."}
-       "is_overwrite" {:type "boolean"
-                       :description "copy/move: overwrite an existing dest (default false)."}}
-      :required ["op"]
-      :additionalProperties false}
+     :schema {:type "object"
+              :properties
+              {"op" {:type "string"
+                     :enum ["copy" "move" "delete" "create_dirs" "exists"]
+                     :description "Operation."}
+               "paths"
+               {:type "array"
+                :items {:type "string"}
+                :minItems 1
+                :description
+                "delete/create_dirs/exists targets; ALWAYS a list, ordered, one result/path."}
+               "src" {:type "string" :description "copy/move source."}
+               "dest" {:type "string" :description "copy/move destination."}
+               "is_overwrite" {:type "boolean" :description "copy/move overwrite (default false)."}}
+              :required ["op"]
+              :additionalProperties false}
      :before-fn fs-before-fn
      :tag :mutation
      :on-error-fn (tool-failure-on-error :fs :path nil)}))
