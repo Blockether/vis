@@ -963,9 +963,9 @@
     {:symbol 'format_code
      :native-tool? true
      :result
-     (str "String-keyed `op` object. Code/single-file: `changed`, optional `chars`, `path`, "
-          "`formatter`, `repaired`; batch: `files`, `by-cwd`, `formatters`. No formatted source.")
-     :description "Format through the active language pack."
+     (str "String-keyed `op` object; code/file: `changed`, optional `chars`, `path`, `formatter`, "
+          "`repaired`; batch: `files`, `by-cwd`, `formatters`. No source text.")
+     :description "Format with the active language pack."
      ;; NAME(language, {payload}) — optional leading `language`, the rest a
      ;; pure options dict (always emitted so the payload stays a map).
      :call {:lead-opt "language" :rest :always}
@@ -974,16 +974,14 @@
      :schema
      {:type "object"
       :properties
-      {"language" {:type "string"
-                   :minLength 1
-                   :description "Language pack (e.g. \"clojure\"); first if supplied."}
-       "code" {:type "string" :description "Source to format."}
+      {"language" {:type "string" :minLength 1 :description "Language pack."}
+       "code" {:type "string" :description "Source."}
        "paths"
        {:type "array"
         :items {:type "string" :minLength 1}
         :minItems 1
         :description
-        "Format paths in place; directories recursively include source files. Exclusive with `code`; OMIT both for default source paths."}}
+        "Paths; directories recursively format source files. Exclusive with `code`; OMIT both for default source paths."}}
       :required []
       :additionalProperties false}
      :inject-env? true
@@ -995,22 +993,20 @@
     {:symbol 'lint_code
      :native-tool? true
      :result
-     (str "String-keyed `op` object: `language`, `error`, `warning`, `info`, `files`, `findings`, "
-          "`providers`, `by-cwd`; stdin may add `snippet`, path runs `targets`. "
-          "Finding: `file`, `row`, `col`, `level`, `type`, `message`, optional `provider`.")
-     :description "Lint with the active language pack; does not change files."
+     (str
+       "String-keyed `op` object with `language`, severity counts, `files`, `findings`, `providers`, "
+       "`by-cwd`; stdin adds `snippet`, path runs `targets`. Findings have `file`/`row`/`col`, "
+       "`level`, `type`, `message`, optional `provider`.")
+     :description "Lint code or paths without changing files."
      :render render-lint-result
      :color-role :tool-color/read
      :schema {:type "object"
-              :properties {"language" {:type "string"
-                                       :minLength 1
-                                       :description
-                                       "Language pack (e.g. \"clojure\"); first if supplied."}
-                           "code" {:type "string" :description "Source; exclusive with `paths`."}
+              :properties {"language" {:type "string" :minLength 1 :description "Language pack."}
+                           "code" {:type "string" :description "Source; not with `paths`."}
                            "paths" {:type "array"
                                     :items {:type "string" :minLength 1}
                                     :minItems 1
-                                    :description "files/dirs; OMIT for default source paths."}}
+                                    :description "files/dirs; OMIT for defaults."}}
               :required []
               :additionalProperties false}
      :inject-env? true
@@ -1023,14 +1019,12 @@
      :native-tool? true
      :result
      (str
-       "One string-keyed object stamped with `op`; null and mode-inapplicable fields may be "
-       "omitted. Pack/mode fields cover execution (`language`, `framework`, `command`, `cwd`, "
-       "`exit`, `ms`), results (`is_pass`, counts, `failures`, `errors`, `by-cwd`, `output`), and "
-       "timeout/REPL recovery diagnostics.")
+       "String-keyed object stamped with `op`; null and mode-inapplicable fields may be omitted. "
+       "Contains execution metadata, pass/fail counts and details, output, and timeout/REPL recovery diagnostics.")
      :description
-     (str "Run tests through the active language pack; prefer the smallest proving target. `cwd` "
-          "selects the project, `namespaces` (otherwise `paths`) selects what loads, and "
-          "`only`/`filter`/`include`/`exclude` narrow tests.")
+     (str "Run tests through the active language pack. Prefer the smallest target: `cwd` selects "
+          "the project; `namespaces` (or `paths`) loads tests; "
+          "`only`/`filter`/`include`/`exclude` narrow them.")
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
      ;; directly in Clojure so the language pack's own timeout budget wins.
@@ -1041,25 +1035,21 @@
      :schema
      {:type "object"
       :properties
-      {"language" {:type "string"
-                   :minLength 1
-                   :description "Language pack (e.g. \"clojure\"); REQUIRED first arg."}
-       "namespaces"
-       {:type "array"
-        :items {:type "string" :minLength 1}
-        :description
-        "Test namespaces/modules (e.g. [\"my.app.core-test\"]); empty/omitted discovers every `*_test` namespace."}
+      {"language" {:type "string" :minLength 1 :description "Language pack; REQUIRED."}
+       "namespaces" {:type "array"
+                     :items {:type "string" :minLength 1}
+                     :description
+                     "Test namespaces/modules; OMIT or [] discovers all `*_test` namespaces."}
        "paths"
        {:type "array"
         :items {:type "string" :minLength 1}
         :description
-        "Dirs/files for `*_test` discovery; empty/omitted uses the workspace root; a non-empty miss is an error."}
-       "only" {:type "array" :items {:type "string"} :description "Fully-qualified test vars."}
-       "include" {:type "array" :items {:type "string"} :description "Require these test tags."}
-       "exclude" {:type "array" :items {:type "string"} :description "Excluded test tags."}
-       "cwd" {:type "string" :description "Project directory; defaults to the workspace root."}
-       "filter" {:type "string"
-                 :description "Test-name filter when supported (e.g. `bun test -t`)."}}
+        "Dirs/files to discover `*_test`; OMIT or [] uses workspace root; a non-empty miss errors."}
+       "only" {:type "array" :items {:type "string"} :description "Fully-qualified vars."}
+       "include" {:type "array" :items {:type "string"} :description "Required tags."}
+       "exclude" {:type "array" :items {:type "string"} :description "Skipped tags."}
+       "cwd" {:type "string" :description "Project directory; workspace root by default."}
+       "filter" {:type "string" :description "Supported test-name filter."}}
       :required ["language"]
       :additionalProperties false}
      :inject-env? true
@@ -1072,12 +1062,11 @@
      :native-tool? true
      :result
      (str
-       "Pack-defined string-keyed object stamped with `op`; fields may be absent. Clojure keys: "
-       "`code`, `repl`, `value`/`values`, `out`, `err`, `status`, `ns`, `ms`, `timed_out`, `ex`, "
-       "`root_ex`. Python/Bun: `code`, `ok`, `out`, `err`, `value`, `data`, `type`, `exc`. No UI "
+       "Pack-defined string-keyed object stamped with `op`; fields may be absent. Clojure: `code`, "
+       "`repl`, `value`/`values`, `out`, `err`, `status`, `ns`, `ms`, `timed_out`, `ex`, `root_ex`; "
+       "Python/Bun: `code`, `ok`, `out`, `err`, `value`, `data`, `type`, `exc`. No UI "
        "`transcript`/`content`.")
-     :description
-     "Evaluate source in an already `up` project REPL; use `repl` for lifecycle changes."
+     :description "Evaluate source in an `up` REPL; use `repl` for lifecycle changes."
      :call {:lead-opt "language" :rest :always}
      ;; repl_eval's own `timeout_ms` can exceed the generic Python eval
      ;; watchdog (DEFAULT_EVAL_TIMEOUT_MS, 120s); dispatch it directly in
@@ -1089,11 +1078,9 @@
      :color-role :tool-color/shell
      :schema {:type "object"
               :properties
-              {"language" {:type "string"
-                           :minLength 1
-                           :description "Language pack (e.g. \"clojure\"); REQUIRED first arg."}
-               "code" {:type "string" :minLength 1 :description "REPL source."}
-               "id" {:type "string" :minLength 1 :description "Resource id."}
+              {"language" {:type "string" :minLength 1 :description "Language pack; REQUIRED."}
+               "code" {:type "string" :minLength 1 :description "Source."}
+               "id" {:type "string" :minLength 1 :description "REPL resource id."}
                "cwd" {:type "string" :description "Project directory; workspace root by default."}
                "timeout_ms"
                {:type "integer" :minimum 1 :description "Milliseconds; default 30000."}}
