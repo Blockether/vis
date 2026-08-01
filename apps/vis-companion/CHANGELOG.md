@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.21 (2861) — 2026-08-01
+<!-- commit: 52953cd362b54144b18dde9388055588cc2abe7a -->
+
+- Unify releases and harden live companion behavior
+- Enforce the locked GraalVM pin across build workflows
+
 ## 0.1.20 (2856) — 2026-08-01
 <!-- commit: 66b0c31d8faee8c348f30a412c520b826579c506 -->
 
