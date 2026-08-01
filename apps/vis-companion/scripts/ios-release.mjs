@@ -336,23 +336,34 @@ const archiveArgs = [
   `CURRENT_PROJECT_VERSION=${buildNumber}`,
   'archive',
 ];
+const authenticationArgs = hasApiKey
+  ? [
+      '-authenticationKeyPath',
+      resolve(keyPath),
+      '-authenticationKeyID',
+      keyId,
+      '-authenticationKeyIssuerID',
+      issuerId,
+    ]
+  : [];
 if (hasApiKey) {
-  archiveArgs.splice(
-    archiveArgs.indexOf('-allowProvisioningUpdates') + 1,
-    0,
-    '-authenticationKeyPath',
-    resolve(keyPath),
-    '-authenticationKeyID',
-    keyId,
-    '-authenticationKeyIssuerID',
-    issuerId,
-  );
+  archiveArgs.splice(archiveArgs.indexOf('-allowProvisioningUpdates') + 1, 0, ...authenticationArgs);
 }
 run('xcodebuild', archiveArgs, { cwd: projectDir });
 
 run(
   'xcodebuild',
-  ['-exportArchive', '-archivePath', archivePath, '-exportOptionsPlist', exportOptions, '-exportPath', ipaDir, '-allowProvisioningUpdates'],
+  [
+    '-exportArchive',
+    '-archivePath',
+    archivePath,
+    '-exportOptionsPlist',
+    exportOptions,
+    '-exportPath',
+    ipaDir,
+    '-allowProvisioningUpdates',
+    ...authenticationArgs,
+  ],
   { cwd: projectDir },
 );
 
