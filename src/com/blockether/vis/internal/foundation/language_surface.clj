@@ -888,11 +888,7 @@
   (dispatch! env :format-fn args))
 
 (defn lint-code
-  "Lint source using a language extension. Pass `language` FIRST when you know it —
-   lint_code(language, arg); inferred from the file/workspace only when omitted. `arg` is a raw code string / {\"code\": ...}
-   (lints the snippet), a {\"paths\": […]} map (lints those on disk — ALWAYS a list, even
-   for one file), or nothing (lints the workspace's default source paths). Returns the
-   linter's findings + severity counts."
+  "Lint through a language pack. Pass `language` first: `lint_code(language,arg)`; omit it only for file/workspace inference. Give source/`{\"code\":...}` to lint a snippet or `{\"paths\":[...]}`—always a list—to lint disk. Omit both for default source paths. Returns findings and severity counts."
   [env & args]
   (dispatch! env :lint-fn args))
 
