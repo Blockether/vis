@@ -5833,15 +5833,15 @@
      :native-tool? true
      :result
      (str
-       "Object with string key `results` and optional `occurrences`. `results` preserves one item per requested file; each has `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, and `ranges`. "
-       "Set `include_occurrences` to true to include `occurrences`, which has one group per declared identifier: `name`, `symbols` (one entry per definition with `path`, `anchor`, `end_anchor`, `kind`, `visibility`, `signature`, `use_count`, and `uses` as `{path, anchors}`), plus conservative `other_uses`, `count`, `definition_count`, `scanned`, and `failed`. "
-       "No source text: a row's SOURCE comes from its `anchor` — `struct_nodes` for the node verbatim plus a zipper cursor, `cat` for its anchored lines.")
+       "String-keyed `{results, occurrences?}`. `results` has one row per requested file with `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, and `ranges`. "
+       "With `include_occurrences`, `occurrences` groups each declared identifier as `name`, definition `symbols` (`path`, `anchor`, `end_anchor`, `kind`, `visibility`, `signature`, `use_count`, `uses` as `{path, anchors}`), conservative `other_uses`, `count`, `definition_count`, `scanned`, and `failed`. "
+       "No source text: use a row's `anchor` with `struct_nodes` (verbatim node + cursor) or `cat` (anchored lines).")
      :active-fn structural-supported?
      :description
      (str
-       "Inspect supported source structurally before reading bodies: imports plus a nested definition "
-       "skeleton with signatures, doc gists, and fresh start/end anchors for `cat`/`struct_patch`. "
-       "Set `include_occurrences` to true to trace each indexed definition's syntactic occurrences across the supplied files.")
+       "Inspect supported source before bodies: imports, a nested definition skeleton, signatures, doc gists, "
+       "and fresh start/end anchors for `cat`/`struct_patch`. `include_occurrences` traces each indexed "
+       "definition's syntactic occurrences across the supplied files.")
      :render render-index-result
      :color-role :tool-color/read
      :schema
@@ -5864,20 +5864,19 @@
         :minItems 1
         :description
         (str
-          "Exact physical source-file paths from grep/cat/struct_index, copied unchanged — batch every file "
-          "you need. Shared `ranges` apply to every entry; `{\"path\": \"…\", \"ranges\": [[a, b]]}` "
-          "scopes one file differently. Set `include_occurrences` to true to trace each indexed definition across this exact file set.")}
+          "Exact physical source paths from grep/cat/struct_index; copy unchanged and batch them. Shared "
+          "`ranges` apply to all entries; `{\"path\":\"…\",\"ranges\":[[a,b]]}` overrides one file. "
+          "`include_occurrences` traces definitions across exactly these files.")}
        "include_occurrences"
        {:type "boolean"
         :description
-        "When true, include syntactic occurrence groups for every indexed definition. Omit or set false to return only results."}
+        "True includes syntactic occurrence groups for every indexed definition; false/omitted returns only results."}
        "ranges"
        {:type "array"
         :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
         :minItems 1
         :description
-        (str "[[start, end], …] 1-based inclusive line windows. A definition is kept when its span "
-             "intersects ANY window; line_count still reports the whole file.")}}
+        "1-based inclusive `[[start,end],…]` windows. Keep a definition if its span intersects any; `line_count` remains whole-file."}}
       :required ["paths"]
       :additionalProperties false}
      :before-fn (path-protected-before-fn :struct_index :file :read read-arg-paths)
