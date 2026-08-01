@@ -12,7 +12,8 @@ name: Mobile release
 # CI calls the explicit `release:ios:store` / `release:android:store` internals.
 #
 # Repository secrets (Settings ▸ Secrets and variables ▸ Actions):
-#   iOS      VIS_ASC_KEY_ID, VIS_ASC_ISSUER_ID, VIS_ASC_KEY (the .p8 CONTENTS), VIS_IOS_TEAM_ID
+#   iOS      VIS_ASC_KEY_ID, VIS_ASC_ISSUER_ID, VIS_ASC_KEY (the .p8 CONTENTS), VIS_IOS_TEAM_ID,
+#            VIS_IOS_DISTRIBUTION_P12 (base64 .p12), VIS_IOS_DISTRIBUTION_P12_PASSWORD
 #   Android  VIS_PLAY_SERVICE_ACCOUNT (service-account JSON), VIS_ANDROID_KEYSTORE (base64 .jks),
 #            VIS_ANDROID_KEYSTORE_PASSWORD, VIS_ANDROID_KEY_ALIAS, VIS_ANDROID_KEY_PASSWORD,
 #            VIS_ANDROID_GOOGLE_SERVICES (google-services.json, optional — push only)
@@ -131,6 +132,32 @@ jobs:
         run: |
           umask 077
           printf '%s\n' "$VIS_ASC_KEY" > "$RUNNER_TEMP/AuthKey_${{ secrets.VIS_ASC_KEY_ID }}.p8"
+
+      # App Store Connect API auth can fetch profiles, but GitHub runners have no signing
+      # identity. Import our dedicated API-created distribution certificate into an ephemeral
+      # keychain; the runner and every decrypted byte disappear when the job ends.
+      - name: Install the iOS distribution certificate
+        if: steps.creds.outputs.ok == 'true'
+        env:
+          P12_BASE64: ${{ secrets.VIS_IOS_DISTRIBUTION_P12 }}
+          P12_PASSWORD: ${{ secrets.VIS_IOS_DISTRIBUTION_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$P12_BASE64" || { echo 'VIS_IOS_DISTRIBUTION_P12 is required' >&2; exit 1; }
+          test -n "$P12_PASSWORD" || { echo 'VIS_IOS_DISTRIBUTION_P12_PASSWORD is required' >&2; exit 1; }
+          umask 077
+          CERTIFICATE_PATH="$RUNNER_TEMP/vis-distribution.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/vis-signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+          printf '%s' "$P12_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
       - name: Build, upload, distribute
         if: steps.creds.outputs.ok == 'true'
