@@ -297,7 +297,7 @@
   (vis/extension
     {:ext/name "foundation-harness"
      :ext/description
-     "Harness compatibility layer: discover + use the skills and agents other AI coding harnesses (Claude Code, opencode, …) define on disk. skill(name) loads a full SKILL.md on demand; agent(name, prompt) dispatches a sub-agent as a sub_loop child. Always available."
+     "Discovers on-disk Claude Code/opencode skills and agents: `skill(name)` loads full SKILL.md on demand; `agent(name,prompt)` dispatches a `sub_loop` child. Always available."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
