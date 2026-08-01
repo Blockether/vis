@@ -132,18 +132,15 @@ if (reuseExisting) {
 
 if (!has('skip-web')) {
   run('npm', ['run', 'build']);
+  if (!existsSync(androidDir)) {
+    console.log('· no android/ — scaffolding it with `cap add android`');
+    run('npx', ['cap', 'add', 'android']);
+  }
   run('npx', ['cap', 'sync', 'android']);
+} else if (!existsSync(androidDir)) {
+  die('no Android project to reuse with --skip-web; run a normal release once to scaffold it');
 } else {
   console.log('· --skip-web: reusing dist/ and the last cap sync');
-}
-
-// `android/` is gitignored and regenerable, so on a clean checkout (CI) it simply is not
-// there yet. Scaffold it rather than failing — nothing in it is hand-maintained; every
-// project-specific bit is stamped back in by android-prepare.mjs below.
-if (!existsSync(androidDir)) {
-  console.log('· no android/ — scaffolding it with `cap add android`');
-  run('npx', ['cap', 'add', 'android']);
-  run('npx', ['cap', 'sync', 'android']);
 }
 
 // Materialises google-services.json AND the release keystore from the keychain, and

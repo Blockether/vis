@@ -91,7 +91,16 @@ const buildNumber = flag('build') ?? capture('git', ['rev-list', '--count', 'HEA
 if (!/^\d+(\.\d+)*$/.test(marketingVersion)) die(`bad VIS_VERSION "${marketingVersion}"`);
 if (!/^\d+$/.test(buildNumber)) die(`bad --build "${buildNumber}" (git rev-list unavailable?)`);
 
-if (!existsSync(projectDir)) die(`no iOS project at ${projectDir} — run \`npm run add:ios\` first`);
+const needsIosScaffold = !existsSync(projectDir);
+
+if (needsIosScaffold) {
+  if (has('skip-web')) {
+    die('no iOS project to reuse with --skip-web; run a normal release once to scaffold it');
+  }
+  console.log('· no ios/ — scaffolding it with `cap add ios`');
+  run('npm', ['run', 'build']);
+  run('npx', ['cap', 'add', 'ios']);
+}
 
 // ios/ is gitignored, so a freshly generated project has no export options.
 if (!existsSync(exportOptions)) {
@@ -145,7 +154,7 @@ const notes = has('no-notes')
 if (notes.text) console.log(`\nWhat to Test${notes.reused ? ' (from CHANGELOG.md)' : ''}:\n${notes.text}\n`);
 
 if (!has('skip-web')) {
-  run('npm', ['run', 'build']);
+  if (!needsIosScaffold) run('npm', ['run', 'build']);
   run('npx', ['cap', 'sync', 'ios']);
 }
 
