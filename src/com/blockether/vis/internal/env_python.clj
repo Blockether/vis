@@ -1084,11 +1084,11 @@
     (set-python-binding-doc!
       ctx
       'apropos
-      "apropos(query='') -> {name: gist}. List live Python sandbox tools; filter names by an optional substring.")
+      "apropos(query='') -> {name: gist}. List sandbox tools; optional name substring.")
     (set-python-binding-doc!
       ctx
       'doc
-      "doc(name) -> str. Show one live Python sandbox tool's callable contract, arguments, result shape, and mechanics.")
+      "doc(name) -> str. Show a sandbox tool's callable contract, arguments, result shape, and mechanics.")
     (set-python-binding-doc!
       ctx
       'gather
