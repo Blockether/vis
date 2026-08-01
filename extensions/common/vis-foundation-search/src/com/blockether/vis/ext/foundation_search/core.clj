@@ -1981,42 +1981,34 @@
      :native-tool? true
      :result
      (str
-       "Object with string keys `op`, `query`, `citations`, `citation_count`, `truncated`, `source`, "
-       "and optional `endpoint`; each citation is a normalized source object with title, URL, "
-       "and excerpt/metadata when available.")
+       "String-keyed `{op,query,citations,citation_count,truncated,source,endpoint?}`; citations are "
+       "normalized source objects with title, URL, and available excerpt/metadata.")
      :name "search"
      :color-role :tool-color/search
      :render render-search-result
      :description
-     "Research beyond the local project: live web, public repos/technical docs, or arXiv papers. For code, provider can select GitHub directly. Returns ranked citations with excerpts."
+     "Search live web, public code/docs, or arXiv; code can use GitHub. Returns ranked citations with excerpts."
      :schema
      {:type "object"
       :properties
-      {"query" {:type "string" :description "Natural-language search query."}
-       "kind"
-       {:type "string"
-        :enum ["web" "code" "papers"]
-        :description
-        "Corpus to search (default \"web\"): web = live web, code = repos + technical docs, papers = arXiv."}
-       "provider"
-       {:type "string"
-        :enum ["auto" "exa" "github"]
-        :description
-        "code only: provider (default auto: Exa then GitHub); github requires `gh auth login`."}
-       "num_results" {:type "integer" :description "web/papers: max results (papers default 10)."}
-       "type" {:type "string"
-               :description "web: Exa search type, e.g. \"auto\", \"neural\", \"keyword\"."}
+      {"query" {:type "string" :description "Natural-language query."}
+       "kind" {:type "string"
+               :enum ["web" "code" "papers"]
+               :description "Corpus: web (default), code (repos/docs), or papers (arXiv)."}
+       "provider" {:type "string"
+                   :enum ["auto" "exa" "github"]
+                   :description "code: auto (Exa then GitHub), exa, or github (`gh auth login`)."}
+       "num_results" {:type "integer" :description "web/papers result cap; papers default 10."}
+       "type" {:type "string" :description "web: Exa type (`auto`, `neural`, `keyword`)."}
        "livecrawl" {:type "string"
-                    :description "web: live-crawl mode, e.g. \"preferred\", \"always\", \"never\"."}
-       "context_max_characters" {:type "integer"
-                                 :description "web: cap on context characters per result."}
+                    :description "web: live-crawl mode (`preferred`, `always`, `never`)."}
+       "context_max_characters" {:type "integer" :description "web: context chars per result."}
        "tokens_num" {:type "integer"
-                     :description "code: approximate token budget for the returned context."}
-       ;; `num_results` is shared with web — declared once, above.
+                     :description "code: approximate returned-context token budget."}
        "sort" {:type "string"
                :enum ["relevance" "lastUpdatedDate" "submittedDate"]
-               :description "papers: sort order (default relevance)."}
-       "timeout_ms" {:type "integer" :description "papers: HTTP timeout in milliseconds."}}
+               :description "papers: sort; default relevance."}
+       "timeout_ms" {:type "integer" :description "papers: HTTP timeout in ms."}}
       :required ["query"]
       :additionalProperties false}
      :handler (fn [_env input]
