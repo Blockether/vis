@@ -1013,9 +1013,7 @@
        "String-keyed object stamped with `op`; null and mode-inapplicable fields may be omitted. "
        "May include execution metadata, counts/details, output, timeout, and REPL-recovery diagnostics.")
      :description
-     (str
-       "Run pack tests. Prefer the smallest target: `cwd` picks the project; `namespaces` (else `paths`) "
-       "loads tests; `only`, `filter`, `include`, and `exclude` narrow them.")
+     "Run pack tests; prefer the smallest target: `namespaces` beats `paths`, `only`/`filter`/tags narrow."
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
      ;; directly in Clojure so the language pack's own timeout budget wins.
