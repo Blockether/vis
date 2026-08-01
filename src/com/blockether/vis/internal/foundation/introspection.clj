@@ -1219,14 +1219,7 @@
 (def
   ^{:doc
     "await session_state(session_id=None)  # current session by default; pass an id for another conversation
-Returns {\"session\" (identity + per-turn rollup), \"current_turn\", \"failures\", \"diagnosis\", \"session_forks\", \"turn_retries\", \"usage\", \"transcript\", ...}. `usage` is the compact per-turn/per-iteration/per-tool token, cost, outcome, bounded-error, and provider-routing ledger; tool rows overlap when an iteration invoked multiple tools, so never sum them. The rich transcript is at `[\"transcript\"]`: `[\"totals\"]` and `[\"turns\"]` = [{id, user_request, answer, status, iteration_count, tokens, cost_usd, iterations:[{position, status, blocks:[code/result]}]}] — iterate it in python_execution to gather answers, grep code, or diff cost; slice, don't dump.
-Pick keys; the whole dict stays bound. No-arg defaults to the current session, but for
-THIS conversation the live `session` bag already has turn, scope, utilization,
-workspace, and tool state. It is also the recovery path for raw folded current-session
-content: select `['transcript']['turns']` by numeric `position`, then filter
-`['iterations'][...]['blocks']`. Recovery does not undo fold intents or restore them
-to the model wire. For OTHER sessions, use sessions() for the index, then pass that
-session id."
+Returns a string-keyed map with `session`, `current_turn`, `failures`, `diagnosis`, `session_forks`, `turn_retries`, \"usage\", and `transcript`. \"usage\" is the compact token/cost/outcome/error/routing ledger; tool rows overlap, so never sum them. Filter `transcript/turns/iterations/blocks` (`code`/`result`) in python_execution; don't dump it. Prefer the live `session` bag for this conversation's current workspace/tool state. This is the recovery path for raw folded current-session content; recovery does not undo fold intents or restore them to model context. Use `sessions()` to find another id."
     :arglists '([] [session-id])}
   session-state
   foundation-inspect)
@@ -1235,18 +1228,8 @@ session id."
 
 (def
   ^{:doc
-    "await sessions()  # newest-first index of EVERY past conversation
-Returns a list of metadata maps you filter in python_execution:
-    [{\"id\", \"channel\", \"title\", \"turn_count\", \"created_at\", \"modified_at\"} ...]
-newest-first; `modified_at` is the latest turn's timestamp (falls back to `created_at` for
-empty sessions). Pass a channel keyword to narrow to one channel. This is a METADATA-ONLY
-index — the content lives behind session_state(id). To find and read one session, pick its
-row off the maps, then hand the `id` on:
-    rows = await sessions()
-    hit  = next(r for r in rows if \"checkout\" in (r[\"title\"] or \"\").lower())
-    convo = await session_state(hit[\"id\"])  # the ONLY way to read full content
-Sort/filter on `title`/`channel`/`modified_at` to select the row — operate on the maps, do
-not `json.dumps` and slice the raw list (a `[:N]` cut silently drops the session you want)."
+    "await sessions(channel=None)  # newest-first conversation index
+Returns string-keyed metadata rows `{id,channel,title,turn_count,created_at,modified_at}`; optional `channel` filters them. Content lives only behind `session_state(id)`. Filter rows in python_execution; don't stringify and blindly slice the list."
     :arglists '([] [channel])}
   sessions
   foundation-sessions)
@@ -1282,12 +1265,11 @@ not `json.dumps` and slice the raw list (a `[:N]` cut silently drops the session
 (def ^:private INTROSPECTION_PROMPT
   (str
     "## Session introspection\n"
-    "- Read a session's raw wire history from `~/.vis/gateway/events/<id>.ndjson`; never grep `.`.\n"
-    "- Call `await session_state()` once. Its `usage` key is the compact per-turn, per-iteration, per-tool, and selected-versus-actual provider ledger with bounded tool errors and routing events. Tool rows overlap when an iteration invoked multiple tools; never sum them.\n"
-    "- Current conversation transcript: `session_state()` → `transcript/turns/iterations/blocks`\n"
-    "  (`code`/`result`); it is also the recovery path for folded content.\n"
-    "- Another conversation: `await sessions()` for the index, then `await session_state(id)`.\n"
-    "- Select and filter these structures in `python_execution`; never dump them whole.\n"))
+    "- Raw wire history: `~/.vis/gateway/events/<id>.ndjson`; never grep `.`.\n"
+    "- Call `await session_state()` once. `usage` summarizes per-turn/iteration/tool/provider routing; tool rows overlap, never sum them.\n"
+    "- Current transcript and folded-content recovery: `transcript/turns/iterations/blocks` (`code`/`result`).\n"
+    "- Other conversation: `await sessions()`, then `await session_state(id)`.\n"
+    "- Filter in `python_execution`; never dump whole structures.\n"))
 
 (defn- introspection-prompt [_env] INTROSPECTION_PROMPT)
 
