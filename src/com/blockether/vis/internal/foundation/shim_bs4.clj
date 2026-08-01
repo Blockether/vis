@@ -37,7 +37,7 @@
      [{:shim/name "bs4"
        :shim/imports ["bs4"]
        :shim/description
-       "BeautifulSoup-compatible `bs4` (find/find_all/select/get_text) in pure Python on stdlib html.parser. Not supported: lxml/html5lib parsers and advanced CSS pseudo-classes in `select`."
+       "`bs4` BeautifulSoup API (`find`, `find_all`, `select`, `get_text`) via stdlib `html.parser`. No lxml/html5lib parsers or advanced CSS pseudo-classes."
        :shim/source "vis-shims/bs4.py"}]}))
 
 (vis/register-extension! vis-extension)
