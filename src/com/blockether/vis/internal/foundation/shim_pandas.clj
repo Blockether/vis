@@ -38,7 +38,7 @@
      [{:shim/name "pandas"
        :shim/imports ["pandas"]
        :shim/description
-       "pandas-compatible `pandas` in pure Python (Series, DataFrame, groupby, merge, read_csv). Not supported: C-speed; `to_csv(path)` disabled (use `to_csv()` for a string); vectorized/IO-heavy APIs beyond the documented set."
+       "Pure-Python `pandas` subset: Series, DataFrame, groupby, merge, read_csv. No C speed or broader vectorized/IO-heavy APIs; `to_csv(path)` is disabled—use `to_csv()` for text."
        :shim/source "vis-shims/pandas.py"}]}))
 
 (vis/register-extension! vis-extension)
