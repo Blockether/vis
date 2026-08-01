@@ -25,7 +25,7 @@ import { GatewaySettingsDialog } from './screens/SettingsScreen';
 import { SessionScreen } from './screens/SessionScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
 import { parseRoute, parseSessionDeepLink, sessionHash, tabHash } from './lib/router';
-import { useVisualViewportShell } from './lib/viewport';
+import { ShellStyleContext, useVisualViewportShell } from './lib/viewport';
 import { App as CapacitorApp } from '@capacitor/app';
 import {
   acquirePushToken,
@@ -563,9 +563,8 @@ export function App() {
 
   // The visual-viewport pin is owned by <Shell> below. Owning it there (instead of in
   // this component) means a keyboard or rotation frame re-renders only <Shell>'s root,
-  // not this whole tree and not the multi-thousand-line session screen. The keyboard/
-  // rotation motion-freeze is applied at the html element by lib/viewport.ts and the
-  // `[data-rotating]` rules in index.css, so it needs no React-driven attribute here.
+  // not this whole tree and not the multi-thousand-line session screen. Rotation is
+  // coordinated imperatively in lib/viewport.ts without stamping a class on <html>.
 
   if (!ready) return <Splash />;
 
@@ -751,16 +750,19 @@ function Splash() {
 }
 
 function Shell({ children }: { children: ReactNode }) {
-  // The visual-viewport pin is written imperatively to :root CSS custom properties
-  // by useVisualViewportShell (see lib/viewport.ts) and consumed by the `.shell-viewport`
-  // class in index.css. A keyboard or rotation frame therefore recomputes only the
-  // style engine — it never re-renders React at all, so the multi-thousand-line
-  // session screen is untouched while the keyboard animates. `children` is a stable
-  // element reference from <App>, so nothing below this root re-renders either.
-  useVisualViewportShell();
+  // Owns the visual-viewport pin so a keyboard/rotation frame re-renders ONLY this root,
+  // not the screens inside it. `children` is a stable element reference created by <App>,
+  // so when this re-renders React bails the whole subtree out — while the context value
+  // still propagates to fixed overlays (the paste editor) that call useShellStyle().
+  const shellStyle = useVisualViewportShell();
   return (
-    <div className="shell-viewport isolate fixed inset-x-0 top-0 flex min-h-0 flex-col overflow-hidden bg-ink text-body">
-      {children}
-    </div>
+    <ShellStyleContext.Provider value={shellStyle}>
+      <div
+        className="isolate fixed inset-x-0 top-0 flex h-dvh min-h-0 flex-col overflow-hidden bg-ink text-body"
+        style={shellStyle}
+      >
+        {children}
+      </div>
+    </ShellStyleContext.Provider>
   );
 }

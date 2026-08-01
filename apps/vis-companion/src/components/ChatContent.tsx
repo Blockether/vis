@@ -37,6 +37,7 @@ import type {
   TranscriptTurn,
 } from '../lib/types';
 import type { GatewayClient } from '../lib/gateway';
+import { ExpandableImage } from './ImageViewer';
 
 const disclosureClass =
   'inline-block shrink-0 text-ui transition-transform duration-150 group-open:rotate-90';
@@ -678,10 +679,16 @@ function turnFallbackNote(turn: TranscriptTurn): string | null {
     'llm.routing/provider-fallback',
     'llm.routing/format-fallback',
   ]);
-  const retryEvents = routing.trace.filter((item) => item.type === 'llm.routing/provider-retry');
+  // `wire/->wire` transforms Clojure's `:event/type` into `event_type`.
+  // Accept `type` too so old persisted traces remain legible.
+  const eventType = (item: Record<string, JsonValue>) =>
+    String(item.event_type ?? item.type ?? '');
+  const retryEvents = routing.trace.filter(
+    (item) => eventType(item) === 'llm.routing/provider-retry',
+  );
   if (!routing.fallback && !retryEvents.length) return null;
 
-  const fallbackEvent = routing.trace.find((item) => fallbackTypes.has(String(item.type ?? '')));
+  const fallbackEvent = routing.trace.find((item) => fallbackTypes.has(eventType(item)));
   const event = fallbackEvent ?? retryEvents.at(-1);
   const retries = retryEvents.length;
   const from = modelPair(routing.selected) ?? 'previous model';
@@ -1171,7 +1178,7 @@ const AttachmentTile = memo(function AttachmentTile({
   return (
     <figure className="mt-2.5 min-w-0">
       {url ? (
-        <img
+        <ExpandableImage
           src={url}
           alt={name}
           loading="lazy"
@@ -1624,7 +1631,7 @@ export const UserMessage = memo(function UserMessage(
       {imageAttachments.length > 0 && (
         <div className="mt-2 flex flex-col items-start gap-2">
           {imageAttachments.map((att, i) => (
-            <img
+            <ExpandableImage
               key={att.id ?? `att-${i}`}
               src={att.base64.startsWith('data:') ? att.base64 : `data:${att.media_type};base64,${att.base64}`}
               alt={att.filename ?? 'attachment'}

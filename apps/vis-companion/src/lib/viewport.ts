@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import type { PluginListenerHandle } from '@capacitor/core';
@@ -16,13 +17,14 @@ import {
 } from './viewport-metrics';
 
 /**
- * iOS animates its keyboard over 0.25s on UIKit's own curve, and `keyboardWillShow`
- * fires BEFORE that animation starts. The shell matches that movement purely in CSS
- * — `html.shell-animating .shell-viewport` in `index.css` runs the same 250ms curve
- * on `height` — so no React render sits between the OS announcing the
- * keyboard and the transition starting. This module only toggles that class; it
- * carries neither the duration nor the curve itself.
+ * iOS animates its keyboard over 0.25s on UIKit's own curve, and
+ * `keyboardWillShow` fires BEFORE that animation starts. Driving the shell with
+ * the same duration and curve, in the frame that event arrives, makes the shell
+ * and the keyboard one movement — instead of the web layer chasing
+ * `visualViewport`, which iOS delivers late and in two or three coarse steps.
  */
+const KEYBOARD_ANIMATION_MS = 250;
+const KEYBOARD_EASING = 'cubic-bezier(0.17, 0.59, 0.4, 0.77)';
 
 /** `input` types that never raise a keyboard. */
 const NON_TEXT_INPUT_TYPES = new Set([
@@ -126,7 +128,6 @@ function endRotation() {
   rotationGuard = null;
   if (!rotating) return;
   rotating = false;
-  document.documentElement.removeAttribute('data-rotating');
   emitRotation('end');
 }
 
@@ -168,10 +169,10 @@ function beginRotation() {
   // rotation; the second must extend the window, not restart the snapshot.
   if (!rotating) {
     rotating = true;
-    // Every clock in the app is stopped for the duration (see `index.css`): an
-    // entry keyframe or a height transition that keeps playing through the flip
-    // animates FROM the old geometry into the new one, which is the sloshing.
-    document.documentElement.setAttribute('data-rotating', '');
+    // Do not stamp a state class onto <html>: a descendant-wide rotation rule
+    // invalidates styles for every node in a transcript at both boundaries of
+    // the flip. The rotation signal below already makes geometry consumers
+    // suspend transitional measurements without touching the rendered tree.
     emitRotation('start');
   }
   // rAF stalls in a hidden webview, so the loop above could never close the
@@ -300,12 +301,11 @@ export function useIsViewportRotating(): boolean {
  * header rides up under the status bar / Dynamic Island and its
  * `env(safe-area-inset-top)` padding goes off-screen with it.
  *
- * The shell is given the exact visible height and shifted back onto the visual
- * viewport (via the `--shell-height` / `--shell-y` custom properties and the
- * `.shell-viewport` class in `index.css`), so the header stays put and the composer
- * sits directly on the keyboard. The custom properties are cleared whenever the
- * visual viewport still matches the layout one, so desktop and idle mobile keep the
- * plain `100dvh` box.
+ * The returned style gives the shell the exact visible height and shifts it
+ * back onto the visual viewport, so the header stays put and the composer sits
+ * directly on the keyboard. It is `undefined` whenever the visual viewport
+ * still matches the layout one, so desktop and idle mobile keep the plain
+ * `h-dvh` box (and no transform containing block).
  *
  * Backgrounding the app freezes those metrics: iOS suspends the webview mid
  * keyboard-teardown and, on resume, neither `resize` nor `scroll` fires. The
@@ -330,49 +330,14 @@ export function shellViewportHeight(): number {
   return clampShellHeight(pinnedShellHeight ?? metrics.visualHeight, metrics);
 }
 
-/**
- * The shell's geometry, written to `:root` as `--shell-height` / `--shell-y`, plus an
- * `html.shell-animating` class for the keyboard's transition and an `html.shell-shifted`
- * class that gates the (rare) layout-viewport shift, so the fixed shell — and any overlay
- * of class `shell-viewport` — tracks the keyboard through CSS alone (see `index.css`).
- * A null height is the unpinned, plain `100dvh` box.
- */
-let shellHeightWritten: number | null | undefined;
-let shellTopWritten = 0;
+export function useVisualViewportShell(): CSSProperties | undefined {
+  const [box, setBox] = useState<Box | null>(null);
+  // True only while the native keyboard animation is running, so the pin
+  // transitions with the keyboard and snaps for everything else (rotation,
+  // wake, a toolbar appearing).
+  const [animating, setAnimating] = useState(false);
 
-function writeShell(height: number | null, top: number): void {
-  if (height === shellHeightWritten && top === shellTopWritten) return;
-  shellHeightWritten = height;
-  shellTopWritten = top;
-  const root = document.documentElement;
-  // `shell-shifted` gates the `transform` rule in `index.css`. Native iOS never
-  // scrolls the layout viewport, so `top` stays `0` and the shell keeps no transform
-  // at all — keeping it off the compositor (see `index.css`).
-  root.classList.toggle('shell-shifted', top !== 0);
-  if (height === null) {
-    root.style.removeProperty('--shell-height');
-    root.style.removeProperty('--shell-y');
-  } else {
-    root.style.setProperty('--shell-height', `${height}px`);
-    root.style.setProperty('--shell-y', `${top}px`);
-  }
-}
-
-let shellAnimatingWritten: boolean | undefined;
-
-function setShellAnimating(on: boolean): void {
-  if (on === shellAnimatingWritten) return;
-  shellAnimatingWritten = on;
-  document.documentElement.classList.toggle('shell-animating', on);
-}
-
-export function useVisualViewportShell(): void {
   useEffect(() => {
-    // React-state aliases for the imperative writers above: every `setBox` /
-    // `setAnimating` below now writes CSS instead of triggering a render.
-    const setBox = (value: Box | null) =>
-      writeShell(value ? value.height : null, value ? value.top : 0);
-    const setAnimating = setShellAnimating;
     const vv = window.visualViewport;
     if (!vv) return;
 
@@ -438,7 +403,12 @@ export function useVisualViewportShell(): void {
             ? deviceHeightLimit(rotatingMetrics)
             : null;
           pinnedShellHeight = limit;
-          writeShell(limit, 0);
+          setBox((prev) => {
+            if (limit === null) return null;
+            return prev && prev.height === limit && prev.top === 0
+              ? prev
+              : { height: limit, top: 0 };
+          });
           return;
         }
         // The native keyboard driver owns the box while the keyboard is up: with
@@ -471,7 +441,9 @@ export function useVisualViewportShell(): void {
             ? { height: clampShellHeight(vv.height, metrics), top }
             : null;
         pinnedShellHeight = next ? next.height : null;
-        setBox(next);
+        setBox((prev) =>
+          prev && next && prev.height === next.height && prev.top === next.top ? prev : next,
+        );
         document.documentElement.style.setProperty(
           '--safe-bottom',
           covered ? '0px' : 'env(safe-area-inset-bottom)',
@@ -544,14 +516,10 @@ export function useVisualViewportShell(): void {
     window.addEventListener('resize', sync);
     document.addEventListener('focusin', onFocusIn);
     // A layout-viewport scroll moves the fixed shell but fires no visual
-    // viewport event, so it has to be watched on its own. On the native iOS
-    // keyboard path the layout viewport cannot scroll at all — `Keyboard.setScroll`
-    // is disabled, the webview's own scroll is off (`scrollEnabled: false` in
-    // capacitor.config) and `html` is `overflow: hidden` — so this capture-phase
-    // listener would fire only for nested scrollers (the transcript), schedule a
-    // rAF, force a full `readViewportMetrics` layout-read every scroll frame, and
-    // then bail because `layoutScroll()` is `0`. It is pure per-frame waste on the
-    // primary platform, so it only runs on the web / Android fallback.
+    // viewport event, so it has to be watched on its own. On native iOS the
+    // layout viewport cannot scroll (`Keyboard.setScroll` and WKWebView scrolling
+    // are disabled), while transcript scrolling bubbles through this capture
+    // listener at 60 Hz. Listening there only forced useless viewport reads.
     if (!nativeKeyboard) window.addEventListener('scroll', sync, true);
 
     // Rotation, not a wake: `start` drops the stale pin in the frame the flip
@@ -594,7 +562,9 @@ export function useVisualViewportShell(): void {
         // one taller than the screen, so the keyboard pin is clamped too.
         const next = { height: clampShellHeight(height, readViewportMetrics()), top: 0 };
         pinnedShellHeight = next.height;
-        setBox(next);
+        setBox((prev) =>
+          prev && prev.height === next.height && prev.top === next.top ? prev : next,
+        );
       };
       const onWillShow = (info: KeyboardInfo) => {
         keyboardUp = true;
@@ -682,5 +652,31 @@ export function useVisualViewportShell(): void {
     };
   }, []);
 
+  if (!box) return undefined;
+  const style: CSSProperties = {
+    height: `${box.height}px`,
+    transform: `translateY(${box.top}px)`,
+  };
+  if (!animating) return style;
+  const curve = `${KEYBOARD_ANIMATION_MS}ms ${KEYBOARD_EASING}`;
+  return { ...style, transition: `height ${curve}, transform ${curve}` };
 }
 
+/**
+ * The shell's visual-viewport pin, shared with fixed overlays WITHOUT forcing the
+ * whole screen to re-render on every keyboard/rotation frame.
+ *
+ * `useVisualViewportShell` drives the app shell (see `Shell` in `App.tsx`). Its state
+ * changes many times during a keyboard animation or a device rotation, so only the
+ * component that owns it (`Shell`) re-renders on those frames. Overlays that must ALSO
+ * follow the visual viewport — the paste editor — read the value here through context,
+ * which React propagates to a consumer even when the screen behind it bails out of the
+ * render.
+ */
+const ShellStyleContext = createContext<CSSProperties | undefined>(undefined);
+
+export function useShellStyle(): CSSProperties | undefined {
+  return useContext(ShellStyleContext);
+}
+
+export { ShellStyleContext };
