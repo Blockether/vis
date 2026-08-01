@@ -1826,35 +1826,36 @@ Result keys are total PER STAGE, never a union: always stage, id, cwd, commands,
     {:symbol 'shell
      :native-tool? true
      :result
-     "Always: `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`, `timed_out`, `note`. `run` adds `timeout_secs`; lifecycle stages add `pid`, `status`, and stage fields. Each command has `command`, `started`, `stdout`, `stderr`, `exit`, `duration_ms`, `timed_out`, `stdout_omitted_chars`, `stderr_omitted_chars`, `status`, and `note`."
+     (str
+       "Always includes `stage`, `id`, `cwd`, `commands`, timing/exit fields, and `note`; run adds "
+       "`timeout_secs`, lifecycle adds `pid`, `status`, and stage fields. Commands include command "
+       "text, timing/exit, stdout/stderr with truncation counts, status, and note.")
      :name "shell"
      :description
      (str
-       "Bounded commands and background-shell lifecycle. ONE options map (`commands` array), never a positional string or array. "
-       "Use `background` for long or interactive work, then `logs`; `send` writes `text`, and `stop` kills. Live ids: `session[\"resources\"]`. "
-       "Output: `r[\"commands\"][0][\"stdout\"]`; `*_omitted_chars` means truncated. Await in `python_execution`.")
+       "Run bounded commands or manage background shells with ONE options map, never a positional string or array. "
+       "Long/interactive: `background`, then `logs`; `send` writes `text`; `stop` kills. Live ids: "
+       "`session[\"resources\"]`. Output: `r[\"commands\"][0][\"stdout\"]`; `*_omitted_chars` means "
+       "truncation. Await in `python_execution`.")
      :render render-shell-result
      :color-role :tool-color/shell
      :schema
      {:type "object"
       :properties
-      {"commands" (batch/commands-property
-                    {:items {:type "string"}
-                     :description "Required for run/new background: ordered `bash -lc` lines."})
+      {"commands" (batch/commands-property {:items {:type "string"}
+                                            :description
+                                            "Required for run/new background: `bash -lc` lines."})
        "op" {:type "string"
              :enum ["run" "background" "logs" "send" "stop"]
-             :description "Stage (default run; background when `id` is supplied)."}
-       "id"
-       {:type "string" :minLength 1 :description "Background resource id for lifecycle operations."}
+             :description "Stage; default run, or background with `id`."}
+       "id" {:type "string" :minLength 1 :description "Background id for lifecycle ops."}
        "timeout_secs"
-       {:type "integer" :minimum 1 :maximum 600 :description "run: timeout; default 120 seconds."}
+       {:type "integer" :minimum 1 :maximum 600 :description "run timeout; default 120s."}
        "cwd" {:type "string"
-              :description
-              "Working directory under an allowed root; relative paths use the workspace."}
-       "n"
-       {:type "integer" :minimum 1 :maximum 2000 :description "logs: tail line count; default 200."}
-       "text" {:type "string" :description "send: exact keystrokes."}
-       "is_enter" {:type "boolean" :description "send: append a newline (default true)."}}
+              :description "Working directory under allowed root; relative uses workspace."}
+       "n" {:type "integer" :minimum 1 :maximum 2000 :description "logs tail lines; default 200."}
+       "text" {:type "string" :description "send keystrokes."}
+       "is_enter" {:type "boolean" :description "send newline; default true."}}
       :additionalProperties false}
      :inject-env? true
      :tag :mutation
