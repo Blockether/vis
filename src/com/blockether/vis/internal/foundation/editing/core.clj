@@ -5962,7 +5962,7 @@
   {:type "object"
    :properties {"path" {:type "string" :minLength 1}
                 "ranges" (assoc cat-ranges-schema
-                           :description "THIS file only; overrides shared `ranges`.")}
+                           :description "THIS file; overrides shared `ranges`.")}
    :required ["path"]
    :additionalProperties false})
 
@@ -5972,16 +5972,15 @@
    :items {:oneOf [{:type "string" :minLength 1} cat-file-entry-schema]}
    :minItems 1
    :description
-   "Exact physical files. Batch all needed regions in one call; strings use shared `ranges`, objects override them."})
+   "Exact physical files. Batch regions; strings use shared `ranges`, objects override."})
 
 (def ^:private cat-schema
   "`cat`'s JSON Schema: plural `files` plus optional shared line `ranges`."
   {:type "object"
    :properties {"files" cat-files-schema
-                "ranges"
-                (assoc cat-ranges-schema
-                  :description
-                  "Inclusive 1-based `[[start,end],…]` windows shared by bare file entries.")}
+                "ranges" (assoc cat-ranges-schema
+                           :description
+                           "Shared inclusive 1-based `[[start,end],…]` windows for bare entries.")}
    :required ["files"]
    :additionalProperties false
    :maxProperties 2})
@@ -5993,13 +5992,13 @@
      :native-tool? true
      :result
      (str
-       "String-keyed `{results}`. File rows have `op`, `path`, `size`, `mtime`, `eof`, `truncated`, `next_offset`, `ranges`, and `anchors`. "
-       "`anchors[\"line:hash\"]={\"text\":line}` is the ONLY content field (no `content`/`lines`) and holds all windows. "
-       "`ranges` carry metadata only (`range`, `eof`, `next_offset`, `truncated`) and never repeat the text. "
-       "Directory rows have `op`, `path`, `type`, `depth`, and `entries`.")
+       "String-keyed `{results}` rows. Files: `{op,path,size,mtime,eof,truncated,next_offset,ranges,anchors}`. "
+       "`anchors[\"line:hash\"]={\"text\":line}` is the ONLY content field (no `content`/`lines`) and holds every window; "
+       "`ranges` carry metadata only (`{range,eof,next_offset,truncated}`) and never repeat the text. "
+       "Directories: `{op,path,type,depth,entries}`.")
      :description
      (str
-       "Read all needed regions from all paths as patch-ready `lineno:hash` anchored lines; directories list instead. "
+       "Read every needed region from all paths as patch-ready `lineno:hash` lines; directories list. "
        "Run `struct_index` first on code. Writes invalidate pre-write anchors for that file, not other files.")
      :render render-cat-result
      :color-role :tool-color/read
