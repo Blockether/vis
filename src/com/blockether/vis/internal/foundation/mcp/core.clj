@@ -532,7 +532,7 @@
   (vis/extension
     {:ext/name "foundation-mcp"
      :ext/description
-     "Model Context Protocol (MCP) client: the gateway daemon auto-connects the stdio/HTTP MCP servers declared in config (:mcp :servers) into ONE shared pool, reconciled on every /reload, and exposes their tools (mcp__servers/mcp__tools/mcp__call) to every session. Supports stdio, remote HTTP (Streamable), and OAuth 2.1 (spec 2025-06-18) with automatic discovery + PKCE. Always on; activates when servers are configured."
+     "MCP client: one gateway-wide pool auto-connects and `/reload`-reconciles configured (`:mcp :servers`) stdio/Streamable HTTP servers; `mcp__servers`, `mcp__tools`, and `mcp__call` reach every session. Supports remote OAuth 2.1 discovery + PKCE (2025-06-18). Always on; active with servers."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
