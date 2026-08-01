@@ -5929,16 +5929,14 @@
      :native-tool? true
      :result
      (str
-       "Batch result: object with string key `results`; each file item has `op`, `path`, `size`, `mtime`, `eof`, `truncated`, "
-       "`next_offset`, `ranges`, and `anchors`. `anchors` maps each `line:hash` to `{\"text\": line}` and is the ONLY "
-       "content field (no `content`/`lines`), already holding EVERY window's lines; `ranges` window maps carry metadata "
-       "only (`range`, `eof`, `next_offset`, `truncated`) and never repeat the text. "
-       "Directory items have `op`, `path`, `type`, `depth`, and `entries`.")
+       "String-keyed `{results}`. File rows have `op`, `path`, `size`, `mtime`, `eof`, `truncated`, `next_offset`, `ranges`, and `anchors`. "
+       "`anchors[\"line:hash\"]={\"text\":line}` is the ONLY content field (no `content`/`lines`) and holds all windows. "
+       "`ranges` carry metadata only (`range`, `eof`, `next_offset`, `truncated`) and never repeat the text. "
+       "Directory rows have `op`, `path`, `type`, `depth`, and `entries`.")
      :description
      (str
-       "Read EVERY region you already need, from EVERY requested path, as patch-ready `lineno:hash` anchored lines. "
-       "A DIRECTORY entry lists instead (`depth`/`is_hidden`). "
-       "Run `struct_index` first on code; a write invalidates pre-write anchors for that file, not other files.")
+       "Read all needed regions from all paths as patch-ready `lineno:hash` anchored lines; directories list instead. "
+       "Run `struct_index` first on code. Writes invalidate pre-write anchors for that file, not other files.")
      :render render-cat-result
      :color-role :tool-color/read
      :schema cat-schema
@@ -5952,17 +5950,16 @@
     {:symbol 'grep
      :native-tool? true
      :result
-     (str "Object with string keys `op`, `query`, `needles`, `searched_paths`, `missing_paths`, "
-          "`paths`, `matches`, `file_counts`, `first_hit`, `hint`, `hit_count`, `file_count`, "
-          "`total_file_count`, `total_file_count_is_exact`, `limit`, `truncated_by`, and "
-          "`hits_truncated_by`. Exact nested shape: `matches[path][\"line:hash\"] = "
-          "{\"text\": string, \"before\": [{\"line\": integer, \"text\": string}], "
-          "\"after\": [{\"line\": integer, \"text\": string}]}` — a mapping of mappings, never a "
-          "list; `before` and `after` are omitted only on a row when empty.")
+     (str
+       "String-keyed object with `op`, `query`, `needles`, `searched_paths`, `missing_paths`, `paths`, `matches`, "
+       "`file_counts`, `first_hit`, `hint`, `hit_count`, `file_count`, `total_file_count`, `total_file_count_is_exact`, "
+       "`limit`, `truncated_by`, and `hits_truncated_by`. `matches[path][\"line:hash\"]` is "
+       "`{\"text\":string, \"before\"?:[{\"line\":integer,\"text\":string}], \"after\"?:[{\"line\":integer,\"text\":string}]}`: a mapping of mappings, never a list; "
+       "`before`/`after` are omitted only when empty.")
      :description
      (str
-       "Find code by CONTENT (literal, smart-case) and by fuzzy file name — the first move when location is "
-       "unknown; `query: \"\"` lists scoped files. Content is complete when `hits_truncated_by` is null.")
+       "Find literal smart-case CONTENT and fuzzy file names—the first move when location is unknown. `query: \"\"` "
+       "lists scoped files. Content is complete when `hits_truncated_by` is null.")
      :render render-grep-result
      :color-role :tool-color/search
      :schema
@@ -5971,12 +5968,12 @@
       {"query"
        {:oneOf [{:type "string"} {:type "array" :items {:type "string" :minLength 1} :minItems 1}]
         :description
-        "Literal content substring and/or filename fragment; an empty string lists scoped files ranked by frecency/recency. A list is OR for content search; filename matching uses the joined terms."}
+        "Literal content or filename fragment; an empty string lists by frecency/recency. A list is OR for content search; filenames use the joined terms."}
        "paths"
        {:type "array"
         :items {:type "string" :minLength 1}
         :description
-        "Scopes (default: whole tree). An existing file scope is searched exactly and never widened on zero content hits; a missing scope falls back to its nearest existing directory and is echoed in missing_paths. Returned `paths` are exact physical paths — hand them to cat/struct_index unchanged, never rebuilt from a language namespace."}
+        "Scopes (default whole tree). An existing file is searched exactly and never widened on zero hits. A missing scope uses its nearest existing directory and appears in `missing_paths`. Returned `paths` are exact physical paths; pass unchanged, never rebuilt from a language namespace."}
        "include" {:oneOf [{:type "array" :items {:type "string"}} {:type "string"}]
                   :description "Restrict content search to these globs, e.g. [\"**/*.clj\"]."}
        "context" {:type "integer"
