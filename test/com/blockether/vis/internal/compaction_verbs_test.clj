@@ -1037,9 +1037,9 @@
           (sf {"through" "t1/i2"} "traced")))))
   (it "a gist-less fold still shows the tokens + reduction suffix"
       (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
-        (expect (=
-                  "folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44%→~31% (42k→30k tokens)"
-                  (sf ["t1/i1"])))))
+        (expect
+          (= "folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44%→~31% (42k→30k tokens)"
+             (sf ["t1/i1"])))))
   (it
     "a scope with NO stamped weight reclaims nothing, so the card reads an explicit saved ~0 alongside the live window fullness"
     (let [sf (get (compaction-verbs (priced-ctx)) 'session-fold)]
@@ -1196,20 +1196,21 @@
    char-folds mid-word and the companion gives `overflow-x-auto`. Prose and
    bullets soft-wrap to whatever width each surface has, so one engine-side
    shape reads correctly in the TUI and on the web."
-  (it
-    "splits a full receipt into headline + gist paragraph + metric bullets"
-    (let
-      [card (session-fold-card (str "folded t1/i1 · saved ~60k tokens · ~67% of budget"
-                                    " · context 94%→~31% (90k→30k tokens) · more results: ntr.describe()"
-                                    " → bigger task"))]
-      ;; Collapsed view: WHAT was folded + HOW MUCH it reclaimed.
-      (expect (= "folded `t1/i1` · saved **~60k tokens**" (:summary card)))
-      ;; `~67% of budget` qualifies the `saved …` it follows, so the pair
-      ;; stays on ONE bullet instead of stranding a bare percentage.
-      (expect (= (str "\nbigger task\n\n" "- **saved** ~60k tokens · ~67% of budget\n"
-                      "- **context** 94%→~31% (90k→30k tokens)\n" "- **more results:** `ntr.describe()`")
-                 (:body card)))
-      (expect (not (str/includes? (:body card) "```")))))
+  (it "splits a full receipt into headline + gist paragraph + metric bullets"
+      (let
+        [card (session-fold-card
+                (str "folded t1/i1 · saved ~60k tokens · ~67% of budget"
+                     " · context 94%→~31% (90k→30k tokens) · more results: ntr.describe()"
+                     " → bigger task"))]
+        ;; Collapsed view: WHAT was folded + HOW MUCH it reclaimed.
+        (expect (= "folded `t1/i1` · saved **~60k tokens**" (:summary card)))
+        ;; `~67% of budget` qualifies the `saved …` it follows, so the pair
+        ;; stays on ONE bullet instead of stranding a bare percentage.
+        (expect (= (str "\nbigger task\n\n" "- **saved** ~60k tokens · ~67% of budget\n"
+                        "- **context** 94%→~31% (90k→30k tokens)\n"
+                        "- **more results:** `ntr.describe()`")
+                   (:body card)))
+        (expect (not (str/includes? (:body card) "```")))))
   (it "a tilde in an accessor label can't strike out the breadcrumb"
       ;; ONE tilde opens GFM strikethrough and tool gists are full of `~/vis/…`
       ;; paths, so every label is monospaced — and each accessor gets its own

@@ -275,7 +275,7 @@
                 mid (Math/toRadians (+ a0 (/ ang 2.0)))
                 lx (+ cx (* (+ r 16) (Math/cos mid)))
                 ly (+ cy (* (+ r 16) (Math/sin mid)))
-                lbl (if (and labels (< i (count labels)))
+                lbl (if (and labels (< (long i) (count labels)))
                       (str (nth labels i))
                       (str (Math/round (* 100.0 frac)) "%"))]
 

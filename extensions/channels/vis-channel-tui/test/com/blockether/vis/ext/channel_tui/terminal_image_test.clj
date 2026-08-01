@@ -46,29 +46,23 @@
 
 (defdescribe png-transcode-test
              ;; Kitty's f=100 is PNG-only, so a JPEG drop must be re-encoded to PNG.
-             (it
-               "transcodes a JPEG file into a downscaled PNG base64 payload"
-               (let
-                 [tmp
-                  (java.io.File/createTempFile "vis-timg" ".jpg")]
+             (it "transcodes a JPEG file into a downscaled PNG base64 payload"
+                 (let [tmp (java.io.File/createTempFile "vis-timg" ".jpg")]
+                   (try (with-open [src (img/blank 400 300 "red")]
+                          (img/save! src tmp {:format :jpeg}))
+                        (let
+                          [b64 (timg/transcode->png-base64 (.getAbsolutePath tmp)
+                                                           {:cols 20 :rows 10})
+                           bytes (.decode (java.util.Base64/getDecoder) ^String b64)]
 
-                 (try (with-open [src (img/blank 400 300 "red")]
-                        (img/save! src tmp {:format :jpeg}))
-                      (let
-                        [b64
-                         (timg/transcode->png-base64 (.getAbsolutePath tmp) {:cols 20 :rows 10})
-
-                         bytes
-                         (.decode (java.util.Base64/getDecoder) ^String b64)]
-
-                        (expect (string? b64))
-                        ;; PNG magic 0x89 'P' 'N' 'G'
-                        (expect (= [-119 80 78 71] (map #(aget ^bytes bytes %) (range 4))))
-                        ;; 20 cols x 9px = 180 wide box; the 400x300 source must shrink.
-                        (let [{:keys [width height]} (img/probe bytes)]
-                          (expect (<= width 180))
-                          (expect (<= height 180))))
-                      (finally (.delete tmp))))))
+                          (expect (string? b64))
+                          ;; PNG magic 0x89 'P' 'N' 'G'
+                          (expect (= [-119 80 78 71] (map #(aget ^bytes bytes %) (range 4))))
+                          ;; 20 cols x 9px = 180 wide box; the 400x300 source must shrink.
+                          (let [{:keys [width height]} (img/probe bytes)]
+                            (expect (<= width 180))
+                            (expect (<= height 180))))
+                        (finally (.delete tmp))))))
 
 (defdescribe kitty-encoding-test
              (it "small payload is a single a=T transmit+display escape with C=1"

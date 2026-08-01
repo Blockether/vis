@@ -203,8 +203,7 @@
    `cmd /c start`). Uses the same spawner as every other external link in vis,
    so there is no `java.awt.Desktop` and no `java.desktop` module involved."
   [^String url]
-  (try (= :ok (:status (external-opener/open! url)))
-       (catch Throwable _ false)))
+  (try (= :ok (:status (external-opener/open! url))) (catch Throwable _ false)))
 
 (defn- await-loopback-code!
   "Bind a one-shot HTTP server on 127.0.0.1, print the authorization URL, best-effort

@@ -4671,13 +4671,11 @@
           ;; exact invocation submitted to the tool, so prefer its raw `:code` and
           ;; fall back to `:display-code` only when an older frame omitted it.
           code-text
-          (str/trim
-            (str
-              (if (and running?
-                       (some? (:vis/tool-name form))
-                       (not= (name (:vis/tool-name form)) "python_execution"))
-                (or (not-empty (str code)) display-code)
-                (or (not-empty (str display-code)) (vis/beautify-python code)))))
+          (str/trim (str (if (and running?
+                                  (some? (:vis/tool-name form))
+                                  (not= (name (:vis/tool-name form)) "python_execution"))
+                           (or (not-empty (str code)) display-code)
+                           (or (not-empty (str display-code)) (vis/beautify-python code)))))
 
           ;; Tree-sitter recovers from syntax errors, so colorize failed programs too.
           ;; The diagnostic caret remains plain and column-aligned below.
@@ -4953,15 +4951,19 @@
           (when error
             (mapv #(line-entry (str c-marker %)) (wrap-text (form-error-headline error) fill-w)))
 
-          ;; Completed native invocation source is redundant beside its op-card,
-          ;; but the invocation currently executing must stay visible. Python is
-          ;; user-relevant evidence in every state; failed native calls retain only
-          ;; their compact error message. `vis/hide-tool-code?` owns the completed
-          ;; policy and `running?` deliberately overrides it here.
+          ;; Completed native invocation source is redundant beside its op-card.
+          ;; While a call is still RUNNING only `vis/show-running-tool-code?`
+          ;; tools (shell / python_execution) keep their submitted source on
+          ;; screen — for everything else a 200ms cat/grep would flash a code
+          ;; frame nobody reads, so it just spins behind its badge. Python is
+          ;; user-relevant evidence in every state; failed native calls retain
+          ;; only their compact error message. `vis/hide-tool-code?` owns the
+          ;; completed policy.
           ;; Blank non-tool code also drops empty chrome.
           hide-code-chrome?
           (or (and (not is-error?) (str/blank? code-text))
-              (and (vis/hide-tool-code? form) (not running?)))
+              (and (vis/hide-tool-code? form)
+                   (not (and running? (vis/show-running-tool-code? form)))))
 
           code-block
           (cond hide-code-chrome?

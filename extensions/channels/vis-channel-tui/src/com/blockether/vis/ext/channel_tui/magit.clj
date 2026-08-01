@@ -452,15 +452,12 @@
              (head-exists? root)
              (= 0 (:exit (git! root ["diff" "--cached" "--quiet"]))))
         {:ok? false :msg "Nothing staged (stage with s/S first)"}
-        :else
-        (action-result
-          (if amend? "Amended commit" "Committed")
-          (git/commit!
-            (as-file root)
-            (cond-> ["commit" "-m" (str message)]
-              amend?
-              (conj "--amend"))
-            nil))))
+        :else (action-result (if amend? "Amended commit" "Committed")
+                             (git/commit! (as-file root)
+                                          (cond-> ["commit" "-m" (str message)]
+                                            amend?
+                                            (conj "--amend"))
+                                          nil))))
 
 (defn push!
   "`opts`: :remote (default \"origin\"), :set-upstream? adds `-u <remote> <branch>`,

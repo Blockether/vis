@@ -441,9 +441,15 @@
 
 (defn- transport-of
   [{:keys [transport url]}]
-  (case (some-> transport name)
-    ("streamable_http" "streamable-http" "http") :streamable-http
-    "stdio" :stdio
+  (case
+    (some-> transport
+            name)
+    ("streamable_http" "streamable-http" "http")
+    :streamable-http
+
+    "stdio"
+    :stdio
+
     (if url :streamable-http :stdio)))
 
 (defn connect
@@ -491,13 +497,20 @@
 
     ;; Per spec, acknowledge before issuing further requests.
     ((:notify-fn conn) "notifications/initialized" nil)
-    (let [negotiated-protocol-version (or (get init "protocolVersion") protocol-version)
-          _ (when-let [version-atom (:protocol-version-atom t)]
-              (reset! version-atom negotiated-protocol-version))
-          conn (assoc conn
-                 :server-info (get init "serverInfo")
-                 :server-capabilities (get init "capabilities")
-                 :protocol-version negotiated-protocol-version)]
+    (let
+      [negotiated-protocol-version
+       (or (get init "protocolVersion") protocol-version)
+
+       _
+       (when-let [version-atom (:protocol-version-atom t)]
+         (reset! version-atom negotiated-protocol-version))
+
+       conn
+       (assoc conn
+         :server-info (get init "serverInfo")
+         :server-capabilities (get init "capabilities")
+         :protocol-version negotiated-protocol-version)]
+
       ;; Wire the optional HTTP listen channel: server-pushed
       ;; `notifications/tools/list_changed` invalidates the tools cache so a
       ;; repeat `list-tools` re-fetches; any caller-supplied `:on-notification`

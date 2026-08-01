@@ -324,15 +324,30 @@
         ;; configuration shapes. `transport` is optional so a standard config
         ;; can omit it; `http` remains a read-compatible alias for pre-canonical
         ;; Vis state and is normalized to `streamable_http` on a gateway save.
-        (let [transport (case (get % "transport")
-                          "http" "streamable_http"
-                          (get % "transport"))
-              has-cmd? (non-blank-string? (get % "command"))
-              has-url? (non-blank-string? (get % "url"))]
+        (let
+          [transport
+           (case (get % "transport")
+             "http"
+             "streamable_http"
+
+             (get % "transport"))
+
+           has-cmd?
+           (non-blank-string? (get % "command"))
+
+           has-url?
+           (non-blank-string? (get % "url"))]
+
           (case transport
-            "stdio" (and has-cmd? (not has-url?))
-            "streamable_http" (and has-url? (not has-cmd?))
-            nil (and (or has-cmd? has-url?) (not (and has-cmd? has-url?)))
+            "stdio"
+            (and has-cmd? (not has-url?))
+
+            "streamable_http"
+            (and has-url? (not has-cmd?))
+
+            nil
+            (and (or has-cmd? has-url?) (not (and has-cmd? has-url?)))
+
             false))))
 (s/def ::mcp-servers
   #(and (map? %) (every? non-blank-string? (keys %)) (every? (spec-pred ::mcp-server) (vals %))))

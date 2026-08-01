@@ -410,7 +410,11 @@ def __vis_install_matplotlib__():
             lines.append(fence)
             print("\n".join(lines))
             return True
-        except Exception:
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            # Host-side failures arrive as foreign throwables that a plain
+            # `except Exception:` does not catch; fall back to ASCII output.
             return False
 
     def show(*args, **kwargs):
@@ -1997,7 +2001,14 @@ def __vis_install_matplotlib__():
             raise RuntimeError(
                 "vis: matplotlib imaging backend is not bound in this sandbox."
             )
-        env = render(_spec())
+        try:
+            env = render(_spec())
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as _e:
+            # Foreign (host) throwables are not Python exceptions, so without
+            # this they escape every `except Exception:` in calling code.
+            raise RuntimeError("matplotlib render failed: " + str(_e))
         if not env[0]:
             raise RuntimeError("matplotlib render failed: " + str(env[1]))
         data = base64.b64decode(env[1])

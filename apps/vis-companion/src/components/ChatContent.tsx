@@ -897,14 +897,23 @@ function formIsRunning(form: TranscriptForm): boolean {
   );
 }
 
+// Mirrors `form/running-code-tools`: the only native tools whose submitted source
+// stays on screen while the call is still running. Everything else spins behind
+// its op-card instead of flashing a bordered code frame for 200ms.
+const RUNNING_CODE_TOOLS = new Set(['python_execution', 'shell']);
+
 function showFormCode(form: TranscriptForm, code: string): boolean {
   if (!code) return false;
   if (!form.tool_name) return true;
-  // Keep completed native invocations compact behind their result card, but while
-  // an operation is running its submitted source is the most important fact on
-  // screen. `block.started` carries that exact source and the Running… sentinel.
-  // Python remains evidence after completion as well, whether it passed or failed.
-  return form.tool_name === 'python_execution' || formIsRunning(form);
+  // Keep completed native invocations compact behind their result card. A long
+  // `shell`/`python_execution` call is the exception while it runs: the submitted
+  // command IS the most important fact on screen, and `block.started` carries that
+  // exact source plus the Running… sentinel. Python remains evidence after
+  // completion as well, whether it passed or failed.
+  return (
+    form.tool_name === 'python_execution'
+    || (formIsRunning(form) && RUNNING_CODE_TOOLS.has(form.tool_name))
+  );
 }
 
 const PYTHON_PREVIEW_LINES = 5;

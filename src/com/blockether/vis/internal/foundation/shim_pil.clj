@@ -314,7 +314,7 @@
      need
      (* w h 4)]
 
-    (when (> need max-decode-bytes)
+    (when (> need (long max-decode-bytes))
       (throw
         (ex-info
           (format
@@ -322,7 +322,7 @@
             w
             h
             (/ (double need) 1048576.0)
-            (long (/ max-decode-bytes 1048576)))
+            (long (/ (long max-decode-bytes) 1048576)))
           {:width w :height h :bytes need :limit max-decode-bytes})))))
 
 (defn- frame-raster
@@ -1664,7 +1664,10 @@
    screen-space `(cos a, sin a)` already gives with y pointing down."
   [kind x0 y0 x1 y1 start end]
   (let
-    [cx
+    [start
+     (double start)
+
+     cx
      (/ (+ (double x0) (double x1)) 2.0)
 
      cy

@@ -255,16 +255,18 @@
      saved
      (atom nil)]
 
-    (with-redefs [config/load-config (constantly (assoc base
-                                                   :fallback-provider "openai"
-                                                   :fallback-model "gpt-5"))]
+    (with-redefs
+      [config/load-config (constantly (assoc base
+                                        :fallback-provider "openai"
+                                        :fallback-model "gpt-5"))]
       (is (= {:provider-id :openai :model "gpt-5"} (providers/fallback-selection fleet primary))))
     (with-redefs [config/load-config (constantly base)]
       (is (nil? (providers/fallback-selection fleet primary))
           "an unset tag never invents a second choice"))
-    (with-redefs [config/load-config (constantly (assoc base
-                                                   :fallback-provider "anthropic-coding-plan"
-                                                   :fallback-model "claude-opus-4-8"))]
+    (with-redefs
+      [config/load-config (constantly (assoc base
+                                        :fallback-provider "anthropic-coding-plan"
+                                        :fallback-model "claude-opus-4-8"))]
       (is (nil? (providers/fallback-selection fleet primary))
           "a tag on the primary's own provider is no fallback at all"))
     (with-redefs

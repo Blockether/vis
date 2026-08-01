@@ -1573,8 +1573,10 @@
                        (expect (= 20 (long (:crop-top got)))))))
                (it "iterm2 normalizes every partial image into the visible rows"
                    (with-redefs [timg/images-protocol (constantly :iterm2)]
-                     (let [bottom (:img (first (fit (band 10 0 5) 0 15)))
-                           scrolled (:img (first (fit (band 20 20 0) 0 30)))]
+                     (let
+                       [bottom (:img (first (fit (band 10 0 5) 0 15)))
+                        scrolled (:img (first (fit (band 20 20 0) 0 30)))]
+
                        (expect (= 10 (long (:rows bottom))))
                        (expect (= 10 (long (:cols bottom))))
                        (expect (= 20 (long (:rows scrolled))))

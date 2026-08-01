@@ -230,28 +230,28 @@
                      (expect (= 1 (count (:commits m)))))
                    (expect (= "initial, reworded" (magit/last-commit-message dir)))))
              (it "routes through the shared semantic commit operation"
-                 (let [dir
-                       (init-repo!)
+                 (let
+                   [dir
+                    (init-repo!)
 
-                       extension-name
-                       "test.magit-commit-gate"]
+                    extension-name
+                    "test.magit-commit-gate"]
 
                    (spit (str dir "/a.txt") "guarded\n")
                    (magit/stage-file! dir "a.txt")
-                   (try
-                     (extension/register-extension!
-                       {:ext/name extension-name
-                        :ext/description "block Magit commit"
-                        :ext/op-hooks
-                        [{:op :git/commit
-                          :phase :around
-                          :fn (fn [_context _op _args _next]
-                                (throw (ex-info "verification evidence missing" {})))}]})
-                     (let [result (magit/commit! dir "blocked" {})]
-                       (expect (false? (:ok? result)))
-                       (expect (= "verification evidence missing" (:msg result)))
-                       (expect (= "initial" (:head-subject (magit/status-model dir)))))
-                     (finally (extension/deregister-extension! extension-name))))))
+                   (try (extension/register-extension!
+                          {:ext/name extension-name
+                           :ext/description "block Magit commit"
+                           :ext/op-hooks [{:op :git/commit
+                                           :phase :around
+                                           :fn (fn [_context _op _args _next]
+                                                 (throw (ex-info "verification evidence missing"
+                                                                 {})))}]})
+                        (let [result (magit/commit! dir "blocked" {})]
+                          (expect (false? (:ok? result)))
+                          (expect (= "verification evidence missing" (:msg result)))
+                          (expect (= "initial" (:head-subject (magit/status-model dir)))))
+                        (finally (extension/deregister-extension! extension-name))))))
 
 ;;; ── branches ────────────────────────────────────────────────────────────────
 
@@ -750,22 +750,22 @@
 
 ;;; ── Multi-root workspaces (one root + extra filesystem roots, drafts) ───────
 
-(defdescribe
-  workspace-roots-test
-  (it "nil workspace falls back to the launch root"
-      (expect (= [{:root "/here" :trunk "/here" :label "here" :draft? false}]
-                 (magit/workspace-roots nil "/here"))))
-  (it "blank fallback and nil workspace yield no roots"
-      (expect (= [] (magit/workspace-roots nil "")))
-      (expect (= [] (magit/workspace-roots nil nil))))
-  (it "trunk workspace uses its primary root"
-      (let [roots (magit/workspace-roots {:root "/w/proj"} "/ignored")]
-        (expect (= [{:root "/w/proj" :trunk "/w/proj" :label "proj" :draft? false}] roots))))
-  (it "draft workspace uses its clone labelled by the trunk"
-      (expect (= [{:root "/clones/proj" :trunk "/real/proj" :label "proj" :draft? true}]
-                 (magit/workspace-roots
-                   {:root "/clones/proj" :repo-root "/real/proj" :draft? true :fork-ms 5}
-                   nil)))))
+(defdescribe workspace-roots-test
+             (it "nil workspace falls back to the launch root"
+                 (expect (= [{:root "/here" :trunk "/here" :label "here" :draft? false}]
+                            (magit/workspace-roots nil "/here"))))
+             (it "blank fallback and nil workspace yield no roots"
+                 (expect (= [] (magit/workspace-roots nil "")))
+                 (expect (= [] (magit/workspace-roots nil nil))))
+             (it "trunk workspace uses its primary root"
+                 (let [roots (magit/workspace-roots {:root "/w/proj"} "/ignored")]
+                   (expect (= [{:root "/w/proj" :trunk "/w/proj" :label "proj" :draft? false}]
+                              roots))))
+             (it "draft workspace uses its clone labelled by the trunk"
+                 (expect (= [{:root "/clones/proj" :trunk "/real/proj" :label "proj" :draft? true}]
+                            (magit/workspace-roots
+                              {:root "/clones/proj" :repo-root "/real/proj" :draft? true :fork-ms 5}
+                              nil)))))
 
 (defdescribe
   multi-status-rows-test

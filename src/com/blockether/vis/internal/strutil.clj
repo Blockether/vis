@@ -23,11 +23,9 @@
    longer fences: pick the shortest safe one."
   [body]
   (let
-    [max-run
-     (->> (re-seq #"`+" (str body))
-          (map count)
-          (reduce max 0))]
-
+    [max-run (->> (re-seq #"`+" (str body))
+                  (map count)
+                  (reduce max 0))]
     (apply str (repeat (max 3 (inc (long max-run))) "`"))))
 
 (defn fenced

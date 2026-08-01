@@ -70,6 +70,19 @@
     (let [k (str sid)]
       (if (contains? @pending k) (pending->val (get @pending k)) (db-read db-info sid)))))
 
+(defn pending-pref
+  "The UNFLUSHED in-memory preference for `sid` as `[pending? value]`.
+
+   Callers that already hold the session's persisted `llm_pref_*` columns (the
+   gateway soul reads the whole `session_soul` row anyway) use this to honour a
+   just-made pick during its debounce window WITHOUT paying for a DB read. The
+   two-element answer distinguishes \"nothing pending\" from \"pending CLEAR\"
+   (back to the router default), which a bare nil cannot."
+  [sid]
+  (let [k (str sid)
+        p @pending]
+    (if (contains? p k) [true (pending->val (get p k))] [false nil])))
+
 (defn model-of-cached
   "Like `model-of` but DISPLAY-oriented: when no pending value exists, a recent
    DB value is served from a tiny TTL cache so callers can read it every frame

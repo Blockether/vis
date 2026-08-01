@@ -1279,66 +1279,67 @@
    repaint history."
   #{"reasoning_level" "openai_codex_verbosity"})
 
-(reg-event-db :resync-toggle-settings
-              ;; Triggered by the toggles-registry listener whenever a flip
-              ;; happens (settings dialog row, programmatic vis/toggle-set-value!,
-              ;; provider-side cycle event). Rebuilds the cached `:settings`
-              ;; projection so consumers reading `(get settings :show-thinking)`
-              ;; etc. observe the new value on the very next paint.
-              ;;
-              ;; The optional toggle id says WHICH toggle flipped; see
-              ;; `render-neutral-toggle-ids`. Omitted id = unknown flip = bust
-              ;; everything, the old conservative behaviour.
-              (fn [db [_ toggle-id]]
-                ;; Drop BOTH render caches. A registry toggle changes what a
-                ;; bubble paints, but the projected lines live in
-                ;; `render/fmt-cache` (keyed on message identity, NOT toggle
-                ;; value) and the row count lives in the `virtual` height
-                ;; cache (its `settings-fingerprint` only tracks the keys
-                ;; mirrored into `:settings` — registry-only toggles like
-                ;; `:vis/show-thinking` aren't in
-                ;; it). Without this bust the flip resolved live in the
-                ;; registry but the painter kept handing back stale cached
-                ;; lines/heights, so the new value only appeared after a
-                ;; restart cleared the process caches. The local-settings
-                ;; path already busts fmt-cache via `apply-settings-update!`;
-                ;; the registry path needs the same on both caches.
-                (let [render-neutral? (contains? render-neutral-toggle-ids
-                                                 (some-> toggle-id name))]
-                  ;; Drop BOTH render caches. A registry toggle changes what a
-                  ;; bubble paints, but the projected lines live in
-                  ;; `render/fmt-cache` (keyed on message identity, NOT toggle
-                  ;; value) and the row count lives in the `virtual` height
-                  ;; cache (its `settings-fingerprint` only tracks the keys
-                  ;; mirrored into `:settings` — registry-only toggles like
-                  ;; `:vis/show-thinking` aren't in
-                  ;; it). Without this bust the flip resolved live in the
-                  ;; registry but the painter kept handing back stale cached
-                  ;; lines/heights, so the new value only appeared after a
-                  ;; restart cleared the process caches. The local-settings
-                  ;; path already busts fmt-cache via `apply-settings-update!`;
-                  ;; the registry path needs the same on both caches.
-                  (when-not render-neutral?
-                    (render/invalidate-cache!)
-                    (virtual/invalidate-heights!))
-                  (let
-                    [settings (merge (migrated-toggle-projection)
-                                     (select-keys (:settings db) (keys default-settings)))]
-                    ;; The invalidate above dropped EVERY sticky height - the whole
-                    ;; transcript is back on estimates. Re-warm in the background
-                    ;; (same worker the startup path uses) so total-h re-settles
-                    ;; while the user is still idle; without this the corrections
-                    ;; land mid-scroll and jump the scrollbar thumb. Width comes
-                    ;; from the last published layout; a nil layout (no frame yet)
-                    ;; skips - the startup warm is still in flight then anyway.
-                    (when-let [cols (and (not render-neutral?) (:cols (:layout db)))]
-                      (virtual/rewarm! (:messages db)
-                                       (max 1 (- (long cols) (long render/MESSAGE_SIDE_PAD)))
-                                       settings
-                                       {:session-id (get-in db [:session :id])
-                                        :detail-expansions (:detail-expansions db)
-                                        :on-warm #(dispatch [:bump-render-version])}))
-                    (assoc db :settings settings)))))
+(reg-event-db
+  :resync-toggle-settings
+  ;; Triggered by the toggles-registry listener whenever a flip
+  ;; happens (settings dialog row, programmatic vis/toggle-set-value!,
+  ;; provider-side cycle event). Rebuilds the cached `:settings`
+  ;; projection so consumers reading `(get settings :show-thinking)`
+  ;; etc. observe the new value on the very next paint.
+  ;;
+  ;; The optional toggle id says WHICH toggle flipped; see
+  ;; `render-neutral-toggle-ids`. Omitted id = unknown flip = bust
+  ;; everything, the old conservative behaviour.
+  (fn [db [_ toggle-id]]
+    ;; Drop BOTH render caches. A registry toggle changes what a
+    ;; bubble paints, but the projected lines live in
+    ;; `render/fmt-cache` (keyed on message identity, NOT toggle
+    ;; value) and the row count lives in the `virtual` height
+    ;; cache (its `settings-fingerprint` only tracks the keys
+    ;; mirrored into `:settings` — registry-only toggles like
+    ;; `:vis/show-thinking` aren't in
+    ;; it). Without this bust the flip resolved live in the
+    ;; registry but the painter kept handing back stale cached
+    ;; lines/heights, so the new value only appeared after a
+    ;; restart cleared the process caches. The local-settings
+    ;; path already busts fmt-cache via `apply-settings-update!`;
+    ;; the registry path needs the same on both caches.
+    (let
+      [render-neutral? (contains? render-neutral-toggle-ids
+                                  (some-> toggle-id
+                                          name))]
+      ;; Drop BOTH render caches. A registry toggle changes what a
+      ;; bubble paints, but the projected lines live in
+      ;; `render/fmt-cache` (keyed on message identity, NOT toggle
+      ;; value) and the row count lives in the `virtual` height
+      ;; cache (its `settings-fingerprint` only tracks the keys
+      ;; mirrored into `:settings` — registry-only toggles like
+      ;; `:vis/show-thinking` aren't in
+      ;; it). Without this bust the flip resolved live in the
+      ;; registry but the painter kept handing back stale cached
+      ;; lines/heights, so the new value only appeared after a
+      ;; restart cleared the process caches. The local-settings
+      ;; path already busts fmt-cache via `apply-settings-update!`;
+      ;; the registry path needs the same on both caches.
+      (when-not render-neutral? (render/invalidate-cache!) (virtual/invalidate-heights!))
+      (let
+        [settings (merge (migrated-toggle-projection)
+                         (select-keys (:settings db) (keys default-settings)))]
+        ;; The invalidate above dropped EVERY sticky height - the whole
+        ;; transcript is back on estimates. Re-warm in the background
+        ;; (same worker the startup path uses) so total-h re-settles
+        ;; while the user is still idle; without this the corrections
+        ;; land mid-scroll and jump the scrollbar thumb. Width comes
+        ;; from the last published layout; a nil layout (no frame yet)
+        ;; skips - the startup warm is still in flight then anyway.
+        (when-let [cols (and (not render-neutral?) (:cols (:layout db)))]
+          (virtual/rewarm! (:messages db)
+                           (max 1 (- (long cols) (long render/MESSAGE_SIDE_PAD)))
+                           settings
+                           {:session-id (get-in db [:session :id])
+                            :detail-expansions (:detail-expansions db)
+                            :on-warm #(dispatch [:bump-render-version])}))
+        (assoc db :settings settings)))))
 
 (reg-event-fx :cycle-reasoning-level
               (fn [db _]
@@ -1356,8 +1357,7 @@
                   ;; cycled the level AGAIN — every retry guaranteeing the next
                   ;; one. That livelock is why Ctrl+X r span through reasoning
                   ;; levels forever instead of advancing by one.
-                  {:db db
-                   :fx [[:cycle-toggle "reasoning_level" "Reasoning"]]})))
+                  {:db db :fx [[:cycle-toggle "reasoning_level" "Reasoning"]]})))
 
 (reg-event-fx :cycle-codex-verbosity
               (fn [db _]
@@ -1366,8 +1366,7 @@
                    :fx [[:notify "Codex verbosity is only available for OpenAI Codex" :warn
                          settings-notification-ttl-ms]]}
                   ;; Effect, not an in-swap mutation - see :cycle-reasoning-level.
-                  {:db db
-                   :fx [[:cycle-toggle "openai_codex_verbosity" "Codex verbosity"]]})))
+                  {:db db :fx [[:cycle-toggle "openai_codex_verbosity" "Codex verbosity"]]})))
 
 (reg-event-fx :cycle-model
               ;; Ctrl+T cycles the ACTIVE SESSION's model preference — the SAME unified,

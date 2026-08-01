@@ -722,53 +722,53 @@
    candidate as a WHOLE SOURCE (fragment repair can't fix contextual imbalance
    — the session-9c829d10 class: a locally-balanced replacement with a stray
    closer), commits the batch itself, and substitutes a success envelope."
-  (it
-    "whole-source-repairs the broken candidate, writes the WHOLE batch, returns success"
-    ;; The SUCCESS envelope the hook substitutes carries the op's mandatory
-    ;; observation/mutation tag, and `:patch` is tagged by the FOUNDATION's
-    ;; symbol registry — which this standalone pack JVM never loads on its own,
-    ;; so the op-tag lookup failed closed with `:extension/unregistered-op`.
-    ;; `discover-extensions!` pulls the foundation in from its built-in list
-    ;; (idempotent; same move as the engine's own foundation test).
-    (extension/discover-extensions!)
-    (let [root (tmp-dir)]
-      (try
-        ;; the failing class from session 9c829d10: the replacement line is
-        ;; locally balanced but carries a stray `]` — only the FULL file
-        ;; shows the imbalance, so fragment repair is a no-op on it.
-        (let
-          [before-a "(def entries\n  [])\n"
-           before-b "(def other 0)\n"
-           broken-candidate "(def entries\n  [{:id :a :label \"A\"}\n   {:id :b :label \"B\"}]]\n"
-           clean-candidate "(def other 1)\n"
-           refusal {:success? false
-                    :error {:reason :syntax-error :message "would leave a.clj SYNTAX ERROR"}
-                    :metadata {:candidate-plans
-                               [{:path "a.clj" :before before-a :after broken-candidate}
-                                {:path "b.clj" :before before-b :after clean-candidate}]
-                               :broken-paths ["a.clj"]}}
-           calls (atom 0)
-           out (core/clj-patch-no-fail-around {:workspace/root (.getPath root)}
-                                              :patch
-                                              [[{:path "a.clj" :from_anchor "1:abc" :replace "x"}]]
-                                              (fn [_]
-                                                (swap! calls inc)
-                                                refusal))]
+  (it "whole-source-repairs the broken candidate, writes the WHOLE batch, returns success"
+      ;; The SUCCESS envelope the hook substitutes carries the op's mandatory
+      ;; observation/mutation tag, and `:patch` is tagged by the FOUNDATION's
+      ;; symbol registry — which this standalone pack JVM never loads on its own,
+      ;; so the op-tag lookup failed closed with `:extension/unregistered-op`.
+      ;; `discover-extensions!` pulls the foundation in from its built-in list
+      ;; (idempotent; same move as the engine's own foundation test).
+      (extension/discover-extensions!)
+      (let [root (tmp-dir)]
+        (try
+          ;; the failing class from session 9c829d10: the replacement line is
+          ;; locally balanced but carries a stray `]` — only the FULL file
+          ;; shows the imbalance, so fragment repair is a no-op on it.
+          (let
+            [before-a "(def entries\n  [])\n"
+             before-b "(def other 0)\n"
+             broken-candidate "(def entries\n  [{:id :a :label \"A\"}\n   {:id :b :label \"B\"}]]\n"
+             clean-candidate "(def other 1)\n"
+             refusal {:success? false
+                      :error {:reason :syntax-error :message "would leave a.clj SYNTAX ERROR"}
+                      :metadata {:candidate-plans
+                                 [{:path "a.clj" :before before-a :after broken-candidate}
+                                  {:path "b.clj" :before before-b :after clean-candidate}]
+                                 :broken-paths ["a.clj"]}}
+             calls (atom 0)
+             out (core/clj-patch-no-fail-around
+                   {:workspace/root (.getPath root)}
+                   :patch
+                   [[{:path "a.clj" :from_anchor "1:abc" :replace "x"}]]
+                   (fn [_]
+                     (swap! calls inc)
+                     refusal))]
 
-          (expect (true? (:success? out)))
-          (expect (= 1 @calls)) ; no retry — the hook commits itself
-          ;; the broken file landed REPAIRED (balanced), the clean one verbatim
-          (let [a (slurp (io/file root "a.clj"))]
-            (expect (balanced? a))
-            (expect (= (count (re-seq #"\[" a)) (count (re-seq #"\]" a)))))
-          (expect (= "(def other 1)\n" (slurp (io/file root "b.clj"))))
-          ;; the summary marks the repaired file (result vector is STRING-keyed)
-          ;; and still carries the same diff body a normal successful patch would render.
-          (expect (= [true nil] (mapv #(get % "repaired") (:result out))))
-          (expect (= [true true] (mapv #(boolean (seq (get % "diff"))) (:result out))))
-          (expect (= [{:path "a.clj" :before before-a} {:path "b.clj" :before before-b}]
-                     (get-in out [:metadata :file-befores]))))
-        (finally (cleanup root)))))
+            (expect (true? (:success? out)))
+            (expect (= 1 @calls)) ; no retry — the hook commits itself
+            ;; the broken file landed REPAIRED (balanced), the clean one verbatim
+            (let [a (slurp (io/file root "a.clj"))]
+              (expect (balanced? a))
+              (expect (= (count (re-seq #"\[" a)) (count (re-seq #"\]" a)))))
+            (expect (= "(def other 1)\n" (slurp (io/file root "b.clj"))))
+            ;; the summary marks the repaired file (result vector is STRING-keyed)
+            ;; and still carries the same diff body a normal successful patch would render.
+            (expect (= [true nil] (mapv #(get % "repaired") (:result out))))
+            (expect (= [true true] (mapv #(boolean (seq (get % "diff"))) (:result out))))
+            (expect (= [{:path "a.clj" :before before-a} {:path "b.clj" :before before-b}]
+                       (get-in out [:metadata :file-befores]))))
+          (finally (cleanup root)))))
   (it
     "surfaces the ORIGINAL refusal when repair would introduce lint errors"
     (let [root (tmp-dir)]

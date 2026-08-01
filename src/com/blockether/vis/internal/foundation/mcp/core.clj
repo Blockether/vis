@@ -46,16 +46,24 @@
   "Canonical internal transport. `http` is accepted only as a legacy persisted
    spelling; new gateway saves write the standard `streamable_http` form."
   [spec]
-  (case (some-> (:transport spec) name)
-    ("streamable_http" "streamable-http" "http") :streamable-http
-    "stdio" :stdio
+  (case
+    (some-> (:transport spec)
+            name)
+    ("streamable_http" "streamable-http" "http")
+    :streamable-http
+
+    "stdio"
+    :stdio
+
     (if (:url spec) :streamable-http :stdio)))
 
 (defn- canonicalize-server-spec
   "Persist the standard external spelling while retaining legacy read support."
   [spec]
   (case (get spec "transport")
-    ("http" "streamable-http") (assoc spec "transport" "streamable_http")
+    ("http" "streamable-http")
+    (assoc spec "transport" "streamable_http")
+
     spec))
 
 (defn- interpolate-env
@@ -250,7 +258,9 @@
     (cond->
       {:name name
        :transport (case (transport-of spec)
-                    :streamable-http "streamable_http"
+                    :streamable-http
+                    "streamable_http"
+
                     "stdio")
        :enabled (enabled? spec)
        :is-connected (boolean conn)

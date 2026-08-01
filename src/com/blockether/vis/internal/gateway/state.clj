@@ -634,7 +634,8 @@
 (defn session-usage-info
   "Whole-session USAGE rollup for `sid` in THE canonical string-keyed wire shape
    `{\"turn_count\" \"iteration_count\" \"tool_call_count\" \"fold_count\"
-   \"top_tools\" \"input_tokens\" \"input_regular_tokens\"
+   \"top_tools\" \"error_count\" \"top_errors\" \"input_tokens\"
+   \"input_regular_tokens\"
    \"input_cache_write_tokens\" \"input_cache_read_tokens\" \"output_tokens\"
    \"output_reasoning_tokens\" \"cache_hit_rate\" \"cost_usd\" \"duration_ms\"
    \"first_turn_at\" \"last_turn_at\" \"provider\" \"model\"}`, or nil when the
@@ -3777,7 +3778,14 @@
        server-time-ms (System/currentTimeMillis)
        stats (try (some-> (lp/db-info)
                           (persistance/db-session-turn-stats sid))
-                  (catch Throwable _ nil))]
+                  (catch Throwable _ nil))
+
+       ;; The session's MODEL PIN, from the same `session_soul` row `by-id` just
+       ;; read — no extra query, so every list row carries it and a client never
+       ;; has to follow up with `GET /v1/sessions/:sid/model` to name the model it
+       ;; will run on. An unflushed pick (600ms debounce) still wins over the row.
+       model-pref (let [[pending? v] (smodel/pending-pref sid)]
+                    (if pending? v (:model-pref session)))]
 
       (wire/canonical
         (cond->
@@ -3785,7 +3793,7 @@
            :channel (some-> (:channel session)
                             name)
            :title (:title session)
-           :model (:model session)
+           :model (:model session) ; the state's ROOT model, NOT the pin below
            :external_id (:external-id session)
            :created_at (:created-at session)
            :owner_id (:owner-id session)
@@ -3803,6 +3811,9 @@
            :last_active_at (:last-active entry)
            :turn_count (long (or (:turn-count stats) 0))
            :server_time_ms server-time-ms}
+          model-pref
+          (assoc :model_pref model-pref)
+
           (:latest-turn-at stats)
           (assoc :modified_at (:latest-turn-at stats))
 
@@ -3870,9 +3881,8 @@
 
 (defn- session-recency-ms
   [session]
-  (->epoch-ms (or (get session "modified_at")
-                  (get session "last_active_at")
-                  (get session "created_at"))))
+  (->epoch-ms
+    (or (get session "modified_at") (get session "last_active_at") (get session "created_at"))))
 
 (defn- record-recency-ms
   "`session-recency-ms` for an UNDECORATED session: the same three sources
@@ -3895,8 +3905,13 @@
   [channel stats]
   (->> (lp/by-channel channel)
        (sort-by (fn [record]
-                  (let [id (:id record)
-                        entry (get @registry id)]
+                  (let
+                    [id
+                     (:id record)
+
+                     entry
+                     (get @registry id)]
+
                     [(if (:current-turn entry) 0 1)
                      (unchecked-negate (record-recency-ms record entry (get stats (str id))))
                      (str id)])))
@@ -3968,7 +3983,8 @@
      {:sessions rows
       :total total
       :offset from
-      :limit (some-> limit long)
+      :limit (some-> limit
+                     long)
       :order-digest order-digest
       :has-more (< (+ from (count window)) total)})))
 

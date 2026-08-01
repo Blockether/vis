@@ -514,9 +514,16 @@
    the integer cell width: with it, every glyph of a merged text run lands
    exactly on its column, so a 120-column line cannot drift."
   [^long size]
-  (let [m   (img/text-measure {:text "M" :size size :family mono-family})
-        adv (double (:width m))
-        cw  (max 1 (Math/round adv))]
+  (let
+    [m
+     (img/text-measure {:text "M" :size size :family mono-family})
+
+     adv
+     (double (:width m))
+
+     cw
+     (max 1 (Math/round adv))]
+
     {:cw cw
      :ch (max 1 (Math/round (double (:height m))))
      :ascent (Math/round (- (double (:y m))))
@@ -532,17 +539,33 @@
   "Split one captured row into `{:x :style :text}` runs of consecutive cells that
    share fg + bold — one draw op instead of one per column."
   [row]
-  (loop [cells (map-indexed vector row) out []]
+  (loop
+    [cells
+     (map-indexed vector row)
+
+     out
+     []]
+
     (if-let [[i c] (first cells)]
-      (let [ch    (or (:ch c) " ")
-            style [(:fg c) (boolean (:bold c))]]
+      (let
+        [ch (or (:ch c) " ")
+         style [(:fg c) (boolean (:bold c))]]
+
         (if (narrow? ch)
-          (let [run (take-while (fn [[_ d]] (and (narrow? (or (:ch d) " "))
-                                                 (= style [(:fg d) (boolean (:bold d))])))
-                                (rest cells))]
+          (let
+            [run (take-while (fn [[_ d]]
+                               (and (narrow? (or (:ch d) " "))
+                                    (= style [(:fg d) (boolean (:bold d))])))
+                             (rest cells))]
             (recur (drop (inc (count run)) cells)
-                   (conj out {:x i :style style
-                              :text (apply str ch (map (fn [[_ d]] (or (:ch d) " ")) run))})))
+                   (conj out
+                         {:x i
+                          :style style
+                          :text (apply str
+                                  ch
+                                  (map (fn [[_ d]]
+                                         (or (:ch d) " "))
+                                       run))})))
           (recur (rest cells) (conj out {:x i :style style :text ch}))))
       out)))
 
@@ -551,45 +574,73 @@
    bg merged) then the glyph runs."
   [grid cw ch ascent size letter-spacing]
   (into []
-        (mapcat
-         (fn [[y row]]
-           (let [py (* (long y) (long ch))]
-             (concat
-              (for [g (partition-by (comp :bg second) (map-indexed vector row))
-                    :let [x (ffirst g)]]
-                {:op :rect :x (* (long x) (long cw)) :y py :w (* (count g) (long cw)) :h ch
-                 :fill (hex-color (:bg (second (first g))))})
-              (for [{:keys [x style text]} (text-runs row)
-                    :when (pos? (count (str/trim text)))
-                    :let [[fg bold] style]]
-                {:op :text :text text
-                 :x (* (long x) (long cw)) :y (+ py (long ascent))
-                 :fill (hex-color fg)
-                 :size size :family mono-family
-                 :weight (if bold 700 400)
-                 :letter-spacing letter-spacing}))))
-         (map-indexed vector grid))))
+        (mapcat (fn [[y row]]
+                  (let [py (* (long y) (long ch))]
+                    (concat (for
+                              [g (partition-by (comp :bg second) (map-indexed vector row))
+                               :let [x (ffirst g)]]
+
+                              {:op :rect
+                               :x (* (long x) (long cw))
+                               :y py
+                               :w (* (count g) (long cw))
+                               :h ch
+                               :fill (hex-color (:bg (second (first g))))})
+                            (for
+                              [{:keys [x style text]} (text-runs row)
+                               :when (pos? (count (str/trim text)))
+                               :let [[fg bold] style]]
+
+                              {:op :text
+                               :text text
+                               :x (* (long x) (long cw))
+                               :y (+ py (long ascent))
+                               :fill (hex-color fg)
+                               :size size
+                               :family mono-family
+                               :weight (if bold 700 400)
+                               :letter-spacing letter-spacing}))))
+                (map-indexed vector grid))))
 
 (defn- grid->picture
   "Render one captured grid into a jcodec RGB `Picture` — imaging does the glyph
    rasterisation, then the straight RGBA rows are packed into jcodec's
    interleaved, -128-biased RGB plane. No `BufferedImage` anywhere."
   ^Picture [grid cols rows cw ch ascent size letter-spacing]
-  (let [w   (even2 (* (long cols) (long cw)))
-        h   (even2 (* (long rows) (long ch)))
-        pic (Picture/create (int w) (int h) ColorSpace/RGB)
-        dst ^bytes (aget ^"[[B" (.getData pic) 0)]
+  (let
+    [w
+     (even2 (* (long cols) (long cw)))
+
+     h
+     (even2 (* (long rows) (long ch)))
+
+     pic
+     (Picture/create (int w) (int h) ColorSpace/RGB)
+
+     dst
+     ^bytes (aget ^"[[B" (.getData pic) 0)]
+
     (with-open [im (img/blank w h "black")]
       (img/draw! im (grid->ops grid cw ch ascent size letter-spacing))
-            (let [src ^bytes (img/pixels im)
-            n   (* (long w) (long h))]
+      (let
+        [src ^bytes (img/pixels im)
+         n (* (long w) (long h))]
+
         ;; RGBA8 -> jcodec's interleaved RGB plane, whose samples are biased by
         ;; -128; on bytes that bias is exactly a flip of the sign bit.
-        (loop [i 0 s 0 d 0]
+        (loop
+          [i 0
+           s 0
+           d 0]
+
           (when (< i n)
             (aset dst d (unchecked-byte (bit-xor (aget src s) 0x80)))
-            (aset dst (unchecked-inc d) (unchecked-byte (bit-xor (aget src (unchecked-inc s)) 0x80)))
-            (aset dst (unchecked-add d 2) (unchecked-byte (bit-xor (aget src (unchecked-add s 2)) 0x80)))
+            (aset dst
+                  (unchecked-inc d)
+                  (unchecked-byte (bit-xor (aget src (unchecked-inc s)) 0x80)))
+            (aset dst
+                  (unchecked-add d 2)
+                  (unchecked-byte (bit-xor (aget src (unchecked-add s 2)) 0x80)))
             (recur (unchecked-inc i) (unchecked-add s 4) (unchecked-add d 3))))))
     pic))
 
@@ -609,8 +660,9 @@
      (SequenceEncoder/createSequenceEncoder out-file (int fps))]
 
     (try (doseq [f frames]
-           (.encodeNativeFrame enc (grid->picture (:grid f) cols rows cw ch ascent
-                                                  font-size (double letter-spacing))))
+           (.encodeNativeFrame
+             enc
+             (grid->picture (:grid f) cols rows cw ch ascent font-size (double letter-spacing))))
          (.finish enc)
          (finally (try (.finish enc) (catch Throwable _ nil))))
     out-file))

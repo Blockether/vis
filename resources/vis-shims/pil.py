@@ -18,10 +18,26 @@ def __vis_install_pil__():
         fn = globals().get(name)
         if fn is None:
             raise OSError("vis: the PIL host backend is not bound in this sandbox")
-        env = fn(*args)
-        if not env[0]:
-            raise OSError(str(env[1]))
-        return env[1]
+        try:
+            env = fn(*args)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except OSError:
+            raise
+        except BaseException as _e:
+            # Host failures (a foreign throwable, e.g. an arity mismatch when the
+            # running binary is older than this shim) are NOT Python exceptions:
+            # untranslated they escape every `except Exception:` a caller writes.
+            raise OSError("vis: PIL host call " + str(name) + " failed: " + str(_e))
+        try:
+            ok, value = env[0], env[1]
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            raise OSError("vis: PIL host call " + str(name) + " returned no result")
+        if not ok:
+            raise OSError(str(value))
+        return value
 
     def _lst(x):
         try:

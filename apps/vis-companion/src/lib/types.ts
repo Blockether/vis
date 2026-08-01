@@ -79,6 +79,9 @@ export interface SessionUsage {
   tool_call_count?: number;
   fold_count?: number;
   top_tools?: Array<{ name: string; count: number }>;
+  /** Tool calls that FAILED, noisiest tool first — `top_tools`' shape, errors only. */
+  top_errors?: Array<{ name: string; count: number }>;
+  error_count?: number;
   input_tokens?: number;
   input_regular_tokens?: number;
   input_cache_write_tokens?: number;

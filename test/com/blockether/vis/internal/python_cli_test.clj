@@ -313,11 +313,13 @@
   python-src-layout-inference-test
   ;; The declarations are read by PYTHON's own `tomllib`/`configparser` inside a
   ;; GraalPy context, so these cases need a live interpreter -- one for the ns.
-  (let [ctx (python-cli-context {:network? false})
+  (let
+    [ctx
+     (python-cli-context {:network? false})
 
-        roots
-        (fn [^java.io.File root]
-          (python-project-import-roots ctx (.getCanonicalPath root)))]
+     roots
+     (fn [^java.io.File root]
+       (python-project-import-roots ctx (.getCanonicalPath root)))]
 
     (it "infers the setuptools `where` root, so plain `-m pytest` imports the project"
         (let
@@ -374,8 +376,8 @@
                               ["src"])]
           (expect (= [(.getCanonicalPath (java.io.File. root "src"))] (roots root)))))
     (it "honours a whitespace-separated `pythonpath` in pytest.ini"
-        (let [root (write-files! {"pytest.ini" "[pytest]\npythonpath = src other\n"}
-                                 ["src" "other"])]
+        (let
+          [root (write-files! {"pytest.ini" "[pytest]\npythonpath = src other\n"} ["src" "other"])]
           (expect (= [(.getCanonicalPath (java.io.File. root "src"))
                       (.getCanonicalPath (java.io.File. root "other"))]
                      (roots root)))))
@@ -386,11 +388,15 @@
         (let
           [root (write-project! (str "[tool.setuptools.packages.find]\n" "where = [\"src\"]\n")
                                 ["src" "vendor"])]
-          (with-redefs [config/load-config-raw (fn [] {"python" {"source_paths" ["vendor"]}})]
+          (with-redefs
+            [config/load-config-raw (fn []
+                                      {"python" {"source_paths" ["vendor"]}})]
             (expect (= [(.getCanonicalPath (java.io.File. root "vendor"))
                         (.getCanonicalPath (java.io.File. root "src"))]
                        (roots root))))))
     (it "drops a configured source path that is not a directory"
         (let [root (write-project! "[project]\nname = \"flat\"\n" [])]
-          (with-redefs [config/load-config-raw (fn [] {"python" {"source_paths" ["nope"]}})]
+          (with-redefs
+            [config/load-config-raw (fn []
+                                      {"python" {"source_paths" ["nope"]}})]
             (expect (empty? (roots root))))))))

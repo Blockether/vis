@@ -287,10 +287,10 @@
     (let
       [info
        ((deref #'shim/op-server-start)
-        (fn [_u _p]
-          0)
-        (fn [_a _p]
-          true))
+         (fn [_u _p]
+           0)
+         (fn [_a _p]
+           true))
 
        handle
        (long (get info "handle"))

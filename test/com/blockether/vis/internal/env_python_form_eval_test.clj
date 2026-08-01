@@ -487,11 +487,13 @@ await patch({'path': css})" "t1/i1")]
   ;; to a plain assignment plus the `__annotations__` record a module keeps.
   (it "an annotated module-level assignment binds and records its annotation"
       (let [ctx (:python-context (ep/create-python-context {}))]
-        (let [r (ep/run-python-block
-                  ctx
-                  (str "ann_x: int = 5\n" "ann_y: str\n"
-                       "print(ann_x, __annotations__['ann_x'] is int, 'ann_y' in globals())")
-                  "t1/i1")]
+        (let
+          [r (ep/run-python-block
+               ctx
+               (str "ann_x: int = 5\n"
+                    "ann_y: str\n"
+                    "print(ann_x, __annotations__['ann_x'] is int, 'ann_y' in globals())")
+               "t1/i1")]
           (expect (nil? (:error r)))
           (expect (= "5 True False" (str/trim (str (:stdout r))))))
         (let [r (ep/run-python-block ctx "print(ann_x + 1)" "t1/i2")]
@@ -500,20 +502,22 @@ await patch({'path': css})" "t1/i1")]
   ;; so the wrapper made every future import a SyntaxError. The flags are stripped
   ;; and OR'd into compile() instead — here PEP 563 stores annotations unevaluated.
   (it "`from __future__ import annotations` compiles and applies its flag"
-      (let [r (ep/run-python-block
-                (:python-context (ep/create-python-context {}))
-                (str "from __future__ import annotations\n" "fut_v: int = 3\n"
-                     "print(fut_v, repr(__annotations__['fut_v']))")
-                "t1/i1")]
+      (let
+        [r (ep/run-python-block (:python-context (ep/create-python-context {}))
+                                (str "from __future__ import annotations\n"
+                                     "fut_v: int = 3\n"
+                                     "print(fut_v, repr(__annotations__['fut_v']))")
+                                "t1/i1")]
         (expect (nil? (:error r)))
         (expect (= "3 'int'" (str/trim (str (:stdout r)))))))
   ;; A top-level `return` used to end the block silently (the wrapper is a
   ;; function), and a top-level `yield` turned it into an async generator whose
   ;; body never ran. Both are SyntaxErrors in a real module.
   (it "a top-level `return` is a SyntaxError, not a silently truncated block"
-      (let [r (ep/run-python-block (:python-context (ep/create-python-context {}))
-                                   "print('a')\nreturn 5"
-                                   "t1/i1")]
+      (let
+        [r (ep/run-python-block (:python-context (ep/create-python-context {}))
+                                "print('a')\nreturn 5"
+                                "t1/i1")]
         (expect (some? (:error r)))
         (expect (str/includes? (str (:message (:error r))) "'return' outside function"))))
   ;; AUTO-SETTLE must not touch a generator: it only drives OUR deferred tool
@@ -528,10 +532,15 @@ await patch({'path': css})" "t1/i1")]
   ;; null-sourceRange NullPointerException), so `except SyntaxError` around
   ;; compile() never sees it. Reject it up front with CPython's own message.
   (it "`await` inside a lambda is a normal SyntaxError, not an engine fault"
-      (let [r (ep/run-python-block (:python-context (ep/create-python-context {}))
-                                   "f = lambda: await g()"
-                                   "t1/i1")
-            msg (str (:message (:error r)))]
+      (let
+        [r
+         (ep/run-python-block (:python-context (ep/create-python-context {}))
+                              "f = lambda: await g()"
+                              "t1/i1")
+
+         msg
+         (str (:message (:error r)))]
+
         (expect (some? (:error r)))
         (expect (str/includes? msg "'await' outside async function"))
         (expect (not (str/includes? msg "NullPointerException")))
@@ -539,9 +548,16 @@ await patch({'path': css})" "t1/i1")]
   ;; Same class of trap: a bare starred target died with a raw
   ;; `UnsupportedOperationException: StoreVisitor: Starred`.
   (it "a bare starred assignment target is a SyntaxError, not a host fault"
-      (let [ctx (:python-context (ep/create-python-context {}))
-            r (ep/run-python-block ctx "*only = [1]" "t1/i1")
-            msg (str (:message (:error r)))]
+      (let
+        [ctx
+         (:python-context (ep/create-python-context {}))
+
+         r
+         (ep/run-python-block ctx "*only = [1]" "t1/i1")
+
+         msg
+         (str (:message (:error r)))]
+
         (expect (some? (:error r)))
         (expect (str/includes? msg "starred assignment target must be in a list or tuple"))
         (expect (not (str/includes? msg "UnsupportedOperationException")))
@@ -553,9 +569,10 @@ await patch({'path': css})" "t1/i1")]
   ;; must come from the exception itself — otherwise the boundary reports a
   ;; preamble line the user never wrote.
   (it "a compile-phase SyntaxError points at the USER's line"
-      (let [r (ep/run-python-block (:python-context (ep/create-python-context {}))
-                                   "x = 1\ndef f():\n    return await g()"
-                                   "t1/i1")]
+      (let
+        [r (ep/run-python-block (:python-context (ep/create-python-context {}))
+                                "x = 1\ndef f():\n    return await g()"
+                                "t1/i1")]
         (expect (= 3 (:line (:data (:error r)))))
         (expect (str/includes? (str (:message (:error r))) "3:     return await g()"))))
   ;; `globals().clear()` (or deleting an engine-owned name) is legal Python and
@@ -582,21 +599,24 @@ await patch({'path': css})" "t1/i1")]
   ;; survives it (a frame captures its builtins); pinning the helpers into builtins
   ;; gives them the same survival rule as `print`.
   (it "a mid-block globals().clear() does not break the rest of the same block"
-      (let [r (ep/run-python-block (:python-context (ep/create-python-context {}))
-                                   "import sys\nglobals().clear()\nprint('recovered')"
-                                   "t1/i1")]
+      (let
+        [r (ep/run-python-block (:python-context (ep/create-python-context {}))
+                                "import sys\nglobals().clear()\nprint('recovered')"
+                                "t1/i1")]
         (expect (nil? (:error r)))
         (expect (= "recovered" (str/trim (str (:stdout r)))))))
   (it "deleting one engine helper mid-block keeps the rest of the block alive"
-      (let [r (ep/run-python-block (:python-context (ep/create-python-context {}))
-                                   "del __vis_settle__\nprint(1 + 1)"
-                                   "t1/i1")]
+      (let
+        [r (ep/run-python-block (:python-context (ep/create-python-context {}))
+                                "del __vis_settle__\nprint(1 + 1)"
+                                "t1/i1")]
         (expect (nil? (:error r)))
         (expect (= "2" (str/trim (str (:stdout r)))))))
   (it "a print after a globals().clear() in the same block still works"
-      (let [r (ep/run-python-block (:python-context (ep/create-python-context {}))
-                                   "print('a')\nglobals().clear()\nprint('b')"
-                                   "t1/i1")]
+      (let
+        [r (ep/run-python-block (:python-context (ep/create-python-context {}))
+                                "print('a')\nglobals().clear()\nprint('b')"
+                                "t1/i1")]
         (expect (nil? (:error r)))
         (expect (= "a\nb" (str/trim (str (:stdout r))))))))
 

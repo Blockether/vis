@@ -20,7 +20,10 @@
 //   • live SSE frames — the in-flight turn is replayed by the gateway from its
 //     `turn.started`, which is exactly the "only the newest stuff" a cold client
 //     is missing;
-//   • capabilities/settings — cheap to refetch and version-sensitive.
+//   • the full settings sheet and capabilities — cheap to refetch and
+//     version-sensitive. The by-id toggles and model picks below ARE persisted:
+//     they are two short strings each and they name what the composer footer
+//     paints on its first frame.
 
 /** How much of a session's history one snapshot holds (mirrors gateway.ts). */
 export interface HeldWindow {
@@ -37,8 +40,20 @@ export interface SnapshotStores {
 
 const STORAGE_KEY = 'vis.snapshots.v1';
 
-/** Resource kinds worth surviving an app kill. */
-const DURABLE_KINDS = new Set(['sessions', 'session', 'transcript']);
+/**
+ * Resource kinds worth surviving an app kill. `setting`/`model`/`model-default`
+ * are tiny and are what the composer footer paints before anything else: a cold
+ * start would otherwise show a nameless "model" chip and no reasoning chip at
+ * all until a `/v1/router` probe (seconds on a cold daemon) came back.
+ */
+const DURABLE_KINDS = new Set([
+  'sessions',
+  'session',
+  'transcript',
+  'setting',
+  'model',
+  'model-default',
+]);
 
 // A transcript page is 24 turns and a single turn can be hundreds of kilobytes
 // of tool output. Persist only the newest few per session: enough to paint the

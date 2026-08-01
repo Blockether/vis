@@ -187,23 +187,32 @@
    definition."
   (^long [^Span span] (span-end-line nil span))
   (^long [lines ^Span span]
-   (let [start (.startLine span)
-         e (long (cond-> (.endLine span)
-                   (and (zero? (.endColumn span)) (> (.endLine span) start)) dec))]
+   (let
+     [start
+      (.startLine span)
+
+      e
+      (long (cond-> (.endLine span)
+              (and (zero? (.endColumn span)) (> (.endLine span) start))
+              dec))]
+
      (if (nil? lines)
        e
        (loop [e e]
-         (if (and (> e start) (str/blank? (nth lines e "")))
-           (recur (dec e))
-           e))))))
+         (if (and (> e start) (str/blank? (nth lines e ""))) (recur (dec e)) e))))))
 
 (defn node-span
   "0-based inclusive `[start-line end-line]` of the TOP-LEVEL structural node named
    `target` (optionally narrowed by `kind`, case-insensitive), or nil if not found.
    Used by the structural `move` op to extract a node's exact source text by name."
   [^String source ^String language ^String target kind]
-  (let [k (canonical-kind kind)
-        lines (str/split-lines source)]
+  (let
+    [k
+     (canonical-kind kind)
+
+     lines
+     (str/split-lines source)]
+
     (some (fn [^StructureItem it]
             (when (and (= target (.name it)) (or (nil? k) (= k (canonical-kind (item-kind it)))))
               (let [^Span span (.span it)]

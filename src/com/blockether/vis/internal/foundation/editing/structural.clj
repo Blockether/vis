@@ -78,9 +78,7 @@
      ;; remains — local to this seam, nothing else. A LONE trailing "" is not a
      ;; blank line, it is the file's final newline: never collapse that away.
      after
-     (if (and (str/blank? (str (last before)))
-              (> (count after) 1)
-              (str/blank? (str (first after))))
+     (if (and (str/blank? (str (last before))) (> (count after) 1) (str/blank? (str (first after))))
        (vec (rest after))
        after)]
 

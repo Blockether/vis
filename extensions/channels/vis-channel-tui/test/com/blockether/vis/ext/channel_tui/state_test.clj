@@ -621,26 +621,25 @@
       ;; the next. The flip now lives in the :cycle-toggle EFFECT, so one
       ;; keystroke advances exactly one step.
       (vis/toggle-set-value! "reasoning_level" "quick")
-      (let [dispose (vis/toggle-add-listener!
-                      (fn [event]
-                        (state/dispatch [:resync-toggle-settings (:id event)])))]
+      (let
+        [dispose (vis/toggle-add-listener! (fn [event]
+                                             (state/dispatch [:resync-toggle-settings
+                                                              (:id event)])))]
         (try (with-redefs
-               [vis/load-config-raw (fn [] {})
+               [vis/load-config-raw (fn []
+                                      {})
                 vis/save-config! (fn [_])
                 vis/get-router (constantly :router)
                 vis/resolve-effective-model (fn [_]
-                                              {:provider :openai
-                                               :name "gpt-5"
-                                               :reasoning? true})
+                                              {:provider :openai :name "gpt-5" :reasoning? true})
                 vis/notify! (fn [& _])]
-               (reset! state/app-db {:settings {:reasoning-level "quick"}
-                                     :render-version 0})
+
+               (reset! state/app-db {:settings {:reasoning-level "quick"} :render-version 0})
                (let [result (future (state/dispatch [:cycle-reasoning-level]) :done)]
                  (expect (= :done (deref result 2000 :timeout)))
                  (expect (= "balanced" (vis/toggle-value "reasoning_level")))
                  (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))))
-             (finally (dispose)
-                      (vis/toggle-reset-to-default! "reasoning_level")))))
+             (finally (dispose) (vis/toggle-reset-to-default! "reasoning_level")))))
   (it "wraps reasoning level from deep back to quick"
       (vis/toggle-set-value! "reasoning_level" "deep")
       (try (with-redefs

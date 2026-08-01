@@ -994,11 +994,13 @@ export function SessionScreen({
   // being written under the new session's key.
   const draftMessageReadyRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
-  // The session's provider/model pick. Read once from the gateway so the header
-  // chip is right on open, then written through by the router dialog.
-  const [modelPref, setModelPref] = useState<ModelPref | null>(null);
-  // The gateway's default route, shown when this session pins nothing.
-  const [defaultPref, setDefaultPref] = useState<ModelPref | null>(null);
+  // The session's provider/model pick. Seeded from the client's snapshot so the
+  // header chip names the model on the FIRST frame instead of reading "model"
+  // until the gateway answers, then written through by the router dialog.
+  const [modelPref, setModelPref] = useState<ModelPref | null>(() => client.cachedSessionModel(sid));
+  // The gateway's default route, shown when this session pins nothing. Same
+  // seed: resolving it costs a `/v1/router` probe on a cold daemon.
+  const [defaultPref, setDefaultPref] = useState<ModelPref | null>(() => client.cachedDefaultModel());
   const [routerOpen, setRouterOpen] = useState(false);
   const [loading, setLoading] = useState(!fresh);
   // The veil outlives `loading` by one transition so it can dissolve.
@@ -1351,7 +1353,9 @@ export function SessionScreen({
     settleUntilRef.current = 0;
     showJumpRef.current = false;
     setRouterOpen(false);
-    setModelPref(null);
+    // Switching sessions swaps the pin, so paint the NEW session's last known
+    // one rather than blanking the chip back to the placeholder word.
+    setModelPref(client.cachedSessionModel(sid));
   }, [sid, fresh, draftMessageId]);
 
   // Reasoning effort is the other per-turn dial you change mid-session, so it
@@ -1359,7 +1363,7 @@ export function SessionScreen({
   // control for it (the model picker deliberately has none). The gateway keeps
   // it out of `/v1/settings` (`:settings? false`) because each channel owns its
   // own control, hence the by-id read.
-  const [reasoning, setReasoning] = useState<Toggle | null>(null);
+  const [reasoning, setReasoning] = useState<Toggle | null>(() => client.cachedSetting('reasoning_level'));
   const [reasoningBusy, setReasoningBusy] = useState(false);
   // The level the user just asked for, shown until the gateway confirms it.
   const [pendingLevel, setPendingLevel] = useState<string | null>(null);

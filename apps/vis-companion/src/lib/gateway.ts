@@ -701,17 +701,29 @@ export class GatewayClient {
   }
 
   /**
+   * One toggle by id, exactly as it was last seen. The composer footer paints
+   * this on its FIRST frame: without it the reasoning chip is simply absent
+   * until a round trip lands, on every session open, for a value that changes
+   * once in a blue moon.
+   */
+  cachedSetting(id: string): Toggle | null {
+    return readSnapshot<Toggle>(this.snapshotKey('setting', id));
+  }
+
+  /**
    * One toggle by id. `/v1/settings` only lists what the settings sheet shows,
    * so screen-owned knobs (reasoning effort lives in the composer footer) are
-   * read one at a time here.
+   * read one at a time here. The answer is snapshotted for the seed above.
    */
   async setting(id: string, signal?: AbortSignal): Promise<Toggle> {
-    return this.request<Toggle>(
+    const toggle = await this.request<Toggle>(
       'GET',
       `/v1/settings/${encodeURIComponent(id)}`,
       undefined,
       signal,
     );
+    writeSnapshot(this.snapshotKey('setting', id), toggle);
+    return toggle;
   }
 
   async setSetting(
@@ -720,6 +732,10 @@ export class GatewayClient {
     value?: string,
   ): Promise<Toggle> {
     const updated = await this.request<Toggle>('POST', '/v1/settings', { id, action, value });
+    // The by-id seed the composer reads is the same fact, so keep it in step —
+    // otherwise cycling reasoning effort here would repaint the OLD word on the
+    // next open until the revalidation landed.
+    writeSnapshot(this.snapshotKey('setting', id), updated);
     // Patch the one toggle that changed instead of dropping the snapshot, so
     // reopening the dialog paints the NEW value rather than a blank sheet.
     const cached = this.cachedSettings();
@@ -867,6 +883,15 @@ export class GatewayClient {
     this.invalidateRouter();
   }
 
+  /**
+   * This session's pinned provider/model as last seen — the header chip's first
+   * frame. `null` here means BOTH "no pin" and "never read"; either way the
+   * fetch below is still issued and reconciles on top.
+   */
+  cachedSessionModel(sid: string): ModelPref | null {
+    return readSnapshot<ModelPref>(this.snapshotKey('model', sid));
+  }
+
   async sessionModel(sid: string, signal?: AbortSignal): Promise<ModelPref | null> {
     const response = await this.request<{ model?: ModelPref }>(
       'GET',
@@ -874,19 +899,32 @@ export class GatewayClient {
       undefined,
       signal,
     );
-    return response.model ?? null;
+    const pref = response.model ?? null;
+    writeSnapshot(this.snapshotKey('model', sid), pref);
+    return pref;
+  }
+
+  /** The gateway default as last seen — same first-frame job as above. */
+  cachedDefaultModel(): ModelPref | null {
+    return readSnapshot<ModelPref>(this.snapshotKey('model-default'));
   }
 
   /**
    * The gateway's DEFAULT provider+model — what a session with no pin actually
    * runs on. `sessionModel` answers only the explicit pin (null for "default"),
    * so any surface that names the live model needs this fallback.
+   *
+   * It rides `/v1/router`, which is a real auth/limits probe per provider on a
+   * cold daemon — seconds. Hence the snapshot: the chip names the model at once
+   * and this answer only ever corrects it.
    */
   async defaultModel(signal?: AbortSignal): Promise<ModelPref | null> {
     const rows = await this.router(signal);
     const row = rows.find((p) => p.is_default && p.default_model) ?? rows.find((p) => p.default_model);
     if (!row?.default_model) return null;
-    return { provider: row.id, model: row.default_model };
+    const pref = { provider: row.id, model: row.default_model };
+    writeSnapshot(this.snapshotKey('model-default'), pref);
+    return pref;
   }
 
   async setSessionModel(
@@ -899,7 +937,9 @@ export class GatewayClient {
       `/v1/sessions/${encodeURIComponent(sid)}/model`,
       { provider, model },
     );
-    return response.model ?? null;
+    const pref = response.model ?? null;
+    writeSnapshot(this.snapshotKey('model', sid), pref);
+    return pref;
   }
 
   /** Begin OAuth. `kind: 'device'` finishes by polling; `'pkce'` needs a paste-back. */
@@ -1207,6 +1247,7 @@ export class GatewayClient {
     snapshots.delete(this.snapshotKey('transcript', sid));
     snapshots.delete(this.snapshotKey('queued', sid));
     snapshots.delete(this.snapshotKey('live', sid));
+    snapshots.delete(this.snapshotKey('model', sid));
     for (const key of Array.from(this.sentAttachments.keys())) {
       if (key.startsWith(`${sid}\u0000`)) this.sentAttachments.delete(key);
     }

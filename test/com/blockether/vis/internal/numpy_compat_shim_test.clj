@@ -279,3 +279,34 @@
                            (str "import numpy as np\n" "a = np.array([1,2,3]); a += 10\n"
                                 "b = np.array([1,2,3]); b *= np.array([2,2,2])\n"
                                 "a.tolist() == [11,12,13] and b.tolist() == [2,4,6]")))))))
+
+(defdescribe
+  numpy-dstack-test
+  "dstack / atleast_3d stack along the depth axis like numpy: 1-D inputs become
+   (1, N, k), 2-D inputs (M, N, k) and 3-D inputs concatenate on axis 2."
+  (it "stacks 1-D arrays into a (1, N, k) block"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "import numpy as np\n"
+                                "b = np.dstack([np.array([1,2,3]), np.array([4,5,6])])\n"
+                                "b.shape == (1,3,2) and b.tolist() == [[[1,4],[2,5],[3,6]]]"))))))
+  (it "stacks 2-D arrays into channels"
+      (with-python-context
+        (expect (true?
+                  (ev python-context
+                      (str "import numpy as np\n"
+                           "a = np.dstack([np.zeros((2,3)), np.ones((2,3)), np.full((2,3),2.0)])\n"
+                           "a.shape == (2,3,3) and a[1,2].tolist() == [0.0,1.0,2.0]"))))))
+  (it "concatenates 3-D inputs on the depth axis and lifts scalars"
+      (with-python-context (expect (true? (ev python-context
+                                              (str
+                                                "import numpy as np\n"
+                                                "a = np.dstack([np.zeros((2,3)), np.ones((2,3))])\n"
+                                                "np.dstack([a, a]).shape == (2,3,4) "
+                                                "and np.dstack([1.0, 2.0]).shape == (1,1,2)"))))))
+  (it "atleast_3d promotes to three dimensions"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "import numpy as np\n"
+                                "np.atleast_3d(np.array([1,2])).shape == (1,2,1) "
+                                "and np.atleast_3d(np.zeros((2,3))).shape == (2,3,1)")))))))

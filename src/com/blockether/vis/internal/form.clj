@@ -177,6 +177,25 @@
 
     (boolean (and (native-tool-form? form) (not errored?) (not= tool-name "python_execution")))))
 
+(def running-code-tools
+  "Native tools whose SUBMITTED invocation stays visible while the call is STILL
+   RUNNING — the command/program itself is the payload a user needs to judge a
+   long-running op. Every other native tool just spins behind its badge: a 200ms
+   `cat`/`grep` must not flash a bordered code frame with a copy control for
+   something nobody reads. `python_execution` additionally keeps its source after
+   completion (see `hide-tool-code?`); `shell` only while it runs, because the
+   finished command is already carried by its op-card headline."
+  #{"python_execution" "shell"})
+
+(defn show-running-tool-code?
+  "Should a channel show a STILL-RUNNING form's invocation source even though
+   `hide-tool-code?` would drop it once the call completes? Only for
+   `running-code-tools` (and non-tool forms, which have no op-card to hide
+   behind). This is the shared TUI/channel policy; web mirrors it."
+  [form]
+  (boolean (or (not (native-tool-form? form))
+               (contains? running-code-tools (some-> (:vis/tool-name form) name)))))
+
 (def ^:private same-path-coalescable-tools
   "Native tools whose ADJACENT op-cards fold only when they target the SAME file."
   #{"cat" "patch"})

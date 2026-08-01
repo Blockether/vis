@@ -92,40 +92,50 @@
   ;; MissingForeignRegistrationError, which lanterna catches and silently
   ;; degrades back to stty. Registering here keeps the fast path in the binary.
   (try
-    (let [layouts
-          (fn ^"[Ljava.lang.foreign.MemoryLayout;" [ls]
-            (into-array java.lang.foreign.MemoryLayout ls))
+    (let
+      [layouts
+       (fn ^"[Ljava.lang.foreign.MemoryLayout;" [ls]
+         (into-array java.lang.foreign.MemoryLayout ls))
 
-          descriptor
-          (fn [args]
-            (java.lang.foreign.FunctionDescriptor/of
-              java.lang.foreign.ValueLayout/JAVA_INT
-              (layouts args)))
+       descriptor
+       (fn [args]
+         (java.lang.foreign.FunctionDescriptor/of java.lang.foreign.ValueLayout/JAVA_INT
+                                                  (layouts args)))
 
-          ;; REFLECTIVE on purpose. `RuntimeForeignAccess` is @Platforms(HOSTED_ONLY):
-          ;; it exists in the image BUILDER, never in the image. graal-build-time
-          ;; initializes every Clojure namespace at build time, so this Feature's
-          ;; Vars land in the image heap and the analysis PARSES this fn as
-          ;; application code — a static reference then aborts the build with
-          ;; "Type is not available in this platform:
-          ;; org.graalvm.nativeimage.hosted.RuntimeForeignAccess". Looking the
-          ;; class up by name keeps the build-time call working and leaves the
-          ;; parsed method free of the hosted type.
-          register!
-          (fn [desc & options]
-            (let [k (Class/forName "org.graalvm.nativeimage.hosted.RuntimeForeignAccess")
-                  m (->> (.getMethods k)
-                         (filter (fn [^java.lang.reflect.Method mm]
-                                   (and (= "registerForDowncall" (.getName mm))
-                                        (= 2 (alength (.getParameterTypes mm))))))
-                         first)
-                  _ (when-not m
-                      (throw (ex-info (str "no registerForDowncall/2 on " k " - had "
-                                           (mapv str (.getMethods k)))
-                                      {})))
-                  opt-t (.getComponentType ^Class (aget (.getParameterTypes ^java.lang.reflect.Method m) 1))]
-              (.invoke ^java.lang.reflect.Method m nil
-                       (into-array Object [desc (into-array opt-t options)]))))]
+       ;; REFLECTIVE on purpose. `RuntimeForeignAccess` is @Platforms(HOSTED_ONLY):
+       ;; it exists in the image BUILDER, never in the image. graal-build-time
+       ;; initializes every Clojure namespace at build time, so this Feature's
+       ;; Vars land in the image heap and the analysis PARSES this fn as
+       ;; application code — a static reference then aborts the build with
+       ;; "Type is not available in this platform:
+       ;; org.graalvm.nativeimage.hosted.RuntimeForeignAccess". Looking the
+       ;; class up by name keeps the build-time call working and leaves the
+       ;; parsed method free of the hosted type.
+       register!
+       (fn [desc & options]
+         (let
+           [k
+            (Class/forName "org.graalvm.nativeimage.hosted.RuntimeForeignAccess")
+
+            m
+            (->> (.getMethods k)
+                 (filter (fn [^java.lang.reflect.Method mm]
+                           (and (= "registerForDowncall" (.getName mm))
+                                (= 2 (alength (.getParameterTypes mm))))))
+                 first)
+
+            _
+            (when-not m
+              (throw (ex-info (str "no registerForDowncall/2 on " k
+                                   " - had " (mapv str (.getMethods k)))
+                              {})))
+
+            opt-t
+            (.getComponentType ^Class (aget (.getParameterTypes ^java.lang.reflect.Method m) 1))]
+
+           (.invoke ^java.lang.reflect.Method m
+                    nil
+                    (into-array Object [desc (into-array opt-t options)]))))]
 
       ;; open(const char*, int) / close(int)
       (register! (descriptor [java.lang.foreign.ValueLayout/ADDRESS

@@ -837,6 +837,7 @@ function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }
 
   const cacheHit = usage?.cache_hit_rate;
   const tools = usage?.top_tools ?? [];
+  const errors = usage?.top_errors ?? [];
 
   return (
     <div className="border-t border-dialog-edge bg-panel-2 py-2.5 pl-10 pr-3 sm:pl-11 sm:pr-4">
@@ -871,7 +872,9 @@ function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }
             <Stat label="Cost" value={formatUsd(usage.cost_usd)} />
           </dl>
           <dl className="mt-2.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-dialog-edge/40 pt-2">
-            <Meta label="Model" value={usage.model || '—'} title={usage.provider} />
+            {/* `/usage` aggregates turns and does not carry the model; the session
+                record does, so fall back to it instead of rendering a bare dash. */}
+            <Meta label="Model" value={usage.model || session.model || '—'} title={usage.provider} />
             <Meta
               label="Active"
               value={formatDuration(usage.duration_ms)}
@@ -885,6 +888,22 @@ function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }
                   .map((tool) => `${tool.name} ${tool.count}`)
                   .join(' · ')}
                 title={tools.map((tool) => `${tool.name} ${tool.count}`).join(' · ')}
+              />
+            )}
+            {/* Volume alone hides where a session actually struggled, so failed
+                calls get their own labelled pair instead of disappearing into
+                the TOP TOOLS totals. */}
+            {errors.length > 0 && (
+              <Meta
+                label="Top errors"
+                value={errors
+                  .slice(0, 3)
+                  .map((tool) => `${tool.name} ${tool.count}`)
+                  .join(' · ')}
+                title={`${usage.error_count ?? 0} failed tool calls · ${errors
+                  .map((tool) => `${tool.name} ${tool.count}`)
+                  .join(' · ')}`}
+                tone="warn"
               />
             )}
           </dl>
@@ -908,13 +927,29 @@ function Stat({ label, value }: { label: string; value: string }) {
 // The grid above answers "how much"; this row answers "of what, for how long".
 // It reuses the grid's dim-key/strong-value grammar so the three facts read as
 // labelled data instead of one faint unlabelled sentence.
-function Meta({ label, value, title }: { label: string; value: string; title?: string }) {
+function Meta({
+  label,
+  value,
+  title,
+  tone = 'default',
+}: {
+  label: string;
+  value: string;
+  title?: string;
+  tone?: 'default' | 'warn';
+}) {
   return (
     <div className="flex min-w-0 items-baseline gap-1.5" title={title}>
       <dt className="shrink-0 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
         {label}
       </dt>
-      <dd className="min-w-0 truncate font-mono text-meta font-bold text-white">{value}</dd>
+      <dd
+        className={`min-w-0 truncate font-mono text-meta font-bold ${
+          tone === 'warn' ? 'text-warn-strong' : 'text-white'
+        }`}
+      >
+        {value}
+      </dd>
     </div>
   );
 }

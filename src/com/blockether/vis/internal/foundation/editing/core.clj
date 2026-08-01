@@ -1304,14 +1304,23 @@
    by page width. This preserves `cat`'s complete, uncapped directory-listing
    contract without asking FFM for an unbounded result."
   [idx]
-  (loop [offset 0
-         items []]
-    (let [{page :items total :total-matched}
-          (fff/search-mixed idx {:query ""
-                                 :page-index offset
-                                 :page-size fff-ls-page-size})
-          page (or page [])
-          items (into items page)]
+  (loop
+    [offset
+     0
+
+     items
+     []]
+
+    (let
+      [{page :items total :total-matched}
+       (fff/search-mixed idx {:query "" :page-index offset :page-size fff-ls-page-size})
+
+       page
+       (or page [])
+
+       items
+       (into items page)]
+
       (if (or (empty? page) (>= (long (count items)) (long total)))
         items
         (recur (unchecked-add (long offset) (long fff-ls-page-size)) items)))))
@@ -5919,11 +5928,11 @@
                         {:type "object"
                          :properties
                          {"path" {:type "string" :minLength 1}
-                          "ranges"
-                          {:type "array"
-                           :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
-                           :minItems 1
-                           :description "THIS path's windows; override shared `ranges`."}}
+                          "ranges" {:type "array"
+                                    :items
+                                    {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
+                                    :minItems 1
+                                    :description "THIS path's windows; override shared `ranges`."}}
                          :required ["path"]
                          :additionalProperties false}]}
         :minItems 1
@@ -5953,9 +5962,6 @@
    :items {:type "array" :items {:type "integer" :minimum 1} :minItems 2 :maxItems 2}
    :minItems 1})
 
-(def ^:private cat-anchor-schema
-  "Shape of an `anchor` value: one `lineno:hash` string, or a [from to] pair of them."
-  {:oneOf [{:type "string"} {:type "array" :items {:type "string"} :minItems 2 :maxItems 2}]})
 
 (def ^:private cat-file-entry-schema
   "A per-file object entry in `files`: the path plus a `ranges` override."
@@ -6522,8 +6528,7 @@
      :schema
      {:type "object"
       :properties
-      {"path" {:type "string"
-               :description "Edit file, or shared default for `edits`."}
+      {"path" {:type "string" :description "Edit file, or shared default for `edits`."}
        "paths"
        {:type "array"
         :items {:type "string" :minLength 1}
@@ -6536,31 +6541,25 @@
         :items {:type "object"}
         :description
         "ORDERED BATCH: single-edit entries; top-level defaults allow one path/many ops or several files. Applied in order, never rolled back. Omit for a lone edit."}
-       "op"
-       {:type "string"
-        :enum ["replace" "delete" "insert_before" "insert_after" "append" "add_doc" "replace_doc"
-               "replace_node" "rename" "move_before" "move_after" "append_child" "prepend_child"]
-        :description
-        "`append`=EOF; `append_child`/`prepend_child` take a definition or node locator."}
-       "target" {:type "string"
-                 :description
-                 "Definition NAME; also container for child appends."}
-       "code" {:type "string"
-               :description "Source to replace/insert, or rename's new name."}
+       "op" {:type "string"
+             :enum ["replace" "delete" "insert_before" "insert_after" "append" "add_doc"
+                    "replace_doc" "replace_node" "rename" "move_before" "move_after" "append_child"
+                    "prepend_child"]
+             :description
+             "`append`=EOF; `append_child`/`prepend_child` take a definition or node locator."}
+       "target" {:type "string" :description "Definition NAME; also container for child appends."}
+       "code" {:type "string" :description "Source to replace/insert, or rename's new name."}
        "kind" {:type "string"
                :description "Disambiguates same-named defs: function/class/method/…."}
-       "match" {:type "string"
-                :description "`replace_node`: unique subexpression text to swap."}
+       "match" {:type "string" :description "`replace_node`: unique subexpression text to swap."}
        "anchor"
        {:type "string"
         :description
         "`move_before`/`move_after`: adjacent def NAME; otherwise a struct_index/cat `lineno:hash` entering its node. Composes with `nav`."}
        "at" {:type "array"
              :items {:type "integer" :minimum 0}
-             :description
-             "Named-child path from a `struct_nodes` row; for path-based ops."}
-       "nav" {:type "array"
-              :description "Relative zipper moves after `at` (strings/maps)."}}
+             :description "Named-child path from a `struct_nodes` row; for path-based ops."}
+       "nav" {:type "array" :description "Relative zipper moves after `at` (strings/maps)."}}
       ;; Either a lone `path`+`op` edit or an `edits` batch — validated in the tool.
       :additionalProperties false}
      :before-fn (plan-gated-before-fn :struct_patch :file :write write-arg-paths)

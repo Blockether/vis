@@ -967,6 +967,15 @@
             (:llm_root_provider state)
             (assoc :provider (->kw-back (:llm_root_provider state)))
 
+            ;; The per-session model PIN lives on this same `session_soul` row
+            ;; (`db-get-session-model-pref` reads exactly these two columns), and
+            ;; the row is already selected with `:*`. Carrying it here is free and
+            ;; lets a session list answer "which model does this run on?" without
+            ;; an extra per-session round-trip.
+            (not-empty (:llm_pref_model soul))
+            (assoc :model-pref {:provider (:llm_pref_provider soul)
+                                :model (:llm_pref_model soul)})
+
             project
             (assoc :project-name (:name project))))))))
 
@@ -1409,7 +1418,8 @@
    `{:turn-count :iteration-count :duration-ms :input-tokens
      :input-regular-tokens :input-cache-write-tokens :input-cache-read-tokens
      :output-tokens :output-reasoning-tokens :cost-usd :first-turn-at
-     :last-turn-at :provider :model :tool-call-count :fold-count :top-tools}`
+     :last-turn-at :provider :model :tool-call-count :fold-count :top-tools
+     :error-count :top-errors}`
 
    Token/cost/iteration facts are SQL aggregates over the turn-state rollups
    (`session_turn_state`), which the turn writer already maintains — no
@@ -1419,7 +1429,13 @@
    decode is why this is an ON-DEMAND single-session read and never part of
    `list-sessions`.
 
-   `:top-tools` is `[{:name s :count n}]`, busiest first, folds excluded."
+   `:top-tools` is `[{:name s :count n}]`, busiest first, folds excluded.
+
+   `:top-errors` is that same shape over only the calls that FAILED (noisiest
+   tool first, folds included), so a session's failure surface reads next to
+   its volume. A form counts as failed the way channels judge one: it carries
+   an `:error` payload, or an explicit false `:success?`. Both rollups come out
+   of the SAME blob pass, so errors cost no extra decode."
   [db-info session-id]
   (when (and (ds db-info) session-id)
     (let
@@ -1468,12 +1484,22 @@
                                       join)
                           :where (conj where [:<> :qti.tool_calls nil])}))
 
-           counts
+           ;; ONE decode pass, TWO rollups: every call by tool, and only the
+           ;; failed ones. Errors are the same judgement channels make about a
+           ;; form (`error` payload, or an explicit false `success?`), so a
+           ;; session's failure surface costs no second scan of the blobs.
+           {counts :counts errors :errors}
            (reduce (fn [acc chunk]
                      (reduce (fn [acc* row]
                                (reduce (fn [a form]
-                                         (let [n (str (:vis/tool-name form))]
-                                           (if (str/blank? n) a (update a n (fnil inc 0)))))
+                                         (let [n (str (:vis/tool-name form))
+                                               ok (:success? form)]
+                                           (if (str/blank? n)
+                                             a
+                                             (cond-> (update-in a [:counts n] (fnil inc 0))
+                                               (or (some? (:error form))
+                                                   (and (some? ok) (not ok)))
+                                               (update-in [:errors n] (fnil inc 0))))))
                                        acc*
                                        (<-blob (:tool_calls row))))
                              acc
@@ -1482,7 +1508,7 @@
                                       :from [[:session_turn_iteration :qti]]
                                       :where [:and [:in :qti.id (vec chunk)]
                                               [:<> :qti.tool_calls nil]]})))
-                   {}
+                   {:counts {} :errors {}}
                    (partition-all 200 iter-ids))
 
            folds
@@ -1505,7 +1531,12 @@
                               (comp (remove #(= "session_fold" (key %)))
                                     (map (fn [[n c]]
                                            {:name n :count (long c)})))
-                              (sort-by (comp - val) counts))}
+                              (sort-by (comp - val) counts))
+             :error-count (long (reduce + 0 (vals errors)))
+             :top-errors (into []
+                               (map (fn [[n c]]
+                                      {:name n :count (long c)}))
+                               (sort-by (comp - val) errors))}
             (:first_at agg)
             (assoc :first-turn-at (long (:first_at agg)))
 

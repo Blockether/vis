@@ -1,14 +1,22 @@
-
 import ast as __vis_ast__
 import time as __vis_time__
+
 
 def __vis_count_forms__(src):
     return len(__vis_ast__.parse(src).body)
 
+
 def __vis_banned_name__(src, banned):
     banned = set(banned)
-    return next((n.id for n in __vis_ast__.walk(__vis_ast__.parse(src))
-                 if isinstance(n, __vis_ast__.Name) and n.id in banned), None)
+    return next(
+        (
+            n.id
+            for n in __vis_ast__.walk(__vis_ast__.parse(src))
+            if isinstance(n, __vis_ast__.Name) and n.id in banned
+        ),
+        None,
+    )
+
 
 class __vis_Raise__:
     # Driver -> awaitable signal that the tool/gather call the driver just ran
@@ -16,9 +24,11 @@ class __vis_Raise__:
     # coroutine (at the user's own `await`), so an in-block `try/except` around
     # `await tool(...)` CATCHES a tool failure like any other error; left
     # uncaught it escapes the driver exactly as before.
-    __slots__ = ('exc',)
+    __slots__ = ("exc",)
+
     def __init__(self, exc):
         self.exc = exc
+
 
 class __vis_ToolError__(Exception):
     # A tool/gather failure normalized to a REAL Python exception. Host tool
@@ -31,6 +41,7 @@ class __vis_ToolError__(Exception):
     def __init__(self, orig, msg):
         self.__vis_orig__ = orig
         super().__init__(msg)
+
 
 def __vis_clean_msg__(exc):
     # The bare message of a foreign host exception. `str(exc)` on a host throwable
@@ -45,12 +56,13 @@ def __vis_clean_msg__(exc):
     except BaseException:
         pass
     s = str(exc)
-    i = s.find(': ')
+    i = s.find(": ")
     if i > 0:
         head = s[:i]
-        if '.' in head and ' ' not in head:
-            return s[i + 2:]
+        if "." in head and " " not in head:
+            return s[i + 2 :]
     return s
+
 
 def __vis_wrap_tool_exc__(exc):
     # A native Python exception passes through untouched (its own type/message are
@@ -60,18 +72,28 @@ def __vis_wrap_tool_exc__(exc):
         return exc
     return __vis_ToolError__(exc, __vis_clean_msg__(exc))
 
+
 class __vis_Call__:
-    __slots__ = ('fn', 'a', 'k', 'nm', 'ran', 'failed', 'res')
-    def __init__(self, fn, a, k, nm='tool'):
-        self.fn = fn; self.a = a; self.k = k; self.nm = nm
-        self.ran = False; self.failed = False; self.res = None
+    __slots__ = ("fn", "a", "k", "nm", "ran", "failed", "res")
+
+    def __init__(self, fn, a, k, nm="tool"):
+        self.fn = fn
+        self.a = a
+        self.k = k
+        self.nm = nm
+        self.ran = False
+        self.failed = False
+        self.res = None
+
     def __await__(self):
         __vis_r__ = yield self
         if type(__vis_r__) is __vis_Raise__:
             raise __vis_r__.exc
         return __vis_r__
+
     def __repr__(self):
-        return '<unawaited async tool call: write `await ' + self.nm + '(...)`>'
+        return "<unawaited async tool call: write `await " + self.nm + "(...)`>"
+
     # INLINE-USE auto-settle. Subscripting / `len(...)` / `in` a deferred call is
     # ALWAYS a single-expression use of that ONE call's result — there is no
     # concurrency to forfeit (unlike a batchable set of calls), so we settle it
@@ -82,39 +104,49 @@ class __vis_Call__:
     # case the loud repr must keep nudging toward `await gather(...)`.
     def __getitem__(self, k):
         return __vis_settle__(self)[k]
+
     def __len__(self):
         return len(__vis_settle__(self))
+
     def __contains__(self, k):
         return k in __vis_settle__(self)
 
+
 class __vis_Gather__:
-    __slots__ = ('aws', 'return_exceptions')
+    __slots__ = ("aws", "return_exceptions")
+
     def __init__(self, aws, return_exceptions=False):
         self.aws = aws
         self.return_exceptions = bool(return_exceptions)
+
     def __await__(self):
         __vis_r__ = yield self
         if type(__vis_r__) is __vis_Raise__:
             raise __vis_r__.exc
         return __vis_r__
 
+
 def gather(*aws, return_exceptions=False):
     if len(aws) == 1 and isinstance(aws[0], (list, tuple)):
         aws = list(aws[0])
     return __vis_Gather__(list(aws), return_exceptions)
+
 
 class __vis_Already__:
     # A trivially-ready awaitable: `await __vis_Already__(v)` immediately yields
     # `v` (the `if False: yield` makes this `__await__` a generator, so the
     # object is awaitable, but it never suspends). Used to make `await` on an
     # already-resolved value a no-op that returns the value.
-    __slots__ = ('v',)
+    __slots__ = ("v",)
+
     def __init__(self, v):
         self.v = v
+
     def __await__(self):
         if False:
             yield
         return self.v
+
 
 def __vis_awaitable__(v):
     # Normalize the operand of `await` so awaiting a NON-awaitable just returns
@@ -127,14 +159,15 @@ def __vis_awaitable__(v):
     # `await gather(...)` keep being driven by `__vis_drive__` exactly as before.
     if isinstance(v, (__vis_Call__, __vis_Gather__)):
         return v
-    if hasattr(v, '__await__'):
+    if hasattr(v, "__await__"):
         return v
     return __vis_Already__(v)
+
 
 def __vis_exec_call__(c):
     if c.ran:
         if c.failed:
-            raise RuntimeError(c.nm + ' deferred call has already failed')
+            raise RuntimeError(c.nm + " deferred call has already failed")
         return c.res
     try:
         # Fold Python **kwargs into a TRAILING DICT positional. The host tool
@@ -154,7 +187,10 @@ def __vis_exec_call__(c):
     finally:
         c.ran = True
         # Success, failure, and cancellation all release host callable + arguments.
-        c.fn = None; c.a = (); c.k = {}
+        c.fn = None
+        c.a = ()
+        c.k = {}
+
 
 def __vis_key_hint__(__vis_d__, __vis_k__):
     # A missing key on a TOOL RESULT is a LOOKUP mistake, not a broken tool: shapes
@@ -163,23 +199,48 @@ def __vis_key_hint__(__vis_d__, __vis_k__):
     # the model guesses another name and spins. Name the tool, the near miss, and every
     # key it DID return — one wrong guess then ends the guessing.
     __vis_keys__ = list(__vis_d__.keys())
-    __vis_op__ = __vis_d__.get('op')
-    __vis_who__ = (repr(__vis_op__) + ' result') if __vis_op__ else 'this result map'
-    __vis_have__ = ', '.join([repr(__vis_x__) for __vis_x__ in __vis_keys__]) or '(no keys)'
+    __vis_op__ = __vis_d__.get("op")
+    __vis_who__ = (repr(__vis_op__) + " result") if __vis_op__ else "this result map"
+    __vis_have__ = (
+        ", ".join([repr(__vis_x__) for __vis_x__ in __vis_keys__]) or "(no keys)"
+    )
     if not isinstance(__vis_k__, str):
-        return ('cannot index ' + __vis_who__ + ' with ' + repr(__vis_k__) +
-                ': a dict is not sliceable or positional — use list(d), d.items(), or a '
-                'string key. Keys: ' + __vis_have__)
+        return (
+            "cannot index "
+            + __vis_who__
+            + " with "
+            + repr(__vis_k__)
+            + ": a dict is not sliceable or positional — use list(d), d.items(), or a "
+            "string key. Keys: " + __vis_have__
+        )
     __vis_low__ = __vis_k__.lower()
-    __vis_near__ = [__vis_x__ for __vis_x__ in __vis_keys__
-                    if isinstance(__vis_x__, str)
-                    and (__vis_low__ in __vis_x__.lower() or __vis_x__.lower() in __vis_low__)]
-    __vis_tip__ = ((' Did you mean ' +
-                    ' / '.join([repr(__vis_x__) for __vis_x__ in __vis_near__]) + '?')
-                   if __vis_near__ else '')
-    return (repr(__vis_k__) + ' is not a key of ' + __vis_who__ + '. Keys: ' + __vis_have__ +
-            '.' + __vis_tip__ + ' Read the keys it returned instead of guessing another '
-            'name; use .get(k, default) when the field is optional.')
+    __vis_near__ = [
+        __vis_x__
+        for __vis_x__ in __vis_keys__
+        if isinstance(__vis_x__, str)
+        and (__vis_low__ in __vis_x__.lower() or __vis_x__.lower() in __vis_low__)
+    ]
+    __vis_tip__ = (
+        (
+            " Did you mean "
+            + " / ".join([repr(__vis_x__) for __vis_x__ in __vis_near__])
+            + "?"
+        )
+        if __vis_near__
+        else ""
+    )
+    return (
+        repr(__vis_k__)
+        + " is not a key of "
+        + __vis_who__
+        + ". Keys: "
+        + __vis_have__
+        + "."
+        + __vis_tip__
+        + " Read the keys it returned instead of guessing another "
+        "name; use .get(k, default) when the field is optional."
+    )
+
 
 class __VisDict__(dict):
     # EVERY map rebuilt from the host boundary: a tool result, each nested map inside
@@ -190,6 +251,7 @@ class __VisDict__(dict):
     def __missing__(self, __vis_k__):
         raise KeyError(__vis_key_hint__(self, __vis_k__))
 
+
 class __VisResult__(__VisDict__):
     # A __VisDict__ that is a TOOL RESULT. `isinstance(x, __VisResult__)` is the
     # robust, UNFORGEABLE origin marker: a model can only build PLAIN dicts (even
@@ -197,6 +259,7 @@ class __VisResult__(__VisDict__):
     # relies on the 'op' key alone. 'op' stays a normal key (the origin, for render).
     # It IS a dict, so it's invisible to the model — json/mutation/isinstance work.
     pass
+
 
 class __VisResultList__(list):
     # A native tool result whose TOP-LEVEL shape is a LIST (patch / struct_patch /
@@ -208,12 +271,16 @@ class __VisResultList__(list):
     # index (res[0]['op']).
     def get(self, __k__, __d__=None):
         return __d__
+
     def keys(self):
         return []
+
     def items(self):
         return []
+
     def values(self):
         return []
+
 
 class __VisResultStr__(str):
     # A native tool result that is a bare STRING (a tool returning plain text). Still a
@@ -222,12 +289,16 @@ class __VisResultStr__(str):
     # it. .keys()/.items()/.values() are empty — a string has no fields.
     def get(self, __k__, __d__=None):
         return __d__
+
     def keys(self):
         return []
+
     def items(self):
         return []
+
     def values(self):
         return []
+
 
 def __vis_as_result__(__vis_v__):
     # Normalize a STORED native result (ntr[id]) so EVERY value answers the dict probes
@@ -246,21 +317,28 @@ def __vis_as_result__(__vis_v__):
         return __VisResultStr__(__vis_v__)
     return __vis_v__
 
+
 try:
     import polyglot as __vis_polyglot__
+
     __vis_Foreign__ = __vis_polyglot__.ForeignObject
+
     def __vis_is_foreign__(x):
         # A host/polyglot proxy (ProxyHashMap/ProxyArray/ForeignDict/…) that
         # crossed the Clojure->Python boundary. NATIVE python values (dict,
         # list, set, tuple, a user object) are NEVER a ForeignObject.
         return isinstance(x, __vis_Foreign__)
 except Exception:
+
     def __vis_is_foreign__(x):
         # Fallback (no `polyglot` module, e.g. non-GraalPy): approximate the
         # old allowlist — treat anything outside real-python primitives as a
         # proxy so tool results still rebuild.
-        return not (type(x) in (dict, list, str, bytes, int, float, bool)
-                    or isinstance(x, __VisDict__))
+        return not (
+            type(x) in (dict, list, str, bytes, int, float, bool)
+            or isinstance(x, __VisDict__)
+        )
+
 
 def __vis_pyify__(x):
     # Tool results cross the host boundary as ProxyHashMap/ProxyArray. GraalPy lets
@@ -278,7 +356,7 @@ def __vis_pyify__(x):
     # subclasses -> dict, so `s = set(); s.add(1)` blew up with the
     # 'list' object has no attribute 'add' error.)
     try:
-        if x is None or type(x).__name__ in ('NoneType', 'ForeignNone'):
+        if x is None or type(x).__name__ in ("NoneType", "ForeignNone"):
             return None
     except BaseException:
         # A RAW host null (not even wrapped as ForeignNone): every interop touch
@@ -287,7 +365,7 @@ def __vis_pyify__(x):
         return None
     if not __vis_is_foreign__(x):
         return x
-    if hasattr(x, 'keys'):
+    if hasattr(x, "keys"):
         try:
             d = {__k__: __vis_pyify__(__v__) for __k__, __v__ in x.items()}
         except Exception:
@@ -308,11 +386,12 @@ def __vis_pyify__(x):
                         pass
             except Exception:
                 d = {}
-        return __VisResult__(d) if 'op' in d else __VisDict__(d)
+        return __VisResult__(d) if "op" in d else __VisDict__(d)
     try:
         return [__vis_pyify__(__e__) for __e__ in x]
     except Exception:
         return x
+
 
 def __vis_settle_gather__(v):
     # Normal gather uses the host's bounded worker pool and aggregated failure
@@ -354,10 +433,12 @@ def __vis_settle_gather__(v):
         # A completed gather must not retain coroutine frames/tool arguments.
         v.aws.clear()
 
+
 # A plain generator is NOT a coroutine: `rows = (r for r in data)` must stay a
 # lazy generator, exactly like real python. It only LOOKS awaitable because it
 # has `.send`, and auto-settling used to DRIVE it to exhaustion and bind None.
-__vis_gen_type__ = __import__('types').GeneratorType
+__vis_gen_type__ = __import__("types").GeneratorType
+
 
 def __vis_settle__(v):
     if isinstance(v, __vis_Call__):
@@ -369,16 +450,21 @@ def __vis_settle__(v):
         return __vis_as_result__(__vis_pyify__(__vis_exec_call__(v)))
     if isinstance(v, __vis_Gather__):
         return __vis_settle_gather__(v)
-    if hasattr(v, '__await__') or (hasattr(v, 'send')
-                                   and not isinstance(v, __vis_gen_type__)):
+    if hasattr(v, "__await__") or (
+        hasattr(v, "send") and not isinstance(v, __vis_gen_type__)
+    ):
         return __vis_pyify__(__vis_drive__(v))
     return __vis_pyify__(v)
 
+
 def __vis_settle_binding__(name):
-    g = globals(); g[name] = __vis_settle__(g[name]); return g[name]
+    g = globals()
+    g[name] = __vis_settle__(g[name])
+    return g[name]
+
 
 def __vis_drive__(coro):
-    it = coro.__await__() if hasattr(coro, '__await__') else coro
+    it = coro.__await__() if hasattr(coro, "__await__") else coro
     send = None
     while True:
         try:
@@ -406,27 +492,33 @@ def __vis_drive__(coro):
             # propagates out of the driver just as it did before.
             send = __vis_Raise__(__vis_wrap_tool_exc__(__vis_exc__))
 
+
 def __vis_error_pos__(e):
     # Deepest '<prog>' (user-code) traceback frame -> (line, col, end_col). The
     # async trampoline (__vis_drive__) unwinds the guest stack, so a GraalPy
     # PolyglotException.getPolyglotStackTrace() LOSES these frames; the Python
     # __traceback__ is the only place the failing user-code position survives.
     # col/end_col are 0-based (co_positions), None when column info is absent.
-    tb = getattr(e, '__traceback__', None)
-    line = None; col = None; end_col = None
+    tb = getattr(e, "__traceback__", None)
+    line = None
+    col = None
+    end_col = None
     while tb is not None:
         f = tb.tb_frame
-        if f.f_code.co_filename == '<prog>':
+        if f.f_code.co_filename == "<prog>":
             line = tb.tb_lineno
-            col = None; end_col = None
+            col = None
+            end_col = None
             try:
                 p = list(f.f_code.co_positions())[f.f_lasti // 2]
                 if p[2] is not None:
-                    col = p[2]; end_col = p[3]
+                    col = p[2]
+                    end_col = p[3]
             except Exception:
                 pass
         tb = tb.tb_next
     return None if line is None else (line, col, end_col)
+
 
 def __vis_err_pos_now__():
     # HOST-CALLED, right after a block failed: compute the failing <prog>
@@ -440,37 +532,45 @@ def __vis_err_pos_now__():
     # became an opaque host-null fault). Called from the host's PolyglotException
     # handler the same fault is catchable there, and costs only the caret.
     g = globals()
-    e = g.get('__vis_err_obj__')
-    g['__vis_err_obj__'] = None
+    e = g.get("__vis_err_obj__")
+    g["__vis_err_obj__"] = None
     if e is None:
-        return g.get('__vis_err_pos__')
+        return g.get("__vis_err_pos__")
     pos = __vis_error_pos__(e)
-    g['__vis_err_pos__'] = pos
+    g["__vis_err_pos__"] = pos
     return pos
+
 
 class CancelledError(BaseException):
     pass
 
+
 class InvalidStateError(Exception):
     pass
+
 
 class __vis_Sleep__:
     # A real blocking sleep wrapped as an awaitable. There is deliberately no
     # selector/event-loop thread. Under gather it runs on the host's bounded,
     # self-reclaiming PLATFORM pool, so a Graal polyglot call cannot pin virtual
     # carriers or grow an unbounded virtual-thread scheduler.
-    __slots__ = ('delay', 'result')
+    __slots__ = ("delay", "result")
+
     def __init__(self, delay, result=None):
-        self.delay = float(delay); self.result = result
+        self.delay = float(delay)
+        self.result = result
+
     def __await__(self):
         __vis_time__.sleep(max(0.0, self.delay))
         result = self.result
         # Like a completed coroutine frame, a retained sleep awaitable must not keep
         # an arbitrary result payload alive after handing it to its caller.
-        self.delay = 0.0; self.result = None
+        self.delay = 0.0
+        self.result = None
         if False:
             yield
         return result
+
 
 def __vis_clean_exception__(exc):
     # Stored failures must not retain completed coroutine/driver frames through
@@ -479,12 +579,13 @@ def __vis_clean_exception__(exc):
     # the underlying host exception, so it can reappear after the handler unwinds.
     # Store a semantic COPY instead - same type, args and message, no frames.
     clean = __vis_clone_exception__(__vis_wrap_tool_exc__(exc))
-    for attr in ('__traceback__', '__context__', '__cause__'):
+    for attr in ("__traceback__", "__context__", "__cause__"):
         try:
             setattr(clean, attr, None)
         except BaseException:
             pass
     return clean
+
 
 def __vis_clone_exception__(exc):
     # Raising the object stored on a Task would attach a fresh traceback to that same
@@ -492,16 +593,18 @@ def __vis_clone_exception__(exc):
     if isinstance(exc, __vis_ToolError__):
         return __vis_ToolError__(exc.__vis_orig__, str(exc))
     try:
-        return type(exc)(*getattr(exc, 'args', (str(exc),)))
+        return type(exc)(*getattr(exc, "args", (str(exc),)))
     except BaseException:
         return RuntimeError(str(exc))
+
 
 class __vis_Task__:
     # A lazy Task-compatible awaitable. It intentionally has NO global task
     # registry or scheduler thread. Completion/cancellation clears the coroutine
     # reference, preventing finished frames and tool arguments from accumulating
     # in a long-lived sandbox Context.
-    __slots__ = ('_aw', '_done', '_cancelled', '_result', '_exception', '_name')
+    __slots__ = ("_aw", "_done", "_cancelled", "_result", "_exception", "_name")
+
     def __init__(self, aw, name=None):
         self._aw = aw
         self._done = False
@@ -509,6 +612,7 @@ class __vis_Task__:
         self._result = None
         self._exception = None
         self._name = name
+
     def __await__(self):
         if self._cancelled:
             raise CancelledError()
@@ -530,6 +634,7 @@ class __vis_Task__:
         if self._exception is not None:
             raise __vis_clone_exception__(self._exception) from None
         return self._result
+
     def cancel(self, msg=None):
         if self._done:
             return False
@@ -540,21 +645,38 @@ class __vis_Task__:
         if aw is not self:
             __vis_dispose_awaitable__(aw)
         return True
-    def cancelled(self): return self._cancelled
-    def done(self): return self._done
+
+    def cancelled(self):
+        return self._cancelled
+
+    def done(self):
+        return self._done
+
     def result(self):
-        if not self._done: raise InvalidStateError('Result is not ready.')
-        if self._cancelled: raise CancelledError()
+        if not self._done:
+            raise InvalidStateError("Result is not ready.")
+        if self._cancelled:
+            raise CancelledError()
         if self._exception is not None:
             raise __vis_clone_exception__(self._exception) from None
         return self._result
+
     def exception(self):
-        if not self._done: raise InvalidStateError('Exception is not set.')
-        if self._cancelled: raise CancelledError()
+        if not self._done:
+            raise InvalidStateError("Exception is not set.")
+        if self._cancelled:
+            raise CancelledError()
         return self._exception
-    def get_name(self): return self._name or 'Task'
-    def set_name(self, name): self._name = str(name)
-    def get_coro(self): return self._aw
+
+    def get_name(self):
+        return self._name or "Task"
+
+    def set_name(self, name):
+        self._name = str(name)
+
+    def get_coro(self):
+        return self._aw
+
 
 def __vis_dispose_awaitable__(aw):
     # Idempotent, recursive disposal for work abandoned before settlement. There is
@@ -567,8 +689,12 @@ def __vis_dispose_awaitable__(aw):
         return
     if isinstance(aw, __vis_Call__):
         if not aw.ran:
-            aw.failed = True; aw.ran = True; aw.res = None
-            aw.fn = None; aw.a = (); aw.k = {}
+            aw.failed = True
+            aw.ran = True
+            aw.res = None
+            aw.fn = None
+            aw.a = ()
+            aw.k = {}
         return
     if isinstance(aw, __vis_Gather__):
         for child in list(aw.aws):
@@ -576,25 +702,30 @@ def __vis_dispose_awaitable__(aw):
         aw.aws.clear()
         return
     try:
-        if hasattr(aw, 'close'):
+        if hasattr(aw, "close"):
             aw.close()
     except BaseException:
         pass
 
+
 class __vis_TaskGroup__:
-    __slots__ = ('_tasks', '_entered')
+    __slots__ = ("_tasks", "_entered")
+
     def __init__(self):
         self._tasks = []
         self._entered = False
+
     async def __aenter__(self):
         self._entered = True
         return self
+
     def create_task(self, coro, *, name=None, context=None):
         if not self._entered:
-            raise RuntimeError('TaskGroup has not been entered')
+            raise RuntimeError("TaskGroup has not been entered")
         task = __vis_Task__(coro, name)
         self._tasks.append(task)
         return task
+
     async def __aexit__(self, typ, val, tb):
         try:
             if typ is not None:
@@ -608,8 +739,10 @@ class __vis_TaskGroup__:
             self._tasks.clear()
             self._entered = False
 
+
 def __vis_create_task__(coro, *, name=None, context=None):
     return coro if isinstance(coro, __vis_Task__) else __vis_Task__(coro, name)
+
 
 async def __vis_wait_for__(aw, timeout):
     # No hidden timer/event-loop thread. Zero/negative deadlines cancel before
@@ -626,7 +759,8 @@ async def __vis_wait_for__(aw, timeout):
         raise TimeoutError()
     return result
 
-async def __vis_wait__(aws, *, timeout=None, return_when='ALL_COMPLETED'):
+
+async def __vis_wait__(aws, *, timeout=None, return_when="ALL_COMPLETED"):
     tasks = {__vis_create_task__(aw) for aw in aws}
     if timeout is not None and float(timeout) <= 0:
         return set(), tasks
@@ -634,16 +768,20 @@ async def __vis_wait__(aws, *, timeout=None, return_when='ALL_COMPLETED'):
         await gather(*tasks, return_exceptions=True)
     return tasks, set()
 
+
 def __vis_to_thread__(func, /, *args, **kwargs):
     # The deferred call is dispatched by gather on the same bounded platform
     # executor as tools; it never creates a guest thread or a per-call executor.
-    return __vis_Call__(func, args, kwargs, getattr(func, '__name__', 'to_thread'))
+    return __vis_Call__(func, args, kwargs, getattr(func, "__name__", "to_thread"))
 
-def __vis_deferred__(realfn, nm='tool'):
+
+def __vis_deferred__(realfn, nm="tool"):
     def __vis_tool__(*a, **k):
         return __vis_Call__(realfn, a, k, nm)
+
     __vis_tool__.__name__ = nm
     return __vis_tool__
+
 
 class __vis_asyncio__:
     # Practical asyncio compatibility for Vis' coroutine trampoline. This is NOT
@@ -655,88 +793,140 @@ class __vis_asyncio__:
     TimeoutError = TimeoutError
     Task = __vis_Task__
     TaskGroup = __vis_TaskGroup__
-    ALL_COMPLETED = 'ALL_COMPLETED'
-    FIRST_COMPLETED = 'FIRST_COMPLETED'
-    FIRST_EXCEPTION = 'FIRST_EXCEPTION'
+    ALL_COMPLETED = "ALL_COMPLETED"
+    FIRST_COMPLETED = "FIRST_COMPLETED"
+    FIRST_EXCEPTION = "FIRST_EXCEPTION"
+
     @staticmethod
-    def run(coro, *, debug=None): return __vis_drive__(coro)
+    def run(coro, *, debug=None):
+        return __vis_drive__(coro)
+
     @staticmethod
-    def run_until_complete(coro): return __vis_drive__(coro)
+    def run_until_complete(coro):
+        return __vis_drive__(coro)
+
     @staticmethod
     def gather(*aws, return_exceptions=False):
         return gather(*aws, return_exceptions=return_exceptions)
+
     @staticmethod
     def create_task(coro, *, name=None, context=None):
         return __vis_create_task__(coro, name=name, context=context)
+
     @staticmethod
-    def ensure_future(coro, *, loop=None): return __vis_create_task__(coro)
+    def ensure_future(coro, *, loop=None):
+        return __vis_create_task__(coro)
+
     @staticmethod
-    def get_event_loop(): return __vis_asyncio__
+    def get_event_loop():
+        return __vis_asyncio__
+
     @staticmethod
-    def get_running_loop(): return __vis_asyncio__
+    def get_running_loop():
+        return __vis_asyncio__
+
     @staticmethod
-    def new_event_loop(): return __vis_asyncio__
+    def new_event_loop():
+        return __vis_asyncio__
+
     @staticmethod
-    def set_event_loop(*a, **k): return None
+    def set_event_loop(*a, **k):
+        return None
+
     @staticmethod
-    def sleep(delay, result=None): return __vis_Sleep__(delay, result)
+    def sleep(delay, result=None):
+        return __vis_Sleep__(delay, result)
+
     @staticmethod
-    def iscoroutine(v): return hasattr(v, 'send') or hasattr(v, '__await__')
+    def iscoroutine(v):
+        return hasattr(v, "send") or hasattr(v, "__await__")
+
     @staticmethod
-    def isfuture(v): return isinstance(v, __vis_Task__)
+    def isfuture(v):
+        return isinstance(v, __vis_Task__)
+
     @staticmethod
-    def current_task(loop=None): return None
+    def current_task(loop=None):
+        return None
+
     @staticmethod
-    def all_tasks(loop=None): return set()
+    def all_tasks(loop=None):
+        return set()
+
     @staticmethod
-    def shield(aw): return __vis_create_task__(aw)
+    def shield(aw):
+        return __vis_create_task__(aw)
+
     @staticmethod
-    def wait_for(aw, timeout): return __vis_wait_for__(aw, timeout)
+    def wait_for(aw, timeout):
+        return __vis_wait_for__(aw, timeout)
+
     @staticmethod
-    def wait(aws, *, timeout=None, return_when='ALL_COMPLETED'):
+    def wait(aws, *, timeout=None, return_when="ALL_COMPLETED"):
         return __vis_wait__(aws, timeout=timeout, return_when=return_when)
+
     @staticmethod
-    def to_thread(func, /, *args, **kwargs): return __vis_to_thread__(func, *args, **kwargs)
+    def to_thread(func, /, *args, **kwargs):
+        return __vis_to_thread__(func, *args, **kwargs)
+
     @staticmethod
     def iscoroutinefunction(fn):
-        return bool(getattr(getattr(fn, '__code__', None), 'co_flags', 0) & 0x80)
+        return bool(getattr(getattr(fn, "__code__", None), "co_flags", 0) & 0x80)
+
 
 asyncio = __vis_asyncio__
 
-__vis_try_stmts__ = tuple(__vis_t__ for __vis_t__ in (getattr(__vis_ast__, 'Try', None),
-                                                      getattr(__vis_ast__, 'TryStar', None))
-                          if __vis_t__ is not None)
-__vis_match_stmt__ = getattr(__vis_ast__, 'Match', None)
+__vis_try_stmts__ = tuple(
+    __vis_t__
+    for __vis_t__ in (
+        getattr(__vis_ast__, "Try", None),
+        getattr(__vis_ast__, "TryStar", None),
+    )
+    if __vis_t__ is not None
+)
+__vis_match_stmt__ = getattr(__vis_ast__, "Match", None)
 
-__vis_scope_nodes__ = tuple(__vis_t__ for __vis_t__ in (getattr(__vis_ast__, 'FunctionDef', None),
-                                                        getattr(__vis_ast__, 'AsyncFunctionDef', None),
-                                                        getattr(__vis_ast__, 'ClassDef', None),
-                                                        getattr(__vis_ast__, 'Lambda', None))
-                            if __vis_t__ is not None)
-__vis_type_alias__ = getattr(__vis_ast__, 'TypeAlias', None)
-__vis_named_expr__ = getattr(__vis_ast__, 'NamedExpr', None)
+__vis_scope_nodes__ = tuple(
+    __vis_t__
+    for __vis_t__ in (
+        getattr(__vis_ast__, "FunctionDef", None),
+        getattr(__vis_ast__, "AsyncFunctionDef", None),
+        getattr(__vis_ast__, "ClassDef", None),
+        getattr(__vis_ast__, "Lambda", None),
+    )
+    if __vis_t__ is not None
+)
+__vis_type_alias__ = getattr(__vis_ast__, "TypeAlias", None)
+__vis_named_expr__ = getattr(__vis_ast__, "NamedExpr", None)
+
 
 def __vis_assigned_names__(body):
-    names = []; seen = set()
+    names = []
+    seen = set()
+
     def add(n):
         # `from x import *` yields the pseudo-name `*`; a `global *` would be a
         # compile error, so only real identifiers ever reach the global list.
         if isinstance(n, str) and n.isidentifier() and n not in seen:
-            seen.add(n); names.append(n)
+            seen.add(n)
+            names.append(n)
+
     def add_target(t):
         if t is None:
             return
         for nn in __vis_ast__.walk(t):
             if isinstance(nn, __vis_ast__.Name):
                 add(nn.id)
+
     def add_pattern(p):
         # `case [a, *rest]` / `case {...., **rest}` / `case X() as hit` all BIND,
         # exactly like an assignment target.
         if p is None:
             return
         for nn in __vis_ast__.walk(p):
-            add(getattr(nn, 'name', None))
-            add(getattr(nn, 'rest', None))
+            add(getattr(nn, "name", None))
+            add(getattr(nn, "rest", None))
+
     def add_walrus(node):
         # `(m := ...)` binds in the ENCLOSING scope wherever it appears: an
         # `if`/`while` test, a call argument, a comprehension element. Nested
@@ -749,6 +939,7 @@ def __vis_assigned_names__(body):
             for ch in __vis_ast__.iter_child_nodes(nn):
                 if not isinstance(ch, __vis_scope_nodes__):
                     stack.append(ch)
+
     def walk_stmts(stmts):
         # MODULE SCOPE is NOT just the top-level statement list: `if` / `while` /
         # `for` / `with` / `try` / `match` bodies execute in the SAME scope, so a
@@ -770,36 +961,52 @@ def __vis_assigned_names__(body):
                 for t in node.targets:
                     if isinstance(t, __vis_ast__.Name):
                         add(t.id)
-            elif isinstance(node, (__vis_ast__.FunctionDef, __vis_ast__.AsyncFunctionDef, __vis_ast__.ClassDef)):
+            elif isinstance(
+                node,
+                (
+                    __vis_ast__.FunctionDef,
+                    __vis_ast__.AsyncFunctionDef,
+                    __vis_ast__.ClassDef,
+                ),
+            ):
                 # A def/class binds its NAME in this scope; its BODY is another
                 # scope entirely, so we never descend into it.
                 add(node.name)
-            elif __vis_type_alias__ is not None and isinstance(node, __vis_type_alias__):
+            elif __vis_type_alias__ is not None and isinstance(
+                node, __vis_type_alias__
+            ):
                 add_target(node.name)
             elif isinstance(node, (__vis_ast__.Import, __vis_ast__.ImportFrom)):
                 for al in node.names:
-                    add((al.asname or al.name).split('.')[0])
+                    add((al.asname or al.name).split(".")[0])
             elif isinstance(node, __vis_ast__.Global):
                 for __vis_gn__ in node.names:
                     add(__vis_gn__)
             elif isinstance(node, (__vis_ast__.If, __vis_ast__.While)):
-                walk_stmts(node.body); walk_stmts(node.orelse)
+                walk_stmts(node.body)
+                walk_stmts(node.orelse)
             elif isinstance(node, (__vis_ast__.For, __vis_ast__.AsyncFor)):
                 add_target(node.target)
-                walk_stmts(node.body); walk_stmts(node.orelse)
+                walk_stmts(node.body)
+                walk_stmts(node.orelse)
             elif isinstance(node, (__vis_ast__.With, __vis_ast__.AsyncWith)):
                 for __vis_it__ in node.items:
                     add_target(__vis_it__.optional_vars)
                 walk_stmts(node.body)
             elif __vis_try_stmts__ and isinstance(node, __vis_try_stmts__):
-                walk_stmts(node.body); walk_stmts(node.orelse); walk_stmts(node.finalbody)
+                walk_stmts(node.body)
+                walk_stmts(node.orelse)
+                walk_stmts(node.finalbody)
                 for __vis_h__ in node.handlers:
                     add(__vis_h__.name)
                     walk_stmts(__vis_h__.body)
-            elif __vis_match_stmt__ is not None and isinstance(node, __vis_match_stmt__):
+            elif __vis_match_stmt__ is not None and isinstance(
+                node, __vis_match_stmt__
+            ):
                 for __vis_c__ in node.cases:
                     add_pattern(__vis_c__.pattern)
                     walk_stmts(__vis_c__.body)
+
     # `for` / `with` / `except` / `case` TARGETS are bindings too: real module
     # scope keeps `for line in ...` and `with open(p) as fh` alive after the
     # statement, so they are declared global as well. Clobbering a TOOL is still
@@ -808,6 +1015,7 @@ def __vis_assigned_names__(body):
     # block.
     walk_stmts(body)
     return names
+
 
 def __vis_star_import__(module, level=0):
     # `from mod import *` is a SyntaxError inside a function, and EVERY block is
@@ -818,11 +1026,11 @@ def __vis_star_import__(module, level=0):
     # module's public names (or its `__all__`) straight into globals. A PROTECTED
     # tool name is never overwritten.
     g = globals()
-    mod = __import__(module or '', g, g, ['*'], level)
-    prot = set(g.get('__vis_protected_names__') or [])
-    exported = getattr(mod, '__all__', None)
+    mod = __import__(module or "", g, g, ["*"], level)
+    prot = set(g.get("__vis_protected_names__") or [])
+    exported = getattr(mod, "__all__", None)
     if exported is None:
-        exported = [k for k in dir(mod) if not k.startswith('_')]
+        exported = [k for k in dir(mod) if not k.startswith("_")]
     for k in exported:
         if k in prot:
             continue
@@ -832,21 +1040,25 @@ def __vis_star_import__(module, level=0):
             pass
     return None
 
+
 class __vis_StarImportFix__(__vis_ast__.NodeTransformer):
     # Replace every `from mod import *` (top level or nested in an if/try) with
     # `__vis_star_import__('mod', level)`.
     def visit_ImportFrom(self, node):
-        if any(al.name == '*' for al in node.names):
+        if any(al.name == "*" for al in node.names):
             call = __vis_ast__.Call(
-                func=__vis_ast__.Name(id='__vis_star_import__', ctx=__vis_ast__.Load()),
-                args=[__vis_ast__.Constant(value=node.module or ''),
-                      __vis_ast__.Constant(value=node.level or 0)],
-                keywords=[])
+                func=__vis_ast__.Name(id="__vis_star_import__", ctx=__vis_ast__.Load()),
+                args=[
+                    __vis_ast__.Constant(value=node.module or ""),
+                    __vis_ast__.Constant(value=node.level or 0),
+                ],
+                keywords=[],
+            )
             return __vis_ast__.Expr(value=call)
         return node
 
 
-__vis_future_mod__ = __import__('__future__')
+__vis_future_mod__ = __import__("__future__")
 
 
 def __vis_future_flags__(tree):
@@ -860,12 +1072,18 @@ def __vis_future_flags__(tree):
     flags = 0
     kept = []
     for node in tree.body:
-        if (isinstance(node, __vis_ast__.ImportFrom) and node.module == '__future__'
-                and not node.level and not any(al.name == '*' for al in node.names)):
+        if (
+            isinstance(node, __vis_ast__.ImportFrom)
+            and node.module == "__future__"
+            and not node.level
+            and not any(al.name == "*" for al in node.names)
+        ):
             for al in node.names:
                 feat = getattr(__vis_future_mod__, al.name, None)
-                if getattr(feat, 'compiler_flag', None) is None:
-                    raise SyntaxError('future feature ' + str(al.name) + ' is not defined')
+                if getattr(feat, "compiler_flag", None) is None:
+                    raise SyntaxError(
+                        "future feature " + str(al.name) + " is not defined"
+                    )
                 flags |= feat.compiler_flag
             continue
         kept.append(node)
@@ -877,15 +1095,16 @@ def __vis_syntax_error__(msg, node, src):
     # A SyntaxError the HOST can actually RENDER. The boundary reads lineno/offset/
     # text off the exception object, so a raise from this preamble without them
     # reports a line number in code the user never wrote (`<prog>, line 1070`).
-    ln = getattr(node, 'lineno', None)
-    col = getattr(node, 'col_offset', None)
+    ln = getattr(node, "lineno", None)
+    col = getattr(node, "col_offset", None)
     txt = None
     if isinstance(ln, int) and ln >= 1:
         lines = src.splitlines()
         if ln <= len(lines):
             txt = lines[ln - 1]
-    return SyntaxError(msg, ('<prog>', ln,
-                             (col + 1) if isinstance(col, int) else None, txt))
+    return SyntaxError(
+        msg, ("<prog>", ln, (col + 1) if isinstance(col, int) else None, txt)
+    )
 
 
 def __vis_check_module_scope__(tree, src):
@@ -897,8 +1116,11 @@ def __vis_check_module_scope__(tree, src):
     # Report what Python reports.
     # A `def`/`class`/`lambda` body is a scope of its own: its `return`/`yield` are
     # perfectly legal and are never inspected here.
-    stack = [__vis_n__ for __vis_n__ in tree.body
-             if not isinstance(__vis_n__, __vis_scope_nodes__)]
+    stack = [
+        __vis_n__
+        for __vis_n__ in tree.body
+        if not isinstance(__vis_n__, __vis_scope_nodes__)
+    ]
     while stack:
         node = stack.pop()
         if isinstance(node, __vis_ast__.Return):
@@ -907,7 +1129,8 @@ def __vis_check_module_scope__(tree, src):
             raise __vis_syntax_error__("'yield' outside function", node, src)
         if isinstance(node, __vis_ast__.Nonlocal):
             raise __vis_syntax_error__(
-                'nonlocal declaration not allowed at module level', node, src)
+                "nonlocal declaration not allowed at module level", node, src
+            )
         for ch in __vis_ast__.iter_child_nodes(node):
             if not isinstance(ch, __vis_scope_nodes__):
                 stack.append(ch)
@@ -922,13 +1145,14 @@ def __vis_check_compile_traps__(tree, src):
     # whole block is reported as an engine fault. Reject them up front, with the
     # message and position CPython gives. Unlike the module-scope pass this walks
     # EVERY scope: a lambda nested in a def is just as fatal.
-    star = 'starred assignment target must be in a list or tuple'
+    star = "starred assignment target must be in a list or tuple"
     for node in __vis_ast__.walk(tree):
         if isinstance(node, __vis_ast__.Lambda):
             for sub in __vis_ast__.walk(node):
                 if isinstance(sub, __vis_ast__.Await):
                     raise __vis_syntax_error__(
-                        "'await' outside async function", sub, src)
+                        "'await' outside async function", sub, src
+                    )
         targets = ()
         if isinstance(node, __vis_ast__.Assign):
             targets = node.targets
@@ -943,7 +1167,7 @@ def __vis_check_compile_traps__(tree, src):
         elif isinstance(node, __vis_ast__.Delete):
             for t in node.targets:
                 if isinstance(t, __vis_ast__.Starred):
-                    raise __vis_syntax_error__('cannot delete starred', t, src)
+                    raise __vis_syntax_error__("cannot delete starred", t, src)
         for t in targets:
             if isinstance(t, __vis_ast__.Starred):
                 raise __vis_syntax_error__(star, t, src)
@@ -953,10 +1177,10 @@ def __vis_annotate__(name, value):
     # Module scope records `x: int = 1` in the module's `__annotations__` (created
     # on first use); the binding itself is a plain assignment.
     g = globals()
-    ann = g.get('__annotations__')
+    ann = g.get("__annotations__")
     if not isinstance(ann, dict):
         ann = {}
-        g['__annotations__'] = ann
+        g["__annotations__"] = ann
     ann[name] = value
     return None
 
@@ -985,22 +1209,31 @@ class __vis_AnnFix__(__vis_ast__.NodeTransformer):
             return node
         # Under `from __future__ import annotations` the annotation is never
         # evaluated — it is stored as its own source text.
-        ann = (__vis_ast__.Constant(value=__vis_ast__.unparse(node.annotation))
-               if self.lazy else node.annotation)
-        record = __vis_ast__.Expr(value=__vis_ast__.Call(
-            func=__vis_ast__.Name(id='__vis_annotate__', ctx=__vis_ast__.Load()),
-            args=[__vis_ast__.Constant(value=node.target.id), ann], keywords=[]))
+        ann = (
+            __vis_ast__.Constant(value=__vis_ast__.unparse(node.annotation))
+            if self.lazy
+            else node.annotation
+        )
+        record = __vis_ast__.Expr(
+            value=__vis_ast__.Call(
+                func=__vis_ast__.Name(id="__vis_annotate__", ctx=__vis_ast__.Load()),
+                args=[__vis_ast__.Constant(value=node.target.id), ann],
+                keywords=[],
+            )
+        )
         if node.value is None:
             return record
         return [__vis_ast__.Assign(targets=[node.target], value=node.value), record]
 
-__vis_builtins_mod__ = __import__('builtins')
-__vis_sysmod__ = __import__('sys')
+
+__vis_builtins_mod__ = __import__("builtins")
+__vis_sysmod__ = __import__("sys")
 __vis_real_exec__ = __vis_builtins_mod__.exec
 __vis_real_vars__ = __vis_builtins_mod__.vars
 # Frame-relative when called from a preamble function — whose globals ARE the
 # session globals `g`, so this hands back exactly that dict.
 __vis_globals__ = __vis_builtins_mod__.globals
+
 
 def __vis_caller_frame__(depth):
     # The frame `depth` levels above the shim, or None when frame introspection
@@ -1010,8 +1243,10 @@ def __vis_caller_frame__(depth):
     except Exception:
         return None
 
+
 def __vis_is_block_frame__(frame):
-    return frame is not None and frame.f_code.co_name == '__vis_main__'
+    return frame is not None and frame.f_code.co_name == "__vis_main__"
+
 
 def exec(source, globals=None, locals=None, /, **kw):
     # MODULE-SCOPE `exec`: at real module level `exec('x = 1')` binds x in the
@@ -1020,10 +1255,15 @@ def exec(source, globals=None, locals=None, /, **kw):
     # vanished and the very next line raised NameError. Only the no-namespace
     # call made DIRECTLY from a block body is redirected; an explicit namespace,
     # and any call from a function the block defined, keeps real semantics.
-    if globals is None and locals is None and __vis_is_block_frame__(__vis_caller_frame__(1)):
+    if (
+        globals is None
+        and locals is None
+        and __vis_is_block_frame__(__vis_caller_frame__(1))
+    ):
         globals = __vis_globals__()
         locals = globals
     return __vis_real_exec__(source, globals, locals, **kw)
+
 
 def locals():
     # At module level `locals() is globals()` — `'{x}'.format(**locals())` and
@@ -1033,6 +1273,7 @@ def locals():
     if __vis_is_block_frame__(frame):
         return __vis_globals__()
     return frame.f_locals if frame is not None else __vis_globals__()
+
 
 def vars(*obj):
     if obj:
@@ -1063,35 +1304,42 @@ def __vis_strip_protected_imports__(src):
     #     that name for THIS block (the wrapper never declares it `global`).
     # Everything else (json, re, ...) is untouched; the ORIGINAL src is returned
     # when nothing changed (line numbers / formatting preserved).
-    prot = set(globals().get('__vis_protected_names__') or [])
-    drop = ('select', 'selectors', 'ssl')
+    prot = set(globals().get("__vis_protected_names__") or [])
+    drop = ("select", "selectors", "ssl")
+
     def bind(name, attr):
-        val = __vis_ast__.Name(id='__vis_asyncio__', ctx=__vis_ast__.Load())
+        val = __vis_ast__.Name(id="__vis_asyncio__", ctx=__vis_ast__.Load())
         if attr is not None:
             val = __vis_ast__.Attribute(value=val, attr=attr, ctx=__vis_ast__.Load())
         return __vis_ast__.Assign(
-            targets=[__vis_ast__.Name(id=name, ctx=__vis_ast__.Store())], value=val)
+            targets=[__vis_ast__.Name(id=name, ctx=__vis_ast__.Store())], value=val
+        )
+
     tree = __vis_ast__.parse(src)
-    changed = False; newbody = []
+    changed = False
+    newbody = []
     for node in tree.body:
         if isinstance(node, __vis_ast__.Import):
             keep = []
             for a in node.names:
-                base = a.name.split('.')[0]; bound = (a.asname or a.name).split('.')[0]
-                if base == 'asyncio':
-                    newbody.append(bind(a.asname or 'asyncio', None)); changed = True
+                base = a.name.split(".")[0]
+                bound = (a.asname or a.name).split(".")[0]
+                if base == "asyncio":
+                    newbody.append(bind(a.asname or "asyncio", None))
+                    changed = True
                 elif base in drop:
                     changed = True
                 else:
                     keep.append(a)
             if keep:
-                node.names = keep; newbody.append(node)
+                node.names = keep
+                newbody.append(node)
         elif isinstance(node, __vis_ast__.ImportFrom):
-            base = (node.module or '').split('.')[0]
-            if base == 'asyncio':
+            base = (node.module or "").split(".")[0]
+            if base == "asyncio":
                 for a in node.names:
                     bound = a.asname or a.name
-                    if bound not in prot:            # gather etc. stay the builtin
+                    if bound not in prot:  # gather etc. stay the builtin
                         newbody.append(bind(bound, a.name))
                 changed = True
             elif base in drop:
@@ -1106,6 +1354,7 @@ def __vis_strip_protected_imports__(src):
     __vis_ast__.fix_missing_locations(tree)
     return __vis_ast__.unparse(tree)
 
+
 class __vis_AwaitFix__(__vis_ast__.NodeTransformer):
     # Wrap the operand of every `await EXPR` as `await __vis_awaitable__(EXPR)`
     # so awaiting a value that is NOT a real awaitable (a tool result that
@@ -1115,9 +1364,12 @@ class __vis_AwaitFix__(__vis_ast__.NodeTransformer):
     def visit_Await(self, node):
         self.generic_visit(node)
         node.value = __vis_ast__.Call(
-            func=__vis_ast__.Name(id='__vis_awaitable__', ctx=__vis_ast__.Load()),
-            args=[node.value], keywords=[])
+            func=__vis_ast__.Name(id="__vis_awaitable__", ctx=__vis_ast__.Load()),
+            args=[node.value],
+            keywords=[],
+        )
         return node
+
 
 def __vis_pin_runtime__(g):
     # PIN the engine's own names into `builtins`.
@@ -1135,8 +1387,9 @@ def __vis_pin_runtime__(g):
     # mid-block half of the same story.) Mirroring into builtins costs one dict
     # scan per block and gives the helpers exactly `print`'s survival rule.
     import builtins as __vis_b__
+
     for __n__ in list(g):
-        if __n__.startswith('__vis_') or __n__.startswith('__Vis'):
+        if __n__.startswith("__vis_") or __n__.startswith("__Vis"):
             try:
                 setattr(__vis_b__, __n__, g[__n__])
             except Exception:
@@ -1146,10 +1399,16 @@ def __vis_pin_runtime__(g):
 def __vis_run_async__(src):
     g = globals()
     __vis_pin_runtime__(g)
-    g['__vis_printed_results__'] = []   # per-block reset (real python list, appendable)
-    g['__vis_only_results__'] = True    # cleared if the block prints anything that isn't a tool result
-    g['__vis_err_pos__'] = None         # deepest <prog> failing position, computed by __vis_err_pos_now__
-    g['__vis_err_obj__'] = None         # the raised exception, stashed for that host-driven lookup
+    g["__vis_printed_results__"] = []  # per-block reset (real python list, appendable)
+    g["__vis_only_results__"] = (
+        True  # cleared if the block prints anything that isn't a tool result
+    )
+    g["__vis_err_pos__"] = (
+        None  # deepest <prog> failing position, computed by __vis_err_pos_now__
+    )
+    g["__vis_err_obj__"] = (
+        None  # the raised exception, stashed for that host-driven lookup
+    )
     tree = __vis_ast__.parse(src)
     __vis_flags__ = __vis_future_flags__(tree)
     __vis_check_module_scope__(tree, src)
@@ -1157,7 +1416,8 @@ def __vis_run_async__(src):
     tree = __vis_AwaitFix__().visit(tree)
     tree = __vis_StarImportFix__().visit(tree)
     tree = __vis_AnnFix__(
-        bool(__vis_flags__ & __vis_future_mod__.annotations.compiler_flag)).visit(tree)
+        bool(__vis_flags__ & __vis_future_mod__.annotations.compiler_flag)
+    ).visit(tree)
     __vis_ast__.fix_missing_locations(tree)
     # PRE-SCAN (piggybacks the block parse — zero extra parse cost): collect every
     # literal id read via ntr[...] (or legacy native_tools_results[...]) and PRIME
@@ -1165,7 +1425,7 @@ def __vis_run_async__(src):
     # Dynamic keys fall back to a lazy per-key fetch in __getitem__. Guarded: the
     # prime callback is only bound in the full agent context (a bare test context
     # has neither the map nor the callback).
-    if '__vis_native_result_prime__' in g and '__vis_native_result_scan__' in g:
+    if "__vis_native_result_prime__" in g and "__vis_native_result_scan__" in g:
         __vis_scan_ids__ = __vis_native_result_scan__(tree)
         if __vis_scan_ids__:
             ntr.__vis_prime__(__vis_scan_ids__)
@@ -1177,10 +1437,11 @@ def __vis_run_async__(src):
     # persistent callable is still there for the next one. Each shadowed name is
     # pre-seeded from globals, so a READ that precedes the shadowing assignment
     # still sees the tool instead of raising UnboundLocalError.
-    __vis_prot__ = set(g.get('__vis_protected_names__') or [])
+    __vis_prot__ = set(g.get("__vis_protected_names__") or [])
     __vis_shadow__ = [n for n in assigned if n in __vis_prot__ and n in g]
     assigned = [n for n in assigned if n not in __vis_shadow__]
     body = list(tree.body)
+
     # AUTO-SETTLE inline, exactly like the sync per-form path: wrap the value of
     # every TOP-LEVEL assignment / bare expression in `__vis_settle__(...)` so a
     # bare deferred tool call (`res = patch(...)`, or a lone `patch(...)`) RUNS
@@ -1191,8 +1452,11 @@ def __vis_run_async__(src):
     # top-level statements, matching the sync contract).
     def __vis_wrap__(v):
         return __vis_ast__.Call(
-            func=__vis_ast__.Name(id='__vis_settle__', ctx=__vis_ast__.Load()),
-            args=[v], keywords=[])
+            func=__vis_ast__.Name(id="__vis_settle__", ctx=__vis_ast__.Load()),
+            args=[v],
+            keywords=[],
+        )
+
     for __vis_node__ in body:
         if isinstance(__vis_node__, (__vis_ast__.Assign, __vis_ast__.AnnAssign)):
             if __vis_node__.value is not None:
@@ -1202,18 +1466,31 @@ def __vis_run_async__(src):
 
     if body and isinstance(body[-1], __vis_ast__.Expr):
         body[-1] = __vis_ast__.Return(value=body[-1].value)
-    seed = [__vis_ast__.parse(n + ' = globals()[' + repr(n) + ']').body[0]
-            for n in __vis_shadow__]
+    seed = [
+        __vis_ast__.parse(n + " = globals()[" + repr(n) + "]").body[0]
+        for n in __vis_shadow__
+    ]
     inner = ([__vis_ast__.Global(names=assigned)] if assigned else []) + seed + body
     fn = __vis_ast__.AsyncFunctionDef(
-        name='__vis_main__',
-        args=__vis_ast__.arguments(posonlyargs=[], args=[], vararg=None,
-                                   kwonlyargs=[], kw_defaults=[], kwarg=None, defaults=[]),
-        body=inner, decorator_list=[], returns=None, type_params=[])
+        name="__vis_main__",
+        args=__vis_ast__.arguments(
+            posonlyargs=[],
+            args=[],
+            vararg=None,
+            kwonlyargs=[],
+            kw_defaults=[],
+            kwarg=None,
+            defaults=[],
+        ),
+        body=inner,
+        decorator_list=[],
+        returns=None,
+        type_params=[],
+    )
     mod = __vis_ast__.Module(body=[fn], type_ignores=[])
     __vis_ast__.fix_missing_locations(mod)
     try:
-        __vis_code__ = compile(mod, '<prog>', 'exec', __vis_flags__)
+        __vis_code__ = compile(mod, "<prog>", "exec", __vis_flags__)
     except SyntaxError as __vis_se__:
         # A compile error on the SYNTHESIZED module has no source text, and the
         # host cannot render such a guest exception at all (it dies with a bare
@@ -1222,28 +1499,30 @@ def __vis_run_async__(src):
         # Keep the ORIGINAL position: the synthesized module keeps every user node's
         # lineno, so `__vis_se__.lineno` is the user's line — dropping it made the
         # boundary report this preamble's line instead.
-        __vis_msg__ = getattr(__vis_se__, 'msg', None) or str(__vis_se__)
-        __vis_ln__ = getattr(__vis_se__, 'lineno', None)
-        __vis_txt__ = getattr(__vis_se__, 'text', None)
+        __vis_msg__ = getattr(__vis_se__, "msg", None) or str(__vis_se__)
+        __vis_ln__ = getattr(__vis_se__, "lineno", None)
+        __vis_txt__ = getattr(__vis_se__, "text", None)
         if __vis_txt__ is None and isinstance(__vis_ln__, int) and __vis_ln__ >= 1:
             __vis_lines__ = src.splitlines()
             if __vis_ln__ <= len(__vis_lines__):
                 __vis_txt__ = __vis_lines__[__vis_ln__ - 1]
-        raise SyntaxError(__vis_msg__, ('<prog>', __vis_ln__,
-                                       getattr(__vis_se__, 'offset', None),
-                                       __vis_txt__)) from None
+        raise SyntaxError(
+            __vis_msg__,
+            ("<prog>", __vis_ln__, getattr(__vis_se__, "offset", None), __vis_txt__),
+        ) from None
     exec(__vis_code__, g)
     try:
-        g['__vis_async_result__'] = __vis_drive__(g['__vis_main__']())
+        g["__vis_async_result__"] = __vis_drive__(g["__vis_main__"]())
     except BaseException as __vis_err__:
         # Stash the exception ONLY, then re-raise UNCHANGED. Deriving the failing
         # position here would walk its traceback frames, which on a warm (JIT-ed)
         # interpreter can hit an uncatchable internal Truffle null-receiver NPE and
         # DESTROY this real error. The host asks for the position afterwards via
         # `__vis_err_pos_now__`, where that fault is catchable.
-        g['__vis_err_obj__'] = __vis_err__
+        g["__vis_err_obj__"] = __vis_err__
         raise
     return assigned
+
 
 def __vis_defer_tools__():
     g = globals()
@@ -1251,7 +1530,8 @@ def __vis_defer_tools__():
         if __vis_n__ in g and callable(g[__vis_n__]):
             g[__vis_n__] = __vis_deferred__(g[__vis_n__], __vis_n__)
 
-def __vis_direct_kwargs__(realfn, nm='verb'):
+
+def __vis_direct_kwargs__(realfn, nm="verb"):
     # KWARGS for the DIRECT (never-deferred) host verbs — today `session_fold`.
     # Those stay raw foreign ProxyExecutables, which accept POSITIONAL args ONLY,
     # so `session_fold(t, gist='…')` used to die with `__call__() got an
@@ -1261,8 +1541,10 @@ def __vis_direct_kwargs__(realfn, nm='verb'):
     # so keyword and positional calls bind identically.
     def __vis_verb__(*a, **k):
         return realfn(*a, dict(k)) if k else realfn(*a)
+
     __vis_verb__.__name__ = nm
     return __vis_verb__
+
 
 def __vis_kwargs_direct_tools__():
     g = globals()
@@ -1270,21 +1552,35 @@ def __vis_kwargs_direct_tools__():
         if __vis_n__ in g and callable(g[__vis_n__]):
             g[__vis_n__] = __vis_direct_kwargs__(g[__vis_n__], __vis_n__)
 
+
 # ── echo-diff strip for a printed edit result: a patch/write/struct_patch result
 # printed to stdout merely re-describes the bytes the model just authored, so drop
 # each file summary's redundant 'diff' for DISPLAY only. The captured original is
 # untouched, so the host op-card still renders the full diff.
 def __vis_is_file_summary__(__m__):
-    return (isinstance(__m__, dict) and isinstance(__m__.get('path'), str)
-            and isinstance(__m__.get('op'), str) and 'changed' in __m__)
+    return (
+        isinstance(__m__, dict)
+        and isinstance(__m__.get("path"), str)
+        and isinstance(__m__.get("op"), str)
+        and "changed" in __m__
+    )
+
+
 def __vis_strip_echo_diff__(__m__):
-    return {__k__: __v__ for __k__, __v__ in __m__.items() if __k__ != 'diff'}
+    return {__k__: __v__ for __k__, __v__ in __m__.items() if __k__ != "diff"}
+
+
 def __vis_strip_echo_diffs__(__x__):
-    if isinstance(__x__, list) and __x__ and all(__vis_is_file_summary__(__e__) for __e__ in __x__):
+    if (
+        isinstance(__x__, list)
+        and __x__
+        and all(__vis_is_file_summary__(__e__) for __e__ in __x__)
+    ):
         return [__vis_strip_echo_diff__(__e__) for __e__ in __x__]
     if __vis_is_file_summary__(__x__):
         return __vis_strip_echo_diff__(__x__)
     return __x__
+
 
 # ── print-capture: a printed TOOL RESULT (a dict carrying 'op', stamped by the
 # host) is recorded on the side so the host can render ONE op-card per printed
@@ -1292,6 +1588,8 @@ def __vis_strip_echo_diffs__(__x__):
 # capture is a pure side-effect. The list is reset per block from Clojure.
 __vis_printed_results__ = []
 __vis_real_print__ = print
+
+
 def __vis_print__(*__vis_a__, **__vis_kw__):
     # Pyify args FIRST: a printed tool-result proxy becomes a __VisResult__ (so
     # `print(await rg(...))` is captured even without an intervening assignment) and
@@ -1305,10 +1603,12 @@ def __vis_print__(*__vis_a__, **__vis_kw__):
     # settled (never a stray generator/coroutine the model meant to print); every
     # other arg pyifies exactly as before.
     __vis_a__ = tuple(
-        __vis_settle__(__a__) if isinstance(__a__, (__vis_Call__, __vis_Gather__))
+        __vis_settle__(__a__)
+        if isinstance(__a__, (__vis_Call__, __vis_Gather__))
         else __vis_pyify__(__a__)
-        for __a__ in __vis_a__)
-    if __vis_kw__.get('file') is None:
+        for __a__ in __vis_a__
+    )
+    if __vis_kw__.get("file") is None:
         for __vis_x__ in __vis_a__:
             # A LIST-shaped result (patch / write / struct_patch: one row per file)
             # is a tool result too — `__VisResultList__` is its unforgeable marker.
@@ -1318,13 +1618,18 @@ def __vis_print__(*__vis_a__, **__vis_kw__):
             if isinstance(__vis_x__, (__VisResult__, __VisResultList__)):
                 __vis_printed_results__.append(__vis_x__)
             else:
-                globals()['__vis_only_results__'] = False
-        if not __vis_a__:                 # a bare print() (blank line) is not a result
-            globals()['__vis_only_results__'] = False
+                globals()["__vis_only_results__"] = False
+        if not __vis_a__:  # a bare print() (blank line) is not a result
+            globals()["__vis_only_results__"] = False
     # DISPLAY strips echo-diffs from a printed edit result (stdout mirrors the model
     # wire); capture above kept the un-stripped originals for the host op-card.
-    return __vis_real_print__(*tuple(__vis_strip_echo_diffs__(__a__) for __a__ in __vis_a__), **__vis_kw__)
+    return __vis_real_print__(
+        *tuple(__vis_strip_echo_diffs__(__a__) for __a__ in __vis_a__), **__vis_kw__
+    )
+
+
 print = __vis_print__
+
 
 # ── ntr / native_tools_results: retrieve a PRIOR native tool's result by its
 # provider tool_use id, WITHOUT re-running the tool. `ntr` is the short public
@@ -1349,8 +1654,8 @@ print = __vis_print__
 # browse by what a result HOLDS, then spend one fetch on the id worth fetching.
 class __VisNativeResults__:
     def __init__(self):
-        self.__vis_cache__ = {}          # id -> pyified __VisResult__ (already fetched)
-        self.__vis_missing__ = set()     # ids proven absent this process (skip re-fetch)
+        self.__vis_cache__ = {}  # id -> pyified __VisResult__ (already fetched)
+        self.__vis_missing__ = set()  # ids proven absent this process (skip re-fetch)
 
     def __vis_store__(self, __vis_id__, __vis_raw__):
         # Stamp the rehydrated proxy into the SAME __VisResult__ shape a fresh
@@ -1365,8 +1670,11 @@ class __VisNativeResults__:
         # id primed by an earlier block hits the in-process cache with NO new DB
         # round-trip. Absent ids are recorded as missing so a later __getitem__
         # raises immediately (no redundant fetch).
-        __vis_need__ = [i for i in __vis_ids__
-                        if i not in self.__vis_cache__ and i not in self.__vis_missing__]
+        __vis_need__ = [
+            i
+            for i in __vis_ids__
+            if i not in self.__vis_cache__ and i not in self.__vis_missing__
+        ]
         if not __vis_need__:
             return
         try:
@@ -1398,10 +1706,12 @@ class __VisNativeResults__:
                 return self.__vis_store__(__vis_id__, __vis_raw__)
             self.__vis_missing__.add(__vis_id__)
         raise KeyError(
-            'no native tool result for ' + repr(__vis_id__) +
-            ' — that tool_use id is unknown or produced no return (a python_execution '
-            'call returns what it print()s, not a stored value). Re-run the tool, or use '
-            'the exact tool_use id shown on a prior tool_result.')
+            "no native tool result for "
+            + repr(__vis_id__)
+            + " — that tool_use id is unknown or produced no return (a python_execution "
+            "call returns what it print()s, not a stored value). Re-run the tool, or use "
+            "the exact tool_use id shown on a prior tool_result."
+        )
 
     def get(self, __vis_id__, __vis_default__=None):
         try:
@@ -1460,7 +1770,7 @@ class __VisNativeResults__:
 
     def items(self):
         __vis_ids__ = self.__vis_all_ids__()
-        self.__vis_prime__(__vis_ids__)   # ONE batched fetch for the whole set
+        self.__vis_prime__(__vis_ids__)  # ONE batched fetch for the whole set
         __vis_out__ = []
         for __vis_i__ in __vis_ids__:
             try:
@@ -1483,26 +1793,46 @@ class __VisNativeResults__:
             if not isinstance(__vis_v__, dict):
                 return type(__vis_v__).__name__
             __vis_bits__ = []
-            __vis_op__ = __vis_v__.get('op')
-            for __vis_k__ in ('path', 'query', 'cmd', 'name', 'target', 'code', 'cwd', 'language'):
+            __vis_op__ = __vis_v__.get("op")
+            for __vis_k__ in (
+                "path",
+                "query",
+                "cmd",
+                "name",
+                "target",
+                "code",
+                "cwd",
+                "language",
+            ):
                 __vis_x__ = __vis_v__.get(__vis_k__)
                 if isinstance(__vis_x__, str) and __vis_x__.strip():
-                    __vis_s__ = ' '.join(__vis_x__.split())
+                    __vis_s__ = " ".join(__vis_x__.split())
                     if len(__vis_s__) > 48:
-                        __vis_s__ = __vis_s__[:47] + '…'
-                    __vis_bits__.append(__vis_k__ + '=' + __vis_s__)
+                        __vis_s__ = __vis_s__[:47] + "…"
+                    __vis_bits__.append(__vis_k__ + "=" + __vis_s__)
                     break
-            for __vis_k__ in ('hit_count', 'file_count', 'line_count', 'count', 'total',
-                              'pass', 'fail', 'exit', 'changed', 'is_pass', 'error'):
+            for __vis_k__ in (
+                "hit_count",
+                "file_count",
+                "line_count",
+                "count",
+                "total",
+                "pass",
+                "fail",
+                "exit",
+                "changed",
+                "is_pass",
+                "error",
+            ):
                 if len(__vis_bits__) >= 3:
                     break
                 __vis_x__ = __vis_v__.get(__vis_k__)
                 if isinstance(__vis_x__, (int, float, bool)):
-                    __vis_bits__.append(__vis_k__ + '=' + str(__vis_x__))
+                    __vis_bits__.append(__vis_k__ + "=" + str(__vis_x__))
             __vis_head__ = [str(__vis_op__)] if __vis_op__ else []
-            return ' · '.join(__vis_head__ + __vis_bits__) or 'result'
+            return " · ".join(__vis_head__ + __vis_bits__) or "result"
         except Exception:
-            return 'result'
+            return "result"
 
     def describe(self, limit=20, ids=None):
         # ['toolu_01Tc… · grep · session_fold, 6 file names', …]
@@ -1511,20 +1841,34 @@ class __VisNativeResults__:
         if __vis_idx__ is not None:
             for __vis_e__ in __vis_idx__:
                 try:
-                    __vis_lbl__[__vis_e__.get('id')] = ' · '.join(
-                        [__vis_x__ for __vis_x__
-                         in (__vis_e__.get('tool'), __vis_e__.get('gist')) if __vis_x__]) or 'result'
+                    __vis_lbl__[__vis_e__.get("id")] = (
+                        " · ".join(
+                            [
+                                __vis_x__
+                                for __vis_x__ in (
+                                    __vis_e__.get("tool"),
+                                    __vis_e__.get("gist"),
+                                )
+                                if __vis_x__
+                            ]
+                        )
+                        or "result"
+                    )
                 except Exception:
                     pass
         if ids is not None:
             __vis_sel__ = [__vis_i__ for __vis_i__ in ids]
         elif __vis_idx__ is not None:
-            __vis_sel__ = [__vis_e__.get('id') for __vis_e__ in __vis_idx__][:max(0, int(limit))]
+            __vis_sel__ = [__vis_e__.get("id") for __vis_e__ in __vis_idx__][
+                : max(0, int(limit))
+            ]
         else:
-            __vis_sel__ = self.__vis_all_ids__()[:max(0, int(limit))]
+            __vis_sel__ = self.__vis_all_ids__()[: max(0, int(limit))]
         # Only ids the index could NOT label cost a payload — normally none, and
         # those go in ONE batched fetch.
-        __vis_need__ = [__vis_i__ for __vis_i__ in __vis_sel__ if __vis_i__ not in __vis_lbl__]
+        __vis_need__ = [
+            __vis_i__ for __vis_i__ in __vis_sel__ if __vis_i__ not in __vis_lbl__
+        ]
         if __vis_need__:
             self.__vis_prime__(__vis_need__)
         __vis_out__ = []
@@ -1533,9 +1877,12 @@ class __VisNativeResults__:
                 __vis_gist__ = __vis_lbl__[__vis_i__]
             else:
                 __vis_v__ = self.get(__vis_i__)
-                __vis_gist__ = ('<missing>' if __vis_v__ is None
-                                else self.__vis_gist_of__(__vis_v__))
-            __vis_out__.append(str(__vis_i__) + ' · ' + __vis_gist__)
+                __vis_gist__ = (
+                    "<missing>"
+                    if __vis_v__ is None
+                    else self.__vis_gist_of__(__vis_v__)
+                )
+            __vis_out__.append(str(__vis_i__) + " · " + __vis_gist__)
         return __vis_out__
 
     def __repr__(self):
@@ -1543,11 +1890,17 @@ class __VisNativeResults__:
             __vis_n__ = len(self.__vis_all_ids__())
         except Exception:
             __vis_n__ = len(self.__vis_cache__)
-        return ('<ntr: ' + str(__vis_n__) + ' stored native results · ntr[tool_id] fetches one '
-                'with no re-run · ntr.describe() lists the latest turn with what each holds>')
+        return (
+            "<ntr: "
+            + str(__vis_n__)
+            + " stored native results · ntr[tool_id] fetches one "
+            "with no re-run · ntr.describe() lists the latest turn with what each holds>"
+        )
+
 
 ntr = __VisNativeResults__()
 native_tools_results = ntr  # backwards-compatible verbose alias
+
 
 # Literal-key ids a block reads via ntr[...] or native_tools_results[...]
 # (STRING subscript only). Used by __vis_run_async__ to prime the whole batch in
@@ -1556,10 +1909,14 @@ native_tools_results = ntr  # backwards-compatible verbose alias
 def __vis_native_result_scan__(__vis_tree__):
     __vis_ids__ = []
     for __vis_n__ in __vis_ast__.walk(__vis_tree__):
-        if (isinstance(__vis_n__, __vis_ast__.Subscript)
-                and isinstance(__vis_n__.value, __vis_ast__.Name)
-                and __vis_n__.value.id in ('ntr', 'native_tools_results')):
+        if (
+            isinstance(__vis_n__, __vis_ast__.Subscript)
+            and isinstance(__vis_n__.value, __vis_ast__.Name)
+            and __vis_n__.value.id in ("ntr", "native_tools_results")
+        ):
             __vis_k__ = __vis_n__.slice
-            if isinstance(__vis_k__, __vis_ast__.Constant) and isinstance(__vis_k__.value, str):
+            if isinstance(__vis_k__, __vis_ast__.Constant) and isinstance(
+                __vis_k__.value, str
+            ):
                 __vis_ids__.append(__vis_k__.value)
     return __vis_ids__

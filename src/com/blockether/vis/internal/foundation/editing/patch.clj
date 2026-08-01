@@ -254,11 +254,12 @@
      (char-offset-at-line content line-end)
 
      char-end
-     (let [e (long (if (and (< char-end-raw (count content))
-                            (pos? char-end-raw)
-                            (= \newline (.charAt content (dec char-end-raw))))
-                     (dec char-end-raw)
-                     char-end-raw))]
+     (let
+       [e (long (if (and (< char-end-raw (count content))
+                         (pos? char-end-raw)
+                         (= \newline (.charAt content (dec char-end-raw))))
+                  (dec char-end-raw)
+                  char-end-raw))]
        ;; CRLF: the terminator is TWO chars. Dropping only the `\n` leaves the
        ;; `\r` INSIDE the replaced region, so an ordinary line replace silently
        ;; rewrites that one line's ending to bare LF and mixes endings in a CRLF
@@ -540,10 +541,9 @@
                                      (< (long char-start) (dec (long char-end)))
                                      (= \return (.charAt current (- (long char-end) 2))))
              replace-ends-nl? (str/ends-with? replace "\n")
-             rewritten
-             (if (and matched-ends-nl? (not replace-ends-nl?))
-               (str replace (if matched-ends-crlf? "\r\n" "\n"))
-               replace)]
+             rewritten (if (and matched-ends-nl? (not replace-ends-nl?))
+                         (str replace (if matched-ends-crlf? "\r\n" "\n"))
+                         replace)]
 
             {:start char-start
              :end char-end

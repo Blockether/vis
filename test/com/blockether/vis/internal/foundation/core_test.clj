@@ -57,10 +57,13 @@
       ;; now lists the symbols that actually exist; do NOT let the old
       ;; DSL names creep back into the descriptor copy.
       (let [doc (:ext/description foundation/vis-extension)]
-        (expect (str/includes? doc "session_state"))
+        ;; Session introspection moved out to `foundation-introspection`
+        ;; (toggle-gated), so the kernel copy points AT that extension instead
+        ;; of advertising `session_state` itself.
+        (expect (str/includes? doc "foundation-introspection"))
         (expect (str/includes? doc "language facade"))
-        (expect (str/includes? doc "file I/O"))
-        (expect (str/includes? doc "system call"))
+        (expect (str/includes? doc "file and structural editing"))
+        (expect (str/includes? doc "session workspace/VCS"))
         (expect (not (str/includes? doc "vis ext repro")))
         (expect (not (str/includes? doc "file-link")))
         (expect (not (str/includes? doc "answer builders")))))

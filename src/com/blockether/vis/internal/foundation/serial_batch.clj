@@ -44,7 +44,9 @@
   (when (string? commands)
     (throw (ex-info (str tool
                          " commands is ALWAYS an ARRAY, never a bare string:"
-                         " wrap one command as a batch of one, [\"" commands "\"].")
+                         " wrap one command as a batch of one, [\""
+                         commands
+                         "\"].")
                     {:type ::bad-commands :tool tool})))
   (when-not (or (sequential? commands) (instance? java.util.List commands))
     (throw (ex-info (str tool

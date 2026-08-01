@@ -438,8 +438,10 @@
            (apply max (map :line-count samples))]
 
           (expect (< max-lines 3000))
-          (expect (< median-ms 60.0) (str "progress layout median-ms=" median-ms " samples=" samples))
-          (expect (< worst-ms 400.0) (str "progress layout worst-ms=" worst-ms " samples=" samples)))))
+          (expect (< median-ms 60.0)
+                  (str "progress layout median-ms=" median-ms " samples=" samples))
+          (expect (< worst-ms 400.0)
+                  (str "progress layout worst-ms=" worst-ms " samples=" samples)))))
   (describe "fixed scroll offset (scroll = some long)"
             (it "clamps to [0, max-scroll]"
                 (let

@@ -103,7 +103,7 @@
        [n (some-> lc
                   long)]
        (cond (nil? n) -1
-             (zero? n) -1
+             (zero? (long n)) -1
              :else n))]
 
     (im/encode-gif (assoc spec :loop-count lc'))))

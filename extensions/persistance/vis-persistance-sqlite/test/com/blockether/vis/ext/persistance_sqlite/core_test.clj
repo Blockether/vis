@@ -508,43 +508,42 @@
 
 (defdescribe
   migration-additive-column-top-up-test
-  (it "a store created by an OLDER canonical V1 gains the new V1 columns on reopen"
-      (let
-        [root
-         (fs/create-temp-dir {:prefix "vis-topup-"})
+  (it
+    "a store created by an OLDER canonical V1 gains the new V1 columns on reopen"
+    (let
+      [root
+       (fs/create-temp-dir {:prefix "vis-topup-"})
 
-         dir
-         (str (fs/path root "store"))
+       dir
+       (str (fs/path root "store"))
 
-         s1
-         (vis/db-create-connection! dir)]
+       s1
+       (vis/db-create-connection! dir)]
 
-        (try
-          (expect (contains? (table-columns s1 "session_attachment") "is_display_only"))
-          ;; Rewind this store to an OLDER shape of the same canonical V1: the
-          ;; table exists, its Flyway history is intact, but it predates the
-          ;; columns V1 has grown since. That is exactly what a `~/.vis` database
-          ;; created before the in-place V1 edit looks like.
-          (jdbc/execute! (:datasource s1) ["DROP TABLE session_attachment"])
-          (jdbc/execute! (:datasource s1)
-                         ["CREATE TABLE session_attachment (id TEXT PRIMARY KEY NOT NULL)"])
-          (jdbc/execute! (:datasource s1) ["CREATE TABLE topup_probe (id INTEGER)"])
-          (jdbc/execute! (:datasource s1) ["INSERT INTO topup_probe (id) VALUES (7)"])
-          (vis/db-dispose-connection! s1)
-          (let [s2 (vis/db-create-connection! dir)]
-            (try
-              (let [cols (table-columns s2 "session_attachment")]
-                ;; Defaulted / nullable columns are added back from V1's own DDL.
-                (expect (contains? cols "is_display_only"))
-                (expect (contains? cols "kind"))
-                (expect (contains? cols "tool_call_id"))
-                ;; NOT NULL without a DEFAULT is not addable in SQLite: left alone
-                ;; rather than failing the open.
-                (expect (not (contains? cols "media_type"))))
-              ;; Purely additive: unrelated tables and rows are untouched.
-              (expect (= 1 (raw-count s2 :topup_probe)))
-              (finally (vis/db-dispose-connection! s2))))
-          (finally (fs/delete-tree root))))))
+      (try (expect (contains? (table-columns s1 "session_attachment") "is_display_only"))
+           ;; Rewind this store to an OLDER shape of the same canonical V1: the
+           ;; table exists, its Flyway history is intact, but it predates the
+           ;; columns V1 has grown since. That is exactly what a `~/.vis` database
+           ;; created before the in-place V1 edit looks like.
+           (jdbc/execute! (:datasource s1) ["DROP TABLE session_attachment"])
+           (jdbc/execute! (:datasource s1)
+                          ["CREATE TABLE session_attachment (id TEXT PRIMARY KEY NOT NULL)"])
+           (jdbc/execute! (:datasource s1) ["CREATE TABLE topup_probe (id INTEGER)"])
+           (jdbc/execute! (:datasource s1) ["INSERT INTO topup_probe (id) VALUES (7)"])
+           (vis/db-dispose-connection! s1)
+           (let [s2 (vis/db-create-connection! dir)]
+             (try (let [cols (table-columns s2 "session_attachment")]
+                    ;; Defaulted / nullable columns are added back from V1's own DDL.
+                    (expect (contains? cols "is_display_only"))
+                    (expect (contains? cols "kind"))
+                    (expect (contains? cols "tool_call_id"))
+                    ;; NOT NULL without a DEFAULT is not addable in SQLite: left alone
+                    ;; rather than failing the open.
+                    (expect (not (contains? cols "media_type"))))
+                  ;; Purely additive: unrelated tables and rows are untouched.
+                  (expect (= 1 (raw-count s2 :topup_probe)))
+                  (finally (vis/db-dispose-connection! s2))))
+           (finally (fs/delete-tree root))))))
 
 (def ^:private multiprocess-child-code
   "(require '[com.blockether.vis.core :as vis])

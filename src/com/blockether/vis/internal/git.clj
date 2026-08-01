@@ -105,14 +105,11 @@
     "--work-tree"})
 
 (def ^:private git-global-options-with-attached-value
-  ["--attr-source=" "--config-env=" "--git-dir=" "--namespace=" "--super-prefix="
-   "--work-tree="])
+  ["--attr-source=" "--config-env=" "--git-dir=" "--namespace=" "--super-prefix=" "--work-tree="])
 
 (defn- attached-global-option?
   [arg]
-  (or (and (> (count arg) 2)
-           (or (str/starts-with? arg "-C")
-               (str/starts-with? arg "-c")))
+  (or (and (> (count arg) 2) (or (str/starts-with? arg "-C") (str/starts-with? arg "-c")))
       (some #(str/starts-with? arg %) git-global-options-with-attached-value)))
 
 (defn- parse-invocation
@@ -122,23 +119,21 @@
    authorization and execution."
   [args]
   (let [tokens (mapv str args)]
-    (loop [global-args []
-           remaining (seq tokens)]
+    (loop
+      [global-args []
+       remaining (seq tokens)]
+
       (if-let [arg (first remaining)]
-        (cond
-          (contains? git-global-options-with-value arg)
-          (if-let [value (second remaining)]
-            (recur (conj global-args arg value) (nnext remaining))
-            {:args tokens :global-args (conj global-args arg) :command nil :command-args []})
-
-          (or (attached-global-option? arg) (str/starts-with? arg "-"))
-          (recur (conj global-args arg) (next remaining))
-
-          :else
-          {:args tokens
-           :global-args global-args
-           :command arg
-           :command-args (vec (next remaining))})
+        (cond (contains? git-global-options-with-value arg)
+              (if-let [value (second remaining)]
+                (recur (conj global-args arg value) (nnext remaining))
+                {:args tokens :global-args (conj global-args arg) :command nil :command-args []})
+              (or (attached-global-option? arg) (str/starts-with? arg "-"))
+              (recur (conj global-args arg) (next remaining))
+              :else {:args tokens
+                     :global-args global-args
+                     :command arg
+                     :command-args (vec (next remaining))})
         {:args tokens :global-args global-args :command nil :command-args []}))))
 
 (def ^:private commit-index-mutating-options
@@ -147,8 +142,8 @@
 
 (def ^:private commit-options-with-value
   #{"-C" "-F" "-U" "-c" "-m" "-t" "--author" "--cleanup" "--date" "--file" "--fixup"
-    "--inter-hunk-context" "--message" "--reedit-message" "--reuse-message" "--squash"
-    "--template" "--trailer" "--unified"})
+    "--inter-hunk-context" "--message" "--reedit-message" "--reuse-message" "--squash" "--template"
+    "--trailer" "--unified"})
 
 (def ^:private short-options-with-attached-value #{\C \F \S \U \c \m \t \u})
 
@@ -156,10 +151,9 @@
   [arg]
   (loop [chars (seq (subs arg 1))]
     (when-let [option (first chars)]
-      (cond
-        (contains? #{\a \i \o \p} option) (str "-" option)
-        (contains? short-options-with-attached-value option) nil
-        :else (recur (next chars))))))
+      (cond (contains? #{\a \i \o \p} option) (str "-" option)
+            (contains? short-options-with-attached-value option) nil
+            :else (recur (next chars))))))
 
 (defn- index-changing-commit-arg
   "Return the first commit argument that makes Git construct a tree other than
@@ -167,21 +161,19 @@
   [args]
   (loop [remaining (seq args)]
     (when-let [arg (first remaining)]
-      (let [long-option
-            (some #(when (or (= arg %) (str/starts-with? arg (str % "="))) %)
-                  (filter #(str/starts-with? % "--") commit-index-mutating-options))]
-        (cond
-          long-option long-option
-          (and (= "--fixup" arg)
-               (str/starts-with? (str (second remaining)) "reword:"))
-          "--fixup=reword"
-          (str/starts-with? arg "--fixup=reword:") "--fixup=reword"
-          (= "--" arg) (when (next remaining) "-- <pathspec>")
-          (contains? commit-options-with-value arg) (recur (nnext remaining))
-          (and (str/starts-with? arg "-") (not (str/starts-with? arg "--")))
-          (or (mutating-short-option arg) (recur (next remaining)))
-          (str/starts-with? arg "-") (recur (next remaining))
-          :else (str "pathspec " arg))))))
+      (let
+        [long-option (some #(when (or (= arg %) (str/starts-with? arg (str % "="))) %)
+                           (filter #(str/starts-with? % "--") commit-index-mutating-options))]
+        (cond long-option long-option
+              (and (= "--fixup" arg) (str/starts-with? (str (second remaining)) "reword:"))
+              "--fixup=reword"
+              (str/starts-with? arg "--fixup=reword:") "--fixup=reword"
+              (= "--" arg) (when (next remaining) "-- <pathspec>")
+              (contains? commit-options-with-value arg) (recur (nnext remaining))
+              (and (str/starts-with? arg "-") (not (str/starts-with? arg "--")))
+              (or (mutating-short-option arg) (recur (next remaining)))
+              (str/starts-with? arg "-") (recur (next remaining))
+              :else (str "pathspec " arg))))))
 
 (defn- prefixed-args [global-args args] (into (vec global-args) args))
 
@@ -193,9 +185,7 @@
   [result message]
   (assoc result
     :exit 1
-    :err (str (when-not (str/blank? (:err result))
-                (str (:err result) "\n"))
-              message)))
+    :err (str (when-not (str/blank? (:err result)) (str (:err result) "\n")) message)))
 
 (defn- git-value
   [^File dir global-args args opts]
@@ -204,8 +194,13 @@
 
 (defn- exact-commit
   [^File dir tokens global-args candidate-tree head-before opts]
-  (let [current-result (run-git dir (prefixed-args global-args ["write-tree"]) opts)
-        current-tree (str/trim (or (:out current-result) ""))]
+  (let
+    [current-result
+     (run-git dir (prefixed-args global-args ["write-tree"]) opts)
+
+     current-tree
+     (str/trim (or (:out current-result) ""))]
+
     (cond
       (not= 0 (:exit current-result)) current-result
       (not= candidate-tree current-tree)
@@ -220,18 +215,15 @@
             ;; but there is no new commit tree to assert.
             (if (= head-before head-after)
               result
-              (let [tree-result
-                    (run-git dir (prefixed-args global-args ["rev-parse" "HEAD^{tree}"]) opts)
+              (let
+                [tree-result
+                 (run-git dir (prefixed-args global-args ["rev-parse" "HEAD^{tree}"]) opts)
+                 actual-tree (str/trim (or (:out tree-result) ""))]
 
-                    actual-tree
-                    (str/trim (or (:out tree-result) ""))]
                 (cond
                   (not= 0 (:exit tree-result))
                   (append-git-error result "Could not resolve the resulting commit tree.")
-
-                  (= candidate-tree actual-tree)
-                  result
-
+                  (= candidate-tree actual-tree) result
                   :else
                   (append-git-error
                     result
@@ -239,13 +231,15 @@
 
 (defn- dispatch-exact-commit
   [^File dir tokens global-args repo-root candidate-tree opts]
-  (let [head-before (git-value dir global-args ["rev-parse" "--verify" "HEAD"] opts)
-        context {:root repo-root
-                 :candidate-tree candidate-tree
-                 :index-preserving? true}
-        result
-        (try
-          (extension/invoke-operation
+  (let
+    [head-before
+     (git-value dir global-args ["rev-parse" "--verify" "HEAD"] opts)
+
+     context
+     {:root repo-root :candidate-tree candidate-tree :index-preserving? true}
+
+     result
+     (try (extension/invoke-operation
             :git/commit
             context
             (fn []
@@ -253,6 +247,7 @@
             [])
           (catch Throwable t
             (failed-git-result (or (ex-message t) "Commit authorization failed."))))]
+
     (if (and (map? result) (contains? result :exit))
       result
       (failed-git-result "Commit authorization returned an invalid result."))))
@@ -267,35 +262,37 @@
    after authorization, runs Git, and asserts the resulting HEAD tree."
   [^File dir args opts]
   (let [{:keys [args global-args command command-args]} (parse-invocation args)]
-    (cond
-      (not= "commit" command)
-      (failed-git-result "Internal Git commit operation requires a commit command.")
+    (cond (not= "commit" command) (failed-git-result
+                                    "Internal Git commit operation requires a commit command.")
+          :else
+          (if-let [arg (index-changing-commit-arg command-args)]
+            (failed-git-result
+              (str
+                "Vis requires the staged index to be the exact commit candidate; stage files first "
+                "and commit without "
+                arg
+                "."))
+            (let
+              [repo-result
+               (run-git dir (prefixed-args global-args ["rev-parse" "--show-toplevel"]) opts)]
+              (if (not= 0 (:exit repo-result))
+                repo-result
+                (let
+                  [repo-root (some-> (:out repo-result)
+                                     str/trim
+                                     not-empty
+                                     io/file
+                                     .getCanonicalPath)
+                   candidate-result (run-git dir (prefixed-args global-args ["write-tree"]) opts)]
 
-      :else
-      (if-let [arg (index-changing-commit-arg command-args)]
-        (failed-git-result
-          (str "Vis requires the staged index to be the exact commit candidate; stage files first "
-               "and commit without "
-               arg
-               "."))
-        (let [repo-result
-              (run-git dir (prefixed-args global-args ["rev-parse" "--show-toplevel"]) opts)]
-          (if (not= 0 (:exit repo-result))
-            repo-result
-            (let [repo-root
-                  (some-> (:out repo-result) str/trim not-empty io/file .getCanonicalPath)
-
-                  candidate-result
-                  (run-git dir (prefixed-args global-args ["write-tree"]) opts)]
-              (if (not= 0 (:exit candidate-result))
-                candidate-result
-                (dispatch-exact-commit
-                  dir
-                  args
-                  global-args
-                  repo-root
-                  (str/trim (or (:out candidate-result) ""))
-                  opts)))))))))
+                  (if (not= 0 (:exit candidate-result))
+                    candidate-result
+                    (dispatch-exact-commit dir
+                                           args
+                                           global-args
+                                           repo-root
+                                           (str/trim (or (:out candidate-result) ""))
+                                           opts)))))))))
 
 (defn run-command
   "Run literal Git argv, routing `commit` through `commit!` after normalizing

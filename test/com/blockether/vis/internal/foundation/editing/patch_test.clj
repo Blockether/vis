@@ -202,15 +202,19 @@
   ;; silently mixes line endings in a CRLF file.
   (it "replacing a middle line keeps its CRLF terminator"
       (let [content "(ns t)\r\n(def a 1)\r\n(def b 2)\r\n"]
-        (expect (= {:content "(ns t)\r\n(def A 11)\r\n(def b 2)\r\n" :applied-line 2}
-                   (resolve-span-output content (patch/line-anchor 2 "(def a 1)") nil "(def A 11)")))))
+        (expect
+          (= {:content "(ns t)\r\n(def A 11)\r\n(def b 2)\r\n" :applied-line 2}
+             (resolve-span-output content (patch/line-anchor 2 "(def a 1)") nil "(def A 11)")))))
   (it "replacing the LAST line keeps CRLF (the terminator sits inside the span there)"
       (let [content "(ns t)\r\n(def a 1)\r\n(def b 2)\r\n"]
-        (expect (= "(ns t)\r\n(def a 1)\r\n(def B 22)\r\n"
-                   (:content (resolve-span-output content (patch/line-anchor 3 "(def b 2)") nil "(def B 22)"))))))
+        (expect
+          (= "(ns t)\r\n(def a 1)\r\n(def B 22)\r\n"
+             (:content
+               (resolve-span-output content (patch/line-anchor 3 "(def b 2)") nil "(def B 22)"))))))
   (it "a CRLF blank line and a from..to range both keep CRLF"
       (expect (= "a\r\nMID\r\nb\r\n"
-                 (:content (resolve-span-output "a\r\n\r\nb\r\n" (patch/line-anchor 2 "") nil "MID"))))
+                 (:content
+                   (resolve-span-output "a\r\n\r\nb\r\n" (patch/line-anchor 2 "") nil "MID"))))
       (expect (= "(ns t2)\r\n(def A 11)\r\n(def b 2)\r\n"
                  (:content (resolve-span-output "(ns t)\r\n(def a 1)\r\n(def b 2)\r\n"
                                                 (patch/line-anchor 1 "(ns t)")
@@ -219,7 +223,9 @@
   (it "deleting a CRLF line removes the whole physical line"
       (expect (= "(ns t)\r\n(def b 2)\r\n"
                  (:content (resolve-span-output "(ns t)\r\n(def a 1)\r\n(def b 2)\r\n"
-                                                (patch/line-anchor 2 "(def a 1)") nil "")))))
+                                                (patch/line-anchor 2 "(def a 1)")
+                                                nil
+                                                "")))))
   (it "LF files are untouched by the CRLF rule"
       (expect (= "a\nZ\nc\n"
                  (:content (resolve-span-output "a\nb\nc\n" (patch/line-anchor 2 "b") nil "Z"))))

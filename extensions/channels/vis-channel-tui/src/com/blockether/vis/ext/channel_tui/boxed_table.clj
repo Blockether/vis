@@ -186,6 +186,9 @@
      table-x
      (long table-x)
 
+     rendered-w
+     (long rendered-w)
+
      body-top
      (long body-top)
 
