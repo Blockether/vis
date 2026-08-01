@@ -1408,7 +1408,7 @@
      [{:shim/name "matplotlib"
        :shim/imports ["matplotlib" "mpl_toolkits"]
        :shim/description
-       "matplotlib.pyplot subset (line/scatter/bar/hist/fill/step/pie/box/image + OO Figure/Axes) with native imaging PNG and ASCII renderers. 3-D via mpl_toolkits.mplot3d/projection='3d': plot_surface, plot_wireframe, contour(offset=), scatter/plot/text in 3-D, bar3d, view_init/set_zlim/set_zlabel - depth-sorted, shaded, colormapped. plt.show() is the ONE display call - it paints the real PNG INLINE on a graphics terminal (Kitty/iTerm2) and automatically falls back to ASCII on text-only terminals; savefig writes PNG (or *.txt/*.asc/format='txt' ASCII, honoring width/height/color kwargs). Not supported: animation, full rcParams theming; only documented plot types render."
+       "matplotlib.pyplot/OO subset with native PNG and ASCII renderers: line/scatter/bar/hist/fill/step/pie/box/image. mpl_toolkits.mplot3d supports surface/wireframe/contour/scatter/plot/text/bar3d, views, z limits/labels, shading, and colormaps. `show()` is the display call: inline PNG on graphics terminals, ASCII otherwise. `savefig` writes PNG or txt/asc ASCII. Not supported: animation, full rcParams theming, undocumented plot types."
        :shim/bindings mpl-bridge-bindings
        :shim/source "vis-shims/matplotlib.py"}]}))
 
