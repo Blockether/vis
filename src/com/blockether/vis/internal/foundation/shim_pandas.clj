@@ -28,7 +28,7 @@
   (vis/extension
     {:ext/name "foundation-shim-pandas"
      :ext/description
-     "Sandbox shim: a `pandas`-compatible module (import pandas / pandas.DataFrame) implemented in PURE Python (Series + DataFrame with selection, loc/iloc, boolean masks, groupby, merge, concat, describe, read_csv/to_csv) on the stdlib. Interoperates with the numpy shim. No pip, no native wheel, no host bridge. A correctness-focused subset, not C-speed pandas."
+     "Sandbox pure-Python `pandas` subset: Series/DataFrame, selection, loc/iloc, masks, groupby, merge, concat, describe, and CSV I/O; interoperates with the NumPy shim. Stdlib only, no pip/wheel/host bridge; correctness-focused, not C-speed."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
