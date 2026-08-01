@@ -43,7 +43,7 @@
      [{:shim/name "xlsxwriter"
        :shim/imports ["xlsxwriter"]
        :shim/description
-       "xlsxwriter-compatible .xlsx writer backed by Rust rust_xlsxwriter (the workbook is modelled in Python and built in one call on close). Not supported: streaming (`constant_memory`), VBA, charts and data validation."
+       "Rust-backed `xlsxwriter` .xlsx writer: models workbooks in Python and builds on close. No `constant_memory` streaming, VBA, charts, or data validation."
        :shim/bindings xlsxwriter-bridge-bindings
        :shim/source "vis-shims/xlsxwriter.py"}]}))
 
