@@ -43,7 +43,7 @@
      [{:shim/name "pptx"
        :shim/imports ["pptx"]
        :shim/description
-       "python-pptx-compatible .pptx writer backed by Rust (the presentation is modelled in Python and built in one call on save). Not supported: opening/editing an existing .pptx, charts and SmartArt."
+       "python-pptx-compatible `.pptx` writer: model in Python, one Rust build on save. No existing-file open/edit, charts, or SmartArt."
        :shim/bindings pptx-bridge-bindings
        :shim/source "vis-shims/pptx.py"}]}))
 
