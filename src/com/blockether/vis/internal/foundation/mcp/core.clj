@@ -420,9 +420,9 @@
       :name "mcp__servers"
       :native-tool? true
       :result
-      "Object `{\"op\": string, \"servers\": [{\"name\": string, \"transport\": string, \"connected\": boolean, \"enabled\": boolean, optional \"tools\", \"command\", \"url\"}]}`."
+      "String-keyed `{op,servers:[{name,transport,connected,enabled,tools?,command?,url?}]}`."
       :description
-      "List configured MCP servers and connection state before choosing one. In `python_execution`, call `await mcp_servers()`."
+      "List configured MCP servers and connection state. In `python_execution`, call `await mcp_servers()`."
       :render render-mcp-servers-result
       :call {:pos []}
       :color-role :tool-color/meta
@@ -435,15 +435,15 @@
       :name "mcp__tools"
       :native-tool? true
       :result
-      "Object `{\"op\": string, \"server\": string, \"tools\": [{\"name\": string, \"description\": string|null, \"input_schema\": object}]}`."
+      "String-keyed `{op,server,tools:[{name,description,input_schema}]}`; descriptions may be null."
       :description
-      "Discover one MCP server's live tools and input schemas before calling them; auto-connects when needed. In `python_execution`, call `await mcp_tools(...)`."
+      "Discover a server's live tools and input schemas; auto-connects. In `python_execution`, call `await mcp_tools(...)`."
       :render render-mcp-tools-result
       :call {:pos ["server"]}
       :color-role :tool-color/meta
       :schema {:type "object"
                :properties {"server" {:type "string"
-                                      :description "Configured MCP server name (auto-connects)."}}
+                                      :description "Configured server; auto-connects."}}
                :required ["server"]
                :additionalProperties false}
       :tag :observation
@@ -454,18 +454,17 @@
       :name "mcp__call"
       :native-tool? true
       :result
-      "Object `{\"op\": string, \"server\": string, \"tool\": string, \"content\": [MCP content blocks], \"is_error\": boolean}`; text blocks expose `block[\"text\"]`."
+      "String-keyed `{op,server,tool,content,is_error}`; `content` is MCP blocks, with text at `block[\"text\"]`."
       :description
-      "Invoke a discovered MCP tool with arguments matching its returned input schema; auto-connects when needed. In `python_execution`, call `await mcp_call(...)`."
+      "Call a discovered server tool using its input schema; auto-connects. In `python_execution`, call `await mcp_call(...)`."
       :render render-mcp-call-result
       :call {:pos ["server" "tool"] :opt-pos ["args"]}
       :color-role :tool-color/shell
       :schema {:type "object"
                :properties
-               {"server" {:type "string" :description "Configured MCP server name (auto-connects)."}
-                "tool" {:type "string" :description "Tool name on that server (see mcp__tools)."}
-                "args" {:type "object"
-                        :description "Args matching the tool's input_schema; omit or {} for none."}}
+               {"server" {:type "string" :description "Configured server; auto-connects."}
+                "tool" {:type "string" :description "Discovered tool name."}
+                "args" {:type "object" :description "Input-schema args; omit or `{}` for none."}}
                :required ["server" "tool"]
                :additionalProperties false}
       :tag :mutation
@@ -475,18 +474,14 @@
      {:symbol 'connect
       :name "mcp__connect"
       :native-tool? true
-      :result
-      "Object `{\"op\": string, \"server\": string, \"connected\": true, \"tools\": integer}`."
+      :result "String-keyed `{op,server,connected:true,tools}`."
       :description
-      "Explicitly connect a configured MCP server into the daemon-wide pool; normally unnecessary because discovery and calls auto-connect, and /reload reconciles the pool. In `python_execution`, call `await mcp_connect(...)`."
+      "Explicitly connect a configured server; tools/calls usually auto-connect and `/reload` reconciles the pool. In `python_execution`, call `await mcp_connect(...)`."
       :render render-mcp-connect-result
       :call {:pos ["server"]}
       :color-role :tool-color/create
       :schema {:type "object"
-               :properties {"server"
-                            {:type "string"
-                             :description
-                             "Configured MCP server to connect into the daemon-wide pool."}}
+               :properties {"server" {:type "string" :description "Configured server."}}
                :required ["server"]
                :additionalProperties false}
       :tag :mutation
@@ -496,18 +491,14 @@
      {:symbol 'disconnect
       :name "mcp__disconnect"
       :native-tool? true
-      :result
-      "Object `{\"op\": string, \"server\": string, \"result\": \"disconnected\"|\"not_connected\"}`."
+      :result "String-keyed `{op,server,result}`, where result is `disconnected|not_connected`."
       :description
-      "Disconnect an MCP server from the daemon-wide pool (closes the connection; terminates the child process for stdio). The next /reload will reconcile the pool from config. In `python_execution`, call `await mcp_disconnect(...)`."
+      "Disconnect from the pool, closing the connection and terminating any stdio child; `/reload` reconciles config. In `python_execution`, call `await mcp_disconnect(...)`."
       :render render-mcp-disconnect-result
       :call {:pos ["server"]}
       :color-role :tool-color/delete
       :schema {:type "object"
-               :properties {"server"
-                            {:type "string"
-                             :description
-                             "Configured MCP server to disconnect from the daemon-wide pool."}}
+               :properties {"server" {:type "string" :description "Configured server."}}
                :required ["server"]
                :additionalProperties false}
       :tag :mutation
