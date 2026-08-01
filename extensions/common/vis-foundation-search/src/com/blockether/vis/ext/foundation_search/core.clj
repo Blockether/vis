@@ -1675,17 +1675,12 @@
 ;; =============================================================================
 
 (defn search
-  "await search(\\\"rust async runtime comparison\\\")                        (kind defaults to \\\"web\\\")
-   await search(\\\"…\\\", {\\\"kind\\\": \\\"code\\\", \\\"tokens_num\\\": N})
-   await search(\\\"…\\\", {\\\"kind\\\": \\\"papers\\\", \\\"num_results\\\": 10, \\\"sort\\\": \\\"relevance\\\"})
+  "await search(\\\"query\\\")  # web by default
+   await search(\\\"query\\\", {\\\"kind\\\": \\\"code\\\", \\\"tokens_num\\\": N})
+   await search(\\\"query\\\", {\\\"kind\\\": \\\"papers\\\", \\\"num_results\\\": 10})
 
-   One research entry point. \\\"kind\\\" picks the corpus:
-   \\\"web\\\" = live web (Exa), \\\"code\\\" = repos + technical docs (Exa),
-   \\\"papers\\\" = arXiv abstracts.
-   Per-kind opts: web -> num_results/type/livecrawl/context_max_characters;
-   code -> tokens_num; papers -> num_results/sort/timeout_ms.
-   Returns {\\\"query\\\", \\\"citations\\\": [{\\\"type\\\", \\\"title\\\", \\\"url\\\", \\\"excerpt\\\", ...}, ...], \\\"citation_count\\\", \\\"truncated\\\", \\\"source\\\", \\\"endpoint\\\"}.
-   Gotcha: \\\"excerpt\\\" is markdown/abstract text — read it directly; on failure \\\"citations\\\"[0] carries \\\"error\\\": True."
+   One entry point: `kind` is `web` (Exa live web), `code` (Exa/GitHub repos and docs), or `papers` (arXiv). Options: web `num_results`/`type`/`livecrawl`/`context_max_characters`; code `tokens_num`/`provider`; papers `num_results`/`sort`/`timeout_ms`.
+   Returns the query, ranked `citations` (`type`/`title`/`url`/`excerpt`/...), count, truncation, source, and endpoint. Read `excerpt` directly; failures put `error` on the first citation."
   ([query] (search query {}))
   ([query opts]
    (let
