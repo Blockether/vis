@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.16 (2846) — 2026-08-01
+<!-- commit: 68352e07b671b3aad7b3b1e53087c8699423ab03 -->
+
+- Show recently-active sessions in collapsed projects
+- Release notes for 0.1.15 (2844)
+
 ## 0.1.15 (2844) — 2026-07-31
 <!-- commit: a70d925169253f6c0758254f726a880ff0685297 -->
 
