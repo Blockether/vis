@@ -130,7 +130,7 @@
      [{:shim/name "tzdata"
        :shim/imports ["dateutil" "pytz" "tzdata" "zoneinfo"]
        :shim/description
-       "zoneinfo/pytz/tzdata + dateutil.{tz,parser,relativedelta} backed by JVM java.time (600+ IANA zones, DST-correct, no data files). Not supported: dateutil beyond the `tz`, `parser`, and `relativedelta` submodules."
+       "JVM java.time-backed zoneinfo/pytz/tzdata and dateutil.tz/parser/relativedelta: 600+ IANA zones, DST-correct, no data files. Other dateutil submodules unsupported."
        :shim/bindings tzdata-bridge-bindings
        :shim/source "vis-shims/tzdata.py"}]}))
 
