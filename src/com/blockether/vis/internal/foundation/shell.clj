@@ -1916,7 +1916,7 @@ Result keys are total PER STAGE, never a union: always stage, id, cwd, commands,
   (vis/extension
     {:ext/name "foundation-shell"
      :ext/description
-     "Shell compatibility layer: ONE `shell` tool for bounded commands and background PTY resources. Its op (run / background / logs / send / stop) covers the full process lifecycle; stop is also reachable through resource_stop. Bound when the `shell` toggle is ON (default); contained by the OS process jail."
+     "One `shell` tool: bounded commands and background PTY lifecycle (`run`, `background`, `logs`, `send`, `stop`); `resource_stop` also stops PTYs. Default-on behind the `shell` toggle and OS process jail."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
