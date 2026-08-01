@@ -1981,7 +1981,7 @@
      [{:shim/name "pil"
        :shim/imports ["PIL"]
        :shim/description
-       "Pillow-compatible `PIL` (Image/ImageDraw/ImageFilter/ImageOps/ImageColor/ImageEnhance/ImageChops/ImageFont) backed by com.blockether/imaging (Rust image+tiny-skia; no java.desktop). Animated GIF (seek/n_frames/save_all), JPEG/WebP quality, adaptive-palette quantize and getexif are supported; an image over 512 MiB of RGBA pixels is refused with an \"image too large\" OSError. Not supported: some color-mode conversions and `Image.transform` methods raise `ValueError`."
+       "Pillow-compatible `PIL`, Rust-backed without java.desktop: Image, ImageDraw, ImageFilter, ImageOps, ImageColor, ImageEnhance, ImageChops, ImageFont; animated GIF seek/n_frames/save_all; JPEG/WebP quality; adaptive quantization; EXIF. Rejects images over 512 MiB RGBA. Not supported: some color conversions and `Image.transform` methods (`ValueError`)."
        :shim/bindings pil-bridge-bindings
        :shim/source "vis-shims/pil.py"}]}))
 
