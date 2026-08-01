@@ -32,7 +32,7 @@
      [{:shim/name "httpx"
        :shim/imports ["httpx"]
        :shim/description
-       "httpx-compatible `httpx` (get/post/Client/AsyncClient/Response/raise_for_status) wrapping the requests shim. `AsyncClient` coroutines run the sync core under the hood. Not supported: HTTP/2 and true concurrent async I/O."
+       "`httpx` subset wrapping requests: get/post, Client/AsyncClient, Response, raise_for_status. AsyncClient coroutines use synchronous I/O. No HTTP/2 or concurrent async I/O."
        :shim/source "vis-shims/httpx.py"}]}))
 
 (vis/register-extension! vis-extension)
