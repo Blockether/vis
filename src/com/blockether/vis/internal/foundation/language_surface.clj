@@ -884,17 +884,17 @@
                    (str " " id)))})
 
 (defn format-code
-  "Format via a language pack. Pass `language` first when known: `format_code(language,arg)`; omit it only for paths-based inference. Give source/`{\"code\":...}` for a changed + char-delta ack (not text), or `{\"paths\":[...]}`—always a list—to format files/directories recursively in place and get per-file changes (not text). Omit both for default source paths recursively. Payload passes through unchanged."
+  "Format through a pack: `format_code(language,arg)`; omit `language` only for paths-based inference. Source/`{\"code\":...}` returns changed + char-delta, never text. `{\"paths\":[...]}` (always a list) recursively formats files/dirs in place and returns per-file changes, never text. Omit code/paths for default source paths recursively."
   [env & args]
   (dispatch! env :format-fn args))
 
 (defn lint-code
-  "Lint through a language pack. Pass `language` first: `lint_code(language,arg)`; omit it only for file/workspace inference. Give source/`{\"code\":...}` to lint a snippet or `{\"paths\":[...]}`—always a list—to lint disk. Omit both for default source paths. Returns findings and severity counts."
+  "Lint through a pack: `lint_code(language,arg)`; omit `language` only for file/workspace inference. Source/`{\"code\":...}` lints a snippet; `{\"paths\":[...]}` (always a list) lints disk. Omit code/paths for defaults. Returns findings and severity counts."
   [env & args]
   (dispatch! env :lint-fn args))
 
 (defn run-tests
-  "Run through a language pack: `run_tests(language,arg)`. `arg` is a namespace/module string or map: `namespaces`/`paths` lists choose what loads or discovers; `only`, `include`, and `exclude` lists narrow tests; `cwd` chooses the project; `filter` narrows names when supported. Every selector is a list, even one. Omit `arg` for the whole suite."
+  "Run through a pack: `run_tests(language,arg)`. `arg` is a module string or map: `namespaces`/`paths` choose loading/discovery; `only`, `include`, `exclude`, and `filter` narrow tests; `cwd` chooses the project. List selectors stay lists, even one. Omit `arg` for all tests."
   [env & args]
   ;; Park outside the generic 30s native wall. Language packs own the test budget.
   (let [started-at (System/nanoTime)]
