@@ -49,7 +49,7 @@
   (vis/extension
     {:ext/name "foundation-shim-pytest"
      :ext/description
-     "Sandbox shim: a `pytest`-compatible module (import pytest / pytest.main / @pytest.fixture / pytest.raises) implemented PURELY in stdlib Python. Real assert introspection via linecache+ast, fixtures, parametrize, marks, monkeypatch/capsys/tmp_path — no pip, no wheel, no host bridge, no plugins/CLI."
+     "Sandbox pure-stdlib `pytest` subset: collection, assert introspection, fixtures, parametrize/marks, raises, monkeypatch, capsys, tmp_path, and `pytest.main`. No pip/wheel/host bridge; no plugins and most CLI options unsupported."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
