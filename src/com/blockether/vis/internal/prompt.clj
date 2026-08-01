@@ -225,6 +225,7 @@
     "- Direct native tools: single operations, simple edits, or small fixed call sets; Batch independent work\n"
     "  via plural args (e.g. `paths`). `await gather(...)` only for independent calls in `python_execution`.\n"
     "- `python_execution`: default for most Python/data work, incl. YAML/JSON/TOML/CSV; prefer it over shell.\n"
+    "- In `python_execution`, prefer small higher-order Python helpers (functions that accept or return callables) for repeated mapping, filtering, grouping, and tool-result pipelines when they make the code clearer; avoid copy-pasted loops.\n"
     "- Native results are raw data, not rendered text. Use documented keys and shape via `ntr[tool_id]`; it holds\n"
     "  only stored, data-bearing native calls — never a `session_fold` receipt. Use a `# saved:` id (or `ntr.describe()`\n"
     "  labelled candidates) to recover raw result: `r = ntr[\"saved id\"]`. Before re-running or scanning transcript,\n"

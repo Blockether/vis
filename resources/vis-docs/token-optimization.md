@@ -109,7 +109,7 @@ Folding changes rendering, not storage. There is no destructive `unfold` command
 
 This recovers evidence without restoring it to the model wire. Filter in `python_execution`; never dump a full transcript back into context.
 
-`session_state` / `sessions` / `session_report_html` are bound only while the `introspection` toggle is ON (default OFF — enable it in `vis.yml` under `toggles:` or from the settings dialog). With it OFF, `ntr[tool_id]` remains the recovery path.
+`session_state` and `sessions` are bound only while the `introspection` toggle is ON (default OFF — enable it in `vis.yml` under `toggles:` or from the settings dialog). Compact token/tool/provider diagnostics live at `session_state()["usage"]`. With introspection OFF, `ntr[tool_id]` remains the recovery path.
 
 ### The budget stays visible
 

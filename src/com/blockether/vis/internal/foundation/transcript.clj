@@ -12,8 +12,8 @@
    analytics extension consumes the same shape.
 
    Lives in foundation because it's an introspection surface, not host
-   plumbing. The sandbox-visible public surface is `(session-state)`
-   for data and `(session-report-html)` for an HTML report; this namespace
+   plumbing. The sandbox-visible public surface is `(session-state)` for data
+   (including compact usage) and `(sessions)` for metadata lookup; this namespace
    owns the transcript portion behind that deeper interface.
 
    Public Clojure surface:

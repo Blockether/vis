@@ -2,13 +2,12 @@
   "Programmatic introspection of the agent's own state from inside
    `:code`. The public state surface is deliberately small:
 
-   - `(session-state [session-id])` -> data map, including raw LLM diagnostics
-   - `(session-report-html [session-id])` -> HTML report rendered from that data
+   - `(session-state [session-id])` -> canonical data map, including usage and raw LLM diagnostics
+   - `(sessions [channel])` -> metadata-only session index
 
    Everything else in this namespace is implementation detail. The agent
-   gets the data once, manipulates it via plain Clojure (`get-in`,
-   `filter`, `map`, etc.), and renders the same data to Markdown only
-   when presentation is needed.
+   gets the data once and manipulates it with ordinary Python collection
+   operations when filtering or presentation is needed.
 
    Every function is a pure read off the same DB tables the projection
    layer reads from (or a classpath read for the doc accessors).
@@ -1078,9 +1077,6 @@
          :tool-errors-truncated? tool-errors-truncated?
          :routing routing}))))
 
-(defn- foundation-usage
-  ([env] (foundation-usage env (:session-id env)))
-  ([env session-id] (session-envelope :session-usage (foundation-usage-data env session-id))))
 
 (defn- safe-call
   [f default]
@@ -1098,9 +1094,9 @@
 (defn- foundation-inspect-data
   "Canonical session-state data surface. One read returns the
    navigation summary, live current turn, classified failures,
-   diagnosis, fork/retry metadata, and the full transcript payload.
-   Default target is the current session; pass a session id or
-   unambiguous prefix to inspect another session."
+   diagnosis, fork/retry metadata, compact usage ledger, and the full
+   transcript payload. Default target is the current session; pass a
+   session id or unambiguous prefix to inspect another session."
   [env session-id]
   (let
     [target-id
@@ -1125,7 +1121,10 @@
      (safe-call #(foundation-session-forks env resolved-id) [])
 
      turn-retries
-     (safe-call #(retries-by-turn env (:turns transcript-data)) {})]
+     (safe-call #(retries-by-turn env (:turns transcript-data)) {})
+
+     usage
+     (safe-call #(foundation-usage-data env resolved-id) {})]
 
     {:schema-version 1
      :scope :session
@@ -1137,10 +1136,11 @@
      :diagnosis diagnosis
      :session-forks forks
      :turn-retries turn-retries
+     :usage usage
      :transcript transcript-data}))
 
 ;; ---------------------------------------------------------------------------
-;; Strings-only boundary egress. session_state / sessions / session_report_html
+;; Strings-only boundary egress. session_state / sessions
 ;; are MODEL-FACING verbs: the `:result` they return crosses the Clojure->Python
 ;; boundary, which throws on any keyword/symbol key or value. The internal
 ;; builders + the transcript projection stay idiomatic keyword Clojure (the
@@ -1190,22 +1190,6 @@
   ([env] (foundation-inspect env (:session-id env)))
   ([env session-id] (session-envelope :session-state (foundation-inspect-data env session-id))))
 
-(defn- foundation-report-html
-  "Render the same canonical data returned by `foundation-inspect` as a
-   standalone, vis-light-styled HTML document. Returns a Vis tool
-   envelope; sandbox callers receive the unwrapped string."
-  ([env] (foundation-report-html env (:session-id env)))
-  ([env session-id]
-   (let
-     [data
-      (foundation-inspect-data env session-id)
-
-      report
-      (if-let [transcript-data (:transcript data)]
-        (transcript/transcript->html transcript-data)
-        (str "Session not found: " (:session-id data) "\n"))]
-
-     (session-envelope :session-report-html report))))
 
 (defn- foundation-sessions
   "Envelope-wrapped session index (see `foundation-sessions-data`).
@@ -1235,7 +1219,7 @@
 (def
   ^{:doc
     "await session_state(session_id=None)  # current session by default; pass an id for another conversation
-Returns {\"session\" (identity + per-turn rollup), \"current_turn\", \"failures\", \"diagnosis\", \"session_forks\", \"turn_retries\", \"transcript\", ...}. The rich one is `transcript`: `[\"totals\"]` (turns/iterations/tokens/cost) and `[\"turns\"]` = [{id, user_request, answer, status, iteration_count, tokens, cost_usd, iterations:[{position, status, blocks:[code/result]}]}] — iterate it in python_execution to gather answers, grep code, or diff cost; slice, don't dump.
+Returns {\"session\" (identity + per-turn rollup), \"current_turn\", \"failures\", \"diagnosis\", \"session_forks\", \"turn_retries\", \"usage\", \"transcript\", ...}. `usage` is the compact per-turn/per-iteration/per-tool token, cost, outcome, bounded-error, and provider-routing ledger; tool rows overlap when an iteration invoked multiple tools, so never sum them. The rich transcript is at `[\"transcript\"]`: `[\"totals\"]` and `[\"turns\"]` = [{id, user_request, answer, status, iteration_count, tokens, cost_usd, iterations:[{position, status, blocks:[code/result]}]}] — iterate it in python_execution to gather answers, grep code, or diff cost; slice, don't dump.
 Pick keys; the whole dict stays bound. No-arg defaults to the current session, but for
 THIS conversation the live `session` bag already has turn, scope, utilization,
 workspace, and tool state. It is also the recovery path for raw folded current-session
@@ -1247,23 +1231,7 @@ session id."
   session-state
   foundation-inspect)
 
-(def
-  ^{:doc
-    "await session_usage(session_id=None)  # compact token/cost and tool-outcome ledger for the current session
-Returns {\"totals\", \"turns\", \"tools\", \"tool_errors\", \"routing\"} without transcript messages, code, results, or raw provider payloads. Totals, turns, and iterations report input, cached_input, uncached_input, cache_created, output, reasoning, cost_usd, tool_calls, tool_errors, and tool_outcomes. Tool rows include calls, errors, and done/error/timeout outcomes. `tool_errors` contains at most 20 bounded error messages with their tool/turn/iteration/form/status; `tool_errors_truncated` says when more were omitted. `routing` aggregates selected and actual provider/model usage, fallback transitions and retries, bounded provider routing events, and durable manual model switches. Tool rows overlap when one iteration invoked multiple tools: their token/cost columns intentionally overlap, so do not sum the tool rows. Use this instead of exploratory session_state() reads when diagnosing usage."
-    :arglists '([] [session-id])}
-  session-usage
-  foundation-usage)
 
-(def
-  ^{:doc
-    "await session_report_html(session_id)  # standalone HTML report for ANOTHER conversation
-Returns a self-contained HTML document (vis-light themed): every turn, iteration, code,
-result, answer - the same transcript data, styled to match the web TUI. Write it
-to a file to open in a browser. Most useful for OTHER sessions."
-    :arglists '([] [session-id])}
-  session-report-html
-  foundation-report-html)
 
 (def
   ^{:doc
@@ -1285,19 +1253,15 @@ not `json.dumps` and slice the raw list (a `[:N]` cut silently drops the session
 
 (def session-state-symbol (vis/symbol #'session-state {:inject-env? true :tag :observation}))
 
-(def session-report-html-symbol
-  (vis/symbol #'session-report-html {:inject-env? true :tag :observation}))
 
 (def sessions-symbol (vis/symbol #'sessions {:inject-env? true :tag :observation}))
 
-(def session-usage-symbol (vis/symbol #'session-usage {:inject-env? true :tag :observation}))
 
-(def all-symbols
-  [session-state-symbol session-usage-symbol session-report-html-symbol sessions-symbol])
+(def all-symbols [session-state-symbol sessions-symbol])
 
 ;; ---------------------------------------------------------------------------
-;; The introspection extension. Self-inspection (`session_state` / `sessions` /
-;; `session_report_html`, plus the gateway event journals) is NOT core agent
+;; The introspection extension. Self-inspection (`session_state` / `sessions`,
+;; plus the gateway event journals) is NOT core agent
 ;; policy: most projects never want the agent reading its own transcripts, so
 ;; the whole surface — symbols AND prompt guidance — hangs off the
 ;; `introspection` toggle, which is OFF by default. Turn it on in `vis.yml`
@@ -1307,11 +1271,9 @@ not `json.dumps` and slice the raw list (a `[:N]` cut silently drops the session
 (vis/register-toggle!
   {:id "introspection"
    :label "Session introspection"
-   :description
-   (str "Let the agent inspect its OWN history: `session_state` / `session_usage` / `sessions` / "
-        "`session_report_html`, plus the gateway event journals under "
-        "`~/.vis/gateway/events`. OFF by default — enable it for debugging Vis "
-        "itself, not for ordinary project work.")
+   :description (str "Let the agent inspect its OWN history through `session_state` / `sessions`, "
+                     "plus the gateway event journals under `~/.vis/gateway/events`. OFF by "
+                     "default — enable it for debugging Vis itself, not for ordinary project work.")
    :default false
    :owner :vis
    :persist? true
@@ -1321,10 +1283,10 @@ not `json.dumps` and slice the raw list (a `[:N]` cut silently drops the session
   (str
     "## Session introspection\n"
     "- Read a session's raw wire history from `~/.vis/gateway/events/<id>.ndjson`; never grep `.`.\n"
-    "- For token/cost/tool-outcome/provider-routing diagnosis, call `await session_usage()` once: it is the compact per-turn, per-iteration, per-tool, and selected-versus-actual provider ledger with bounded tool errors and routing events. Tool rows overlap when an iteration invoked multiple tools; never sum them.\n"
-    "- Current conversation: `await session_state()` → `transcript/turns/iterations/blocks`\n"
+    "- Call `await session_state()` once. Its `usage` key is the compact per-turn, per-iteration, per-tool, and selected-versus-actual provider ledger with bounded tool errors and routing events. Tool rows overlap when an iteration invoked multiple tools; never sum them.\n"
+    "- Current conversation transcript: `session_state()` → `transcript/turns/iterations/blocks`\n"
     "  (`code`/`result`); it is also the recovery path for folded content.\n"
-    "- Another conversation: `await sessions()` for the index, then `await session_usage(id)` or `await session_state(id)`.\n"
+    "- Another conversation: `await sessions()` for the index, then `await session_state(id)`.\n"
     "- Select and filter these structures in `python_execution`; never dump them whole.\n"))
 
 (defn- introspection-prompt [_env] INTROSPECTION_PROMPT)
@@ -1333,7 +1295,7 @@ not `json.dumps` and slice the raw list (a `[:N]` cut silently drops the session
   (vis/extension
     {:ext/name "foundation-introspection"
      :ext/description
-     "Session self-introspection: `session_state` (full transcript), `session_usage` (compact per-turn/per-iteration/per-tool token, cost, outcome, bounded error, and provider-routing ledger), `sessions` (newest-first index of past conversations) and `session_report_html` (standalone HTML transcript), plus guidance for reading `~/.vis/gateway/events/<id>.ndjson`. Bound only while the `introspection` toggle is ON (default OFF)."
+     "Session self-introspection: `session_state` (full transcript plus compact usage/tool/provider-routing ledger) and `sessions` (newest-first metadata index), plus guidance for reading `~/.vis/gateway/events/<id>.ndjson`. Bound only while the `introspection` toggle is ON (default OFF)."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

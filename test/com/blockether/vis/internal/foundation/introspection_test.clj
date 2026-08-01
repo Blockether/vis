@@ -27,28 +27,29 @@
 
 (defdescribe
   introspection-public-surface-test
-  (it "exposes only the session introspection symbols (symbol docs moved to engine `doc`/`apropos`)"
-      (let [symbols (set (map :ext.symbol/symbol introspection/all-symbols))]
-        (expect (contains? symbols 'session-state))
-        (expect (contains? symbols 'session-usage))
-        (expect (contains? symbols 'session-report-html))
-        (expect (contains? symbols 'sessions))
-        (let
-          [session-state-doc (:doc (meta #'introspection/session-state))
-           session-usage-doc (:doc (meta #'introspection/session-usage))]
+  (it "exposes one canonical state tool plus the session index"
+      (let
+        [symbols
+         (set (map :ext.symbol/symbol introspection/all-symbols))
 
-          (expect (str/starts-with?
-                    session-state-doc
-                    "await session_state(session_id=None)  # current session by default"))
-          (expect (re-find #"recovery path for raw folded current-session" session-state-doc))
-          (expect (re-find #"does not undo fold intents or restore them" session-state-doc))
-          (expect (str/starts-with? session-usage-doc "await session_usage(session_id=None)"))
-          (expect (re-find #"Tool rows overlap" session-usage-doc)))
+         session-state-doc
+         (:doc (meta #'introspection/session-state))]
+
+        (expect (= #{'session-state 'sessions} symbols))
+        (expect (not (contains? symbols 'session-usage)))
+        (expect (not (contains? symbols 'session-report-html)))
+        (expect (str/starts-with?
+                  session-state-doc
+                  "await session_state(session_id=None)  # current session by default"))
+        (expect (str/includes? session-state-doc "\"usage\""))
+        (expect (re-find #"tool rows overlap" session-state-doc))
+        (expect (re-find #"recovery path for raw folded current-session" session-state-doc))
+        (expect (re-find #"does not undo fold intents or restore them" session-state-doc))
         ;; engine-symbol-* tools were retired in favour of the bare
         ;; `doc` / `apropos` engine system calls.
         (expect (not (contains? symbols 'engine-symbol-documentation)))
         (expect (not (contains? symbols 'engine-symbol-apropos)))
-        (expect (= 4 (count symbols)))))
+        (expect (= 2 (count symbols)))))
   (it "defaults session_state to the current session when no id is passed"
       (let
         [inspect-data
@@ -57,7 +58,8 @@
          data
          (inspect-data {:session-id "current-session" :db-info nil} nil)]
 
-        (expect (= "current-session" (:session-id data))))))
+        (expect (= "current-session" (:session-id data)))
+        (expect (contains? data :usage)))))
 
 (defdescribe
   session-usage-ledger-test
@@ -108,9 +110,10 @@
                 :content {:from {:provider "anthropic" :model "claude-5"}
                           :to {:provider "openai" :model "gpt-5"}
                           :source :tui}})
-           usage @#'introspection/foundation-usage
-           ledger (:result (usage {:session-id sid :db-info s} sid))
-           missing-ledger (:result (usage {:session-id "missing" :db-info s} "missing"))
+           inspect @#'introspection/foundation-inspect
+           ledger (get (:result (inspect {:session-id sid :db-info s} sid)) "usage")
+           missing-ledger (get (:result (inspect {:session-id "missing" :db-info s} "missing"))
+                               "usage")
            turn-row (first (get ledger "turns"))
            iteration-row (first (get turn-row "iterations"))
            cat-row (first (filter #(= "cat" (get % "tool")) (get ledger "tools")))
@@ -225,18 +228,23 @@
                    (expect (= "excess error" (get-in result [:tool-errors 0 :message]))))))
 
 (defdescribe session-state-envelope-test
-             (it "returns a canonical envelope so observed symbol wrapping can unwrap it"
+             (it "returns one canonical envelope with the compact usage ledger embedded"
                  (let
                    [inspect
                     @#'introspection/foundation-inspect
 
                     result
-                    (inspect {:session-id nil :db-info nil})]
+                    (inspect {:session-id nil :db-info nil})
+
+                    data
+                    (:result result)]
 
                    (expect (extension/tool-result? result))
                    ;; Envelope key stays keyword — internal, unwrapped before the boundary.
                    (expect (= :session-state (:symbol result)))
-                   (expect (map? (:result result))))))
+                   (expect (map? data))
+                   (expect (contains? data "usage"))
+                   (expect (map? (get data "usage"))))))
 
 (defdescribe
   session-state-strings-only-test

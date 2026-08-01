@@ -100,6 +100,7 @@
           "hard preconditions" "`python_execution`" "`await gather(...)` only for independent calls"
           "Direct native tools: single operations" "simple edits" "small fixed call sets"
           "default for most Python/data work" "YAML/JSON/TOML/CSV" "over shell."
+          "higher-order Python helpers" "functions that accept or return callables"
           "Call advertised native tools directly" "for unadvertised sandbox" "read-only `session`"
           "raw data, not rendered text" "Use documented keys" "never a `session_fold` receipt"
           "# saved:" "Before re-running or scanning transcript" "recover raw result" "saved id"

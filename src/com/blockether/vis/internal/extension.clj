@@ -3587,9 +3587,9 @@
        toggle always registers and the feature is one settings flip away (the tools
        stay gated OFF behind the `shell` toggle until the user enables it).
 
-     introspection — session self-inspection (`session_state` / `sessions` /
-       `session_report_html`). INTERNAL core so its `introspection` toggle always
-       registers, but the symbols and prompt stay OFF until the toggle is ON.
+     introspection — session self-inspection (`session_state` / `sessions`).
+       INTERNAL core so its `introspection` toggle always registers, but the
+       symbols and prompt stay OFF until the toggle is ON.
 
      shim-yaml / shim-matplotlib / shim-requests — sandbox SHIMS. NOT gated by anything: each
        registers unconditionally and its `:ext/sandbox-shims` autoloads into
