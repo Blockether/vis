@@ -13,7 +13,7 @@
  *                              (0600, materialised from the login keychain per build and
  *                               shredded by `--clean`; never committed, never in Downloads)
  *   3. versionName/versionCode → app/build.gradle
- *      versionName = package.json "version", versionCode = `git rev-list --count HEAD`,
+ *      versionName = repo-root VIS_VERSION, versionCode = `git rev-list --count HEAD`,
  *      the SAME pair scripts/ios-release.mjs uses, so a build number identifies one commit
  *      on both stores and two uploads can never collide.
  *   4. cleartext HTTP        → res/xml/network_security_config.xml + AndroidManifest
@@ -21,7 +21,7 @@
  *
  * Usage:
  *   node scripts/android-prepare.mjs
- *   node scripts/android-prepare.mjs --version 1.2.0 --build 4711
+ *   node scripts/android-prepare.mjs --build 4711
  *   node scripts/android-prepare.mjs --file google-services.json
  *   node scripts/android-prepare.mjs --clean        # shred the materialised keystore
  */
@@ -183,8 +183,8 @@ const capture = (cmd, cmdArgs) => {
   return res.status === 0 ? res.stdout.trim() : undefined;
 };
 
-// The repo-root VERSION file is the one source of truth; package.json mirrors it.
-const versionName = flag('version') ?? syncPackageVersion();
+// Repo-root VIS_VERSION is the source of truth; npm metadata mirrors it.
+const versionName = syncPackageVersion();
 const versionCode = flag('build') ?? capture('git', ['rev-list', '--count', 'HEAD']) ?? '1';
 
 const gradlePath = join(androidApp, 'build.gradle');

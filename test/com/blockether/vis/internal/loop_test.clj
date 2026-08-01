@@ -1220,6 +1220,37 @@
           (expect (= ["t1/i1" "t1/i2"] (get @ca "engine_iter_universe")))
           (expect (= {"t1/i1" 0 "t1/i2" 100} (get @ca "engine_iter_weights")))
           (expect (= {"t1/i1" [{"id" "call-big"}]} (get @ca "engine_iter_ntr")))))
+    ;; Phantom-reclaim regression (session 881eb071…): the FIRST `{"through" …}`
+    ;; fold of a new turn sweeps in every prior-turn seed iteration that was never
+    ;; explicitly folded. Those seeds emit NOTHING on the wire when their turn
+    ;; completed normally (`conversation-suffix`'s `:preserved-thinking/replay?
+    ;; false` branch — the outcome rides in the prior-turn recap), yet they were
+    ;; priced at full historical payload: cards claimed to reclaim more than the
+    ;; whole request they folded, and the phantom tokens fed the session-rebase
+    ;; counter. A seed from a terminal INCOMPLETE turn does replay its settled
+    ;; results as plain text, so it keeps its weight.
+    (it "prices completed-turn cross-turn seeds at zero, incomplete-turn seeds in full"
+        (let
+          [payload
+           (apply str (repeat 4000 "x"))
+
+           seed
+           (fn [scope status]
+             {:forms-vec [{:scope scope :result payload}]
+              :cross-turn/turn-status status
+              :preserved-thinking/replay? false})
+
+           trailer
+           [[0 (seed "t1/i1/f1" :done)]
+            [1 (seed "t2/i1/f1" :cancelled)]
+            [2 {:forms-vec [{:scope "t3/i1/f1" :result payload}]}]]
+
+           ca
+           (atom {})]
+
+          (stamp-iter-universe! ca trailer)
+          (expect (= {"t1/i1" 0 "t2/i1" 1000 "t3/i1" 1000}
+                     (get @ca "engine_iter_weights")))))
     ;; Frozen-prompt regression (session 0cfd25a7…): a fold recorded under an
     ;; EARLIER/foreign turn numbering kept re-resolving its range cursor against
     ;; every later live turn, collapsing the whole trailer. The model then never

@@ -3,8 +3,8 @@
 
    ONE built-in Python function, `git`, runs a SERIAL batch of `git <args…>` commands
    in the active workspace root and returns a TOTAL, string-keyed result the model reads
-   directly: `{\"commands\" [{\"cmd\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\",
-   \"timed_out\", \"timeout_secs\"} …]}`. Every key is present for every command
+   directly: `{\"commands\" [{\"command\", \"args\", \"stdout\", \"stderr\", \"exit\",
+   \"duration_ms\", \"timed_out\"} …]}`. Every key is present for every command
    (`stderr` \"\" when empty, `exit` None only when that command timed out), so no
    field ever KeyErrors. A non-zero exit is DATA, not a tool failure; later commands
    still run, so a batch reports partial outcomes exactly like a terminal script.
@@ -58,7 +58,7 @@
    an `add` with no reporting flag already present (`-v`/`--verbose`, or the
    self-reporting `-n`/`--dry-run`), append `--verbose` so git itself lists each
    staged path (`add 'file'` / `remove 'file'`) on stdout. Only the SUBPROCESS
-   runs verbose; the echoed `cmd`/`args` stay the caller's original tokens,
+   runs verbose; the echoed `command`/`args` stay the caller's original tokens,
    since `--verbose` only adds reporting, not a different index mutation."
   [tokens]
   (if (and (= "add" (first tokens)) (not (some #{"-v" "--verbose" "-n" "--dry-run"} tokens)))
@@ -84,14 +84,13 @@
       [r (shell/run-argv env
                          (into ["git"] (verbose-add-tokens tokens))
                          {"timeout_secs" default-timeout-secs})]
-      {"cmd" (str "git " (str/join " " tokens))
+      {"command" (str "git " (str/join " " tokens))
        "args" (vec tokens)
        "stdout" (or (get r "stdout") "")
        "stderr" (or (get r "stderr") "")
        "exit" (get r "exit")
        "duration_ms" (get r "duration_ms")
-       "timed_out" (boolean (get r "timed_out"))
-       "timeout_secs" (or (get r "timeout_secs") default-timeout-secs)})))
+       "timed_out" (boolean (get r "timed_out"))})))
 
 (defn- git-impl
   "Run the `commands` array from one options map, preserving its serial order."
@@ -280,9 +279,9 @@
                 ["duration"
                  (some-> (get r "duration_ms")
                          vis/format-duration)]
-                ;; The timeout budget is TOTAL in the result but only worth a row
-                ;; when it was actually hit.
-                ["timeout" (when (get r "timed_out") (str (get r "timeout_secs") "s"))]])
+                ;; The budget is a CONSTANT of this tool, not per-command data, so it
+                ;; is a row only when it was actually hit.
+                ["timeout" (when (get r "timed_out") (str default-timeout-secs "s"))]])
 
      body
      (->> [(section "COMMAND" (str "git " (str/join " " args)) "bash") (section "STATUS" status)
@@ -310,7 +309,7 @@
     "await git({\"commands\": [[\"status\", \"--short\"], [\"diff\", \"--stat\"]]})
 await git({\"commands\": [[\"add\", \"-A\"], [\"commit\", \"-m\", \"wip: message with spaces\"]]})
 
-Run SERIAL host-Git commands in the workspace root. EVERY call takes exactly one map whose `commands` is a non-empty LIST of non-empty LISTS of literal tokens; each inner element is one git argument, safe for commit messages and paths with spaces. Never pass `commands` as a positional array. Commands run in request order, so later mutations see earlier ones. Every command returns exactly `{\"cmd\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\", \"timed_out\", \"timeout_secs\"}` under `{\"commands\" [...]}`. ALL stdout and stderr stay with the command that emitted them.
+Run SERIAL host-Git commands in the workspace root. EVERY call takes exactly one map whose `commands` is a non-empty LIST of non-empty LISTS of literal tokens; each inner element is one git argument, safe for commit messages and paths with spaces. Never pass `commands` as a positional array. Commands run in request order, so later mutations see earlier ones. Every command returns exactly `{\"command\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\", \"timed_out\"}` under `{\"commands\" [...]}`. ALL stdout and stderr stay with the command that emitted them.
 
 Gotcha: a non-zero `exit` is DATA to read, not a tool failure; remaining commands run."
     :arglists '([opts])}
@@ -323,7 +322,7 @@ Gotcha: a non-zero `exit` is DATA to read, not a tool failure; remaining command
     {:symbol 'git
      :native-tool? true
      :result
-     "Object with exactly `commands`, whose entries each have `cmd`, `args`, `stdout`, `stderr`, `exit`, `timed_out`, `timeout_secs`, and `duration_ms`."
+     "Object with exactly `commands`, whose entries each have `command`, `args`, `stdout`, `stderr`, `exit`, `timed_out`, and `duration_ms`."
      :name "git"
      :description
      (str

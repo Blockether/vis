@@ -1,13 +1,15 @@
 name: Mobile release
 
-# Ships the Vis Companion app to both public beta channels from one tag:
+# Ships the Vis Companion app to both public beta channels. A regular Vis
+# `vX.Y.Z` release calls this workflow only after its own release succeeds;
+# app-only rebuilds arrive through the movable `companion-vX.Y.Z` tag. Both
+# paths must match the repo-root VIS_VERSION exactly.
 #   iOS      → TestFlight, and (with `public`) an external PUBLIC-LINK group after Beta App Review
 #   Android  → Google Play; track `beta` IS the public "Open testing" channel
 #
-# The build logic is NOT duplicated here. Everything lives in
-# apps/vis-companion/scripts/{ios-release,android-release}.mjs, which a maintainer runs
-# locally with the SAME inputs read from the macOS login keychain instead of GH secrets.
-# CI therefore cannot drift from the local path: it only supplies credentials.
+# Store build logic stays in scripts/{ios-release,android-release}.mjs. Public
+# npm release commands only orchestrate the regular/companion tag contract;
+# CI calls the explicit `release:ios:store` / `release:android:store` internals.
 #
 # Repository secrets (Settings ▸ Secrets and variables ▸ Actions):
 #   iOS      VIS_ASC_KEY_ID, VIS_ASC_ISSUER_ID, VIS_ASC_KEY (the .p8 CONTENTS), VIS_IOS_TEAM_ID
@@ -23,6 +25,17 @@ name: Mobile release
 on:
   push:
     tags: ['companion-v*']
+  workflow_call:
+    inputs:
+      platforms:
+        type: string
+        default: both
+      track:
+        type: string
+        default: beta
+      public:
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       platforms:
@@ -60,6 +73,40 @@ jobs:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
 
+      - name: Verify release lineage and VIS_VERSION
+        run: |
+          set -euo pipefail
+
+          VERSION=$(tr -d '[:space:]' < ../../VIS_VERSION)
+          REGULAR="v$VERSION"
+          REGULAR_COMMIT=$(git rev-parse --verify "$REGULAR^{commit}") || {
+            echo "$REGULAR must exist before releasing its companion" >&2
+            exit 1
+          }
+
+          if [ "${{ github.event_name }}" = push ]; then
+            case "$GITHUB_REF_NAME" in
+              v*) EXPECTED="$REGULAR" ;;
+              companion-v*) EXPECTED="companion-v$VERSION" ;;
+              *) echo "Unsupported release tag: $GITHUB_REF_NAME" >&2; exit 1 ;;
+            esac
+            test "$GITHUB_REF_NAME" = "$EXPECTED" || {
+              echo "$GITHUB_REF_NAME does not match VIS_VERSION=$VERSION (expected $EXPECTED)" >&2
+              exit 1
+            }
+          fi
+
+          git merge-base --is-ancestor "$REGULAR_COMMIT" HEAD || {
+            echo "$REGULAR must be an ancestor of this companion release" >&2
+            exit 1
+          }
+          if [ "${GITHUB_REF_NAME:-}" = "$REGULAR" ]; then
+            test "$REGULAR_COMMIT" = "$(git rev-parse HEAD)" || {
+              echo "$REGULAR must point at the exact regular-release commit" >&2
+              exit 1
+            }
+          fi
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -93,7 +140,7 @@ jobs:
           VIS_IOS_TEAM_ID: ${{ secrets.VIS_IOS_TEAM_ID }}
         run: |
           export VIS_ASC_KEY_PATH="$RUNNER_TEMP/AuthKey_${VIS_ASC_KEY_ID}.p8"
-          npm run release:ios -- ${{ (github.event_name == 'push' || inputs.public) && '--public' || '' }}
+          npm run release:ios:store -- ${{ (github.event_name == 'push' || inputs.public) && '--public' || '' }}
 
       - name: No iOS credentials
         if: steps.creds.outputs.ok != 'true'
@@ -106,6 +153,40 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
+
+      - name: Verify release lineage and VIS_VERSION
+        run: |
+          set -euo pipefail
+
+          VERSION=$(tr -d '[:space:]' < ../../VIS_VERSION)
+          REGULAR="v$VERSION"
+          REGULAR_COMMIT=$(git rev-parse --verify "$REGULAR^{commit}") || {
+            echo "$REGULAR must exist before releasing its companion" >&2
+            exit 1
+          }
+
+          if [ "${{ github.event_name }}" = push ]; then
+            case "$GITHUB_REF_NAME" in
+              v*) EXPECTED="$REGULAR" ;;
+              companion-v*) EXPECTED="companion-v$VERSION" ;;
+              *) echo "Unsupported release tag: $GITHUB_REF_NAME" >&2; exit 1 ;;
+            esac
+            test "$GITHUB_REF_NAME" = "$EXPECTED" || {
+              echo "$GITHUB_REF_NAME does not match VIS_VERSION=$VERSION (expected $EXPECTED)" >&2
+              exit 1
+            }
+          fi
+
+          git merge-base --is-ancestor "$REGULAR_COMMIT" HEAD || {
+            echo "$REGULAR must be an ancestor of this companion release" >&2
+            exit 1
+          }
+          if [ "${GITHUB_REF_NAME:-}" = "$REGULAR" ]; then
+            test "$REGULAR_COMMIT" = "$(git rev-parse HEAD)" || {
+              echo "$REGULAR must point at the exact regular-release commit" >&2
+              exit 1
+            }
+          fi
 
       - uses: actions/setup-node@v4
         with:
@@ -140,7 +221,7 @@ jobs:
           VIS_ANDROID_KEY_ALIAS: ${{ secrets.VIS_ANDROID_KEY_ALIAS }}
           VIS_ANDROID_KEY_PASSWORD: ${{ secrets.VIS_ANDROID_KEY_PASSWORD }}
           VIS_ANDROID_GOOGLE_SERVICES: ${{ secrets.VIS_ANDROID_GOOGLE_SERVICES }}
-        run: npm run release:android -- --track ${{ inputs.track || 'beta' }}
+        run: npm run release:android:store -- --track ${{ inputs.track || 'beta' }}
 
       - name: No Play credentials
         if: steps.creds.outputs.ok != 'true'

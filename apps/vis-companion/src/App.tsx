@@ -25,7 +25,10 @@ import { GatewaySettingsDialog } from './screens/SettingsScreen';
 import { SessionScreen } from './screens/SessionScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
 import { parseRoute, parseSessionDeepLink, sessionHash, tabHash } from './lib/router';
-import { useVisualViewportShell } from './lib/viewport';
+import {
+  reclaimViewportForExternalNavigation,
+  useVisualViewportShell,
+} from './lib/viewport';
 import { App as CapacitorApp } from '@capacitor/app';
 import {
   acquirePushToken,
@@ -501,6 +504,10 @@ export function App() {
   useEffect(() => {
     void clearDeliveredPushes();
     return onPushTap((tap) => {
+      // The OS may suspend us with the software keyboard up and never deliver its
+      // hide event. Reclaim the full shell before routing; otherwise the old
+      // keyboard-height pin survives into the notification's destination.
+      reclaimViewportForExternalNavigation();
       const conn = active;
       if (!conn || !tap.sessionId) return;
       void openGatewaySession(conn, tap.sessionId);

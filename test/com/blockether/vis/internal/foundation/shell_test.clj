@@ -100,12 +100,18 @@
               (expect (true? (get r "started")))
               (expect (false? (get r "timed_out")))
               (expect (false? (get r "timed_out")))
-              (expect (= 120 (get r "timeout_secs")))
-              (expect (false? (get r "stdout_truncated")))
-              (expect (false? (get r "stderr_truncated")))
               (expect (= 0 (get r "stdout_omitted_chars")))
               (expect (= 0 (get r "stderr_omitted_chars")))
-              (expect (string? (get r "cwd"))))))))
+              ;; Request scope (`cwd`, `timeout_secs`) is GROUP scope: summarised ONCE
+              ;; on the envelope and carried here as metadata, never a second copy on
+              ;; every entry of a batch.
+              (expect (not (contains? r "cwd")))
+              (expect (not (contains? r "timeout_secs")))
+              ;; …and no truncation flag beside the counts: 0 already IS "nothing lost".
+              (expect (not (contains? r "stdout_truncated")))
+              (expect (not (contains? r "stderr_truncated")))
+              (expect (= 120 (:timeout-secs (meta r))))
+              (expect (string? (:dir (meta r)))))))))
   (it "always carries a TOTAL stderr/exit (empty stderr is \"\", not a missing key) and a real cwd"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -117,8 +123,8 @@
                            (expect (contains? r "stderr"))
                            (expect (= 0 (get r "exit"))))
                          (let [r (shell-run* {} "pwd" {"cwd" "src"})]
-                           (expect (string? (get r "cwd")))
-                           (expect (str/ends-with? (get r "cwd") "/src")))))))
+                           (expect (string? (:dir (meta r))))
+                           (expect (str/ends-with? (:dir (meta r)) "/src")))))))
   (it "treats a non-zero exit as DATA on the command's own entry (not a tool error)"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -150,7 +156,7 @@
                                                "echo TAIL_MARKER"))
                             out (get r "stdout")]
 
-                           (expect (true? (get r "stdout_truncated")))
+                           (expect (pos? (get r "stdout_omitted_chars")))
                            ;; the opening line is NO LONGER swallowed (the old tail-only cap ate it)
                            (expect (str/includes? out "HEAD_MARKER"))
                            ;; the closing summary still survives
@@ -158,19 +164,19 @@
                            ;; and the drop is made visible, not silent
                            (expect (str/includes? out "chars omitted")))))))
   (it "honors a timeout above the 120s default (up to the 600s cap)"
-      ;; :timeout_secs only ships on a TIMED-OUT result now, so the clamp is
+      ;; `timeout_secs` is group scope on the envelope now, so the clamp is
       ;; asserted on the helper directly instead of burning wall-clock.
       (let [clamp @#'shell/clamp-timeout-secs]
         (expect (= 120 (clamp nil)))
         (expect (= 300 (clamp 300)))
         (expect (= 600 (clamp 5000)))
         (expect (= 1 (clamp 0)))))
-  (it "surfaces timeout_secs alongside timed_out on the timeout path"
+  (it "carries the timeout budget as entry metadata alongside timed_out"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
                          (let [r (shell-run* {} "sleep 30" {"timeout_secs" 1})]
                            (expect (true? (get r "timed_out")))
-                           (expect (= 1 (get r "timeout_secs")))
+                           (expect (= 1 (:timeout-secs (meta r))))
                            ;; "exit" stays PRESENT and nil (Python None) on timeout.
                            (expect (contains? r "exit"))
                            (expect (nil? (get r "exit"))))))))
@@ -204,7 +210,7 @@
 
                (let [r (shell-run* env "pwd" {"cwd" "../svar"})]
                  (expect (= (.getCanonicalPath sibling) (str/trim (get r "stdout"))))
-                 (expect (= (.getCanonicalPath sibling) (get r "cwd")))))
+                 (expect (= (.getCanonicalPath sibling) (:dir (meta r))))))
              (finally (io/delete-file sibling true)
                       (io/delete-file primary true)
                       (io/delete-file parent true)))))
@@ -225,7 +231,7 @@
 
           (let [r (shell-run* env "pwd" {"cwd" home})]
             (expect (= home (str/trim (get r "stdout"))))
-            (expect (= home (get r "cwd")))))))
+            (expect (= home (:dir (meta r))))))))
   (it "accepts the HOME-relative paths advertised in session access"
       (let
         [home
@@ -244,7 +250,7 @@
           ;; `cwd` is the ONLY spelling — `~` expands against the home root.
           (let [r (shell-run* env "pwd" {"cwd" "~"})]
             (expect (= home (str/trim (get r "stdout"))))
-            (expect (= home (get r "cwd")))))))
+            (expect (= home (:dir (meta r))))))))
   (it "accepts an ABSOLUTE cwd that lands inside a workspace root"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -252,8 +258,8 @@
                            [abs (.getCanonicalPath (java.io.File. (str (workspace/cwd))))
                             r (shell-run* {} "pwd" {"cwd" abs})]
 
-                           (expect (string? (get r "cwd")))
-                           (expect (= abs (get r "cwd"))))
+                           (expect (string? (:dir (meta r))))
+                           (expect (= abs (:dir (meta r)))))
                          ;; an absolute path OUTSIDE every root is still rejected
                          (expect (threw? #(shell-run* {} "pwd" {"cwd" "/"})))))))
   (it "accepts a float timeout but rejects a non-numeric one with a typed error"
@@ -369,10 +375,12 @@
                      ;; TOTAL contract: every op of the ONE shell tool returns the
                      ;; identity keys, with `stage` naming the op that ran.
                      (expect (= "logs" (get r "stage")))
-                     (expect (= "sleep 60" (first (map #(get % "cmd") (get r "commands")))))
+                     (expect (= "sleep 60" (first (map #(get % "command") (get r "commands")))))
                      (expect (contains? r "pid"))
-                     (expect (contains? r "attach"))
-                     (expect (contains? r "socket"))
+                     ;; Stage-SCOPED: `logs` owns pid/status/uptime, never the background
+                     ;; card's attach/socket — no stage carries another stage's keys.
+                     (expect (not (contains? r "attach")))
+                     (expect (not (contains? r "socket")))
                      (expect (not (contains? r "shown_count")))
                      ;; …but CORE keys stay TOTAL: 0 dropped / nil exit, never absent
                      (expect (contains? r "dropped"))
@@ -489,7 +497,7 @@
                       one (first (get r "commands"))]
 
                      (expect (= "run" (get r "stage")))
-                     (expect (= "echo mapped" (get one "cmd")))
+                     (expect (= "echo mapped" (get one "command")))
                      (expect (= "mapped\n" (get one "stdout"))))
                    (expect (threw? #(shell* {} "echo positional")))
                    (expect (threw? #(shell* {} ["echo positional"])))
@@ -505,13 +513,14 @@
   shell-render-test
   (it "renders the run op like a REPL-style collapsible card"
       (let
-        [card (render-shell-run-result {"cmd" "echo hi" "exit" 0 "duration_ms" 12 "stdout" "hi"})]
+        [card (render-shell-run-result
+                {"command" "echo hi" "exit" 0 "duration_ms" 12 "stdout" "hi"})]
         (expect (= "$ echo hi (success) · 12ms" (:summary card)))
         (expect (str/includes? (:body card) "**COMMAND**"))
         (expect (str/includes? (:body card) "**STATUS**"))
         (expect (str/includes? (:body card) "**STDOUT**"))))
   (it "separates a compound command onto its own lines in the COMMAND card"
-      (let [card (render-shell-run-result {"cmd" "a; b && c" "exit" 0 "duration_ms" 1})]
+      (let [card (render-shell-run-result {"command" "a; b && c" "exit" 0 "duration_ms" 1})]
         (expect (str/includes? (:body card) "a;\nb &&\nc"))))
   (it "pretty-prints top-level shell operators, quote/paren-aware"
       ;; top-level ; && || each end their line
@@ -528,9 +537,9 @@
       (expect (= "" (format-shell-command nil))))
   (it "surfaces shell failures and timeouts on the collapsed chip"
       (expect (str/includes? (:summary (render-shell-run-result
-                                         {"cmd" "grep nope missing" "exit" 2 "duration_ms" 34}))
+                                         {"command" "grep nope missing" "exit" 2 "duration_ms" 34}))
                              "$ grep nope missing (failure) · exit 2 · 34ms"))
-      (expect (str/includes? (:summary (render-shell-run-result {"cmd" "make test"
+      (expect (str/includes? (:summary (render-shell-run-result {"command" "make test"
                                                                  "timed_out" true
                                                                  "timeout_secs" 5
                                                                  "duration_ms" 5000}))
@@ -541,7 +550,7 @@
          "\u001b[0;32m✓ PASS\u001b[0m\rnext\b!"
 
          result
-         {"cmd" "tests" "exit" 0 "stdout" stdout}
+         {"command" "tests" "exit" 0 "stdout" stdout}
 
          run-card
          (render-shell-run-result result)
@@ -561,7 +570,7 @@
       (let
         [bg
          (render-shell-bg-result {"id" "srv"
-                                  "commands" [{"cmd" "npm run dev" "started" true}]
+                                  "commands" [{"command" "npm run dev" "started" true}]
                                   "pid" 123
                                   "status" "running"
                                   "attach" "vis extension shell attach srv"})
@@ -627,8 +636,8 @@
          props
          (get-in shell/shell-symbol [:ext.symbol/schema :properties])]
 
-        (expect (str/includes? d "EVERY call takes one options map"))
-        (expect (str/includes? d "Never pass a command string or an array"))
+        (expect (str/includes? d "ONE options map"))
+        (expect (str/includes? d "never a positional string or array"))
         (expect (contains? props "commands"))
         (expect (contains? props "text"))
         (expect (not (contains? props "cmd")))
@@ -752,7 +761,7 @@
                    (py c
                        (str "r = __vis_settle__(shell({'commands':['echo hi']}))\n"
                             "x = r['commands'][0]\n"
-                            "[r['stage'], x['stdout'].strip(), x['cmd']]"))))
+                            "[r['stage'], x['stdout'].strip(), x['command']]"))))
         (expect
           (=
             ["background" "logs" "stop"]

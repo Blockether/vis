@@ -75,29 +75,32 @@ npm install @capacitor-mlkit/barcode-scanning
 
 On the web, scanning falls back to pasting the pairing link.
 
-## Release to TestFlight (iOS)
+## Release the companion app
 
-One command builds the bundle, syncs Capacitor, archives, exports a signed
-`.ipa`, and uploads it to App Store Connect:
+The repo-root `VIS_VERSION` is the product version for regular Vis, iOS, and Android. A regular `vX.Y.Z` release invokes the mobile workflow only after the regular release succeeds. If app code changes while `VIS_VERSION` remains `X.Y.Z`, any public release command below moves the leased `companion-vX.Y.Z` tag to the newer `main` commit and releases **both** stores with a new git-derived build number:
 
 ```sh
-npm run release:ios                 # full run
-npm run release:ios -- --no-upload  # stop at the signed .ipa
-npm run release:ios -- --version 1.2.0 --build 4711
-npm run release:ios -- --prepare    # web + cap sync + stamp versions, then STOP
+npm run release:mobile -- --dry-run
+npm run release:mobile
+npm run release:ios       # same two-store retag orchestrator
+npm run release:android   # same two-store retag orchestrator
 ```
 
-Versioning has **no hand-edited state** — the script passes both numbers to
-`xcodebuild` as build settings, so the gitignored `ios/` project never has to be
-touched:
+Commit and push first. The commands refuse a dirty tree, a non-`main` branch, or a local branch that differs from `origin/main`. If `vX.Y.Z` already points at `HEAD`, no retag occurs because that regular release already owns the app build.
+
+The low-level one-store commands are only for CI and recovery:
+
+```sh
+npm run release:ios:store -- --no-upload
+npm run release:android:store -- --track beta --no-upload
+```
+
+Versioning has **no hand-edited app state**. `scripts/version.mjs` mirrors `VIS_VERSION` into `package.json` and `package-lock.json`; the store scripts pass both numbers as native build settings:
 
 | Store field | Source |
 | --- | --- |
-| `CFBundleShortVersionString` (version) | `package.json` `"version"` — the same value the app stamps on every gateway request and shows on the version-mismatch screen |
-| `CFBundleVersion` (build) | `git rev-list --count HEAD` — strictly monotonic, so two uploads can never collide |
-
-Bump `package.json` `version` for a user-visible release; the build number takes
-care of itself.
+| `CFBundleShortVersionString` / Android `versionName` | repo-root `VIS_VERSION` (npm metadata is only a mirror) |
+| `CFBundleVersion` / Android `versionCode` | `git rev-list --count HEAD` — strictly monotonic and shared by both stores |
 
 To archive by hand in Xcode, run `--prepare` first: it builds the bundle, syncs
 Capacitor, and writes the same two numbers into `App.xcodeproj` — a GUI archive
@@ -127,7 +130,7 @@ release from this machine uses. Artifacts land in `build/ios/`.
 ### Public TestFlight link
 
 ```sh
-npm run release:ios -- --public     # upload, then open the build to the public group
+npm run release:ios:store -- --public  # one-store recovery: upload + public group
 npm run release:testflight          # same distribution step for the LAST uploaded build
 ```
 
@@ -156,11 +159,11 @@ uses it.
 ## Release to Google Play (Android)
 
 ```sh
-npm run release:android                        # signed .aab → internal track
-npm run release:android -- --track beta        # OPEN testing — the public one
-npm run release:android -- --no-upload         # stop at the signed .aab
-npm run release:android -- --rollout 0.1       # staged 10%
-npm run release:android -- --tracks            # what each track serves today
+npm run release:android:store                        # signed .aab → internal track
+npm run release:android:store -- --track beta        # OPEN testing — the public one
+npm run release:android:store -- --no-upload         # stop at the signed .aab
+npm run release:android:store -- --rollout 0.1       # staged 10%
+npm run release:android:store -- --tracks            # what each track serves today
 ```
 
 Play's equivalent of a public TestFlight link is the **`beta` (Open testing)**
@@ -175,7 +178,7 @@ refuses a normal rollout with *"Only releases with status draft may be created
 on draft app"*. Upload with `--draft` in the meantime:
 
 ```sh
-npm run release:android -- --track beta --draft
+npm run release:android:store -- --track beta --draft
 ```
 
 and finish it in Play Console ▸ the app's **Dashboard** — store listing, App
@@ -208,17 +211,27 @@ itself and says so if none is installed (`sdk install java 21.0.11-tem`).
 
 ## Automatic releases
 
-`.github/workflows/mobile-release.yml` runs both stores from one tag:
+The companion always carries the regular Vis version from repo-root `VIS_VERSION`.
+A regular Vis tag releases everything together:
 
 ```sh
-git tag companion-v1.0.2 && git push origin companion-v1.0.2
+git tag v1.0.2 && git push origin v1.0.2
 ```
 
-iOS goes to TestFlight *and* the public group; Android goes to the `beta` track.
-A manual **Run workflow** lets you pick platform, track, and whether to submit
-for Beta App Review. The workflow contains no build logic — it calls the very
-same `release:ios` / `release:android` scripts, reading credentials from
-repository secrets instead of the keychain, so a local release and a CI release
+For another iOS/Android build while Vis remains `1.0.2`, commit and push the app
+fix and move the one companion rebuild tag through the guarded script:
+
+```sh
+npm run release:mobile -- --dry-run
+npm run release:mobile
+```
+
+That atomically retags `companion-v1.0.2` to current `origin/main`. The tag push
+runs `.github/workflows/mobile-release.yml`, ships iOS to public TestFlight and
+Android to the `beta` track, keeps marketing version `1.0.2`, and gets a new
+store build number from `git rev-list --count HEAD`. A manual **Run workflow**
+can recover one platform. The workflow calls the direct `release:ios` /
+`release:android` scripts with repository secrets, so local and CI build logic
 cannot drift. A platform whose secrets are missing is skipped, not failed.
 
 | Secret | Value |

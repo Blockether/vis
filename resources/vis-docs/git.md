@@ -71,13 +71,12 @@ for command in result["commands"]:
 
 | Key | Meaning |
 | --- | --- |
-| `"cmd"` | Display form, including `git`. |
+| `"command"` | Display form, including `git`. |
 | `"args"` | The literal argument list supplied to Git. |
 | `"stdout"` / `"stderr"` | Output for that command only; empty strings when empty. |
 | `"exit"` | Exit code, or `None` when that command timed out. |
 | `"duration_ms"` | Command duration in milliseconds. |
 | `"timed_out"` | Whether that command exceeded its deadline. |
-| `"timeout_secs"` | Deadline used for that command. |
 
 Use the direct native tool for one simple action. Use `python_execution` when
 you need to inspect, filter, or combine Git results without sending every

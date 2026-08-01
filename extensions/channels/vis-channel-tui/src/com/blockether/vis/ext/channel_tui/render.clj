@@ -4601,18 +4601,19 @@
      form-lines
      (fn [form block-number]
        (let
-         [{:keys [code display-code comment error success?]}
+         [{:keys [code display-code comment error success? started-at-ms]}
           form
 
           is-error?
           (and (some? success?) (not success?))
 
-          ;; A NATIVE tool call (cat/rg/patch/…, not python_execution) that
-          ;; FAILED: its synthesized `name({…args…})` source is redundant
-          ;; chrome — a wall of the very args that failed — so the client
-          ;; drops it and shows only the compact error message. Only
-          ;; python_execution (the model's OWN program) keeps its code, whose
-          ;; inline `^---` caret needs the surrounding source.
+          running?
+          (and (some? started-at-ms) (nil? success?))
+
+          ;; A FAILED native tool (cat/rg/patch/…, not python_execution) keeps
+          ;; only its concise error. While that same tool is RUNNING, however,
+          ;; its exact submitted invocation is the primary evidence on screen.
+          ;; Python source remains visible through every state.
           native-tool-error?
           (and is-error?
                (some? (:vis/tool-name form))
@@ -4665,17 +4666,18 @@
           title-lines
           []
 
-          ;; Canonical code surface: paint the model's raw `:code`, using the
-          ;; gateway/canonical `:display-code` (ruff-beautified ONCE upstream)
-          ;; when present so the TUI never re-formats on every re-render. Only a
-          ;; local caller without an attached `:display-code` falls back to the
-          ;; cached formatter (verbatim when ruff is unavailable). NO
-          ;; `:render-segments` / `:vis/show-raw-code` gate — a structurally-silent
-          ;; (engine-chrome / answer) form carries no code and is already filtered
-          ;; upstream, so a blank `code` is the only thing that drops the row
-          ;; (`hide-code-chrome?`).
+          ;; Canonical code surface: Python uses the gateway's cached, ruff-formatted
+          ;; `:display-code`. A RUNNING native call is different: the user needs the
+          ;; exact invocation submitted to the tool, so prefer its raw `:code` and
+          ;; fall back to `:display-code` only when an older frame omitted it.
           code-text
-          (str/trim (str (or (not-empty (str display-code)) (vis/beautify-python code))))
+          (str/trim
+            (str
+              (if (and running?
+                       (some? (:vis/tool-name form))
+                       (not= (name (:vis/tool-name form)) "python_execution"))
+                (or (not-empty (str code)) display-code)
+                (or (not-empty (str display-code)) (vis/beautify-python code)))))
 
           ;; Tree-sitter recovers from syntax errors, so colorize failed programs too.
           ;; The diagnostic caret remains plain and column-aligned below.
@@ -4951,13 +4953,15 @@
           (when error
             (mapv #(line-entry (str c-marker %)) (wrap-text (form-error-headline error) fill-w)))
 
-          ;; Native invocation source is redundant beside its op-card. Python is
-          ;; user-relevant evidence and remains visible on success AND failure;
-          ;; failed programs use the same PYTHON disclosure as successful ones,
-          ;; defaulted collapsed above. `vis/hide-tool-code?` owns this shared policy.
+          ;; Completed native invocation source is redundant beside its op-card,
+          ;; but the invocation currently executing must stay visible. Python is
+          ;; user-relevant evidence in every state; failed native calls retain only
+          ;; their compact error message. `vis/hide-tool-code?` owns the completed
+          ;; policy and `running?` deliberately overrides it here.
           ;; Blank non-tool code also drops empty chrome.
           hide-code-chrome?
-          (or (and (not is-error?) (str/blank? code-text)) (vis/hide-tool-code? form))
+          (or (and (not is-error?) (str/blank? code-text))
+              (and (vis/hide-tool-code? form) (not running?)))
 
           code-block
           (cond hide-code-chrome?
@@ -5029,9 +5033,12 @@
                (:vis/tool-name form)
 
                err?
-               (and (some? (:success? form)) (not (:success? form)))]
+               (and (some? (:success? form)) (not (:success? form)))
 
-              (boolean (and tn (not= tn "python_execution") (not err?)))))
+               running?
+               (and (some? (:started-at-ms form)) (nil? (:success? form)))]
+
+              (boolean (and tn (not= (name tn) "python_execution") (not err?) (not running?)))))
 
           block-code-lines
           (into

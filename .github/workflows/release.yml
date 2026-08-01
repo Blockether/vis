@@ -24,6 +24,21 @@ jobs:
           git fetch --tags --no-recurse-submodules origin
           git fetch --deepen=200 origin main
 
+      - name: Verify tag, main, and VIS_VERSION are identical
+        run: |
+          set -euo pipefail
+          VERSION=$(tr -d '[:space:]' < VIS_VERSION)
+          EXPECTED="v$VERSION"
+          test "$GITHUB_REF_NAME" = "$EXPECTED" || {
+            echo "$GITHUB_REF_NAME does not match VIS_VERSION=$VERSION (expected $EXPECTED)" >&2
+            exit 1
+          }
+          TAG_COMMIT=$(git rev-parse "$GITHUB_REF_NAME^{commit}")
+          test "$TAG_COMMIT" = "$(git rev-parse HEAD)" || {
+            echo "$GITHUB_REF_NAME must point at current main before release" >&2
+            exit 1
+          }
+
       # Jars deployed to Clojars are built on the SAME locked JDK as everything
       # else (GraalVM CE 25.1.3, .graalvm-version) — the action also refuses a
       # half-bumped/unlocked pin before anything is published.
@@ -49,7 +64,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PREV_TAG=$(git tag --sort=-v:refname | head -n 2 | tail -n 1)
+          PREV_TAG=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n 2 | tail -n 1)
           CURRENT_TAG=${{ github.ref_name }}
           if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$CURRENT_TAG" ]; then
             RANGE="$CURRENT_TAG"
@@ -130,7 +145,7 @@ jobs:
       - name: Build & Deploy monorepo packages to Clojars
         if: steps.check-clojars.outputs.exists != 'true'
         env:
-          VERSION: ${{ github.ref_name }}
+          VIS_VERSION: ${{ github.ref_name }}
           CLOJARS_USERNAME: blockether-deployer
           CLOJARS_PASSWORD: ${{ secrets.CLOJARS_DEPLOY_TOKEN }}
         run: clojure -T:build deploy
@@ -144,7 +159,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PREV_TAG=$(git tag --sort=-v:refname | head -n 2 | tail -n 1)
+          PREV_TAG=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n 2 | tail -n 1)
           CURRENT_TAG=${{ github.ref_name }}
           DATE=$(date +%Y-%m-%d)
           if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$CURRENT_TAG" ]; then
@@ -180,26 +195,22 @@ jobs:
             echo "[$CURRENT_TAG]: https://github.com/Blockether/vis/releases/tag/${CURRENT_TAG}" >> CHANGELOG.md
           fi
 
-      - name: Bump VERSION to next patch
-        run: |
-          # VERSION moved from `resources/VERSION` to the repo root in the
-          # monorepo split. build.clj reads the root file and embeds it as
-          # `META-INF/vis/VERSION` inside the jar.
-          CURRENT="${GITHUB_REF_NAME#v}"
-          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
-          MINOR=$(echo "$CURRENT" | cut -d. -f2)
-          PATCH=$(echo "$CURRENT" | cut -d. -f3)
-          NEXT_PATCH=$((PATCH + 1))
-          NEXT_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}"
-          echo "$NEXT_VERSION" > VERSION
-          echo "Bumped VERSION to $NEXT_VERSION"
-
-      - name: Commit version updates
+      - name: Commit release notes
         run: |
           git config user.name "blockether-deployer"
           git config user.email "contact@blockether.com"
-          git add README.md CHANGELOG.md VERSION
+          git add README.md CHANGELOG.md
           git diff --cached --quiet && echo "No changes to commit" || {
-            git commit -m "release: update version files for ${{ github.ref_name }}, bump to next dev version"
+            git commit -m "release: update release notes for ${{ github.ref_name }}"
             git push origin main
           }
+
+  mobile:
+    name: Release matching iOS and Android apps
+    needs: release
+    uses: ./.github/workflows/mobile-release.yml
+    with:
+      platforms: both
+      track: beta
+      public: true
+    secrets: inherit

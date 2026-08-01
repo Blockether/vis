@@ -250,7 +250,7 @@ switch (cmd) {
     if (flag('package')) put('play_package', flag('package'));
     console.log(`\n✓ Play service account stored (${parsed.client_email}).`);
     console.log('  Grant it release access in Play Console ▸ Users and permissions if you have not.');
-    console.log('  Then: npm run release:android -- --track beta');
+    console.log('  Then: npm run release:android  # triggers the matching two-store release');
     console.log('  The JSON on disk is now redundant — shred it:  rm -P <the file>\n');
     break;
   }

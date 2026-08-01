@@ -2254,17 +2254,37 @@
        ;; `apply-summaries` preserves trailer order while replacing collapsed forms
        ;; with a zero-weight breadcrumb, so an already-folded scope cannot reclaim
        ;; its historical raw payload again on a later, broader fold.
+       ;;
+       ;; A cross-turn seed carried from a turn that COMPLETED normally is worth
+       ;; ZERO for the same reason: `conversation-suffix`'s
+       ;; `:preserved-thinking/replay? false` branch emits no assistant message and
+       ;; no results for it (the outcome already rides in the prior-turn recap), so
+       ;; its payload does not reside on the wire at all. Pricing it anyway let any
+       ;; selector reaching back over a turn boundary (a `{"through" …}` fold early
+       ;; in a new turn) bill the FULL historical payload of every prior-turn
+       ;; iteration that was never explicitly folded — cards claiming to reclaim
+       ;; more than the entire request they folded, and phantom tokens accumulating
+       ;; toward the session-rebase threshold. Seeds from terminal INCOMPLETE turns
+       ;; do replay their settled results as plain text, so they keep their weight.
+       off-wire-seed?
+       (fn [rec]
+         (and (false? (:preserved-thinking/replay? rec))
+              (not (terminal-incomplete-turn-status? (:cross-turn/turn-status rec)))))
+
        weights
-       (persistent!
-         (reduce (fn [m [[_ raw-rec] [_ wire-rec]]]
-                   (if-let [sc (scope-of raw-rec)]
-                     (let
-                       [chars
-                        (reduce + 0 (map form-wire-chars (remove :summary? (:forms-vec wire-rec))))]
-                       (assoc! m sc (+ (long (get m sc 0)) (quot (long chars) 4))))
-                     m))
-                 (transient {})
-                 (map vector trailer-iters (or wire-iters trailer-iters))))
+       (persistent! (reduce (fn [m [[_ raw-rec] [_ wire-rec]]]
+                              (if-let [sc (scope-of raw-rec)]
+                                (let
+                                  [chars (if (or (off-wire-seed? raw-rec) (off-wire-seed? wire-rec))
+                                           0
+                                           (reduce +
+                                                   0
+                                                   (map form-wire-chars
+                                                        (remove :summary? (:forms-vec wire-rec)))))]
+                                  (assoc! m sc (+ (long (get m sc 0)) (quot (long chars) 4))))
+                                m))
+                            (transient {})
+                            (map vector trailer-iters (or wire-iters trailer-iters))))
 
        ntr
        (persistent! (reduce (fn [m [_ rec]]

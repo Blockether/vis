@@ -97,7 +97,7 @@ and no invite:
 On iOS you install Apple's free **TestFlight** app first, then open the link;
 on Android the link is an opt-in page that switches your Play account over to
 the testing build of `com.blockether.viscompanion`. Both builds carry the same
-version number as the CLI (the repo-root `VERSION`), and the app refuses to
+version number as the CLI (the repo-root `VIS_VERSION`), and the app refuses to
 talk to a gateway whose protocol version does not match — see
 [Protocol version and compatibility](#protocol-version-and-compatibility).
 
@@ -332,7 +332,7 @@ proves the whole chain. Tapping an alert reopens the session it came from.
 
 The iOS capability itself (`aps-environment` entitlement + AppDelegate token
 forwarding) is stamped into the regenerable `ios/` project by
-`npm run release:ios -- --prepare`, so it survives a `cap add ios`. Android needs
+`npm run release:ios:store -- --prepare`, so it survives a `cap add ios`. Android needs
 no entitlement — only `google-services.json`, stamped by `npm run prepare:android`.
 
 

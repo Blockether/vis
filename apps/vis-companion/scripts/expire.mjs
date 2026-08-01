@@ -8,7 +8,7 @@
  * cannot be un-expired, only superseded by a newer upload.
  *
  * Why this exists: builds are grouped in the TestFlight app by their VERSION STRING
- * (CFBundleShortVersionString, i.e. the repo-root VERSION). When several builds carry the
+ * (CFBundleShortVersionString, i.e. repo-root VIS_VERSION). When several builds carry the
  * same version, testers see the newest *installable* one — and a build that was uploaded
  * but never linked to the external group (see testflight.mjs) is not installable, so the
  * app keeps offering the older build. Expiring the stale ones makes the list honest.

@@ -71,6 +71,8 @@ import { App } from '@capacitor/app';
 import { shareableSessionLink } from '../lib/router';
 import { Capacitor } from '@capacitor/core';
 
+import { workspaceRelativePath } from '../lib/path';
+
 interface LiveActivity {
   kind: string;
   iteration?: number;
@@ -101,6 +103,13 @@ interface LiveTurn {
 
 const TERMINAL_EVENTS = new Set(['turn.completed', 'turn.failed', 'turn.cancelled']);
 const LIVE_BODY_THROTTLE_MS = 150;
+
+// A body frame may wait for stable rotation geometry, but lifecycle truth may
+// not: a terminal must stop the spinner/settle immediately and a new start must
+// replace any cached bubble without being painted as the previous turn.
+function forcesLiveFlushDuringRotation(event: SseEvent): boolean {
+  return TERMINAL_EVENTS.has(event.type) || event.type === 'turn.started';
+}
 
 // A settle's transcript refetch only has to pick up the ONE row the finished
 // turn just persisted, on top of a snapshot that already holds the tail. Four
@@ -276,7 +285,11 @@ function commandPhase(request: string): string | null {
   return null;
 }
 
-function liveProgressPhase(turn: LiveTurn, connected: boolean): string {
+function liveProgressPhase(
+  turn: LiveTurn,
+  connected: boolean,
+  workspaceRoots: readonly (string | null | undefined)[],
+): string {
   if (!connected) return 'Reconnecting — checking turn status';
   if (turn.cancelling) return 'Vis is cancelling';
 
@@ -303,8 +316,10 @@ function liveProgressPhase(turn: LiveTurn, connected: boolean): string {
     case 'response-parse':
       return `Vis is parsing model response ${suffix}`;
     case 'tool':
-    case 'tool-call':
-      return `Vis is running: ${activity.operation || 'tool'}${activity.label ? ` ${compactLabel(activity.label, '')}` : ''} ${suffix}`;
+    case 'tool-call': {
+      const label = workspaceRelativePath(activity.label, workspaceRoots);
+      return `Vis is running: ${activity.operation || 'tool'}${label ? ` ${compactLabel(label, '')}` : ''} ${suffix}`;
+    }
     default:
       break;
   }
@@ -1116,6 +1131,10 @@ export function SessionScreen({
   // A rotation has one terminal scroll write: keep observers and stale scroll
   // events from competing with that write until it has landed.
   const rotationRestorePendingRef = useRef(false);
+  // The SSE effect installs its current queue drain here. Rotation invokes it one
+  // paint before restoring the captured scroll anchor, so the restore targets the
+  // final streamed transcript rather than the pre-rotation body.
+  const flushLiveEventsBeforeRotationRestoreRef = useRef<(() => void) | null>(null);
   // Last measured height of the scroller itself, so a box that shrinks under a
   // parked reader can hand the lost pixels back (see the ResizeObserver below).
   const viewportHeightRef = useRef<number | null>(null);
@@ -1517,6 +1536,9 @@ export function SessionScreen({
       if (finalFrame !== null) window.cancelAnimationFrame(finalFrame);
       firstFrame = window.requestAnimationFrame(() => {
         firstFrame = null;
+        // Fold any body frames intentionally held during the animation while
+        // there is still a full paint left before the one terminal scroll write.
+        flushLiveEventsBeforeRotationRestoreRef.current?.();
         finalFrame = window.requestAnimationFrame(() => {
           finalFrame = null;
           restoreScrollAnchor();
@@ -2295,7 +2317,14 @@ export function SessionScreen({
     let enqueuedSeq = lastLiveSeqRef.current;
     let timerId: number | null = null;
     const flushEvents = () => {
+      if (timerId !== null) window.clearTimeout(timerId);
       timerId = null;
+      // Streaming Markdown repeatedly reflows the transcript. During an OS
+      // rotation those intermediate widths are throwaway geometry, and every
+      // commit both burns the frame budget and moves the live bottom underneath
+      // the frozen scroll transaction. Keep body frames queued until the final
+      // viewport is known; lifecycle frames still punch through immediately.
+      if (isViewportRotating() && !eventQueue.some(forcesLiveFlushDuringRotation)) return;
       const drained = eventQueue.splice(0);
       // Advance the cached cursor HERE, not on arrival: unmounting drops the
       // pending queue, and a cursor that had already counted those frames would
@@ -2389,6 +2418,8 @@ export function SessionScreen({
       }
       if (lifecycle?.type === 'turn.started') setRunning(true);
     };
+
+    flushLiveEventsBeforeRotationRestoreRef.current = flushEvents;
 
     // Liveness watchdog — the transport-independent twin of the TUI's
     // `:turn-liveness-tick`. A terminal registry verdict uses the SAME `settle`
@@ -2484,19 +2515,24 @@ export function SessionScreen({
           enqueuedSeq = event.seq;
         }
         eventQueue.push(event);
-        if (timerId !== null) return;
+        const forceFlush = forcesLiveFlushDuringRotation(event);
+        if (forceFlush && timerId !== null) {
+          window.clearTimeout(timerId);
+          timerId = null;
+        }
+        if (timerId !== null || (isViewportRotating() && !forceFlush)) return;
         // `turn.started` also flushes immediately: on re-entry it is the frame
         // that replaces a cached bubble whose turn has since been superseded, and
         // holding it for a throttle window paints the previous answer twice.
-        const delay =
-          TERMINAL_EVENTS.has(event.type) || event.type === 'turn.started'
-            ? 0
-            : LIVE_BODY_THROTTLE_MS;
+        const delay = forceFlush ? 0 : LIVE_BODY_THROTTLE_MS;
         timerId = window.setTimeout(flushEvents, delay);
       },
     );
 
     return () => {
+      if (flushLiveEventsBeforeRotationRestoreRef.current === flushEvents) {
+        flushLiveEventsBeforeRotationRestoreRef.current = null;
+      }
       window.clearInterval(livenessTimer);
       if (timerId !== null) window.clearTimeout(timerId);
       eventQueue.length = 0;
@@ -3506,7 +3542,10 @@ export function SessionScreen({
                   : []),
             }}
             streaming={liveTurn.status === 'running'}
-            activity={liveProgressPhase(liveTurn, connected)}
+            activity={liveProgressPhase(liveTurn, connected, [
+              session?.workspace?.root,
+              session?.workspace?.repo_root,
+            ])}
             startedAt={liveTurn.startedAt}
             client={client}
             sid={sid}
@@ -3514,7 +3553,16 @@ export function SessionScreen({
         </div>
       );
     },
-    [liveTurn, turns.length, client, sid, connected, fetchedLiveAttachments],
+    [
+      liveTurn,
+      turns.length,
+      client,
+      sid,
+      connected,
+      fetchedLiveAttachments,
+      session?.workspace?.root,
+      session?.workspace?.repo_root,
+    ],
   );
   // Pin the viewport to the content it is already showing, so rows added ABOVE
   // do not shove it. The layout effect reads this height on the next paint.

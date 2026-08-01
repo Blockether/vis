@@ -29,17 +29,15 @@
         {"status" "stopped" "stopped" true}
 
         (let [failed? (str/includes? (str cmd) "boom")]
-          {"commands" [(cond->
-                         {"cmd" cmd
+          {"timeout_secs" 120
+           "commands" [(cond->
+                         {"command" cmd
                           "exit" (if failed? 7 0)
                           "stdout" (if failed? "partial\n" "hello\n")
                           "stderr" (if failed? "boom!\n" "")
                           "duration_ms" (if failed? 3 2)
                           "started" true
                           "timed_out" false
-                          "timeout_secs" 120
-                          "stdout_truncated" false
-                          "stderr_truncated" false
                           "stdout_omitted_chars" 0
                           "stderr_omitted_chars" 0}
                          (nil? cmd)

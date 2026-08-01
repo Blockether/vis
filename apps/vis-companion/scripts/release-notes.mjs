@@ -204,7 +204,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   };
   const secret = (envName, account) => process.env[envName]?.trim() || keychain(account);
 
-  // The repo-root VERSION file is the one source of truth; package.json mirrors it.
+  // Repo-root VIS_VERSION is the source of truth; npm metadata mirrors it.
   const version = flag('version') ?? syncPackageVersion();
   const build = flag('build') ?? capture('git', ['rev-list', '--count', 'HEAD']);
   const scope = flag('scope') ? [flag('scope')] : [];

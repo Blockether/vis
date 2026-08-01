@@ -877,40 +877,67 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
 });
 
 function formCode(form: TranscriptForm): string {
-  const source = form.display_code ?? form.code ?? form.source ?? form.src;
+  const nativeTool = form.tool_name && form.tool_name !== 'python_execution';
+  // A running native call must show the invocation actually submitted, not its
+  // prettified display mirror. Python keeps the canonical formatted surface.
+  const source = nativeTool
+    ? form.code ?? form.source ?? form.src ?? form.display_code
+    : form.display_code ?? form.code ?? form.source ?? form.src;
   return typeof source === 'string' ? source.trim() : '';
+}
+
+function formIsRunning(form: TranscriptForm): boolean {
+  const summary = form.result_summary?.trim();
+  return (
+    form.error == null
+    && form.result == null
+    && form.result_render == null
+    && form.duration_ms == null
+    && (!summary || summary === 'Running…')
+  );
 }
 
 function showFormCode(form: TranscriptForm, code: string): boolean {
   if (!code) return false;
   if (!form.tool_name) return true;
-  // The model's OWN program is always shown — succeeded or failed. On a failure
-  // the result card carries the exception text but not the source that raised it,
-  // so hiding the program left a bare message with nothing to read it against.
-  // The TUI keeps the source under a failing `python_execution` too; same rule here.
-  return form.tool_name === 'python_execution';
+  // Keep completed native invocations compact behind their result card, but while
+  // an operation is running its submitted source is the most important fact on
+  // screen. `block.started` carries that exact source and the Running… sentinel.
+  // Python remains evidence after completion as well, whether it passed or failed.
+  return form.tool_name === 'python_execution' || formIsRunning(form);
 }
 
 const PYTHON_PREVIEW_LINES = 5;
 
-const CollapsiblePythonCode = memo(function CollapsiblePythonCode(
-  { value, bare = false }: { value: string; bare?: boolean },
+const CollapsibleFormCode = memo(function CollapsibleFormCode(
+  {
+    value,
+    label,
+    colorRole,
+    bare = false,
+  }: {
+    value: string;
+    label: string;
+    colorRole?: string;
+    bare?: boolean;
+  },
 ) {
   const [expanded, setExpanded] = useState(false);
   const lines = value.split(/\r?\n/);
   const hiddenLines = Math.max(0, lines.length - PYTHON_PREVIEW_LINES);
   const collapsible = hiddenLines > 0;
   const visibleValue = collapsible && !expanded ? lines.slice(0, PYTHON_PREVIEW_LINES).join('\n') : value;
+  const role = toolRole(colorRole ?? 'tool-color/shell');
 
   // Same frame as the result cards this program produced (see `FormTrace`) and
-  // the same shell-coloured rail the TUI paints for its code band — program and
+  // the same tool-coloured rail the TUI paints for its code band — program and
   // results read as ONE stack. The disclosure row is a HEADER (top of the frame,
   // content reveals below it), identical to the `ToolCard` result headline and to
   // the TUI's THINKING accordion: one rule everywhere, so a row always labels the
   // block beneath it and the collapse control never scrolls away with the body.
   return (
     <div className={bare ? 'min-w-0' : 'mb-1 min-w-0 overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]'}>
-      <div className="min-w-0 border-l-2 border-tool-shell bg-code">
+      <div className={`min-w-0 border-l-2 ${role.border} bg-code`}>
         {/* The header row OWNS the copy control (right edge), exactly like the
             `ToolCard` result headline — never a chip floating over the source.
             It is rendered even when the program is too short to collapse, so a
@@ -925,18 +952,18 @@ const CollapsiblePythonCode = memo(function CollapsiblePythonCode(
               onClick={() => setExpanded((current) => !current)}
             >
               <span
-                className={`${disclosureClass} text-tool-shell ${expanded ? 'rotate-90' : ''}`}
+                className={`${disclosureClass} ${role.text} ${expanded ? 'rotate-90' : ''}`}
                 aria-hidden="true"
               >
                 ›
               </span>
-              <span className="truncate font-mono text-chip font-extrabold tracking-[0.06em] text-tool-shell">
-                {expanded ? 'PYTHON' : `PYTHON +${hiddenLines} more`}
+              <span className={`truncate font-mono text-chip font-extrabold tracking-[0.06em] ${role.text}`}>
+                {expanded ? label : `${label} +${hiddenLines} more`}
               </span>
             </button>
           ) : (
-            <span className="min-w-0 flex-1 select-none truncate px-2 py-1 font-mono text-chip font-extrabold tracking-[0.06em] text-tool-shell">
-              PYTHON
+            <span className={`min-w-0 flex-1 select-none truncate px-2 py-1 font-mono text-chip font-extrabold tracking-[0.06em] ${role.text}`}>
+              {label}
             </span>
           )}
           <CopyButton value={value} className="shrink-0" label="Copy code" />
@@ -986,6 +1013,7 @@ const FormTrace = memo(function FormTrace(
   const showCode = showFormCode(form, code);
   const cards = toolCards(form);
   if (!showCode && !cards.length) return null;
+  const codeLabel = form.tool_name === 'python_execution' ? 'PYTHON' : toolLabel(form.tool_name);
 
   return (
     <div className={live ? `min-w-0 ${transcriptRiseClass}` : 'min-w-0'}>
@@ -1001,12 +1029,12 @@ const FormTrace = memo(function FormTrace(
           belonged to the program printed BELOW it. */}
       {showCode && cards.length > 0 ? (
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
-          <CollapsiblePythonCode value={code} bare />
+          <CollapsibleFormCode value={code} label={codeLabel} colorRole={form.tool_color_role} bare />
           <CardGrid cards={cards} bare />
         </div>
       ) : (
         <>
-          {showCode && <CollapsiblePythonCode value={code} />}
+          {showCode && <CollapsibleFormCode value={code} label={codeLabel} colorRole={form.tool_color_role} />}
           <CardGrid cards={cards} />
         </>
       )}

@@ -5,22 +5,22 @@
  * Versioning has no hand-edited state. The iOS project's own MARKETING_VERSION /
  * CURRENT_PROJECT_VERSION are IGNORED and passed as build settings instead:
  *
- *   CFBundleShortVersionString = package.json "version"   (the release users see)
+ *   CFBundleShortVersionString = repo-root VIS_VERSION       (the release users see)
  *   CFBundleVersion            = `git rev-list --count HEAD`  (strictly monotonic)
  *
  * so `ios/` stays a disposable, regenerable Capacitor output (it is gitignored)
  * and two uploads can never collide on a build number.
  *
- * Usage:
- *   npm run release:ios                 # build + archive + export + upload
- *   npm run release:ios -- --no-upload  # stop at the .ipa (no App Store Connect call)
- *   npm run release:ios -- --version 1.2.0 --build 4711
- *   npm run release:ios -- --skip-web   # reuse dist/ and the last `cap sync`
- *   npm run release:ios -- --prepare    # web + cap sync + stamp versions, then STOP
- *   npm run release:ios -- --prepare --dev  # same, but aps-environment=development
- *                                       # (archive by hand in Xcode: Product > Archive)
- *   npm run release:ios -- --public     # …and hand it to PUBLIC TestFlight afterwards:
- *                                       # beta review + public-link group (see testflight.mjs)
+ * Usage (workflow/store recovery only; normal releases use `npm run release:ios`):
+ *   npm run release:ios:store                 # build + archive + export + upload
+ *   npm run release:ios:store -- --no-upload  # stop at the .ipa (no App Store Connect call)
+ *   npm run release:ios:store -- --build 4711          # recovery-only build override
+ *   npm run release:ios:store -- --skip-web   # reuse dist/ and the last `cap sync`
+ *   npm run release:ios:store -- --prepare    # web + cap sync + stamp versions, then STOP
+ *   npm run release:ios:store -- --prepare --dev  # same, but aps-environment=development
+ *                                             # (archive by hand in Xcode: Product > Archive)
+ *   npm run release:ios:store -- --public     # …and hand it to PUBLIC TestFlight afterwards:
+ *                                             # beta review + public-link group (see testflight.mjs)
  *
  * Upload auth, in order of preference:
  *   1. App Store Connect API key (headless, CI-friendly, no 2FA prompt):
@@ -85,10 +85,10 @@ const capture = (cmd, cmdArgs, opts = {}) => {
   return res.status === 0 ? res.stdout.trim() : '';
 };
 
-// The repo-root VERSION file is the one source of truth; package.json mirrors it.
-const marketingVersion = flag('version') ?? syncPackageVersion();
+// Repo-root VIS_VERSION is the source of truth; npm metadata mirrors it.
+const marketingVersion = syncPackageVersion();
 const buildNumber = flag('build') ?? capture('git', ['rev-list', '--count', 'HEAD']);
-if (!/^\d+(\.\d+)*$/.test(marketingVersion)) die(`bad --version "${marketingVersion}"`);
+if (!/^\d+(\.\d+)*$/.test(marketingVersion)) die(`bad VIS_VERSION "${marketingVersion}"`);
 if (!/^\d+$/.test(buildNumber)) die(`bad --build "${buildNumber}" (git rev-list unavailable?)`);
 
 if (!existsSync(projectDir)) die(`no iOS project at ${projectDir} — run \`npm run add:ios\` first`);

@@ -30,17 +30,17 @@
 ;; =============================================================================
 
 (def version
-  "Single source of truth for the published version. The `VERSION` env
-   var (set by CI on tag pushes) wins; otherwise the repo-root VERSION
-   file is read and tagged `-SNAPSHOT` for non-release builds."
+  "Single source of truth for the published version. The `VIS_VERSION` env
+   var (set by CI on regular tag pushes) wins; otherwise the repo-root
+   VIS_VERSION file is read and tagged `-SNAPSHOT` for non-release builds."
   (let
     [env
-     (System/getenv "VERSION")
+     (System/getenv "VIS_VERSION")
 
      env
      (when env (if (str/starts-with? env "v") (subs env 1) env))]
 
-    (or env (str (str/trim (slurp "VERSION")) "-SNAPSHOT"))))
+    (or env (str (str/trim (slurp "VIS_VERSION")) "-SNAPSHOT"))))
 
 ;; =============================================================================
 ;; Package catalog

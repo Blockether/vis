@@ -418,6 +418,20 @@ export function shellViewportHeight(): number {
   return clampShellHeight(metrics.visualHeight, metrics);
 }
 
+let reclaimShellForExternalNavigation: (() => void) | null = null;
+
+/**
+ * Drop keyboard geometry before a notification/deep-link navigation changes the
+ * visible screen. iOS can suspend the WebView without delivering keyboard-hide;
+ * focus and the old inline shell height then survive the resume even though the
+ * software keyboard is gone.
+ */
+export function reclaimViewportForExternalNavigation(): void {
+  const active = document.activeElement;
+  if (isKeyboardInputElement(active)) active.blur();
+  reclaimShellForExternalNavigation?.();
+}
+
 export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>): void {
   useEffect(() => {
     const shell = shellRef.current;
@@ -476,6 +490,26 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       for (const t of timers) window.clearTimeout(t);
       timers = [];
     };
+
+    const reclaimAfterExternalNavigation = () => {
+      clearTimers();
+      if (outOfOrderDidHideTimer !== null) {
+        window.clearTimeout(outOfOrderDidHideTimer);
+        outOfOrderDidHideTimer = null;
+      }
+      keyboardUp = false;
+      keyboardExpectedAfterRotation = false;
+      keyboardPinned = false;
+      keyboardPinOrientation = null;
+      pinnedShellHeight = null;
+      document.documentElement.style.setProperty(
+        '--safe-bottom',
+        'env(safe-area-inset-bottom)',
+      );
+      resetLayoutScroll();
+      setBox(null);
+    };
+    reclaimShellForExternalNavigation = reclaimAfterExternalNavigation;
 
     const sync = () => {
       cancelAnimationFrame(frame);
@@ -763,16 +797,27 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       };
       const onWillHide = () => {
         // Rotation on iOS 26 reports `didHide` before `willHide`, before either
-        // web orientation signal. A genuine dismissal reports will→did. Use the
-        // reversed pair as the earliest rotation signal and preserve the pin;
-        // otherwise the composer sits behind the reappearing keyboard for ~600ms.
+        // web orientation signal. A hardware-keyboard attachment can report the
+        // same reversed pair while leaving the field focused, so the order alone
+        // is not proof of rotation. Preserve the pin briefly, then require an
+        // actual rotation signal; otherwise reclaim the full shell.
         if (
           outOfOrderDidHideTimer !== null &&
           isKeyboardInputElement(document.activeElement)
         ) {
           window.clearTimeout(outOfOrderDidHideTimer);
-          outOfOrderDidHideTimer = null;
-          keyboardExpectedAfterRotation = true;
+          outOfOrderDidHideTimer = window.setTimeout(() => {
+            outOfOrderDidHideTimer = null;
+            // The CSS root can expose the flip before matchMedia/orientationchange.
+            if (prepinKeyboardFromPhysicalRoot()) return;
+            if (isViewportRotating() || keyboardExpectedAfterRotation) return;
+            keyboardUp = false;
+            document.documentElement.style.setProperty(
+              '--safe-bottom',
+              'env(safe-area-inset-bottom)',
+            );
+            finishKeyboardHide();
+          }, 250);
           return;
         }
         if (isViewportRotating() || keyboardExpectedAfterRotation) return;
@@ -857,6 +902,8 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     return () => {
       cancelAnimationFrame(frame);
       clearTimers();
+      if (reclaimShellForExternalNavigation === reclaimAfterExternalNavigation)
+        reclaimShellForExternalNavigation = null;
       vv.removeEventListener('resize', sync);
       vv.removeEventListener('scroll', sync);
       document.removeEventListener('visibilitychange', onVisible);

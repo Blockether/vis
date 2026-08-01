@@ -117,7 +117,7 @@ RUN set -eux; \
 WORKDIR /build
 
 # Dependency cache first, so a source-only edit does not refetch the world.
-COPY deps.edn build.clj VERSION ./
+COPY deps.edn build.clj VIS_VERSION ./
 COPY extensions/ ./extensions/
 
 # The org.graalvm.* Maven artifacts must match the Graal compiler in the JDK

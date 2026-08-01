@@ -16,7 +16,7 @@ export default defineConfig(({ mode }) => {
   return {
     // The app stamps its release version on every gateway request and shows it
     // on the version-mismatch screen. package.json is only a MIRROR of the
-    // repo-root VERSION file (stamped by `scripts/version.mjs`, run from
+    // repo-root VIS_VERSION file (stamped by `scripts/version.mjs`, run from
     // `prebuild`/`predev` and every release script) so app and gateway ship the
     // same number.
     define: { __VIS_APP_VERSION__: JSON.stringify(pkg.version) },

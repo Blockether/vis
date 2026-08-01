@@ -3,8 +3,8 @@
  * One command: web bundle -> Capacitor sync -> signed .aab -> Google Play track.
  * The Android mirror of scripts/ios-release.mjs, down to the versioning rule:
  *
- *   versionName = package.json "version"          (the release users see)
- *   versionCode = `git rev-list --count HEAD`     (strictly monotonic, shared with iOS)
+ *   versionName = repo-root VIS_VERSION              (the release users see)
+ *   versionCode = `git rev-list --count HEAD`         (strictly monotonic, shared with iOS)
  *
  * Both are passed to Gradle as project properties AND stamped into build.gradle by
  * scripts/android-prepare.mjs, so `android/` stays a disposable Capacitor output (it is
@@ -17,14 +17,14 @@
  *   --track beta        OPEN testing — the public one
  *   --track production  the store itself
  *
- * Usage:
- *   npm run release:android                          # build + sign + internal track
- *   npm run release:android -- --track beta          # public open testing
- *   npm run release:android -- --no-upload           # stop at the signed .aab
- *   npm run release:android -- --draft               # upload, do not release
- *   npm run release:android -- --rollout 0.1         # staged 10% (production/beta)
- *   npm run release:android -- --skip-web            # reuse dist/ and the last cap sync
- *   npm run release:android -- --tracks              # just print what each track serves
+ * Usage (workflow/store recovery only; normal releases use `npm run release:android`):
+ *   npm run release:android:store                          # build + sign + internal track
+ *   npm run release:android:store -- --track beta          # public open testing
+ *   npm run release:android:store -- --no-upload           # stop at the signed .aab
+ *   npm run release:android:store -- --draft               # upload, do not release
+ *   npm run release:android:store -- --rollout 0.1         # staged 10% (production/beta)
+ *   npm run release:android:store -- --skip-web            # reuse dist/ and the last cap sync
+ *   npm run release:android:store -- --tracks              # just print what each track serves
  *
  * Credentials: env first, then the macOS login keychain (scripts/secrets.mjs) —
  *   VIS_PLAY_SERVICE_ACCOUNT   the service-account JSON itself (CI injects this)
@@ -92,8 +92,8 @@ if (has('tracks')) {
 
 // ── versions ──────────────────────────────────────────────────────────────────────────
 
-// The repo-root VERSION file is the one source of truth; package.json mirrors it.
-const versionName = flag('version') ?? syncPackageVersion();
+// Repo-root VIS_VERSION is the source of truth; npm metadata mirrors it.
+const versionName = syncPackageVersion();
 const versionCode = flag('build') ?? capture('git', ['rev-list', '--count', 'HEAD']);
 if (!/^\d+$/.test(versionCode)) die(`version code must be a positive integer, got "${versionCode}"`);
 
@@ -122,7 +122,7 @@ if (!existsSync(androidDir)) {
 
 // Materialises google-services.json AND the release keystore from the keychain, and
 // stamps the signing config + versions into the generated Gradle project.
-run('node', [join(appDir, 'scripts', 'android-prepare.mjs'), '--version', versionName, '--build', versionCode]);
+run('node', [join(appDir, 'scripts', 'android-prepare.mjs'), '--build', versionCode]);
 
 // Release notes come first so an empty/broken changelog fails before a long Gradle run.
 // Play caps release notes at 500 characters per language (App Store Connect allows 4000).

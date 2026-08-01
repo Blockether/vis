@@ -142,7 +142,7 @@ def __vis_install_posix_compat__():
         if c.get("timed_out"):
             raise TimeoutExpired(
                 cmd,
-                c.get("timeout_secs") or timeout,
+                r.get("timeout_secs") or timeout,
                 c.get("stdout") or "",
                 c.get("stderr") or "",
             )

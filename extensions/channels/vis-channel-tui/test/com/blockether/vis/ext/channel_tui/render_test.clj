@@ -758,7 +758,36 @@
         ;; surfaces its actionable guidance via the error panel.
         (expect (not (str/includes? body "RECAP")))
         (expect (str/includes? body "NEXT STEP: wait and retry, or switch provider/model."))
-        (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 429"))))))
+        (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 429")))))
+  (it "shows the exact native invocation while that call is running"
+      (let
+        [code
+         "shell({\"commands\":[\"sleep 30\"]})"
+
+         display-code
+         "shell({\"commands\": [\"sleep 30\"]})"
+
+         lines
+         (format-iteration-entry {:iteration 0
+                                  :forms [{:vis/tool-name "shell"
+                                           :tool-color-role :tool-color/shell
+                                           :code code
+                                           :display-code display-code
+                                           :started-at-ms 1000
+                                           :success? nil}]}
+                                 80
+                                 1
+                                 {:now-ms 2500})
+
+         code-line
+         (first (filter #(str/includes? (strip-ansi %) code) lines))
+
+         display-code-line
+         (first (filter #(str/includes? (strip-ansi %) display-code) lines))]
+
+        (expect (some? code-line))
+        (expect (nil? display-code-line))
+        (expect (= p/MARKER_CODE (marker-of code-line))))))
 
 (defdescribe
   provider-auth-error-test

@@ -132,7 +132,7 @@
             (expect (= [["status" "--short"]] @seen))
             (expect (= ["commands"] (vec (keys one))))
             (expect (= 1 (count (get one "commands"))))
-            (expect (= "git status --short" (get-in one ["commands" 0 "cmd"])))))))
+            (expect (= "git status --short" (get-in one ["commands" 0 "command"])))))))
   (it "keeps a quoted argument as ONE token in the argv list"
       ;; the literal-token contract is unchanged: each inner element is one git
       ;; argument, so a commit message with spaces stays a single token.
