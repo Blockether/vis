@@ -4795,31 +4795,27 @@
   [caps]
   {:name "python_execution"
    :description
-   (str "Run Python in the session sandbox to batch, filter, and chain tool calls: `await "
-        "gather(...)` independent natives, then print only what should enter context. State "
-        "persists across blocks; project packages cannot be imported — use a project REPL. Only "
-        "`print` output comes back; bare expressions are dropped and errors surface. Native "
-        "results return inline and stay reachable as `ntr[tool_id]`; engine-bound natives are "
-        "callable as bare snake_case, native-only ones are absent."
-        (when-let [cap (python-execution-capability-line caps)]
-          (str " " cap)))
+   (str
+     "Run Python in the session sandbox to batch, filter, and chain tool calls: `await gather(...)` independent "
+     "natives, then print only needed output. State persists; project packages cannot be imported "
+     "— use a project REPL. Only `print` returns; bare expressions drop and errors surface. Native "
+     "results return inline and remain at `ntr[tool_id]`; engine-bound natives are bare snake_case, "
+     "native-only ones absent." (when-let [cap (python-execution-capability-line caps)]
+                                  (str " " cap)))
    :result
-   "String containing exactly the captured `print(...)` output; an empty print stream returns an empty string. Evaluation failures surface as failed tool results, not result objects."
+   "Exactly captured `print(...)` output (empty string when none); evaluation failures are failed tool results, not result objects."
    :schema {:type "object"
-            :properties {"code" {:type "string"
-                                 :description "Python source to evaluate in the sandbox."}}
+            :properties {"code" {:type "string" :description "Python source."}}
             :required ["code"]
             :additionalProperties false}})
 
 (defn- retry-native-tool
   []
   {:name "retry_native"
-   :description
-   "Retry a policy-approved failed native call by id, reusing its exact stored arguments."
-   :result "The retried tool's raw result unchanged; use that tool's `Raw result` contract."
+   :description "Retry a policy-approved failed native call by id with its exact stored arguments."
+   :result "The retried tool's raw result unchanged; follow its `Raw result` contract."
    :schema {:type "object"
-            :properties {"tool_call_id" {:type "string"
-                                         :description "Id shown by a retryable tool result."}}
+            :properties {"tool_call_id" {:type "string" :description "Id from a retryable result."}}
             :required ["tool_call_id"]
             :additionalProperties false}})
 
@@ -4875,13 +4871,11 @@
   []
   {:name "apropos"
    :description
-   (str "Discover live Python sandbox capabilities not already advertised as native tools. "
-        "Do not call this to preflight a visible tool whose schema is already present. "
-        "Returns compact name/gist results; the in-Python form returns a filterable dict.")
-   :result "Object mapping each matching capability name to its compact gist string."
+   (str "Discover Python sandbox capabilities not already advertised as native tools; don't "
+        "preflight visible tools. Returns compact name/gists; in-Python returns a filterable dict.")
+   :result "Map of matching capability names to compact gist strings."
    :schema {:type "object"
-            :properties {"query" {:type "string"
-                                  :description "Optional substring used to filter tool names."}}
+            :properties {"query" {:type "string" :description "Optional tool-name substring."}}
             :additionalProperties false}})
 
 (defn- doc-tool
@@ -4891,15 +4885,11 @@
   []
   {:name "doc"
    :description
-   (str "Read one discovered Python sandbox capability's authoritative contract. "
-        "Use it when that capability is not already advertised or its call shape is unclear; "
-        "do not routinely preflight visible native tools.")
-   :result
-   "String containing the named capability's authoritative documentation, including its raw-result contract when it is a native tool."
+   (str "Read a discovered sandbox capability's authoritative contract when not already advertised "
+        "or unclear; don't preflight visible tools.")
+   :result "Authoritative docs string, including a native tool's raw-result contract."
    :schema {:type "object"
-            :properties {"name" {:type "string"
-                                 :description
-                                 "Exact sandbox capability name, usually from apropos."}}
+            :properties {"name" {:type "string" :description "Exact capability name from apropos."}}
             :required ["name"]
             :additionalProperties false}})
 
