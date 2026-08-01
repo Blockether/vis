@@ -883,8 +883,7 @@
                    (str " " id)))})
 
 (defn format-code
-  "Format source using a language extension. Pass `language` FIRST when you know it — format_code(language, arg); it may be omitted only for the {\"paths\": […]} form (then inferred from the files/workspace).
-   `arg` is either a raw code string / {\"code\": ...} (returns a lean changed? + char-delta ack, not the text) or a {\"paths\": [file-or-dir …]} map (formats those paths IN PLACE — ALWAYS a list, even for one file; a DIRECTORY is walked RECURSIVELY for source files — returning a per-file changed roll-up, NOT the files' text, so don't print it back). Omit both code and paths to format the workspace's default source paths recursively. The payload is passed through to the language handler verbatim."
+  "Format via a language pack. Pass `language` first when known: `format_code(language,arg)`; omit it only for paths-based inference. Give source/`{\"code\":...}` for a changed + char-delta ack (not text), or `{\"paths\":[...]}`—always a list—to format files/directories recursively in place and get per-file changes (not text). Omit both for default source paths recursively. Payload passes through unchanged."
   [env & args]
   (dispatch! env :format-fn args))
 
