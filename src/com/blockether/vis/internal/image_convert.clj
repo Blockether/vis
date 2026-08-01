@@ -14,6 +14,7 @@
 
      * raster (BMP, TIFF, or anything else the decoder reads) -> PNG, 1:1
      * vector (`.svg` / gzipped `.svgz`)                      -> rendered PNG
+     * video (`.mp4` / `.mov`)                                -> animated GIF
 
    Everything a renderer can answer is ASKED, not re-implemented.
    `com.blockether/imaging` (Rust `image` + resvg over FFM) decodes, sniffs,
@@ -273,6 +274,76 @@
     data
     (let [out (try (imaging/optimize data {:max-bytes max-bytes}) (catch Throwable _ nil))]
       (if (and out (pos? (alength ^bytes out)) (< (alength ^bytes out) (alength data))) out data))))
+
+(def ^:const video-gif-max-dimension
+  "Long-edge ceiling for the GIF a clip becomes. A model reads a contact sheet,
+   not a film: 320px keeps a UI flow or a crash repro legible while leaving
+   [[video-gif-max-frames]] frames comfortably inside the per-image cap."
+  320)
+
+(def ^:const video-gif-max-frames
+  "Frames kept from a clip. Enough to read motion, few enough that a 30s screen
+   recording stays a few hundred KB."
+  24)
+
+(def ^:const video-gif-fps
+  "Playback rate of the produced GIF. Slow on purpose: the frames are strided
+   samples of the WHOLE clip, not consecutive ones."
+  6)
+
+(defn video->wire-gif
+  "Turn a video container (MP4 / QuickTime) into an animated GIF every vision
+   wire accepts, sampled across the clip's whole length: at most
+   [[video-gif-max-frames]] evenly strided frames, long edge
+   [[video-gif-max-dimension]].
+
+   A clip is the one attachment NO provider takes in any form, so the choice is
+   not \"convert or pass through\", it is this or a blind turn -- the model gets
+   the motion at a legible size instead of nothing at all. Sampling is strided
+   rather than truncated on purpose: the first 24 frames of a screen recording
+   are its first second, which is exactly the part that shows nothing.
+
+   Returns the same map as [[rasterize-svg]] plus `:frames`; `{:reason <why>}`
+   when the clip cannot be decoded (an HEVC/AV1/VP9 track this build does not
+   decode, a corrupt container); nil when conversion is DISABLED."
+  ([^bytes data] (video->wire-gif data nil))
+  ([^bytes data opts]
+   (when (and *enabled?* data (pos? (alength data)))
+     (try
+       (let
+         [probe
+          (imaging/probe-video data)
+
+          frames
+          (long (or (:frames probe) 0))
+
+          keep-n
+          (long (or (:max-frames opts) video-gif-max-frames))
+
+          stride
+          (max 1 (long (Math/ceil (/ (double (max frames 1)) (double keep-n)))))]
+
+         (cond (nil? probe) {:reason "the clip could not be read"}
+               (false? (:is-decodable probe))
+               {:reason (str "the clip's " (or (:codec probe) "video") " track cannot be decoded")}
+               :else (let
+                       [^bytes gif (imaging/video->gif data
+                                                       {:max-frames keep-n
+                                                        :stride stride
+                                                        :max-dimension
+                                                        (long (or (:max-dimension opts)
+                                                                  video-gif-max-dimension))
+                                                        :fps (or (:fps opts) video-gif-fps)})]
+                       (if (and gif (pos? (alength gif)))
+                         {:bytes gif
+                          :media-type "image/gif"
+                          :size (alength gif)
+                          :original-size (alength data)
+                          :width (:width probe)
+                          :height (:height probe)
+                          :frames (min keep-n (quot (+ frames stride -1) stride))}
+                         {:reason "the clip decoded to no frames"}))))
+       (catch Throwable t {:reason (str "the clip could not be decoded: " (failure-reason t))})))))
 
 (defn- same-picture?
   "True when `b` probes as the SAME container, frame count and pixel dimensions

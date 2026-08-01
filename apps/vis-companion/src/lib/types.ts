@@ -139,6 +139,40 @@ export interface SettingsResponse {
   groups: ToggleGroup[];
 }
 
+/** Sanitized MCP inventory served by one gateway. Secret values never travel here. */
+export interface McpServer {
+  name: string;
+  transport: 'stdio' | 'streamable_http';
+  enabled: boolean;
+  is_connected: boolean;
+  tools: number;
+  command?: string;
+  cwd?: string;
+  url?: string;
+}
+
+export interface McpServersResponse {
+  servers: McpServer[];
+}
+
+export interface McpServerInput {
+  transport: 'stdio' | 'streamable_http';
+  enabled?: boolean;
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  timeout_ms?: number;
+}
+
+export interface McpTestResult {
+  name: string;
+  is_connected: boolean;
+  tools: Array<{ name?: string; description?: string }>;
+}
+
 // ── Router: providers, models, OAuth ────────────────────────────────
 // Wire keys are snake_case strings and boolean flags are `is_<foo>` — these
 // mirror the gateway EDN (`:is-authenticated`) mechanically. Never rename a
@@ -329,8 +363,12 @@ export interface GatewayCapabilities {
       enabled: boolean;
       transport: 'inline-base64';
       media_types: string[];
+      /** The subset of `media_types` that is a clip, not a still. */
+      video_media_types?: string[];
       max_files: number;
       max_file_bytes: number;
+      /** Clips carry their own, much larger ceiling. */
+      max_video_bytes?: number;
     };
     voice: {
       enabled: boolean;

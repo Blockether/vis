@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.gateway.server-test
   (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.foundation.mcp.core :as mcp-core]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.protocol :as protocol]
@@ -63,6 +64,54 @@
 (deftest gateway-router-compiles-with-project-action-routes
   (testing "static project actions do not conflict with the dynamic project-id route"
     (is (some? ((rv 'router) "test-token" [])))))
+(deftest mcp-management-handlers-are-sanitized-and-route-mutations-test
+  (let
+    [body
+     {"name" "filesystem" "enabled" true "server" {"transport" "stdio" "command" "npx"}}
+
+     saved
+     (atom nil)
+
+     enabled
+     (atom nil)
+
+     deleted
+     (atom nil)]
+
+    (with-redefs-fn {(rv 'body-json) (constantly body)
+                     #'mcp-core/gateway-servers (constantly {:servers [{:name "filesystem"
+                                                                        :transport "stdio"
+                                                                        :enabled true
+                                                                        :is-connected false
+                                                                        :tools 0}]})
+                     #'mcp-core/save-gateway-server!
+                     (fn [name spec]
+                       (reset! saved [name spec])
+                       {:name name :transport "stdio" :enabled true})
+                     #'mcp-core/set-gateway-server-enabled! (fn [name value]
+                                                              (reset! enabled [name value])
+                                                              {:name name :enabled value})
+                     #'mcp-core/delete-gateway-server! (fn [name]
+                                                         (reset! deleted name)
+                                                         {:name name :is-deleted true})
+                     #'mcp-core/test-gateway-server!
+                     (fn [name _spec]
+                       {:name name :is-connected true :tools [{:name "list_files"}]})}
+      (fn []
+        (let [listed (wire/parse-json (:body ((rv 'mcp-servers-handler) {})))]
+          (is (= 200 (:status ((rv 'mcp-servers-handler) {}))))
+          (is (= "filesystem" (get-in listed ["servers" 0 "name"])))
+          (is (nil? (get-in listed ["servers" 0 "env"]))))
+        (is (= 200 (:status ((rv 'save-mcp-server-handler) {}))))
+        (is (= ["filesystem" {"transport" "stdio" "command" "npx"}] @saved))
+        (is (= 200
+               (:status ((rv 'set-mcp-server-enabled-handler)
+                          {:path-params {:name "filesystem"}}))))
+        (is (= ["filesystem" true] @enabled))
+        (is (= 200 (:status ((rv 'delete-mcp-server-handler) {:path-params {:name "filesystem"}}))))
+        (is (= "filesystem" @deleted))
+        (is (= 200 (:status ((rv 'test-mcp-server-handler) {}))))))))
+
 
 (deftest list-turns-status-filter-routes-to-queued-overlay
   (let
@@ -252,6 +301,14 @@
           (is (true? (get-in body ["features" "attachments" "enabled"])))
           (is (= 8 (get-in body ["features" "attachments" "max_files"])))
           (is (= (* 5 1024 1024) (get-in body ["features" "attachments" "max_file_bytes"])))
+          ;; Clips are advertised as ATTACHABLE media with their own ceiling, so a
+          ;; companion knows to offer the gallery's videos and how big one may be.
+          (is (= ["image/jpeg" "image/png" "image/gif" "image/webp" "image/bmp" "video/mp4"
+                  "video/quicktime"]
+                 (get-in body ["features" "attachments" "media_types"])))
+          (is (= ["video/mp4" "video/quicktime"]
+                 (get-in body ["features" "attachments" "video_media_types"])))
+          (is (= (* 32 1024 1024) (get-in body ["features" "attachments" "max_video_bytes"])))
           (is (false? (get-in body ["features" "voice" "enabled"])))
           (is (= "unavailable" (get-in body ["features" "voice" "model" "status"])))))))
   (testing "voice support includes the current model state without starting a download"

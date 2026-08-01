@@ -73,6 +73,185 @@
       (expect (nil? (attachments/detect-image-mime (.getBytes "hello, this is not an image"
                                                               "UTF-8"))))))
 
+;; A REAL 1.9KB H.264 clip: 32x32, 4 frames of ffmpeg's `testsrc`. Small enough to
+;; inline, COMPLETE enough that the send gate genuinely decodes it — the only way
+;; to prove a dropped clip reaches a provider as something it can read.
+(def ^:private tiny-mp4-b64
+  (str
+    "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAANTbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAA+gAAQAA"
+    "AQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    "AAAAAgAAAn50cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAA+gAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAA"
+    "AAAAAAABAAAAAAAAAAAAAAAAAABAAAAAACAAAAAgAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAPoAAAgAAABAAAAAAH2"
+    "bWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAQABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRl"
+    "b0hhbmRsZXIAAAABoW1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAA"
+    "AQAAAWFzdGJsAAAAwXN0c2QAAAAAAAAAAQAAALFhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAACAAIABIAAAASAAAAAAA"
+    "AAABFUxhdmM2Mi4xMS4xMDAgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAAN2F2Y0MBZAAK/+EAGWdkAAqscgRJbARAAAADAEAA"
+    "AAMCA8SJYRgBAAdo6EODksiw/fj4AAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAB7oAAAAAAAAABhzdHRzAAAAAAAA"
+    "AAEAAAAEAAAQAAAAABRzdHNzAAAAAAAAAAEAAAABAAAAGGN0dHMAAAAAAAAAAQAAAAQAACAAAAAAHHN0c2MAAAAAAAAAAQAA"
+    "AAEAAAAEAAAAAQAAACRzdHN6AAAAAAAAAAAAAAAEAAADhgAAABYAAAAjAAAAHgAAABRzdGNvAAAAAAAAAAEAAAODAAAAYXVk"
+    "dGEAAABZbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAsaWxzdAAAACSpdG9vAAAAHGRhdGEA"
+    "AAABAAAAAExhdmY2Mi4zLjEwMAAAAAhmcmVlAAAD5W1kYXQAAAKvBgX//6vcRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUg"
+    "MTY1IHIzMjIyIGIzNTYwNWEgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDI1IC0gaHR0cDov"
+    "L3d3dy52aWRlb2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MSByZWY9MTYgZGVibG9jaz0xOjA6MCBhbmFs"
+    "eXNlPTB4MzoweDEzMyBtZT11bWggc3VibWU9MTAgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MSBtZV9yYW5n"
+    "ZT0yNCBjaHJvbWFfbWU9MSB0cmVsbGlzPTIgOHg4ZGN0PTEgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNo"
+    "cm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz0xIGxvb2thaGVhZF90aHJlYWRzPTEgc2xpY2VkX3RocmVhZHM9MCBucj0wIGRl"
+    "Y2ltYXRlPTEgaW50ZXJsYWNlZD0wIGJsdXJheV9jb21wYXQ9MCBjb25zdHJhaW5lZF9pbnRyYT0wIGJmcmFtZXM9OCBiX3B5"
+    "cmFtaWQ9MiBiX2FkYXB0PTIgYl9iaWFzPTAgZGlyZWN0PTMgd2VpZ2h0Yj0xIG9wZW5fZ29wPTAgd2VpZ2h0cD0yIGtleWlu"
+    "dD0yNTAga2V5aW50X21pbj00IHNjZW5lY3V0PTQwIGludHJhX3JlZnJlc2g9MCByY19sb29rYWhlYWQ9NjAgcmM9Y3JmIG1i"
+    "dHJlZT0xIGNyZj00MC4wIHFjb21wPTAuNjAgcXBtaW49MCBxcG1heD02OSBxcHN0ZXA9NCBpcF9yYXRpbz0xLjQwIGFxPTE6"
+    "MS4wMACAAAAAz2WIgQAT/9deUC9MeTt/7mp9t6JHJ/NEMIsmXpSKtImNE9Z2k8Bh1YF4LDe2AcJRIpF76PgMhIypP2n4pLzR"
+    "SWzuzY1aSq9n+3vsZjua8ZGnpYa1ilU/N4CjjOcCrEKBaQig6OenxX+iGLN1NSwBwMWWNyCAFAhXGsreHzA9XmO5nk9+WaZY"
+    "HvUsM0RW8dc0jTR1/EiPwiVyF49i5S/79mUtU/uSIi/JWSjMHnT8le6s1GWu3yPtzHU212iyLLMOfZGvVticr2m+ev67cOAX"
+    "/QAAABJBmggtiT+5KrQPjLgV4BznC+gAAAAfQZoQS/AgZMphEf/EyHfU3RUjGtqTSpzXByovGje/sQAAABpBmhhpPAgeTKYE"
+    "Z8wDJmZ6GE35UTOhw3axgA=="))
+
+(def ^:private tiny-mp4-bytes (.decode (Base64/getDecoder) ^String tiny-mp4-b64))
+
+(defn- ftyp-head
+  "The leading bytes of an ISO-BMFF file with major brand `brand` — all the
+   sniffer ever reads, so a header alone is a faithful classification fixture."
+  ^bytes [^String brand]
+  (byte-array (concat [0 0 0 0x18]
+                      (.getBytes "ftyp" "US-ASCII")
+                      (.getBytes brand "US-ASCII")
+                      [0 0 2 0]
+                      (repeat 8 0))))
+
+(defdescribe
+  detect-video-mime-test
+  "MP4/QuickTime are attachable media, but ONLY when the bytes really are a clip:
+   HEIF and AVIF photos wear the very same ISO-BMFF container."
+  (it "sniffs a real mp4" (expect (= "video/mp4" (attachments/detect-video-mime tiny-mp4-bytes))))
+  (it "sniffs the common video brands"
+      (expect (= "video/mp4" (attachments/detect-video-mime (ftyp-head "isom"))))
+      (expect (= "video/mp4" (attachments/detect-video-mime (ftyp-head "mp42")))))
+  (it "sniffs quicktime from the `qt  ` brand"
+      (expect (= "video/quicktime" (attachments/detect-video-mime (ftyp-head "qt  ")))))
+  (it "rejects still-image brands sharing that container"
+      (expect (nil? (attachments/detect-video-mime (ftyp-head "heic"))))
+      (expect (nil? (attachments/detect-video-mime (ftyp-head "avif")))))
+  (it "never crosses the still/clip line"
+      (expect (nil? (attachments/detect-video-mime tiny-png-bytes)))
+      (expect (nil? (attachments/detect-image-mime tiny-mp4-bytes))))
+  (it "detect-media-mime answers for both kinds, and only for media"
+      (expect (= "image/png" (attachments/detect-media-mime tiny-png-bytes)))
+      (expect (= "video/mp4" (attachments/detect-media-mime tiny-mp4-bytes)))
+      (expect (nil? (attachments/detect-media-mime (.getBytes "hello, not media" "UTF-8")))))
+  (it "video-media-type? normalises case and padding"
+      (expect (attachments/video-media-type? "video/mp4"))
+      (expect (attachments/video-media-type? " Video/QuickTime "))
+      (expect (not (attachments/video-media-type? "image/png"))))
+  (it "a clip may be far larger than a still, because it never ships verbatim"
+      (expect (> attachments/max-video-bytes attachments/max-image-bytes))))
+
+(defdescribe
+  collect-user-videos-test
+  "A dropped clip path is collected by the SAME scanner as a picture — content
+   decides, so an extension can neither promote nor demote a file."
+  (it "collects an .mp4 named in prose"
+      (let
+        [dir
+         (temp-dir)
+
+         f
+         (write-file dir "clip.mp4" tiny-mp4-bytes)
+
+         res
+         (attachments/collect-user-images (str "look at " (.getAbsolutePath f) " please"))]
+
+        (expect (= 1 (count (:attached res))))
+        (expect (= "video/mp4"
+                   (-> res
+                       :attached
+                       first
+                       :media-type)))
+        (expect (= (.getAbsolutePath f)
+                   (-> res
+                       :attached
+                       first
+                       :path)))))
+  (it "collects a .mov"
+      (let
+        [dir
+         (temp-dir)
+
+         f
+         (write-file dir "screen.mov" tiny-mp4-bytes)
+
+         res
+         (attachments/collect-user-images (.getAbsolutePath f))]
+
+        (expect (= 1 (count (:attached res))))
+        (expect (= "video/mp4"
+                   (-> res
+                       :attached
+                       first
+                       :media-type)))))
+  (it "leaves a file that only LOOKS like a clip alone"
+      (let
+        [dir
+         (temp-dir)
+
+         f
+         (write-file dir "notes.mp4" (.getBytes "this is prose, not a clip" "UTF-8"))
+
+         res
+         (attachments/collect-user-images (.getAbsolutePath f))]
+
+        (expect (empty? (:attached res))))))
+
+(defdescribe
+  wire-video-test
+  "Send time is where a clip becomes something a provider can read: an animated
+   GIF sampled across the whole clip, never the container itself."
+  (it "sends a clip as an animated GIF"
+      (let
+        [v
+         (attachments/wire-image
+           {:media-type "video/mp4" :base64 tiny-mp4-b64 :path "/tmp/clip.mp4" :filename "clip.mp4"}
+           {:vision? true})]
+        (expect (= "image/gif" (:media-type v)))
+        (expect (nil? (:reason v)))
+        (expect (str/starts-with? (str (:base64 v)) "R0lGODlh"))
+        (expect (= "image/gif"
+                   (attachments/detect-image-mime (.decode (Base64/getDecoder)
+                                                           ^String (:base64 v)))))))
+  (it "samples the clip into a BOUNDED gif"
+      (let [gif (image-convert/video->wire-gif tiny-mp4-bytes {})]
+        (expect (= "image/gif" (:media-type gif)))
+        (expect (= 32 (long (:width gif))))
+        (expect (pos? (long (:frames gif))))
+        (expect (<= (long (:frames gif)) (long image-convert/video-gif-max-frames)))
+        (expect (<= (max (long (:width gif)) (long (:height gif)))
+                    (long image-convert/video-gif-max-dimension)))))
+  (it "an undecodable clip is SKIPPED with a reason instead of throwing"
+      (let
+        [v (attachments/wire-image {:media-type "video/mp4"
+                                    :base64 (.encodeToString (Base64/getEncoder) (ftyp-head "isom"))
+                                    :path "/tmp/broken.mp4"
+                                    :filename "broken.mp4"}
+                                   {:vision? true})]
+        (expect (string? (:reason v)))
+        (expect (nil? (:base64 v)))))
+  (it "NOTHING a clip is DECLARED as can put a video container on the wire"
+      (let
+        [wired (mapv (fn [[declared b64]]
+                       (attachments/wire-image
+                         {:media-type declared :base64 b64 :path "/tmp/clip" :filename "clip"}
+                         {}))
+                     [["video/mp4" tiny-mp4-b64] ["video/quicktime" tiny-mp4-b64]
+                      ;; a lying label: the BYTES are an mp4 either way
+                      ["video/webm" tiny-mp4-b64] ["image/png" tiny-mp4-b64]
+                      ;; and a label that lies the other way, over bytes that are no clip at all
+                      ["video/mp4"
+                       (.encodeToString (Base64/getEncoder) (.getBytes "not a clip" "UTF-8"))]])]
+        (expect (= 5 (count wired)))
+        (expect (not-any? #(attachments/video-media-type? (:media-type %)) wired))
+        (expect (every? #(or (some? (:reason %))
+                             (attachments/provider-image-media-type? (:media-type %)))
+                        wired)))))
+
 (defdescribe
   collect-user-images-test
   (describe
@@ -364,7 +543,40 @@
     (it "still attaches a PNG"
         (let
           [out (attachments/prepare-inline-attachments [{:base64 tiny-png-b64 :filename "a.png"}])]
-          (expect (= ["image/png"] (mapv :media-type (:attached out))))))))
+          (expect (= ["image/png"] (mapv :media-type (:attached out))))))
+    (it "accepts an MP4 upload from the companion, sniffed rather than declared"
+        (let
+          [out (attachments/prepare-inline-attachments [{:base64 (str "data:video/mp4;base64,"
+                                                                      tiny-mp4-b64)
+                                                         :filename "clip.mp4"
+                                                         :media-type "application/octet-stream"}])]
+          (expect (empty? (:skipped out)))
+          (expect (= ["video/mp4"] (mapv :media-type (:attached out))))
+          (expect (= tiny-mp4-b64 (:base64 (first (:attached out)))))))
+    (it "keeps a clip that is far over the per-IMAGE cap — a clip answers to the video cap"
+        (let
+          [out (attachments/prepare-inline-attachments [{:base64 tiny-mp4-b64 :filename "clip.mp4"}]
+                                                       {:max-bytes 64})]
+          (expect (empty? (:skipped out)))
+          (expect (= ["video/mp4"] (mapv :media-type (:attached out))))))
+    (it "quotes the EFFECTIVE ceiling when it skips, not the per-image cap"
+        (let
+          [padded
+           (str "<svg xmlns=\"http://www.w3.org/2000/svg\">"
+                (apply str (repeat 200 "<rect/>"))
+                "</svg>")
+
+           out
+           (attachments/prepare-inline-attachments [{:base64 (b64 (.getBytes padded "UTF-8"))
+                                                     :filename "logo.svg"}]
+                                                   {:max-bytes 100})
+
+           reason
+           (:reason (first (:skipped out)))]
+
+          (expect (empty? (:attached out)))
+          ;; 4x rescue factor for a rasterized container: 400B, never "100B".
+          (expect (str/includes? reason "400B"))))))
 
 (defdescribe
   wire-image-test
@@ -513,11 +725,10 @@
       ;; request stay stored and displayed, and the model is told they are
       ;; openable on disk instead.
       (let
-        [out (attachments/wire-images [{:base64 tiny-png-b64
-                                        :media-type "image/png"
-                                        :path "secret.png"
-                                        :is-display-only true}
-                                       {:base64 tiny-png-b64 :media-type "image/png" :path "ok.png"}])]
+        [out
+         (attachments/wire-images
+           [{:base64 tiny-png-b64 :media-type "image/png" :path "secret.png" :is-display-only true}
+            {:base64 tiny-png-b64 :media-type "image/png" :path "ok.png"}])]
         (expect (= ["ok.png"] (mapv :path (:attached out))))
         (expect (= ["secret.png"] (mapv :path (:skipped out))))
         (expect (true? (:readable-blind? (first (:skipped out)))))

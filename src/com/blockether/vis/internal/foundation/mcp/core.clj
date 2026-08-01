@@ -9,12 +9,10 @@
 
      {:mcp {:servers {\"filesystem\" {:transport :stdio :command \"npx\"
                                     :args [\"-y\" \"@modelcontextprotocol/server-filesystem\" \"/path\"]}
-                      \"remote\"     {:transport :http :url \"https://...\"
+                      \"remote\"     {:transport :streamable-http :url \"https://.../mcp\"
                                     :headers {\"Authorization\" \"Bearer ${MY_TOKEN}\"}
-                                    :timeout_ms 60000
-                                    :listen true
-                                    :auth {:client_id \"...\" :scope \"...\"}}
-                      \"stale\"      {:enabled false :url \"...\"}}}}
+                                    :timeout_ms 60000}
+                      \"stale\"      {:enabled false :url \"https://.../mcp\"}}}}
 
    Every string in `:headers` / `:env` / `:args` / `:url` / `:command` / `:cwd`
    supports `${ENV_VAR}` interpolation from the host environment. `:enabled
@@ -31,6 +29,7 @@
    Live connections + tool counts also ride in ctx under `env.mcp`."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.mcp.client :as mcp]
             [com.blockether.vis.internal.foundation.mcp.oauth :as mcp-oauth]
@@ -43,7 +42,21 @@
 ;; Config — declared servers from ~/.vis/state.yml :mcp :servers
 ;; ---------------------------------------------------------------------------
 
-(defn- transport-of [spec] (or (:transport spec) (if (:url spec) :http :stdio)))
+(defn- transport-of
+  "Canonical internal transport. `http` is accepted only as a legacy persisted
+   spelling; new gateway saves write the standard `streamable_http` form."
+  [spec]
+  (case (some-> (:transport spec) name)
+    ("streamable_http" "streamable-http" "http") :streamable-http
+    "stdio" :stdio
+    (if (:url spec) :streamable-http :stdio)))
+
+(defn- canonicalize-server-spec
+  "Persist the standard external spelling while retaining legacy read support."
+  [spec]
+  (case (get spec "transport")
+    ("http" "streamable-http") (assoc spec "transport" "streamable_http")
+    spec))
 
 (defn- interpolate-env
   "Substitute `${VAR}` in `s` from the host environment; leave unknowns intact.
@@ -96,10 +109,10 @@
            headers)
 
      bearer-fn
-     (when (and (= :http transport) (not has-static-auth?))
+     (when (and (= :streamable-http transport) (not has-static-auth?))
        (mcp-oauth/make-bearer-fn server-name (:url s) (atom nil) (:auth s)))]
 
-    (cond-> s
+    (cond-> (assoc s :transport transport)
       (:timeout_ms s)
       (assoc :timeout-ms (:timeout_ms s))
 
@@ -120,7 +133,7 @@
   []
   (let
     [raw
-     (get-in (or (vis/load-config-raw) {}) ["mcp"])
+     (get-in (or (config/load-config-raw) {}) ["mcp"])
 
      h
      (hash raw)]
@@ -140,7 +153,7 @@
                             (str k)
 
                             rt
-                            (vis/runtime-config v)]
+                            (config/runtime-config v)]
 
                            (when (enabled? rt) [nm (->client-spec nm rt)]))))
                  m)
@@ -208,6 +221,158 @@
   []
   (when (compare-and-set! reconciling? false true)
     (future (try (reconcile!) (finally (reset! reconciling? false))))))
+
+;; ---------------------------------------------------------------------------
+;; Gateway management — persisted on the gateway, never in a Companion client.
+;; ---------------------------------------------------------------------------
+
+(defn- raw-servers [] (or (get-in (or (config/load-config-raw) {}) ["mcp" "servers"]) {}))
+
+(defn- server-name
+  [name]
+  (let
+    [name (some-> name
+                  str
+                  str/trim)]
+    (when-not (seq name)
+      (throw (ex-info "MCP server name must be a non-blank string" {:type :mcp/invalid-name})))
+    name))
+
+(defn- server-summary
+  [name raw-spec]
+  (let
+    [spec
+     (config/runtime-config raw-spec)
+
+     conn
+     (conn-of name)]
+
+    (cond->
+      {:name name
+       :transport (case (transport-of spec)
+                    :streamable-http "streamable_http"
+                    "stdio")
+       :enabled (enabled? spec)
+       :is-connected (boolean conn)
+       :tools (count (or (some-> (:tools conn)
+                                 deref)
+                         []))}
+      (:command spec)
+      (assoc :command (:command spec))
+
+      (:cwd spec)
+      (assoc :cwd (:cwd spec))
+
+      (:url spec)
+      (assoc :url (:url spec)))))
+
+(defn gateway-servers
+  "Sanitized MCP inventory for gateway management. Secrets (env and header values)
+   deliberately never cross this boundary."
+  []
+  {:servers (->> (raw-servers)
+                 (map (fn [[name spec]]
+                        [(str name) spec]))
+                 (sort-by first)
+                 (mapv (fn [[name spec]]
+                         (server-summary name spec))))})
+
+(defn- reset-server-cache! [] (reset! servers-cache {:hash ::none :value {}}))
+
+(defn save-gateway-server!
+  "Validate and persist a complete string-keyed server spec in this gateway's
+   machine state, then reconnect it in the background. Returns its sanitized row."
+  [name raw-spec]
+  (let
+    [name
+     (server-name name)
+
+     raw-spec
+     (-> raw-spec
+         (dissoc "name")
+         canonicalize-server-spec)]
+
+    (when-not (map? raw-spec)
+      (throw (ex-info "MCP server must be an object" {:type :mcp/invalid-server})))
+    (let
+      [machine
+       (or (config/load-global-config-raw) {})
+
+       next-config
+       (assoc-in machine ["mcp" "servers" name] raw-spec)]
+
+      ;; save-config! is the strict schema and secret-preserving write boundary.
+      (config/save-config! next-config :gateway-mcp)
+      (reset-server-cache!)
+      (disconnect! name)
+      (reconcile-async!)
+      (server-summary name raw-spec))))
+
+(defn set-gateway-server-enabled!
+  "Persist an enabled/disabled override without exposing or accepting secrets."
+  [name enabled]
+  (let
+    [name
+     (server-name name)
+
+     current
+     (get (raw-servers) name)]
+
+    (when-not current (throw (ex-info "Unknown MCP server" {:type :mcp/not-found :server name})))
+    (save-gateway-server! name (assoc current "enabled" (boolean enabled)))))
+
+(defn delete-gateway-server!
+  "Remove a server from this gateway's machine-owned state and stop it now."
+  [name]
+  (let
+    [name
+     (server-name name)
+
+     machine
+     (or (config/load-global-config-raw) {})]
+
+    (when-not (get-in machine ["mcp" "servers" name])
+      (throw (ex-info "Unknown MCP server in gateway state" {:type :mcp/not-found :server name})))
+    (let
+      [servers
+       (dissoc (get-in machine ["mcp" "servers"]) name)
+
+       machine*
+       (if (seq servers)
+         (assoc-in machine ["mcp" "servers"] servers)
+         (update machine "mcp" dissoc "servers"))
+
+       next-config
+       (if (seq (get machine* "mcp")) machine* (dissoc machine* "mcp"))]
+
+      (config/save-config! next-config :gateway-mcp)
+      (reset-server-cache!)
+      (disconnect! name)
+      {:name name :is-deleted true})))
+
+(defn test-gateway-server!
+  "Connect a candidate spec without saving it. The connection is always closed;
+   only non-secret tool metadata is returned."
+  [name raw-spec]
+  (let
+    [name
+     (server-name name)
+
+     spec
+     (->> (dissoc raw-spec "name")
+          canonicalize-server-spec
+          config/runtime-config
+          (->client-spec name))
+
+     conn
+     (mcp/connect name spec)]
+
+    (try {:name name
+          :is-connected true
+          :tools (mapv (fn [tool]
+                         {:name (get tool "name") :description (get tool "description")})
+                       (mcp/list-tools conn))}
+         (finally (mcp/close conn)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Verb implementations (env injected by the gate as the first arg)

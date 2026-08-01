@@ -9,12 +9,15 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { AssistantMessage, transcriptEnterClass, UserMessage } from '../components/ChatContent';
+import { ExpandableImage } from '../components/ImageViewer';
 import { Banner } from '../components/ui';
 import { ProviderRouterDialog } from './RouterScreen';
 import {
   attachmentsFromFiles,
+  editedAttachment,
   filePickerCancelled,
-  pickImageAttachments,
+  isVideoMediaType,
+  pickMediaAttachments,
   type PendingAttachment,
 } from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';
@@ -2783,7 +2786,7 @@ export function SessionScreen({
     const maximum = limits?.max_files ?? 8;
     const remaining = maximum - attachments.length;
     if (remaining <= 0) {
-      setComposerNotice(`You can attach up to ${maximum} images`);
+      setComposerNotice(`You can attach up to ${maximum} files`);
       return;
     }
 
@@ -2796,9 +2799,10 @@ export function SessionScreen({
     }
 
     try {
-      const result = await pickImageAttachments({
+      const result = await pickMediaAttachments({
         maxFiles: remaining,
         maxFileBytes: limits?.max_file_bytes ?? 5 * 1024 * 1024,
+        maxVideoBytes: limits?.max_video_bytes,
         mediaTypes: limits?.media_types,
       });
       setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
@@ -2818,13 +2822,14 @@ export function SessionScreen({
     const maximum = limits?.max_files ?? 8;
     const remaining = maximum - attachments.length;
     if (remaining <= 0) {
-      setComposerNotice(`You can attach up to ${maximum} images`);
+      setComposerNotice(`You can attach up to ${maximum} files`);
       return;
     }
     try {
       const result = await attachmentsFromFiles(files, {
         maxFiles: remaining,
         maxFileBytes: limits?.max_file_bytes ?? 5 * 1024 * 1024,
+        maxVideoBytes: limits?.max_video_bytes,
         mediaTypes: limits?.media_types,
       });
       setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
@@ -2902,18 +2907,19 @@ export function SessionScreen({
     closePasteEditor();
   }
 
-  async function addPastedImages(files: File[]) {
+  async function addPastedMedia(files: File[]) {
     const limits = capabilities?.features.attachments;
     const maximum = limits?.max_files ?? 8;
     const remaining = maximum - attachments.length;
     if (remaining <= 0) {
-      setComposerNotice(`You can attach up to ${maximum} images`);
+      setComposerNotice(`You can attach up to ${maximum} files`);
       return;
     }
     try {
       const result = await attachmentsFromFiles(files, {
         maxFiles: remaining,
         maxFileBytes: limits?.max_file_bytes ?? 5 * 1024 * 1024,
+        maxVideoBytes: limits?.max_video_bytes,
         mediaTypes: limits?.media_types,
       });
       setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
@@ -2923,15 +2929,37 @@ export function SessionScreen({
     }
   }
 
+  // A picture that has not been sent yet is still EDITABLE: the viewer flattens
+  // the annotations into fresh bytes and they go back into the same composer
+  // slot, so "paste a screenshot, circle the bug, send" stays one gesture chain
+  // and the model never receives the un-annotated copy alongside it.
+  async function applyAttachmentEdit(id: string, edited: Blob) {
+    const target = attachments.find((entry) => entry.id === id);
+    if (!target) return;
+    const limits = capabilities?.features.attachments;
+    try {
+      const next = await editedAttachment(target, edited, {
+        maxFileBytes: limits?.max_file_bytes,
+        maxVideoBytes: limits?.max_video_bytes,
+        mediaTypes: limits?.media_types,
+      });
+      setAttachments((current) => current.map((entry) => (entry.id === id ? next : entry)));
+      setComposerNotice(null);
+    } catch (cause) {
+      setComposerNotice(`${target.filename}: ${(cause as Error).message}`);
+    }
+  }
+
   function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>) {
-    // Image paste (screenshots, copied pictures) — works on web and in the
-    // iOS/Android WKWebView, which surface pasted images as clipboard files.
-    const imageFiles = Array.from(event.clipboardData.files).filter((file) =>
-      file.type.startsWith('image/'),
+    // Media paste (screenshots, copied pictures, a clip) — works on web and in
+    // the iOS/Android WKWebView, which surface pasted media as clipboard files.
+    // The gateway's own list is the authority; this only keeps text out.
+    const mediaFiles = Array.from(event.clipboardData.files).filter(
+      (file) => file.type.startsWith('image/') || isVideoMediaType(file.type),
     );
-    if (imageFiles.length) {
+    if (mediaFiles.length) {
       event.preventDefault();
-      void addPastedImages(imageFiles);
+      void addPastedMedia(mediaFiles);
       return;
     }
 
@@ -3968,11 +3996,24 @@ export function SessionScreen({
                   key={attachment.id}
                   className="group relative flex min-w-0 max-w-40 shrink-0 items-center gap-1.5 border border-dialog-edge bg-panel pr-6 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
                 >
-                  <img
-                    src={attachment.previewUrl}
-                    alt=""
-                    className="size-8 shrink-0 object-cover"
-                  />
+                  {isVideoMediaType(attachment.media_type) ? (
+                    <video
+                      src={attachment.previewUrl}
+                      className="size-8 shrink-0 object-cover"
+                      muted
+                      playsInline
+                      preload="metadata"
+                    />
+                  ) : (
+                    <ExpandableImage
+                      src={attachment.previewUrl}
+                      alt={attachment.filename}
+                      loading="eager"
+                      className="size-8 object-cover"
+                      frameClassName="shrink-0"
+                      onApply={(edited) => applyAttachmentEdit(attachment.id, edited)}
+                    />
+                  )}
                   <span className="truncate font-mono text-chip text-dialog-hint-key">
                     {attachment.filename}
                   </span>
@@ -4011,7 +4052,7 @@ export function SessionScreen({
             <input
               ref={fileInputRef}
               type="file"
-              accept={(capabilities?.features.attachments.media_types ?? ['image/*']).join(',')}
+              accept={(capabilities?.features.attachments.media_types ?? ['image/*', 'video/*']).join(',')}
               multiple
               className="hidden"
               onChange={(event) => void onFilesPicked(event.target.files)}

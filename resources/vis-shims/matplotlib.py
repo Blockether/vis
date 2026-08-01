@@ -31,6 +31,7 @@ def __vis_install_matplotlib__():
                 "yticks": None,
                 "yticklabels": None,
                 "width": 640,
+                "dpi": 100.0,
                 "height": 480,
                 "axis_off": False,
                 "projection": None,
@@ -98,6 +99,7 @@ def __vis_install_matplotlib__():
         # figure's series leak into it.
         _reset()
         d = float(dpi or 100)
+        _state["dpi"] = d
         if figsize:
             _state["width"] = int(float(figsize[0]) * d)
             _state["height"] = int(float(figsize[1]) * d)
@@ -574,6 +576,22 @@ def __vis_install_matplotlib__():
     class _Axes(object):
         # Minimal OO Axes: every method delegates to the module-level artist so
         # `fig, ax = plt.subplots(); ax.plot(...)` works like the pyplot API.
+        @property
+        def patch(self):
+            # Background artist stub: `ax.patch.set_facecolor(...)` is common
+            # styling boilerplate and must not raise.
+            p = getattr(self, "_patch", None)
+            if p is None:
+                p = _Patch()
+                self._patch = p
+            return p
+
+        def set_facecolor(self, c, **k):
+            return self.patch.set_facecolor(c)
+
+        def set_alpha(self, a, **k):
+            return self.patch.set_alpha(a)
+
         def plot(self, *a, **k):
             return plot(*a, **k)
 
@@ -705,6 +723,106 @@ def __vis_install_matplotlib__():
         def stackplot(self, *a, **k):
             return stackplot(*a, **k)
 
+    class _Patch(object):
+        # Background artist stand-in for `figure.patch` / `axes.patch`. The
+        # renderer paints its own chrome, so the properties are only recorded
+        # and read back; nothing here changes the picture.
+        def __init__(self):
+            self._props = {}
+
+        def _set(self, key, value):
+            self._props[key] = value
+            return None
+
+        def set(self, **k):
+            for key in k:
+                self._set(key, k[key])
+            return None
+
+        def set_facecolor(self, c, **k):
+            return self._set("facecolor", c)
+
+        def set_edgecolor(self, c, **k):
+            return self._set("edgecolor", c)
+
+        def set_color(self, c, **k):
+            return self._set("color", c)
+
+        def set_alpha(self, a, **k):
+            return self._set("alpha", a)
+
+        def set_linewidth(self, w, **k):
+            return self._set("linewidth", w)
+
+        def set_visible(self, v=True, **k):
+            return self._set("visible", v)
+
+        def get_facecolor(self):
+            return self._props.get("facecolor")
+
+        def get_edgecolor(self):
+            return self._props.get("edgecolor")
+
+        def get_alpha(self):
+            return self._props.get("alpha")
+
+    def _figure_patch():
+        # One patch per figure: `plt.gcf()` hands out a fresh _Figure wrapper,
+        # so the artist has to live in figure state to keep its identity.
+        p = _state.get("patch")
+        if not isinstance(p, _Patch):
+            p = _Patch()
+            _state["patch"] = p
+        return p
+
+    class _Canvas(object):
+        # `fig.canvas.draw()` and friends: no live event loop, but the size
+        # query answers from figure state so blitting code gets sane numbers.
+        def draw(self, *a, **k):
+            return None
+
+        def draw_idle(self, *a, **k):
+            return None
+
+        def flush_events(self, *a, **k):
+            return None
+
+        def get_width_height(self):
+            return (int(_state["width"]), int(_state["height"]))
+
+        def print_png(self, fname, *a, **k):
+            return savefig(fname, format="png")
+
+        def mpl_connect(self, *a, **k):
+            return 0
+
+        def mpl_disconnect(self, *a, **k):
+            return None
+
+    class _SubplotSpec(object):
+        def __init__(self, gridspec, key):
+            self.gridspec = gridspec
+            self.key = key
+
+    class _GridSpec(object):
+        # add_subplot()/add_axes() ignore their layout arguments, so a gridspec
+        # only has to be indexable: `fig.add_subplot(gs[0, 1])` then works.
+        def __init__(self, nrows=1, ncols=1, **k):
+            self.nrows = int(nrows)
+            self.ncols = int(ncols)
+
+        def __getitem__(self, key):
+            return _SubplotSpec(self, key)
+
+        def new_subplotspec(self, loc, rowspan=1, colspan=1):
+            return _SubplotSpec(self, loc)
+
+        def update(self, **k):
+            return None
+
+        def tight_layout(self, *a, **k):
+            return None
+
     class _Figure(object):
         # Wraps the single global figure state so the OO idiom
         # `fig, ax = plt.subplots(); ...; fig.savefig(...)` works. Every method
@@ -725,8 +843,9 @@ def __vis_install_matplotlib__():
         def set_size_inches(self, w, h=None, **k):
             if h is None and hasattr(w, "__len__"):
                 w, h = w[0], w[1]
-            _state["width"] = int(float(w) * 100)
-            _state["height"] = int(float(h) * 100)
+            d = float(_state.get("dpi") or 100.0)
+            _state["width"] = int(float(w) * d)
+            _state["height"] = int(float(h) * d)
             return None
 
         def add_subplot(self, *a, **k):
@@ -748,6 +867,96 @@ def __vis_install_matplotlib__():
             _reset()
 
         def align_labels(self, *a, **k):
+            return None
+
+        # --- artist / canvas / geometry accessors ---------------------------
+        # Styling and layout boilerplate written against real matplotlib
+        # (`fig.patch.set_facecolor`, `fig.canvas.draw`, `fig.get_size_inches`)
+        # has to run unchanged even though the renderer ignores most of it.
+        @property
+        def patch(self):
+            return _figure_patch()
+
+        @property
+        def canvas(self):
+            return _Canvas()
+
+        @property
+        def axes(self):
+            return [gca()]
+
+        def get_axes(self):
+            return [gca()]
+
+        @property
+        def dpi(self):
+            return float(_state.get("dpi") or 100.0)
+
+        def get_dpi(self):
+            return float(_state.get("dpi") or 100.0)
+
+        def set_dpi(self, d, **k):
+            _state["dpi"] = float(d)
+            return None
+
+        def set_facecolor(self, c, **k):
+            return _figure_patch().set_facecolor(c)
+
+        def set_edgecolor(self, c, **k):
+            return _figure_patch().set_edgecolor(c)
+
+        def set_alpha(self, a, **k):
+            return _figure_patch().set_alpha(a)
+
+        def get_facecolor(self):
+            return _figure_patch().get_facecolor()
+
+        def get_size_inches(self):
+            d = float(_state.get("dpi") or 100.0)
+            return (float(_state["width"]) / d, float(_state["height"]) / d)
+
+        def get_figwidth(self):
+            return self.get_size_inches()[0]
+
+        def get_figheight(self):
+            return self.get_size_inches()[1]
+
+        def set_figwidth(self, w, **k):
+            return self.set_size_inches(w, self.get_figheight())
+
+        def set_figheight(self, h, **k):
+            return self.set_size_inches(self.get_figwidth(), h)
+
+        def add_gridspec(self, nrows=1, ncols=1, **k):
+            return _GridSpec(nrows, ncols)
+
+        def supxlabel(self, s, **k):
+            _state["xlabel"] = str(s)
+            return None
+
+        def supylabel(self, s, **k):
+            _state["ylabel"] = str(s)
+            return None
+
+        def text(self, *a, **k):
+            return text(*a, **k)
+
+        def sca(self, ax=None, **k):
+            return ax
+
+        def delaxes(self, ax=None, **k):
+            return None
+
+        def show(self, *a, **k):
+            return show(*a, **k)
+
+        def set_tight_layout(self, *a, **k):
+            return None
+
+        def set_constrained_layout(self, *a, **k):
+            return None
+
+        def autofmt_xdate(self, *a, **k):
             return None
 
     class _Colorbar(object):

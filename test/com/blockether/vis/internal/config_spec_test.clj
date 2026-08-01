@@ -80,7 +80,7 @@
                               "env" {"TOKEN" "secret"}
                               "enabled" true
                               "timeout_ms" 60000}
-                     "remote" {"transport" "http"
+                     "remote" {"transport" "streamable_http"
                                "url" "https://mcp.example.com"
                                "headers" {"Authorization" "Bearer secret"}
                                "listen" true

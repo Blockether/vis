@@ -307,7 +307,7 @@
 (s/def ::mcp-auth #(closed-map? mcp-auth-schema %))
 
 (def mcp-server-schema
-  {"transport" (one-of #{"stdio" "http"})
+  {"transport" (one-of #{"stdio" "streamable_http" "http"})
    "command" non-blank-string?
    "args" #(and (vector? %) (every? string? %))
    "cwd" non-blank-string?
@@ -320,16 +320,20 @@
    "auth" (spec-pred ::mcp-auth)})
 (s/def ::mcp-server
   #(and (closed-map? mcp-server-schema %)
-        ;; Exactly ONE transport-defining key. Prevents a stdio spec with a
-        ;; stray :url silently switching to http via inference.
-        (let
-          [has-cmd?
-           (non-blank-string? (get % "command"))
-
-           has-url?
-           (non-blank-string? (get % "url"))]
-
-          (and (or has-cmd? has-url?) (not (and has-cmd? has-url?))))))
+        ;; `command`/`args` and `url`/`headers` are the standard MCP client
+        ;; configuration shapes. `transport` is optional so a standard config
+        ;; can omit it; `http` remains a read-compatible alias for pre-canonical
+        ;; Vis state and is normalized to `streamable_http` on a gateway save.
+        (let [transport (case (get % "transport")
+                          "http" "streamable_http"
+                          (get % "transport"))
+              has-cmd? (non-blank-string? (get % "command"))
+              has-url? (non-blank-string? (get % "url"))]
+          (case transport
+            "stdio" (and has-cmd? (not has-url?))
+            "streamable_http" (and has-url? (not has-cmd?))
+            nil (and (or has-cmd? has-url?) (not (and has-cmd? has-url?)))
+            false))))
 (s/def ::mcp-servers
   #(and (map? %) (every? non-blank-string? (keys %)) (every? (spec-pred ::mcp-server) (vals %))))
 (def mcp-schema {"servers" (spec-pred ::mcp-servers)})

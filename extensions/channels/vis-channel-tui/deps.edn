@@ -89,7 +89,7 @@
         ;;      at all — vis's native image no longer needs the java.desktop module.
         ;; Drop-in replacement — same com.googlecode.lanterna.* package namespace.
         ;; Retire when upstream ships equivalent fixes.
-        com.blockether/lanterna {:mvn/version "3.1.5-vis.41"}
+        com.blockether/lanterna {:mvn/version "3.1.5-vis.42"}
         ;; Pure-Java H.264/MP4 encoder for the headless session `cinema` export
         ;; (channel-tui.cinema). CORE ONLY: frames are rendered by
         ;; com.blockether/imaging and handed over as jcodec RGB `Picture`s, so the

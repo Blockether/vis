@@ -47,70 +47,66 @@
 
 (def ^:private bridge-commit-gate (var-get #'bridge/bridge-commit-gate))
 
-(defdescribe bridge-commit-gate-test
-             (it "is declared as lifecycle-owned semantic middleware"
-                 (expect (= [{:op :git/commit
-                              :phase :around
-                              :fn bridge-commit-gate}]
-                            (:ext/op-hooks bridge/vis-extension))))
-             (it "allows an ordinary commit when Bridge is not configured"
-                 (let [root (temp-root "bridge-ext-no-gate")
-                       called (atom nil)
-                       result
-                       (bridge-commit-gate
-                         {:root root
-                          :candidate-tree "candidate"
-                          :index-preserving? true}
-                         :git/commit
-                         []
-                         (fn [args]
-                           (reset! called args)
-                           :committed))]
-                   (expect (= :committed result))
-                   (expect (= [] @called))))
-             (it "approves only the exact semantic candidate supplied by Vis"
-                 (let [root (temp-root "bridge-ext-gate-candidate")
-                       _ (configure-project! root root)
-                       seen-opts (atom nil)
-                       context {:root root
-                                :candidate-tree "candidate"
-                                :index-preserving? true}]
-                   (with-redefs
-                     [br/check
-                      (fn [_profile opts]
-                        (reset! seen-opts opts)
-                        {:status "clear"
-                         :issue-count 0
-                         :change-detection
-                         {:candidate-tree "candidate"
-                          :approval {:status "approved"}}})]
-                     (expect (= :committed
-                                (bridge-commit-gate
-                                  context
-                                  :git/commit
-                                  []
-                                  (constantly :committed))))
-                     (expect (true? (:index? @seen-opts)))
-                     (expect (true? (:approve? @seen-opts))))
-                   (with-redefs
-                     [br/check
-                      (fn [_profile _opts]
-                        {:status "clear"
-                         :issue-count 0
-                         :change-detection
-                         {:candidate-tree "different"
-                          :approval {:status "approved"}}})]
-                     (let [error
-                           (try
-                             (bridge-commit-gate
-                               context
-                               :git/commit
-                               []
-                               (constantly :committed))
-                             nil
-                             (catch clojure.lang.ExceptionInfo e e))]
-                       (expect (some? error))
-                       (expect (str/includes? (ex-message error) "candidate changed")))))))
+(defdescribe
+  bridge-commit-gate-test
+  (it "is declared as lifecycle-owned semantic middleware"
+      (expect (= [{:op :git/commit :phase :around :fn bridge-commit-gate}]
+                 (:ext/op-hooks bridge/vis-extension))))
+  (it "allows an ordinary commit when Bridge is not configured"
+      (let
+        [root
+         (temp-root "bridge-ext-no-gate")
+
+         called
+         (atom nil)
+
+         result
+         (bridge-commit-gate {:root root :candidate-tree "candidate" :index-preserving? true}
+                             :git/commit
+                             []
+                             (fn [args]
+                               (reset! called args)
+                               :committed))]
+
+        (expect (= :committed result))
+        (expect (= [] @called))))
+  (it
+    "approves only the exact semantic candidate supplied by Vis"
+    (let
+      [root
+       (temp-root "bridge-ext-gate-candidate")
+
+       _
+       (configure-project! root root)
+
+       seen-opts
+       (atom nil)
+
+       context
+       {:root root :candidate-tree "candidate" :index-preserving? true}]
+
+      (with-redefs
+        [br/check (fn [_profile opts]
+                    (reset! seen-opts opts)
+                    {:status "clear"
+                     :issue-count 0
+                     :change-detection {:candidate-tree "candidate"
+                                        :approval {:status "approved"}}})]
+        (expect (= :committed (bridge-commit-gate context :git/commit [] (constantly :committed))))
+        (expect (true? (:index? @seen-opts)))
+        (expect (true? (:approve? @seen-opts))))
+      (with-redefs
+        [br/check (fn [_profile _opts]
+                    {:status "clear"
+                     :issue-count 0
+                     :change-detection {:candidate-tree "different"
+                                        :approval {:status "approved"}}})]
+        (let
+          [error (try (bridge-commit-gate context :git/commit [] (constantly :committed))
+                      nil
+                      (catch clojure.lang.ExceptionInfo e e))]
+          (expect (some? error))
+          (expect (str/includes? (ex-message error) "candidate changed")))))))
 
 (defdescribe
   bridge-extension-test
@@ -148,6 +144,29 @@
           (expect (str/includes? prompt "doc(name)"))
           (expect (not (str/includes? prompt "required_obligations")))
           (expect (< (count prompt) 400))))))
+
+(defdescribe bridge-toggle-test
+             (it "registers a persistent default-on toggle that controls activation"
+                 (let
+                   [spec
+                    (vis/toggle-spec "bridge")
+
+                    activation-fn
+                    (:ext/activation-fn bridge/vis-extension)
+
+                    original
+                    (vis/toggle-enabled? "bridge")]
+
+                   (expect (= {:id "bridge"
+                               :label "Bridge verification"
+                               :default true
+                               :persist? true
+                               :group :extensions}
+                              (select-keys spec [:id :label :default :persist? :group])))
+                   (try (expect (true? (activation-fn {})))
+                        (vis/toggle-set-enabled! "bridge" false)
+                        (expect (false? (activation-fn {})))
+                        (finally (vis/toggle-set-enabled! "bridge" original))))))
 
 (defdescribe
   bridge-session-projects-test
@@ -219,16 +238,12 @@
        (bridge/check {:workspace/root root})
 
        guard-error
-       (try
-         (bridge-commit-gate
-           {:root root
-            :candidate-tree "candidate"
-            :index-preserving? true}
-           :git/commit
-           []
-           (constantly :committed))
-         nil
-         (catch clojure.lang.ExceptionInfo e e))
+       (try (bridge-commit-gate {:root root :candidate-tree "candidate" :index-preserving? true}
+                                :git/commit
+                                []
+                                (constantly :committed))
+            nil
+            (catch clojure.lang.ExceptionInfo e e))
 
        selected
        (bridge/check {:workspace/root root} {"profile" beta-profile})]

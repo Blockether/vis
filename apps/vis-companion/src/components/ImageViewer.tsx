@@ -11,20 +11,30 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { Button } from './ui';
 
 interface ExpandableImageProps {
   src: string;
   alt: string;
   className: string;
+  /** Extra classes for the zoom trigger itself, e.g. `shrink-0` inside a flex row. */
+  frameClassName?: string;
   loading?: 'eager' | 'lazy';
   decoding?: 'async' | 'auto' | 'sync';
   onError?: () => void;
+  /**
+   * Given, the viewer can hand the picture BACK: the flattened image (original
+   * pixels plus every annotation) for the caller to put where the original was.
+   * That is what makes a not-yet-sent attachment editable rather than read-only.
+   */
+  onApply?: (edited: Blob) => void | Promise<void>;
 }
 
 interface ImageViewerProps {
   src: string;
   name: string;
   onClose: () => void;
+  onApply?: (edited: Blob) => void | Promise<void>;
 }
 
 type Point = { x: number; y: number };
@@ -38,15 +48,37 @@ type Gesture =
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 6;
+// Pen colours are THEME colours, named by palette variable rather than frozen
+// as hex: `/v1/theme` repaints the whole app from the gateway, and an ink that
+// ignores it is the one mark on the picture that belongs to another product.
+// The canvas needs a real colour string, so the value is read from the live
+// palette at the moment a stroke starts.
 const PEN_COLORS = [
-  { value: '#ef4444', className: 'bg-red-500', label: 'Red pen' },
-  { value: '#f8fafc', className: 'bg-slate-50', label: 'White pen' },
-  { value: '#facc15', className: 'bg-yellow-400', label: 'Yellow pen' },
-  { value: '#38bdf8', className: 'bg-sky-400', label: 'Blue pen' },
+  { token: '--err', className: 'bg-err', label: 'Red pen' },
+  { token: '--fg', className: 'bg-white', label: 'Ink pen' },
+  { token: '--primary', className: 'bg-accent', label: 'Amber pen' },
+  { token: '--link-fg', className: 'bg-link', label: 'Blue pen' },
+  { token: '--ok', className: 'bg-ok', label: 'Green pen' },
 ] as const;
 
-const controlClass =
-  'min-h-9 shrink-0 border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-ui font-semibold text-zinc-100 transition-colors hover:bg-zinc-800 active:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40';
+/** The live value behind a palette variable — canvas work cannot use a class. */
+function paletteColor(token: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+  return value || '#ef4444';
+}
+
+/**
+ * Does a real share sheet exist for image FILES?
+ *
+ * Without one the share button downloads, and calling that "Share" is a lie the
+ * user only discovers after tapping — so the label follows the capability.
+ */
+function canShareImageFiles(): boolean {
+  if (Capacitor.isNativePlatform()) return true;
+  if (typeof navigator.share !== 'function') return false;
+  if (typeof navigator.canShare !== 'function') return true;
+  return navigator.canShare({ files: [new File([], 'image.png', { type: 'image/png' })] });
+}
 
 function distance(a: Point, b: Point): number {
   return Math.hypot(b.x - a.x, b.y - a.y);
@@ -91,9 +123,11 @@ export function ExpandableImage({
   src,
   alt,
   className,
+  frameClassName = '',
   loading = 'lazy',
   decoding = 'async',
   onError,
+  onApply,
 }: ExpandableImageProps) {
   const [open, setOpen] = useState(false);
 
@@ -101,7 +135,7 @@ export function ExpandableImage({
     <>
       <button
         type="button"
-        className="block max-w-full cursor-zoom-in appearance-none border-0 bg-transparent p-0 text-left"
+        className={`block max-w-full cursor-zoom-in appearance-none border-0 bg-transparent p-0 text-left ${frameClassName}`}
         onClick={() => setOpen(true)}
         aria-label={`Open ${alt} full screen`}
       >
@@ -114,12 +148,14 @@ export function ExpandableImage({
           className={className}
         />
       </button>
-      {open && <ImageViewer src={src} name={alt} onClose={() => setOpen(false)} />}
+      {open && (
+        <ImageViewer src={src} name={alt} onApply={onApply} onClose={() => setOpen(false)} />
+      )}
     </>
   );
 }
 
-function ImageViewer({ src, name, onClose }: ImageViewerProps) {
+function ImageViewer({ src, name, onClose, onApply }: ImageViewerProps) {
   const imageRef = useRef<HTMLImageElement | null>(null);
   const transformedRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -130,9 +166,11 @@ function ImageViewer({ src, name, onClose }: ImageViewerProps) {
   const strokesRef = useRef<Stroke[]>([]);
   const activeStrokeRef = useRef<Stroke | null>(null);
   const [drawing, setDrawing] = useState(false);
-  const [penColor, setPenColor] = useState<string>(PEN_COLORS[0].value);
+  const [penColor, setPenColor] = useState<string>(PEN_COLORS[0].token);
   const [strokeCount, setStrokeCount] = useState(0);
-  const [busy, setBusy] = useState<'copy' | 'share' | null>(null);
+  const [busy, setBusy] = useState<'copy' | 'share' | 'apply' | null>(null);
+  // Probed once per open: the sheet cannot appear or disappear mid-viewer.
+  const [shareVerb] = useState(() => (canShareImageFiles() ? 'Share' : 'Save'));
   const [status, setStatus] = useState('');
 
   const applyTransform = useCallback((next: Transform) => {
@@ -222,7 +260,7 @@ function ImageViewer({ src, name, onClose }: ImageViewerProps) {
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
     const stroke: Stroke = {
-      color: penColor,
+      color: paletteColor(penColor),
       width: Math.max(3, Math.max(canvas.width, canvas.height) * 0.006),
       points: [point],
     };
@@ -448,18 +486,35 @@ function ImageViewer({ src, name, onClose }: ImageViewerProps) {
     }
   }
 
+  // Hand the drawn-on picture back to whoever opened the viewer. The caller owns
+  // the slot it came from, so an annotated attachment REPLACES itself instead of
+  // arriving as a second copy — and the original bytes are never mutated here.
+  async function applyEdit() {
+    if (!onApply) return;
+    setBusy('apply');
+    setStatus('Preparing image…');
+    try {
+      await onApply(await editedImage());
+      onClose();
+    } catch (cause) {
+      setStatus(cause instanceof Error ? cause.message : 'Could not use this edit');
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const viewer = (
     <div
-      className="fixed inset-0 z-[100] isolate bg-zinc-950 text-zinc-100"
+      className="fixed inset-0 z-[100] isolate bg-ink text-white"
       role="dialog"
       aria-modal="true"
       aria-label={`${name} image viewer`}
     >
-      <header className="absolute inset-x-0 top-0 z-20 flex min-h-14 items-center gap-3 border-b border-zinc-800 bg-zinc-950/95 pb-2 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-[max(0.5rem,env(safe-area-inset-top))] backdrop-blur">
-        <div className="min-w-0 flex-1 truncate font-mono text-ui text-zinc-300">{name}</div>
-        <button type="button" className={controlClass} onClick={onClose} autoFocus>
+      <header className="absolute inset-x-0 top-0 z-20 flex min-h-14 items-center gap-3 border-b border-dialog-edge bg-panel pb-2 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-[max(0.5rem,env(safe-area-inset-top))]">
+        <div className="min-w-0 flex-1 truncate font-mono text-ui text-dialog-hint-key">{name}</div>
+        <Button variant="ghost" className="py-2" onClick={onClose} autoFocus>
           Close
-        </button>
+        </Button>
       </header>
 
       <div
@@ -495,23 +550,23 @@ function ImageViewer({ src, name, onClose }: ImageViewerProps) {
         </div>
       </div>
 
-      <div className="absolute inset-x-0 bottom-0 z-20 border-t border-zinc-800 bg-zinc-950/95 pb-[max(0.75rem,env(safe-area-inset-bottom))] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-2 backdrop-blur">
+      <div className="absolute inset-x-0 bottom-0 z-20 border-t border-dialog-edge bg-panel pb-[max(0.75rem,env(safe-area-inset-bottom))] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-2">
         <div className="mx-auto flex max-w-[1400px] items-center gap-2 overflow-x-auto overscroll-x-contain pb-1">
           <div className="flex shrink-0 items-center" aria-label="Zoom controls">
-            <button type="button" className={controlClass} onClick={() => zoomBy(1 / 1.35)} aria-label="Zoom out">
+            <Button variant="ghost" className="py-2" onClick={() => zoomBy(1 / 1.35)} aria-label="Zoom out">
               −
-            </button>
-            <button type="button" className={`${controlClass} min-w-14 border-x-0 px-2`} onClick={resetTransform} aria-label="Reset zoom">
+            </Button>
+            <Button variant="ghost" className="min-w-14 border-x-0 py-2" onClick={resetTransform} aria-label="Reset zoom">
               <span ref={zoomLabelRef}>100%</span>
-            </button>
-            <button type="button" className={controlClass} onClick={() => zoomBy(1.35)} aria-label="Zoom in">
+            </Button>
+            <Button variant="ghost" className="py-2" onClick={() => zoomBy(1.35)} aria-label="Zoom in">
               +
-            </button>
+            </Button>
           </div>
 
-          <button
-            type="button"
-            className={`${controlClass} ${drawing ? 'border-yellow-400 bg-yellow-400 text-zinc-950 hover:bg-yellow-300' : ''}`}
+          <Button
+            variant={drawing ? 'solid' : 'ghost'}
+            className="py-2"
             onClick={() => {
               resetTransform();
               setDrawing((current) => !current);
@@ -520,41 +575,58 @@ function ImageViewer({ src, name, onClose }: ImageViewerProps) {
             aria-pressed={drawing}
           >
             {drawing ? 'Done' : 'Draw'}
-          </button>
+          </Button>
 
           <div className="ml-auto flex shrink-0 items-center gap-2">
-            <button type="button" className={`${controlClass} px-2 sm:px-3`} onClick={copyImage} disabled={busy !== null}>
-              {busy === 'copy' ? 'Copying...' : 'Copy'}
-            </button>
-            <button type="button" className={`${controlClass} border-yellow-400 bg-yellow-400 px-2 text-zinc-950 hover:bg-yellow-300 sm:px-3`} onClick={shareImage} disabled={busy !== null}>
-              {busy === 'share' ? 'Sharing...' : 'Share'}
-            </button>
+            <Button variant="ghost" className="py-2" onClick={copyImage} disabled={busy !== null}>
+              {busy === 'copy' ? 'Copying…' : 'Copy'}
+            </Button>
+            {/* Exactly ONE solid button is on screen at a time: when the picture can go
+                back into the message, THAT is the primary action and sharing steps down. */}
+            <Button
+              variant={onApply ? 'ghost' : 'solid'}
+              className="py-2"
+              onClick={shareImage}
+              disabled={busy !== null}
+            >
+              {busy === 'share' ? `${shareVerb}…` : shareVerb}
+            </Button>
+            {onApply && (
+              <Button variant="solid" className="py-2" onClick={applyEdit} disabled={busy !== null}>
+                {busy === 'apply' ? 'Applying…' : 'Use edit'}
+              </Button>
+            )}
           </div>
         </div>
 
         {drawing && (
           <div className="mx-auto mt-1 flex max-w-[1400px] items-center justify-center gap-1 overflow-x-auto overscroll-x-contain pb-1" aria-label="Drawing tools">
-            {PEN_COLORS.map((color) => (
+            {PEN_COLORS.map((pen) => (
               <button
-                key={color.value}
+                key={pen.token}
                 type="button"
-                className={`size-7 shrink-0 border-2 ${color.className} ${penColor === color.value ? 'border-yellow-400' : 'border-zinc-600'}`}
-                onClick={() => setPenColor(color.value)}
-                aria-label={color.label}
-                aria-pressed={penColor === color.value}
+                className={`size-7 shrink-0 border-2 ${pen.className} ${penColor === pen.token ? 'border-accent' : 'border-edge-strong'}`}
+                onClick={() => setPenColor(pen.token)}
+                aria-label={pen.label}
+                aria-pressed={penColor === pen.token}
               />
             ))}
-            <button type="button" className={controlClass} onClick={undoStroke} disabled={!strokeCount}>
+            <Button variant="ghost" className="py-2" onClick={undoStroke} disabled={!strokeCount}>
               Undo
-            </button>
-            <button type="button" className={controlClass} onClick={clearStrokes} disabled={!strokeCount}>
+            </Button>
+            <Button variant="ghost" className="py-2" onClick={clearStrokes} disabled={!strokeCount}>
               Clear
-            </button>
+            </Button>
           </div>
         )}
 
-        <div className="mx-auto min-h-4 max-w-[1400px] truncate pt-1 text-center font-mono text-chip text-zinc-400" aria-live="polite">
-          {status || (drawing ? 'Draw on the image, then copy or share it.' : 'Pinch, scroll, or double-click to zoom.')}
+        <div className="mx-auto min-h-4 max-w-[1400px] truncate pt-1 text-center font-mono text-chip text-dialog-hint" aria-live="polite">
+          {status
+            || (drawing
+              ? onApply
+                ? 'Draw on the image, then use the edit in your message.'
+                : 'Draw on the image, then copy or share it.'
+              : 'Pinch, scroll, or double-click to zoom.')}
         </div>
       </div>
     </div>

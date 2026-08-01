@@ -501,12 +501,11 @@
                               {:changed-files (ensure-vector (get opts "changed_files"))
                                :policy policy
                                :policy-path policy-path
-                               :index? (boolean (or (get opts "is_index")
-                                                    (get opts "index")))
+                               :index? (boolean (or (get opts "is_index") (get opts "index")))
                                :tree (get opts "tree")
                                :frontier (get opts "frontier")
                                :approve? (boolean (or (get opts "is_approve")
-                                                     (get opts "approve")))})]
+                                                      (get opts "approve")))})]
 
                    (assoc summary
                      :configured? true
@@ -629,21 +628,21 @@
                  (fn [opts]
                    (let [discovery (profile-discovery (workspace-root env) opts)]
                      (when-not (:configured? discovery) (throw-profile-selection! discovery))
-                     (let [{:keys [profile profile-path policy-path]} (load-profile+policy env opts)]
+                     (let
+                       [{:keys [profile profile-path policy-path]} (load-profile+policy env opts)]
                        {:profile-path profile-path
-                        :result (br/run-command profile
-                                                (str id)
-                                                {:out-dir (get opts "out_dir")
-                                                 :out-path (get opts "out")
-                                                 :subject (get opts "subject")
-                                                 :timeout-seconds (get opts "timeout_seconds")
-                                                 :policy-path policy-path
-                                                 :index? (boolean (or (get opts "is_index")
-                                                                      (get opts "index")))
-                                                 :tree (get opts "tree")
-                                                 :frontier (get opts "frontier")
-                                                 :dry-run? (boolean (get opts
-                                                                         "is_dry_run"))})}))))))
+                        :result (br/run-command
+                                  profile
+                                  (str id)
+                                  {:out-dir (get opts "out_dir")
+                                   :out-path (get opts "out")
+                                   :subject (get opts "subject")
+                                   :timeout-seconds (get opts "timeout_seconds")
+                                   :policy-path policy-path
+                                   :index? (boolean (or (get opts "is_index") (get opts "index")))
+                                   :tree (get opts "tree")
+                                   :frontier (get opts "frontier")
+                                   :dry-run? (boolean (get opts "is_dry_run"))})}))))))
 
 (defn- inject-env [env f args] {:env env :fn f :args (into [env] args)})
 
@@ -727,7 +726,7 @@
             (= "--approve" head) (recur (vec tail) (assoc opts "is_approve" true))
             (#{"--root" "--profile" "--policy" "--subject" "--out" "--out-dir" "--tree"
                "--frontier"}
-              head)
+             head)
             (let
               [k (case head
                    "--root"
@@ -811,7 +810,7 @@
       :cmd/doc "Run a configured evidence command and write its receipt."
       :cmd/usage
       "vis extension bridge run-evidence <id> [--index | --tree TREE] [--frontier TREE] [--dry-run] [--subject S] [--out PATH] [--out-dir PATH] [--timeout-seconds N] [--profile PATH]"
-     :cmd/examples ["vis extension bridge run-evidence unit --dry-run"
+      :cmd/examples ["vis extension bridge run-evidence unit --dry-run"
                      "vis extension bridge run-evidence unit --timeout-seconds 300"]
       :cmd/run-fn cli-run-evidence!}]}])
 
@@ -822,79 +821,86 @@
                  (string? candidate-tree)
                  (not (str/blank? candidate-tree))
                  (true? index-preserving?))
-    (throw
-      (ex-info
-        "Bridge blocked commit: Vis did not provide an exact staged candidate."
-        {:type :vis.bridge/invalid-commit-candidate})))
-  (let [env {:workspace/root root}
-        discovery (profile-discovery (workspace-root env) {})]
+    (throw (ex-info "Bridge blocked commit: Vis did not provide an exact staged candidate."
+                    {:type :vis.bridge/invalid-commit-candidate})))
+  (let
+    [env
+     {:workspace/root root}
+
+     discovery
+     (profile-discovery (workspace-root env) {})]
+
     (cond
       (:selection-ambiguous? discovery)
       (throw
         (ex-info
           "Bridge blocked commit: multiple configured projects require an explicit verification authority."
           {:type :vis.bridge/ambiguous-commit-authority}))
-
-      (not (:configured? discovery))
-      (next args)
-
+      (not (:configured? discovery)) (next args)
       :else
-      (let [{:keys [profile policy policy-path]} (load-profile+policy env {})
-            summary
-            (try
-              (br/check profile
-                        {:index? true
-                         :approve? true
-                         :policy policy
-                         :policy-path policy-path})
+      (let
+        [{:keys [profile policy policy-path]}
+         (load-profile+policy env {})
+
+         summary
+         (try (br/check profile
+                        {:index? true :approve? true :policy policy :policy-path policy-path})
               (catch Throwable t
-                (throw
-                  (ex-info
-                    (str "Bridge blocked commit: " (or (ex-message t) "verification failed"))
-                    {:type :vis.bridge/commit-check-failed}
-                    t))))
-            checked-tree (get-in summary [:change-detection :candidate-tree])
-            approval-status (get-in summary [:change-detection :approval :status])]
-        (cond
-          (not= candidate-tree checked-tree)
-          (throw
-            (ex-info
-              "Bridge blocked commit: the staged candidate changed during verification; retry."
-              {:type :vis.bridge/candidate-changed
-               :candidate-tree candidate-tree
-               :checked-tree checked-tree}))
+                (throw (ex-info (str "Bridge blocked commit: "
+                                     (or (ex-message t) "verification failed"))
+                                {:type :vis.bridge/commit-check-failed}
+                                t))))
 
-          (and (= "clear" (:status summary)) (= "approved" approval-status))
-          (next args)
+         checked-tree
+         (get-in summary [:change-detection :candidate-tree])
 
-          :else
-          (throw
-            (ex-info
-              (str "Bridge blocked commit: "
-                   (or (:issue-count summary) 0)
-                   " verification issue(s) remain"
-                   (when-let [action (:next-action summary)]
-                     (str "; next evidence: " (:evidence-id action))))
-              {:type :vis.bridge/commit-not-approved
-               :status (:status summary)
-               :issue-count (:issue-count summary)
-               :approval-status approval-status})))))))
+         approval-status
+         (get-in summary [:change-detection :approval :status])]
+
+        (cond (not= candidate-tree checked-tree)
+              (throw
+                (ex-info
+                  "Bridge blocked commit: the staged candidate changed during verification; retry."
+                  {:type :vis.bridge/candidate-changed
+                   :candidate-tree candidate-tree
+                   :checked-tree checked-tree}))
+              (and (= "clear" (:status summary)) (= "approved" approval-status)) (next args)
+              :else (throw (ex-info (str "Bridge blocked commit: " (or (:issue-count summary) 0)
+                                         " verification issue(s) remain"
+                                         (when-let [action (:next-action summary)]
+                                           (str "; next evidence: " (:evidence-id action))))
+                                    {:type :vis.bridge/commit-not-approved
+                                     :status (:status summary)
+                                     :issue-count (:issue-count summary)
+                                     :approval-status approval-status})))))))
+
+(vis/register-toggle!
+  {:id "bridge"
+   :label "Bridge verification"
+   :description
+   "Expose Bridge verification and commit-gate tools. When OFF, the Bridge extension is not bound."
+   :default true
+   :owner :vis
+   :persist? true
+   :group :extensions})
 
 (def vis-extension
-  (vis/extension {:ext/name "foundation-bridge"
-                  :ext/description "Bridge verification coordinator tools under `br/`."
-                  :ext/version "0.1.0"
-                  :ext/author "enajski"
-                  :ext/owner "vis"
-                  :ext/license "Apache-2.0"
-                  :ext/engine {:ext.engine/alias 'br :ext.engine/symbols bridge-symbols}
-                  :ext/cli bridge-cli
-                  :ext/kind "verification"
-                  :ext/op-hooks [{:op :git/commit
-                                  :phase :around
-                                  :fn bridge-commit-gate}]
-                  :ext/ctx-fn bridge-session-context
-                  :ext/protected-paths bridge-protected-paths
-                  :ext/prompt-fn bridge-prompt}))
+  (vis/extension
+    {:ext/name "foundation-bridge"
+     :ext/description
+     "Bridge verification coordinator tools under `br/`, default-on behind the `bridge` toggle."
+     :ext/version "0.1.0"
+     :ext/author "enajski"
+     :ext/owner "vis"
+     :ext/license "Apache-2.0"
+     :ext/activation-fn (fn [_env]
+                          (vis/toggle-enabled? "bridge"))
+     :ext/engine {:ext.engine/alias 'br :ext.engine/symbols bridge-symbols}
+     :ext/cli bridge-cli
+     :ext/kind "verification"
+     :ext/op-hooks [{:op :git/commit :phase :around :fn bridge-commit-gate}]
+     :ext/ctx-fn bridge-session-context
+     :ext/protected-paths bridge-protected-paths
+     :ext/prompt-fn bridge-prompt}))
 
 (vis/register-extension! vis-extension)

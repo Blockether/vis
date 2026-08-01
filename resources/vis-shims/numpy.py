@@ -1630,7 +1630,21 @@ def __vis_install_numpy__():
         )
 
     def dstack(arrays):
-        raise NotImplementedError("dstack is not supported in the vis shim")
+        arrs = []
+        for x in arrays:
+            a = _asarray(x)
+            if a.ndim == 0:
+                arrs.append(a.reshape(1, 1, 1))
+            elif a.ndim == 1:
+                arrs.append(a.reshape(1, a._shape[0], 1))
+            elif a.ndim == 2:
+                arrs.append(a.reshape(a._shape[0], a._shape[1], 1))
+            else:
+                arrs.append(a)
+        return concatenate(arrs, 2)
+
+    def atleast_3d(a):
+        return dstack([a])
 
     def meshgrid(x, y):
         X = _asarray(x)._d
@@ -1952,6 +1966,8 @@ def __vis_install_numpy__():
         "vstack": vstack,
         "hstack": hstack,
         "column_stack": column_stack,
+        "dstack": dstack,
+        "atleast_3d": atleast_3d,
         "expand_dims": expand_dims,
         "repeat": repeat,
         "tile": tile,

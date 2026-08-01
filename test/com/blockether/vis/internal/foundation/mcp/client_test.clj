@@ -47,3 +47,15 @@
               (let [r (mcp/call-tool conn "nope" {})]
                 (expect (true? (boolean (get r "isError")))))
               (finally (mcp/close conn) (expect (false? (mcp/alive? conn))))))))))
+
+(defdescribe mcp-transport-normalization-test
+             (it "accepts the string transport values that YAML configuration supplies"
+                 (let
+                   [transport-of (ns-resolve 'com.blockether.vis.internal.foundation.mcp.client
+                                             'transport-of)]
+                   (expect (= :stdio (transport-of {:transport "stdio"})))
+                   (expect (= :streamable-http (transport-of {:transport "streamable_http"})))
+                   ;; Pre-canonical state keeps loading, but all new saves use the
+                   ;; standard Streamable HTTP spelling.
+                   (expect (= :streamable-http (transport-of {:transport "http"})))
+                   (expect (= :streamable-http (transport-of {:url "https://mcp.example.test/mcp"}))))))

@@ -13,13 +13,39 @@ export interface PickAttachmentResult {
   rejected: string[];
 }
 
-const DEFAULT_MEDIA_TYPES = [
+const DEFAULT_IMAGE_MEDIA_TYPES = [
   'image/jpeg',
   'image/png',
   'image/gif',
   'image/webp',
   'image/bmp',
 ];
+
+// A clip attaches everywhere a picture does. The engine is what makes that
+// honest: `image-convert/video->wire-gif` samples the video into an animated
+// GIF for the provider, so the model sees MOTION rather than a filename, while
+// the session DB keeps the original bytes for replay. The app therefore only
+// has to admit the type, size it, and play it back.
+const DEFAULT_VIDEO_MEDIA_TYPES = ['video/mp4', 'video/quicktime'];
+
+const DEFAULT_MEDIA_TYPES = [...DEFAULT_IMAGE_MEDIA_TYPES, ...DEFAULT_VIDEO_MEDIA_TYPES];
+
+const DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024;
+// A clip is megabytes where a screenshot is kilobytes; the gateway advertises
+// its own ceiling (`max_video_bytes`) and this only backstops an older one.
+const DEFAULT_MAX_VIDEO_BYTES = 32 * 1024 * 1024;
+
+/** Playable-not-still: the ONE test both the size limit and the preview key off. */
+export function isVideoMediaType(media: string | null | undefined): boolean {
+  return !!media && media.startsWith('video/');
+}
+
+export interface AttachmentLimits {
+  maxFiles?: number;
+  maxFileBytes?: number;
+  maxVideoBytes?: number;
+  mediaTypes?: string[];
+}
 
 /** Treat an intentional picker dismissal as a normal selection outcome. */
 export function filePickerCancelled(cause: unknown): boolean {
@@ -30,7 +56,7 @@ export function filePickerCancelled(cause: unknown): boolean {
 function blobAsDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error('Could not read image'));
+    reader.onerror = () => reject(reader.error ?? new Error('Could not read file'));
     reader.onload = () => resolve(String(reader.result));
     reader.readAsDataURL(blob);
   });
@@ -57,7 +83,15 @@ async function pickedFileBlob(file: PickedFile): Promise<Blob> {
   throw new Error(`Could not read ${file.name}`);
 }
 
-interface PreparedImage {
+// ONE candidate, however it was chosen: picker entry, pasted clipboard item or
+// dropped File. Bytes stay behind a thunk so a rejected candidate is never read.
+interface MediaCandidate {
+  name: string;
+  mimeType: string;
+  blob: () => Promise<Blob>;
+}
+
+interface PreparedAttachment {
   filename: string;
   mediaType: string;
   dataUrl: string;
@@ -71,16 +105,18 @@ interface PreparedImage {
  * bytes the user picked. A payload the gateway would refuse in one request is
  * REJECTED with a reason the user can act on, rather than silently resampled
  * behind their back — image optimization is a real problem with real tradeoffs
- * and vis does not pretend to solve it by shrinking things in the dark.
+ * and vis does not pretend to solve it by shrinking things in the dark. The
+ * same holds for a clip: transcoding for the provider is the ENGINE's job, on
+ * a copy, and never costs the user the original.
  */
-async function prepareImage(
+async function prepareAttachment(
   blob: Blob,
   name: string,
   mimeType: string,
-  maxFileBytes: number,
-): Promise<PreparedImage> {
-  if (blob.size > maxFileBytes) {
-    throw new Error(`larger than ${Math.round(maxFileBytes / 1024 / 1024)} MB`);
+  maxBytes: number,
+): Promise<PreparedAttachment> {
+  if (blob.size > maxBytes) {
+    throw new Error(`larger than ${Math.round(maxBytes / 1024 / 1024)} MB`);
   }
   return {
     filename: name,
@@ -90,82 +126,44 @@ async function prepareImage(
   };
 }
 
-export async function pickImageAttachments({
-  maxFiles = 8,
-  maxFileBytes = 5 * 1024 * 1024,
+// The single admission gate: what the gateway accepts, and how many bytes of it.
+// A clip and a still have different ceilings, so the limit is per candidate.
+function attachmentGate({
+  maxFileBytes = DEFAULT_MAX_FILE_BYTES,
+  maxVideoBytes = DEFAULT_MAX_VIDEO_BYTES,
   mediaTypes = DEFAULT_MEDIA_TYPES,
-}: {
-  maxFiles?: number;
-  maxFileBytes?: number;
-  mediaTypes?: string[];
-} = {}): Promise<PickAttachmentResult> {
-  const result = Capacitor.isNativePlatform()
-    ? await FilePicker.pickImages({
-        readData: true,
-        skipTranscoding: false,
-        ordered: true,
-      })
-    : await FilePicker.pickFiles({ types: mediaTypes, readData: true });
-
-  const attachments: PendingAttachment[] = [];
-  const rejected: string[] = [];
-  for (const file of result.files) {
-    if (attachments.length >= maxFiles) {
-      rejected.push(`${file.name}: limit of ${maxFiles} images reached`);
-      continue;
-    }
-    if (!mediaTypes.includes(file.mimeType)) {
-      rejected.push(`${file.name}: unsupported image format`);
-      continue;
-    }
-
-    try {
-      const prepared = await prepareImage(
-        await pickedFileBlob(file),
-        file.name,
-        file.mimeType,
-        maxFileBytes,
-      );
-      attachments.push({
-        id: crypto.randomUUID(),
-        filename: prepared.filename,
-        media_type: prepared.mediaType,
-        base64: prepared.dataUrl,
-        previewUrl: prepared.dataUrl,
-        size: prepared.size,
-      });
-    } catch (cause) {
-      rejected.push(`${file.name}: ${(cause as Error).message}`);
-    }
-  }
-  return { attachments, rejected };
+}: AttachmentLimits) {
+  return {
+    accepts: (mimeType: string) => mediaTypes.includes(mimeType),
+    limitFor: (mimeType: string) => (isVideoMediaType(mimeType) ? maxVideoBytes : maxFileBytes),
+  };
 }
 
-// Build attachments from raw File/Blob objects — the clipboard-paste and
-// drag-drop path (web + iOS/Android WKWebView), reusing the same validation,
-// shrinking and data-URL encoding as the native file picker above.
-export async function attachmentsFromFiles(
-  files: File[],
-  {
-    maxFiles = 8,
-    maxFileBytes = 5 * 1024 * 1024,
-    mediaTypes = DEFAULT_MEDIA_TYPES,
-  }: { maxFiles?: number; maxFileBytes?: number; mediaTypes?: string[] } = {},
+async function collectAttachments(
+  candidates: MediaCandidate[],
+  limits: AttachmentLimits,
 ): Promise<PickAttachmentResult> {
+  const { maxFiles = 8 } = limits;
+  const gate = attachmentGate(limits);
   const attachments: PendingAttachment[] = [];
   const rejected: string[] = [];
-  for (const file of files) {
-    const name = file.name || 'pasted-image';
+  for (const candidate of candidates) {
+    const { name, mimeType } = candidate;
     if (attachments.length >= maxFiles) {
-      rejected.push(`${name}: limit of ${maxFiles} images reached`);
+      rejected.push(`${name}: limit of ${maxFiles} attachments reached`);
       continue;
     }
-    if (!mediaTypes.includes(file.type)) {
-      rejected.push(`${name}: unsupported image format`);
+    if (!gate.accepts(mimeType)) {
+      rejected.push(`${name}: unsupported media format`);
       continue;
     }
     try {
-      const prepared = await prepareImage(file, name, file.type, maxFileBytes);
+      const prepared = await prepareAttachment(
+        await candidate.blob(),
+        name,
+        mimeType,
+        gate.limitFor(mimeType),
+      );
       attachments.push({
         id: crypto.randomUUID(),
         filename: prepared.filename,
@@ -179,4 +177,86 @@ export async function attachmentsFromFiles(
     }
   }
   return { attachments, rejected };
+}
+
+export async function pickMediaAttachments(
+  limits: AttachmentLimits = {},
+): Promise<PickAttachmentResult> {
+  const mediaTypes = limits.mediaTypes ?? DEFAULT_MEDIA_TYPES;
+  // Native gets the OS gallery sheet: `pickMedia` when the gateway takes clips,
+  // `pickImages` when it does not, so a video the server would refuse is never
+  // even offered. Web falls back to the typed file dialog.
+  const wantsVideo = mediaTypes.some(isVideoMediaType);
+  const result = Capacitor.isNativePlatform()
+    ? await (wantsVideo ? FilePicker.pickMedia : FilePicker.pickImages)({
+        readData: true,
+        skipTranscoding: false,
+        ordered: true,
+      })
+    : await FilePicker.pickFiles({ types: mediaTypes, readData: true });
+
+  return collectAttachments(
+    result.files.map((file) => ({
+      name: file.name,
+      mimeType: file.mimeType,
+      blob: () => pickedFileBlob(file),
+    })),
+    limits,
+  );
+}
+
+// Build attachments from raw File/Blob objects — the clipboard-paste and
+// drag-drop path (web + iOS/Android WKWebView), reusing the same validation
+// and data-URL encoding as the native picker above.
+export async function attachmentsFromFiles(
+  files: File[],
+  limits: AttachmentLimits = {},
+): Promise<PickAttachmentResult> {
+  return collectAttachments(
+    files.map((file) => ({
+      name: file.name || (isVideoMediaType(file.type) ? 'pasted-clip' : 'pasted-image'),
+      mimeType: file.type,
+      blob: async () => file,
+    })),
+    limits,
+  );
+}
+
+/** A canvas edit is PNG bytes; the name has to follow, or the extension lies. */
+function pngFilename(name: string): string {
+  const base = name.replace(/\.[^./\\]+$/u, '');
+  return `${base || 'image'}.png`;
+}
+
+/**
+ * Swap one pending attachment's bytes for an edited copy, in its own slot.
+ *
+ * The id and the position in the composer survive, so annotating a screenshot
+ * before sending reads as "the same picture, drawn on" instead of arriving as a
+ * second attachment next to the untouched one. Nothing is optimised on the way
+ * through — the gateway's ceiling is re-checked here only because burning
+ * strokes into a picture can grow the payload, never shrink it.
+ */
+export async function editedAttachment(
+  previous: PendingAttachment,
+  edited: Blob,
+  limits: AttachmentLimits = {},
+): Promise<PendingAttachment> {
+  const mediaType = edited.type || 'image/png';
+  const gate = attachmentGate(limits);
+  if (!gate.accepts(mediaType)) throw new Error(`${mediaType} is not accepted here`);
+  const prepared = await prepareAttachment(
+    edited,
+    pngFilename(previous.filename),
+    mediaType,
+    gate.limitFor(mediaType),
+  );
+  return {
+    ...previous,
+    filename: prepared.filename,
+    media_type: prepared.mediaType,
+    base64: prepared.dataUrl,
+    previewUrl: prepared.dataUrl,
+    size: prepared.size,
+  };
 }

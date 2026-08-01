@@ -54,42 +54,15 @@
 
 (defn parse-cell-size-report
   "Parse a terminal window-report reply into `{:w :h}` CELL pixel dimensions, or
-   nil. Recognises the `CSI 16 t` cell-size reply `ESC[6;<h>;<w>t` directly, and
-   falls back to deriving the cell size from a `CSI 14 t` text-area-pixels reply
-   `ESC[4;<hpx>;<wpx>t` paired with a `CSI 18 t` text-area-cells reply
-   `ESC[8;<rows>;<cols>t` (cell = px / cells). Tolerant of the replies arriving
-   concatenated in any order / interleaved with other bytes."
+   nil. The fork recognises the `CSI 16 t` cell-size reply `ESC[6;<h>;<w>t`
+   directly, and otherwise derives the cell from a `CSI 14 t` text-area-pixels
+   reply `ESC[4;<hpx>;<wpx>t` paired with a `CSI 18 t` text-area-cells reply
+   `ESC[8;<rows>;<cols>t` (cell = px / cells) — tolerant of the replies arriving
+   concatenated in any order and interleaved with whatever else the tty had
+   queued."
   [^String s]
-  (when (and (string? s) (seq s))
-    (or (when-let [m (re-find #"\u001b\[6;(\d+);(\d+)t" s)]
-          (let
-            [h (long (parse-long (nth m 1)))
-             w (long (parse-long (nth m 2)))]
-
-            (when (and (pos? w) (pos? h)) {:w w :h h})))
-        (let
-          [px
-           (re-find #"\u001b\[4;(\d+);(\d+)t" s)
-
-           ch
-           (re-find #"\u001b\[8;(\d+);(\d+)t" s)]
-
-          (when (and px ch)
-            (let
-              [hpx
-               (long (parse-long (nth px 1)))
-
-               wpx
-               (long (parse-long (nth px 2)))
-
-               rows
-               (long (parse-long (nth ch 1)))
-
-               cols
-               (long (parse-long (nth ch 2)))]
-
-              (when (and (pos? wpx) (pos? hpx) (pos? rows) (pos? cols))
-                {:w (quot wpx cols) :h (quot hpx rows)})))))))
+  (when-let [wh (TerminalImage/parseCellSizeReport s)]
+    {:w (aget ^ints wh 0) :h (aget ^ints wh 1)}))
 
 ;; =============================================================================
 ;; Intrinsic pixel-dimension sniffing
@@ -112,22 +85,19 @@
 
 (def ^:private v-poster (delay (video-var 'poster)))
 (def ^:private v-probe (delay (video-var 'probe)))
-(def ^:private v-media-type (delay (video-var 'media-type)))
-(def ^:private v-video-file? (delay (video-var 'video-file?)))
 
 (defn video-mime?
-  "True for a `video/…` media type."
+  "True for a media type the fork sizes and posters as a clip."
   [mime]
-  (boolean (and mime (str/starts-with? (str mime) "video/"))))
+  (TerminalImage/isVideoMime (when mime (str mime))))
 
 (defn video-source?
   "True when `path` is a clip this namespace can draw — by media type when the
-   caller knows one, else by sniffing the file's first 16 bytes (a dropped path
-   carries no mime). Cheap enough to sit on the still-image transcode path."
+   caller knows one, else by sniffing the file's head (a dropped path carries no
+   mime). Both halves live in the fork; 12 bytes are read, never a decode, so it
+   is cheap enough to sit on the still-image transcode path."
   [path mime]
-  (boolean (or (video-mime? mime)
-               (when-let [video-file? @v-video-file?]
-                 (video-file? path)))))
+  (TerminalImage/isVideoSource (str path) (when mime (str mime))))
 
 (defn image-dimensions
   "Intrinsic `{:w :h}` pixel size from the leading bytes of an image, or nil."
@@ -174,12 +144,11 @@
 
    Decoding 1080p for an 80-column window produces about six times the pixels
    the cells can show: seconds of extra decode and tens of megabytes of extra
-   escape bytes, all of it thrown away by the terminal's own downscale. Reads
-   the LIVE cell metrics, so a HiDPI cell asks for a proportionally sharper
-   picture."
+   escape bytes, all of it thrown away by the terminal's own downscale. The fork
+   reads its LIVE cell metrics, so a HiDPI cell asks for a proportionally
+   sharper picture."
   [cols rows]
-  (let [{:keys [w h]} (cell-pixels)]
-    (max 64 (* (long (or cols 80)) (long w)) (* (long (or rows 0)) (long h)))))
+  (TerminalImage/boxPixels (int (or cols 0)) (int (or rows 0))))
 
 ;; =============================================================================
 ;; Escape encoding
@@ -375,88 +344,49 @@
    cursor: draw it into a `cols`×`rows` cell box, optionally cropped to the visible
    vertical slice (`crop-top`/`crop-bottom` cell rows over an `img-w`×`img-h` px
    image) via the protocol's source rectangle — the SAME `x/y/w/h` math the fork's
-   crop `encodeKitty` uses. Reusing placement id `p=1` REPLACES the prior placement,
-   so a scroll moves the picture atomically: no delete-all, no re-upload, no flash."
+   crop `encodeKitty` uses, because it is the same code. Reusing placement id `p=1`
+   REPLACES the prior placement, so a scroll moves the picture atomically: no
+   delete-all, no re-upload, no flash."
   [{:keys [id cols rows crop-top crop-bottom img-w img-h]}]
-  (let
-    [ct
-     (max 0 (long (or crop-top 0)))
-
-     cb
-     (max 0 (long (or crop-bottom 0)))
-
-     rows
-     (long (or rows 0))
-
-     cols
-     (long (or cols 0))
-
-     ih
-     (long (or img-h 0))
-
-     vis
-     (max 1 (- rows ct cb))
-
-     base
-     (str "\u001b_Ga=p,i=" id ",p=1,C=1,q=2" (when (pos? cols) (str ",c=" cols)))]
-
-    (if (and (pos? rows) (pos? ih) (or (pos? ct) (pos? cb)))
-      (let
-        [src-y
-         (Math/round (/ (* (double ih) ct) (double rows)))
-
-         src-h0
-         (max 1 (Math/round (/ (* (double ih) vis) (double rows))))
-
-         ;; Clamp the source rectangle inside the image like the fork's
-         ;; encodeKitty: an out-of-bounds y+h makes Kitty reject the placement,
-         ;; which would blank the image mid-scroll and reintroduce the flicker.
-         src-h
-         (if (> (+ src-y src-h0) ih) (- ih src-y) src-h0)]
-
-        (str base ",r=" vis ",x=0,y=" src-y ",w=" (long (or img-w 0)) ",h=" src-h "\u001b\\"))
-      (str base ",r=" vis "\u001b\\"))))
+  (TerminalImage/placeKitty (int id)
+                            (int (or cols 0))
+                            (int (or rows 0))
+                            (int (or crop-top 0))
+                            (int (or crop-bottom 0))
+                            (int (or img-w 0))
+                            (int (or img-h 0))))
 
 (defn kitty-delete-placement
   "Kitty sequence removing image `id`'s placement while KEEPING its uploaded data,
    so an image scrolled off screen leaves no ghost yet needs no re-upload if it
    scrolls back into view."
   [id]
-  (str "\u001b_Ga=d,d=i,i=" id ",q=2\u001b\\"))
+  (TerminalImage/deleteKittyPlacement (int id)))
 
 (defn kitty-free-image
   "Kitty sequence deleting image `id` AND freeing its uploaded data — used when the
    transmit cache evicts a long-off-screen image to bound terminal-side memory."
   [id]
-  (str "\u001b_Ga=d,d=I,i=" id ",q=2\u001b\\"))
+  (TerminalImage/freeKittyImage (int id)))
 
-(def ^:private video-path-regex
-  "A one-line paste whose WHOLE payload is a path to a clip — optionally quoted,
-   `file://`-prefixed, or with shell-escaped spaces, which is what a terminal
-   drag-and-drop actually delivers."
-  #"(?i)^\s*[\"']?(?:file://)?([^\"'\n]+?\.(?:mp4|m4v|mov))[\"']?\s*$")
 
 (defn- video-paste-descriptor
   "Descriptor for a dropped VIDEO path, in exactly the shape a dropped picture
    returns, so a clip flows through the same paste → fence → inline-render path.
-   The engine's image scanner deliberately ignores clips (they are not vision-wire
-   attachments), so the TUI resolves them here. Dimensions come from the MP4
+   The engine's media scanner attaches clips too (it samples them into a wire GIF),
+   but the TUI resolves them here to paint the drop the instant it lands. The fork
+   unquotes / un-escapes /
+   de-`file://`s the dropped line and sniffs the mime; dimensions come from the MP4
    index, never a decode. nil unless the path really is a readable clip."
   [text workspace-root]
-  (when-let [m (re-find video-path-regex (str text))]
+  (when-let [s (TerminalImage/pastedVideoPath (str text))]
     (let
-      [s (-> (second m)
-             (str/replace "\\ " " ")
-             str/trim)
-       s (if (str/starts-with? s "~") (str (System/getProperty "user.home") (subs s 1)) s)
-       f (io/file s)
+      [f (io/file s)
        f
        (if (.isAbsolute f) f (io/file (str (or workspace-root (System/getProperty "user.dir"))) s))]
 
       (when (and (.isFile f) (.canRead f))
-        (when-let
-          [mime (when-let [mt @v-media-type]
-                  (mt f))]
+        (when-let [mime (TerminalImage/probeVideoMime (.getAbsolutePath f))]
           (let [{:keys [w h]} (or (probe-dimensions (.getAbsolutePath f) mime) {})]
             {:path (.getAbsolutePath f)
              :mime mime
@@ -502,17 +432,6 @@
     (.mkdirs dir)
     dir))
 
-(def ^:private media-type->ext
-  {"image/png" ".png"
-   "image/jpeg" ".jpg"
-   "image/gif" ".gif"
-   "image/webp" ".webp"
-   "image/bmp" ".bmp"
-   ;; A clip is cached under its OWN extension: the poster path re-decodes the
-   ;; file, and a `.png` named MP4 would be neither playable nor probeable.
-   "video/mp4" ".mp4"
-   "video/quicktime" ".mov"
-   "video/x-m4v" ".m4v"})
 
 (defn materialize-attachment
   "Decode ONE persisted user image attachment (canonical wire map, STRING keys
@@ -535,7 +454,7 @@
       (when (and (or (str/starts-with? media "image/") (video-mime? media)) (not (str/blank? b64)))
         (let
           [ext
-           (get media-type->ext media ".png")
+           (or (TerminalImage/extensionForMime media) ".png")
 
            id
            (or (not-empty (str (get att "id"))) (str (java.util.UUID/randomUUID)))

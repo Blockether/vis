@@ -8,6 +8,9 @@ import type {
   ThemeSummary,
   Toggle,
   ToggleGroup,
+  McpServer,
+  McpServerInput,
+  McpTestResult,
 } from '../lib/types';
 import {
   acquirePushToken,
@@ -301,6 +304,8 @@ export function GatewaySettingsDialog({
 
           {!unreachable && !unauthorized && <NotificationsPanel client={client} />}
 
+          {!unreachable && !unauthorized && <McpServersPanel client={client} />}
+
           {unreachable ? (
             <SettingsPanel title="Settings">
               <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
@@ -444,6 +449,223 @@ export function GatewaySettingsDialog({
         </footer>
       </section>
     </div>
+  );
+}
+
+function McpServersPanel({ client }: { client: GatewayClient }) {
+  const [servers, setServers] = useState<McpServer[] | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [transport, setTransport] = useState<'stdio' | 'streamable_http'>('stdio');
+  const [name, setName] = useState('');
+  const [command, setCommand] = useState('');
+  const [args, setArgs] = useState('');
+  const [cwd, setCwd] = useState('');
+  const [url, setUrl] = useState('');
+  const [env, setEnv] = useState('');
+  const [headers, setHeaders] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [test, setTest] = useState<McpTestResult | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setServers(await client.mcpServers());
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [client]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const spec = (): McpServerInput => {
+    const keyValues = (text: string) =>
+      Object.fromEntries(
+        text
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const index = line.indexOf('=');
+            return [line.slice(0, index).trim(), line.slice(index + 1)];
+          })
+          .filter(([key]) => key),
+      );
+    return transport === 'stdio'
+      ? {
+          transport,
+          command: command.trim(),
+          args: args.split('\n').map((arg) => arg.trim()).filter(Boolean),
+          ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
+          ...(env.trim() ? { env: keyValues(env) } : {}),
+        }
+      : {
+          transport,
+          url: url.trim(),
+          ...(headers.trim() ? { headers: keyValues(headers) } : {}),
+        };
+  };
+
+  const valid = () => {
+    if (!name.trim()) return 'Server name is required.';
+    if (transport === 'stdio' && !command.trim()) return 'An executable is required.';
+    if (transport === 'streamable_http' && !url.trim()) return 'An MCP endpoint is required.';
+    return null;
+  };
+
+  async function validateAndSave() {
+    const message = valid();
+    if (message) return setError(message);
+    const candidate = spec();
+    setBusy('save');
+    try {
+      const result = await client.testMcpServer(name.trim(), candidate);
+      setTest(result);
+      await client.saveMcpServer(name.trim(), candidate);
+      setShowForm(false);
+      setName('');
+      setCommand('');
+      setArgs('');
+      setCwd('');
+      setUrl('');
+      setEnv('');
+      setHeaders('');
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function toggle(server: McpServer) {
+    setBusy(server.name);
+    try {
+      await client.setMcpServerEnabled(server.name, !server.enabled);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function remove(server: McpServer) {
+    if (!window.confirm(`Remove ${server.name} from this gateway?`)) return;
+    setBusy(server.name);
+    try {
+      await client.deleteMcpServer(server.name);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <SettingsPanel
+      title="MCP servers"
+      description="Tools run on this gateway and are shared with every client. Commands, tokens, and environment values never leave this machine."
+      meta={servers === null ? 'loading' : `${servers.length} configured`}
+    >
+      <div className="divide-y divide-dialog-edge">
+        {error && <Banner kind="err">{error}</Banner>}
+        {servers?.map((server) => (
+          <div key={server.name} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 px-3 py-3 sm:px-4 sm:py-2.5">
+            <div className="min-w-0">
+              <p className="truncate font-mono text-ui font-bold text-white">{server.name}</p>
+              <p className="mt-0.5 truncate font-mono text-meta text-dialog-hint">
+                {server.transport === 'stdio' ? server.command : server.url} · {server.tools} tools ·{' '}
+                {server.is_connected ? 'connected' : server.enabled ? 'connecting' : 'disabled'}
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Switch
+                label={`${server.name} MCP server`}
+                on={server.enabled}
+                busy={busy === server.name}
+                disabled={busy !== null}
+                onClick={() => void toggle(server)}
+              />
+              <Button variant="ghost" disabled={busy !== null} onClick={() => void remove(server)}>
+                Remove
+              </Button>
+            </div>
+          </div>
+        ))}
+        {servers?.length === 0 && !showForm && (
+          <p className="px-3 py-5 font-mono text-meta text-dialog-hint sm:px-4">No MCP servers on this gateway.</p>
+        )}
+        {!showForm ? (
+          <div className="p-2.5">
+            <Button onClick={() => { setError(null); setTest(null); setShowForm(true); }}>Add MCP server</Button>
+          </div>
+        ) : (
+          <div className="space-y-3 p-2.5">
+            <div className="grid grid-cols-2 gap-1" role="group" aria-label="MCP transport">
+              {(['stdio', 'streamable_http'] as const).map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  onClick={() => setTransport(kind)}
+                  className={`min-h-8 border px-2 font-mono text-chip font-bold uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${transport === kind ? 'border-transparent bg-accent text-accent-foreground' : 'border-transparent bg-panel-2 text-dialog-hint hover:bg-hover hover:text-white'}`}
+                >
+                  {kind === 'stdio' ? 'Local command' : 'Streamable HTTP'}
+                </button>
+              ))}
+            </div>
+            <FormLabel label="Server name">
+              <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="filesystem" autoCapitalize="none" autoCorrect="off" />
+            </FormLabel>
+            {transport === 'stdio' ? (
+              <>
+                <FormLabel label="Executable">
+                  <Input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="npx" autoCapitalize="none" autoCorrect="off" />
+                </FormLabel>
+                <FormLabel label="Arguments — one per line" hint="Arguments are passed directly, never through a shell.">
+                  <textarea value={args} onChange={(event) => setArgs(event.target.value)} placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path'} className="min-h-24 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none" />
+                </FormLabel>
+                <FormLabel label="Working directory (optional)">
+                  <Input value={cwd} onChange={(event) => setCwd(event.target.value)} placeholder="/workspace" autoCapitalize="none" autoCorrect="off" />
+                </FormLabel>
+                <FormLabel label="Environment variables (optional)" hint="One NAME=value per line. Values are write-only after saving.">
+                  <textarea value={env} onChange={(event) => setEnv(event.target.value)} placeholder="API_TOKEN=…" className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none" />
+                </FormLabel>
+              </>
+            ) : (
+              <>
+                <FormLabel label="Streamable HTTP endpoint">
+                  <Input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://mcp.example.com/mcp" inputMode="url" autoCapitalize="none" autoCorrect="off" />
+                </FormLabel>
+                <FormLabel label="Headers (optional)" hint="One NAME=value per line. Values are write-only after saving.">
+                  <textarea value={headers} onChange={(event) => setHeaders(event.target.value)} placeholder="Authorization=Bearer …" className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none" />
+                </FormLabel>
+              </>
+            )}
+            {test && <Banner kind="ok">Validated {test.name}: {test.tools.length} tools discovered.</Banner>}
+            <div className="flex flex-wrap justify-end gap-2 border-t border-dialog-edge pt-2">
+              <Button variant="ghost" disabled={busy !== null} onClick={() => setShowForm(false)}>Cancel</Button>
+              <Button disabled={busy !== null} onClick={() => void validateAndSave()}>
+                {busy === 'save' ? 'Validating…' : 'Validate & save'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </SettingsPanel>
+  );
+}
+
+function FormLabel({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  return (
+    <label className="block space-y-1">
+      <span className="block font-mono text-chip font-bold text-white">{label}</span>
+      {children}
+      {hint && <span className="block font-mono text-chip text-dialog-hint">{hint}</span>}
+    </label>
   );
 }
 

@@ -36,6 +36,10 @@ import type {
   PushStatus,
   VoiceModelState,
   VoiceTranscript,
+  McpServer,
+  McpServerInput,
+  McpServersResponse,
+  McpTestResult,
 } from './types';
 import { PROTOCOL_HEADERS } from './compat';
 import {
@@ -729,6 +733,31 @@ export class GatewayClient {
       });
     }
     return updated;
+  }
+
+  // ── Gateway-owned MCP servers ───────────────────────────────────
+  async mcpServers(signal?: AbortSignal): Promise<McpServer[]> {
+    return (await this.request<McpServersResponse>('GET', '/v1/mcp/servers', undefined, signal)).servers ?? [];
+  }
+
+  async saveMcpServer(name: string, server: McpServerInput): Promise<McpServer> {
+    return this.request<McpServer>('POST', '/v1/mcp/servers', { name, server });
+  }
+
+  async setMcpServerEnabled(name: string, enabled: boolean): Promise<McpServer> {
+    return this.request<McpServer>(
+      'POST',
+      `/v1/mcp/servers/${encodeURIComponent(name)}/actions/enable`,
+      { enabled },
+    );
+  }
+
+  async deleteMcpServer(name: string): Promise<void> {
+    await this.request('DELETE', `/v1/mcp/servers/${encodeURIComponent(name)}`);
+  }
+
+  async testMcpServer(name: string, server: McpServerInput): Promise<McpTestResult> {
+    return this.request<McpTestResult>('POST', '/v1/mcp/servers/actions/test', { name, server });
   }
 
   // ── Router: providers, models, auth ─────────────────────────────

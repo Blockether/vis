@@ -1162,6 +1162,16 @@ function attachmentIsImage(attachment: IterationAttachment): boolean {
   return media ? media.startsWith('image/') : attachment.kind === 'image';
 }
 
+function attachmentIsVideo(attachment: IterationAttachment): boolean {
+  return (attachment.media_type ?? '').startsWith('video/');
+}
+
+// A still and a clip belong to the SAME rail: both are something the user asked
+// to SEE, so both paint where they were made. Everything else is a recorded file.
+function attachmentIsPlayable(attachment: IterationAttachment): boolean {
+  return attachmentIsImage(attachment) || attachmentIsVideo(attachment);
+}
+
 // ONE artifact a tool call produced (a matplotlib figure, a `vis_attach`ed
 // image). The gateway ships descriptors only, never bytes, so the picture is
 // pulled from the attachment endpoint on first paint — with the auth headers an
@@ -1185,11 +1195,12 @@ const AttachmentTile = memo(function AttachmentTile({
   const [failed, setFailed] = useState(false);
   const iterationId = attachment.iteration_id ?? '';
   const index = attachment.index ?? 0;
-  const isImage = attachmentIsImage(attachment);
+  const isVideo = attachmentIsVideo(attachment);
+  const isPlayable = isVideo || attachmentIsImage(attachment);
   const name = attachment.filename || 'attachment';
 
   useEffect(() => {
-    if (!isImage || !iterationId || !sid) return;
+    if (!isPlayable || !iterationId || !sid) return;
     let alive = true;
     // Hold this artifact's object URL for as long as the tile is mounted. The
     // client's cache is bounded and REVOKES what it evicts, and re-entering a
@@ -1210,11 +1221,11 @@ const AttachmentTile = memo(function AttachmentTile({
       alive = false;
       release();
     };
-  }, [client, sid, iterationId, index, isImage, attempt]);
+  }, [client, sid, iterationId, index, isPlayable, attempt]);
 
-  // A non-image artifact reaching a tile is the failure path only — the rail
+  // A non-visual artifact reaching a tile is the failure path only — the rail
   // below routes files into the collapsed recorded-files row.
-  if (!isImage || failed || !iterationId) {
+  if (!isPlayable || failed || !iterationId) {
     return (
       <div className="mt-2 min-w-0 truncate font-mono text-chip text-footer-muted">
         {failed ? `✗ ${name}` : `↗ ${name}`}
@@ -1224,7 +1235,21 @@ const AttachmentTile = memo(function AttachmentTile({
 
   return (
     <figure className="mt-2.5 min-w-0">
-      {url ? (
+      {!url ? (
+        <div className="h-24 w-full animate-pulse bg-thinking-surface" aria-hidden="true" />
+      ) : isVideo ? (
+        // A clip PLAYS in place, with the platform's own controls. It streams from
+        // the same attachment endpoint as the pictures, and `preload="metadata"`
+        // means a transcript full of clips costs a poster frame, not the bytes.
+        <video
+          src={url}
+          controls
+          playsInline
+          preload="metadata"
+          onError={() => setFailed(true)}
+          className="block max-h-[60svh] w-auto max-w-full object-contain"
+        />
+      ) : (
         <ExpandableImage
           src={url}
           alt={name}
@@ -1240,8 +1265,6 @@ const AttachmentTile = memo(function AttachmentTile({
           }}
           className="block max-h-[60svh] w-auto max-w-full object-contain"
         />
-      ) : (
-        <div className="h-24 w-full animate-pulse bg-thinking-surface" aria-hidden="true" />
       )}
       <figcaption className="mt-1 truncate font-mono text-chip text-footer-muted">{name}</figcaption>
     </figure>
@@ -1301,15 +1324,15 @@ export const AttachmentRail = memo(function AttachmentRail({
   attachments: IterationAttachment[];
 }) {
   const [open, setOpen] = useState(false);
-  const images = attachments.filter(attachmentIsImage);
-  const files = recordedFiles(attachments.filter((entry) => !attachmentIsImage(entry)));
+  const playable = attachments.filter(attachmentIsPlayable);
+  const files = recordedFiles(attachments.filter((entry) => !attachmentIsPlayable(entry)));
   const total = files.reduce((sum, file) => sum + file.count, 0);
   const head = files[0];
   const rest = head ? total - head.count : 0;
 
   return (
     <>
-      {images.map((attachment) => (
+      {playable.map((attachment) => (
         <AttachmentTile
           key={`${attachment.iteration_id ?? 'iter'}-${attachment.index}`}
           client={client}
@@ -1636,8 +1659,10 @@ export const UserMessage = memo(function UserMessage(
   // Persisted user images re-render from DB-owned base64 (survives a restart even
   // after the original clipboard/temp source file is gone). Tool artifacts render
   // in the assistant trace, so only the `user` rail belongs in the user bubble.
-  const imageAttachments = (attachments ?? []).filter(
-    (a) => (a.source ?? 'user') === 'user' && !!a.base64 && !!a.media_type?.startsWith('image/'),
+  const mediaAttachments = (attachments ?? []).filter(
+    (a) => (a.source ?? 'user') === 'user'
+      && !!a.base64
+      && (!!a.media_type?.startsWith('image/') || !!a.media_type?.startsWith('video/')),
   );
   // The user bubble keeps its OWN best-effort rule, decided in JS. `Markdown` can justify
   // unconditionally because it owns elements to scope `break-all` to (inline `code`, links);
@@ -1675,16 +1700,33 @@ export const UserMessage = memo(function UserMessage(
           </details>
         ))}
       </div>
-      {imageAttachments.length > 0 && (
+      {mediaAttachments.length > 0 && (
         <div className="mt-2 flex flex-col items-start gap-2">
-          {imageAttachments.map((att, i) => (
-            <ExpandableImage
-              key={att.id ?? `att-${i}`}
-              src={att.base64.startsWith('data:') ? att.base64 : `data:${att.media_type};base64,${att.base64}`}
-              alt={att.filename ?? 'attachment'}
-              className="max-h-[min(28rem,60dvh)] max-w-full w-auto rounded border border-code-edge object-contain"
-            />
-          ))}
+          {mediaAttachments.map((att, i) => {
+            const key = att.id ?? `att-${i}`;
+            const src = att.base64.startsWith('data:')
+              ? att.base64
+              : `data:${att.media_type};base64,${att.base64}`;
+            // The clip the user sent replays from the SAME DB-owned bytes as a
+            // picture, so it survives a restart after the source file is gone.
+            return att.media_type?.startsWith('video/') ? (
+              <video
+                key={key}
+                src={src}
+                controls
+                playsInline
+                preload="metadata"
+                className="max-h-[min(28rem,60dvh)] max-w-full w-auto rounded border border-code-edge object-contain"
+              />
+            ) : (
+              <ExpandableImage
+                key={key}
+                src={src}
+                alt={att.filename ?? 'attachment'}
+                className="max-h-[min(28rem,60dvh)] max-w-full w-auto rounded border border-code-edge object-contain"
+              />
+            );
+          })}
         </div>
       )}
     </article>

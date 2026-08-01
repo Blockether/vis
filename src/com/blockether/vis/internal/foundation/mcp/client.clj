@@ -34,7 +34,7 @@
     (java.time Duration)
     (java.util.concurrent ConcurrentHashMap)))
 
-(def ^:private protocol-version "2025-06-18")
+(def ^:private protocol-version "2025-11-25")
 
 (def default-timeout-ms 30000)
 
@@ -217,13 +217,14 @@
    text/event-stream`, parse pushed JSON-RPC notifications and dispatch them via
    `on-notify` `(fn [msg])`. Reconnects with backoff until `closed?`. Silent when
    the server doesn't support the GET listen channel (HTTP 405/404)."
-  [server-name url headers session-atom bearer-fn on-notify closed?]
+  [server-name url headers session-atom protocol-version-atom bearer-fn on-notify closed?]
   (letfn
     [(build-request []
        (let
          [b
           (-> (HttpRequest/newBuilder (URI/create url))
               (.header "Accept" "text/event-stream")
+              (.header "MCP-Protocol-Version" @protocol-version-atom)
               (.timeout (Duration/ofHours 1))
               (.GET))
 
@@ -283,6 +284,9 @@
     [session
      (atom nil)
 
+     protocol-version*
+     (atom protocol-version)
+
      www-auth
      (atom nil)
 
@@ -303,7 +307,7 @@
                    (.timeout (Duration/ofMillis (long timeout-ms)))
                    (.header "Content-Type" "application/json")
                    (.header "Accept" "application/json, text/event-stream")
-                   (.header "MCP-Protocol-Version" protocol-version)
+                   (.header "MCP-Protocol-Version" @protocol-version*)
                    (.POST (HttpRequest$BodyPublishers/ofString body)))
 
                b
@@ -399,7 +403,7 @@
                             [b (-> (HttpRequest/newBuilder (URI/create url))
                                    (.timeout (Duration/ofSeconds 5))
                                    (.header "Mcp-Session-Id" sid)
-                                   (.header "MCP-Protocol-Version" protocol-version)
+                                   (.header "MCP-Protocol-Version" @protocol-version*)
                                    (.DELETE))
                              b (apply-headers b headers)
                              b (if-let
@@ -415,7 +419,8 @@
        :alive-fn (fn []
                    (not @closed?))
        :www-auth-atom www-auth
-       :session-atom session}
+       :session-atom session
+       :protocol-version-atom protocol-version*}
       listen?
       (assoc :listen-start-fn
         (fn [on-notify]
@@ -423,6 +428,7 @@
                              url
                              headers
                              session
+                             protocol-version*
                              bearer-fn
                              (or on-notify
                                  (fn [_]
@@ -433,15 +439,19 @@
 ;; Public client surface
 ;; ===========================================================================
 
-(defn- transport-of [{:keys [transport url]}] (or transport (if url :http :stdio)))
+(defn- transport-of
+  [{:keys [transport url]}]
+  (case (some-> transport name)
+    ("streamable_http" "streamable-http" "http") :streamable-http
+    "stdio" :stdio
+    (if url :streamable-http :stdio)))
 
 (defn connect
   "Connect to MCP server `name` per its `spec` and run the `initialize`
    handshake. `spec` supports:
-     stdio → `{:transport :stdio :command :args :env :cwd
-                :timeout-ms}`
-     http  → `{:transport :http  :url :headers :bearer-fn
-                :timeout-ms :listen? :on-notification}`
+     stdio           → `{:transport :stdio :command :args :env :cwd :timeout-ms}`
+     streamable-http → `{:transport :streamable-http :url :headers :bearer-fn
+                         :timeout-ms :listen? :on-notification}`
    Returns an opaque `conn` map (or throws)."
   [name spec]
   (let
@@ -453,7 +463,7 @@
        :stdio
        (start-stdio! name spec)
 
-       :http
+       :streamable-http
        (start-http! name spec)
 
        (throw (ex-info (str "MCP: unknown transport " (pr-str transport))
@@ -481,11 +491,13 @@
 
     ;; Per spec, acknowledge before issuing further requests.
     ((:notify-fn conn) "notifications/initialized" nil)
-    (let
-      [conn (assoc conn
-              :server-info (get init "serverInfo")
-              :server-capabilities (get init "capabilities")
-              :protocol-version (get init "protocolVersion"))]
+    (let [negotiated-protocol-version (or (get init "protocolVersion") protocol-version)
+          _ (when-let [version-atom (:protocol-version-atom t)]
+              (reset! version-atom negotiated-protocol-version))
+          conn (assoc conn
+                 :server-info (get init "serverInfo")
+                 :server-capabilities (get init "capabilities")
+                 :protocol-version negotiated-protocol-version)]
       ;; Wire the optional HTTP listen channel: server-pushed
       ;; `notifications/tools/list_changed` invalidates the tools cache so a
       ;; repeat `list-tools` re-fetches; any caller-supplied `:on-notification`

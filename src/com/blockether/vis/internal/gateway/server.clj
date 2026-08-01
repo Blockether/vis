@@ -55,6 +55,7 @@
            [org.eclipse.jetty.server ConnectionFactory HttpConfiguration HttpConnectionFactory
             Server ServerConnector]))
 
+
 (def ^:private DEFAULT_PORT 7890)
 
 (def ^:private DEFAULT_HOST "127.0.0.1")
@@ -1268,6 +1269,80 @@
                     (lp/sync-cached-extension-symbols!)
                     (json-response (toggle-json (toggles/toggle-spec id)))))))
 
+(defn- mcp-error-response
+  [e]
+  (let
+    [{:keys [type]}
+     (ex-data e)
+
+     status
+     (case type
+       :mcp/not-found
+       404
+
+       :mcp/invalid-name
+       400
+
+       :mcp/invalid-server
+       400
+
+       400)]
+
+    (error-response status (or type :mcp/invalid-request) (ex-message e))))
+
+(defn- mcp-servers-handler
+  [_]
+  (json-response ((requiring-resolve
+                    'com.blockether.vis.internal.foundation.mcp.core/gateway-servers))))
+
+(defn- save-mcp-server-handler
+  [request]
+  (try (let
+         [body
+          (body-json request)
+
+          name
+          (or (get-in request [:path-params :name]) (get body "name"))
+
+          server
+          (or (get body "server") body)]
+
+         (json-response ((requiring-resolve
+                           'com.blockether.vis.internal.foundation.mcp.core/save-gateway-server!)
+                          name
+                          server)))
+       (catch clojure.lang.ExceptionInfo e (mcp-error-response e))
+       (catch Throwable e (error-response 400 :mcp/invalid-request (ex-message e)))))
+
+(defn- set-mcp-server-enabled-handler
+  [request]
+  (try (let [enabled (get (body-json request) "enabled")]
+         (if (boolean? enabled)
+           (json-response
+             ((requiring-resolve
+                'com.blockether.vis.internal.foundation.mcp.core/set-gateway-server-enabled!)
+               (get-in request [:path-params :name])
+               enabled))
+           (error-response 400 :mcp/invalid-request "enabled must be a boolean")))
+       (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
+
+(defn- delete-mcp-server-handler
+  [request]
+  (try (json-response ((requiring-resolve
+                         'com.blockether.vis.internal.foundation.mcp.core/delete-gateway-server!)
+                        (get-in request [:path-params :name])))
+       (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
+
+(defn- test-mcp-server-handler
+  [request]
+  (try (let [body (body-json request)]
+         (json-response ((requiring-resolve
+                           'com.blockether.vis.internal.foundation.mcp.core/test-gateway-server!)
+                          (get body "name")
+                          (or (get body "server") body))))
+       (catch clojure.lang.ExceptionInfo e (mcp-error-response e))
+       (catch Throwable e (error-response 400 :mcp/test-failed (ex-message e)))))
+
 (defn- configured-theme-id
   "Theme selected by the TUI's persisted settings, normalized to a theme that
    this gateway process can actually render."
@@ -2269,9 +2344,12 @@
                                :attachments {:enabled true
                                              :transport "inline-base64"
                                              :media-types ["image/jpeg" "image/png" "image/gif"
-                                                           "image/webp" "image/bmp"]
+                                                           "image/webp" "image/bmp" "video/mp4"
+                                                           "video/quicktime"]
+                                             :video-media-types ["video/mp4" "video/quicktime"]
                                              :max-files attachments/max-image-count
-                                             :max-file-bytes attachments/max-image-bytes}
+                                             :max-file-bytes attachments/max-image-bytes
+                                             :max-video-bytes attachments/max-video-bytes}
                                :voice voice
                                :push (push/status)}})))
 
@@ -2649,6 +2727,10 @@
         ["/devices/actions/test" {:post test-device-handler}]
         ["/devices/:token" {:delete delete-device-handler}]
         ["/settings" {:get list-settings-handler :post set-setting-handler}]
+        ["/mcp/servers" {:get mcp-servers-handler :post save-mcp-server-handler}]
+        ["/mcp/servers/actions/test" {:post test-mcp-server-handler}]
+        ["/mcp/servers/:name" {:put save-mcp-server-handler :delete delete-mcp-server-handler}]
+        ["/mcp/servers/:name/actions/enable" {:post set-mcp-server-enabled-handler}]
         ["/settings/:id" {:get get-setting-handler}]
         ["/theme" {:get get-theme-handler :post set-theme-handler}]
         ["/slashes" {:get slashes-handler}]

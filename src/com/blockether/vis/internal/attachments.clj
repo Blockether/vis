@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.attachments
-  "User-message image attachments.
+  "User-message image and video attachments.
 
    Dropping a file onto the terminal pastes its PATH into the input (the
    terminal's drop behavior — same mechanism pi relies on). At turn start
@@ -11,8 +11,8 @@
 
    Only files the model can genuinely consume are attached: the MIME type
    is sniffed from magic bytes (pi-parity: jpeg / non-animated png / gif /
-   webp / bmp) or, for SVG, from the markup head — never trusted from the
-   extension alone.
+   webp / bmp, plus MP4/QuickTime clips) or, for SVG, from the markup head --
+   never trusted from the extension alone.
 
    Storing and SENDING are deliberately separate concerns:
 
@@ -48,6 +48,13 @@
    more, but the smallest common bound keeps one attachment valid on
    every wire."
   (* 5 1024 1024))
+
+(def max-video-bytes
+  "Per-clip byte cap. A clip is never sent in its own container -- it leaves as
+   a small animated GIF ([[wire-verdict]]) -- so this bounds the ORIGINAL the
+   session keeps and the memory one drop can cost, not any provider limit. A
+   32MB ceiling covers a normal screen recording or a phone clip."
+  (* 32 1024 1024))
 
 (def max-image-count
   "Attachment count cap per user message. Guards against a pathological
@@ -175,6 +182,52 @@
         (svg-markup? b) "image/svg+xml"
         :else nil))
 
+(def ^:private still-image-brands
+  "ISO-BMFF major brands that are a STILL PICTURE, not a clip. HEIF/AVIF share
+   MP4's `ftyp` container header, so an iPhone photo looks exactly like a video
+   to a naive `ftyp` check and would be pushed down the decode path as one.
+   Mirrors `TerminalImage/STILL_IMAGE_BRANDS` in the Lanterna fork so the
+   terminal and the engine classify the same bytes identically."
+  #{"heic" "heix" "heim" "heis" "hevc" "hevx" "mif1" "msf1" "avif" "avis"})
+
+(defn- brand-at
+  "The 4-char ASCII box brand at `off`, lower-cased, or nil when the head is
+   too short."
+  [^bytes b ^long off]
+  (when (>= (alength b) (+ off 4))
+    (str/lower-case (String. b (int off) 4 StandardCharsets/US_ASCII))))
+
+(defn detect-video-mime
+  "Sniff a supported video MIME type from the leading bytes of a file.
+   Returns \"video/mp4\" | \"video/quicktime\", or nil.
+
+   ISO-BMFF only (`ftyp` at offset 4); the major brand at offset 8 decides.
+   `qt  ` is QuickTime, a [[still-image-brands]] brand is a PHOTO (nil, never a
+   clip), anything else is MP4."
+  [^bytes b]
+  (when (and (>= (alength b) 12) (ascii-at? b 4 "ftyp"))
+    (let [brand (brand-at b 8)]
+      (when-not (contains? still-image-brands brand)
+        (if (= "qt  " brand) "video/quicktime" "video/mp4")))))
+
+(def video-media-types
+  "Video containers vis stores. No wire takes any of them verbatim: a clip is
+   transcoded to an animated GIF at SEND time (see [[wire-verdict]]), which is
+   why storing one is safe even though sending the container never is."
+  #{"video/mp4" "video/quicktime"})
+
+(defn video-media-type?
+  "True when `media-type` is one of [[video-media-types]]."
+  [media-type]
+  (contains? video-media-types (str/lower-case (str/trim (str media-type)))))
+
+(defn detect-media-mime
+  "The sniffed type of anything vis can attach: [[detect-image-mime]] first,
+   then [[detect-video-mime]]. Stills win the tie deliberately -- HEIF/AVIF
+   photos share the MP4 container header."
+  [^bytes b]
+  (or (detect-image-mime b) (detect-video-mime b)))
+
 (def provider-image-media-types
   "The ONLY image media types a vision wire accepts VERBATIM. Anthropic names
    exactly these four in its rejection (`the image data you provided does not
@@ -205,29 +258,29 @@
             buf (byte-array n)]
 
            (.readFully raf buf)
-           (detect-image-mime buf)))
+           (detect-media-mime buf)))
        (catch Throwable _ nil)))
 
 ;; =============================================================================
 ;; Path-candidate extraction
 ;; =============================================================================
 
-(def ^:private image-extension-pattern
+(def ^:private media-extension-pattern
   "Cheap pre-filter before any filesystem access: only tokens that END in
-   an image extension are stat'd. The magic-byte sniff still owns the
-   final verdict."
-  #"(?i)\.(png|jpe?g|gif|webp|bmp|svg)$")
+   an image or video extension are stat'd. The magic-byte sniff still owns
+   the final verdict."
+  #"(?i)\.(png|jpe?g|gif|webp|bmp|svg|mp4|m4v|mov)$")
 
-(def ^:private image-extension-present-pattern
+(def ^:private media-extension-present-pattern
   "Whole-text fast path: a single unanchored scan that answers \"could this
-   message mention ANY image file at all?\". When it misses we skip
-   tokenization + per-token filtering entirely — turning a large paste (a
+   message mention ANY image or video file at all?\". When it misses we skip
+   tokenization + per-token filtering entirely -- turning a large paste (a
    90KB log, thousands of tokens) from a ~10ms multi-regex walk into one
-   ~0.3ms linear scan. Deliberately looser than [[image-extension-pattern]]
+   ~0.3ms linear scan. Deliberately looser than [[media-extension-pattern]]
    (no end anchor): a hit only means \"keep looking\", the anchored per-token
    pattern and the magic-byte sniff still own the real verdict, so the
-   loose match can never let a non-image through."
-  #"(?i)\.(?:png|jpe?g|gif|webp|bmp|svg)")
+   loose match can never let a non-media file through."
+  #"(?i)\.(?:png|jpe?g|gif|webp|bmp|svg|mp4|m4v|mov)")
 
 (def ^:private quoted-span-pattern
   "Single- or double-quoted spans — several terminals quote dropped paths
@@ -260,11 +313,12 @@
       (str/replace #"^[(\[{<'\"]+" "")
       (str/replace #"[.,;:!?)\]}>'\"]+$" "")))
 
-(def ^:private image-path-token-pattern
-  "One image-shaped PATH token as it appears IN prose: a quoted span or a
-   whitespace-delimited token ending in an image extension. Non-capturing
-   throughout so `str/replace` hands the matcher fn a plain string."
-  #"(?i)(?:\"[^\"]*\.(?:png|jpe?g|gif|webp|bmp)\"|'[^']*\.(?:png|jpe?g|gif|webp|bmp)'|\S+\.(?:png|jpe?g|gif|webp|bmp))")
+(def ^:private media-path-token-pattern
+  "One media-shaped PATH token as it appears IN prose: a quoted span or a
+   whitespace-delimited token ending in an image or video extension.
+   Non-capturing throughout so `str/replace` hands the matcher fn a plain
+   string."
+  #"(?i)(?:\"[^\"]*\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov)\"|'[^']*\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov)'|\S+\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov))")
 
 (defn- path-candidates
   "Raw path-shaped candidates from user text, drop-pattern aware:
@@ -297,7 +351,7 @@
                    str/trim
                    strip-file-url
                    paths/expand-home)]
-    (when (and (seq s) (re-find image-extension-pattern s))
+    (when (and (seq s) (re-find media-extension-pattern s))
       (let
         [f (File. s)
          f
@@ -316,20 +370,25 @@
         :else (str n "B")))
 
 (defn- oversize-skip
-  [^File f ^long max-bytes]
+  [^File f ^long limit]
   {:path (.getAbsolutePath f)
-   :reason
-   (str (size-label (.length f)) " exceeds the " (size-label max-bytes) " attachment limit")})
+   :reason (str (size-label (.length f)) " exceeds the " (size-label limit) " attachment limit")})
 
 (defn- storable-limit
   "Byte ceiling for STORING one attachment of `media-type`. A container the wire
    takes verbatim must already fit the per-image cap. A container that is
    rasterized on the way OUT (BMP, SVG) is allowed `oversize-rescue-factor` x
-   that, because rendering it routinely lands far under the cap — and the cap
+   that, because rendering it routinely lands far under the cap -- and the cap
    that decides is the one applied to the bytes that actually go on the wire
-   (see [[wire-image]])."
+   (see [[wire-image]]).
+
+   A CLIP answers to [[max-video-bytes]] instead: the per-image cap is a
+   PROVIDER limit, and no clip ever reaches a provider in its own container --
+   it leaves as a small GIF, which is the payload the cap then judges."
   ^long [media-type ^long max-bytes]
-  (if (provider-image-media-type? media-type) max-bytes (* oversize-rescue-factor max-bytes)))
+  (cond (provider-image-media-type? media-type) max-bytes
+        (video-media-type? media-type) max-video-bytes
+        :else (* oversize-rescue-factor max-bytes)))
 
 (defn- attach-file
   "Read one image file and keep it EXACTLY as it sits on disk: original bytes,
@@ -348,10 +407,13 @@
      (Files/readAllBytes (.toPath f))
 
      size
-     (alength raw)]
+     (alength raw)
 
-    (if (> size (storable-limit mime max-bytes))
-      {:reason (str (size-label size) " exceeds the " (size-label max-bytes) " attachment limit")}
+     limit
+     (storable-limit mime max-bytes)]
+
+    (if (> size limit)
+      {:reason (str (size-label size) " exceeds the " (size-label limit) " attachment limit")}
       {:path (.getAbsolutePath f)
        :filename (.getName f)
        :media-type mime
@@ -359,18 +421,18 @@
        :size size
        :size-label (size-label size)})))
 
-(defn- resolved-image-files
+(defn- resolved-media-files
   "Ordered, de-duped `[canonical-path File]` pairs for every path-shaped
-   token in `text` that resolves to a readable image-extension file.
-   The magic-byte sniff still owns the final image verdict downstream.
+   token in `text` that resolves to a readable image- or video-extension file.
+   The magic-byte sniff still owns the final verdict downstream.
 
-   Fast path: if the whole message contains no image-extension substring
+   Fast path: if the whole message contains no media-extension substring
    at all we return `[]` after a single linear scan, skipping the
    tokenization + per-candidate filesystem work that dominates the cost on
-   large non-image pastes (the common case on every turn)."
+   large non-media pastes (the common case on every turn)."
   [text workspace-root]
   (let [s (str text)]
-    (if-not (re-find image-extension-present-pattern s)
+    (if-not (re-find media-extension-present-pattern s)
       []
       (into []
             (comp (keep #(resolve-candidate % workspace-root))
@@ -398,7 +460,7 @@
                            :size-label (size-label (.length f))
                            :filename (.getName f)})
                         (catch Throwable _ nil))))
-           (resolved-image-files text workspace-root)))))
+           (resolved-media-files text workspace-root)))))
 
 (defn collect-user-images
   "Scan `text` (one user message) for paths of readable image files and
@@ -421,30 +483,30 @@
      :or {max-bytes max-image-bytes max-images max-image-count}}]
    (if (str/blank? (str text))
      {:attached [] :skipped []}
-     (let [files (resolved-image-files text workspace-root)]
-       (reduce (fn [acc [_canonical ^File f]]
-                 (try (if-let [mime (sniff-file-mime f)]
-                        (cond (> (.length f) (* oversize-rescue-factor (long max-bytes)))
-                              (update acc :skipped conj (oversize-skip f max-bytes))
-                              (>= (count (:attached acc)) (long max-images))
-                              (update acc
-                                      :skipped
-                                      conj
-                                      {:path (.getAbsolutePath f)
-                                       :reason (str "attachment limit of "
-                                                    max-images
-                                                    " images per message reached")})
-                              :else (let [res (attach-file f mime (long max-bytes))]
-                                      (if (:reason res)
-                                        (update acc
-                                                :skipped
-                                                conj
-                                                {:path (.getAbsolutePath f) :reason (:reason res)})
-                                        (update acc :attached conj res))))
-                        acc)
-                      (catch Throwable _ acc)))
-               {:attached [] :skipped []}
-               files)))))
+     (let [files (resolved-media-files text workspace-root)]
+       (reduce
+         (fn [acc [_canonical ^File f]]
+           (try
+             (if-let [mime (sniff-file-mime f)]
+               (cond
+                 (> (.length f) (storable-limit mime (long max-bytes)))
+                 (update acc :skipped conj (oversize-skip f (storable-limit mime (long max-bytes))))
+                 (>= (count (:attached acc)) (long max-images))
+                 (update acc
+                         :skipped
+                         conj
+                         {:path (.getAbsolutePath f)
+                          :reason
+                          (str "attachment limit of " max-images " images per message reached")})
+                 :else
+                 (let [res (attach-file f mime (long max-bytes))]
+                   (if (:reason res)
+                     (update acc :skipped conj {:path (.getAbsolutePath f) :reason (:reason res)})
+                     (update acc :attached conj res))))
+               acc)
+             (catch Throwable _ acc)))
+         {:attached [] :skipped []}
+         files)))))
 
 (defn- strip-data-url-prefix
   "Drop a `data:<mime>;base64,` prefix if the payload arrived as a data URL."
@@ -483,21 +545,24 @@
             (.decode (Base64/getDecoder) payload)
 
             mime
-            (detect-image-mime raw)
+            (detect-media-mime raw)
 
             size
             (alength raw)]
 
            (cond (nil? mime)
-                 (update acc :skipped conj {:path label :reason "not a supported still image"})
+                 (update acc :skipped conj {:path label :reason "not a supported image or video"})
                  (> size (storable-limit mime (long max-bytes)))
                  (update acc
                          :skipped
                          conj
                          {:path label
+                          ;; The EFFECTIVE ceiling, not the per-image cap: a clip
+                          ;; answers to `max-video-bytes`, so quoting `max-bytes`
+                          ;; here would tell the user 5 MB when 32 MB was allowed.
                           :reason (str (size-label size)
                                        " exceeds the "
-                                       (size-label max-bytes)
+                                       (size-label (storable-limit mime (long max-bytes)))
                                        " attachment limit")})
                  (>= (count (:attached acc)) (long max-images))
                  (update acc
@@ -531,10 +596,10 @@
    the picture."
   [text]
   (let [s (str (or text ""))]
-    (if-not (re-find image-extension-present-pattern s)
+    (if-not (re-find media-extension-present-pattern s)
       s
       (str/replace s
-                   image-path-token-pattern
+                   media-path-token-pattern
                    (fn [m]
                      (let
                        [clean (-> (str m)
@@ -590,16 +655,18 @@
   [attachment]
   (true? (:is-display-only attachment)))
 
-(defn- image-candidate?
-  "True when an attachment CLAIMS a still image and is therefore worth decoding
-   at send time. A generic `vis_attach` artifact (csv/json/pdf/wav/…) is DB- and
-   display-only and must never cost a base64 decode on every turn, and a BLANK
-   media type never counts: unverifiable bytes an image block would have to
-   label `image/png` are exactly the thing that bricks a session."
+(defn- media-candidate?
+  "True when an attachment CLAIMS a still image or a clip and is therefore worth
+   decoding at send time. A generic `vis_attach` artifact (csv/json/pdf/wav/...)
+   is DB- and display-only and must never cost a base64 decode on every turn,
+   and a BLANK media type never counts: unverifiable bytes an image block would
+   have to label `image/png` are exactly the thing that bricks a session."
   [media-type]
   (let [mt (str/lower-case (str/trim (str media-type)))]
     (and (not (str/blank? mt))
-         (or (str/starts-with? mt "image/") (image-convert/svg-media-type? mt)))))
+         (or (str/starts-with? mt "image/")
+             (str/starts-with? mt "video/")
+             (image-convert/svg-media-type? mt)))))
 
 (def ^:private wire-cache-max-entries "Distinct payloads whose send verdict is remembered." 64)
 
@@ -652,6 +719,28 @@
                           {:order order :entries entries :bytes total}))))
   verdict)
 
+(defn- video-verdict
+  "The send verdict for a CLIP, which no vision wire accepts in any container.
+   The clip is sampled across its whole length into a small animated GIF
+   ([[com.blockether.vis.internal.image-convert/video->wire-gif]]) -- a format
+   every provider reads as an image -- so a dropped screen recording is
+   something the model can actually WATCH instead of a filename it is told
+   about. Refused only when the track cannot be decoded (HEVC/AV1/VP9, a
+   corrupt container) or the GIF still does not fit."
+  [^bytes raw media-type ^long max-bytes]
+  (let [gif (image-convert/video->wire-gif raw nil)]
+    (cond (nil? gif) {:reason (str media-type " cannot be turned into a picture on this build")}
+          (:reason gif) {:reason (:reason gif)}
+          :else (let [fitted (image-convert/fit-within ^bytes (:bytes gif) max-bytes)]
+                  (if (> (alength ^bytes fitted) max-bytes)
+                    {:reason (str (size-label (alength ^bytes fitted))
+                                  " exceeds the "
+                                  (size-label max-bytes)
+                                  " attachment limit")}
+                    {:media-type "image/gif"
+                     :size (alength ^bytes fitted)
+                     :base64 (.encodeToString (Base64/getEncoder) ^bytes fitted)})))))
+
 (defn- wire-verdict
   "The send verdict for ONE payload, uncached.
 
@@ -667,8 +756,12 @@
          ;; sniff covers everything vis stores. A type the sniff does not know
          ;; (tiff, heic, an inline upload's own label) still reaches the decoder
          ;; below, which sniffs for itself.
-         mt (or (detect-image-mime raw) declared)
-         safe (image-convert/to-provider-safe raw mt)
+         mt (or (detect-media-mime raw) declared)
+         ;; A clip takes its own path: no wire reads a video container, and
+         ;; handing these bytes to the STILL decoder is a wasted full read of
+         ;; every byte the user dropped.
+         video? (video-media-type? mt)
+         safe (when-not video? (image-convert/to-provider-safe raw mt))
          ;; Over the cap is NOT the same as unsendable. The real optimisers get
          ;; one shot at it (lossless first, then the imaging library's own
          ;; ladder) instead of the picture being dropped; a payload that already
@@ -676,25 +769,26 @@
          fitted (some-> ^bytes (:bytes safe)
                         (image-convert/fit-within max-bytes))]
 
-        (cond
-          ;; Conversion unavailable (a build with no imaging cdylib): a container
-          ;; the wire already accepts still goes out unverified — best effort
-          ;; beats a blind turn — and nothing else can be made sendable at all.
-          (nil? safe) (if (provider-image-media-type? mt)
-                        {:media-type mt :size (alength ^bytes raw)}
-                        {:reason (unsupported-media-reason mt)})
-          (not (provider-image-media-type? (:media-type safe)))
-          {:reason (or (:reason safe) (unsupported-media-reason mt))}
-          (> (alength ^bytes fitted) max-bytes) {:reason (str (size-label (alength ^bytes fitted))
-                                                              " exceeds the "
-                                                              (size-label max-bytes)
-                                                              " attachment limit")}
-          ;; Byte-identical: the payload was already wire-safe AND decoded, so
-          ;; the caller's base64 is reused rather than re-encoded.
-          (identical? fitted raw) {:media-type (:media-type safe) :size (alength ^bytes raw)}
-          :else {:media-type (or (detect-image-mime fitted) (:media-type safe))
-                 :size (alength ^bytes fitted)
-                 :base64 (.encodeToString (Base64/getEncoder) ^bytes fitted)})))))
+        (cond video? (video-verdict raw mt max-bytes)
+              ;; Conversion unavailable (a build with no imaging cdylib): a container
+              ;; the wire already accepts still goes out unverified — best effort
+              ;; beats a blind turn — and nothing else can be made sendable at all.
+              (nil? safe) (if (provider-image-media-type? mt)
+                            {:media-type mt :size (alength ^bytes raw)}
+                            {:reason (unsupported-media-reason mt)})
+              (not (provider-image-media-type? (:media-type safe)))
+              {:reason (or (:reason safe) (unsupported-media-reason mt))}
+              (> (alength ^bytes fitted) max-bytes) {:reason (str (size-label (alength ^bytes
+                                                                                       fitted))
+                                                                  " exceeds the "
+                                                                  (size-label max-bytes)
+                                                                  " attachment limit")}
+              ;; Byte-identical: the payload was already wire-safe AND decoded, so
+              ;; the caller's base64 is reused rather than re-encoded.
+              (identical? fitted raw) {:media-type (:media-type safe) :size (alength ^bytes raw)}
+              :else {:media-type (or (detect-image-mime fitted) (:media-type safe))
+                     :size (alength ^bytes fitted)
+                     :base64 (.encodeToString (Base64/getEncoder) ^bytes fitted)})))))
 
 (defn wire-image
   "ONE stored attachment as the wire will actually carry it — the single gate
@@ -713,6 +807,7 @@
      * JPEG / PNG / GIF / WebP — decoded to prove they are pixels, then sent
        BYTE-IDENTICAL (a header sniff is not a picture)
      * SVG / SVGZ            — rasterized to PNG (no wire reads markup)
+     * MP4 / QuickTime       — sampled into an animated GIF (no wire takes a clip)
      * BMP, TIFF, anything else the decoder reads — re-containered to PNG
      * HEIC/AVIF, a corrupt raster, an image past the decoder's limits —
        refused, with the decoder's own words
@@ -733,7 +828,7 @@
       payload
       (strip-data-url-prefix (str base64))]
 
-     (when (and (image-candidate? declared) (not (str/blank? payload)))
+     (when (and (media-candidate? declared) (not (str/blank? payload)))
        (let
          [k
           (content-key payload declared (long max-bytes))

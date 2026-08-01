@@ -33,7 +33,8 @@
             [clojure.string :as str]
             [com.blockether.imaging :as img]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg])
-  (:import [java.io File]))
+  (:import [com.googlecode.lanterna.terminal.image TerminalImage]
+           [java.io File]))
 
 
 ;; ── Tunables ────────────────────────────────────────────────────────────────
@@ -51,53 +52,37 @@
    no vision wire would accept anyway."
   480)
 
-(def ^:private still-image-brands
-  "ISO-BMFF brands that are STILL IMAGES in an MP4-shaped box structure. HEIF /
-   AVIF files carry the very same `ftyp` signature as a movie, so brand-blind
-   sniffing would hand a photo to the video decoder."
-  #{"heic" "heix" "heim" "heis" "hevc" "hevx" "mif1" "msf1" "avif" "avis"})
-
 ;; ── Sniffing ────────────────────────────────────────────────────────────────
-
-(defn- ascii-at
-  "`n` ASCII chars of `b` at `offset`, or nil when the array is too short."
-  [^bytes b ^long offset ^long n]
-  (when (and b (>= (alength b) (+ offset n)))
-    (str/join (for [i (range offset (+ offset n))]
-                (char (bit-and (aget b (int i)) 0xff))))))
+;;
+;; The container sniff itself lives in the lanterna fork's `TerminalImage`: it is
+;; the same brand table the terminal-side probe uses to size a clip without
+;; decoding it, so a HEIF photo cannot be mistaken for a movie by one half of the
+;; stack and not the other.
 
 (defn mp4?
   "True when `data` begins with an ISO base-media (`ftyp`) box whose major brand
    is a VIDEO brand — `.mp4`, `.m4v` and `.mov` all land here. HEIF/AVIF still
-   images share the container and are rejected via [[still-image-brands]]."
+   images share the container and are rejected by the fork's brand table."
   [^bytes data]
-  (boolean (and (= "ftyp" (ascii-at data 4 4))
-                (when-let [brand (ascii-at data 8 4)]
-                  (not (still-image-brands (str/lower-case (str/trim brand))))))))
+  (TerminalImage/isVideoHead data))
 
 (defn- io-file ^File [x] (if (instance? File x) x (io/file (str x))))
 
 (defn video-file?
   "True when `src` is an existing readable file whose FIRST BYTES are a video
-   `ftyp` box — 16 bytes read, no decode and no index walk. This is the cheap
+   `ftyp` box — 12 bytes read, no decode and no index walk. This is the cheap
    gate every still-image surface uses to ask \"is this thing a clip?\" before
-   spending a poster frame on it, so it must stay allocation-free and total."
+   spending a poster frame on it, so it must stay allocation-free and total; the
+   fork's `isVideoFile` is exactly that."
   [src]
-  (let [file (io-file src)]
-    (boolean (try (and (.isFile file)
-                       (mp4? (with-open [in (io/input-stream file)]
-                               (.readNBytes in 16))))
-                  (catch Throwable _ false)))))
+  (TerminalImage/isVideoFile (.getPath (io-file src))))
 
 (defn media-type
   "The `video/…` media type for `src`, or nil when it is not a clip we can open.
    The NAME only picks the label (`.mov` → `video/quicktime`); the verdict is
    always the magic-byte sniff, so a mislabelled file cannot fool a caller."
   [src]
-  (when (video-file? src)
-    (if (str/ends-with? (str/lower-case (.getName (io-file src))) ".mov")
-      "video/quicktime"
-      "video/mp4")))
+  (TerminalImage/probeVideoMime (.getPath (io-file src))))
 
 ;; ── Metadata ────────────────────────────────────────────────────────────────
 
