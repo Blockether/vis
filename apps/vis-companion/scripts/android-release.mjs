@@ -12,18 +12,19 @@
  *
  * Tracks — "public testing" on Play is the `beta` track (Open testing), the closest thing
  * to a TestFlight public link. Anyone with the link joins, no invite, no per-tester list:
- *   --track internal    up to 100 named testers, no review wait          (default)
+ *   --track internal    up to 100 named testers, no review wait
  *   --track alpha       closed testing, tester lists/groups
- *   --track beta        OPEN testing — the public one
+ *   --track beta        OPEN testing — the public one                     (default)
  *   --track production  the store itself
  *
  * Usage (workflow/store recovery only; normal releases use `npm run release:android`):
- *   npm run release:android:store                          # build + sign + internal track
- *   npm run release:android:store -- --track beta          # public open testing
+ *   npm run release:android:store                          # build + sign + beta/open testing
+ *   npm run release:android:store -- --track internal      # named internal testers only
  *   npm run release:android:store -- --no-upload           # stop at the signed .aab
  *   npm run release:android:store -- --draft               # upload, do not release
  *   npm run release:android:store -- --rollout 0.1         # staged 10% (production/beta)
  *   npm run release:android:store -- --skip-web            # reuse dist/ and the last cap sync
+ *   npm run release:android:store -- --reuse-existing --build 2861 # promote without re-upload
  *   npm run release:android:store -- --tracks              # just print what each track serves
  *
  * Credentials: env first, then the macOS login keychain (scripts/secrets.mjs) —
