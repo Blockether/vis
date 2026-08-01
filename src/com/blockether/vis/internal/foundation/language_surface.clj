@@ -994,14 +994,14 @@
      :native-tool? true
      :result
      (str
-       "String-keyed `op` object with `language`, severity counts, `files`, `findings`, `providers`, "
-       "`by-cwd`; stdin adds `snippet`, path runs `targets`. Findings have `file`/`row`/`col`, "
-       "`level`, `type`, `message`, optional `provider`.")
-     :description "Lint code or paths without changing files."
+       "String-keyed `op` object: `language`, severity counts, `files,findings,providers,by-cwd`; "
+       "stdin adds `snippet`, paths add `targets`. Findings use `file,row,col,level,type,message` "
+       "and optional `provider`.")
+     :description "Lint code/paths without edits."
      :render render-lint-result
      :color-role :tool-color/read
      :schema {:type "object"
-              :properties {"language" {:type "string" :minLength 1 :description "Language pack."}
+              :properties {"language" {:type "string" :minLength 1 :description "Pack."}
                            "code" {:type "string" :description "Source; not with `paths`."}
                            "paths" {:type "array"
                                     :items {:type "string" :minLength 1}
