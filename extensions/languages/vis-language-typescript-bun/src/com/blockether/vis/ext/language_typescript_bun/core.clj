@@ -335,7 +335,7 @@
   (vis/extension
     {:ext/name "language-typescript-bun"
      :ext/description
-     "TypeScript/JavaScript (Bun) language pack: a managed Bun REPL (persistent globals, top-level await, reload()) behind the generic repl/repl_eval/repl_stop facade, plus run_tests -> `bun test`. Covers TS/TSX/JS/JSX and activates on Bun/Node workspaces."
+     "Bun TS/JS pack: managed `repl`/`repl_eval` with persistent globals, top-level await, `reload()`; `run_tests` uses `bun test`. Covers TS/TSX/JS/JSX; active in Bun/Node workspaces."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
