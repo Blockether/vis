@@ -995,30 +995,24 @@
     {:symbol 'lint_code
      :native-tool? true
      :result
-     (str
-       "String-keyed object with `op`, `language`, `error`, `warning`, `info`, `files`, `findings`, "
-       "`providers`, `by-cwd`, and (for stdin lints) `snippet`; explicit path runs may add `targets`. "
-       "Each finding uses `file`, `row`, `col`, `level`, `type`, `message`, and `provider` when reported.")
-     :description
-     "Run the active language pack's linter on source or project files. Returns findings and severity counts without changing files."
+     (str "String-keyed `op` object: `language`, `error`, `warning`, `info`, `files`, `findings`, "
+          "`providers`, `by-cwd`; stdin may add `snippet`, path runs `targets`. "
+          "Finding: `file`, `row`, `col`, `level`, `type`, `message`, optional `provider`.")
+     :description "Lint with the active language pack; does not change files."
      :render render-lint-result
      :color-role :tool-color/read
-     :schema
-     {:type "object"
-      :properties
-      {"language" {:type "string"
-                   :minLength 1
-                   :description
-                   "Language pack (e.g. \"clojure\"); pass it first — inferred when omitted."}
-       "code" {:type "string"
-               :description "Source to lint (returns findings). Mutually exclusive with paths."}
-       "paths" {:type "array"
-                :items {:type "string" :minLength 1}
-                :minItems 1
-                :description
-                "Lint these files/dirs; OMIT to lint the workspace's default source paths."}}
-      :required []
-      :additionalProperties false}
+     :schema {:type "object"
+              :properties {"language" {:type "string"
+                                       :minLength 1
+                                       :description
+                                       "Language pack (e.g. \"clojure\"); first if supplied."}
+                           "code" {:type "string" :description "Source; exclusive with `paths`."}
+                           "paths" {:type "array"
+                                    :items {:type "string" :minLength 1}
+                                    :minItems 1
+                                    :description "files/dirs; OMIT for default source paths."}}
+              :required []
+              :additionalProperties false}
      :inject-env? true
      :tag :observation}))
 
@@ -1115,46 +1109,35 @@
      :native-tool? true
      :result
      (str
-       "Pack-defined string-keyed lifecycle object stamped with `op` for the requested directory, "
-       "never a `{resources: [...]}` list. Clojure status includes `result`, `id`, `cwd`, and "
-       "`status`; Python/Bun status includes `cwd` and `status`. Start/restart/connect may add "
-       "`running`, `port`, `pid`, `cmd`, `tool`, `aliases`, `external`, `host`, `log`, or `message`; "
-       "stop by resource id returns `{result,id,message}`.")
+       "String-keyed lifecycle result stamped with `op`, never a `{resources: [...]}` list. "
+       "Clojure status may include `result`, `id`, `cwd`, and `status`; Python/Bun status includes "
+       "`cwd` and `status`. Start/restart/connect may add `running`, `port`, `pid`, `cmd`, `tool`, "
+       "`aliases`, `external`, `host`, `log`, or `message`; stop by id returns "
+       "`{result,id,message}`.")
      :description
      (str
-       "THE one REPL lifecycle tool. Read `session[\"resources\"][\"repls\"][language][cwd]` "
-       "(`.` is root) FIRST, then pick `op`: already `up` → reuse it, no call needed (`starting` → "
-       "recheck); \"start\" for absent/down/failed; \"restart\" for unresponsive; \"stop\" ends a "
-       "managed REPL you started (by `id`, else `cwd`'s); \"connect\" attaches an EXTERNAL running "
-       "REPL by `port` — never owned or killed, so stopping it only detaches; \"status\" reports "
+       "THE one REPL lifecycle tool. Read `session[\"resources\"][\"repls\"][language][cwd]` first "
+       "(`.` is root). Reuse `up` without a call; recheck `starting`; \"start\" for "
+       "absent/down/failed; \"restart\" if unresponsive; \"stop\" ends a managed REPL you started; "
+       "\"connect\" attaches an external REPL by port and stop only detaches; \"status\" reports "
        "that directory's lifecycle state.")
      :call {:lead-opt "language" :rest :always}
      :render render-repl-start-result
      :color-role :tool-color/shell
-     :schema {:type "object"
-              :properties
-              {"language" {:type "string"
-                           :minLength 1
-                           :description "Language pack (e.g. \"clojure\"); REQUIRED first arg."}
-               "op" {:type "string"
-                     :enum ["start" "restart" "connect" "stop" "status"]
-                     :description "Lifecycle operation (default \"start\")."}
-               "id" {:type "string"
-                     :minLength 1
-                     :description "Lifecycle resource id (stop: the exact REPL to stop)."}
-               "cwd"
-               {:type "string"
-                :minLength 1
-                :description
-                "Directory the REPL serves (connect: the directory the attachment is keyed by)."}
-               "port" {:type "integer"
-                       :description "connect only: port of the already-running external REPL."}
-               "host" {:type "string" :description "connect only: its host (default localhost)."}
-               "aliases" {:type "array"
-                          :items {:type "string"}
-                          :description "Build-tool aliases to activate (e.g. deps.edn :dev)."}}
-              :required ["language"]
-              :additionalProperties false}
+     :schema
+     {:type "object"
+      :properties
+      {"language" {:type "string" :minLength 1 :description "Language pack; REQUIRED first arg."}
+       "op" {:type "string"
+             :enum ["start" "restart" "connect" "stop" "status"]
+             :description "Operation (default \"start\")."}
+       "id" {:type "string" :minLength 1 :description "Resource id; exact id for stop."}
+       "cwd" {:type "string" :minLength 1 :description "Served directory; connect attachment key."}
+       "port" {:type "integer" :description "External REPL port; connect only."}
+       "host" {:type "string" :description "External host; connect only (localhost)."}
+       "aliases" {:type "array" :items {:type "string"} :description "Build-tool aliases."}}
+      :required ["language"]
+      :additionalProperties false}
      :inject-env? true
      :tag :mutation}))
 

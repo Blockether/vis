@@ -3671,22 +3671,26 @@ export function SessionScreen({
           {error && <Banner kind="err">{error}</Banner>}
 
           <>
-          {/* The empty state FILLS the scroller instead of reserving a fixed
-              `55vh`: the shell is pinned to the VISUAL viewport, so raising the
-              keyboard shrinks this box while `vh` keeps measuring the untouched
-              layout viewport. The mark was then taller than the space it lived
-              in — pushed off the top and visibly off-centre. */}
+          {/* Keep the new-session cue fluid: it shares the scroller's available
+              height, including when a software keyboard changes it. The mark is
+              intentionally unframed so the brand feels like part of the canvas,
+              not a small dialog inside it. */}
           {!turns.length && !liveTurn ? (
-            <div className="flex min-h-0 flex-1 flex-col items-center justify-center text-center transition-[opacity,transform,translate,scale,rotate] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
-              <div className="grid size-9 place-items-center border border-dialog-edge bg-panel-2" aria-hidden="true">
-                <img src="/vis-logo.png" alt="" className="h-5 w-6 object-contain" />
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-3 text-center transition-[opacity,transform,translate,scale,rotate] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
+              <img
+                src="/vis-logo.png"
+                alt=""
+                className="w-14 max-w-full object-contain sm:w-16"
+                aria-hidden="true"
+              />
+              <div className="mt-4 max-w-md">
+                <h2 className="text-head font-semibold text-dialog-foreground">What would you like to work on?</h2>
+                <p className="mt-1 text-body text-dialog-hint">
+                  Describe a task, ask a question, or add a screenshot to get started.
+                </p>
               </div>
-              <h2 className="mb-1 mt-3 text-title font-semibold">Start a conversation</h2>
-              <p className="max-w-sm text-body text-dialog-hint">
-                This session is ready. Ask Vis to inspect, explain, or change your project.
-              </p>
             </div>
-              ) : null}
+          ) : null}
 
           {earlierTotal > 0 && (
             <div className="mb-5 flex justify-center">
