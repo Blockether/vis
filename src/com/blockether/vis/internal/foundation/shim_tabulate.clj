@@ -33,7 +33,7 @@
      [{:shim/name "tabulate"
        :shim/imports ["tabulate"]
        :shim/description
-       "tabulate-compatible `tabulate` in pure Python. Not supported: only common tablefmts (plain/simple/github/pipe/grid/fancy_grid/rst/tsv/html); exotic formats and colored output."
+       "`tabulate`-compatible, pure Python. Formats: plain/simple/github/pipe/grid/fancy_grid/rst/tsv/html. No exotic formats or color."
        :shim/source "vis-shims/tabulate.py"}]}))
 
 (vis/register-extension! vis-extension)
