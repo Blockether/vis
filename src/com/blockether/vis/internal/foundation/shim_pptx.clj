@@ -33,7 +33,7 @@
   (vis/extension
     {:ext/name "foundation-shim-pptx"
      :ext/description
-     "Sandbox shim: a python-pptx-compatible module (Presentation, slides/slide_layouts, shapes with add_textbox/add_shape/add_picture/add_table/add_connector, placeholders, text frames with paragraphs/runs/fonts, fills, outlines, tables, notes, core properties, Emu/Pt/Inches/Cm units, RGBColor, PP_ALIGN/MSO_ANCHOR/MSO_SHAPE) backed by com.blockether/imaging's Rust OOXML writer. GraalPy can't install the CPython package; this makes `from pptx import Presentation` produce real .pptx files with no pip, no native wheel and no JVM document model."
+     "Sandbox python-pptx subset backed by com.blockether/imaging's Rust OOXML writer: Presentation/slides/layouts; text, pictures, shapes, tables, connectors, notes, properties, units, colors, fills/outlines, and common enums. Produces real `.pptx` files without pip/native wheel/JVM document model; no opening existing files, charts, or SmartArt."
      :ext/version "0.2.0"
      :ext/author "Blockether"
      :ext/owner "vis"
