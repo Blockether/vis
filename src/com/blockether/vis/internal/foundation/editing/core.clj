@@ -7038,16 +7038,15 @@
      :native-tool? false
      ;; copy(src, dest, {opts}) — two positionals, the rest an options dict.
      :call {:pos ["src" "dest"] :rest :opt}
-     :description
-     "Copy a confined file or directory. Existing destinations fail unless overwrite is explicitly enabled."
+     :description "Copy a confined file or directory; existing destinations require `is_overwrite`."
      :render render-copy-result
      :color-role :tool-color/move
      :schema {:type "object"
-              :properties {"src" {:type "string" :description "Source path."}
-                           "dest" {:type "string" :description "Destination path."}
+              :properties {"src" {:type "string" :description "Source."}
+                           "dest" {:type "string" :description "Destination."}
                            "is_overwrite" {:type "boolean"
                                            :description
-                                           "Overwrite an existing dest (default false)."}}
+                                           "Replace an existing destination (default false)."}}
               :required ["src" "dest"]
               :additionalProperties false}
      :before-fn (path-protected-before-fn :copy :path :write first-two-arg-paths)
