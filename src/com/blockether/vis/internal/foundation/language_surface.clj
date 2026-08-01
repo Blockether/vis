@@ -917,9 +917,7 @@
              envelope))))))
 
 (defn repl-eval
-  "Evaluate code in an already-running project REPL. ALWAYS pass the language
-   FIRST — repl_eval(language, arg). `arg` may include `id`/`repl_id`, `cwd`,
-   and `timeout_ms`; `cwd` defaults to the workspace root."
+  "Evaluate code in an already-running project REPL: `repl_eval(language,arg)`. Pass `language` first. `arg` may set `id`/`repl_id`, `cwd` (workspace root by default), and `timeout_ms`."
   [env & args]
   (dispatch! env :repl-eval-fn args))
 
