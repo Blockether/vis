@@ -5899,15 +5899,15 @@
      :native-tool? true
      :result
      (str
-       "String-keyed `{results, occurrences?}`. `results` has one row per requested file with `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, and `ranges`. "
-       "With `include_occurrences`, `occurrences` groups each declared identifier as `name`, definition `symbols` (`path`, `anchor`, `end_anchor`, `kind`, `visibility`, `signature`, `use_count`, `uses` as `{path, anchors}`), conservative `other_uses`, `count`, `definition_count`, `scanned`, and `failed`. "
-       "No source text: use a row's `anchor` with `struct_nodes` (verbatim node + cursor) or `cat` (anchored lines).")
+       "`{results, occurrences?}` has string keys. `results` preserves one row/file: `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, `ranges`. "
+       "With `include_occurrences`, each declared-name group has `name`; definition `symbols` (`path`, `anchor`, `end_anchor`, `kind`, `visibility`, `signature`, `use_count`, `uses` as `{path, anchors}`); conservative `other_uses`; `count`, `definition_count`, `scanned`, `failed`. "
+       "No source: use row `anchor` in `struct_nodes` (verbatim node + cursor) or `cat` (anchored lines).")
      :active-fn structural-supported?
      :description
      (str
-       "Inspect supported source before bodies: imports, a nested definition skeleton, signatures, doc gists, "
-       "and fresh start/end anchors for `cat`/`struct_patch`. `include_occurrences` traces each indexed "
-       "definition's syntactic occurrences across the supplied files.")
+       "Inspect supported source before bodies: imports, nested definition skeleton, signatures, doc gists, and "
+       "fresh start/end anchors for `cat`/`struct_patch`. `include_occurrences` traces each indexed definition's "
+       "syntactic occurrences across supplied files.")
      :render render-index-result
      :color-role :tool-color/read
      :schema
@@ -5919,30 +5919,28 @@
                         {:type "object"
                          :properties
                          {"path" {:type "string" :minLength 1}
-                          "ranges" {:type "array"
-                                    :items
-                                    {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
-                                    :minItems 1
-                                    :description
-                                    "Windows for THIS path only; overrides the shared `ranges`."}}
+                          "ranges"
+                          {:type "array"
+                           :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
+                           :minItems 1
+                           :description "THIS path's windows; override shared `ranges`."}}
                          :required ["path"]
                          :additionalProperties false}]}
         :minItems 1
         :description
         (str
-          "Exact physical source paths from grep/cat/struct_index; copy unchanged and batch them. Shared "
-          "`ranges` apply to all entries; `{\"path\":\"…\",\"ranges\":[[a,b]]}` overrides one file. "
-          "`include_occurrences` traces definitions across exactly these files.")}
+          "Exact physical source paths from grep/cat/struct_index; copy unchanged and batch. Shared `ranges` "
+          "apply to all; object entries override one file. `include_occurrences` traces only these files.")}
        "include_occurrences"
        {:type "boolean"
         :description
-        "True includes syntactic occurrence groups for every indexed definition; false/omitted returns only results."}
+        "True adds each indexed definition's syntactic occurrence group; omit/false returns only `results`."}
        "ranges"
        {:type "array"
         :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
         :minItems 1
         :description
-        "1-based inclusive `[[start,end],…]` windows. Keep a definition if its span intersects any; `line_count` remains whole-file."}}
+        "`[[start,end],…]` are 1-based inclusive; keep definitions intersecting any window. `line_count` stays whole-file."}}
       :required ["paths"]
       :additionalProperties false}
      :before-fn (path-protected-before-fn :struct_index :file :read read-arg-paths)
