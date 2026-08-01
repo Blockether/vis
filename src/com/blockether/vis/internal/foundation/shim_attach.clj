@@ -194,7 +194,7 @@
        :shim/globals ["vis_attach" "vis_attach_bytes" "vis_attachments" "vis_read_attachment"
                       "vis_reinspect_attachment"]
        :shim/description
-       "vis_attach / vis_attach_bytes: persist a produced artifact as a durable iteration attachment (DB-owned bytes, media-type sniffed). vis-native helper — no upstream Python library."
+       "`vis_attach`/`vis_attach_bytes`: persist artifacts as durable DB-owned iteration attachments with sniffed media types. Vis-native; no upstream library."
        :shim/bindings attach-bridge-bindings
        :shim/source "vis-shims/attach.py"}]}))
 
