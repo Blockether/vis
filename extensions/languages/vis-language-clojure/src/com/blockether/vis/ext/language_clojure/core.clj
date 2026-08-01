@@ -1218,7 +1218,7 @@
   (vis/extension
     {:ext/name "language-clojure"
      :ext/description
-     "Clojure language pack: managed nREPL resources, generic language-surface handlers for format/test/repl, and format/paren-repair tooling. Activates only when the workspace has Clojure sources."
+     "Clojure pack: managed nREPL; generic format/lint/test/repl handlers; formatting and delimiter repair. Active only in Clojure workspaces."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
