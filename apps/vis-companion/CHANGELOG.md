@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.17 (2849) — 2026-08-01
+<!-- commit: e1e9c7743a054f472fd4d6e35e7eabe7d4dc0cca -->
+
+- Smoother keyboard show/hide and rotation: the app shell now tracks the visual viewport through CSS custom properties instead of React state, so the screen no longer re-renders on every keyboard/rotation frame
+- Pasted blocks in your messages are now full-width with wider spacing
+
 ## 0.1.16 (2846) — 2026-08-01
 <!-- commit: 68352e07b671b3aad7b3b1e53087c8699423ab03 -->
 
