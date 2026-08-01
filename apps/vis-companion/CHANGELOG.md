@@ -2,6 +2,11 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.18 (2851) — 2026-08-01
+<!-- commit: d5f4f08cf0cb184cdc2df14da7642baa8ca4b896 -->
+
+- Faster keyboard show/hide and orientation change: the app shell no longer sits on its own composited layer, so raising the keyboard and rotating re-run layout only instead of re-rasterizing the whole screen every frame (fixes a regression from 0.1.17)
+
 ## 0.1.17 (2849) — 2026-08-01
 <!-- commit: e1e9c7743a054f472fd4d6e35e7eabe7d4dc0cca -->
 
