@@ -120,7 +120,7 @@
   (vis/extension
     {:ext/name "foundation-shim-tzdata"
      :ext/description
-     "Sandbox shim: `zoneinfo`, `pytz`, `tzdata` and `dateutil` (tz/parser/relativedelta) backed by the JVM java.time IANA zone database. Fixes the un-catchable getcwd SecurityException the real modules hit under the sandbox's denied filesystem. No pip, no native wheel, no data files."
+     "Sandbox `zoneinfo`/`pytz`/`tzdata`/`dateutil` subset (tz, parser, relativedelta), backed by JVM `java.time` IANA data. Avoids denied-filesystem getcwd failures; no pip/wheel/data files."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
