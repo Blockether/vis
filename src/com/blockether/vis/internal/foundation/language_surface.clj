@@ -1125,28 +1125,22 @@
     {:symbol 'repl_connect
      :native-tool? false
      :description
-     "Attach an external REPL the user already runs. Vis registers it for evaluation but never owns or kills its process; stopping the resource only detaches."
+     "Attach an external, already-running REPL. Vis registers it but never owns or kills its process; stopping only detaches."
      :call {:lead-opt "language" :rest :always}
      :render render-repl-start-result
      :color-role :tool-color/shell
-     :schema
-     {:type "object"
-      :properties
-      {"language" {:type "string"
-                   :minLength 1
-                   :description
-                   "Language pack (e.g. \"clojure\") — REQUIRED; ALWAYS pass it as the first arg."}
-       "port" {:type "integer"
-               :minimum 1
-               :maximum 65535
-               :description "Port of the ALREADY-RUNNING external REPL to attach to."}
-       "host" {:type "string" :description "Its host (default localhost)."}
-       "cwd"
-       {:type "string"
-        :description
-        "Project directory this REPL serves (default the workspace root) — the attachment is keyed and addressed by it."}}
-      :required ["language" "port"]
-      :additionalProperties false}
+     :schema {:type "object"
+              :properties
+              {"language" {:type "string" :minLength 1 :description "REQUIRED first: pack."}
+               "port" {:type "integer"
+                       :minimum 1
+                       :maximum 65535
+                       :description "Already-running external REPL port."}
+               "host" {:type "string" :description "Host (localhost default)."}
+               "cwd" {:type "string"
+                      :description "Served project dir (workspace root default); keys attachment."}}
+              :required ["language" "port"]
+              :additionalProperties false}
      :inject-env? true
      :tag :mutation}))
 
