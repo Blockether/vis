@@ -6017,15 +6017,14 @@
      :native-tool? true
      :result
      (str
-       "String-keyed object with `op`, `query`, `needles`, `searched_paths`, `missing_paths`, `paths`, `matches`, "
-       "`file_counts`, `first_hit`, `hint`, `hit_count`, `file_count`, `total_file_count`, `total_file_count_is_exact`, "
-       "`limit`, `truncated_by`, and `hits_truncated_by`. `matches[path][\"line:hash\"]` is "
-       "`{\"text\":string, \"before\"?:[{\"line\":integer,\"text\":string}], \"after\"?:[{\"line\":integer,\"text\":string}]}`: a mapping of mappings, never a list; "
-       "`before`/`after` are omitted only when empty.")
+       "Fields: `op`, `query`, `needles`, `searched_paths`, `missing_paths`, `paths`, `matches`, `file_counts`, "
+       "`first_hit`, `hint`, `hit_count`, `file_count`, `total_file_count`, `total_file_count_is_exact`, `limit`, "
+       "`truncated_by`, `hits_truncated_by`. `matches={path:{\"line:hash\":{\"text\":string,\"before\"?:"
+       "[{\"line\":integer,\"text\":string}],\"after\"?:[...]}}}` is a mapping of mappings, never a list; "
+       "empty `before`/`after` are omitted.")
      :description
-     (str
-       "Find literal smart-case CONTENT and fuzzy file names—the first move when location is unknown. `query: \"\"` "
-       "lists scoped files. Content is complete when `hits_truncated_by` is null.")
+     (str "Literal smart-case content plus fuzzy filenames; use first when location is unknown. "
+          "`query: \"\"` lists files; null `hits_truncated_by` means complete content.")
      :render render-grep-result
      :color-role :tool-color/search
      :schema
@@ -6034,21 +6033,19 @@
       {"query"
        {:oneOf [{:type "string"} {:type "array" :items {:type "string" :minLength 1} :minItems 1}]
         :description
-        "Literal content or filename fragment; an empty string lists by frecency/recency. A list is OR for content search; filenames use the joined terms."}
+        "Content/filename; an empty string lists by frecency/recency. Arrays are OR for content search; filenames use joined terms."}
        "paths"
        {:type "array"
         :items {:type "string" :minLength 1}
         :description
-        "Scopes (default whole tree). An existing file is searched exactly and never widened on zero hits. A missing scope uses its nearest existing directory and appears in `missing_paths`. Returned `paths` are exact physical paths; pass unchanged, never rebuilt from a language namespace."}
+        "Default: whole tree. Existing files are searched exactly, never widened. Missing scopes use the nearest existing directory and enter `missing_paths`. Reuse exact physical paths; never rebuilt from a language namespace."}
        "include" {:oneOf [{:type "array" :items {:type "string"}} {:type "string"}]
-                  :description "Restrict content search to these globs, e.g. [\"**/*.clj\"]."}
+                  :description "Content globs, e.g. [\"**/*.clj\"]."}
        "context" {:type "integer"
                   :minimum 0
-                  :description "N surrounding lines per hit, returned as before/after (default 0)."}
-       "limit"
-       {:type "integer" :minimum 1 :description "Maximum ranked filename matches (default 50)."}
-       "is_hidden" {:type "boolean"
-                    :description "Also match dotfiles / hidden dirs (default false)."}}
+                  :description "Context lines per hit in before/after (default 0)."}
+       "limit" {:type "integer" :minimum 1 :description "Filename-match cap (default 50)."}
+       "is_hidden" {:type "boolean" :description "Include hidden paths (default false)."}}
       :required ["query"]
       :additionalProperties false}
      :before-fn (path-protected-before-fn :grep :dir :read find-arg-paths)
