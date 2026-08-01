@@ -1218,8 +1218,8 @@
 ;; `vis/symbol` can read both straight off the var.
 (def
   ^{:doc
-    "await session_state(session_id=None)  # current session by default; pass an id for another conversation
-Returns a string-keyed map with `session`, `current_turn`, `failures`, `diagnosis`, `session_forks`, `turn_retries`, \"usage\", and `transcript`. \"usage\" is the compact token/cost/outcome/error/routing ledger; tool rows overlap, so never sum them. Filter `transcript/turns/iterations/blocks` (`code`/`result`) in python_execution; don't dump it. Prefer the live `session` bag for this conversation's current workspace/tool state. This is the recovery path for raw folded current-session content; recovery does not undo fold intents or restore them to model context. Use `sessions()` to find another id."
+    "await session_state(session_id=None)  # current session by default; pass id for another
+String-keyed fields: `session`, `current_turn`, `failures`, `diagnosis`, `session_forks`, `turn_retries`, \"usage\", `transcript`. \"usage\" is compact token/cost/outcome/error/routing; tool rows overlap, so never sum them. Filter `transcript/turns/iterations/blocks` (`code`/`result`) in python_execution; don't dump. Use live `session` for current state. This is the recovery path for raw folded current-session content; it does not undo fold intents or restore them. Find ids via `sessions()`."
     :arglists '([] [session-id])}
   session-state
   foundation-inspect)
@@ -1229,7 +1229,7 @@ Returns a string-keyed map with `session`, `current_turn`, `failures`, `diagnosi
 (def
   ^{:doc
     "await sessions(channel=None)  # newest-first conversation index
-Returns string-keyed metadata rows `{id,channel,title,turn_count,created_at,modified_at}`; optional `channel` filters them. Content lives only behind `session_state(id)`. Filter rows in python_execution; don't stringify and blindly slice the list."
+String-keyed rows: `{id,channel,title,turn_count,created_at,modified_at}`; optional `channel` filter. Content: `session_state(id)`. Filter in python_execution; don't stringify or slice blindly."
     :arglists '([] [channel])}
   sessions
   foundation-sessions)
