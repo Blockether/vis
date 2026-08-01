@@ -1601,16 +1601,21 @@ export const UserMessage = memo(function UserMessage(
         {parts.map((part) => part.type === 'text' ? (
           <span key={part.key}>{part.text}</span>
         ) : part.type === 'image' ? (
-          <span key={part.key} className="my-0.5 inline-flex items-center gap-1 border border-code-edge bg-code px-1.5 py-0.5 align-middle font-mono text-meta text-dialog-hint first:mt-0">
+          <span key={part.key} className="my-1 mr-1 inline-flex items-center gap-1 border border-code-edge bg-code px-2 py-1 align-middle font-mono text-meta text-dialog-hint first:mt-0">
             {part.summary}
           </span>
         ) : (
-          <details key={part.key} className="group my-1 block max-w-full border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0">
-            <summary className="cursor-pointer list-none select-none px-2 py-1 font-mono text-meta font-semibold text-accent-ink marker:hidden [&::-webkit-details-marker]:hidden">
-              <span className="mr-1 inline-block text-dialog-hint transition-transform group-open:rotate-90">▸</span>
+          // Full-bleed to the bubble's own `px-3`: the rules then read as the
+          // bubble's dividers instead of a stray box hairline-close to the
+          // sentence above and below it. Vertical margin is the paste's ONLY
+          // separation from that prose, so it stays wider than the block's own
+          // padding.
+          <details key={part.key} className="group -mx-3 my-3 block max-w-none border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0">
+            <summary className="cursor-pointer list-none select-none px-3 py-2 font-mono text-meta font-semibold text-accent-ink marker:hidden [&::-webkit-details-marker]:hidden">
+              <span className="mr-1.5 inline-block text-dialog-hint transition-transform group-open:rotate-90">▸</span>
               {part.summary}
             </summary>
-            <pre className="max-h-[min(28rem,60dvh)] overflow-auto overscroll-contain border-t border-code-edge px-2 py-2 font-mono text-meta [tab-size:2]">
+            <pre className="max-h-[min(28rem,60dvh)] overflow-auto overscroll-contain border-t border-code-edge px-3 py-2 font-mono text-meta [tab-size:2]">
               <code>{part.content}</code>
             </pre>
           </details>
