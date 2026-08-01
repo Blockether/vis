@@ -307,11 +307,9 @@
 (def
   ^{:doc
     "await git({\"commands\": [[\"status\", \"--short\"], [\"diff\", \"--stat\"]]})
-await git({\"commands\": [[\"add\", \"-A\"], [\"commit\", \"-m\", \"wip: message with spaces\"]]})
+await git({\"commands\": [[\"add\", \"-A\"], [\"commit\", \"-m\", \"message with spaces\"]]})
 
-Run SERIAL host-Git commands in the workspace root. EVERY call takes exactly one map whose `commands` is a non-empty LIST of non-empty LISTS of literal tokens; each inner element is one git argument, safe for commit messages and paths with spaces. Never pass `commands` as a positional array. Commands run in request order, so later mutations see earlier ones. Every command returns exactly `{\"command\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\", \"timed_out\"}` under `{\"commands\" [...]}`. ALL stdout and stderr stay with the command that emitted them.
-
-Gotcha: a non-zero `exit` is DATA to read, not a tool failure; remaining commands run."
+Run host Git serially from the workspace root. Pass ONE map whose non-empty `commands` is a list of non-empty argv lists, with `git` omitted; each token is one literal argument, so paths and messages with spaces are safe. Never pass a positional array. Later commands see earlier mutations. Result: `{\"commands\": [{\"command\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\", \"timed_out\"}, ...]}`; output stays with its command. Non-zero `exit` is data, and later commands still run."
     :arglists '([opts])}
   git
   git-impl)
