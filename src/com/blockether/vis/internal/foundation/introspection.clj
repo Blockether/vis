@@ -1277,7 +1277,7 @@ Returns string-keyed metadata rows `{id,channel,title,turn_count,created_at,modi
   (vis/extension
     {:ext/name "foundation-introspection"
      :ext/description
-     "Session self-introspection: `session_state` (full transcript plus compact usage/tool/provider-routing ledger) and `sessions` (newest-first metadata index), plus guidance for reading `~/.vis/gateway/events/<id>.ndjson`. Bound only while the `introspection` toggle is ON (default OFF)."
+     "`session_state`: transcript + compact usage/tool/routing ledger; `sessions`: newest-first metadata. Raw journal: `~/.vis/gateway/events/<id>.ndjson`. Requires the default-off `introspection` toggle."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
