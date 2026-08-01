@@ -95,7 +95,9 @@ def __vis_install_attach__():
         ]
         print(chr(10).join(lines))
 
-    def vis_attach_bytes(data, filename, kind=None, media_type=None, display_only=False):
+    def vis_attach_bytes(
+        data, filename, kind=None, media_type=None, display_only=False
+    ):
         if isinstance(data, str):
             data = data.encode("utf-8")
         data = bytes(data)
@@ -194,28 +196,19 @@ def __vis_install_attach__():
         }
 
     vis_attach.__doc__ = (
-        "Persist a file this tool produced as a durable iteration attachment. "
-        "Reads path through the sandbox-confined filesystem (a path outside the "
-        "roots raises), sniffs the media-type (magic bytes / extension / utf-8 "
-        "probe), and hands the bytes to the engine so they land in the DB as a "
-        "session_iteration_attachment row - surviving a web/TUI restart and, for "
-        "image/* media-types, replayable to a vision model on later turns. "
-        "kind / media_type / filename override the guesses. "
-        "display_only=True stores and DISPLAYS the artifact but never sends the "
-        "image to the model on any request (use it for screenshots/figures the "
-        "human wants to see; the model can still open the bytes with "
-        "vis_read_attachment(id) or ask for them with vis_reinspect_attachment(id)). "
-        "Returns None so a bare call produces no result display; do not print the "
-        "call. Use vis_attachments() when attachment metadata is needed. "
-        "Use vis_attach_bytes(data, filename, ...) for in-memory bytes/str."
+        "Persist a produced file as a durable attachment. The sandbox-confined path "
+        "is read, its media type inferred, and its bytes stored across restarts; images "
+        "can replay to vision models. kind, media_type, and filename override inference. "
+        "display_only=True stores and displays the artifact but never sends the image to "
+        "the model; its bytes remain readable or available for one-request reinspection. "
+        "Returns None: call directly, do not print. Use vis_attachments() for metadata "
+        "and vis_attach_bytes() for in-memory bytes/str."
     )
     vis_attach_bytes.__doc__ = (
-        "Persist in-memory bytes (or a str, utf-8 encoded) as a durable iteration "
-        "attachment - the no-temp-file twin of vis_attach. filename gives the "
-        "artifact its name and drives extension-based media-type guessing. "
-        "display_only=True keeps the image off the wire (stored + displayed only). "
-        "Returns None so a bare call produces no result display; do not print the "
-        "call. Use vis_attachments() when attachment metadata is needed."
+        "Persist bytes (or a UTF-8 str) as a durable attachment without a temporary "
+        "file; filename drives media-type inference. display_only=True stores and "
+        "displays the artifact but never sends the image to the model. Returns None: "
+        "call directly, do not print. Use vis_attachments() for metadata."
     )
 
     g = globals()
@@ -230,34 +223,30 @@ def __vis_install_attach__():
     docs = g.setdefault("__vis_docs__", {})
     docs["vis_attach"] = (
         "vis_attach(path, kind=None, media_type=None, filename=None, display_only=False): "
-        "persist a produced file as a durable DB iteration attachment (survives restart; "
-        "image/* replays to vision models). display_only=True stores and displays it but "
-        "never sends the image to the model. Returns None; call directly, do not print. "
-        "Use vis_attachments() when metadata is needed."
+        "persist a produced file as a durable attachment across restarts; images can "
+        "replay to vision models. display_only=True stores/displays but never sends the "
+        "image to the model. Returns None; call, do not print. Use vis_attachments() "
+        "for metadata."
     )
     docs["vis_attach_bytes"] = (
         "vis_attach_bytes(data, filename, kind=None, media_type=None, display_only=False): "
-        "persist in-memory bytes/str as a durable DB iteration attachment. display_only=True "
-        "keeps the image off the wire (stored + displayed only). Returns None; "
-        "call directly, do not print. Use vis_attachments() when metadata is needed."
+        "persist bytes/str as a durable attachment. display_only=True stores/displays "
+        "but never sends the image to the model. Returns None; call, do not print. Use "
+        "vis_attachments() for metadata."
     )
     docs["vis_reinspect_attachment"] = (
-        "vis_reinspect_attachment(id, detail=auto): queue a persisted image from this "
-        "session for exactly the NEXT provider request, then return it to stored-only state. "
-        "Use this when pixels from an earlier user upload or tool artifact need another look. "
-        "detail is auto, low, or high. Non-image and unknown ids raise RuntimeError."
+        "vis_reinspect_attachment(id, detail='auto'): queue this session's persisted "
+        "image for exactly the NEXT provider request, then return it to stored-only. "
+        "detail is auto, low, or high; unknown/non-image ids raise RuntimeError."
     )
     docs["vis_attachments"] = (
-        "vis_attachments(): list artifacts already persisted in THIS session "
-        "(id, filename, media_type, kind, size, position, tool_call_id, "
-        "iteration_id) - metadata only, newest turns included. Pick an id and "
-        "read the bytes with vis_read_attachment(id)."
+        "vis_attachments(): list THIS session's persisted artifact metadata: id, "
+        "filename, media_type, kind, size, position, tool_call_id, iteration_id. "
+        "Pass an id to vis_read_attachment()."
     )
     docs["vis_read_attachment"] = (
-        "vis_read_attachment(id): fetch one persisted artifact by id as "
-        "{bytes, media_type, filename, kind, size, id, storage_uri} - the "
-        "read-back twin of vis_attach, so a tool can reuse an artifact it (or "
-        "an earlier turn) produced."
+        "vis_read_attachment(id): fetch persisted artifact bytes and metadata as "
+        "{bytes, media_type, filename, kind, size, id, storage_uri}."
     )
 
 
