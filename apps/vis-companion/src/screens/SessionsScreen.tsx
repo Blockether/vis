@@ -870,18 +870,24 @@ function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }
             />
             <Stat label="Cost" value={formatUsd(usage.cost_usd)} />
           </dl>
-          <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-chip text-dialog-hint">
-            <span className="whitespace-nowrap">{usage.model || 'unknown model'}</span>
-            <span className="whitespace-nowrap">{formatDuration(usage.duration_ms)} of turns</span>
+          <dl className="mt-2.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-dialog-edge/40 pt-2">
+            <Meta label="Model" value={usage.model || '—'} title={usage.provider} />
+            <Meta
+              label="Active"
+              value={formatDuration(usage.duration_ms)}
+              title="Time spent inside turns"
+            />
             {tools.length > 0 && (
-              <span className="min-w-0 truncate">
-                {tools
+              <Meta
+                label="Top tools"
+                value={tools
                   .slice(0, 3)
                   .map((tool) => `${tool.name} ${tool.count}`)
-                  .join('  ')}
-              </span>
+                  .join(' · ')}
+                title={tools.map((tool) => `${tool.name} ${tool.count}`).join(' · ')}
+              />
             )}
-          </p>
+          </dl>
         </>
       )}
     </div>
@@ -895,6 +901,20 @@ function Stat({ label, value }: { label: string; value: string }) {
         {label}
       </dt>
       <dd className="truncate font-mono text-meta font-bold tabular-nums text-white">{value}</dd>
+    </div>
+  );
+}
+
+// The grid above answers "how much"; this row answers "of what, for how long".
+// It reuses the grid's dim-key/strong-value grammar so the three facts read as
+// labelled data instead of one faint unlabelled sentence.
+function Meta({ label, value, title }: { label: string; value: string; title?: string }) {
+  return (
+    <div className="flex min-w-0 items-baseline gap-1.5" title={title}>
+      <dt className="shrink-0 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+        {label}
+      </dt>
+      <dd className="min-w-0 truncate font-mono text-meta font-bold text-white">{value}</dd>
     </div>
   );
 }
