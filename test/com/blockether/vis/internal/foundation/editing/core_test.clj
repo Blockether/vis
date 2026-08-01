@@ -1233,7 +1233,7 @@
                     (:result (cat-tool dir {"depth" 2}))
 
                     sub
-                    (first (filter #(= "sub" (get % "name")) (get out "entries")))]
+                    (some #(when (= "sub" (get % "name")) %) (get out "entries"))]
 
                    (expect (= 2 (get out "depth")))
                    (expect (= ["b.txt"] (mapv #(get % "name") (get sub "children")))))))
@@ -5636,3 +5636,40 @@
         (expect (some #(= "array" (:type %)) (get-in schema [:properties "query" :oneOf])))
         ;; paths: always an array of scopes
         (expect (= "array" (get-in schema [:properties "paths" :type]))))))
+
+(defdescribe
+  cat-directory-fff-overlay-test
+  (it
+    "cat directory listing applies the native vis.yml grep overlay"
+    (let
+      [dir-name
+       "ls-fff-overlay"
+
+       rel-dir
+       (str (temp-root) "/" dir-name)
+
+       rel-included
+       (str rel-dir "/repositories/")
+
+       _
+       (write-temp! (str dir-name "/.gitignore") "repositories/\n")
+
+       _
+       (write-temp! (str dir-name "/repositories/kept.txt") "visible only through config\n")
+
+       dir
+       (temp-dir-path dir-name)
+
+       cat-tool
+       (private-fn "cat-tool")
+
+       names
+       (fn []
+         (set (map #(get % "name") (get (:result (cat-tool dir)) "entries"))))]
+
+      ;; The default FFF index honors .gitignore; the live config overlay opens it.
+      (expect (not (contains? (names) "repositories")))
+      (with-redefs
+        [config/load-config-raw (fn []
+                                  {"grep" {"include_gitignored_paths" [rel-included]}})]
+        (expect (contains? (names) "repositories"))))))

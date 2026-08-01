@@ -46,7 +46,6 @@
             [com.blockether.vis.internal.fff-index :as fff-index]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.git :as git]
-            [com.blockether.vis.internal.gitignore :as gitignore]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.strutil :as strutil]
             [com.blockether.vis.internal.workspace :as workspace]
@@ -1076,21 +1075,12 @@
 ;; .gitignore (cheap, lazy)
 ;; =============================================================================
 
-(defn- load-ignore-node [^File root] (gitignore/load-matcher root))
+(def ^:private fff-ls-page-size
+  "Native mixed-search page width for `cat` directory listings. Pages are exhausted
+   so the listing keeps its complete, uncapped contract while each FFM result stays
+   bounded."
+  512)
 
-(defn- ignored?
-  [node ^File f ^File root]
-  (when node
-    ;; Match gitignore patterns against `/`-separated paths — a native
-    ;; separator would never match, leaking ignored files.
-    (let
-      [rel
-       (paths/unixify (.relativize (.toPath root) (.toPath f)))
-
-       dir?
-       (.isDirectory f)]
-
-      (gitignore/ignored? node rel dir?))))
 
 (defn- fff-ignore-overlay
   "The ignore OVERLAY handed to fff for a search, or nil when there is nothing
@@ -1291,51 +1281,130 @@
               p))
           pairs)))
 
-(defn- dir-entry
-  "One directory listing row for `f`, or nil when it is hidden/gitignored and not
-   opted in. `levels` is how many directory levels REMAIN to descend; a subdir
-   nests a `\"children\"` vector while `levels` > 1. `root` anchors gitignore
-   matching for the whole listing."
-  [^File f ^File root node is_hidden levels]
-  (when-not (or (and (not is_hidden) (.isHidden f)) (ignored? node f root))
+(defn- hidden-relative-path?
+  "True when `relative-path` has a hidden filesystem segment below `root`. This
+   preserves `cat`'s `is_hidden` contract while fff owns every ignore decision."
+  [^File root ^String relative-path]
+  (loop
+    [^File parent
+     root
+
+     [part & more]
+     (str/split relative-path #"/")]
+
+    (if part
+      (let [^File child (io/file parent part)]
+        (or (.isHidden child) (recur child more)))
+      false)))
+
+(defn- fff-ls-items
+  "Exhaust fff's native mixed file+directory index in bounded pages. The native
+   index includes empty directories, unlike a file-only walk."
+  [idx]
+  (loop
+    [page-index
+     0
+
+     items
+     []]
+
     (let
-      [dir?
-       (.isDirectory f)
+      [{page :items total :total-matched}
+       (fff/search-mixed idx {:query "" :page-index page-index :page-size fff-ls-page-size})
 
-       levels
-       (long levels)]
+       items
+       (into items page)]
 
-      (cond->
-        {"name" (.getName f) "path" (rel-path f) "type" (if dir? "dir" "file") "size" (.length f)}
-        (and dir? (> levels 1))
-        (assoc "children"
-          (->> (or (.listFiles f) (into-array File []))
-               (sort-by (fn [^File c]
-                          [(if (.isDirectory c) 0 1) (.getName c)]))
-               (keep #(dir-entry % root node is_hidden (dec levels)))
-               vec))))))
+      (if (or (empty? page) (>= (long (count items)) (long total)))
+        items
+        (recur (unchecked-inc page-index) items)))))
+
+(defn- fff-ls-overlay
+  "Rebase the global `vis.yml` overlay for an explicitly listed directory.
+
+   `cat` may name a directory already ignored by an ancestor (such as `target/`).
+   Opening the pooled native index at that directory preserves explicit-read
+   semantics, while paths configured beneath it must become local to fff's base."
+  [target-rel]
+  (let
+    [prefix
+     (when (seq target-rel) (str target-rel "/"))
+
+     rebase
+     (fn [globs]
+       (->> globs
+            (keep (fn [glob]
+                    (let [glob (str glob)]
+                      (cond (= glob target-rel) nil
+                            (and prefix (str/starts-with? glob prefix)) (subs glob (count prefix))
+                            :else glob))))
+            vec))]
+
+    (some-> (fff-ignore-overlay)
+            (update :exclude-globs rebase)
+            (update :unignore-globs rebase))))
 
 (defn- list-dir
-  "Shallow (`depth` 1) directory listing as MODEL data — the cat-on-directory read.
-   Entries sort directories first, then files, each alphabetical. Hidden entries
-   are skipped unless opted in and gitignored paths are ALWAYS skipped; `depth` > 1
-   nests `\"children\"`. Returns `{\"path\" \"type\" \"entries\" \"depth\"}`."
+  "Directory listing as MODEL data, powered by a canonical pooled fff index.
+
+   The index is rooted at the explicitly requested directory: a direct `cat` of
+   a gitignored directory remains readable, as it was before. fff owns
+   `.gitignore`, `.ignore`, `.rgignore`, and the rebased live `vis.yml` grep
+   overlay in one native index; this code only rebuilds the documented tree
+   shape. Directory rows, including empty directories, come from fff's mixed
+   index. Results remain directories-first then alphabetical, and are exhaustive
+   through bounded native pages."
   [^File d {:keys [depth is_hidden] :or {depth 1 is_hidden false}}]
   (let
-    [levels
+    [^File root
+     (.getCanonicalFile d)
+
+     target-rel
+     (let [p (rel-path root)]
+       (if (= "." p) "" p))
+
+     levels
      (long depth)
 
-     node
-     (load-ignore-node d)
+     items
+     (fff-index/with-index [idx (fff-index/lease root true (fff-ls-overlay target-rel))]
+                           (fff-ls-items idx))
 
-     entries
-     (->> (or (.listFiles d) (into-array File []))
-          (sort-by (fn [^File c]
-                     [(if (.isDirectory c) 0 1) (.getName c)]))
-          (keep #(dir-entry % d node is_hidden levels))
-          vec)]
+     rows
+     (->> items
+          (filter (fn [{:keys [relative-path]}]
+                    (let [^String path (or relative-path "")]
+                      (and (seq path)
+                           (<= (count (str/split path #"/")) levels)
+                           (or is_hidden (not (hidden-relative-path? root path)))))))
+          (map (fn [{:keys [relative-path directory? size]}]
+                 (let
+                   [^String path
+                    (or relative-path "")
 
-    {"path" (rel-path d) "type" "dir" "entries" entries "depth" levels}))
+                    ^File f
+                    (io/file root path)
+
+                    slash
+                    (.lastIndexOf path "/")]
+
+                   {:local path
+                    :parent (if (neg? slash) "" (subs path 0 slash))
+                    :entry {"name" (if (neg? slash) path (subs path (inc slash)))
+                            "path" (rel-path f)
+                            "type" (if directory? "dir" "file")
+                            "size" (long (or size 0))}})))
+          (group-by :parent))]
+
+    (letfn [(children [parent ^long level]
+              (->> (get rows parent)
+                   (sort-by (fn [{:keys [entry]}]
+                              [(if (= "dir" (get entry "type")) 0 1) (get entry "name")]))
+                   (mapv (fn [{:keys [local entry]}]
+                           (if (and (= "dir" (get entry "type")) (< level levels))
+                             (assoc entry "children" (children local (unchecked-inc level)))
+                             entry)))))]
+      {"path" (rel-path d) "type" "dir" "entries" (children "" 1) "depth" levels})))
 
 (defn- dir-listing-success
   "Wrap a `list-dir` result in the cat tool envelope (`:kind :dir`)."
