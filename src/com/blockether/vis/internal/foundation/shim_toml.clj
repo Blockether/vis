@@ -31,7 +31,7 @@
      [{:shim/name "toml"
        :shim/imports ["toml"]
        :shim/description
-       "toml-compatible `toml`: loads/load via stdlib tomllib, dumps/dump via a pure-Python serializer. Not supported (writer): comment preservation and exotic formatting; reads are spec-correct."
+       "`toml`: `loads`/`load` via stdlib tomllib; `dumps`/`dump` via pure Python. Reads are spec-correct; no comment preservation or exotic writer formatting."
        :shim/source "vis-shims/toml.py"}]}))
 
 (vis/register-extension! vis-extension)
