@@ -91,7 +91,7 @@
   (vis/extension
     {:ext/name "foundation-shim-ruff"
      :ext/description
-     "Sandbox shim: `ruff` — the Python formatter/linter — as an importable module AND a `vis python -m ruff check|format` CLI, backed by the in-process com.blockether/ruff cdylib. Honours the project's own ruff.toml / .ruff.toml / pyproject.toml [tool.ruff]. No pip, no binary on PATH."
+     "Sandbox in-process `ruff` formatter/linter: importable module plus `vis python -m ruff check|format`, backed by com.blockether/ruff. Honours nearest ruff.toml/.ruff.toml/pyproject.toml config; no pip/PATH binary."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
