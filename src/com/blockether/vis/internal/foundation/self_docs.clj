@@ -50,11 +50,10 @@
       str/lower-case))
 
 (defn- vis-docs-tool
-  "await vis_docs()      -> {\"pages\": [{\"slug\", \"title\", \"section\", \"blurb\"}, ...]} — list vis's own embedded doc pages, each with a one-line blurb of what it covers.
+  "await vis_docs()      -> {\"pages\": [{\"slug\", \"title\", \"section\", \"blurb\"}, ...]}
+await vis_docs(slug)  -> {\"pages\": [{\"slug\", \"title\", \"section\", \"content\"}]}
 
-await vis_docs(slug)  -> {\"pages\": [{\"slug\", \"title\", \"section\", \"content\"}]} — the matched page's full markdown under \"content\", read as `vis_docs(slug)[\"pages\"][0][\"content\"]`.
-Both arities return the same `{\"pages\": [...]}` shape. Slug matching tolerates a trailing `.md`, whitespace, case, and the `{\"slug\": ...}` map form.
-Vis's OWN documentation (features, configuration, extending vis). Use ONLY for questions about vis itself, never for the host project."
+List Vis's OWN documentation or fetch full Markdown at `vis_docs(slug)[\"pages\"][0][\"content\"]`. Both return the same `pages` shape. Slugs ignore case, whitespace, and trailing `.md`; the `{\"slug\": ...}` form works. Use only for Vis features, configuration, or extensions; never for the host project."
   ([] (extension/success {:result {"pages" (listing (pages))}}))
   ([slug]
    (let
