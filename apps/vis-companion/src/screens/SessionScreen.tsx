@@ -65,7 +65,6 @@ import {
   scrollAnchorFor,
   type ScrollAnchor,
   shellViewportHeight,
-  useShellStyle,
 } from '../lib/viewport';
 import { answeredTurnCount, markSessionRead } from '../lib/unread';
 import { App } from '@capacitor/app';
@@ -826,14 +825,12 @@ function PasteEditor({
   onClose: () => void;
   onSave: () => void;
 }) {
-  // The only fixed overlay that must follow the keyboard. It reads the shell pin through
-  // context (useShellStyle), not a prop, so a keyboard/rotation frame re-renders this
-  // overlay ALONE — not the screen behind it, which bailed out of that render.
-  const shellStyle = useShellStyle();
+  // The only fixed overlay that must follow the keyboard. Like the shell it reads its
+  // height/translate from the :root custom properties (class `shell-viewport`), so it
+  // tracks the keyboard through CSS — no React render, no context.
   return (
     <div
-      className="fixed inset-x-0 top-0 z-50 flex h-dvh items-stretch justify-center bg-ink/85 p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:p-5"
-      style={shellStyle}
+      className="shell-viewport fixed inset-x-0 top-0 z-50 flex items-stretch justify-center bg-ink/85 p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:p-5"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}

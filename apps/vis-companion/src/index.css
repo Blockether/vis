@@ -286,6 +286,16 @@
   }
 }
 
+.shell-viewport {
+  height: var(--shell-height, 100dvh);
+  transform: translateY(var(--shell-y, 0px));
+}
+html.shell-animating .shell-viewport {
+  transition:
+    height 250ms cubic-bezier(0.17, 0.59, 0.4, 0.77),
+    transform 250ms cubic-bezier(0.17, 0.59, 0.4, 0.77);
+}
+
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
