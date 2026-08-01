@@ -514,7 +514,7 @@
                      :policy-path policy-path)))))
 
 (defn init
-  "Bootstrap Bridge in this workspace. `await br_init()` (opts `{\"root\": path}`). Returns the existing config if already set up."
+  "Bootstrap Bridge with `await br_init()`; optional `root` path. Returns existing config when initialized."
   [env & [opts]]
   (stringify-result
     (bridge-tool :br/init
@@ -554,7 +554,7 @@
                           :next-step {:kind :extension-op :op (tool-call "br/check" [])}})))))))
 
 (defn profile
-  "Active Bridge project profile summary. `await br_profile()` (opts `{\"profile\": path, \"policy\": path}`)."
+  "`await br_profile()` returns the active project summary; optional `profile` and `policy` paths."
   [env & [opts]]
   (stringify-result
     (bridge-tool
@@ -575,7 +575,7 @@
                :policy-loaded? (boolean policy)})))))))
 
 (defn check
-  "Run Bridge check. Bare calls inspect the working snapshot; use `{\"is_index\": True}` for the staged commit candidate or `{\"tree\": sha, \"frontier\": sha}` for a pinned tree. `\"is_approve\": True` explicitly approves a clear candidate. Returns canonical status — summarize it, don't paste raw."
+  "`await br_check()` checks the working snapshot. `is_index` checks the staged candidate; `tree` plus `frontier` pins one; `is_approve` approves a clear candidate. Summarize the canonical result; don't paste it."
   [env & [opts]]
   (let
     [opts*
@@ -602,7 +602,7 @@
                         (bridge-check env opts*)))))
 
 (defn list-evidence
-  "List the active profile's evidence commands. `await br_list_evidence()`. Returns `{\"commands\": [...]}`."
+  "`await br_list_evidence()` returns the active profile's evidence commands."
   [env & [opts]]
   (stringify-result (bridge-tool
                       :br/list-evidence
@@ -620,7 +620,7 @@
                                :commands (br/list-commands profile)})))))))
 
 (defn run-evidence
-  "Run one evidence command and write its receipt. `await br_run_evidence(id, {\"is_index\": True})` or pin `{\"tree\": sha, \"frontier\": sha}` for candidate evidence; `is_dry_run` previews without writing."
+  "`await br_run_evidence(id, opts)` runs one command and writes its receipt. Candidate opts: `is_index` or `tree` plus `frontier`; `is_dry_run` only previews."
   [env id & [opts]]
   (stringify-result
     (bridge-tool :br/run-evidence
