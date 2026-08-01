@@ -4820,47 +4820,39 @@
             :additionalProperties false}})
 
 (defn- session-fold-tool
-  "Engine-level `session_fold` native-tool schema — the context-compaction verb
-   advertised as a first-class tool_use. It is ALSO callable bare / inside
-   `python_execution` (the SAME bound sandbox verb from `compaction-verbs`);
-   native dispatch just synthesizes `session_fold(target, gist)` into that verb
-   (see the injected call-shape), so ONE definition drives both surfaces and the
-   ctx-atom closure is reused — no separate Clojure handler."
+  "Engine-level schema for the context-compaction verb shared by native dispatch
+   and sandbox Python."
   []
   {:name "session_fold"
    :description
    (str
-     "Collapse SETTLED wire steps into a breadcrumb — folding changes rendering, not "
-     "storage, so fold a step once its takeaway is captured. Settled = every PRIOR turn "
-     "plus the current turn's already-completed iterations (read `session[\"turn\"]`); the "
-     "live iteration you are emitting right now, and any future step, is not settled and "
-     "blocks the call — fold through the last finished iteration instead "
-     "({\"through\": \"tN/iK\"}). `ntr` never stores this fold receipt; if you need evidence "
-     "from a folded step, recover that step's individual data-tool result via `ntr[tool_id]` "
-     "(one native result, no re-run, survives a restart). Fold receipts stay compact and "
-     "only direct you to `ntr.describe()`, which lists labelled results from the latest turn."
+     "Collapse SETTLED wire steps into a breadcrumb; folding changes rendering, not storage. "
+     "Settled means all prior turns plus the current turn's already-completed iterations "
+     "(see `session[\"turn\"]`); fold a step once its takeaway is captured. "
+     "Fold only through the last finished iteration; the live iteration you are emitting right now "
+     "and future steps block the call (`{\"through\":\"tN/iK\"}`). `ntr` never stores fold receipts. "
+     "Recover a folded step's individual data-tool result with `ntr[tool_id]` (no rerun; survives restart). "
+     "Receipts stay compact and point to latest-turn labels from `ntr.describe()`"
      (if (toggles/enabled? "introspection")
-       ", else walk `await session_state()` → `transcript/turns/iterations/blocks` (`code`/`result`). "
-       ". ")
-     "Broader/newer folds supersede fully covered breadcrumbs; equal scopes keep the newer "
-     "gist; partial overlaps remain.")
+       ", or use `await session_state()` → `transcript/turns/iterations/blocks` (`code`/`result`)"
+       "")
+     ". Broader/newer folds supersede fully covered breadcrumbs; equal scopes keep the newer gist; "
+     "partial overlaps remain.")
    :result
-   "String receipt naming the folded scope and, when results exist, pointing to `ntr.describe()`."
+   "String receipt naming the folded scope and, when available, its `ntr.describe()` results."
    :schema
    {:type "object"
     :properties
     {"target" {:description
-               (str "What to fold: a LIST of ids [\"t2/i3\", \"t2/i4\"] (a bare \"t2\" folds "
-                    "that WHOLE turn), or ONE selector — {\"through\": \"tN/iN\"} every step "
-                    "up to and INCLUDING it; {\"from\": \"tA/iA\", \"to\": \"tB/iB\"} an "
-                    "inclusive window (either bound optional); {\"since\": \"tN/iN\"} that "
-                    "step through the newest.")}
+               (str
+                 "Fold a LIST of ids [\"t2/i3\", \"t2/i4\"] (bare \"t2\" = whole turn), or ONE "
+                 "selector: {\"through\":\"tN/iN\"} through that step; "
+                 "{\"from\":\"tA/iA\",\"to\":\"tB/iB\"} inclusive window (either bound optional); "
+                 "{\"since\":\"tN/iN\"} through newest.")}
      "gist" {:type "string"
              :description
-             (str
-               "Optional one-line durable takeaway: the finding, its consequence, and a useful "
-               "path:line, symbol/test, or anchor (refresh a preserved anchor before editing). "
-               "OMIT to drop spent reads, catalogs, errors, or any step with no durable value.")}}
+             (str "Optional durable one-line takeaway: finding, consequence, and useful path:line, "
+                  "symbol/test, or anchor (refresh it before editing). Omit when none.")}}
     :required ["target"]
     :additionalProperties false}})
 
