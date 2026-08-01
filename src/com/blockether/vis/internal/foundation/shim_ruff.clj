@@ -101,7 +101,7 @@
      [{:shim/name "ruff"
        :shim/imports ["ruff"]
        :shim/description
-       "ruff formatter + linter in-process (no pip, no PATH binary): `python -m ruff check [paths]` / `python -m ruff format [paths] [--check|--diff]`, or `import ruff` for format_str/check_str/format_file/check_file/config_for/version. Ruff's own config discovery applies (.ruff.toml, ruff.toml, pyproject.toml [tool.ruff] walking up from each file, per-file-ignores included); with no config file it uses ruff's defaults (E4,E7,E9,F) and says so. Not supported: --fix, --watch, --output-format, --show-settings, config exclude walking."
+       "In-process Ruff, no pip/PATH: `python -m ruff check|format <paths>` (`format`: --check/--diff); import API: format_/check_{str,file}, config_for, version. Finds nearest .ruff.toml, ruff.toml, or pyproject.toml [tool.ruff] per file and honors per-file-ignores; otherwise uses/reports E4,E7,E9,F defaults. Not supported: --fix, --watch, --output-format, --show-settings, config exclude walking."
        :shim/bindings ruff-bridge-bindings
        :shim/source "vis-shims/ruff.py"}]}))
 
