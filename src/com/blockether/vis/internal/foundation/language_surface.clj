@@ -1096,30 +1096,30 @@
      :native-tool? true
      :result
      (str
-       "String-keyed result stamped with `op`, never a `{resources: [...]}` list. Status includes "
-       "Clojure `result,id,cwd,status`; Python/Bun `cwd,status`. Start/restart/connect may add "
+       "String-keyed result stamped with `op`; never a `{resources: [...]}` list. Status: Clojure "
+       "`result,id,cwd,status`, Python/Bun `cwd,status`. Start/restart/connect may add "
        "`running,port,pid,cmd,tool,aliases,external,host,log,message`; stop by id returns "
        "`{result,id,message}`.")
      :description
      (str
-       "THE one REPL lifecycle tool. Read `session[\"resources\"][\"repls\"][language][cwd]` first. "
-       "Reuse `up`; recheck `starting`; \"start\" for absent/down/failed; \"restart\" if unresponsive; "
-       "\"stop\" ends a managed REPL you started; \"connect\" attaches an external REPL by port "
-       "(stop only detaches); \"status\" reports that directory's lifecycle state.")
+       "The REPL lifecycle tool. First read `session[\"resources\"][\"repls\"][language][cwd]`: reuse `up`; "
+       "recheck `starting`; \"start\" for absent/down/failed; \"restart\" if unresponsive; \"status\" reports "
+       "that directory's lifecycle state. \"stop\" ends a managed REPL you started. \"connect\" attaches "
+       "external by port; stop only detaches.")
      :call {:lead-opt "language" :rest :always}
      :render render-repl-start-result
      :color-role :tool-color/shell
      :schema {:type "object"
               :properties
-              {"language" {:type "string" :minLength 1 :description "Pack; REQUIRED first arg."}
+              {"language" {:type "string" :minLength 1 :description "Pack; REQUIRED first."}
                "op" {:type "string"
                      :enum ["start" "restart" "connect" "stop" "status"]
-                     :description "Operation; default `start`."}
-               "id" {:type "string" :minLength 1 :description "Resource id; exact for stop."}
+                     :description "Op; default `start`."}
+               "id" {:type "string" :minLength 1 :description "Exact id; stop."}
                "cwd"
                {:type "string" :minLength 1 :description "Directory (`.` default); connect key."}
-               "port" {:type "integer" :description "External port; connect only."}
-               "host" {:type "string" :description "External host; connect only (localhost)."}
+               "port" {:type "integer" :description "Connect port."}
+               "host" {:type "string" :description "Connect host (localhost)."}
                "aliases" {:type "array" :items {:type "string"} :description "Build aliases."}}
               :required ["language"]
               :additionalProperties false}
