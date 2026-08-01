@@ -1364,24 +1364,23 @@
 
 (def
   ^{:doc
-    "In `python_execution`, await every call with ONE map:
+    "`shell(opts)` runs bounded commands or manages background PTYs. Await it in `python_execution`; pass one map, never positional args.
+
+Examples:
 await shell({\"commands\": [\"git status\"]})
-await shell({\"commands\": [\"npm run build\"], \"cwd\": \"web\"})
-await shell({\"commands\": [\"npm ci\", \"npm test\"], \"op\": \"background\", \"id\": \"ci\"})
-await shell({\"op\": \"logs\", \"id\": \"ci\", \"n\": 500})
-await shell({\"op\": \"send\", \"id\": \"ci\", \"text\": \"y\"})
-await shell({\"op\": \"stop\", \"id\": \"ci\"})
+await shell({\"commands\": [\"npm test\"], \"op\": \"background\", \"id\": \"tests\"})
+await shell({\"op\": \"logs\", \"id\": \"tests\"})
+await shell({\"op\": \"send\", \"id\": \"tests\", \"text\": \"y\"})
+await shell({\"op\": \"stop\", \"id\": \"tests\"})
 
-THE one shell tool. EVERY call takes exactly one map: `commands` is a non-empty string array, never positional. `text` is only `send`'s keystrokes. op defaults to \"run\", or \"background\" when an id is present.
+`commands` is a non-empty string array. `op` defaults to `run`, or `background` when `id` is supplied:
+- `run`: blocking `bash -lc`; `cwd` defaults to workspace root; `timeout_secs` defaults to 120 (max 600); nonzero exit is data.
+- `background`: returns immediately without a timeout and owns a session resource; use for long or interactive work, then poll `logs`.
+- `logs`: last 200 lines by default; `n` max 2000.
+- `send`: writes `text` verbatim; `is_enter` defaults true.
+- `stop`: kills the process tree and drops its logs/resource.
 
-Stages:
-  run — bash -lc in the workspace root, blocks until the commands exit. Short bounded work only. opts: timeout_secs (default 120, max 600), cwd. A non-zero exit is DATA, not a tool failure.
-  background — returns at once, no timeout, and OWNS a session resource under id. PREFER it for builds, test suites, daemons, watchers and interactive work; poll with logs.
-  logs — last 200 lines, or n up to 2000.
-  send — types `text` into the pty verbatim; is_enter (default true) appends the newline that SUBMITS it.
-  stop — kill the process tree, discard retained logs, drop the resource.
-
-Result keys are total PER STAGE, never a union: always stage, id, cwd, commands, started, exit, duration_ms, timed_out, note — plus run: timeout_secs · background: pid, status, uptime_ms, attach, socket, already_running · logs: pid, status, uptime_ms, lines, line_count, dropped · send: pid, status, sent, text, keys · stop: pid, status, uptime_ms, stopped. Each `commands` entry is command, started, stdout, stderr, exit, duration_ms, timed_out, stdout_omitted_chars, stderr_omitted_chars, status, note."
+Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`, `timed_out`, and `note`; stages add process/status/log/send fields. Each command reports its text, timing, stdout/stderr, exit, timeout, truncation counts, status, and note."
     :arglists '([opts])}
   shell
   shell-dispatch)
