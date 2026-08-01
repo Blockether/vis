@@ -20,7 +20,7 @@
   (vis/extension
     {:ext/name "foundation-shim-urllib3"
      :ext/description
-     "Sandbox shim: a `urllib3`-compatible module (import urllib3 / PoolManager / urllib3.request) implemented as a thin wrapper over the requests shim. No pip, no native wheel, no host bridge."
+     "Sandbox `urllib3` subset (`PoolManager`, `urllib3.request`) wrapping the requests shim. No pip/wheel/host bridge."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
