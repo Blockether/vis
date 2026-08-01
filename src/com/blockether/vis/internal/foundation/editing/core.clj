@@ -6514,60 +6514,59 @@
      :native-tool? true
      :result
      (str
-       "One ordered row per edit: `path`, `op`, `changed`, `diff`, and optional small-region `anchors` "
-       "(`{\"lineno:hash\":{\"text\":line}}`) reusable as the next `from_anchor` without rereading. "
-       "A `paths` rename returns one row per file; failures have `changed` false and `error`.")
+       "One row/edit has `path`, `op`, `changed`, `diff`; small regions may add reusable `anchors` "
+       "(`{\"lineno:hash\":{\"text\":line}}`) for the next `from_anchor` without rereading. A `paths` rename "
+       "returns one row/file; failures set `changed` false plus `error`.")
      :active-fn structural-supported?
      :description
      (str
-       "Structural editor for supported code: target a definition by NAME (`target`) without stale anchors "
-       "or blobs, or a node by `at`/`anchor`. Unlike text, it handles file/project rename, docs, moves, and "
-       "append_child. Writes are re-parsed: code that will not parse is REFUSED; unbalanced Clojure "
-       "delimiters auto-repaired.")
+       "Structurally edit supported code: definition by NAME (`target`)—no stale anchors/blobs—or node by "
+       "`at`/`anchor`. Supports file/project rename, docs, moves, `append_child`. Re-parses writes: code that "
+       "will not parse is REFUSED; unbalanced Clojure delimiters auto-repaired.")
      :render render-patch-result
      :color-role :tool-color/edit
      :schema
      {:type "object"
       :properties
       {"path" {:type "string"
-               :description "File to edit (a lone edit, or the shared default for `edits`)."}
+               :description "Edit file, or shared default for `edits`."}
        "paths"
        {:type "array"
         :items {:type "string" :minLength 1}
         :minItems 1
         :description
-        "Rename only, instead of `path`: rewrite `target` to `code` in these scopes (`[\".\"]` = whole project). Check with grep, then struct_index(paths)."}
+        "`rename` only: rewrite `target` to `code` in scopes (`[\".\"]` = project). Check via grep, then struct_index(paths)."}
        "edits"
        {:type "array"
         :minItems 1
         :items {:type "object"}
         :description
-        "ORDERED BATCH: entries use single-edit keys; top-level keys are defaults (one path/many ops or several files). Applied sequentially, never rolled back. Omit for one edit."}
+        "ORDERED BATCH: single-edit entries; top-level defaults allow one path/many ops or several files. Applied in order, never rolled back. Omit for a lone edit."}
        "op"
        {:type "string"
         :enum ["replace" "delete" "insert_before" "insert_after" "append" "add_doc" "replace_doc"
                "replace_node" "rename" "move_before" "move_after" "append_child" "prepend_child"]
         :description
-        "Operation; append is end-of-file. append_child/prepend_child take a definition or node path/anchor."}
+        "`append`=EOF; `append_child`/`prepend_child` take a definition or node locator."}
        "target" {:type "string"
                  :description
-                 "Definition NAME; append_child/prepend_child also use it to enter the definition."}
+                 "Definition NAME; also container for child appends."}
        "code" {:type "string"
-               :description "Replacement/insertion source (or the new name for rename)."}
+               :description "Source to replace/insert, or rename's new name."}
        "kind" {:type "string"
-               :description "function/class/method/… — disambiguates same-named defs."}
+               :description "Disambiguates same-named defs: function/class/method/…."}
        "match" {:type "string"
-                :description "For match-based replace_node: the unique sub-expr text to swap."}
+                :description "`replace_node`: unique subexpression text to swap."}
        "anchor"
        {:type "string"
         :description
-        "Selector: for move_before/move_after, the adjacent def NAME; otherwise a `lineno:hash` row (struct_index/cat) entering its node. Composes with `nav`."}
+        "`move_before`/`move_after`: adjacent def NAME; otherwise a struct_index/cat `lineno:hash` entering its node. Composes with `nav`."}
        "at" {:type "array"
              :items {:type "integer" :minimum 0}
              :description
-             "Named-child index path from a `struct_nodes` entry's `at` (path-based ops)."}
+             "Named-child path from a `struct_nodes` row; for path-based ops."}
        "nav" {:type "array"
-              :description "Relative zipper moves applied after `at` (strings or maps)."}}
+              :description "Relative zipper moves after `at` (strings/maps)."}}
       ;; Either a lone `path`+`op` edit or an `edits` batch — validated in the tool.
       :additionalProperties false}
      :before-fn (plan-gated-before-fn :struct_patch :file :write write-arg-paths)
