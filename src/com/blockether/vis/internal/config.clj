@@ -23,6 +23,7 @@
             [clojure.string :as str]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.config-spec :as config-spec]
+            [com.blockether.vis.internal.credential-command :as cred]
             [com.blockether.vis.internal.registry :as registry]
             [taoensso.telemere :as tel]
             [yamlstar.core :as yamlstar])
@@ -486,6 +487,16 @@
   [pid]
   (get @router-baked-tokens pid))
 
+(defn provider-credential-message
+  "The message shown when a provider's `api_key_command` cannot produce a token.
+
+   Mirrors `provider-env-message`'s shape — `can't use <provider>: <reason>` — so
+   every channel renders both credential gaps identically. `reason` is the
+   executor's own non-secret verdict (missing program, exit code, timeout, blank
+   output); the helper's STDOUT is the credential and never reaches here."
+  [provider-id reason]
+  (str "can't use " (if (keyword? provider-id) (name provider-id) (str provider-id)) ": " reason))
+
 (defn ->svar-provider
   "Coerce a provider map to svar-native shape (`:id`, `:api-key`,
    `:base-url`, `:api-style`, `:models`, optional `:responses-path`,
@@ -513,8 +524,21 @@
      template
      (provider-template pid)
 
+     ;; A literal `:api-key` always wins. Otherwise a configured
+     ;; `:api-key-command` is exec'd (single-flight, cached, no shell) and its
+     ;; trimmed stdout becomes the token — the short-lived-SSO credential path.
+     ;; It is baked into the router like any other token but NEVER travels back
+     ;; onto the provider map, so no write path can persist it.
      api-key
-     (:api-key provider)
+     (if-let [literal (:api-key provider)]
+       literal
+       (when-let [argv (:api-key-command provider)]
+         (let [{:keys [token error]} (cred/resolve! pid argv)]
+           (when error
+             (throw (ex-info (provider-credential-message pid error)
+                             {:type :vis/credential-command-failed :provider pid})))
+           (swap! router-baked-tokens assoc pid token)
+           token)))
 
      ;; Local no-auth presets (ollama, lmstudio) ship a dummy api-key in
      ;; svar's catalog; svar's `models!` sends it as an HTTP header, and a
@@ -648,24 +672,24 @@
 (def ^:private runtime-keywords
   "Finite YAML key vocabulary used by internal keyword-keyed domain maps.
    Unknown/user-owned keys remain strings; no YAML key is passed to `keyword`."
-  (merge (into {}
-               (map (juxt (comp #(str/replace % "-" "_") name) identity))
-               #{:providers :default-provider :default-model :fallback-provider :fallback-model
-                 :router :system-prompt :workspace :enabled :filesystem :jail :network :environment
-                 :db-spec :grep :toggles :tui-settings :mcp :name :context :output-limit :id
-                 :api-key :models :base-url :api-style :compatibility :responses-path :llm-headers
-                 :extra-body :rate-limit :budget :tokens :same-provider-delays-ms :fallback-after-ms
-                 :timeout-ms :ttft-timeout-ms :idle-timeout-ms :semantic-timeout-ms :max-retries
-                 :initial-delay-ms :max-delay-ms :multiplier :max-tokens :max-cost :pricing
-                 :context-limits :output-reserve :failure-threshold :recovery-ms
-                 :transient-status-codes :window-ms :cooldown-ms :max-wait-ms :allow-read-write
-                 :allow-read :allow-write :deny-read :deny-write :path :access :description
-                 :inbound-ports :deny-exec :allowed-domains :denied-domains :exclude-domains
-                 :allow-private :rules :host :methods :allow :method :text :is-replace
-                 :include-gitignored-paths :always-exclude :backend :theme-name
-                 :contributors-disabled :servers :transport :command :args :cwd :env :url :headers
-                 :python :resource-cache :source-paths :message-queue :breaker-threshold
-                 :retry-backoff-ms :halfopen-probe-ms :retry-after-cap-ms :titling :mode :provider})
+  (merge (into
+           {}
+           (map (juxt (comp #(str/replace % "-" "_") name) identity))
+           #{:providers :default-provider :default-model :fallback-provider :fallback-model :router
+             :system-prompt :workspace :enabled :filesystem :jail :network :environment :db-spec
+             :grep :toggles :tui-settings :mcp :name :context :output-limit :id :api-key
+             :api-key-command :models :base-url :api-style :compatibility :responses-path
+             :llm-headers :extra-body :rate-limit :budget :tokens :same-provider-delays-ms
+             :fallback-after-ms :timeout-ms :ttft-timeout-ms :idle-timeout-ms :semantic-timeout-ms
+             :max-retries :initial-delay-ms :max-delay-ms :multiplier :max-tokens :max-cost :pricing
+             :context-limits :output-reserve :failure-threshold :recovery-ms :transient-status-codes
+             :window-ms :cooldown-ms :max-wait-ms :allow-read-write :allow-read :allow-write
+             :deny-read :deny-write :path :access :description :inbound-ports :deny-exec
+             :allowed-domains :denied-domains :exclude-domains :allow-private :rules :host :methods
+             :allow :method :text :is-replace :include-gitignored-paths :always-exclude :backend
+             :theme-name :contributors-disabled :servers :transport :command :args :cwd :env :url
+             :headers :python :resource-cache :source-paths :message-queue :breaker-threshold
+             :retry-backoff-ms :halfopen-probe-ms :retry-after-cap-ms :titling :mode :provider})
          svar-yaml->runtime))
 
 (defn runtime-config
@@ -804,14 +828,68 @@
        (str/join ", " env-vars)
        (if (next env-vars) " are not set" " is not set")))
 
+(defn provider-credential-gap
+  "The ONE non-secret reason `provider` cannot currently produce a credential,
+   or nil when it can.
+
+   Two sources, checked in that order:
+
+     - an unresolved `${NAME}` anywhere in the entry (`provider-env-gap`);
+     - an `api_key_command` that cannot currently produce a token — missing
+       executable, non-zero exit, timeout, or blank stdout.
+
+   Returns `{:reason <human string> :env-vars [...]|nil}`. `:reason` is safe to
+   log, render and put in an error: it names the provider, the unset vars or the
+   PROGRAM, and never the command's stdout.
+
+   This is the single seam every availability decision reads — provider status,
+   `vis-agent doctor`, router-build exclusion and the hard error raised when a
+   user explicitly selects the provider — so a command-backed credential behaves
+   exactly like an unset `${NAME}` everywhere, by construction."
+  [provider]
+  (if-let [env-vars (provider-env-gap provider)]
+    {:reason (provider-env-message (:id provider) env-vars) :env-vars env-vars}
+    (when-let [error (:error (cred/resolve! (:id provider) (:api-key-command provider)))]
+      {:reason (provider-credential-message (:id provider) error) :env-vars nil})))
+
+(defn provider-credential-gap-cached
+  "`provider-credential-gap` restricted to what is ALREADY known: the env check is
+   pure, and a credential command is only consulted through its cache.
+
+   Paint paths (`providers/initial-provider-status`) must never fork a subprocess
+   to draw a frame, so an unprobed helper yields nil here and the card renders as
+   loading until the real background probe answers."
+  [provider]
+  (if-let [env-vars (provider-env-gap provider)]
+    {:reason (provider-env-message (:id provider) env-vars) :env-vars env-vars}
+    (when-let [error (:error (cred/peek-token (:id provider) (:api-key-command provider)))]
+      {:reason (provider-credential-message (:id provider) error) :env-vars nil})))
+
+(defn provider-credential-error
+  "`provider-credential-gap`'s message, or nil. Convenience for call sites that
+   only render the reason."
+  [provider]
+  (:reason (provider-credential-gap provider)))
+
+(defn invalidate-credential-command!
+  "Forget the memoized `api_key_command` token for provider `pid`, so the next
+   router build re-execs the helper.
+
+   The 401 recovery path lives in `loop.clj` and must not reach past this ns into
+   the credential executor, so the one-line hook belongs here beside the rest of
+   the credential seam."
+  [pid]
+  (cred/invalidate! pid))
+
 (defn provider-env-gaps
-  "`provider-id -> unset env vars` for every provider in `config` carrying an
-   unresolved reference; an empty map when the fleet resolved completely."
+  "`provider-id -> reason` for every provider in `config` that cannot currently
+   authenticate; an empty map when the whole fleet resolved. Covers unset
+   `${NAME}` references AND failing `api_key_command` helpers."
   [config]
   (into (sorted-map)
         (keep (fn [p]
-                (when-let [env-vars (provider-env-gap p)]
-                  [(:id p) env-vars])))
+                (when-let [{:keys [reason env-vars]} (provider-credential-gap p)]
+                  [(:id p) (or env-vars [reason])])))
         (:providers config)))
 
 (defonce ^:private warned-env-gaps

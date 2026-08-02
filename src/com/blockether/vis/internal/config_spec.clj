@@ -82,8 +82,8 @@
 
 (def model-keys #{"name" "context" "output_limit" "is_tool_call"})
 (def provider-keys
-  #{"id" "api_key" "models" "base_url" "compatibility" "api_style" "responses_path" "llm_headers"
-    "extra_body" "is_stateless"})
+  #{"id" "api_key" "api_key_command" "models" "base_url" "compatibility" "api_style" "responses_path"
+    "llm_headers" "extra_body" "is_stateless"})
 
 (def compatibility-values
   "The wire dialects a provider may declare. `api_style` remains the raw svar
@@ -96,6 +96,13 @@
    "output_limit" positive-int?
    "is_tool_call" boolean?})
 
+(s/def ::api-key-command
+  ;; Structured argv, never a shell string: the helper is exec'd directly, so a
+  ;; bare string is ONE argument and is never word-split. Both spellings are the
+  ;; same value shape; there is no shell to quote for.
+  (s/or :argv (s/coll-of non-blank-string? :kind vector? :min-count 1)
+        :program non-blank-string?))
+
 (s/def ::model-map #(closed-map? model-schema #{"name"} %))
 (s/def ::model
   (s/or :name non-blank-string?
@@ -105,6 +112,9 @@
 (def provider-schema
   {"id" non-blank-string?
    "api_key" string?
+   ;; Command-backed credential: argv whose trimmed stdout IS the API key.
+   ;; Resolved live (short-lived SSO/vault helpers) and NEVER persisted.
+   "api_key_command" (spec-pred ::api-key-command)
    "models" (spec-pred ::models)
    "base_url" non-blank-string?
    "compatibility" (one-of compatibility-values)

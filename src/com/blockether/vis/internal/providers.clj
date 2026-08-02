@@ -293,18 +293,23 @@
        ;; leaves the literal reference sitting in `:api-key`, which is `some?` and
        ;; would otherwise read as "authenticated from config" — the worst possible
        ;; verdict, since the truth only surfaces as a 401 on the first real turn.
-       (config/provider-env-gap provider) (let [env-vars (config/provider-env-gap provider)]
-                                            {:is-authenticated false
-                                             :source :env
-                                             :needs-env (str/join ", " env-vars)
-                                             :error (config/provider-env-message (:id provider)
-                                                                                 env-vars)})
+       ;; A configured `api_key_command` that cannot currently produce a token is
+       ;; the same class of un-authenticatable provider and answers here too.
+       (config/provider-credential-gap provider)
+       (let [{:keys [reason env-vars]} (config/provider-credential-gap provider)]
+         (cond-> {:is-authenticated false
+                  :source (if env-vars :env :command)
+                  :error reason}
+           env-vars (assoc :needs-env (str/join ", " env-vars))))
        ;; Local no-auth providers (Ollama / LM Studio) have no key and
        ;; their registered status-fn is a hardcoded stub — probe the
        ;; endpoint for real.
        (contains? local-no-auth-provider-ids (:id provider)) (probe-local-reachable provider)
        (some? (:api-key provider))
        {:is-authenticated true :source :config :config-path config/state-path}
+       ;; No gap above means the helper DID produce a token just now.
+       (some? (:api-key-command provider))
+       {:is-authenticated true :source :command}
        registered (or (safe-provider-status registered) {:is-authenticated false})
        :else {:is-authenticated false})]
 
@@ -365,18 +370,24 @@
           :error {:message (or (ex-message e) (str e))}})))
 
 (defn initial-provider-status
-  "Placeholder status while a real probe runs in the background. An env gap is
-   decided synchronously — it is a pure read of the config already in hand — so
-   the card never flashes an authenticated verdict it is about to retract."
+  "Placeholder status while a real probe runs in the background. A credential gap
+   is decided synchronously — it is a pure read of the config already in hand,
+   plus at most one cached credential-command probe — so the card never flashes
+   an authenticated verdict it is about to retract."
   [provider]
-  (wire/canonical (if-let [env-vars (config/provider-env-gap provider)]
-                    {:is-authenticated false
-                     :source :env
-                     :needs-env (str/join ", " env-vars)
-                     :error (config/provider-env-message (:id provider) env-vars)}
-                    (if (some? (:api-key provider))
-                      {:is-authenticated true :source :config :config-path config/state-path}
-                      {:is-authenticated nil :loading? true}))))
+  (wire/canonical (if-let [{:keys [reason env-vars]} (config/provider-credential-gap-cached
+                                                       provider)]
+                    (cond-> {:is-authenticated false
+                             :source (if env-vars :env :command)
+                             :error reason}
+                      env-vars (assoc :needs-env (str/join ", " env-vars)))
+                    (cond (some? (:api-key provider))
+                          {:is-authenticated true :source :config :config-path config/state-path}
+
+                          (some? (:api-key-command provider))
+                          {:is-authenticated true :source :command}
+
+                          :else {:is-authenticated nil :loading? true}))))
 
 (defn initial-provider-limits
   "Placeholder limits report while the real fetch runs."
@@ -955,12 +966,12 @@
       (throw (ex-info
                (str "Fallback provider must differ from the primary provider (" (name primary) ")")
                {:type :vis/invalid-fallback-provider :provider provider-id* :primary primary})))
-    ;; The one place an unresolved `${NAME}` IS fatal: the user is explicitly
+    ;; The one place an unresolvable credential IS fatal: the user is explicitly
     ;; reaching for THIS provider, so the error is actionable rather than
-    ;; collateral. Loading stays lenient (see `config/interpolate-env`); only
-    ;; intent hard-fails.
-    (when-let [env-vars (config/provider-env-gap selected)]
-      (throw (ex-info (config/provider-env-message provider-id* env-vars)
+    ;; collateral. Loading stays lenient (see `config/interpolate-env`) and
+    ;; implicit routing silently skips the provider; only intent hard-fails.
+    (when-let [{:keys [reason env-vars]} (config/provider-credential-gap selected)]
+      (throw (ex-info reason
                       {:type :vis/provider-env-unset :provider provider-id* :env-vars env-vars})))
     (let
       [raw

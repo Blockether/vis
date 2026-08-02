@@ -12,6 +12,8 @@
    "fallback_model" "gpt"
    "providers" [{"id" "anthropic"
                  "api_key" "secret"
+                 ;; Command-backed credential: argv whose trimmed stdout is the key.
+                 "api_key_command" ["vault-token" "--env" "sbox"]
                  "models"
                  [{"name" "claude" "context" 200000 "output_limit" 8192 "is_tool_call" true}]
                  "base_url" "https://api.anthropic.com"

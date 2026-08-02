@@ -6269,6 +6269,39 @@
                         (str "Provider build auth refresh FAILED for " pid "; skipping"))
               false)))))))
 
+(defn- boot-refresh-credential-command!
+  "Command-backed sibling of `boot-refresh-provider-token!`, for providers whose
+   credential comes from `api_key_command` instead of a registered OAuth hook.
+
+   A short-lived SSO token expires WHILE vis runs, so the very failure this has
+   to heal is the one a cache would otherwise keep serving: drop the memoized
+   token for this provider and let the caller re-exec the helper once. Gated
+   exactly like the OAuth path — auth-shaped errors only, and
+   `auth-refresh-allowed?` still owns the rate budget — so a helper that is
+   simply broken can never be re-run in a hot loop."
+  [p ^Throwable t]
+  (let
+    [pid
+     (:id p)
+
+     d
+     (ex-data t)
+
+     provider-message
+     (perr/provider-body-message (some-> (:body d)
+                                         str))]
+
+    (boolean
+      (when (and (:api-key-command p)
+                 (perr/auth-provider-error? (:status d) provider-message (ex-message t))
+                 (auth-refresh-allowed? pid))
+        (config/invalidate-credential-command! pid)
+        (tel/log! {:level :warn :id ::boot-credential-command-refreshed :data {:provider pid}}
+                  (str "Provider build hit auth error — re-running credential command for "
+                       pid
+                       "; retrying build"))
+        true))))
+
 (defn- runtime-router-providers
   "Resolve durable provider config into the svar runtime shape.
 
@@ -6316,11 +6349,11 @@
          ;; (see `screen/svar-no-providers-cause?`), and that dialog now names
          ;; the exact variable.
          (remove (fn [p]
-                   (when-let [env-vars (config/provider-env-gap p)]
+                   (when-let [{:keys [reason env-vars]} (config/provider-credential-gap p)]
                      (tel/log! {:level :warn
                                 :id ::provider-env-unresolved-skipped
                                 :data {:provider (:id p) :env-vars env-vars}
-                                :msg (config/provider-env-message (:id p) env-vars)})
+                                :msg reason})
                      true)))
          (keep
            (fn [p]
@@ -6331,7 +6364,9 @@
                       ;; a server-rotated OAuth token is auth-shaped and force-
                       ;; refreshable in place — refresh once, retry the build once.
                       ;; Anything else (or a failed retry) falls through to skip.
-                      (or (try (when (boot-refresh-provider-token! (:id p) t) (build))
+                      (or (try (when (or (boot-refresh-provider-token! (:id p) t)
+                                         (boot-refresh-credential-command! p t))
+                                 (build))
                                (catch Throwable _ nil))
                           (do (tel/log! {:level :warn
                                          :id ::provider-unavailable-skipped
