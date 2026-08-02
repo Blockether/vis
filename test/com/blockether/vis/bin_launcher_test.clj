@@ -235,7 +235,7 @@
 (defdescribe
   wrapper-release-asset-test
   (it
-    "installs either release layout: the launcher bundle or a bare legacy runtime"
+    "installs the release bundle and reports a missing asset honestly"
     (let
       [root
        (.toFile (Files/createTempDirectory "vis-agent-asset-test-" (make-array FileAttribute 0)))
@@ -310,31 +310,11 @@
                                    "case \"$url\" in\n"
                                    "  *api.github.com*) cat \"$VIS_TEST_RELEASE_JSON\" ;;\n"
                                    "  *) cp \"$VIS_TEST_ASSET_FILE\" \"$out\" ;;\n" "esac\n"))
-           (let
-             [json
-              (io/file fixtures "legacy.json")
-
-              bare
-              (write-executable! (io/file fixtures "vis-linux-x64-community")
-                                 "#!/usr/bin/env bash\necho BARE-RUNTIME\n")
-
-              launcher-before
-              (slurp launcher)]
-
-             (spit json (release-json "vis-linux-x64-community"))
-             (let [{:keys [exit output]} (run-update! json bare)]
-               (expect (= 0 exit) output)
-               (expect (str/includes? output "predates the launcher bundle"))
-               (expect (str/includes? (slurp native) "BARE-RUNTIME"))
-               (expect (.canExecute native))
-               ;; A bare-runtime release must never disturb the launcher in use.
-               (expect (= launcher-before (slurp launcher)))))
            (let [json (io/file fixtures "empty.json")]
              (spit json (release-json))
              (let [{:keys [exit output]} (run-update! json nil)]
                (expect (= 1 exit) output)
-               (expect (str/includes? output "vis-agent-linux-x64-community.tar.gz"))
-               (expect (str/includes? output "vis-linux-x64-community"))))
+               (expect (str/includes? output "vis-agent-linux-x64-community.tar.gz"))))
            (let
              [json
               (io/file fixtures "bundle.json")

@@ -315,11 +315,9 @@ vis_runtime() {
   esac
 }
 
-# Release assets come in two shapes and BOTH must install, because whatever the
-# latest release happens to be is what the documented one-liner downloads:
-#   vis-agent-<os>-<arch>-community.tar.gz  bundle: launcher + native runtime
-#   vis-<os>-<arch>-community               bare native runtime (releases up to
-#                                           v0.1.22, which predate the bundle)
+# Every release publishes exactly one asset per platform: the bundle that carries
+# the launcher together with its native runtime.
+#   vis-agent-<os>-<arch>-community.tar.gz
 vis_platform_slug() {
   local os arch
   case "$(uname -s)" in
@@ -341,14 +339,8 @@ vis_platform_asset() {
   printf 'vis-agent-%s-community.tar.gz' "$slug"
 }
 
-vis_legacy_asset() {
-  local slug
-  slug="$(vis_platform_slug)" || return 1
-  printf 'vis-%s-community' "$slug"
-}
-
-# Exact-name match: the trailing quote keeps 'vis-linux-x64-community' from
-# matching 'vis-linux-x64-community.tar.gz' (or any longer sibling asset).
+# Exact-name match: the trailing quote keeps the bundle from matching a longer
+# sibling asset (checksum, signature) that shares its name as a prefix.
 vis_asset_url() {
   local json="$1" name="$2" url
   url="$(printf '%s' "$json" | grep -o "https://[^\"]*/${name}\"" | head -1)" || url=""
@@ -434,14 +426,11 @@ vis_do_update() {
     fi
   fi
 
-  # Current releases ship launcher + runtime as one bundle; releases up to
-  # v0.1.22 publish only the bare runtime. Install whichever this release has,
-  # so the documented one-liner works against the latest release as it is today.
+  # Releases ship the launcher and its native runtime as a single bundle.
   command -v curl >/dev/null || { echo "vis-agent update needs curl on PATH" >&2; exit 1; }
   command -v tar >/dev/null  || { echo "vis-agent update needs tar on PATH" >&2; exit 1; }
-  local asset legacy api dl legacy_dl json archive unpack native_dir
+  local asset api dl json archive unpack native_dir
   asset="$(vis_platform_asset)" || exit 1
-  legacy="$(vis_legacy_asset)" || exit 1
   if [[ -z "$target" || "$target" == latest ]]; then
     api="https://api.github.com/repos/$vis_repo_slug/releases/latest"
   else
@@ -452,10 +441,8 @@ vis_do_update() {
   # `set -o pipefail` + `set -e` would kill this function on a no-match grep,
   # swallowing the actionable message below. Keep the failure local.
   dl="$(vis_asset_url "$json" "$asset")"
-  legacy_dl=""
-  [[ -n "$dl" ]] || legacy_dl="$(vis_asset_url "$json" "$legacy")"
-  if [[ -z "$dl" && -z "$legacy_dl" ]]; then
-    echo "vis-agent update: no native runtime published for '$asset' or '$legacy'." >&2
+  if [[ -z "$dl" ]]; then
+    echo "vis-agent update: no native runtime published for '$asset'." >&2
     echo "  Checked $api" >&2
     echo "  Releases currently carry Linux x64 and arm64 only." >&2
     echo "  Elsewhere: install the source runtime (bin/install-source), or build" >&2
@@ -475,23 +462,6 @@ vis_do_update() {
       exit 1
     }
     native_dir="$bin_dir"
-  fi
-
-  # Pre-bundle release: the runtime is published alone, so keep THIS launcher
-  # (it is the one that knows how to drive both asset layouts).
-  if [[ -z "$dl" ]]; then
-    local bare
-    bare="$(mktemp "${TMPDIR:-/tmp}/vis-agent-native.XXXXXX")"
-    trap 'rm -f "$bare"' RETURN
-    echo "vis-agent: this release predates the launcher bundle; installing runtime '$legacy'"
-    echo "vis-agent: downloading $legacy_dl"
-    curl -fSL "$legacy_dl" -o "$bare" || exit 1
-    chmod 0755 "$bare"
-    mv -f "$bare" "$native_dir/vis-agent-native"
-    trap - RETURN
-    echo "vis-agent: installed native runtime from $legacy into $native_dir"
-    echo "vis-agent: choose it with 'vis-agent runtime use native'."
-    exit 0
   fi
 
   archive="$(mktemp "${TMPDIR:-/tmp}/vis-agent-bundle.XXXXXX.tar.gz")"

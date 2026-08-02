@@ -48,12 +48,6 @@ Release CI currently builds and smoke-tests:
 | Linux x86-64 | `vis-agent-linux-x64-community.tar.gz` |
 | Linux ARM64 | `vis-agent-linux-arm64-community.tar.gz` |
 
-Releases up to `v0.1.22` predate this bundle and publish the bare runtime as
-`vis-<os>-<arch>-community` instead. `vis-agent update --native` accepts either
-layout: with no bundle in the release it installs that binary as
-`vis-agent-native` and keeps the launcher it is already running, so the
-documented install works against the latest release either way.
-
 macOS users use the JVM source distribution unless a maintainer provides a
 matching locally built sidecar. Native builds require GraalVM Community Edition
 25.1.3 exactly; the repository pin is authoritative.
