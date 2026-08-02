@@ -137,6 +137,22 @@ def __vis_fd_drop__(__vis_fd__, __vis_id__):
         return 0
 
 
+__vis_fd_reapers__ = __vis_survivor__("__vis_fd_reapers__", list)
+
+
+def __vis_run_reapers__():
+    # Descriptors this module never opened. A shim (`sqlite3`) hands the block a
+    # Python object wrapping a HOST handle, and dropping that object leaks the host
+    # connection and its descriptor — measured 14 per 15 dropped `sqlite3.connect()`
+    # — because nothing here can see it. A shim registers one cheap callable here
+    # and reclaims its own on the same schedule; a reaper must never raise.
+    for __vis_reaper__ in list(__vis_fd_reapers__):
+        try:
+            __vis_reaper__()
+        except Exception:
+            pass
+
+
 def __vis_reclaim_fds__(force=False):
     # Drop entries the block closed itself, close the ones it dropped. Cheap:
     # one `fstat` per tracked handle, no collect. Returns descriptors closed.
@@ -144,6 +160,7 @@ def __vis_reclaim_fds__(force=False):
     # ref is already dead — such a handle can no longer be flushed by anyone
     # (its buffer died with it), so closing its descriptor loses nothing that was
     # not lost the moment the block dropped it.
+    __vis_run_reapers__()
     if not __vis_fd_registry__:
         return 0
     if not force and len(__vis_fd_registry__) < __vis_fd_sweep_at__:
@@ -228,6 +245,47 @@ def __vis_flush_writes__():
 open = __vis_open__
 __vis_builtins__.open = __vis_open__
 __vis_io__.open = __vis_open__
+
+
+# The RAW doors, which reach a descriptor without passing through any `open` at
+# all (measured: 25 leaked descriptors per 25 iterations, seen by neither shim
+# above): `io.FileIO(p)` IS the descriptor-owning class, and `io.open_code(p)`
+# hands back one. `io.FileIO` is an immutable type — its `__init__` cannot be
+# hooked (TypeError) — so the shim is a SUBCLASS whose metaclass forwards
+# `isinstance`/`issubclass` to the real class: the raws built INSIDE `open` are
+# real `FileIO`s, and code asking `isinstance(f.raw, io.FileIO)` must still get
+# True after the swap. What stays the CALLER's: `os.open` hands back a bare int
+# with no object to weak-ref, so that descriptor is theirs to `os.close`, exactly
+# like `closefd=False`.
+__vis_real_FileIO__ = __vis_survivor__("__vis_real_FileIO__", lambda: __vis_io__.FileIO)
+
+
+class __vis_FileIOMeta__(type(__vis_real_FileIO__)):
+    def __instancecheck__(cls, __vis_o__):
+        return isinstance(__vis_o__, __vis_real_FileIO__)
+
+    def __subclasscheck__(cls, __vis_c__):
+        return issubclass(__vis_c__, __vis_real_FileIO__)
+
+
+class __vis_FileIO__(__vis_real_FileIO__, metaclass=__vis_FileIOMeta__):
+    # `FileIO(name, mode="r", closefd=True, opener=None)`: `closefd=False` (kwarg
+    # or 3rd positional) means the caller merely lent us its descriptor, exactly
+    # as in `__vis_open__`. Nothing joins `__vis_open_writes__` here — a FileIO is
+    # unbuffered, so it never holds bytes that a flush could still rescue.
+    def __init__(self, *__vis_a__, **__vis_kw__):
+        __vis_fd_admit__()
+        super().__init__(*__vis_a__, **__vis_kw__)
+        if __vis_kw__.get("closefd", True) and (len(__vis_a__) < 3 or __vis_a__[2]):
+            __vis_fd_track__(self)
+
+
+def __vis_open_code__(__vis_p__):
+    return __vis_FileIO__(__vis_p__, "rb")
+
+
+__vis_io__.FileIO = __vis_FileIO__
+__vis_io__.open_code = __vis_open_code__
 
 
 def __vis_count_forms__(src):

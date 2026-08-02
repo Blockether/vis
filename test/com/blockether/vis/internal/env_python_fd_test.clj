@@ -231,4 +231,91 @@
         (expect (nil? (:error r)))
         (expect (= "probe\n" (:result r)))
         (expect (nil? (:error after)))
-        (expect (= (:result before) (:result after))))))
+        (expect (= (:result before) (:result after)))))
+  (it "reclaims the raw doors, which never pass through any `open`"
+      ;; `io.FileIO(p)` IS the descriptor-owning object and `io.open_code(p)` hands
+      ;; one back: neither goes through `open`, so both leaked one descriptor per
+      ;; call while only the `open` doors were shimmed (measured, 25 per 25) and
+      ;; neither showed up in the registry. `io.FileIO` is an immutable type, so
+      ;; the shim is a subclass — this is what proves the subclass is really the
+      ;; one being constructed.
+      (let
+        [ctx (sandbox)
+         before (open-fd-count)
+         r (ep/run-python-block ctx
+                                (str "import io\n"
+                                     "h = io.FileIO(F)\n"
+                                     "c = io.open_code(F)\n"
+                                     "seen = [h.fileno() in __vis_fd_registry__,\n"
+                                     "        c.fileno() in __vis_fd_registry__]\n"
+                                     "h.close()\n"
+                                     "c.close()\n"
+                                     "for _ in range(40):\n"
+                                     "    g = io.FileIO(F)\n"
+                                     "    del g\n"
+                                     "seen + [len(__vis_fd_registry__) <= 8]")
+                                "t1/i2")
+         grown (- (open-fd-count) before)]
+        (expect (nil? (:error r)))
+        (expect (= [true true true] (:result r)))
+        (expect (> 40 grown))))
+  (it "keeps `isinstance` honest after taking over `io.FileIO`"
+      ;; The shim is a SUBCLASS, so the raw built INSIDE `open` is not one of its
+      ;; instances. Its metaclass forwards the question to the real class, or every
+      ;; library asking `isinstance(f.raw, io.FileIO)` would start answering False
+      ;; the moment the sandbox loaded.
+      (let
+        [r (ep/run-python-block (sandbox)
+                                (str "import io, pathlib\n"
+                                     "raw = open(F, 'rb', buffering=0)\n"
+                                     "out = [isinstance(raw, io.FileIO),\n"
+                                     "       issubclass(io.FileIO, io.RawIOBase),\n"
+                                     "       isinstance(io.FileIO(F), io.FileIO),\n"
+                                     "       pathlib.Path(F).read_text()]\n"
+                                     "raw.close()\n"
+                                     "out")
+                                "t1/i2")]
+        (expect (nil? (:error r)))
+        (expect (= [true true true "probe\n"] (:result r)))))
+  (it "leaves a descriptor borrowed through `io.FileIO` to its owner"
+      ;; Same contract as `open(fd, closefd=False)`, at the raw door: the block
+      ;; opened that fd itself and still reads through it after the wrapper dies.
+      (let
+        [r (ep/run-python-block (sandbox)
+                                (str "import gc, io, os\n"
+                                     "fd = os.open(F, os.O_RDONLY)\n"
+                                     "__vis_fd_registry__.pop(fd, None)\n"
+                                     "h = io.FileIO(fd, 'r', False)\n"
+                                     "tracked = fd in __vis_fd_registry__\n"
+                                     "del h\n"
+                                     "gc.collect()\n"
+                                     "__vis_reclaim_fds__(True)\n"
+                                     "out = os.read(fd, 5).decode()\n"
+                                     "os.close(fd)\n"
+                                     "[tracked, out]")
+                                "t1/i2")]
+        (expect (nil? (:error r)))
+        (expect (= [false "probe"] (:result r)))))
+  (it "reclaims a HOST resource a block dropped, not only descriptors it opened"
+      ;; `sqlite3` hands the block a Python object wrapping a host connection, and
+      ;; dropping that object left the connection — and its descriptor — open for
+      ;; the whole session (measured: 14 per 15), invisible to the registry because
+      ;; no `open` was ever involved. The shim registers a reaper that the runtime
+      ;; calls on its own schedule, so the process count is what has to be watched.
+      (let
+        [ctx (sandbox)
+         before (open-fd-count)
+         r (ep/run-python-block ctx
+                                (str "import gc, sqlite3\n"
+                                     "for i in range(40):\n"
+                                     "    c = sqlite3.connect(W + str(i) + '.db')\n"
+                                     "    c.execute('create table t(x)')\n"
+                                     "    del c\n"
+                                     "gc.collect()\n"
+                                     "__vis_reclaim_fds__(True)\n"
+                                     "'done'")
+                                "t1/i2")
+         grown (- (open-fd-count) before)]
+        (expect (nil? (:error r)))
+        (expect (= "done" (:result r)))
+        (expect (> 20 grown)))))

@@ -1,5 +1,5 @@
 def __vis_install_sqlite3__():
-    import sys, types
+    import sys, types, weakref
 
     _bi = sys.modules["builtins"]
     _connect = __vis_sqlite_connect__
@@ -61,6 +61,28 @@ def __vis_install_sqlite3__():
         if not ok:
             _raise(payload)
         return payload
+
+    # A dropped Connection is NOT closed: GraalPy does not refcount, so the HOST
+    # connection stays open for the whole session and keeps its descriptor
+    # (measured: 14 leaked descriptors per 15 dropped `connect()`s, invisible to
+    # the runtime's own registry because no `open` was ever involved). The handle
+    # is a plain host id, so unlike the Python object it OUTLIVES its owner: hold
+    # it under a WEAK ref and close it host-side once nothing can reach it.
+    _live = {}
+
+    def _reap():
+        for h in list(_live):
+            r = _live.get(h)
+            if r is None or r() is not None:
+                continue
+            _live.pop(h, None)
+            try:
+                _close(h)
+            except Exception:
+                pass  # best-effort: a broken handle must never break the block
+        return len(_live)
+
+    _reap.__vis_sqlite3_reaper__ = True
 
     def _decode_cell(v):
         if v is None:
@@ -210,7 +232,9 @@ def __vis_install_sqlite3__():
 
     class Connection:
         def __init__(self, database):
+            _reap()
             self._h = _call(_connect, database)
+            _live[self._h] = weakref.ref(self)
             self.row_factory = None
             self.text_factory = str
             self.isolation_level = ""
@@ -234,6 +258,7 @@ def __vis_install_sqlite3__():
             _call(_rollback, self._h)
 
         def close(self):
+            _live.pop(self._h, None)
             _call(_close, self._h)
 
         @property
@@ -362,6 +387,14 @@ def __vis_install_sqlite3__():
     sys.modules["sqlite3"] = mod
     sys.modules["sqlite3.dbapi2"] = mod
     _bi.sqlite3 = mod
+
+    # Reclaim dropped connections on the runtime's own schedule (every tool-call
+    # boundary and every block end), not only when the block opens another one.
+    _reapers = getattr(_bi, "__vis_fd_reapers__", None)
+    if _reapers is not None and not any(
+        getattr(f, "__vis_sqlite3_reaper__", False) for f in _reapers
+    ):
+        _reapers.append(_reap)
 
 
 __vis_install_sqlite3__()
