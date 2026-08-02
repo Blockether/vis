@@ -383,22 +383,31 @@
      :mode :memory}))
 
 (defn- stable-db-file-key
-  "Best-effort stable identity for the current SQLite file behind a store.
+  "Filesystem IDENTITY of the SQLite file behind a store - the `(dev, ino)`
+   file key, and deliberately NOT its size or mtime.
+
    Used to detect when the pathname stayed the same but the file was
    replaced underneath a long-lived JVM (common in dev when `~/.vis/vis.mdb`
-   gets recreated while nREPL survives)."
+   gets recreated while nREPL survives).
+
+   Size and mtime used to be part of this snapshot, and they made the check
+   LIE: SQLite rewrites `vis.db` in place on every WAL checkpoint, so
+   ORDINARY write traffic moved both while the inode never changed.
+   `db-store-stale?` then answered true for the rest of the process, and the
+   facade responds to a stale store by closing the process-wide Hikari pool
+   - underneath in-flight queries - and opening a new one. A crashed gateway
+   had reached pool generation `vis-rlm-disk-351` with seven leaked
+   housekeeper threads in 3h21m of uptime, and died with SIGBUS inside
+   `NativeDB.step`. Identity moves exactly when a reopen is the right
+   answer."
   [store]
   (when-let [db-file (:db-file store)]
     (try (let
            [attrs (Files/readAttributes ^java.nio.file.Path
                                         (Paths/get db-file (make-array String 0))
-                                        "basic:fileKey,lastModifiedTime,size"
+                                        "basic:fileKey"
                                         ^"[Ljava.nio.file.LinkOption;" (make-array LinkOption 0))]
-           {:db-file db-file
-            :file-key (get attrs "fileKey")
-            :last-modified (some-> (get attrs "lastModifiedTime")
-                                   str)
-            :size (get attrs "size")})
+           {:db-file db-file :file-key (get attrs "fileKey")})
          (catch Throwable _ {:db-file db-file :missing? true}))))
 
 (defn- with-file-key-snapshot
@@ -467,9 +476,13 @@
 
 (defn db-store-stale?
   "True when a persistent SQLite store no longer matches the requested
-   db-spec or the file at the same path was replaced under this JVM. When
-   true, the facade closes the old shared pool and opens a new one.
-   Paths compare CANONICALIZED on both sides."
+   db-spec or the file at the same path was REPLACED under this JVM. When
+   true, the facade closes the old shared pool and opens a new one, so this
+   predicate must never fire on a store that is merely being written to -
+   the close lands on connections other threads are querying.
+
+   Paths compare CANONICALIZED on both sides; the file compares by
+   filesystem identity only (see `stable-db-file-key`)."
   [store db-spec]
   (when (= :persistent (:mode store))
     (or (and (string? db-spec) (not= (canonical-path db-spec) (canonical-path (:path store))))

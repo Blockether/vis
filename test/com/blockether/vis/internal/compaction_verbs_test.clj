@@ -577,8 +577,8 @@
         (expect (= "session_fold" (:name t)))
         (expect (str/starts-with? (:description t) "Collapse SETTLED wire steps"))
         (expect (str/includes? (:description t) "fold a step once its takeaway is captured"))
-        (expect (str/includes? (:description t) "the live iteration you are emitting right now"))
-        (expect (str/includes? (:description t) "already-completed iterations"))
+        (expect (str/includes? (:description t) "The live iteration and future steps are refused"))
+        (expect (str/includes? (:description t) "this turn's finished iterations"))
         (expect (str/includes? (:description t) "folding changes rendering, not storage"))
         ;; The `session_state` recovery hint is INTROSPECTION-gated: session
         ;; self-inspection only exists while the `introspection` toggle is ON

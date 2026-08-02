@@ -848,8 +848,8 @@
 ;; `/logout`. Every one of them is a THIN pass-through: the daemon owns the
 ;; PKCE verifier, the device code, the token exchange, and the credential file.
 ;; A client only ever sees what it must SHOW the user (URL, user code) and the
-;; verdict. This is what lets a remote client — the companion app, the web UI,
-;; or a TUI attached to a gateway on another machine — sign a provider in
+;; verdict. This is what lets a remote client — the companion app, or a TUI
+;; attached to a gateway on another machine — sign a provider in
 ;; WITHOUT the provider extension on its own classpath.
 
 (defn provider-auth-start!

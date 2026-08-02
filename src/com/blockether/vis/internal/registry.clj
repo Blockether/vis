@@ -162,7 +162,7 @@
 ;; ── Headless OAuth (the wire-drivable twin of :provider/auth-fn) ─────────────
 ;; `auth-fn` is INTERACTIVE: it prints and blocks on a terminal/dialog, so it
 ;; can never cross an HTTP boundary. These three slots split the SAME flow into
-;; steps a remote client (companion app, web UI, any gateway caller) can drive:
+;; steps a remote client (companion app, any gateway caller) can drive:
 ;;
 ;;   start    -> {:kind :pkce|:device …public fields… :flow <opaque, PRIVATE>}
 ;;   complete -> PKCE only: exchange the pasted redirect URL / code

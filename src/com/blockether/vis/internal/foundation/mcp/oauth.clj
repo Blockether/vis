@@ -205,23 +205,21 @@
   [^String url]
   (try (= :ok (:status (external-opener/open! url))) (catch Throwable _ false)))
 
-(defn- await-loopback-code!
-  "Bind a one-shot HTTP server on 127.0.0.1, print the authorization URL, best-effort
-   open it, and block up to `timeout-ms` for the OAuth `code`. Returns
-   `{:code :state}` or throws `:mcp/oauth-timeout`."
-  [server-name authorize-url-fn timeout-ms]
-  (let
-    [addr
-     (InetSocketAddress. "127.0.0.1" 0)
+(defn- start-loopback!
+  "Bind a one-shot loopback callback listener on 127.0.0.1. Returns
+   `{:server :port :redirect-uri :result}`; `result` is a promise delivered with
+   the parsed callback query the moment a browser ON THIS HOST reaches it.
 
-     srv
-     (HttpServer/create addr 0)
+   Split out of `await-loopback-code!` because the headless flow needs the same
+   listener WITHOUT blocking and without opening a browser on the daemon's
+   machine — the person authorizing may be on a phone somewhere else."
+  [server-name]
+  (let
+    [srv
+     (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)
 
      port
      (.getPort (.getAddress srv))
-
-     redirect-uri
-     (str "http://127.0.0.1:" port "/mcp-callback")
 
      result
      (promise)]
@@ -257,6 +255,17 @@
               (deliver result q)))))
     (.setExecutor srv nil)
     (.start srv)
+    {:server srv
+     :port port
+     :redirect-uri (str "http://127.0.0.1:" port "/mcp-callback")
+     :result result}))
+
+(defn- await-loopback-code!
+  "Bind a one-shot HTTP server on 127.0.0.1, print the authorization URL, best-effort
+   open it, and block up to `timeout-ms` for the OAuth `code`. Returns
+   `{:code :state}` or throws `:mcp/oauth-timeout`."
+  [server-name authorize-url-fn timeout-ms]
+  (let [{:keys [^HttpServer server redirect-uri result]} (start-loopback! server-name)]
     (try (let [url (authorize-url-fn redirect-uri)]
            (tel/log!
              {:level :info :id ::authorize :data {:server server-name :redirect_uri redirect-uri}}
@@ -270,7 +279,7 @@
                    (throw (ex-info (str "MCP " server-name " OAuth error: " (get q "error"))
                                    {:type :mcp/oauth-error :server server-name :query q}))
                    :else {:code (get q "code") :state (get q "state") :redirect-uri redirect-uri})))
-         (finally (.stop srv 0)))))
+         (finally (.stop server 0)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Token store — one EDN file per server under ~/.vis/mcp-tokens/
@@ -330,12 +339,13 @@
 ;; Auth-code flow (first time)
 ;; ---------------------------------------------------------------------------
 
-(defn- authorize-code!
-  "Run the full RFC 9728 → RFC 8414 → PKCE authorization-code dance for `server-name`
-   against `server-url`. `www-auth` is the raw `WWW-Authenticate` header from the
-   401 (may be nil — we still try the well-known URL). `auth-hint` is optional user
-   config: `{:client-id :scope :authorization-timeout-ms}`. Persists tokens and
-   returns the token map."
+(defn- auth-context
+  "Discovery (RFC 9728 → RFC 8414) plus fresh PKCE material for `server-name`.
+   Shared by the loopback flow and the headless flow so both speak exactly the
+   same protocol and only the redirect leg differs. `www-auth` is the raw
+   `WWW-Authenticate` header from the 401 (may be nil — we still try the
+   well-known URL). `auth-hint` is optional user config:
+   `{:client-id :scope :authorization-timeout-ms}`."
   [server-name server-url www-auth auth-hint]
   (let
     [rmeta
@@ -357,91 +367,111 @@
                          {:type :mcp/oauth-discovery :server server-name})))
 
      verifier
-     (b64url (rand-bytes 32))
+     (b64url (rand-bytes 32))]
 
-     challenge
-     (b64url (sha256 verifier))
+    {:server server-name
+     :as-url as-url
+     :asmeta asmeta
+     :verifier verifier
+     :challenge (b64url (sha256 verifier))
+     :state (b64url (rand-bytes 16))
+     :resource (get rmeta "resource")
+     :scope (or (:scope auth-hint)
+                (some->> (get rmeta "scopes_supported")
+                         seq
+                         (str/join " "))
+                "openid profile offline_access")}))
 
-     state
-     (b64url (rand-bytes 16))
+(defn- authorize-url
+  "The authorization-endpoint URL for `ctx` at `redirect-uri`, plus the `client_id`
+   it was built for. Dynamic client registration happens HERE, once, and the id is
+   returned: registering again before the token exchange can hand back a DIFFERENT
+   client, which the authorization server then rejects the code for."
+  [{:keys [asmeta challenge state resource scope server]} auth-hint redirect-uri]
+  (let
+    [reg
+     (when-not (:client-id auth-hint) (register-client! asmeta redirect-uri))
 
-     resource
-     (get rmeta "resource")
+     client-id
+     (or (:client-id auth-hint) (get reg "client_id"))
 
-     scope
-     (or (:scope auth-hint)
-         (some->> (get rmeta "scopes_supported")
-                  seq
-                  (str/join " "))
-         "openid profile offline_access")]
+     _
+     (when-not client-id
+       (throw (ex-info (str "MCP " server
+                            ": the authorization server supports no dynamic client registration; "
+                            "set `auth: {client_id: …}` on the server")
+                       {:type :mcp/oauth-client :server server})))
 
-    (letfn
-      [(authorize-url [redirect-uri]
-         (let
-           [reg
-            (when-not (:client-id auth-hint) (register-client! asmeta redirect-uri))
+     endpoint
+     (get asmeta "authorization_endpoint")
 
-            client-id
-            (or (:client-id auth-hint) (get reg "client_id"))
+     params
+     (cond->
+       {"response_type" "code"
+        "client_id" client-id
+        "redirect_uri" redirect-uri
+        "state" state
+        "code_challenge" challenge
+        "code_challenge_method" "S256"
+        "scope" scope}
+       resource
+       (assoc "resource" resource))]
 
-            params
-            (cond->
-              {"response_type" "code"
-               "client_id" client-id
-               "redirect_uri" redirect-uri
-               "state" state
-               "code_challenge" challenge
-               "code_challenge_method" "S256"
-               "scope" scope}
-              resource
-              (assoc "resource" resource))]
+    {:client-id client-id
+     :url (str endpoint (if (str/includes? endpoint "?") "&" "?") (form-encode params))}))
 
-           (assert
-             client-id
-             "MCP OAuth: no client_id (auth server does not support DCR; set :auth :client_id in config)")
-           (str (get asmeta "authorization_endpoint")
-                (if (str/includes? (get asmeta "authorization_endpoint") "?") "&" "?")
-                (form-encode params))))]
-      (let
-        [{:keys [code state redirect-uri]}
-         (await-loopback-code! server-name
-                               authorize-url
-                               (or (:authorization-timeout-ms auth-hint) 300000))
+(defn- exchange-code!
+  "Spend `code` at the token endpoint and PERSIST the resulting tokens."
+  [{:keys [server as-url asmeta verifier resource]} client-id code redirect-uri]
+  (let
+    [token-url
+     (get asmeta "token_endpoint")
 
-         _
-         (when-not (seq code)
-           (throw (ex-info "MCP OAuth: no code in callback"
-                           {:type :mcp/oauth-error :server server-name :state state})))
+     {:keys [status body]}
+     (http-post-form token-url
+                     (cond->
+                       {"grant_type" "authorization_code"
+                        "code" code
+                        "redirect_uri" redirect-uri
+                        "client_id" client-id
+                        "code_verifier" verifier}
+                       resource
+                       (assoc "resource" resource)))]
 
-         reg
-         (when-not (:client-id auth-hint) (register-client! asmeta redirect-uri))
+    (when (>= (long status) 400)
+      (throw (ex-info (str "MCP " server " token exchange failed: " status)
+                      {:type :mcp/oauth-token :server server :status status :body body})))
+    (write-tokens! server
+                   (->tokens body
+                             {:client-id client-id
+                              :token-endpoint token-url
+                              :authorization-server as-url
+                              :resource resource}))))
 
-         client-id
-         (or (:client-id auth-hint) (get reg "client_id"))
+(defn- authorize-code!
+  "Run the full RFC 9728 → RFC 8414 → PKCE authorization-code dance for `server-name`
+   against `server-url`, driving a browser on THIS host through a loopback redirect.
+   Persists tokens and returns the token map."
+  [server-name server-url www-auth auth-hint]
+  (let
+    [ctx
+     (auth-context server-name server-url www-auth auth-hint)
 
-         token-url
-         (get asmeta "token_endpoint")
+     client-id
+     (volatile! nil)
 
-         {:keys [status body]}
-         (http-post-form token-url
-                         (cond->
-                           {"grant_type" "authorization_code"
-                            "code" code
-                            "redirect_uri" redirect-uri
-                            "client_id" client-id
-                            "code_verifier" verifier}
-                           resource
-                           (assoc "resource" resource)))]
+     {:keys [code redirect-uri]}
+     (await-loopback-code! server-name
+                           (fn [redirect-uri]
+                             (let [built (authorize-url ctx auth-hint redirect-uri)]
+                               (vreset! client-id (:client-id built))
+                               (:url built)))
+                           (or (:authorization-timeout-ms auth-hint) 300000))]
 
-        (when (>= (long status) 400)
-          (throw (ex-info (str "MCP " server-name " token exchange failed: " status)
-                          {:type :mcp/oauth-token :server server-name :status status :body body})))
-        (write-tokens! server-name
-                       (->tokens body
-                                 {:client-id client-id
-                                  :token-endpoint token-url
-                                  :authorization-server as-url
-                                  :resource resource}))))))
+    (when-not (seq code)
+      (throw (ex-info "MCP OAuth: no code in callback"
+                      {:type :mcp/oauth-error :server server-name})))
+    (exchange-code! ctx @client-id code redirect-uri)))
 
 (defn- refresh-token-exchange!
   "Refresh an access token via the token endpoint. May rotate the refresh token."
@@ -497,3 +527,173 @@
   [server-name]
   (let [f (token-file server-name)]
     (when (.exists f) (.delete f))))
+
+(defn token-status
+  "Non-secret view of the persisted OAuth tokens for `server-name`. Never returns
+   the token itself: a client may render it, and a client is never trusted with
+   credentials."
+  [server-name]
+  (let [creds (read-tokens server-name)]
+    {:server server-name
+     :is-authorized (boolean (:token creds))
+     :is-expired (boolean (and (:token creds) (expired? creds)))
+     :has-refresh-token (boolean (:refresh-token creds))
+     :expires-at-ms (:expires-at-ms creds)
+     :scope (:scope creds)}))
+
+;; ---------------------------------------------------------------------------
+;; Headless flows — authorizing from a client that is NOT this daemon's terminal
+;;
+;; `authorize-code!` above assumes the person is sitting at the machine running
+;; the gateway: it opens a browser here and blocks. The Companion app and the TUI
+;; are clients, possibly on another device entirely, so they need the flow taken
+;; apart: START returns the URL to show, the user authorizes in THEIR browser,
+;; and the flow lands either by itself (the browser did reach the loopback
+;; listener on this host) or by POSTing back the redirect URL they were dumped on.
+;; ---------------------------------------------------------------------------
+
+(def ^:private flow-ttl-ms
+  "How long an unfinished headless flow stays resumable. Long enough to unlock a
+   phone, log in, and approve; short enough that an abandoned flow's loopback
+   listener does not sit on a port forever."
+  600000)
+
+(defonce ^:private flows (atom {})) ; {flow-id flow}
+
+(defn- new-flow-id [] (b64url (rand-bytes 12)))
+
+(defn- stop-loopback!
+  [{:keys [^HttpServer loopback]}]
+  (when loopback (try (.stop loopback 0) (catch Throwable _ nil)))
+  nil)
+
+(defn- drop-flow!
+  [flow-id]
+  (when-let [flow (get @flows flow-id)]
+    (swap! flows dissoc flow-id)
+    (stop-loopback! flow))
+  nil)
+
+(defn- sweep!
+  "Drop expired flows and release their listeners. Runs on every public op, so a
+   gateway nobody is authorizing against keeps no timers and no open ports."
+  []
+  (doseq [[id {:keys [expires-at-ms]}] @flows]
+    (when (< (long expires-at-ms) (System/currentTimeMillis)) (drop-flow! id)))
+  nil)
+
+(defn- flow-view
+  "The ONLY fields that may cross the wire. The PKCE verifier, the state nonce and
+   the discovery context stay in this process."
+  [{:keys [id server url redirect-uri expires-at-ms state]}]
+  (merge {:flow-id id
+          :server server
+          :kind "pkce"
+          :url url
+          :redirect-uri redirect-uri
+          :expires-at-ms expires-at-ms}
+         @state))
+
+(defn- code-of
+  "The authorization code inside `input`: a bare code, or the whole redirect URL
+   the browser landed on (which is all a user on another device can hand back).
+   Throws the server's own `error` when the callback carried one."
+  [input]
+  (let
+    [s
+     (str/trim (str input))
+
+     q
+     (when (str/includes? s "?") (query-parse (subs s (inc (long (str/index-of s "?"))))))]
+
+    (when-let [err (get q "error")]
+      (throw (ex-info
+               (str "MCP OAuth error: " err)
+               {:type :mcp/oauth-error :error err :description (get q "error_description")})))
+    (or (get q "code")
+        (when-not (or (str/blank? s) (str/includes? s "?")) s)
+        (throw (ex-info "No authorization code in the pasted value" {:type :mcp/oauth-error})))))
+
+(defn- finish-flow!
+  "Spend `code` for `flow` and record the verdict on the flow itself, so a client
+   that started the flow on one device can read the outcome from another."
+  [{:keys [ctx client-id redirect-uri state] :as flow} code]
+  (try (exchange-code! ctx client-id code redirect-uri)
+       (reset! state {:status "ok"})
+       (catch Throwable t
+         (reset! state {:status "error" :error (or (ex-message t) (str t))})
+         (throw t))
+       (finally (stop-loopback! flow)))
+  (flow-view flow))
+
+(defn start-authorization!
+  "Begin a HEADLESS OAuth flow for `server-name` at `server-url` and return its
+   public view `{:flow-id :server :kind :url :redirect-uri :expires-at-ms :status}`.
+
+   The caller shows `:url`; the user authorizes in their own browser. NO browser
+   is opened here — the user may be nowhere near this machine. The flow completes
+   by itself when that browser can reach the loopback listener on this host (the
+   local TUI case), otherwise the client posts the redirect URL back through
+   `complete-authorization!`."
+  [server-name server-url {:keys [www-auth auth-hint]}]
+  (sweep!)
+  (let
+    [ctx
+     (auth-context server-name server-url www-auth auth-hint)
+
+     {:keys [^HttpServer server redirect-uri result]}
+     (start-loopback! server-name)
+
+     {:keys [url client-id]}
+     (try (authorize-url ctx auth-hint redirect-uri)
+          (catch Throwable t (try (.stop server 0) (catch Throwable _ nil)) (throw t)))
+
+     flow
+     {:id (new-flow-id)
+      :server server-name
+      :ctx ctx
+      :client-id client-id
+      :url url
+      :redirect-uri redirect-uri
+      :loopback server
+      :expires-at-ms (+ (System/currentTimeMillis) (long flow-ttl-ms))
+      :state (atom {:status "pending"})}]
+
+    (swap! flows assoc (:id flow) flow)
+    (future (let [q (deref result flow-ttl-ms ::timeout)]
+              (when (map? q)
+                (try (finish-flow! flow (code-of (str "?" (form-encode q))))
+                     (catch Throwable _ nil)))))
+    (tel/log!
+      {:level :info :id ::headless-authorize :data {:server server-name :flow_id (:id flow)}}
+      (str "MCP OAuth: headless flow started for `" server-name "`"))
+    (flow-view flow)))
+
+(defn complete-authorization!
+  "Finish flow `flow-id` with what the user pasted back: the redirect URL their
+   browser landed on, or a bare authorization code."
+  [flow-id input]
+  (sweep!)
+  (let [flow (get @flows flow-id)]
+    (when-not flow
+      (throw (ex-info "Unknown or expired MCP auth flow"
+                      {:type :mcp/oauth-flow-not-found :flow-id flow-id})))
+    (finish-flow! flow (code-of input))))
+
+(defn poll-authorization!
+  "Read a flow's verdict without blocking: `pending`, `ok`, or `error`. This is how
+   a client learns that the loopback listener already finished the flow for it."
+  [flow-id]
+  (sweep!)
+  (let [flow (get @flows flow-id)]
+    (when-not flow
+      (throw (ex-info "Unknown or expired MCP auth flow"
+                      {:type :mcp/oauth-flow-not-found :flow-id flow-id})))
+    (flow-view flow)))
+
+(defn cancel-authorization!
+  "Forget an abandoned flow and release its loopback listener now."
+  [flow-id]
+  (sweep!)
+  (drop-flow! flow-id)
+  {:flow-id flow-id :is-cancelled true})

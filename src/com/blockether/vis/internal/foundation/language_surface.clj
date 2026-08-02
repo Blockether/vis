@@ -1010,8 +1010,8 @@
      :native-tool? true
      :result
      (str
-       "String-keyed object stamped with `op`; null and mode-inapplicable fields may be omitted. "
-       "May include execution metadata, counts/details, output, timeout, and REPL-recovery diagnostics.")
+       "String-keyed, stamped with `op`; absent fields mean not applicable. Carries execution metadata, "
+       "counts/details, output, timeout, and REPL-recovery diagnostics.")
      :description
      "Run pack tests; prefer the smallest target: `namespaces` beats `paths`, `only`/`filter`/tags narrow."
      :call {:lead-opt "language" :rest :always}
@@ -1084,10 +1084,9 @@
        "`{result,id,message}`.")
      :description
      (str
-       "REPL lifecycle. Read `session[\"resources\"][\"repls\"][language][cwd]` first: reuse `up`; "
-       "recheck `starting`; start absent/down/failed; restart unresponsive; \"status\" reports that "
-       "directory's lifecycle state; \"stop\" ends a managed REPL; connect attaches an external "
-       "REPL by port and then only detaches it.")
+       "REPL lifecycle. Check `session[\"resources\"][\"repls\"][language][cwd]` first: reuse `up`, recheck "
+       "`starting`, start when absent/down/failed, restart when unresponsive. `status` reports that "
+       "directory's state; `stop` ends a managed REPL; `connect` attaches an external REPL by port and only detaches it.")
      :call {:lead-opt "language" :rest :always}
      :render render-repl-start-result
      :color-role :tool-color/shell

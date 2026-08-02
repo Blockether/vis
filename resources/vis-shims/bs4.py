@@ -815,7 +815,8 @@ def __vis_install_bs4__():
                 formatter=formatter,
                 encoding=encoding or _DEFAULT_OUTPUT_ENCODING,
             )
-            if not out.endswith(_NL):
+            # An empty document prettifies to '', not to a lone newline.
+            if out and not out.endswith(_NL):
                 out = out + _NL
             return out.encode(encoding, "xmlcharrefreplace") if encoding else out
 
@@ -1504,7 +1505,7 @@ def __vis_install_bs4__():
 
     # -- CSS select --------------------------------------------------------------
     # An+B, as soupsieve's RE_NTH sees it (`odd`/`even` are handled separately).
-    _NTH_RE = re.compile(r"^([-+]?)(\d*n|\d+)([-+])?(\d+)?$")
+    _NTH_RE = re.compile(r"^([-+]?)(\d*n|\d+)(?:([-+])(\d+))?$")
 
     # The element `:scope` refers to: whatever select() was called on.
     _CSS_SCOPE = [None]
@@ -1713,6 +1714,27 @@ def __vis_install_bs4__():
     def _css_bad(selector):
         raise SelectorSyntaxError("Invalid CSS selector: %r" % (selector,))
 
+    def _css_check_pseudo_elements(selector):
+        # soupsieve refuses every pseudo-element while parsing and names the
+        # position of the first colon; nothing about the document matters.
+        text = selector if isinstance(selector, str) else ""
+        quote = None
+        i = 0
+        n = len(text)
+        while i < n:
+            ch = text[i]
+            if quote is not None:
+                if ch == chr(92):
+                    i = i + 2
+                    continue
+                if ch == quote:
+                    quote = None
+            elif ch == _Q or ch == chr(39):
+                quote = ch
+            elif ch == ":" and i + 1 < n and text[i + 1] == ":":
+                raise NotImplementedError("Pseudo-element found at position %d" % i)
+            i = i + 1
+
     def _split_commas(text):
         # Comma-splits a selector without cutting inside [attr], :not(...) or a
         # quoted value.
@@ -1857,13 +1879,10 @@ def __vis_install_bs4__():
                 if not pname:
                     _css_bad(tok)
                 if element:
-                    raise NotImplementedError(
-                        "'::%s' pseudo-element is not implemented at this time."
-                        % (pname,)
-                    )
+                    raise NotImplementedError("Pseudo-element found at position 0")
                 if pname not in _CSS_PSEUDO_CLASSES:
                     raise NotImplementedError(
-                        "':%s' pseudo-class is not implemented at this time." % (pname,)
+                        "':%s' pseudo-class is not implemented at this time" % (pname,)
                     )
                 pseudos.append((pname, parg))
             else:
@@ -1932,14 +1951,18 @@ def __vis_install_bs4__():
     def _complex_match(node, part):
         return _complex_steps_match(node, _tokenize_group(part))
 
-    def _css_arg_parts(parg):
+    def _css_arg_parts(parg, forgiving=False):
+        # `:is()`, `:where()` and `:matches()` take a forgiving selector list, so
+        # an empty one matches nothing instead of raising.
         parts = []
         for part in _split_commas(parg or ""):
             part = part.strip()
             if not part:
+                if forgiving:
+                    continue
                 _css_bad(parg or "")
             parts.append(part)
-        if not parts:
+        if not parts and not forgiving:
             _css_bad(parg or "")
         return parts
 
@@ -2022,7 +2045,7 @@ def __vis_install_bs4__():
                     return False
             return True
         if pname in ("is", "where", "matches"):
-            for part in _css_arg_parts(parg):
+            for part in _css_arg_parts(parg, forgiving=True):
                 if _complex_match(node, part):
                     return True
             return False
@@ -2306,6 +2329,7 @@ def __vis_install_bs4__():
     def _select(root, selector, limit=None):
         # soupsieve scopes :scope to the element select() was called on -- for a
         # whole soup that is its root element.
+        _css_check_pseudo_elements(selector)
         scope = root
         if getattr(root, "name", None) == "[document]":
             scope = None
@@ -2816,13 +2840,21 @@ def __vis_install_bs4__():
             else:
                 self.interesting = _re.compile(r"</\s*%s" % self.cdata_elem, _re.I)
 
-        def __init__(self, builder=None):
+        # Duplicate-attribute strategies, named as bs4 names them on
+        # BeautifulSoupHTMLParser. Anything else must be callable.
+        REPLACE = "replace"
+        IGNORE = "ignore"
+
+        def __init__(self, builder=None, on_duplicate_attribute=None):
             # convert_charrefs stays off (as in bs4's own html.parser builder) so
             # entity handling lives here rather than in html.parser, which would
             # silently keep an unknown `&foo;` verbatim. Character data therefore
             # arrives split around every reference, and _flush() re-joins each run
             # into the single NavigableString bs4 produces.
             _hp.HTMLParser.__init__(self, convert_charrefs=False)
+            self.on_duplicate_attribute = (
+                self.REPLACE if on_duplicate_attribute is None else on_duplicate_attribute
+            )
             self.builder = builder
             self.root = Tag(None, builder, "[document]")
             self.stack = [self.root]
@@ -2839,6 +2871,31 @@ def __vis_install_bs4__():
         def _cur(self):
             return self.stack[-1]
 
+        def _element_classes(self):
+            """`element_classes` from the soup being built, if it has any."""
+            soup = getattr(self.builder, "soup", None)
+            return getattr(soup, "element_classes", None) or {}
+
+        def _tag_class(self):
+            return self._element_classes().get(Tag, Tag)
+
+        def _string_container(self, base=None):
+            # bs4's BeautifulSoup.string_container: a general element_classes
+            # override wins, and only a still-plain NavigableString picks up the
+            # per-tag container class.
+            container = base or NavigableString
+            container = self._element_classes().get(container, container)
+            if container is NavigableString:
+                # Text anywhere inside <script>/<style>/<template>/<rt>/<rp>
+                # is wrapped in bs4's dedicated NavigableString subclass for
+                # that container -- bs4 keeps a stack of container tags, so
+                # nesting does not lose the special class.
+                for open_tag in reversed(self.stack):
+                    special = self.builder.string_containers.get(open_tag.name)
+                    if special is not None:
+                        return special
+            return container
+
         def _flush(self):
             if self._data:
                 text = "".join(self._data)
@@ -2849,17 +2906,7 @@ def __vis_install_bs4__():
                     _pws(t) for t in self.stack
                 ):
                     text = _NL if _NL in text else " "
-                # Text anywhere inside <script>/<style>/<template>/<rt>/<rp>
-                # is wrapped in bs4's dedicated NavigableString subclass for
-                # that container -- bs4 keeps a stack of container tags, so
-                # nesting does not lose the special class.
-                cls = NavigableString
-                for open_tag in reversed(self.stack):
-                    special = self.builder.string_containers.get(open_tag.name)
-                    if special is not None:
-                        cls = special
-                        break
-                self._cur().append(cls(text))
+                self._cur().append(self._string_container()(text))
 
         def handle_starttag(self, tag, attrs, handle_empty_element=True):
             if self._root_tag is None:
@@ -2870,8 +2917,22 @@ def __vis_install_bs4__():
             for key, value in attrs:
                 # bs4 turns a valueless attribute into '' here, in the builder,
                 # so that a hand-built tag can still carry a None value.
-                attr_dict[key] = "" if value is None else value
-            t = Tag(
+                if value is None:
+                    value = ""
+                if key in attr_dict:
+                    # The same attribute twice in one tag: replace (the default),
+                    # keep the first, or hand all three to a callable. A string
+                    # that is neither strategy raises, just as bs4's does.
+                    on_dupe = self.on_duplicate_attribute
+                    if on_dupe == self.IGNORE:
+                        pass
+                    elif on_dupe in (None, self.REPLACE):
+                        attr_dict[key] = value
+                    else:
+                        on_dupe(attr_dict, key, value)
+                else:
+                    attr_dict[key] = value
+            t = self._tag_class()(
                 None,
                 self.builder,
                 tag,
@@ -2916,24 +2977,28 @@ def __vis_install_bs4__():
 
         def handle_comment(self, data):
             self._flush()
-            self._cur().append(Comment(data))
+            self._cur().append(self._string_container(Comment)(data))
 
         def handle_decl(self, decl):
             self._flush()
             if decl.lower().startswith("doctype"):
-                self._cur().append(Doctype(decl[7:].strip()))
+                self._cur().append(self._string_container(Doctype)(decl[7:].strip()))
 
         def handle_pi(self, data):
             self._flush()
             self._document_might_be_xml(data)
-            self._cur().append(ProcessingInstruction(data))
+            self._cur().append(self._string_container(ProcessingInstruction)(data))
 
         def unknown_decl(self, data):
             self._flush()
             if data.startswith("CDATA["):
                 # html.parser reports `<![CDATA[x]]>` as `CDATA[x`.
                 body = data[6:]
-                self._cur().append(CData(body[:-1] if body.endswith("]") else body))
+                self._cur().append(
+                    self._string_container(CData)(
+                        body[:-1] if body.endswith("]") else body
+                    )
+                )
 
         def close(self):
             _hp.HTMLParser.close(self)
@@ -3021,15 +3086,18 @@ def __vis_install_bs4__():
     class SoupSieve:
         """What css.compile() hands back: soupsieve's object, in miniature."""
 
-        def __init__(self, pattern, namespaces=None, flags=0, **kwargs):
+        def __init__(self, pattern, namespaces=None, flags=0, custom=None, **kwargs):
+            _css_check_pseudo_elements(pattern)
             self.pattern = pattern
             self.namespaces = namespaces
+            self.custom = custom
             self.flags = flags
 
         def __repr__(self):
-            return "SoupSieve(pattern=%r, namespaces=%r, flags=%r)" % (
+            return "SoupSieve(pattern=%r, namespaces=%r, custom=%r, flags=%r)" % (
                 self.pattern,
                 self.namespaces,
+                self.custom,
                 self.flags,
             )
 
@@ -3055,7 +3123,8 @@ def __vis_install_bs4__():
     class CSS:
         """bs4.css.CSS: the object behind `tag.css`."""
 
-        # Upstream this is the soupsieve module itself; nothing to point at here.
+        # Upstream this is the soupsieve module; the shim publishes a facade over
+        # its own engine under that name, so this points at the same object.
         api = None
 
         def __init__(self, tag, api=None):
@@ -3195,6 +3264,14 @@ def __vis_install_bs4__():
             self.contains_replacement_characters = False
             if hasattr(markup, "read"):
                 markup = markup.read()
+            elif len(markup) <= 256 and (
+                (isinstance(markup, bytes) and b"<" not in markup)
+                or (isinstance(markup, str) and "<" not in markup)
+            ):
+                # Two beginner mistakes -- a URL or a filename handed over
+                # instead of markup. bs4 only warns; it still parses the input.
+                if not self._markup_is_url(markup):
+                    self._markup_resembles_filename(markup)
             if isinstance(markup, bytes):
                 (
                     markup,
@@ -3203,7 +3280,14 @@ def __vis_install_bs4__():
                     self.contains_replacement_characters,
                 ) = _decode_markup(markup, from_encoding, exclude_encodings)
             self.builder.initialize_soup(self)
-            b = _Builder(builder=self.builder)
+            b = _Builder(
+                builder=self.builder,
+                on_duplicate_attribute=self.builder.parser_args[1].get(
+                    "on_duplicate_attribute"
+                )
+                if getattr(self.builder, "parser_args", None)
+                else None,
+            )
             b.feed(markup or "")
             b.close()
             if self.parse_only is not None:
@@ -3279,6 +3363,16 @@ def __vis_install_bs4__():
                 return markup.decode("utf-8", "replace")
             return markup
 
+        def insert_before(self, *args):
+            raise NotImplementedError(
+                "BeautifulSoup objects don't support insert_before()."
+            )
+
+        def insert_after(self, *args):
+            raise NotImplementedError(
+                "BeautifulSoup objects don't support insert_after()."
+            )
+
         @classmethod
         def _markup_is_url(cls, markup):
             """Does this 'markup' look like someone passed a URL by mistake?"""
@@ -3288,7 +3382,16 @@ def __vis_install_bs4__():
                 space, prefixes = " ", ("http:", "https:")
             else:
                 return False
-            return any(markup.startswith(p) for p in prefixes) and space not in markup
+            if any(markup.startswith(p) for p in prefixes) and space not in markup:
+                _warnings.warn(
+                    "The input looks more like a URL than markup. You may want to use"
+                    " an HTTP client like requests to get the document behind"
+                    " the URL, and feed that document to Beautiful Soup.",
+                    MarkupResemblesLocatorWarning,
+                    stacklevel=3,
+                )
+                return True
+            return False
 
         @classmethod
         def _markup_resembles_filename(cls, markup):
@@ -3301,8 +3404,19 @@ def __vis_install_bs4__():
             elif not isinstance(markup, str):
                 return False
             if any(x in markup for x in path_characters):
+                filelike = True
+            else:
+                filelike = any(markup.lower().endswith(ext) for ext in extensions)
+            if filelike:
+                _warnings.warn(
+                    "The input looks more like a filename than markup. You may"
+                    " want to open this file and pass the filehandle into"
+                    " Beautiful Soup.",
+                    MarkupResemblesLocatorWarning,
+                    stacklevel=3,
+                )
                 return True
-            return any(markup.lower().endswith(ext) for ext in extensions)
+            return False
 
         def string_container(self, base_class=None):
             """Which NavigableString subclass a string in this position gets."""
@@ -3515,7 +3629,8 @@ def __vis_install_bs4__():
                 formatter=formatter,
                 encoding=eventual_encoding,
             )
-            return out if out.endswith(_NL) else out + _NL
+            # An empty soup prettifies to '', not to a lone newline.
+            return out if not out or out.endswith(_NL) else out + _NL
 
         def encode(
             self,
@@ -3944,6 +4059,11 @@ def __vis_install_bs4__():
         def __init__(self, parser_args=None, parser_kwargs=None, **kwargs):
             parser_args = parser_args or []
             parser_kwargs = parser_kwargs or {}
+            # bs4 moves a few constructor arguments past the builder and into
+            # the parser it creates for each feed().
+            for _arg in ("on_duplicate_attribute",):
+                if _arg in kwargs:
+                    parser_kwargs[_arg] = kwargs.pop(_arg)
             # bs4 turns entity conversion off and handles references itself.
             parser_kwargs["convert_charrefs"] = False
             self.parser_args = (parser_args, parser_kwargs)
@@ -3957,7 +4077,11 @@ def __vis_install_bs4__():
             so feeding hands each finished node to `object_was_parsed` --
             the same entry point a custom builder would use.
             """
-            parser = _Builder(builder=self)
+            _args, _kwargs = self.parser_args
+            parser = _Builder(
+                builder=self,
+                on_duplicate_attribute=_kwargs.get("on_duplicate_attribute"),
+            )
             parser.feed(markup)
             parser.close()
             # A finished soup detaches its builder (`builder.soup = None`), so
@@ -5123,8 +5247,101 @@ def __vis_install_bs4__():
     builder_mod.sys = sys
     builder_mod.warnings = _warnings
     css_mod.warnings = _warnings
-    # Upstream this is the soupsieve module; there is none to point at here.
-    css_mod.soupsieve = None
+    # soupsieve is not installed either. bs4 delegates .css to it and real code
+    # imports it directly, so the shim publishes a facade with soupsieve's module
+    # surface over the selector engine above.
+    soupsieve_mod = types.ModuleType("soupsieve")
+    soupsieve_mod.__doc__ = "Soup Sieve. A CSS selector filter for BeautifulSoup4."
+    soupsieve_mod.__version__ = "2.5"
+    soupsieve_mod.__version_info__ = _collections.namedtuple(
+        "Version", "major minor micro release pre post dev"
+    )(2, 5, 0, "final", 0, 0, 0)
+    soupsieve_mod.DEBUG = 1
+    soupsieve_mod.SoupSieve = SoupSieve
+    soupsieve_mod.SelectorSyntaxError = SelectorSyntaxError
+
+    def _ss_compile(pattern, namespaces=None, flags=0, custom=None, **kwargs):
+        if isinstance(pattern, SoupSieve):
+            # An already-compiled selector cannot be reconfigured, exactly as
+            # soupsieve refuses to.
+            for _label, _value in (
+                ("namespaces", namespaces),
+                ("custom", custom),
+                ("flags", flags),
+            ):
+                if _value:
+                    raise ValueError(
+                        "Cannot process '%s' argument on a compiled selector list"
+                        % _label
+                    )
+            return pattern
+        return SoupSieve(pattern, namespaces, flags, custom, **kwargs)
+
+    def _ss_select(pattern, tag, namespaces=None, limit=0, flags=0, **kwargs):
+        return _ss_compile(pattern, namespaces, flags, **kwargs).select(tag, limit)
+
+    def _ss_select_one(pattern, tag, namespaces=None, flags=0, **kwargs):
+        return _ss_compile(pattern, namespaces, flags, **kwargs).select_one(tag)
+
+    def _ss_iselect(pattern, tag, namespaces=None, limit=0, flags=0, **kwargs):
+        return _ss_compile(pattern, namespaces, flags, **kwargs).iselect(tag, limit)
+
+    def _ss_match(pattern, tag, namespaces=None, flags=0, **kwargs):
+        return _ss_compile(pattern, namespaces, flags, **kwargs).match(tag)
+
+    def _ss_closest(pattern, tag, namespaces=None, flags=0, **kwargs):
+        return _ss_compile(pattern, namespaces, flags, **kwargs).closest(tag)
+
+    def _ss_filter(pattern, iterable, namespaces=None, flags=0, **kwargs):
+        return _ss_compile(pattern, namespaces, flags, **kwargs).filter(iterable)
+
+    def _ss_purge():
+        """soupsieve caches compiled selectors; this shim has no cache to drop."""
+        return None
+
+    for _ss_name, _ss_fn in (
+        ("compile", _ss_compile),
+        ("select", _ss_select),
+        ("select_one", _ss_select_one),
+        ("iselect", _ss_iselect),
+        ("match", _ss_match),
+        ("closest", _ss_closest),
+        ("filter", _ss_filter),
+        ("purge", _ss_purge),
+        ("escape", _css_escape),
+    ):
+        _ss_fn.__name__ = _ss_name
+        _ss_fn.__qualname__ = _ss_name
+        _ss_fn.__module__ = "soupsieve"
+        setattr(soupsieve_mod, _ss_name, _ss_fn)
+    soupsieve_mod.__all__ = [
+        "DEBUG",
+        "SelectorSyntaxError",
+        "SoupSieve",
+        "closest",
+        "compile",
+        "filter",
+        "iselect",
+        "match",
+        "select",
+        "select_one",
+    ]
+    soupsieve_mod.bs4 = mod
+    for _ss_sub, _ss_alias, _ss_exports in (
+        ("css_match", "cm", {"SoupSieve": SoupSieve}),
+        ("css_parser", "cp", {"SelectorSyntaxError": SelectorSyntaxError}),
+        ("css_types", "ct", {}),
+        ("util", "util", {"SelectorSyntaxError": SelectorSyntaxError}),
+    ):
+        _ss_mod = types.ModuleType("soupsieve." + _ss_sub)
+        for _k, _v in _ss_exports.items():
+            setattr(_ss_mod, _k, _v)
+        setattr(soupsieve_mod, _ss_sub, _ss_mod)
+        setattr(soupsieve_mod, _ss_alias, _ss_mod)
+        sys.modules["soupsieve." + _ss_sub] = _ss_mod
+    sys.modules["soupsieve"] = soupsieve_mod
+    css_mod.soupsieve = soupsieve_mod
+    CSS.api = soupsieve_mod
     dammit_mod.codecs = _codecs
     dammit_mod.codepoint2name = _hent.codepoint2name
     dammit_mod.defaultdict = _collections.defaultdict

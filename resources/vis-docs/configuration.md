@@ -9,6 +9,12 @@ Vis reads config from four YAML sources, deep-merged in order — later sources 
 
 "Project" means the directory you launched `vis-agent` from. Everything else Vis owns lives next to the global config: the session database at `~/.vis/vis.mdb` and the log at `~/.vis/vis.log`.
 
+## Gateway-managed MCP servers
+
+The gateway API — and the Companion on top of it — writes MCP servers to the machine store (`~/.vis/state.yml`) and nowhere else. Servers you declare by hand in any other source are still listed, connected, and usable, but they come back with `is_managed: false`: a client never rewrites them. The project tiers win on merge, so a write from there would either be silently shadowed or fork a stale duplicate of your own spec into the machine store. Toggling, saving, or deleting one answers `409`; edit the file that declares it.
+
+Saving a managed server keeps its stored `env` and `headers` when the request omits those keys — the inventory a client reads never carries secret values, so a round-trip through a UI cannot wipe them. Sending the key explicitly, including as an empty map, still replaces it.
+
 ## Keys are snake_case strings
 
 Config is YAML only, validated exactly as parsed:

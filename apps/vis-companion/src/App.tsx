@@ -1,4 +1,14 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type ComponentProps,
+  lazy,
+  type ReactNode,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type { GatewayConn } from './lib/types';
 import { type Compat, compatOf } from './lib/compat';
 import { GatewayClient, ROUTER_TTL_MS } from './lib/gateway';
@@ -22,8 +32,6 @@ import { applyTheme, resolveLocalTheme } from './lib/theme';
 import { getThemePalette, getThemePref } from './lib/storage';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
-import { ApplicationSettingsDialog, GatewaySettingsDialog } from './screens/SettingsScreen';
-import { SessionScreen } from './screens/SessionScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
 import { parseRoute, parseSessionDeepLink, sessionHash, tabHash } from './lib/router';
 import {
@@ -60,7 +68,67 @@ const BOOT_REVEAL_MS = 3_000;
 // forever. Sweep on the leading edge, then at most once per window.
 const RECOVERY_SWEEP_MIN_GAP_MS = 5_000;
 
+// The launch screen is the session LIST, but the transcript renderer behind it —
+// `SessionScreen` with `ChatContent`, react-markdown/remark and Prism plus a
+// dozen grammars — sat in the SAME chunk, so every cold start parsed and ran all
+// 857 kB before painting a row. Split both heavy screens out and warm them the
+// moment the list is up: by the time anything is tapped the module is resolved,
+// `lazy` mounts it in the same commit, and no boundary ever falls back.
+const SessionScreenLazy = lazy(async () => ({
+  default: (await import('./screens/SessionScreen')).SessionScreen,
+}));
+const GatewaySettingsDialogLazy = lazy(async () => ({
+  default: (await import('./screens/SettingsScreen')).GatewaySettingsDialog,
+}));
+const ApplicationSettingsDialogLazy = lazy(async () => ({
+  default: (await import('./screens/SettingsScreen')).ApplicationSettingsDialog,
+}));
+
+// Each split screen keeps its own boundary so a miss costs that screen, never the
+// app shell. The transcript's fallback is the same ink sheet its own veil paints,
+// so a cold open reads as the load it already was; a dialog just arrives a frame
+// later.
+function SessionScreen(props: ComponentProps<typeof SessionScreenLazy>) {
+  return (
+    <Suspense fallback={<div className="h-full bg-ink" />}>
+      <SessionScreenLazy {...props} />
+    </Suspense>
+  );
+}
+
+function GatewaySettingsDialog(props: ComponentProps<typeof GatewaySettingsDialogLazy>) {
+  return (
+    <Suspense fallback={null}>
+      <GatewaySettingsDialogLazy {...props} />
+    </Suspense>
+  );
+}
+
+function ApplicationSettingsDialog(props: ComponentProps<typeof ApplicationSettingsDialogLazy>) {
+  return (
+    <Suspense fallback={null}>
+      <ApplicationSettingsDialogLazy {...props} />
+    </Suspense>
+  );
+}
+
+function prefetchScreens() {
+  void import('./screens/SessionScreen');
+  void import('./screens/SettingsScreen');
+}
+
 export function App() {
+  // Warm the split screens once the shell is up — off the critical path, so the
+  // launch frame stays the list and the first tap still opens instantly.
+  useEffect(() => {
+    if (typeof window.requestIdleCallback === 'function') {
+      const handle = window.requestIdleCallback(prefetchScreens, { timeout: 2_000 });
+      return () => window.cancelIdleCallback(handle);
+    }
+    const timer = window.setTimeout(prefetchScreens, 300);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   const [conns, setConns] = useState<GatewayConn[]>([]);
   const [active, setActive] = useState<GatewayConn | null>(null);
   const [primary, setPrimary] = useState<GatewayConn | null>(null);

@@ -583,16 +583,22 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
               </p>
             </div>
             <div className="flex items-center gap-1.5">
-              <Switch
-                label={`${server.name} MCP server`}
-                on={server.enabled}
-                busy={busy === server.name}
-                disabled={busy !== null}
-                onClick={() => void toggle(server)}
-              />
-              <Button variant="ghost" disabled={busy !== null} onClick={() => void remove(server)}>
-                Remove
-              </Button>
+              {server.is_managed ? (
+                <>
+                  <Switch
+                    label={`${server.name} MCP server`}
+                    on={server.enabled}
+                    busy={busy === server.name}
+                    disabled={busy !== null}
+                    onClick={() => void toggle(server)}
+                  />
+                  <Button variant="ghost" disabled={busy !== null} onClick={() => void remove(server)}>
+                    Remove
+                  </Button>
+                </>
+              ) : (
+                <p className="font-mono text-chip text-dialog-hint">config file</p>
+              )}
             </div>
           </div>
         ))}

@@ -305,6 +305,41 @@
 
 (defn- raw-servers [] (or (get-in (or (config/load-config-raw) {}) ["mcp" "servers"]) {}))
 
+(defn- machine-servers
+  "The servers THIS GATEWAY owns: the `:mcp :servers` block of the machine-written
+   `~/.vis/state.yml` it read-modify-writes. Every other server in the merged view
+   comes from a hand-written tier (`~/.vis/config.yml`, `vis.yml`,
+   `.vis/config.yml`) that belongs to the user, so this API lists those but never
+   rewrites them."
+  []
+  (or (get-in (or (config/load-global-config-raw) {}) ["mcp" "servers"]) {}))
+
+(defn- ensure-managed!
+  "Guard on every gateway write: `name` must be unknown, or owned by the machine
+   tier. Writing a hand-written entry from here is never what the caller means —
+   the project tier WINS on merge, so the edit is either silently shadowed or
+   forks a stale duplicate of the user's own spec into `state.yml`."
+  [name]
+  (when (and (not (contains? (machine-servers) name)) (contains? (raw-servers) name))
+    (throw (ex-info (str "MCP server '"
+                         name
+                         "' is declared in a hand-written config file, not in this gateway's state; "
+                         "edit it there.")
+                    {:type :mcp/not-managed :server name}))))
+
+(defn- with-preserved-secrets
+  "Carry `env`/`headers` forward from the persisted spec when the incoming one
+   OMITS that key. The sanitized inventory a client reads never carries those
+   values, so a save that round-tripped through a UI would otherwise wipe the
+   server's credentials. An explicit key — including `{}` — still replaces."
+  [previous next]
+  (reduce (fn [spec k]
+            (if (or (contains? next k) (not (contains? previous k)))
+              spec
+              (assoc spec k (get previous k))))
+          next
+          ["env" "headers"]))
+
 (defn- server-name
   [name]
   (let
@@ -351,8 +386,22 @@
             {:connected [] :failed []}
             coerced)))
 
+(defn- tool-count
+  "How many tools `conn` exposes. `mcp/list-tools` CACHES into the conn, so the
+   first read pays one RPC and every later read is free. Reading the raw `:tools`
+   atom instead reports 0 for every freshly connected server — the cache is only
+   filled on demand — which is what made a healthy gateway server look empty in
+   the Companion inventory and in the model's own `env.mcp` view."
+  [conn]
+  (if-not conn
+    0
+    (count (or (some-> (:tools conn)
+                       deref)
+               (try (mcp/list-tools conn) (catch Throwable _ nil))
+               []))))
+
 (defn- server-summary
-  [name raw-spec]
+  [name raw-spec is-managed]
   (let
     [spec
      (config/runtime-config raw-spec)
@@ -369,9 +418,10 @@
                     "stdio")
        :enabled (enabled? spec)
        :is-connected (boolean conn)
-       :tools (count (or (some-> (:tools conn)
-                                 deref)
-                         []))}
+       ;; Whether the GATEWAY owns this entry. A server declared in a hand-written
+       ;; tier is the user's file: listed, never rewritten from here.
+       :is-managed (boolean is-managed)
+       :tools (tool-count conn)}
       (:command spec)
       (assoc :command (:command spec))
 
@@ -383,21 +433,28 @@
 
 (defn gateway-servers
   "Sanitized MCP inventory for gateway management. Secrets (env and header values)
-   deliberately never cross this boundary."
+   deliberately never cross this boundary. Every configured server is listed —
+   gateway-owned and hand-written alike — and `:is-managed` says which of them
+   this API may write."
   []
-  {:servers (->> (raw-servers)
-                 (map (fn [[name spec]]
-                        [(str name) spec]))
-                 (sort-by first)
-                 (mapv (fn [[name spec]]
-                         (server-summary name spec))))})
+  (let [machine (machine-servers)]
+    {:servers (->> (raw-servers)
+                   (map (fn [[name spec]]
+                          [(str name) spec]))
+                   (sort-by first)
+                   (mapv (fn [[name spec]]
+                           (server-summary name spec (contains? machine name)))))}))
 
 (defn- reset-server-cache! [] (reset! servers-cache {:hash ::none :value {}}))
 
 (defn save-gateway-server!
   "Validate and persist a complete string-keyed server spec in this gateway's
-   machine state, then reconnect it in the background. Returns its sanitized row."
+   machine state, then reconnect it in the background. Returns its sanitized row.
+
+   `env` and `headers` survive a save that omits them: see `with-preserved-secrets`."
   [name raw-spec]
+  (when-not (map? raw-spec)
+    (throw (ex-info "MCP server must be an object" {:type :mcp/invalid-server})))
   (let
     [name
      (server-name name)
@@ -407,21 +464,23 @@
          (dissoc "name")
          canonicalize-server-spec)]
 
-    (when-not (map? raw-spec)
-      (throw (ex-info "MCP server must be an object" {:type :mcp/invalid-server})))
+    (ensure-managed! name)
     (let
       [machine
        (or (config/load-global-config-raw) {})
 
+       spec
+       (with-preserved-secrets (get-in machine ["mcp" "servers" name]) raw-spec)
+
        next-config
-       (assoc-in machine ["mcp" "servers" name] raw-spec)]
+       (assoc-in machine ["mcp" "servers" name] spec)]
 
       ;; save-config! is the strict schema and secret-preserving write boundary.
       (config/save-config! next-config :gateway-mcp)
       (reset-server-cache!)
       (disconnect! name)
       (reconcile-async!)
-      (server-summary name raw-spec))))
+      (server-summary name spec true))))
 
 (defn set-gateway-server-enabled!
   "Persist an enabled/disabled override without exposing or accepting secrets."
@@ -431,9 +490,11 @@
      (server-name name)
 
      current
-     (get (raw-servers) name)]
+     (get (machine-servers) name)]
 
-    (when-not current (throw (ex-info "Unknown MCP server" {:type :mcp/not-found :server name})))
+    (when-not current
+      (ensure-managed! name)
+      (throw (ex-info "Unknown MCP server" {:type :mcp/not-found :server name})))
     (save-gateway-server! name (assoc current "enabled" (boolean enabled)))))
 
 (defn delete-gateway-server!
@@ -447,6 +508,10 @@
      (or (config/load-global-config-raw) {})]
 
     (when-not (get-in machine ["mcp" "servers" name])
+      ;; A hand-written server LOOKS deletable in the inventory; deleting the
+      ;; machine tier would appear to work and the entry would come straight
+      ;; back on the next merge. Say so instead.
+      (ensure-managed! name)
       (throw (ex-info "Unknown MCP server in gateway state" {:type :mcp/not-found :server name})))
     (let
       [servers
@@ -518,10 +583,7 @@
                                 "connected" (boolean conn)
                                 "enabled" true}
                                conn
-                               (assoc "tools"
-                                 (count (or (some-> (:tools conn)
-                                                    deref)
-                                            [])))
+                               (assoc "tools" (tool-count conn))
 
                                (:command spec)
                                (assoc "command" (:command spec))
@@ -814,9 +876,7 @@
        {"name" nm
         "scope" scope
         "transport" (name (:transport conn))
-        "tools" (count (or (some-> (:tools conn)
-                                   deref)
-                           []))})
+        "tools" (tool-count conn)})
 
      session-rows
      (keep (fn [[[s nm] {:keys [conn]}]]

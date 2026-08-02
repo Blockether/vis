@@ -15,7 +15,7 @@
             ;; below can resolve its private vars at top-level def time. Without
             ;; this require, `resolve` returns nil and `deref` throws NPE because
             ;; the backend is normally loaded lazily by extension scanning.
-            [com.blockether.vis.ext.persistance-sqlite.core]
+            [com.blockether.vis.ext.persistance-sqlite.core :as sqlite-core]
             ;; Register the extension in the persistance facade. Production loads
             ;; this via classpath manifest discovery; tests need it explicit
             ;; because requiring `core` no longer self-registers (see
@@ -506,6 +506,57 @@
                  (expect (= 42 (:id (first (raw-query s2 {:select [:id] :from [:repair_probe]})))))
                  (finally (vis/db-dispose-connection! s2))))
           (finally (fs/delete-tree root))))))
+
+(defdescribe
+  db-store-stale-identity-test
+  ;; Regression (hs_err_pid48027, gateway SIGBUS inside `NativeDB.step`):
+  ;; the staleness snapshot carried the db file's SIZE and MTIME. SQLite
+  ;; rewrites `vis.db` in place on every WAL checkpoint, so ORDINARY write
+  ;; traffic moved both and the store looked "replaced" forever after.
+  ;; `db-shared-connection!` answers a stale store by closing the
+  ;; process-wide Hikari pool - underneath in-flight queries - and opening
+  ;; a new one: the crashed process had reached pool generation 351 with
+  ;; seven leaked housekeeper threads in 3h21m of uptime.
+  (it "stays fresh across a WAL checkpoint that rewrites the file in place"
+      (let
+        [root
+         (fs/create-temp-dir)
+
+         dir
+         (str (fs/path root "store"))
+
+         s
+         (vis/db-create-connection! dir)]
+
+        (try (expect (false? (boolean (sqlite-core/db-store-stale? s dir))))
+             (jdbc/execute! (:datasource s) ["CREATE TABLE churn (id INTEGER PRIMARY KEY, v TEXT)"])
+             (dotimes [_ 200]
+               (jdbc/execute! (:datasource s)
+                              ["INSERT INTO churn (v) VALUES (?)" (str/join (repeat 400 "x"))]))
+             (jdbc/execute! (:datasource s) ["PRAGMA wal_checkpoint(TRUNCATE)"])
+             ;; The file grew and its mtime moved; the inode did not.
+             (expect (< 4096 (fs/size (fs/path dir "vis.db"))))
+             (expect (false? (boolean (sqlite-core/db-store-stale? s dir))))
+             (finally (vis/db-dispose-connection! s) (fs/delete-tree root)))))
+  (it "reports stale when the file at the same path is a different inode"
+      (let
+        [root
+         (fs/create-temp-dir)
+
+         dir
+         (str (fs/path root "store"))
+
+         s
+         (vis/db-create-connection! dir)]
+
+        (try (expect (false? (boolean (sqlite-core/db-store-stale? s dir))))
+             ;; `rm -rf ~/.vis/vis.mdb` + a fresh file at the same pathname:
+             ;; identity moved, and a reopen is the right answer.
+             (fs/delete (fs/path dir "vis.db"))
+             (expect (true? (boolean (sqlite-core/db-store-stale? s dir))))
+             (fs/create-file (fs/path dir "vis.db"))
+             (expect (true? (boolean (sqlite-core/db-store-stale? s dir))))
+             (finally (vis/db-dispose-connection! s) (fs/delete-tree root))))))
 
 (defdescribe
   migration-additive-column-top-up-test

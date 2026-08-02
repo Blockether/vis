@@ -5464,9 +5464,9 @@
 
 (defn- highlight-needles
   "Wrap every occurrence of any OR `needle` in `text` with reverse-video SGR
-   (\u001B[7m … \u001B[0m) so BOTH channels paint the matched term: the TUI's
-   `paint-ansi-line!` maps the code to a fg, the web's `ansi->hiccup` turns it
-   into a highlight span. One non-overlapping pass, longest needle first, so a
+   (\u001B[7m … \u001B[0m) so the TUI's `paint-ansi-line!` maps the code to a
+   highlight fg when it paints the row. One non-overlapping pass, longest needle
+   first, so a
    short needle can't re-wrap a longer one's match."
   [needles ^String text]
   (if (or (not (seq needles)) (str/blank? text))
@@ -6177,13 +6177,13 @@
      :result
      (str
        "String-keyed `{results, occurrences?}`. Row/file: `path,language,line_count,imports,definitions,skeleton,note,ranges`. "
-       "`include_occurrences` adds a group per declared name: `name`, `symbols` (`path,anchor,end_anchor,kind,visibility,signature,use_count,uses{path,anchors}`), `other_uses`, `count`, `definition_count`, `scanned`, `failed`. "
-       "No source: use row `anchor` in `struct_nodes`/`cat`.")
+       "`include_occurrences` adds a group per name: `symbols` (`path,anchor,end_anchor,kind,visibility,signature,use_count,uses{path,anchors}`), `other_uses`, `count`, `definition_count`, `scanned`, `failed`. "
+       "No source — pass a row `anchor` to `struct_nodes`/`cat`.")
      :active-fn structural-supported?
      :description
      (str
-       "Inspect supported source before bodies: imports, definition skeleton, signatures, doc gists, and "
-       "fresh start/end anchors for `cat`/`struct_patch`. `include_occurrences` traces each definition's uses.")
+       "Skeleton of supported source before bodies: imports, definitions, signatures, doc gists, and "
+       "fresh anchors for `cat`/`struct_patch`. `include_occurrences` traces each definition's uses.")
      :render render-index-result
      :color-role :tool-color/read
      :schema
@@ -6204,8 +6204,9 @@
                          :additionalProperties false}]}
         :minItems 1
         :description
-        (str "Exact physical source paths from grep/cat/struct_index; batch them. Shared `ranges` "
-             "apply to all; object entries override one file.")}
+        (str
+          "Exact physical paths from grep/cat/struct_index; batch them. Shared `ranges` apply to "
+          "all; an object entry overrides one file.")}
        "include_occurrences" {:type "boolean"
                               :description "Adds each definition's occurrence group; default off."}
        "ranges"
@@ -6213,7 +6214,7 @@
         :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
         :minItems 1
         :description
-        "`[[start,end],…]` are 1-based inclusive; keep definitions intersecting any window. `line_count` stays whole-file."}}
+        "1-based inclusive `[[start,end],…]`; keeps definitions intersecting any window. `line_count` stays whole-file."}}
       :required ["paths"]
       :additionalProperties false}
      :before-fn (path-protected-before-fn :struct_index :file :read read-arg-paths)
@@ -6267,8 +6268,8 @@
        "`ranges` carry metadata only (`{range,eof,next_offset,truncated}`) and never repeat the text.")
      :description
      (str
-       "Read every needed region from all paths as patch-ready `lineno:hash` lines; `ls` lists directories. "
-       "Run `struct_index` first on code. Writes invalidate pre-write anchors for that file, not other files.")
+       "Read every needed region of every path as patch-ready `lineno:hash` lines; `ls` lists directories, "
+       "`struct_index` maps code first. A write invalidates only that file's earlier anchors.")
      :render render-cat-result
      :color-role :tool-color/read
      :schema cat-schema
@@ -6292,7 +6293,7 @@
    {"paths" {:type "array"
              :items {:oneOf [{:type "string" :minLength 1} ls-entry-schema]}
              :minItems 1
-             :description "Directories to list; an object entry overrides the shared options."}
+             :description "Directories; an object entry overrides shared options."}
     "depth" {:type "integer"
              :minimum 1
              :description "Levels to descend (default 1); nested rows sit in `children`."}
@@ -6308,12 +6309,11 @@
      :native-tool? true
      :result
      (str
-       "String-keyed `{results}`, one row per requested path in request order: "
-       "`{path,type,depth,entries}`; each entry is `{name,path,type,size}` plus `children` when `depth` nests.")
+       "String-keyed `{results}`, one row per requested path in order: `{path,type,depth,entries}`; "
+       "entries are `{name,path,type,size}` plus `children` when `depth` nests.")
      :description
-     (str
-       "List directory contents (ls), batched over `paths`: directories first, then alphabetical. "
-       "Dotfiles are hidden unless `is_hidden`, gitignored entries always. Read files with `cat`.")
+     (str "Directory contents batched over `paths`: directories first, then alphabetical. "
+          "Dotfiles need `is_hidden`; gitignored entries are never listed. `cat` reads files.")
      :render render-ls-results
      :color-role :tool-color/read
      :schema ls-schema
@@ -6331,7 +6331,7 @@
        "Fields `op,query,needles,searched_paths,missing_paths,paths,matches,file_counts,first_hit,hint,hit_count,"
        "file_count,total_file_count,total_file_count_is_exact,limit,truncated_by,hits_truncated_by`. "
        "`matches={path:{\"line:hash\":{\"text\":string,\"before\"?:[{\"line\",\"text\"}],\"after\"?:[…]}}}` "
-       "is a mapping of mappings, never a list; empty `before`/`after` omitted.")
+       "never a list; empty `before`/`after` omitted.")
      :description
      (str "Literal smart-case content plus fuzzy filenames; use first when location is unknown. "
           "`query: \"\"` lists files; null `hits_truncated_by` means complete content.")
@@ -6368,15 +6368,14 @@
     {:symbol 'patch
      :native-tool? true
      :result
-     "One row/edit: `path`, `op`, `changed`, `diff`; optional small-region `anchors` (`{\"lineno:hash\":{\"text\":line}}`) reusable as the next `from_anchor`; auto-balanced files add `repaired` true and `note`."
+     "One row/edit: `path`, `op`, `changed`, `diff`; small regions add `anchors` (`{\"lineno:hash\":{\"text\":line}}`) reusable as the next `from_anchor`; auto-balanced files add `repaired` true and `note`."
      :call (fn [input]
              {:args [(get input "edits")]})
      :description
      (str
        "Anchor-based TEXT editor for prose, config, unsupported languages, or definition spans. "
        "ATOMIC: one bad edit writes NOTHING. Code that will not parse is refused; unbalanced Clojure "
-       "delimiters are auto-repaired (`repaired`). A write invalidates pre-write anchors for each changed "
-       "file only; anchors for other files remain valid.")
+       "delimiters are auto-repaired (`repaired`). A write invalidates only that file's earlier anchors.")
      :render render-patch-result
      :color-role :tool-color/edit
      :schema {:type "object"
@@ -6820,15 +6819,15 @@
     {:symbol 'struct_patch
      :native-tool? true
      :result
-     (str "One row/edit: `path`, `op`, `changed`, `diff`; small regions may add reusable `anchors` "
-          "(`{\"lineno:hash\":{\"text\":line}}`) for the next `from_anchor`. A `paths` rename "
-          "returns one row/file; failures set `changed` false plus `error`.")
+     (str
+       "One row/edit: `path`, `op`, `changed`, `diff`; small regions add reusable `anchors` for the "
+       "next `from_anchor`. A `paths` rename returns one row/file; failures set `changed` false plus `error`.")
      :active-fn structural-supported?
      :description
      (str
        "Structurally edit supported code: definition by NAME (`target`)—no stale anchors—or node by "
-       "`at`/`anchor`. Does rename, docs, moves, `append_child`. Re-parses writes: code that "
-       "will not parse is REFUSED; unbalanced Clojure delimiters auto-repaired.")
+       "`at`/`anchor`. Renames, docs, moves, `append_child`. Writes re-parse: code that will not parse "
+       "is REFUSED; unbalanced Clojure delimiters auto-repaired.")
      :render render-patch-result
      :color-role :tool-color/edit
      :schema
@@ -6845,7 +6844,7 @@
         :minItems 1
         :items {:type "object"}
         :description
-        "ORDERED BATCH of single-edit entries; top-level keys are defaults. Applied in order, never rolled back. Omit for a lone edit."}
+        "ORDERED batch; top-level keys are defaults, applied in order, never rolled back. Omit for a lone edit."}
        "op" {:type "string"
              :enum ["replace" "delete" "insert_before" "insert_after" "append" "add_doc"
                     "replace_doc" "replace_node" "rename" "move_before" "move_after" "append_child"
@@ -6854,13 +6853,12 @@
              "`append`=EOF; `append_child`/`prepend_child` take a definition or node locator."}
        "target" {:type "string" :description "Definition NAME; also container for child appends."}
        "code" {:type "string" :description "Source to replace/insert, or rename's new name."}
-       "kind" {:type "string"
-               :description "Disambiguates same-named defs: function/class/method/…."}
+       "kind" {:type "string" :description "Disambiguates same-named defs."}
        "match" {:type "string" :description "`replace_node`: unique subexpression text to swap."}
        "anchor"
        {:type "string"
         :description
-        "`move_before`/`move_after`: adjacent def NAME; else a `lineno:hash` entering its node. Composes with `nav`."}
+        "`move_before`/`move_after`: adjacent def NAME; else `lineno:hash` entering its node. Composes with `nav`."}
        "at" {:type "array"
              :items {:type "integer" :minimum 0}
              :description "Named-child path from a `struct_nodes` row."}
@@ -7079,10 +7077,9 @@
              :description "Shared absolute named-child index path."}
        "nav" {:type "array"
               :description "Shared relative moves: strings or {find/child/find_kind} maps."}
-       "anchor"
-       {:type "string"
-        :description
-        "Shared `lineno:hash` from struct_index/cat; enters that line's node instead of `at`."}}
+       "anchor" {:type "string"
+                 :description
+                 "`lineno:hash` from struct_index/cat; enters that line's node instead of `at`."}}
       :additionalProperties false}
      :before-fn (path-protected-before-fn :struct_nodes :file :read nodes-arg-paths)
      :tag :observation
@@ -7752,7 +7749,7 @@
        "create_dirs `{action,path,is_created}`, exists `{action,path,is_existing}`; batch `paths` gives "
        "`{action,paths}`, one ordered row/target. Top level adds `op`.")
      :description
-     "Confined filesystem tool; `op` selects verb/params. delete is destructive and needs explicit intent; absent is a no-op (`is_deleted` false). create_dirs makes parents; exists never reads."
+     "Confined filesystem ops. delete is destructive and needs explicit intent; a missing target is a no-op (`is_deleted` false); create_dirs makes parents; exists never reads."
      :render render-fs-result
      :color-role :tool-color/move
      :schema {:type "object"

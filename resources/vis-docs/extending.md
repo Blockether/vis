@@ -1,7 +1,7 @@
 # Extending Vis
 
 Vis is a small core plus **extensions**. Everything beyond the engine loop ships
-that way: the git surface, the TUI, the web channel, the Clojure and Python
+that way: the git surface, the TUI, the Clojure and Python
 language packs are all extensions. Your own follow the same recipes.
 
 There are two flavors, and this page is the whole story for both:

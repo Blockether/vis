@@ -1760,12 +1760,12 @@
   (components/find-bar! g cols text-top (:search db)))
 
 (defn- paint-jump-bottom!
-  "Floating \"jump to latest\" affordance — the TUI twin of the web's
-   `#jump-bottom` button. Painted ONLY while the user has scrolled UP off the
-   live bottom (`scroll/scrolled-up?`), bottom-right of the messages viewport
+  "Floating \"jump to latest\" affordance. Painted ONLY while the user has
+   scrolled UP off the live bottom (`scroll/scrolled-up?`), bottom-right of the
+   messages viewport
    just above the echo area. Clicking it (the `:jump-bottom` click region) — or
    pressing C-l / Ctrl+End — re-arms FOLLOW and eases to the newest content.
-   Hidden while following, exactly like the web. Reuses `components/button!`
+   Hidden while following. Reuses `components/button!`
    so its look / hover / click region can't drift from the other TUI chips.
 
    Gated on `scroll/jump-chip-visible?` — the user must be PARKED above the

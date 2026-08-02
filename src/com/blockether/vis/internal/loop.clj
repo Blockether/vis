@@ -4798,11 +4798,10 @@
    :description
    (str
      "Run Python in the session sandbox to batch, filter, and chain tool calls: `await gather(...)` independent "
-     "natives, then print only needed output. State persists; project packages cannot be imported "
-     "— use a project REPL. Only `print` returns; bare expressions drop and errors surface. Native "
-     "results return inline and remain at `ntr[tool_id]`; engine-bound natives are bare snake_case, "
-     "native-only ones absent. Do not use `time.sleep`/`asyncio.sleep` to wait or poll for background "
-     "shell completion — use `shell` op `wait`, concurrently via `gather` when needed."
+     "natives, then print only needed output. State persists; project packages need a project REPL. "
+     "Only `print` returns; bare expressions drop and errors surface. Native results return inline and stay "
+     "at `ntr[tool_id]`; engine-bound natives are bare snake_case, native-only ones absent. Never "
+     "`time.sleep`/poll for background shells \u2014 use `shell` op `wait`, via `gather` when parallel."
      (when-let [cap (python-execution-capability-line caps)]
        (str " " cap)))
    :result
@@ -4830,14 +4829,12 @@
    :description
    (str
      "Collapse SETTLED wire steps into a breadcrumb; folding changes rendering, not storage. "
-     "Settled means all prior turns plus the current turn's already-completed iterations "
-     "(see `session[\"turn\"]`); fold a step once its takeaway is captured. "
-     "Fold only through the last finished iteration; the live iteration you are emitting right now "
-     "and future steps block the call (`{\"through\":\"tN/iK\"}`). `ntr` never stores fold receipts. "
-     "Recover a folded step's individual data-tool result with `ntr[tool_id]` (no rerun; survives restart). "
-     "Receipts stay compact and point to latest-turn labels from `ntr.describe()`"
+     "Settled = prior turns plus this turn's finished iterations (see `session[\"turn\"]`); fold a step "
+     "once its takeaway is captured. The live iteration and future steps are refused. "
+     "Folded data-tool results stay recoverable at `ntr[tool_id]` (no rerun, survives restart), but "
+     "`ntr` never stores fold receipts"
      (if (toggles/enabled? "introspection")
-       ", or use `await session_state()` → `transcript/turns/iterations/blocks` (`code`/`result`)"
+       "; `await session_state()` keeps `transcript/turns/iterations/blocks` (`code`/`result`)"
        "")
      ". Broader/newer folds supersede fully covered breadcrumbs; equal scopes keep the newer gist; "
      "partial overlaps remain.")
@@ -4848,14 +4845,12 @@
     :properties
     {"target" {:description
                (str
-                 "Fold a LIST of ids [\"t2/i3\", \"t2/i4\"] (bare \"t2\" = whole turn), or ONE "
-                 "selector: {\"through\":\"tN/iN\"} through that step; "
-                 "{\"from\":\"tA/iA\",\"to\":\"tB/iB\"} inclusive window (either bound optional); "
-                 "{\"since\":\"tN/iN\"} through newest.")}
+                 "List of ids [\"t2/i3\",\"t2/i4\"] (bare \"t2\" = whole turn), or ONE selector: "
+                 "{\"through\":\"tN/iN\"}; {\"from\":\"tA/iA\",\"to\":\"tB/iB\"} inclusive window "
+                 "(either bound optional); {\"since\":\"tN/iN\"} through newest.")}
      "gist" {:type "string"
-             :description
-             (str "Optional durable one-line takeaway: finding, consequence, and useful path:line, "
-                  "symbol/test, or anchor (refresh it before editing). Omit when none.")}}
+             :description (str "Durable one-line takeaway: finding, consequence, and a useful "
+                               "path:line/symbol/anchor. Omit when none.")}}
     :required ["target"]
     :additionalProperties false}})
 
@@ -4866,8 +4861,8 @@
   []
   {:name "apropos"
    :description
-   (str "Discover Python sandbox capabilities not already advertised as native tools; don't "
-        "preflight visible tools. Returns compact name/gists; in-Python returns a filterable dict.")
+   (str "Discover sandbox capabilities not advertised as native tools; never preflight visible "
+        "tools. Returns name/gists; in-Python a filterable dict.")
    :result "Map of matching capability names to compact gist strings."
    :schema {:type "object"
             :properties {"query" {:type "string" :description "Optional tool-name substring."}}
@@ -4880,8 +4875,7 @@
   []
   {:name "doc"
    :description
-   (str "Read a discovered sandbox capability's authoritative contract when not already advertised "
-        "or unclear; don't preflight visible tools.")
+   "Read a discovered capability's authoritative contract; never preflight visible tools."
    :result "Authoritative docs string, including a native tool's raw-result contract."
    :schema {:type "object"
             :properties {"name" {:type "string" :description "Exact capability name from apropos."}}

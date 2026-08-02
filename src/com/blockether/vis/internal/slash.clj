@@ -95,7 +95,7 @@
        claimed (registered slashes always win).
 
    `extra` are CHANNEL-NATIVE entries (`{:name :doc}`) the channel handles
-   itself (e.g. the web's `/new-session`); they PREPEND and win name
+   itself (e.g. a channel's own `/new-session`); they PREPEND and win name
    collisions against templates."
   ([channel] (slash-palette channel nil))
   ([channel extra]

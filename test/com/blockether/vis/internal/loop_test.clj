@@ -3751,15 +3751,16 @@
       ;; Discovery is for sandbox-only capabilities, not a mandatory two-call
       ;; preflight before every native tool whose full schema is already visible.
       (doseq [tool-name ["apropos" "doc"]]
-        (expect (str/includes? (get-in by-name [tool-name :description]) "not already advertised")))
+        (expect (str/includes? (get-in by-name [tool-name :description])
+                               "never preflight visible tools")))
       (expect (= ["tool_call_id"] (get-in by-name ["retry_native" :schema :required])))
       (let [python-description (get-in by-name ["python_execution" :description])]
         (doseq
-          [fact ["project packages cannot be imported" "ntr[tool_id]" "bare snake_case"
+          [fact ["project packages need a project REPL" "ntr[tool_id]" "bare snake_case"
                  "errors surface"]]
           (expect (str/includes? python-description fact))))
       (expect (str/includes? (get-in by-name ["session_fold" :description])
-                             "already-completed iterations"))))
+                             "finished iterations"))))
   (it "rejects engine-owned native tools without description or raw-result contracts"
       (doseq
         [[tool expected-type]

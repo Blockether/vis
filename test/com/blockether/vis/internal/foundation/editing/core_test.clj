@@ -3063,10 +3063,8 @@
      (:ext.symbol/result editing/cat-symbol)]
 
     (it "scopes anchor invalidation to files actually written"
-        (expect (string/includes? patch-description "pre-write anchors"))
-        (expect (string/includes? patch-description "changed file only"))
-        (expect (string/includes? patch-description "anchors for other files remain valid"))
-        (expect (string/includes? cat-description "for that file, not other files")))
+        (expect (string/includes? patch-description "only that file's earlier anchors"))
+        (expect (string/includes? cat-description "only that file's earlier anchors")))
     ;; The Clojure pack's :around hooks REPAIR unbalanced delimiters instead of
     ;; refusing, so "a syntax break is refused" alone was a lie; both editors say
     ;; what actually happens and `patch`'s result contract carries the flag.
@@ -3206,7 +3204,7 @@
         (expect (= 1 (get-in schema [:properties "depth" :minimum])))
         (expect (= "boolean" (get-in schema [:properties "is_hidden" :type])))
         (expect (= "integer" (get-in entry [:properties "depth" :type])))
-        (expect (string/includes? (:ext.symbol/description ls) "(ls)"))
+        (expect (string/includes? (:ext.symbol/description ls) "Directory contents"))
         (expect (string/includes? (:ext.symbol/result ls) "children"))
         ;; cat is a FILE reader again: no directory knobs, no ls prose
         (expect (not (contains? (:properties cat-entry) "depth")))
@@ -5954,3 +5952,140 @@
 
         (expect (nil? (:error result)))
         (expect (= "True 1\n" (:stdout result))))))
+
+;; =============================================================================
+;; `ls` ORDERING, and the two sources allowed to answer a listing.
+;;
+;; A listing can come from the WARM workspace index (the fast path `grep`/`find`
+;; already keep hot) or from an index rooted at the listed directory (the
+;; fallback). Neither the rows nor their order may depend on which one answered,
+;; and the documented order — directories first, then alphabetical — has to hold
+;; at EVERY nesting level, not just the top one: a model reading a `depth 3` tree
+;; scans children the same way it scans the root.
+;; =============================================================================
+
+(defn- ls-order-key
+  "One entry's position under the documented listing order."
+  [entry]
+  [(if (= "dir" (get entry "type")) 0 1) (str (get entry "name"))])
+
+(defn- ls-order-violations
+  "Every `[path [worse better]]` adjacent pair that breaks the documented order,
+   walking `entries` AND every nested `children` vector."
+  [path entries]
+  (into (vec (for
+               [[a b]
+                (partition 2 1 (map ls-order-key entries))
+
+                :when (not (neg? (compare a b)))]
+
+               [path [a b]]))
+        (mapcat (fn [entry]
+                  (when-let [kids (get entry "children")]
+                    (ls-order-violations (get entry "path") kids))))
+        entries))
+
+(defdescribe
+  ls-ordering-test
+  "Directories first, then alphabetical — recursively."
+  (it "keeps every nesting level ordered, dotfiles included"
+      (doseq
+        [dir ["." "src" "test/com/blockether/vis" "src/com/blockether/vis/internal/foundation"
+              "resources"]]
+        (let
+          [entries (get ((private-fn "ls-one") {"path" dir "depth" 3 "is_hidden" true}) "entries")]
+          (expect (seq entries))
+          (expect (= [] (ls-order-violations dir entries))))))
+  (it "sorts a nested children vector, not just the top level"
+      (let
+        [_
+         (write-temp! "lsorder/b-dir/z.txt" "z")
+
+         _
+         (write-temp! "lsorder/b-dir/a.txt" "a")
+
+         _
+         (write-temp! "lsorder/b-dir/m-sub/x.txt" "x")
+
+         _
+         (write-temp! "lsorder/a.txt" "a")
+
+         dir
+         (temp-dir-path "lsorder")
+
+         out
+         ((private-fn "ls-one") {"path" dir "depth" 2})
+
+         b-dir
+         (some #(when (= "b-dir" (get % "name")) %) (get out "entries"))]
+
+        (expect (= ["b-dir" "a.txt"] (mapv #(get % "name") (get out "entries"))))
+        ;; the nested vector obeys the same rule: the directory `m-sub` outranks
+        ;; both files even though its name sorts between them
+        (expect (= ["m-sub" "a.txt" "z.txt"] (mapv #(get % "name") (get b-dir "children"))))
+        (expect (= [] (ls-order-violations dir (get out "entries")))))))
+
+(defdescribe
+  ls-source-agreement-test
+  "The fast path and the fallback are interchangeable."
+  (it
+    "renders an identical listing whichever index answers"
+    (let
+      [dir
+       "src/com/blockether/vis/internal/foundation"
+
+       root
+       (.getCanonicalFile (java.io.File. dir))
+
+       ;; the workspace index has to be warm before it can serve anything
+       _
+       ((private-fn "ls-one") {"path" "."})
+
+       warm-rows
+       ((private-fn "fff-ls-workspace-items") root dir 2 false)
+
+       fallback-rows
+       ((private-fn "fff-ls-target-items") root dir 2 false)
+
+       ;; `fff-ls-workspace-items` carries primitive hints, so the stand-in has
+       ;; to match its shape
+       listing
+       (fn [rows]
+         (with-redefs
+           [editing/fff-ls-workspace-items (fn [_ _ ^long _ _]
+                                             rows)]
+           (get ((private-fn "ls-one") {"path" dir "depth" 2}) "entries")))]
+
+      ;; the fast path really answered — this is not two runs of the fallback
+      (expect (seq warm-rows))
+      (expect (= (set (map (juxt :relative-path (comp boolean :directory?)) warm-rows))
+                 (set (map (juxt :relative-path (comp boolean :directory?)) fallback-rows))))
+      (expect (= (listing warm-rows) (listing fallback-rows)))))
+  (it "never pays fff's mixed file+directory merge"
+      ;; `search-mixed` re-ranks a union `ls` does not need; going near it is the
+      ;; regression this pins (measured 3.3 ms vs 0.8 ms on this repo).
+      (with-redefs
+        [fff/search-mixed (fn [& _]
+                            (throw (ex-info "ls must not call search-mixed" {})))]
+        (let
+          [root (get ((private-fn "ls-one") {"path" "." "depth" 2}) "entries")
+           sub (get ((private-fn "ls-one") {"path" "src/com/blockether/vis/internal/foundation"})
+                    "entries")]
+
+          (expect (seq root))
+          (expect (contains? (set (map #(get % "name") sub)) "editing")))))
+  (it "serves a warm workspace subdirectory without ever building a fresh index"
+      ;; `grep`/`find` keep the workspace index hot, and `ls` of a subdirectory has
+      ;; to ride it. A fallback listing is still CORRECT, so agreement alone cannot
+      ;; catch a silently lost fast path — only counting the fallback can.
+      ((private-fn "ls-one") {"path" "."})
+      (let [fresh (atom 0)]
+        (with-redefs
+          [editing/fff-ls-target-items (fn [_ _ ^long _ _]
+                                         (swap! fresh inc)
+                                         nil)]
+          (doseq
+            [spec [{"path" "src" "depth" 2} {"path" "test/com/blockether/vis/internal"}
+                   {"path" "resources/vis-docs" "depth" 2 "is_hidden" true}]]
+            (expect (seq (get ((private-fn "ls-one") spec) "entries")))))
+        (expect (zero? @fresh)))))

@@ -1303,6 +1303,9 @@
        :mcp/invalid-server
        400
 
+       :mcp/not-managed
+       409
+
        400)]
 
     (error-response status (or type :mcp/invalid-request) (ex-message e))))
@@ -2680,7 +2683,7 @@
   "CORS headers for a cross-origin browser request. The bearer token is the
    real authorization gate (§3); CORS only tells the browser the response is
    readable. We echo the request Origin — so `Access-Control-Allow-Credentials`
-   is legal for the web channel's cookie — and fall back to `*` for callers
+   is legal for cookie-bearing browser clients — and fall back to `*` for callers
    that send no Origin (curl, native clients)."
   [request]
   (let

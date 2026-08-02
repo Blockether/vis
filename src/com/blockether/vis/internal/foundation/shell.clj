@@ -1989,14 +1989,14 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
      (str
        "Always `stage`, `id`, `cwd`, `commands`, timing/exit fields, `note`; run adds `timeout_secs`; "
        "lifecycle adds `pid`, `status`, stage fields. Each command carries its text, timing/exit, "
-       "stdout/stderr plus truncation counts, status, note. `logs`/`wait` return output in `lines`.")
+       "stdout/stderr with truncation counts, status, note. `logs`/`wait` put output in `lines`.")
      :name "shell"
      :description
      (str
-       "Run bounded commands or manage background shells with ONE options map, never a positional string or array. "
-       "Long/interactive: `background`, then `wait`; `logs` is an immediate snapshot; `send` writes `text`; "
-       "`stop` kills. Live ids: `session[\"resources\"]`. Output: `r[\"commands\"][0][\"stdout\"]` for run, "
-       "`r[\"lines\"]` for `logs`/`wait`. `*_omitted_chars` marks truncation.")
+       "Run bounded commands or manage background shells; ONE options map, never a positional string or array. "
+       "Long or interactive: `background`, then `wait`; `logs` snapshots; `send` writes `text`; `stop` kills. "
+       "Live ids: `session[\"resources\"]`. Output: `r[\"commands\"][0][\"stdout\"]` for run, `r[\"lines\"]` for "
+       "`logs`/`wait`; `*_omitted_chars` marks truncation.")
      :render render-shell-result
      :color-role :tool-color/shell
      :schema

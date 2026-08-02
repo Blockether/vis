@@ -112,6 +112,27 @@
         (is (= "filesystem" @deleted))
         (is (= 200 (:status ((rv 'test-mcp-server-handler) {}))))))))
 
+(deftest mcp-management-refuses-hand-written-servers-test
+  (testing "a server declared in a user config file answers 409, never a silent success"
+    (let
+      [refuse (fn [name]
+                (throw (ex-info "declared in a hand-written config file"
+                                {:type :mcp/not-managed :server name})))]
+      (with-redefs-fn {(rv 'body-json) (constantly {"enabled" false})
+                       #'mcp-core/set-gateway-server-enabled! (fn [name _enabled]
+                                                                (refuse name))
+                       #'mcp-core/delete-gateway-server! (fn [name]
+                                                           (refuse name))
+                       #'mcp-core/save-gateway-server! (fn [name _spec]
+                                                         (refuse name))}
+        (fn []
+          (doseq
+            [handler ['set-mcp-server-enabled-handler 'delete-mcp-server-handler
+                      'save-mcp-server-handler]]
+            (let [response ((rv handler) {:path-params {:name "team"}})]
+              (is (= 409 (:status response)))
+              (is (= "not-managed"
+                     (get-in (wire/parse-json (:body response)) ["error" "type"]))))))))))
 
 (deftest list-turns-status-filter-routes-to-queued-overlay
   (let

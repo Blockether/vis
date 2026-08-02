@@ -37,6 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- persistence: the shared SQLite pool is no longer torn down underneath live
+  queries. The snapshot behind "was `~/.vis/vis.mdb/vis.db` replaced under this
+  JVM?" compared the file's size and mtime, and SQLite rewrites `vis.db` in
+  place on every WAL checkpoint — so ordinary write traffic made the store look
+  replaced forever after. The gateway answered by closing its connection pool
+  and opening a new one, over and over: a crashed 3h21m process had reached
+  pool generation 351, leaked seven housekeeper threads, and died with SIGBUS
+  inside `NativeDB.step`, taking every live session with it. The check now
+  compares the filesystem `(dev, ino)` identity only, which moves exactly when
+  a reopen is the right answer.
 - sandbox: a Python block's `open(path, "w").write(text)` reaches the disk. The
   sandbox runs on GraalPy, which does not refcount, so a handle dropped without
   `close()` was never finalized at the end of the statement — the bytes stayed
