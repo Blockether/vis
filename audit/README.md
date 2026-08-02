@@ -183,7 +183,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `babashka/process` | `0.6.25` | EPL-1.0 | 23 KB | 3rd-party |
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
 | `com.blockether/fff` | `0.12.2` | MIT | 10 KB | Blockether (in-house) |
-| `com.blockether/imaging` | `0.1.5` | MIT | 21 KB | Blockether (in-house) |
+| `com.blockether/imaging` | `0.1.6` | MIT | 22 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.3.3` | MIT | 9 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.95` | Apache-2.0 | 504 KB | Blockether (in-house) |
 | `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.38` | MIT | 171 KB | Blockether (in-house) |

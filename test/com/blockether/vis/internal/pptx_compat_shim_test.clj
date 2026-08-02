@@ -103,42 +103,27 @@
     "s.notes_slide.notes_text_frame.text = 'Speaker notes'\n" "b1 = io.BytesIO()\n"
     "prs.save(b1)\n" "opened = Presentation(io.BytesIO(b1.getvalue()))\n"))
 
-;; EDITING a re-opened deck needs the Rust OOXML READER in the RESOLVED
-;; `com.blockether/imaging` build to hand back each slide's shapes. The
-;; published 0.1.5 reader returns the slide with an EMPTY shape list, so the
-;; editable path is asserted only where the dependency actually supports it —
-;; the same conditional-capability shape as the CoW workspace and MCP tests.
-;;
-;; The gate can never go vacuous: the degraded branch pins the exact shipped
-;; behaviour (the package round-trips, the slide is there, only shapes are
-;; missing), so a real regression on either side still fails.
 (defdescribe
   pptx-open-edit-save-test
   (it
     "re-opens Rust OOXML into editable python-pptx shapes, tables, charts and notes"
     (with-python-context
-      (if (pos? (long (ev python-context
-                          (str create-and-reopen-py "len(opened.slides[0].shapes)"))))
-        (expect
-          (=
-            ;; `repr` keeps the float-ness of plotted values visible: GraalPy → Clojure
-            ;; conversion narrows an integral double back to a long.
-            ["Hello again" "Q1" "Q2" "[3.0, 7.0]" "Speaker notes" "Edited" true]
-            (ev
-              python-context
-              (str
-                create-and-reopen-py
-                "opened.slides[0].shapes[0].text = 'Edited'\n"
-                "b2 = io.BytesIO()\n" "opened.save(b2)\n"
-                "again = Presentation(io.BytesIO(b2.getvalue()))\n"
-                "shapes = again.slides[0].shapes\n"
-                "chart = next(x.chart for x in shapes if x.has_chart)\n"
-                "['Hello again', chart.plots[0].categories[0], chart.plots[0].categories[1],\n"
-                " repr(list(chart.series[0].values)), again.slides[0].notes_slide.notes_text_frame.text,\n"
-                " shapes[0].text, b2.getvalue()[:2] == b'PK']"))))
-        (expect (= [true 1 0 true]
-                   (ev python-context
-                       (str create-and-reopen-py
-                            "b2 = io.BytesIO()\n" "opened.save(b2)\n"
-                            "[b1.getvalue()[:2] == b'PK', len(opened.slides),\n"
-                            " len(opened.slides[0].shapes), b2.getvalue()[:2] == b'PK']"))))))))
+      (expect
+        (=
+          ;; `repr` keeps the float-ness of plotted values visible: GraalPy → Clojure
+          ;; conversion narrows an integral double back to a long.
+          ["Hello again" "A" "B" "Q1" "Q2" "[3.0, 7.0]" "Speaker notes" "Edited" true]
+          (ev
+            python-context
+            (str
+              create-and-reopen-py
+              "opened.slides[0].shapes[0].text = 'Edited'\n"
+              "b2 = io.BytesIO()\n" "opened.save(b2)\n"
+              "again = Presentation(io.BytesIO(b2.getvalue()))\n"
+              "shapes = again.slides[0].shapes\n"
+              "tbl = next(x.table for x in shapes if x.has_table)\n"
+              "chart = next(x.chart for x in shapes if x.has_chart)\n"
+              "['Hello again', tbl.cell(0, 0).text, tbl.cell(1, 1).text,\n"
+              " chart.plots[0].categories[0], chart.plots[0].categories[1],\n"
+              " repr(list(chart.series[0].values)), again.slides[0].notes_slide.notes_text_frame.text,\n"
+              " shapes[0].text, b2.getvalue()[:2] == b'PK']")))))))
