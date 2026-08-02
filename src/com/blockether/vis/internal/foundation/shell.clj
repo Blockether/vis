@@ -2272,7 +2272,10 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
        "cwd" {:type "string"
               :description "Working directory under allowed root; relative uses workspace."}
        "n"
-       {:type "integer" :minimum 1 :maximum 2000 :description "logs/wait tail lines; default 200."}
+       {:type "integer"
+        :minimum 1
+        :maximum 2000
+        :description "logs/wait tail lines; default 200. `until` still scans all."}
        "text" {:type "string" :description "send keystrokes."}
        "is_enter" {:type "boolean" :description "send newline; default true."}}
       :additionalProperties false}

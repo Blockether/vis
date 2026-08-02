@@ -1,6 +1,8 @@
 import ast as __vis_ast__
+import builtins as __vis_builtins__
 import errno as __vis_errno__
 import gc as __vis_gc__
+import io as __vis_io__
 import os as __vis_os__
 import time as __vis_time__
 import weakref as __vis_weakref__
@@ -15,8 +17,24 @@ import weakref as __vis_weakref__
 # WEAKLY (no lifetime is extended, no fd is held) and flushed before each tool
 # call and at the end of the block, so what a block wrote is on disk by the time
 # anything else looks at it.
-__vis_open_writes__ = __vis_weakref__.WeakSet()
-__vis_real_open__ = open
+def __vis_survivor__(__vis_name__, __vis_make__):
+    # Runtime state that must OUTLIVE a reinstall. `ensure-async-runtime!` re-evals
+    # this whole preamble in the SAME globals whenever a block loses
+    # `__vis_run_async__` (`globals().clear()` is legal Python), and a plain
+    # `x = {}` here would silently drop every pending write and every tracked
+    # descriptor. `__vis_pin_runtime__` mirrors each `__vis_*` global into
+    # builtins, so the FIRST value is still reachable there: re-adopt it.
+    __vis_v__ = getattr(__vis_builtins__, __vis_name__, None)
+    return __vis_make__() if __vis_v__ is None else __vis_v__
+
+
+__vis_open_writes__ = __vis_survivor__("__vis_open_writes__", __vis_weakref__.WeakSet)
+# The REAL opener, captured ONCE. By the time a reinstall re-runs this line, the
+# name `open` — module global AND `builtins.open` — is already the shim, so a
+# fresh capture would make `__vis_open__` call ITSELF forever: exactly the
+# self-recursion `ensure-async-runtime!` already unwraps for `print`, one door
+# further down.
+__vis_real_open__ = __vis_survivor__("__vis_real_open__", lambda: __vis_builtins__.open)
 
 # ── DESCRIPTOR RECLAMATION + CEILING: the same non-refcounting fact, with a much
 # harsher failure. A dropped handle also keeps its PROCESS file descriptor: the
@@ -38,7 +56,9 @@ __vis_real_open__ = open
 # stolen from whoever owns it now. `__vis_fd_max__` is the ceiling that cannot be
 # crossed: reaching it raises a normal Python `OSError(EMFILE)` naming the fix,
 # instead of leaving the session to die later on an unrelated toolchain error.
-__vis_fd_registry__ = {}  # fd -> (weakref(handle), (st_dev, st_ino) | None)
+__vis_fd_registry__ = __vis_survivor__(
+    "__vis_fd_registry__", dict
+)  # fd -> (weakref(owner), (st_dev, st_ino) | None)
 
 
 def __vis_fd_env_int__(__vis_name__, __vis_default__, __vis_low__):
@@ -54,6 +74,26 @@ def __vis_fd_env_int__(__vis_name__, __vis_default__, __vis_low__):
 # while a leaking one is caught long before the process limit.
 __vis_fd_max__ = __vis_fd_env_int__("VIS_PY_MAX_OPEN_FILES", 512, 8)
 __vis_fd_sweep_at__ = max(16, __vis_fd_max__ // 2)
+
+
+def __vis_fd_owner__(__vis_h__):
+    # The object that actually OWNS the descriptor. `open()` hands back a STACK
+    # (TextIOWrapper -> BufferedReader -> FileIO) and a lower layer happily
+    # outlives the one above it: `buf = open(p).buffer` drops the wrapper while
+    # the file stays perfectly readable through `buf` (measured). Weak-referencing
+    # the TOP layer would close a descriptor still in use, so track the BOTTOM.
+    __vis_o__ = __vis_h__
+    for _ in range(4):  # 2 in practice; the bound keeps a pathological cycle finite
+        try:
+            __vis_n__ = getattr(__vis_o__, "buffer", None)
+            if __vis_n__ is None:
+                __vis_n__ = getattr(__vis_o__, "raw", None)
+        except Exception:
+            __vis_n__ = None  # detached/closed layer: this is as deep as we get
+        if __vis_n__ is None or __vis_n__ is __vis_o__:
+            break
+        __vis_o__ = __vis_n__
+    return __vis_o__
 
 
 def __vis_fd_track__(__vis_h__):
@@ -72,7 +112,7 @@ def __vis_fd_track__(__vis_h__):
         __vis_id__ = None
     try:
         __vis_fd_registry__[__vis_fd__] = (
-            __vis_weakref__.ref(__vis_h__),
+            __vis_weakref__.ref(__vis_fd_owner__(__vis_h__)),
             __vis_id__,
         )
     except Exception:
@@ -161,7 +201,11 @@ def __vis_open__(*__vis_a__, **__vis_kw__):
             __vis_open_writes__.add(__vis_h__)
     except Exception:
         pass  # unweakrefable / no writable(): not ours to track, hand it back as-is
-    __vis_fd_track__(__vis_h__)
+    # `closefd=False` (kwarg, or the 7th positional) says the CALLER owns that
+    # descriptor and merely lent it to this wrapper; reclaiming it when the
+    # wrapper dies would close a file the block is still using elsewhere.
+    if __vis_kw__.get("closefd", True) and (len(__vis_a__) < 7 or __vis_a__[6]):
+        __vis_fd_track__(__vis_h__)
     return __vis_h__
 
 
@@ -174,7 +218,16 @@ def __vis_flush_writes__():
             pass  # best-effort: one broken handle must never break the block
 
 
+# EVERY door onto a descriptor, not just this module's global. `io.open` is a
+# DIFFERENT object from `builtins.open` here, `pathlib.Path.open` and `tempfile.*`
+# go through `io.open`, and any stdlib module calling bare `open()` reaches
+# `builtins.open` — each of those three leaked 50 descriptors per 50 iterations
+# while only the module global was shimmed (measured). `__vis_real_open__` is the
+# pre-shim `builtins.open`, which does NOT delegate to `io.open` (measured), so no
+# door leads back into the shim.
 open = __vis_open__
+__vis_builtins__.open = __vis_open__
+__vis_io__.open = __vis_open__
 
 
 def __vis_count_forms__(src):
