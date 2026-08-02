@@ -64,19 +64,26 @@ export const retryUnauthorized = async (mint, call) => {
   }
 };
 
+/**
+ * An ASC caller bound to a token MINT instead of one token: EVERY request in a
+ * distribution gets one fresh-token retry, not just the two that happened to fail
+ * in run 30766271157. The build is already uploaded by the time any of this runs.
+ */
+export const retryingApi = (mint) => (method, path, body) => retryUnauthorized(mint, (token) => asc(token, method, path, body));
+
 /** Beta App Review refuses a submission when these are unset; they are per-app and set once. */
-const ensureBetaMeta = async (token, appId, { locale = 'en-US', feedbackEmail, description, contact = {}, log }) => {
+const ensureBetaMeta = async (api, appId, { locale = 'en-US', feedbackEmail, description, contact = {}, log }) => {
   const missing = [];
 
-  const locs = await asc(token, 'GET', `/v1/apps/${appId}/betaAppLocalizations?limit=50`);
+  const locs = await api('GET', `/v1/apps/${appId}/betaAppLocalizations?limit=50`);
   const mine = locs.data?.find((l) => l.attributes?.locale === locale);
   const wantLoc = { ...(feedbackEmail ? { feedbackEmail } : {}), ...(description ? { description } : {}) };
   if (mine && Object.keys(wantLoc).length) {
-    await asc(token, 'PATCH', `/v1/betaAppLocalizations/${mine.id}`, { data: { type: 'betaAppLocalizations', id: mine.id, attributes: wantLoc } });
+    await api('PATCH', `/v1/betaAppLocalizations/${mine.id}`, { data: { type: 'betaAppLocalizations', id: mine.id, attributes: wantLoc } });
     log(`beta localization ${locale} updated`);
   } else if (!mine) {
     if (feedbackEmail) {
-      await asc(token, 'POST', '/v1/betaAppLocalizations', {
+      await api('POST', '/v1/betaAppLocalizations', {
         data: {
           type: 'betaAppLocalizations',
           attributes: { locale, feedbackEmail, ...(description ? { description } : {}) },
@@ -99,10 +106,10 @@ const ensureBetaMeta = async (token, appId, { locale = 'en-US', feedbackEmail, d
     ...(contact.notes ? { notes: contact.notes } : {}),
   };
   if (Object.keys(wantContact).length) {
-    await asc(token, 'PATCH', `/v1/betaAppReviewDetails/${appId}`, { data: { type: 'betaAppReviewDetails', id: appId, attributes: wantContact } });
+    await api('PATCH', `/v1/betaAppReviewDetails/${appId}`, { data: { type: 'betaAppReviewDetails', id: appId, attributes: wantContact } });
     log('beta review contact updated');
   } else {
-    const detail = await asc(token, 'GET', `/v1/apps/${appId}/betaAppReviewDetail`);
+    const detail = await api('GET', `/v1/apps/${appId}/betaAppReviewDetail`);
     const a = detail.data?.attributes ?? {};
     if (!a.contactEmail || !a.contactFirstName || !a.contactLastName || !a.contactPhone) {
       missing.push('beta review contact (pass --contact-first/--contact-last/--contact-email/--contact-phone)');
@@ -112,11 +119,11 @@ const ensureBetaMeta = async (token, appId, { locale = 'en-US', feedbackEmail, d
 };
 
 /** The external, public-link group every public tester joins. Created once, reused after. */
-const ensurePublicGroup = async (token, appId, name, { publicLink = true, limit, log }) => {
-  const groups = await asc(token, 'GET', `/v1/apps/${appId}/betaGroups?limit=200`);
+const ensurePublicGroup = async (api, appId, name, { publicLink = true, limit, log }) => {
+  const groups = await api('GET', `/v1/apps/${appId}/betaGroups?limit=200`);
   let group = groups.data?.find((g) => g.attributes?.name === name);
   if (!group) {
-    const created = await asc(token, 'POST', '/v1/betaGroups', {
+    const created = await api('POST', '/v1/betaGroups', {
       data: {
         type: 'betaGroups',
         attributes: {
@@ -131,7 +138,7 @@ const ensurePublicGroup = async (token, appId, name, { publicLink = true, limit,
     group = created.data;
     log(`created external beta group "${name}"`);
   } else if (publicLink && !group.attributes?.publicLinkEnabled) {
-    const patched = await asc(token, 'PATCH', `/v1/betaGroups/${group.id}`, {
+    const patched = await api('PATCH', `/v1/betaGroups/${group.id}`, {
       data: { type: 'betaGroups', id: group.id, attributes: { publicLinkEnabled: true } },
     });
     group = patched.data;
@@ -160,38 +167,34 @@ export const distribute = async ({
 }) => {
   if (!keyId || !issuerId || !keyPem) return { ok: false, reason: 'no App Store Connect API key (npm run secrets asc …)' };
   const credentials = { keyId, issuerId, keyPem };
-  let token = ascToken(credentials);
+  const mint = () => ascToken(credentials);
+  const api = retryingApi(mint);
   try {
-    const appId = await appIdFor(token, bundleId);
+    const appId = await retryUnauthorized(mint, (token) => appIdFor(token, bundleId));
     if (!appId) return { ok: false, reason: `no app with bundle id ${bundleId} in this API key's team` };
 
     // A build must be VALID before it can be reviewed or linked; PROCESSING is rejected.
     // Apple's JWTs expire after 20 minutes, while build ingestion can take much longer.
-    const found = await waitForBuild(() => ascToken(credentials), { appId, build, timeoutMs, requireValid: true, log });
+    const found = await waitForBuild(mint, { appId, build, timeoutMs, requireValid: true, log });
     if (!found?.id) return { ok: false, reason: `build ${build} not visible in App Store Connect yet` };
     if (found.state !== 'VALID') return { ok: false, reason: `build ${build} is still ${found.state} — re-run with --build ${build} once it is VALID` };
-    token = ascToken(credentials);
 
     // Apple validates the beta metadata against the app's PRIMARY locale, not en-US: with only an
     // en-US localization on an en-GB app, `betaAppReviewSubmissions` fails with the misleading
     // "betaAppLocalizations not found for this app". Ask the app which locale it wants.
-    const primaryLocale = (await asc(token, 'GET', `/v1/apps/${appId}`))?.data?.attributes?.primaryLocale;
-    const missing = await ensureBetaMeta(token, appId, { locale: primaryLocale || 'en-US', ...meta, log });
+    const primaryLocale = (await api('GET', `/v1/apps/${appId}`))?.data?.attributes?.primaryLocale;
+    const missing = await ensureBetaMeta(api, appId, { locale: primaryLocale || 'en-US', ...meta, log });
     if (review && missing.length) {
       return { ok: false, reason: `beta metadata incomplete: ${missing.join('; ')}` };
     }
 
-    const grp = await ensurePublicGroup(token, appId, group, { publicLink, limit: publicLinkLimit, log });
+    const grp = await ensurePublicGroup(api, appId, group, { publicLink, limit: publicLinkLimit, log });
 
     if (review) {
       try {
-        await retryUnauthorized(
-          () => ascToken(credentials),
-          (fresh) =>
-            asc(fresh, 'POST', '/v1/betaAppReviewSubmissions', {
-              data: { type: 'betaAppReviewSubmissions', relationships: { build: { data: { type: 'builds', id: found.id } } } },
-            }),
-        );
+        await api('POST', '/v1/betaAppReviewSubmissions', {
+          data: { type: 'betaAppReviewSubmissions', relationships: { build: { data: { type: 'builds', id: found.id } } } },
+        });
         log('submitted for Beta App Review (Apple usually answers within a day)');
       } catch (err) {
         if (!isDuplicate(err)) throw err;
@@ -201,17 +204,14 @@ export const distribute = async ({
 
     // Linking is idempotent server-side, but a duplicate POST still 409s on some paths.
     try {
-      await retryUnauthorized(
-        () => ascToken(credentials),
-        (fresh) => asc(fresh, 'POST', `/v1/betaGroups/${grp.id}/relationships/builds`, { data: [{ type: 'builds', id: found.id }] }),
-      );
+      await api('POST', `/v1/betaGroups/${grp.id}/relationships/builds`, { data: [{ type: 'builds', id: found.id }] });
       log(`linked build ${build} to "${group}"`);
     } catch (err) {
       if (!isDuplicate(err)) throw err;
       log(`build ${build} was already in "${group}"`);
     }
 
-    const fresh = await asc(token, 'GET', `/v1/betaGroups/${grp.id}`);
+    const fresh = await api('GET', `/v1/betaGroups/${grp.id}`);
     return { ok: true, buildId: found.id, groupId: grp.id, publicLink: fresh.data?.attributes?.publicLink };
   } catch (err) {
     return { ok: false, reason: err.message };

@@ -1,5 +1,20 @@
-import { describe, expect, it } from 'vitest';
-import { retryUnauthorized } from './testflight.mjs';
+import { describe, expect, it, vi } from 'vitest';
+
+// Every ASC request the distribution makes goes through the real `asc`; the retry wrapper
+// is what we are testing, so the transport is the only thing stubbed.
+const calls = [];
+vi.mock('./asc.mjs', () => ({
+  appIdFor: vi.fn(),
+  ascToken: vi.fn(),
+  waitForBuild: vi.fn(),
+  asc: vi.fn((token, method, path, body) => {
+    calls.push({ token, method, path, body });
+    if (calls.length === 1) return Promise.reject(Object.assign(new Error('ASC → 401'), { status: 401 }));
+    return Promise.resolve({ data: { id: 'ok' } });
+  }),
+}));
+
+import { retryingApi, retryUnauthorized } from './testflight.mjs';
 
 const asc = (status) => Object.assign(new Error(`ASC POST /v1/betaAppReviewSubmissions → ${status}`), { status });
 
@@ -63,5 +78,25 @@ describe('retryUnauthorized', () => {
       ).rejects.toThrow(String(status));
       expect(calls).toBe(1);
     }
+  });
+});
+
+describe('retryingApi', () => {
+  // Not only the two POSTs that failed once: a 401 on ANY request of an already-uploaded
+  // build's distribution must cost a fresh token, not the release.
+  it('mints per request and replays a 401 with a fresh token', async () => {
+    const minted = ['t1', 't2', 't3'];
+    const api = retryingApi(() => minted.shift());
+
+    const first = await api('GET', '/v1/apps/42');
+
+    expect(first).toEqual({ data: { id: 'ok' } });
+    expect(calls.map((c) => [c.token, c.method, c.path])).toEqual([
+      ['t1', 'GET', '/v1/apps/42'],
+      ['t2', 'GET', '/v1/apps/42'],
+    ]);
+
+    await api('POST', '/v1/betaGroups', { data: 1 });
+    expect(calls.at(-1)).toEqual({ token: 't3', method: 'POST', path: '/v1/betaGroups', body: { data: 1 } });
   });
 });
