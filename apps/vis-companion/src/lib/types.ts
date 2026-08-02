@@ -225,7 +225,7 @@ export interface ProviderLimits {
   status?: 'ok' | 'loading' | 'error' | string;
   fetched_at_ms?: number;
   static?: Record<string, unknown>;
-  dynamic?: { limits?: ProviderLimitRow[] };
+  dynamic?: { limits?: ProviderLimitRow[]; note?: string };
   error?: { message?: string };
 }
 

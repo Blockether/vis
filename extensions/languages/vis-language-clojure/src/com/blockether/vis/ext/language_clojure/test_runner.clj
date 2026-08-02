@@ -11,7 +11,7 @@
 
    run-form is the code EVALED on the target nREPL. It is a quoted form (not a
    call into this namespace) so it works against ANY project's nREPL, including
-   hosts that do not have the vis extension on their classpath."
+   hosts that do not have the vis-agent extension on their classpath."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]

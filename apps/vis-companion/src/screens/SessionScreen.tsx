@@ -698,7 +698,7 @@ function keepKeyboard(event: ReactMouseEvent<HTMLElement>) {
   event.preventDefault();
 }
 
-// The session id is the durable handle a user pastes into `vis`/tools, so it is
+// The session id is the durable handle a user pastes into `vis-agent`/tools, so it is
 // tap-to-copy rather than inert text — shown short with the full id on hover.
 function CopyableId({ id, className }: { id: string; className: string }) {
   const [copied, setCopied] = useState(false);
@@ -1684,6 +1684,7 @@ export function SessionScreen({
     // has to be read back at all. Re-entering a session that has not moved then
     // costs one small request and no re-render, instead of refetching, reparsing
     // and re-rendering the whole history every time you walk back into it.
+    const backlogReadAt = Date.now();
     void (async () => {
       // A COLD open holds no cached rows, so the meta row cannot save the
       // transcript read — it can only delay it by a whole round trip on a link
@@ -1694,8 +1695,9 @@ export function SessionScreen({
       const body = cold ? loadTranscript() : null;
       let row: Session | null = null;
       try {
-        row = await client.session(sid, controller.signal);
+        row = await client.session(sid, controller.signal, true);
         setSession(row);
+        acceptQueueBacklog(client.cachedQueuedTurns(sid) ?? [], backlogReadAt);
       } catch {
         /* Unreachable gateway: fall through, the transcript read reports it. */
       }
@@ -1707,17 +1709,6 @@ export function SessionScreen({
       // turn flickers.
       await adoptRunningTurn(row, controller.signal);
     })();
-    // The queue tray paints ONLY gateway truth, and SSE carries just the
-    // deltas that happen while we are subscribed — so read the existing
-    // backlog on open. Without this, messages queued from the TUI (or
-    // before a browser reload) are invisible here until they drain.
-    const backlogReadAt = Date.now();
-    void client
-      .queuedTurns(sid, controller.signal)
-      .then((rows) => {
-        if (!controller.signal.aborted) acceptQueueBacklog(rows, backlogReadAt);
-      })
-      .catch(() => undefined);
     return () => controller.abort();
   }, [client, sid, loadTranscript, acceptQueueBacklog, adoptRunningTurn]);
 

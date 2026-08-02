@@ -24,6 +24,9 @@
                             (codex/parse-authorization-input
                               "http://localhost:1455/auth/callback?code=abc&state=s1")))
                  (expect (= {:code "abc" :state "s1"}
+                            (codex/parse-authorization-input
+                              "localhost:1455/auth/callback?code=abc&state=s1")))
+                 (expect (= {:code "abc" :state "s1"}
                             (codex/parse-authorization-input "code=abc&state=s1")))
                  (expect (= {:code "abc" :state "s1"} (codex/parse-authorization-input "abc#s1")))
                  (expect (= {:code "abc"} (codex/parse-authorization-input "abc")))))

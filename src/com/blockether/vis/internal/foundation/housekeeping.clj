@@ -11,8 +11,8 @@
    daemons stay forever.
 
    Neither is an error, so nothing here deletes on its own: `scan` is pure
-   observation (no mutation, never throws) that `vis doctor` renders, and
-   `purge!` is the explicit operator action behind `vis doctor --purge`.
+   observation (no mutation, never throws) that `vis-agent doctor` renders, and
+   `purge!` is the explicit operator action behind `vis-agent doctor --purge`.
 
    `purge!` routes deletions through `workspace/abandon!` for live draft rows so
    the DB transition, hooks, and backend root release all happen exactly as they
@@ -66,7 +66,7 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Filesystem helpers. Every one of these swallows IO failure: housekeeping is
-;; advisory, and a permission-denied subtree must not take `vis doctor` down.
+;; advisory, and a permission-denied subtree must not take `vis-agent doctor` down.
 ;; ---------------------------------------------------------------------------
 
 (defn- canonical
@@ -241,7 +241,7 @@
   "Fire-and-forget `sweep-logs!` on a lowest-priority daemon thread. Called once
    per process at startup: hundreds of `File` stats are trivial but they are
    still disk I/O on the path to first paint, and a sweep that loses the race
-   with a short-lived `vis --version` simply runs on the next start. Returns the
+   with a short-lived `vis-agent --version` simply runs on the next start. Returns the
    thread.
 
    The body is a `bound-fn` so `*logs-home*` CONVEYS: a new thread otherwise

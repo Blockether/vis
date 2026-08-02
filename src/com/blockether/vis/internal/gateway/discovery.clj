@@ -334,8 +334,8 @@
 (def ^:private spawn-argv0
   "argv[0] that a vis-spawned vis process presents to `ps` / Activity Monitor.
    ProcessBuilder always reuses the executable PATH as argv[0], so a daemon we
-   launch would otherwise show up as `/long/abs/path/to/vis gateway start …`.
-   Forcing the bare program name makes the process line read `vis gateway start`
+   launch would otherwise show up as `/long/abs/path/to/vis-agent gateway start …`.
+   Forcing the bare program name makes the process line read `vis-agent gateway start`
    — the subcommand is the thing an operator scans for."
   "vis")
 
@@ -367,7 +367,7 @@
   "Fire-and-forget launch of a gateway daemon for `db`, fully DETACHED so closing
    the spawner's terminal (SIGHUP) does NOT kill it (D4). On unix this runs the
    argv inside a throwaway shell that backgrounds and disowns it (the daemon is
-   reparented to init) and renames it to `vis gateway start …`; elsewhere it
+   reparented to init) and renames it to `vis-agent gateway start …`; elsewhere it
    falls back to a plain detached ProcessBuilder. The daemon
    SELF-REGISTERS its pid/port on startup, so we never need its pid here. Its
    stdout+stderr are captured to a per-DB boot log under the registry dir so a
@@ -395,9 +395,9 @@
     (doto pb
       (.redirectOutput ProcessBuilder$Redirect/DISCARD)
       (.redirectError ProcessBuilder$Redirect/DISCARD))
-    ;; Marks this `vis gateway start` as client-managed rather than a user-owned
+    ;; Marks this `vis-agent gateway start` as client-managed rather than a user-owned
     ;; foreground daemon. The daemon should self-reap when the last client dies;
-    ;; a manually-run `vis gateway start` must not.
+    ;; a manually-run `vis-agent gateway start` must not.
     (.put (.environment pb) "VIS_GATEWAY_MANAGED" "1")
     (.start pb)
     nil))

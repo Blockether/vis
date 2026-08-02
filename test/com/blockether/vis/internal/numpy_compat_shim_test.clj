@@ -76,11 +76,11 @@
                                 "b = np.array([1,2,3,4]); b[b > 2] = 9\n"
                                 "a.tolist() == [[0,0,0],[4,5,6]] and b.tolist() == [1,2,9,9]"))))))
   (it "rejects ragged nested sequences rather than creating malformed arrays"
-      (with-python-context
-        (expect (true? (ev python-context
-                           (str "import numpy as np\n"
-                                "try:\n" "    np.array([[1,2],[3]])\n"
-                                "    ok = False\n" "except ValueError:\n" "    ok = True\n" "ok")))))))
+      (with-python-context (expect (true? (ev python-context
+                                              (str "import numpy as np\n"
+                                                   "try:\n" "    np.array([[1,2],[3]])\n"
+                                                   "    ok = False\n" "except ValueError:\n"
+                                                   "    ok = True\n" "ok")))))))
 
 (defdescribe
   numpy-reductions-test
@@ -333,11 +333,17 @@
                                        "masked_array([1,2], mask=[False,True]).filled(9).tolist(), "
                                        "NDArray is not None]")))))))
 
-(defdescribe numpy-ma-alias-regression-test
-  (it "keeps standard numpy.ma aliases and mask inspection usable"
+(defdescribe
+  numpy-ma-alias-regression-test
+  (it
+    "keeps standard numpy.ma aliases and mask inspection usable"
     (with-python-context
-      (expect (= [[1 9] [false true] [1 2] true]
-                 (ev python-context
-                     (str "from numpy.ma import masked_array, getmaskarray, getdata, isMaskedArray\n"
-                          "a = masked_array([1,2], mask=[False,True])\n"
-                          "[a.filled(9).tolist(), getmaskarray(a).tolist(), getdata(a).tolist(), isMaskedArray(a)]")))))))
+      (expect
+        (=
+          [[1 9] [false true] [1 2] true]
+          (ev
+            python-context
+            (str
+              "from numpy.ma import masked_array, getmaskarray, getdata, isMaskedArray\n"
+              "a = masked_array([1,2], mask=[False,True])\n"
+              "[a.filled(9).tolist(), getmaskarray(a).tolist(), getdata(a).tolist(), isMaskedArray(a)]")))))))

@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.python-cli-test
-  "End-to-end cover for the `vis python` standalone interpreter helpers
+  "End-to-end cover for the `vis-agent python` standalone interpreter helpers
    (`python-cli-context` / `run-python-source!`). Drives the SAME
    `env/*` machinery the native binary runs, so these assertions hold on
    both the JVM and the native image. Boots ONE no-network sandbox for the

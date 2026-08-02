@@ -6,8 +6,15 @@ import { Button, Input } from './ui';
 /** How long to keep polling a device flow before giving up on our side. */
 const DEVICE_POLL_CEILING_MS = 15 * 60 * 1000;
 
+/** A live limits probe can invalidate credentials that still exist locally. */
+function limitsAuthError(provider: RouterProvider): string | null {
+  const report = provider.limits;
+  if (report?.status !== 'unauthenticated') return null;
+  return report.dynamic?.note ?? report.error?.message ?? 'Provider credentials were rejected.';
+}
+
 export function isProviderAuthed(provider: RouterProvider): boolean {
-  return provider.status?.is_authenticated === true;
+  return provider.status?.is_authenticated === true && !limitsAuthError(provider);
 }
 
 /** Present the explicit router default first without mutating the gateway fleet. */
@@ -34,8 +41,8 @@ export function openProviderUrl(url: string): void {
 }
 
 export function providerStatusDot(provider: RouterProvider) {
-  if (provider.status?.error) {
-    return { glyph: '●', tone: 'text-err', label: 'Error' };
+  if (provider.status?.error || limitsAuthError(provider)) {
+    return { glyph: '●', tone: 'text-err', label: 'Authentication error' };
   }
   return isProviderAuthed(provider)
     ? { glyph: '●', tone: 'text-ok', label: 'Signed in' }
@@ -71,7 +78,9 @@ const SOURCE_LABELS: Record<string, string> = {
  */
 export function providerStatusLine(provider: RouterProvider): string {
   const status = provider.status;
+  const liveAuthError = limitsAuthError(provider);
   if (status?.error) return status.error;
+  if (liveAuthError) return liveAuthError;
   if (!status?.is_authenticated) return status?.detail ?? 'Not signed in';
   const source = status.source ? (SOURCE_LABELS[status.source] ?? status.source) : undefined;
   const parts = [status.detail, source, status.account_type].filter(

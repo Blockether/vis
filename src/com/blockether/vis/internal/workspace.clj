@@ -178,7 +178,7 @@
 (defn trunk-root
   "The user's real working directory — where they launched `vis`.
    Canonical absolute path. This is *trunk*: never mutated, never
-   required to be a git repo. (`bin/vis` preserves the invocation cwd
+   required to be a git repo. (`bin/vis-agent` preserves the invocation cwd
    as JVM user.dir even though it cd's to the repo for deps.)"
   ^String []
   (file-path (System/getProperty "user.dir")))

@@ -840,7 +840,7 @@ def _auth(printer):
 
 
 def _auth_prompt():
-    return ['Acme OAuth: run `vis providers auth acme-oauth`.',
+    return ['Acme OAuth: run `vis-agent providers auth acme-oauth`.',
             'Or set ACME_TOKEN=... in the environment.']
 
 
@@ -975,7 +975,7 @@ vis.extension(
             (expect (= ["  Visit https://acme.test/device and enter code ABCD." "  Then re-run."]
                        @lines)))
           ;; auth-prompt-fn: () -> guidance lines for the API-key dialog body
-          (expect (= ["Acme OAuth: run `vis providers auth acme-oauth`."
+          (expect (= ["Acme OAuth: run `vis-agent providers auth acme-oauth`."
                       "Or set ACME_TOKEN=... in the environment."]
                      ((:provider/auth-prompt-fn oauth))))
           ;; refresh-token-fn, 1-param: RECEIVES the rejected token.

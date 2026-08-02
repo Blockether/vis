@@ -3563,7 +3563,7 @@
    label inside a code span.
 
    Both matter because a label is FOREIGN prose — another tool's op-card gist,
-   full of paths and flags (`~/vis/bin/vis`, `--ff-only`). Rendered as inline
+   full of paths and flags (`~/vis/bin/vis-agent`, `--ff-only`). Rendered as inline
    markdown it gets EATEN: a single tilde opens GFM strikethrough (one is
    enough, two are not required), so one path silently struck through half the
    breadcrumb. A code span makes the label inert, and it is honest markup —
@@ -11912,7 +11912,7 @@
   "Host-driven title change. Resolves the live env (if any) so the
    in-memory atom + listener fan-out stay in sync; falls back to a
    plain DB write when no env is live for this session (e.g.
-   `vis sessions` rename ops)."
+   `vis-agent sessions` rename ops)."
   [id title]
   (let [env (env-for id)]
     (titling/set-title-with-broadcast! (or (:db-info env) (db-info))

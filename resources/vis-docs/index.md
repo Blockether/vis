@@ -4,8 +4,8 @@ Vis is a coding agent with a different memory model. Instead of piling every
 message into one growing chat transcript, it keeps its working state in a real
 runtime — Python vars, a database, query results — that the model talks to
 through code. The context window holds only what the model needs *right now*;
-everything else is one call away. It is written in Clojure, ships as a single
-native binary, and works with **any** text model.
+everything else is one call away. It is written in Clojure, runs through one
+Bash wrapper with native and JVM runtime options, and works with **any** text model.
 
 ## Why it's different
 
@@ -73,106 +73,107 @@ Native contracts have one source: tool descriptions own routing and semantics; J
   a tool it doesn't have, it authors one, reloads it, and keeps going.
 - **Clojure extensions.** The full-surface path — new tools, channels,
   providers, slash commands, and doc pages — compiled into the binary.
-- **Two runtimes.** Run it from source on the JVM, or build a GraalVM
-  native-image and ship a single self-contained binary with no JVM install.
+- **One wrapper, two runtimes.** `vis-agent` always remains the command. It can
+  launch live JVM source or a private GraalVM native sidecar.
 
 ## Install
 
-Three supported methods. Pick by your **network**, not by taste — each ends with `vis` on your `PATH`.
+The public command is **`vis-agent`**, not `vis`. Linux already has an unrelated
+`vis` utility, so the shorter name is intentionally left alone.
 
-> **Corporate networks: use method 1 or 2.** The one-line installer downloads from
-> `raw.githubusercontent.com`, which corporate proxies very commonly block; a hang or
-> `curl: (22)/(35)` there is exactly that. Cloning over `github.com` and downloading a
-> release asset both avoid that host entirely.
+Every installation includes the Bash wrapper. A native release is not installed
+as a standalone Vis executable: its archive contains `vis-agent` plus the private
+`vis-agent-native` runtime sidecar.
 
-### 1. Install from source — git clone over HTTPS (recommended; corporate-safe)
+### Native release bundle
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-native | bash
+vis-agent help
+```
+
+The installer resolves `vis-agent-<os>-<arch>-community.tar.gz`, installs both
+files in `~/.local/bin`, persists native as the selected runtime, and adds the
+directory to your shell profile when PATH does not already contain it. New shells
+can therefore invoke `vis-agent` globally from any working directory.
+
+For an all-users installation:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-native -o /tmp/install-vis-agent
+sudo bash /tmp/install-vis-agent --install-dir /usr/local/bin
+```
+
+Release CI currently publishes Linux x64 and arm64 bundles. On an unsupported
+platform, install the JVM source runtime. A maintainer can still build the private
+native sidecar with `vis-agent native` when GraalVM CE 25.1.3 and enough RAM are
+available.
+
+### JVM source distribution
 
 ```bash
 git clone https://github.com/Blockether/vis.git ~/.vis/sourcecode
-~/.vis/sourcecode/bin/install-source   # checks java/clojure/git, symlinks ~/.local/bin/vis
-vis help
+~/.vis/sourcecode/bin/install-source
+vis-agent help
 ```
 
-`bin/install-source` is idempotent: on an existing checkout it fast-forwards it and re-points the symlink, so it is safe to rerun. Pure-manual equivalent, if you would rather not run the script:
+`bin/install-source` is idempotent. It checks Java 25+, the Clojure CLI, and git;
+fast-forwards an existing checkout; copies the public wrapper to
+`~/.local/bin/vis-agent`; records the source checkout under `~/.vis/source-dir`;
+and updates the shell profile when needed. `--dest PATH` and `--install-dir PATH`
+override those locations.
 
-```bash
-git clone https://github.com/Blockether/vis.git ~/.vis/sourcecode
-ln -sfn ~/.vis/sourcecode/bin/vis ~/.local/bin/vis
-vis help
-```
-
-`~/.vis/sourcecode` is the default checkout path (`vis update` pulls it); `~/.local/bin/vis` is the launcher symlink. Both are configurable — set `VIS_SOURCE_DIR` and `VIS_LOCAL_BIN_DIR`, pass `--dest`, or clone anywhere and point the symlink at `<checkout>/bin/vis`; the launcher resolves its repo through the symlink. If `~/.local/bin` is not already on your `PATH`, add it:
-
-```bash
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-```
-
-To pin a branch or tag, add `--branch NAME`. To use a fork, clone its HTTPS URL instead of `Blockether/vis`. Update later with `git pull` in the checkout, or `vis update`.
-
-**Needs:** `java` 25+, the [Clojure CLI](https://clojure.org/guides/install_clojure), and `git`. The installer checks for them and tells you what is missing. These are required to **run** Vis from source; the native binary removes the JVM dependency for daily use.
-
-### 2. Download a prebuilt native binary — no JVM, no Clojure CLI
-
-Release assets are named `vis-<os>-<arch>-community` on the [Releases page](https://github.com/Blockether/vis/releases):
-
-```bash
-curl -fL -o ~/.local/bin/vis \
-  https://github.com/Blockether/vis/releases/download/v0.1.13/vis-linux-arm64-community
-chmod +x ~/.local/bin/vis
-vis help
-```
-
-Releases currently carry **Linux x64 and arm64 only**, and not every tag carries both — open the tag and take the asset that is actually published there. There is no macOS job by design (free macOS runners have too little RAM, and GraalVM CE publishes no macOS-x64 JDK), so **on macOS install from source and build the binary once with `vis native`**. From a checkout, `vis update --native` fetches the same asset through `api.github.com`; when the release has nothing for your platform it says so and points at `vis native`.
-
-### 3. One-liner installer (personal machines)
-
-**macOS & Linux** (bash):
+The one-line equivalent is:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source | bash
 ```
 
-This is the same script as method 1 — it clones Vis, verifies the runtime tools, and puts the `vis` launcher on your PATH — only fetched over `raw.githubusercontent.com`. Then confirm:
-
-```bash
-vis help
-```
+Corporate proxies commonly block `raw.githubusercontent.com`; cloning from
+`github.com` and running the checked-out script avoids that host.
 
 ### Hosts to allowlist
 
 | Host | Needed for |
 |---|---|
-| `github.com` | `git clone`, release-asset downloads |
-| `api.github.com` | `vis update` release lookup |
-| `release-assets.githubusercontent.com` | release binary bytes (redirect target of a release download) |
-| `repo1.maven.org`, `repo.clojars.org` | dependency resolution for source/JVM runs |
-| `raw.githubusercontent.com` | **only** the one-liner installer (method 3) |
+| `github.com` | git clone and release bytes |
+| `api.github.com` | release resolution for install/update |
+| `release-assets.githubusercontent.com` | release bundle bytes |
+| `repo1.maven.org`, `repo.clojars.org` | JVM/source dependency resolution |
+| `raw.githubusercontent.com` | one-line installers only |
 | your model provider's API | running the agent |
 
-**Update:** `vis update` fetches and fast-forwards your source checkout, keeping you on the latest source. It does **not** fetch a binary. If your branch has diverged from its upstream (usually an upstream force-push) it prints how far each side moved and stops; `vis update --reset` then hard-resets onto the upstream and prints the old HEAD so `git reset --hard <sha>` can bring your commits back. With uncommitted changes it refuses either way — commit or stash first.
+## Choose native or JVM source
 
-## Native or JVM?
+The wrapper owns runtime selection:
 
-Vis runs in two builds. The launcher picks the best one it can find; you rarely choose.
+```bash
+vis-agent runtime show
+vis-agent runtime use native
+vis-agent runtime use jvm
 
-| | **Native** (preferred) | **JVM** (fallback) |
-|---|---|---|
-| Startup | ~instant | a few seconds |
-| Needs | nothing, single binary | Java 25+ and Clojure CLI |
-| Where it comes from | you build it once (`vis native`) | the source checkout itself |
-| Use when | everyday work | hacking on Vis, `--source`, or before you've built native |
-| Force it | `vis --native …` (default if a binary is present) | `vis --source …` (`--jvm` is the old alias) |
+vis-agent --native help       # one-launch override
+vis-agent --jvm help          # one-launch override; --source is an alias
+```
 
-`vis` falls back through, in order: **live source inside a Vis checkout** (`clojure -M:vis`, so working-tree edits always win — `VIS_PREBUILT=1` opts out), then a managed native binary from `vis update` (`$VIS_HOME/install`), then a repo native binary (`target/vis`), then live source. The uberjar (`target/vis.jar`) is never auto-selected — ask for it with `vis --jar …`. Building the native binary needs GraalVM CE 25.1.3 (exactly, see `.graalvm-version`) with at least 16 GB RAM, and a builder heap of its own (`VIS_NATIVE_EXTRA_ARGS='-J-Xmx18g -J-Xms6g'`); GraalVM 25.2.x is not supported because its `native-image` analysis runs out of Java heap on this codebase. See **[Custom distributions](distributions.md)**.
+A persisted choice wins. Without one, source wins while developing inside a Vis
+checkout; elsewhere the installed native sidecar wins when present, with JVM
+source as the fallback. If the selected runtime is unavailable, the wrapper
+stops and explains how to install or switch—it never silently picks another.
 
-> **JVM path (`--jvm`) JDK requirement.** Vis embeds GraalPy/Truffle pinned to a specific version (currently `25.1.3`). On the JVM you must run on **either** a stock (non-GraalVM) **JDK 25** — e.g. `sdk install java 25.0.3-tem` — **or** a GraalVM whose version matches the pinned line (`graalvm-community-jdk-25i1` / `graal-25.1.3`). Running on a *mismatched* GraalVM (e.g. GraalVM CE 25.0.2) puts that JDK's built-in Truffle on the path where it collides with the pinned one, and Vis aborts at session start with an actionable version-mismatch message. JDK 21–24 are too old (a dependency is compiled for Java 25).
+There is no jar distribution and no `--jar` selector. `target/vis.jar` exists only
+as an intermediate build artifact. The JVM runtime means live source plus Java
+25 and the Clojure CLI; the native runtime remains private behind the wrapper.
+GraalVM builds require Community Edition 25.1.3 exactly and at least 16 GB RAM;
+25.2.x is unsupported because its native-image analysis does not converge within
+memory.
 
 ## Features
 
 - **Context as an environment.** The model writes code to query its world and keeps state in named vars and a SQLite database, not in the token budget. It sees exactly what it needs; everything else is one call away.
 - **Token-efficient by construction.** Structure is read before bytes, edits happen by name rather than by diff, and large intermediate values live in vars instead of the prompt.
-- **A real runtime.** An embedded GraalPython sandbox executes the agent's actions, a JVM core compiles to a native binary, and tree-sitter gives language-aware reading and editing across 30+ languages.
-- **One binary.** Ships as a GraalVM native-image: fast startup, no JVM install required, with per-platform native distributions.
+- **A real runtime.** An embedded GraalPython sandbox executes the agent's actions, a JVM core can compile to a native runtime, and tree-sitter gives language-aware reading and editing across 30+ languages.
+- **One stable command.** Every installation exposes the Bash `vis-agent` wrapper; native bundles include a private per-platform sidecar and require no JVM.
 - **Model-agnostic.** Works with any text-based model. Nothing here depends on a specific provider's tools.
 
 ## Learn more
@@ -180,11 +181,11 @@ Vis runs in two builds. The launcher picks the best one it can find; you rarely 
 - **[Token optimization](token-optimization.md)**: the context-as-environment model and the tools that make it cheap.
 - **[GraalPython sandbox](graalpython.md)**: the in-process interpreter that executes the agent's actions.
 - **[Process sandbox and gateway egress](sandbox.md)**: Seatbelt, filesystem/network policy, MITM, managed processes, trust boundaries, and verification.
-- **[JVM & native-image](jvm-native-image.md)**: how the Clojure core becomes a standalone binary.
-- **[Custom distributions](distributions.md)**: per-platform native artifacts and how they're built.
+- **[JVM & native-image](jvm-native-image.md)**: how the Clojure core becomes the wrapper's private native runtime.
+- **[Runtime distributions](distributions.md)**: wrapper bundles, runtime selection, and platform builds.
 - **[Configuration](configuration.md)**: providers and models, system_prompt overrides, router tuning, the database.
 - **[Extending Vis](extending.md)**: one guide to both flavors — drop-in [Python extensions](extending.md#python-extensions) (`.py` in `.vis/extensions/`, no rebuild, `/reload`able, Vis can write them for itself mid-session) and [Clojure extensions](extending.md#clojure-extensions) (the full-surface path: tools, channels, providers, slash commands, doc pages, compiled into the binary).
 - **[Content-block protocol](content-blocks.md)**: the canonical role-labelled message, typed block, persistence, and streaming contract.
 - **[Reporting bugs](reporting-bugs.md)**: filing an issue that is reproducible for us and safe for you — what to include, what never to paste, and how to sanitize a session export.
 
-Vis can also answer these questions itself: ask a running `vis` how to configure or extend it and it reads these same pages through its `vis_docs` tool.
+Vis can also answer these questions itself: ask a running `vis-agent` how to configure or extend it and it reads these same pages through its `vis_docs` tool.

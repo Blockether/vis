@@ -115,15 +115,18 @@
   [input]
   (let [value (str/trim (or input ""))]
     (cond (str/blank? value) {}
-          (str/starts-with? value "http") (try (let
-                                                 [[head fragment] (str/split value #"#" 2)
-                                                  q-idx (.indexOf ^String head "?")
-                                                  query (when (<= 0 q-idx) (subs head (inc q-idx)))
-                                                  params (merge (parse-query-string query)
-                                                                (parse-query-string fragment))]
+          ;; Mobile browsers sometimes copy a loopback callback without `http://`.
+          ;; The query carries the OAuth response, so parse any URL-shaped value with
+          ;; a query rather than treating `localhost:…/callback?code=…` as the code.
+          (or (str/starts-with? value "http") (str/includes? value "?"))
+          (try (let
+                 [[head fragment] (str/split value #"#" 2)
+                  q-idx (.indexOf ^String head "?")
+                  query (when (<= 0 q-idx) (subs head (inc q-idx)))
+                  params (merge (parse-query-string query) (parse-query-string fragment))]
 
-                                                 (select-keys params [:code :state]))
-                                               (catch Exception _ {:code value}))
+                 (select-keys params [:code :state]))
+               (catch Exception _ {:code value}))
           (str/includes? value "#") (let [[code state] (str/split value #"#" 2)]
                                       (cond-> {:code code}
                                         (not (str/blank? state))
@@ -315,7 +318,7 @@
      :no-token!
      #(throw
         (ex-info
-          "No OpenAI Codex refresh token on file. Run `vis providers auth openai-codex` to re-authenticate."
+          "No OpenAI Codex refresh token on file. Run `vis-agent providers auth openai-codex` to re-authenticate."
           {:type :vis/openai-codex-not-authenticated}))}))
 
 (defn get-openai-codex-token!
@@ -338,7 +341,7 @@
       :else
       (throw
         (ex-info
-          "No OpenAI Codex credentials found. Run `vis providers auth openai-codex` to authenticate."
+          "No OpenAI Codex credentials found. Run `vis-agent providers auth openai-codex` to authenticate."
           {:type :vis/openai-codex-not-authenticated})))))
 
 (defn force-refresh-token!
@@ -417,8 +420,8 @@
    (let [print! (or printer-fn (constantly nil))]
      (if (and (not force?) (detect-credentials))
        (do (print! "  Already authenticated with OpenAI Codex.")
-           (print! "  Run `vis providers status openai-codex` for details.")
-           (print! "  Run `vis providers logout openai-codex` first to re-authenticate.")
+           (print! "  Run `vis-agent providers status openai-codex` for details.")
+           (print! "  Run `vis-agent providers logout openai-codex` first to re-authenticate.")
            :already-authenticated)
        (let [{:keys [verifier state url]} (create-authorization-flow originator)]
          (print! "")
@@ -434,7 +437,7 @@
          (when-not manual-code-fn
            (throw
              (ex-info
-               "Manual code entry is disabled for this flow. Run `vis providers auth openai-codex` in a terminal or use a frontend that can collect the redirect URL."
+               "Manual code entry is disabled for this flow. Run `vis-agent providers auth openai-codex` in a terminal or use a frontend that can collect the redirect URL."
                {:type :vis/openai-codex-manual-entry-disabled})))
          (let
            [input (manual-code-fn print!)

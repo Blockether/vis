@@ -299,10 +299,10 @@
 ;; =============================================================================
 ;; GraalVM native-image build
 ;;
-;; The vis CLI (`bin/vis` = `clojure -M:vis`) compiles to a standalone native
-;; binary. Pipeline: AOT EVERY namespace (core + every extension — extensions
-;; are `require`d at runtime by manifest discovery, so they MUST be in the image)
-;; -> uberjar (Main-Class com.blockether.vis.core) -> native-image.
+;; The Vis Agent application (`bin/vis-agent` = `clojure -M:vis`) compiles to a
+;; private native runtime used behind the shipped Bash wrapper. Pipeline: AOT
+;; EVERY namespace (core + every extension — extensions are `require`d at runtime
+;; by manifest discovery, so they MUST be in the image) -> uberjar -> native-image.
 ;;
 ;; Embedded GraalPy + dynamic extension loading make this non-trivial; see the
 ;; `:native` alias (graal-build-time) and `native-image-args`. Cross-platform:
@@ -314,10 +314,10 @@
 (def ^:private native-uber "target/vis.jar")
 
 (def ^:private uber-exclusions
-  "Entry patterns dropped from the portable uberjar. The jar DELIBERATELY keeps
-   every platform's JNI libs (sherpa-onnx, onnxruntime, sqlite-jdbc) — it is the
-   single cross-OS `vis --jvm` distribution — but the onnxruntime macOS libs drag
-   ~16.5 MB of nested *.dSYM DWARF debug bundles along; no runtime reads those."
+  "Entry patterns dropped from the build-only uberjar. The jar DELIBERATELY keeps
+   every platform's JNI libs (sherpa-onnx, onnxruntime, sqlite-jdbc), but the
+   onnxruntime macOS libs drag ~16.5 MB of nested *.dSYM DWARF debug bundles
+   along; no runtime reads those."
   ["ai/onnxruntime/native/.*\\.dSYM/.*"
    ;; dep-jar warts: babashka/http-client ships scratch.clj and sci ships
    ;; scratch.cljs at the classpath ROOT of their published jars
@@ -458,7 +458,7 @@
                  :env {"JAVA_HOME" home
                        "GRAALVM_HOME" home
                        ;; The clojure CLI prefers JAVA_CMD over JAVA_HOME, and
-                       ;; `bin/vis` exports it — without pinning it here the child
+                       ;; `bin/vis-agent` exports it — without pinning it here the child
                        ;; silently starts on the INHERITED JDK and dies on the
                        ;; hard refusal below (VIS_GRAALVM_SWITCHED already set).
                        "JAVA_CMD" (str home "/bin/java")
@@ -799,7 +799,7 @@
     (write-preload-namespaces! native-class-dir basis)
     ;; index Flyway migrations so they're discoverable without dir listing
     (write-migration-indexes! native-class-dir)
-    ;; `vis/VERSION` resource (git short sha) so `vis --version` has a value.
+    ;; `vis/VERSION` resource (git short sha) so `vis-agent --version` has a value.
     (let
       [sha
        (try (str/trim (:out (b/process {:command-args ["git" "rev-parse" "--short" "HEAD"]
@@ -1075,7 +1075,7 @@
        ;; (com.blockether.vis.internal.nativeimage/-duringSetup).
        "--enable-native-access=ALL-UNNAMED"
        "-H:IncludeResources=META-INF/vis-extension/.*" "-H:IncludeResources=.*\\.edn$"
-       ;; the build-written `vis/VERSION` (git sha) read by `vis --version`
+       ;; the build-written `vis/VERSION` (git sha) read by `vis-agent --version`
        "-H:IncludeResources=vis/VERSION"
        ;; Flyway migration SQL (not in the agent-traced metadata)
        "-H:IncludeResources=db/.*"
@@ -1091,7 +1091,7 @@
        ;; (numpy, pandas, yaml, ...) is missing in the native binary.
        "-H:IncludeResources=vis-shims/.*"
        ;; Python helper sources (resources/vis-python/*.py) slurped at RUNTIME
-       ;; via io/resource -- e.g. the packaging-metadata reader `vis python`
+       ;; via io/resource -- e.g. the packaging-metadata reader `vis-agent python`
        ;; uses to discover a project's import roots.
        "-H:IncludeResources=vis-python/.*"
        ;; vendored Prism highlighter, inlined into standalone HTML
@@ -1225,12 +1225,12 @@
         (throw (ex-info "native-image build failed" {:exit exit}))))))
 
 (defn native
-  "Build BOTH vis distributions in one shot:
-     1. `target/vis.jar`  — portable JVM uberjar (LOCAL `vis --jvm` fallback, not shipped)
-     2. `target/vis`      — standalone native binary
-   They share one AOT pass. Requires `native-image` on PATH (Oracle GraalVM /
-   GraalVM CE 25+) and ≥16 GB RAM (GraalPy's libpythonvm needs -Xms14g).
-   `bin/vis` then proxies to the native binary by default.
+  "Build the private Vis Agent native runtime and its intermediate AOT jar:
+     1. `target/vis.jar`  — build artifact, never a selectable distribution
+     2. `target/vis`      — private native runtime behind `bin/vis-agent`
+   They share one AOT pass. Requires `native-image` on PATH (GraalVM CE 25.1.3)
+   and ≥16 GB RAM (GraalPy's libpythonvm needs -Xms14g). Releases always package
+   `bin/vis-agent` together with the native runtime.
 
    Options:
      :profile :community — the ONE distribution and the default: every extension
@@ -1247,7 +1247,7 @@
   (resolve-profile opts)
   (let [basis (prepare-native-classes!)]
 
-    ;; (1) JVM distribution — also the `vis --jvm` fallback. Portable uberjar.
+    ;; (1) Intermediate AOT uberjar for build tooling. Never shipped or selected at runtime.
     (b/delete {:path native-uber})
     (b/uber {:class-dir native-class-dir
              :uber-file native-uber
@@ -1258,7 +1258,7 @@
     ;; A prior `package`/uber run can leave a target/vis DIRECTORY behind; the
     ;; builder then dies at [8/8] Creating image with "Path exists as directory".
     (b/delete {:path native-bin})
-    ;; (2) native distribution. Built from a classpath of real jars (NOT the
+    ;; (2) Private native runtime. Built from a classpath of real jars (NOT the
     ;; uberjar) so polyglot/graalpy keep their module-info + native-image.properties.
     (println "native-image:"
              native-bin

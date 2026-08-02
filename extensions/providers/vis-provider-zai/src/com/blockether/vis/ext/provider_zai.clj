@@ -16,7 +16,7 @@
    extension entry per provider id.
 
    Auth lifecycle:
-     1. `vis providers auth zai-coding` (or `vis providers auth zai`) prompts for the API
+     1. `vis-agent providers auth zai-coding` (or `vis-agent providers auth zai`) prompts for the API
         key once and persists it under `~/.vis/zai-auth.json`,
         as canonical snake_case JSON - top-level plan tag, then
         `api_key` / `saved_at` (never kebab, never keyword keys).
@@ -25,9 +25,9 @@
         match the key used for model calls; env vars
         (`ZAI_CODING_API_KEY`, `ZAI_API_KEY`) override the auth file when
         present so CI / scripted setups stay home-directory-free.
-     3. `vis providers status zai-coding` reports the source
+     3. `vis-agent providers status zai-coding` reports the source
         (config / env / file) without exposing the full key.
-     4. `vis providers logout zai-coding` clears the persisted key for
+     4. `vis-agent providers logout zai-coding` clears the persisted key for
         that plan only; the other plan stays intact."
   (:require [babashka.http-client :as http]
             [charred.api :as json]
@@ -169,7 +169,7 @@
 (defn- get-token
   "Resolve a usable API key for the given plan. Throws when no
    source has one so the runtime fails fast with a clear pointer at
-   `vis providers auth <plan>` instead of a confusing 401 from Z.ai."
+   `vis-agent providers auth <plan>` instead of a confusing 401 from Z.ai."
   [plan-tag]
   (let [{:keys [provider-id base-url]} (get PLANS plan-tag)]
     (if-let [{:keys [api-key]} (detect-key plan-tag)]
@@ -179,7 +179,7 @@
       (throw (ex-info
                (str "No Z.ai API key for plan "
                     plan-tag
-                    ". Run `vis providers auth "
+                    ". Run `vis-agent providers auth "
                     (name provider-id)
                     "` to authenticate, "
                     "or set "
@@ -445,16 +445,17 @@
 (defn- auth-instruction-lines
   [plan-tag]
   (let [{:keys [provider-id label env-keys base-url]} (get PLANS plan-tag)]
-    (vec
-      (concat
-        ["" (str "  " label " requires a static API key.") "" "  Two ways to authenticate:" ""
-         (str "    1. Set the env var, then re-run `vis providers auth " (name provider-id) "`:")]
-        (mapv (fn [name*]
-                (str "         export " name* "=<your-zai-api-key>"))
-              env-keys)
-        ["" "    2. Add the provider through the TUI (Ctrl+K -> Providers)."
-         "       The TUI prompts for the key directly and writes it to the config." ""
-         (str "  Endpoint: " base-url)]))))
+    (vec (concat ["" (str "  " label " requires a static API key.") "" "  Two ways to authenticate:"
+                  ""
+                  (str "    1. Set the env var, then re-run `vis-agent providers auth "
+                       (name provider-id)
+                       "`:")]
+                 (mapv (fn [name*]
+                         (str "         export " name* "=<your-zai-api-key>"))
+                       env-keys)
+                 ["" "    2. Add the provider through the TUI (Ctrl+K -> Providers)."
+                  "       The TUI prompts for the key directly and writes it to the config." ""
+                  (str "  Endpoint: " base-url)]))))
 
 (defn- make-auth-fn
   "Interactive auth flow. The runtime invokes this with a single
@@ -462,7 +463,7 @@
    user-visible output). We can't use `read-line` directly because
    the CLI dispatcher captures stdout/stderr to a log file; the
    shared pattern is to print instructions and accept the key from
-   the env var the user set in the shell that ran `vis providers auth ...`. If
+   the env var the user set in the shell that ran `vis-agent providers auth ...`. If
    the env var is already populated we just persist it; otherwise we
    instruct the user to set it and re-run."
   [plan-tag]
@@ -483,8 +484,8 @@
         (and existing (contains? #{:config :auth-file} (:source existing)))
         (do (print! (str "  Already authenticated with " label "."))
             (print! (str "  Source: " (name (:source existing)) "."))
-            (print! (str "  Run `vis providers status " (name provider-id) "` for details."))
-            (print! (str "  Run `vis providers logout "
+            (print! (str "  Run `vis-agent providers status " (name provider-id) "` for details."))
+            (print! (str "  Run `vis-agent providers logout "
                          (name provider-id)
                          "` first to switch stored keys."))
             :already-authenticated)
@@ -504,7 +505,7 @@
                   :no-credentials)))))
 
 ;; =============================================================================
-;; Public CLI helpers (used by both auth-fn and `vis providers`)
+;; Public CLI helpers (used by both auth-fn and `vis-agent providers`)
 ;; =============================================================================
 
 (defn authenticated?
@@ -523,7 +524,7 @@
 
 (defn logout!
   "Clear BOTH persisted plan keys. Plan-specific logout goes through
-   `vis providers logout <plan>` which dispatches to the per-plan
+   `vis-agent providers logout <plan>` which dispatches to the per-plan
    logout-fn registered below."
   []
   (let [f (io/file AUTH_FILE)]
@@ -535,7 +536,7 @@
 ;;
 ;; Loading this namespace registers ONE extension entry per plan.
 ;; `:zai-coding-plan` and `:zai` are independent first-class providers -
-;; `vis providers auth zai-coding`, `vis providers status zai`,
+;; `vis-agent providers auth zai-coding`, `vis-agent providers status zai`,
 ;; per-plan logout, etc. all work. The TUI's add-provider picker shows
 ;; them as two separate cards driven by each provider's preset metadata.
 ;; =============================================================================

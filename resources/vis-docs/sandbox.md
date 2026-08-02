@@ -111,8 +111,9 @@ sudo -u visgw mkdir -p /home/visgw/workspace /home/visgw/.vis
 sudo apt-get install -y bubblewrap passt
 ```
 
-3. Install vis for that user (native binary at e.g. `/usr/local/bin/vis`, or the
-   JVM build) and write a project config with the jail **on**:
+3. Install the `vis-agent` wrapper for that user (for example under
+   `/usr/local/bin`), select either its native or JVM runtime, and write a project
+   config with the jail **on**:
 
 ```bash
 sudo -u visgw tee /home/visgw/workspace/vis.yml >/dev/null <<'YAML'
@@ -128,14 +129,14 @@ YAML
 ```ini
 # /etc/systemd/system/vis-gateway.service
 [Unit]
-Description=vis gateway
+Description=vis-agent gateway
 After=network.target
 
 [Service]
 User=visgw
 Group=visgw
 WorkingDirectory=/home/visgw/workspace
-ExecStart=/usr/local/bin/vis gateway start --host 0.0.0.0 --port 7890 --require-token
+ExecStart=/usr/local/bin/vis-agent gateway start --host 0.0.0.0 --port 7890 --require-token
 Restart=on-failure
 # The gateway itself stays UNCONFINED; it applies the jail to its CHILDREN.
 # Do NOT wrap this unit in its own bwrap/seccomp/NoNewPrivileges sandbox —

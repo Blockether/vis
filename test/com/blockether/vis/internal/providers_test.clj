@@ -6,6 +6,7 @@
   (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.providers :as providers]
+            [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.registry :as registry]))
 
 (defn- rv
@@ -21,6 +22,22 @@
       (cond (= expected value) value
             (zero? attempts) nil
             :else (do (Thread/sleep 10) (recur (dec attempts)))))))
+
+(deftest live-limits-unauthenticated-overrides-a-stale-credential-status
+  (with-redefs
+    [registry/provider-by-id
+     (constantly {:provider/status-fn (constantly {:is-authenticated true})
+                  :provider/limits-fn (constantly nil)})
+
+     provider-limits/provider-limits
+     (constantly {:provider-id :anthropic-coding-plan
+                  :status :unauthenticated
+                  :static {}
+                  :dynamic {:limits [] :note "Claude subscription is no longer active."}})]
+
+    (let [status (providers/provider-status {:id :anthropic-coding-plan})]
+      (is (false? (:is-authenticated status)))
+      (is (= "Claude subscription is no longer active." (:error status))))))
 
 (deftest configured-providers-cached-warm-reads-never-re-enumerate
   (let

@@ -80,7 +80,10 @@
   [input]
   (let [value (str/trim (or input ""))]
     (cond (str/blank? value) {}
-          (str/starts-with? value "http")
+          ;; Mobile browsers sometimes copy a loopback callback without `http://`.
+          ;; The query carries the OAuth response, so parse any URL-shaped value with
+          ;; a query rather than treating `localhost:…/callback?code=…` as the code.
+          (or (str/starts-with? value "http") (str/includes? value "?"))
           (try (let
                  [[head fragment] (str/split value #"#" 2)
                   q-idx (.indexOf ^String head "?")
@@ -245,7 +248,7 @@
      :no-token!
      #(throw
         (ex-info
-          "No Anthropic refresh token on file. Run `vis providers auth anthropic-coding-plan` to re-authenticate."
+          "No Anthropic refresh token on file. Run `vis-agent providers auth anthropic-coding-plan` to re-authenticate."
           {:type :vis/anthropic-not-authenticated}))}))
 
 (defn get-anthropic-token!
@@ -477,7 +480,7 @@
            :dynamic
            {:limits []
             :note
-            "Anthropic OAuth token was rejected. Run `vis providers auth anthropic-coding-plan --force` to re-authenticate."}})]
+            "Anthropic OAuth token was rejected. Run `vis-agent providers auth anthropic-coding-plan --force` to re-authenticate."}})]
 
        (cond (= 200 status)
              (let [rows (usage-limit-rows json)]
@@ -509,7 +512,7 @@
           :dynamic
           {:limits []
            :note
-           "Run `vis providers auth anthropic-coding-plan` to authenticate with Claude subscription."}}
+           "Run `vis-agent providers auth anthropic-coding-plan` to authenticate with Claude subscription."}}
          (limits-error-report :vis/anthropic-limits-error
                               (or (ex-message e) "Anthropic limits check failed")
                               (dissoc (ex-data e) :access-token :refresh-token :token))))
@@ -553,7 +556,7 @@
 (defn auth-instruction-lines
   []
   ["Anthropic Claude subscription OAuth." "" "CLI OAuth command:"
-   "  vis providers auth anthropic-coding-plan"])
+   "  vis-agent providers auth anthropic-coding-plan"])
 
 (defn- open-browser! [url] (= :ok (:status (opener/open! url))))
 
@@ -577,8 +580,9 @@
    (let [print! (or printer-fn (constantly nil))]
      (if (and (not force?) (detect-credentials))
        (do (print! "  Already authenticated with Anthropic Claude subscription.")
-           (print! "  Run `vis providers status anthropic-coding-plan` for details.")
-           (print! "  Run `vis providers logout anthropic-coding-plan` first to re-authenticate.")
+           (print! "  Run `vis-agent providers status anthropic-coding-plan` for details.")
+           (print!
+             "  Run `vis-agent providers logout anthropic-coding-plan` first to re-authenticate.")
            :already-authenticated)
        (let [{:keys [url] :as flow} (create-authorization-flow)]
          (print! "")
@@ -594,7 +598,7 @@
          (when-not manual-code-fn
            (throw
              (ex-info
-               "Manual code entry is disabled for this flow. Run `vis providers auth anthropic-coding-plan` in a terminal or use a frontend that can collect the redirect URL."
+               "Manual code entry is disabled for this flow. Run `vis-agent providers auth anthropic-coding-plan` in a terminal or use a frontend that can collect the redirect URL."
                {:type :vis/anthropic-manual-entry-disabled})))
          (let
            [input (manual-code-fn print!)

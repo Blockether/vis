@@ -260,7 +260,7 @@
   ([policy method host path] (decide policy method host path nil))
   ([policy method host path port]
    (cond (nil? policy) {:allow? true}
-         (:deny-all? policy) {:allow? false :reason (:reason policy "vis: egress denied")}
+         (:deny-all? policy) {:allow? false :reason (:reason policy "vis-agent: egress denied")}
          (not (host-ok? policy host)) {:allow? false :reason (str "host not permitted: " host)}
          :else (let [rule (rule-for-host (:rules policy) host)]
                  (cond (and rule (not (port-ok? rule port)))
@@ -1263,9 +1263,9 @@
                               (try (policy-fn token) (catch Throwable _ nil))]
 
                              (if (:proxy-auth-required? policy)
-                               (proxy-auth-response cout
-                                                    (:reason policy
-                                                             "vis: proxy authentication required"))
+                               (proxy-auth-response
+                                 cout
+                                 (:reason policy "vis-agent: proxy authentication required"))
                                (if (= (str/upper-case method) "CONNECT")
                                  (handle-connect pool client cout target policy mitm on-log)
                                  (handle-http pool

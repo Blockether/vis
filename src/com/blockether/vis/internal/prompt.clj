@@ -252,7 +252,7 @@
     "- Bugs: reproduce before editing; rerun the same check after the fix. When that is\n"
     "  impossible, state why.\n"
     "- Prove: `repl_eval`/`run_tests`; Python extensions: native\n"
-    "  `run_tests(\"python\")`; CLI: `vis python -m pytest <paths>`.\n"
+    "  `run_tests(\"python\")`; CLI: `vis-agent python -m pytest <paths>`.\n"
     "- BATCH every tool: reads, `shell`/`git` `commands`, `patch`/`struct_patch` `edits` —\n"
     "  one call, never one per file.\n\n"
     "## 4. Edit + verify\n"
@@ -476,7 +476,7 @@
      :doc       - one-line LLM description from `:ext/description` (when set).
      :kind      - categorical bucket (providers, channels, foundation,
                   languages, persistance, ...) used as the section
-                  label both in this snapshot and in `vis extension
+                  label both in this snapshot and in `vis-agent extension
                   list` (when set).
      :registry-id - canonical manifest id, usually the alias symbol.
      :symbols   - vec of bare symbol names the extension intern'd into
@@ -642,7 +642,7 @@
 
 (def cli-autonomous-rules
   "Override injected ONLY for the non-interactive `:cli` channel (headless
-   `bin/vis '<task>'` one-shot runs). No human is in the loop, so the model
+   `bin/vis-agent '<task>'` one-shot runs). No human is in the loop, so the model
    must never wait for input — it makes reasonable assumptions and drives the
    work to a finished prose answer."
   (str "NON-INTERACTIVE ONE-SHOT RUN — no human is watching and nothing can "

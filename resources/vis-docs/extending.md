@@ -42,7 +42,7 @@ native binary.
 
 A project file registering the same extension **name** as a global one wins
 (same layering as configuration). A file that fails to load becomes a
-warning in `vis doctor` — it never crashes Vis.
+warning in `vis-agent doctor` — it never crashes Vis.
 
 A Python extension can contribute:
 
@@ -94,7 +94,7 @@ Exactly one call per file. Keyword arguments:
 | Argument | Type | What it does |
 | --- | --- | --- |
 | `name` | str, required | Unique extension name. Project file with the same name overrides a global one. |
-| `description` | str, required | One-liner for `vis extension list` and the model's extensions snapshot. |
+| `description` | str, required | One-liner for `vis-agent extension list` and the model's extensions snapshot. |
 | `kind` | str | Section label (`"integration"`, `"guard"`, …). Defaults to `"python"`. |
 | `version` | str | Plain metadata. |
 | `alias` | str | Python-name prefix for tools. Required when `symbols=` is declared. |
@@ -335,7 +335,7 @@ needs `get_token_fn` + a `preset`. Dict keys may be snake_case or kebab (`api_ur
 `:api-url`), `api_style` becomes a keyword, and a Python boolean-predicate key
 written `is_<name>` maps to the `:<name>?` the host reads — so a `status_fn` result
 returns `is_authenticated` (Python can't spell the trailing `?`), which the
-runtime consumes as `:is-authenticated`. `vis providers auth/status/limits
+runtime consumes as `:is-authenticated`. `vis-agent providers auth/status/limits
 <id>` work against it like any other provider.
 
 For an interactive login, give `auth_fn=` a `def login(printer): ...` — the runtime
@@ -390,7 +390,7 @@ per-turn callables (`prompt`, `activation`) fast; tools may take their time.
   — no restart, no new session.
 - Startup is fingerprint-checked: unchanged files are a no-op; changed files
   reload automatically on the next Vis start.
-- `vis doctor` lists every loaded file and every load failure with its
+- `vis-agent doctor` lists every loaded file and every load failure with its
   Python error.
 
 ### Multiple files and packages
@@ -441,13 +441,13 @@ Run them:
 
 ```
 /test            # in a session — inline pass/fail report
-vis extension test     # from the shell — prints a report, exits non-zero on failure
+vis-agent extension test     # from the shell — prints a report, exits non-zero on failure
 ```
 
 The report is **per test**: each `test_*` shows ✓/✗ with the failing
 assertion's detail, grouped by file, under a one-line summary
 (`✓ N file(s): P passed, F failed, …`). Counts are derived from the actual
-per-test outcomes — never a separate tally, never scraped from output. `vis extension
+per-test outcomes — never a separate tally, never scraped from output. `vis-agent extension
 test` exits non-zero when anything fails (it signals failure to the CLI, it
 does not kill the process), so it drops straight into CI.
 
@@ -517,7 +517,7 @@ At startup Vis scans every `META-INF/vis-extension/vis.edn` on the classpath and
 Getting on the classpath:
 
 - **JVM / source runs** — add the extension to `deps.edn` like any Clojure dep (the first-party extensions use `:local/root` entries in Vis's own `deps.edn`).
-- **Native binary** — extensions compile into the image. Add the dep, rebuild with `vis native` (see [Custom distributions](distributions.md)), and mind the [native-image rules](#native-image-rules) below.
+- **Native binary** — extensions compile into the image. Add the dep, rebuild with `vis-agent native` (see [Custom distributions](distributions.md)), and mind the [native-image rules](#native-image-rules) below.
 
 ### Anatomy
 
@@ -547,7 +547,7 @@ my-extension/
 | Key | What it is |
 | --- | --- |
 | `:ext/name` | Unique name string, e.g. `"weather"`. |
-| `:ext/description` | One-liner shown in `vis extension list` and to the model in its extensions snapshot. |
+| `:ext/description` | One-liner shown in `vis-agent extension list` and to the model in its extensions snapshot. |
 | `:ext/version` `:ext/author` `:ext/owner` `:ext/license` | Plain metadata strings. |
 | `:ext/kind` | Categorical bucket used as a section label: `"foundation"`, `"git"`, `"language"`, `"channel"`, `"provider"`, … |
 | `:ext/activation-fn` | `(fn [env] -> boolean)`, called **once per turn**. Falsy hides every symbol and the prompt fragment for that turn. Defaults to always-on. |
@@ -556,7 +556,7 @@ my-extension/
 | `:ext/ctx-fn` | `(fn [env] -> map)` — structured per-turn context contributed into the model's `session` dict. |
 | `:ext/sandbox-shims` | Vec of Python **shim** specs — host-backed modules published into the model's Python sandbox (below). |
 | `:ext/slash-commands` | Vec of slash-command specs (below). |
-| `:ext/doctor-fn` | `(fn [env] -> [checks])` — health checks for `vis doctor`. |
+| `:ext/doctor-fn` | `(fn [env] -> [checks])` — health checks for `vis-agent doctor`. |
 | `:ext/settings` `:ext/env` | Declared settings / environment variables (configurable via `~/.vis/config.yml` `environment`). |
 
 Channels, providers, persistence backends, and workspace backends register through their own keys (`:ext/channels`, `:ext/providers`, `:ext/persistance`, `:ext/workspace-backends`) — read a first-party extension of the matching kind as the reference implementation.

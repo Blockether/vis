@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.jfr
   "Opt-in Java Flight Recorder profiling — ONE recording per PROCESS.
 
-   Turned on per-process by the `VIS_JFR` env var (set by `bin/vis --jfr`). The
+   Turned on per-process by the `VIS_JFR` env var (set by `bin/vis-agent --jfr`). The
    var is INHERITED by the detached gateway daemon that a client spawns, so both
    the client (TUI/web) process AND the gateway daemon each start their OWN
    recording into a role+pid-tagged file under `~/.vis/logs/`:
@@ -99,9 +99,10 @@
              (.setDestination (.toPath f))
              (.start))
            (binding [*out* *err*]
-             (println (str "vis: JFR profiling [" role "] \u2192 " f " (dumped on exit)")))
+             (println (str "vis-agent: JFR profiling [" role "] \u2192 " f " (dumped on exit)")))
            f)
          (catch Throwable t
            (binding [*out* *err*]
-             (println (str "vis: JFR profiling unavailable for [" role "]: " (.getMessage t))))
+             (println (str "vis-agent: JFR profiling unavailable for [" role
+                           "]: " (.getMessage t))))
            nil))))

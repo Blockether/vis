@@ -17,7 +17,7 @@
         (.contains
           help
           "Vis - a coding agent that edits, runs and verifies code in your repo, with a persistent sandboxed Python REPL."))
-      (expect (.contains help "vis [FLAGS] \"prompt\""))
+      (expect (.contains help "vis-agent [FLAGS] \"prompt\""))
       (expect (.contains help "--full-trace-json-stream"))
       (expect (.contains help "--provider PROVIDER"))
       (expect (.contains help "--reasoning-effort"))
@@ -31,7 +31,7 @@
       (let [out (java.io.StringWriter.)]
         (binding [*out* out]
           (expect (true? (#'main/fast-help-dispatched? false ["providers" "--help"]))))
-        (expect (.contains (str out) "vis providers"))))
+        (expect (.contains (str out) "vis-agent providers"))))
   (it "loads channels before rendering channels parent help"
       (let
         [out
@@ -155,12 +155,12 @@
              (it "registers canonical session verbs under host-owned sessions command"
                  (let
                    [{:keys [command]}
-                    (commandline/find-leaf (#'main/root-command) ["vis" "sessions"])
+                    (commandline/find-leaf (#'main/root-command) ["vis-agent" "sessions"])
 
                     ^String help
-                    (commandline/render-command command ["vis" "sessions"])]
+                    (commandline/render-command command ["vis-agent" "sessions"])]
 
-                   (expect (.contains help "vis sessions <list|show|fork|delete|search|export>"))
+                   (expect (.contains help "vis-agent sessions <list|show|fork|delete|search|export>"))
                    (expect (.contains help "list"))
                    (expect (.contains help "show"))
                    (expect (.contains help "fork"))

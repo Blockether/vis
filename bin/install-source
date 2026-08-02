@@ -1,35 +1,38 @@
 #!/usr/bin/env bash
-# Clone or update the Vis source checkout under ~/.vis/sourcecode.
-# Checks the runtime tools needed to run Vis from source before touching disk.
+# Install or update the Vis Agent JVM source distribution.
+# The public `vis-agent` wrapper is copied onto PATH; the checkout stays private.
 
 set -euo pipefail
 
 repo_url="${VIS_REPO_URL:-https://github.com/Blockether/vis.git}"
 dest="${VIS_SOURCE_DIR:-$HOME/.vis/sourcecode}"
 branch="${VIS_REPO_BRANCH:-}"
-local_bin_dir="${VIS_LOCAL_BIN_DIR:-$HOME/.local/bin}"
+install_dir="${VIS_INSTALL_DIR:-${VIS_LOCAL_BIN_DIR:-$HOME/.local/bin}}"
+vis_home="${VIS_HOME:-$HOME/.vis}"
 fork_mode="${VIS_FORK:-false}"
 fork_source="${VIS_FORK_SOURCE:-Blockether/vis}"
 fork_owner="${VIS_FORK_OWNER:-}"
 fork_name="${VIS_FORK_NAME:-}"
 upstream_url=""
-vis_link="$local_bin_dir/vis"
+launcher="$install_dir/vis-agent"
+source_dir_file="$vis_home/source-dir"
 
 usage() {
   cat <<EOF
-Usage: bin/install-source [--dest PATH] [--repo URL] [--branch NAME]
+Usage: bin/install-source [--dest PATH] [--install-dir PATH]
+                          [--repo URL] [--branch NAME]
                           [--fork] [--fork-source OWNER/REPO]
                           [--fork-owner OWNER_OR_ORG] [--fork-name NAME]
 
-Checks for Java, Clojure CLI, and git, then clones Vis to:
-  $dest
-
-It also symlinks the launcher to:
-  $vis_link
+Checks for Java, Clojure CLI, and git, then installs the JVM source distribution:
+  checkout: $dest
+  command:  $launcher
 
 Environment overrides:
   VIS_SOURCE_DIR     checkout path (default: ~/.vis/sourcecode)
-  VIS_LOCAL_BIN_DIR  symlink dir (default: ~/.local/bin)
+  VIS_INSTALL_DIR    wrapper directory (default: ~/.local/bin)
+  VIS_LOCAL_BIN_DIR  deprecated alias for VIS_INSTALL_DIR
+  VIS_HOME           state directory (default: ~/.vis)
   VIS_REPO_URL       git remote (default: $repo_url)
   VIS_REPO_BRANCH    branch/tag to clone or update
   VIS_FORK           true to create/clone a GitHub fork with gh
@@ -42,17 +45,23 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dest)
-      [[ $# -ge 2 ]] || { echo "vis install: --dest requires a path" >&2; exit 2; }
+      [[ $# -ge 2 ]] || { echo "vis-agent install: --dest requires a path" >&2; exit 2; }
       dest="$2"
       shift 2
       ;;
+    --install-dir)
+      [[ $# -ge 2 ]] || { echo "vis-agent install: --install-dir requires a path" >&2; exit 2; }
+      install_dir="$2"
+      launcher="$install_dir/vis-agent"
+      shift 2
+      ;;
     --repo)
-      [[ $# -ge 2 ]] || { echo "vis install: --repo requires a URL" >&2; exit 2; }
+      [[ $# -ge 2 ]] || { echo "vis-agent install: --repo requires a URL" >&2; exit 2; }
       repo_url="$2"
       shift 2
       ;;
     --branch)
-      [[ $# -ge 2 ]] || { echo "vis install: --branch requires a name" >&2; exit 2; }
+      [[ $# -ge 2 ]] || { echo "vis-agent install: --branch requires a name" >&2; exit 2; }
       branch="$2"
       shift 2
       ;;
@@ -61,17 +70,17 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --fork-source)
-      [[ $# -ge 2 ]] || { echo "vis install: --fork-source requires OWNER/REPO" >&2; exit 2; }
+      [[ $# -ge 2 ]] || { echo "vis-agent install: --fork-source requires OWNER/REPO" >&2; exit 2; }
       fork_source="$2"
       shift 2
       ;;
     --fork-owner)
-      [[ $# -ge 2 ]] || { echo "vis install: --fork-owner requires an owner or org" >&2; exit 2; }
+      [[ $# -ge 2 ]] || { echo "vis-agent install: --fork-owner requires an owner or org" >&2; exit 2; }
       fork_owner="$2"
       shift 2
       ;;
     --fork-name)
-      [[ $# -ge 2 ]] || { echo "vis install: --fork-name requires a repo name" >&2; exit 2; }
+      [[ $# -ge 2 ]] || { echo "vis-agent install: --fork-name requires a repo name" >&2; exit 2; }
       fork_name="$2"
       shift 2
       ;;
@@ -80,7 +89,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      echo "vis install: unknown argument: $1" >&2
+      echo "vis-agent install: unknown argument: $1" >&2
       usage >&2
       exit 2
       ;;
@@ -99,7 +108,7 @@ normalize_github_slug() {
   raw="${raw%.git}"
   raw="${raw#/}"
   if [[ "$raw" != */* || "$raw" == */*/* ]]; then
-    echo "vis install: expected a GitHub repo as OWNER/REPO, got: $1" >&2
+    echo "vis-agent install: expected a GitHub repo as OWNER/REPO, got: $1" >&2
     exit 2
   fi
   printf '%s' "$raw"
@@ -120,7 +129,7 @@ github_repo_url() {
 
 ensure_github_fork() {
   gh auth status -h github.com >/dev/null 2>&1 || {
-    echo "vis install: GitHub CLI is not authenticated. Run: gh auth login" >&2
+    echo "vis-agent install: GitHub CLI is not authenticated. Run: gh auth login" >&2
     exit 1
   }
 
@@ -132,9 +141,9 @@ ensure_github_fork() {
   fork_slug="$owner/$name"
 
   if gh repo view "$fork_slug" >/dev/null 2>&1; then
-    echo "vis install: using existing GitHub fork: $fork_slug"
+    echo "vis-agent install: using existing GitHub fork: $fork_slug"
   else
-    echo "vis install: creating GitHub fork: $source_slug -> $fork_slug"
+    echo "vis-agent install: creating GitHub fork: $source_slug -> $fork_slug"
     local args=(repo fork "$source_slug")
     [[ -n "$fork_name" ]] && args+=(--fork-name "$fork_name")
     [[ -n "$fork_owner" && "$fork_owner" != "$login" ]] && args+=(--org "$fork_owner")
@@ -157,7 +166,7 @@ for cmd in "${required[@]}"; do
 done
 
 if [[ ${#missing[@]} -gt 0 ]]; then
-  echo "vis install: missing required command(s): ${missing[*]}" >&2
+  echo "vis-agent install: missing required command(s): ${missing[*]}" >&2
   echo "" >&2
   echo "Install Java 25+, the Clojure CLI, git, and gh when using --fork; then rerun this script." >&2
   echo "macOS/Homebrew example:" >&2
@@ -169,14 +178,23 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   exit 1
 fi
 
-if ! java -version >/dev/null 2>&1; then
-  echo "vis install: java exists but failed to run: java -version" >&2
+java_version_output="$(java -version 2>&1)" || {
+  echo "vis-agent install: java exists but failed to run: java -version" >&2
+  exit 1
+}
+java_version="$(printf '%s\n' "$java_version_output" | sed -n '1s/.*version "\([^"]*\)".*/\1/p')"
+java_major="${java_version%%.*}"
+if [[ "$java_major" == "1" ]]; then
+  java_major="$(printf '%s' "$java_version" | cut -d. -f2)"
+fi
+if [[ ! "$java_major" =~ ^[0-9]+$ || "$java_major" -lt 25 ]]; then
+  echo "vis-agent install: Java 25 or newer is required (found: ${java_version:-unknown})." >&2
   exit 1
 fi
 
 if ! clojure -Sdescribe >/dev/null 2>&1; then
-  echo "vis install: clojure exists but failed to run: clojure -Sdescribe" >&2
-  echo "vis install: install the official Clojure CLI, not only a standalone clojure.jar." >&2
+  echo "vis-agent install: clojure exists but failed to run: clojure -Sdescribe" >&2
+  echo "vis-agent install: install the official Clojure CLI, not only a standalone clojure.jar." >&2
   exit 1
 fi
 
@@ -187,20 +205,20 @@ fi
 mkdir -p "$(dirname "$dest")"
 
 if [[ -e "$dest" && ! -d "$dest/.git" ]]; then
-  echo "vis install: destination exists but is not a git checkout: $dest" >&2
-  echo "vis install: move it aside or choose another --dest." >&2
+  echo "vis-agent install: destination exists but is not a git checkout: $dest" >&2
+  echo "vis-agent install: move it aside or choose another --dest." >&2
   exit 1
 fi
 
 if [[ ! -d "$dest/.git" ]]; then
-  echo "vis install: cloning $repo_url -> $dest"
+  echo "vis-agent install: cloning $repo_url -> $dest"
   if [[ -n "$branch" ]]; then
     git clone --branch "$branch" "$repo_url" "$dest"
   else
     git clone "$repo_url" "$dest"
   fi
 else
-  echo "vis install: updating existing checkout: $dest"
+  echo "vis-agent install: updating existing checkout: $dest"
   git -C "$dest" remote set-url origin "$repo_url"
   git -C "$dest" fetch --prune origin
   if [[ -n "$branch" ]]; then
@@ -211,7 +229,7 @@ else
     if [[ -n "$current_branch" ]]; then
       git -C "$dest" pull --ff-only origin "$current_branch"
     else
-      echo "vis install: checkout is detached; fetched origin but did not switch branches." >&2
+      echo "vis-agent install: checkout is detached; fetched origin but did not switch branches." >&2
     fi
   fi
 fi
@@ -222,35 +240,66 @@ if [[ -n "$upstream_url" ]]; then
   else
     git -C "$dest" remote add upstream "$upstream_url"
   fi
-  echo "vis install: upstream remote -> $upstream_url"
+  echo "vis-agent install: upstream remote -> $upstream_url"
 fi
 
-mkdir -p "$local_bin_dir"
-if [[ -e "$vis_link" && ! -L "$vis_link" ]]; then
-  echo "vis install: not replacing existing non-symlink: $vis_link" >&2
-  echo "vis install: move it aside, or run directly: $dest/bin/vis" >&2
-else
-  ln -sfn "$dest/bin/vis" "$vis_link"
-  echo "vis install: linked $vis_link -> $dest/bin/vis"
+mkdir -p "$install_dir" "$vis_home"
+if [[ -d "$launcher" ]]; then
+  echo "vis-agent install: cannot replace directory: $launcher" >&2
+  exit 1
+fi
+install -m 0755 "$dest/bin/vis-agent" "$launcher.tmp"
+mv -f "$launcher.tmp" "$launcher"
+printf '%s\n' "$dest" > "$source_dir_file.tmp"
+mv -f "$source_dir_file.tmp" "$source_dir_file"
+printf 'jvm\n' > "$vis_home/runtime.tmp"
+mv -f "$vis_home/runtime.tmp" "$vis_home/runtime"
+echo "vis-agent install: installed public wrapper: $launcher"
+echo "vis-agent install: recorded JVM source: $dest"
+echo "vis-agent install: selected JVM as the default runtime"
+
+path_configured=0
+case ":$PATH:" in
+  *":$install_dir:"*) path_configured=1 ;;
+esac
+
+profile=""
+if (( ! path_configured )); then
+  case "${SHELL:-}" in
+    */zsh) profile="${ZDOTDIR:-$HOME}/.zshrc" ;;
+    */bash)
+      if [[ "$(uname -s)" == Darwin ]]; then profile="$HOME/.bash_profile"; else profile="$HOME/.bashrc"; fi
+      ;;
+    *) profile="$HOME/.profile" ;;
+  esac
+
+  if [[ "$install_dir" == "$HOME/.local/bin" ]]; then
+    path_line="export PATH=\"\$HOME/.local/bin:\$PATH\""
+  else
+    printf -v quoted_install_dir '%q' "$install_dir"
+    path_line="export PATH=$quoted_install_dir:\$PATH"
+  fi
+  touch "$profile"
+  if ! grep -Fqx "$path_line" "$profile"; then
+    printf '\n# Vis Agent command\n%s\n' "$path_line" >> "$profile"
+  fi
+  echo "vis-agent install: added $install_dir to PATH in $profile"
 fi
 
 cat <<EOF
 
-vis install: source checkout ready:
-  $dest
+Vis Agent JVM distribution is ready.
+The installed command is:
+  $launcher
 
-Try:
-  $vis_link help
-  $vis_link doctor
+New shells can run:
+  vis-agent runtime show
+  vis-agent help
 EOF
 
-case ":$PATH:" in
-  *":$local_bin_dir:"*) ;;
-  *)
-    cat <<EOF
+if (( ! path_configured )); then
+  cat <<EOF
 
-Add Vis to PATH if your shell does not already include ~/.local/bin:
-  echo 'export PATH="$local_bin_dir:\$PATH"' >> ~/.zshrc
+Start a new shell (or run: source "$profile") before using vis-agent by name.
 EOF
-    ;;
-esac
+fi

@@ -33,9 +33,9 @@
    The file's top-level `vis.extension(...)` call registers through the
    ordinary `register-extension!` — from the registry's perspective a
    Python extension is indistinguishable from a Clojure one (activation,
-   prompt assembly, slash dispatch, `vis extension list` all just work).
+   prompt assembly, slash dispatch, `vis-agent extension list` all just work).
    A file that fails to load becomes a load-failure warning (surfaced via
-   `vis doctor`), never a crash."
+   `vis-agent doctor`), never a crash."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -1164,7 +1164,7 @@
    on the shared engine) — deterministic ordering, no partial states.
 
    A file that fails to load is recorded in `load-failures` (and surfaced
-   by `vis doctor`) — it never crashes the host.
+   by `vis-agent doctor`) — it never crashes the host.
 
    Returns `{:loaded n :failed n :changed? bool}`."
   ([] (load-python-extensions! nil))
@@ -1204,7 +1204,7 @@
          ;; old+dead mix issue #44 reported (old symbols bound to a CLOSED
          ;; context → "Context execution was cancelled", new symbols missing):
          ;; the live surface holds the working last-good module wholesale.
-         ;; `vis doctor` (a fresh process, no last-good) and a live `/reload`
+         ;; `vis-agent doctor` (a fresh process, no last-good) and a live `/reload`
          ;; run the SAME loader and diverge only in the fallback for a failed
          ;; load — nothing to fall back to vs. the retained last-good.
          (doseq [^File f files]
@@ -1344,7 +1344,7 @@
                                      (map (fn [{:keys [file error]}]
                                             (str (.getName (io/file ^String file)) " — " error))
                                           (load-failures)))
-                           " — see `vis doctor`"))
+                           " — see `vis-agent doctor`"))
           "; skills/agents, prompt templates" (when template-cnt (str " (" template-cnt ")"))
           ", and context files rescanned" (when (seq failed-hooks)
                                             (str " — hook failures: "
@@ -1536,7 +1536,7 @@
 (defn- register-loader-extension!
   []
   (when (compare-and-set! loader-registered? false true)
-    ;; `/test` + `vis extension test` live in the sibling `python-test-runner` ns.
+    ;; `/test` + `vis-agent extension test` live in the sibling `python-test-runner` ns.
     ;; Resolve them lazily so THIS loader ns carries no compile-time dependency
     ;; on the runner (which itself depends on this ns's trusted-context builder
     ;; — the one seam that would otherwise be a require cycle).
@@ -1571,7 +1571,7 @@
            :cmd/internal? true
            :cmd/doc
            "Run every Python extension test (test_*.py / *_test.py) in a trusted GraalPy context."
-           :cmd/usage "vis extension test"
-           :cmd/examples ["vis extension test"]
+           :cmd/usage "vis-agent extension test"
+           :cmd/examples ["vis-agent extension test"]
            :cmd/run-fn test-cli!}]
          :ext/doctor-fn doctor-fn}))))

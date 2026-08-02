@@ -2,8 +2,8 @@
   "Regression test for the lightweight-registrar split.
 
    The split saves ~480 ms of Clojure compilation on every Vis startup
-   for commands that never touch the DB (`vis providers list`,
-   `vis --help`, ...). This test asserts the contract the split depends
+   for commands that never touch the DB (`vis-agent providers list`,
+   `vis-agent --help`, ...). This test asserts the contract the split depends
    on:
 
      1. Loading the registrar registers the SQLite backend in the

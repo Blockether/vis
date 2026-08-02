@@ -9,7 +9,7 @@
 # Prints the session UUID + verify on the last stdout line.
 set -euo pipefail
 
-VIS_BIN="${VIS_BIN:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/bin/vis}"
+VIS_BIN="${VIS_BIN:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/bin/vis-agent}"
 PROVIDER="${VIS_PROVIDER:-anthropic-coding-plan}"
 MODEL="${VIS_MODEL:-claude-opus-4-8}"
 TURN_TIMEOUT="${W6_TURN_TIMEOUT:-360}"

@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.doctor
   "Doctor protocol: aggregates `:ext/doctor-fn` from every
    registered extension into a single cross-cutting diagnostic
-   surface. `vis doctor` invokes [[run-checks]] then
+   surface. `vis-agent doctor` invokes [[run-checks]] then
    [[format-output]] + [[exit-code]].
 
    Plan §1 Q19 + §10:
@@ -247,31 +247,33 @@
       rst
       (if use-ansi? (:reset ANSI) "")]
 
-     (cond (empty? messages) "vis doctor\n\nNo diagnostic checks registered."
-           :else
-           (let
-             [grouped
-              (group-by :ext messages)
+     (cond (empty? messages) "vis-agent doctor\n\nNo diagnostic checks registered."
+           :else (let
+                   [grouped
+                    (group-by :ext messages)
 
-              ext-order
-              (vec (distinct (mapv :ext messages)))
+                    ext-order
+                    (vec (distinct (mapv :ext messages)))
 
-              sections
-              (mapv #(format-extension-section % (get grouped %) use-ansi?) ext-order)
+                    sections
+                    (mapv #(format-extension-section % (get grouped %) use-ansi?) ext-order)
 
-              totals
-              (frequencies (mapv :level messages))
+                    totals
+                    (frequencies (mapv :level messages))
 
-              summary
-              (str "Summary: "
-                   (or (:error totals) 0)
-                   " errors, "
-                   (or (:warn totals) 0)
-                   " warnings, "
-                   (or (:info totals) 0)
-                   " info")]
+                    summary
+                    (str "Summary: "
+                         (or (:error totals) 0)
+                         " errors, "
+                         (or (:warn totals) 0)
+                         " warnings, "
+                         (or (:info totals) 0)
+                         " info")]
 
-             (str bold "vis doctor" rst "\n\n" (string/join "\n\n" sections) "\n\n" summary))))))
+                   (str bold
+                        "vis-agent doctor" rst
+                        "\n\n" (string/join "\n\n" sections)
+                        "\n\n" summary))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Startup hint - one-line warning printed before non-doctor commands
@@ -280,9 +282,9 @@
 
 (defn startup-hint-line
   "Return a single-line string like `⚠ vis: 2 issues detected - run
-   \\`bin/vis doctor\\` for details.` when warn/error count > 0;
+   \\`bin/vis-agent doctor\\` for details.` when warn/error count > 0;
    nil otherwise. Caller decides whether to print (skipped when the
-   command being dispatched IS `vis doctor`)."
+   command being dispatched IS `vis-agent doctor`)."
   ([] (startup-hint-line {}))
   ([environment]
    (let
@@ -300,4 +302,4 @@
             issues
             " issue"
             (when (> issues 1) "s")
-            " detected - run `bin/vis doctor` for details.")))))
+            " detected - run `bin/vis-agent doctor` for details.")))))

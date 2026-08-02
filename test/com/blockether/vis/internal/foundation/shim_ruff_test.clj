@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.foundation.shim-ruff-test
   "The `ruff` sandbox shim: `import ruff` inside the Python sandbox reaches the
-   in-process ruff cdylib (com.blockether/ruff), so `vis python -m ruff` formats
+   in-process ruff cdylib (com.blockether/ruff), so `vis-agent python -m ruff` formats
    and lints with no ruff on PATH and no PyPI install.
 
    Files are written on the Clojure side into a system temp dir and the Context
@@ -84,7 +84,7 @@
 
 (defdescribe
   ruff-shim-cli-test
-  "`vis python -m ruff <argv>` — console_main returns the process exit code."
+  "`vis-agent python -m ruff <argv>` — console_main returns the process exit code."
   (it "check exits 1 and reports the rule on a file with a finding"
       (let [d (tmp-dir)]
         (spit (str d "/bad.py") "import os\n")

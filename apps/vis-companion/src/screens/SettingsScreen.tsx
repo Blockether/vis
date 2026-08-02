@@ -848,7 +848,7 @@ export function ApplicationSettingsDialog({ onClose }: { onClose: () => void }) 
 /**
  * Provider accounts ON THIS GATEWAY: live auth status, sign-in, a manual
  * re-check, and sign-out — the whole terminal-free equivalent of
- * `vis auth login/logout/status`.
+ * `vis-agent auth login/logout/status`.
  *
  * Every credential lives on the daemon: this panel starts flows, polls them,
  * and asks for verdicts, but never holds a token, verifier, or device code.

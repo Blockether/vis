@@ -1,13 +1,13 @@
 # vis-companion
 
-Universal (**web · Android · iOS**) companion app for the **vis gateway**.
+Universal (**web · Android · iOS**) companion app for the **Vis Agent gateway**.
 Built with **React 19**, **Tailwind CSS v4**, and **Capacitor 8**. It is a pure
 gateway *client*: it reuses the exact same long-lived gateway daemon the TUI and
 other channels drive — no separate backend.
 
 ## What it does
 
-- **Pair with a gateway** by scanning the QR from `vis gateway pair`, opening the
+- **Pair with a gateway** by scanning the QR from `vis-agent gateway pair`, opening the
   `vis://gateway?url=…&token=…` deep link, or pasting the URL + bearer token.
 - **Sessions** — list, create, open, send turns, and watch replies stream live
   over SSE (`GET /v1/sessions/:sid/events`).
@@ -29,7 +29,7 @@ The gateway itself is unchanged; you only choose how the phone reaches it.
 **Tailscale** — put both devices on one tailnet, then on the host:
 
 ```sh
-vis gateway start --host 0.0.0.0 --require-token --pair
+vis-agent gateway start --host 0.0.0.0 --require-token --pair
 ```
 
 The pairing QR automatically prefers the durable `100.x` Tailscale address, so
@@ -38,7 +38,7 @@ the scanned URL keeps working off-LAN.
 **cloudflared** — expose the loopback gateway through a tunnel:
 
 ```sh
-vis gateway start --host 127.0.0.1 --require-token --pair   # note the token it prints
+vis-agent gateway start --host 127.0.0.1 --require-token --pair   # note the token it prints
 cloudflared tunnel --url http://127.0.0.1:7890              # prints https://<name>.trycloudflare.com
 ```
 

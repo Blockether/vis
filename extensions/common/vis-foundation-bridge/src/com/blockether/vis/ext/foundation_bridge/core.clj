@@ -671,7 +671,7 @@
 ;; register-extension! auto-populates the op registry.
 
 ;; =============================================================================
-;; CLI surface -- `vis extension bridge <subcommand>`
+;; CLI surface -- `vis-agent extension bridge <subcommand>`
 ;;
 ;; Mirrors the `br/` tool alias (`br/init`, `br/check`, ...) so the binary
 ;; reflects the same operations the model sees inside iterations.
@@ -780,38 +780,39 @@
   [_parsed residual]
   (let [[id & rest-args] (vec residual)]
     (when (str/blank? (str id))
-      (println-original! "Usage: vis extension bridge run-evidence <id> [--dry-run] [...flags]")
+      (println-original!
+        "Usage: vis-agent extension bridge run-evidence <id> [--dry-run] [...flags]")
       (System/exit 1))
     (emit-result! (run-evidence (cli-env) id (parse-kv-opts rest-args)))))
 
 (def ^:private bridge-cli
   [{:cmd/name "bridge"
     :cmd/doc "Bridge verification coordinator -- mirrors the `br/` tool alias."
-    :cmd/usage "vis extension bridge <init|profile|check|list-evidence|run-evidence> [flags]"
+    :cmd/usage "vis-agent extension bridge <init|profile|check|list-evidence|run-evidence> [flags]"
     :cmd/subcommands
     [{:cmd/name "init"
       :cmd/doc "Bootstrap Bridge for this workspace (.bridge/profile.yaml etc)."
-      :cmd/usage "vis extension bridge init [--root PATH]"
+      :cmd/usage "vis-agent extension bridge init [--root PATH]"
       :cmd/run-fn cli-init!}
      {:cmd/name "profile"
       :cmd/doc "Print the active Bridge profile summary."
-      :cmd/usage "vis extension bridge profile [--profile PATH] [--policy PATH]"
+      :cmd/usage "vis-agent extension bridge profile [--profile PATH] [--policy PATH]"
       :cmd/run-fn cli-profile!}
      {:cmd/name "check"
       :cmd/doc "Run Bridge check for the workspace; exits non-zero on open obligations."
       :cmd/usage
-      "vis extension bridge check [--index | --tree TREE] [--frontier TREE] [--approve] [--changed-file PATH ...] [--profile PATH] [--policy PATH]"
+      "vis-agent extension bridge check [--index | --tree TREE] [--frontier TREE] [--approve] [--changed-file PATH ...] [--profile PATH] [--policy PATH]"
       :cmd/run-fn cli-check!}
      {:cmd/name "list-evidence"
       :cmd/doc "List evidence commands configured by the active profile."
-      :cmd/usage "vis extension bridge list-evidence [--profile PATH]"
+      :cmd/usage "vis-agent extension bridge list-evidence [--profile PATH]"
       :cmd/run-fn cli-list-evidence!}
      {:cmd/name "run-evidence"
       :cmd/doc "Run a configured evidence command and write its receipt."
       :cmd/usage
-      "vis extension bridge run-evidence <id> [--index | --tree TREE] [--frontier TREE] [--dry-run] [--subject S] [--out PATH] [--out-dir PATH] [--timeout-seconds N] [--profile PATH]"
-      :cmd/examples ["vis extension bridge run-evidence unit --dry-run"
-                     "vis extension bridge run-evidence unit --timeout-seconds 300"]
+      "vis-agent extension bridge run-evidence <id> [--index | --tree TREE] [--frontier TREE] [--dry-run] [--subject S] [--out PATH] [--out-dir PATH] [--timeout-seconds N] [--profile PATH]"
+      :cmd/examples ["vis-agent extension bridge run-evidence unit --dry-run"
+                     "vis-agent extension bridge run-evidence unit --timeout-seconds 300"]
       :cmd/run-fn cli-run-evidence!}]}])
 
 (defn- bridge-commit-gate

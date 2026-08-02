@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.manifest
-  "Classpath auto-discovery of vis extension manifests.
+  "Classpath auto-discovery of vis-agent extension manifests.
 
    ONE resource per jar: `META-INF/vis-extension/vis.edn`. Each file
    is an EDN map keyed by extension id symbol:
@@ -81,7 +81,7 @@
   ;; surface the failure to TWO consumers - the per-turn
   ;; `(:project ctx) :warnings` slice (so the LLM sees "foundation extension
   ;; failed; cat will be unbound") and the launcher's stderr banner
-  ;; (so the user running `bin/vis` notices before they spend an
+  ;; (so the user running `bin/vis-agent` notices before they spend an
   ;; iteration loop on phantom errors).
   (atom []))
 

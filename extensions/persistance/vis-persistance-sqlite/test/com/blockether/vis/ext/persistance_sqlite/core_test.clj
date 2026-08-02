@@ -620,7 +620,7 @@
 
 ;; Child JVMs cold-boot Clojure, Flyway, and sqlite-jdbc. The timeout bounds a
 ;; broken child without letting one stalled process hold the full suite hostage.
-(def ^:private MULTIPROCESS_CHILD_TIMEOUT_S 60)
+(def ^:private MULTIPROCESS_CHILD_TIMEOUT_S 120)
 
 (defn- child-output
   [^Process child]

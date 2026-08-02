@@ -160,7 +160,7 @@
                               "non-loopback host, so a bearer token is required and this "
                               "client did not present a valid one. Run the TUI on the SAME "
                               "machine as the gateway (it reads the token from ~/.vis), or "
-                              "restart the gateway on loopback (vis gateway start).")
+                              "restart the gateway on loopback (vis-agent gateway start).")
                          (assoc parsed
                            :http-status status
                            :vis/user-error true))
@@ -284,7 +284,7 @@
      start
      (fn [label plain]
        (swap! state assoc :label label :active true)
-       (if tty (.print err (str "\r\u001b[K⟳ " label "…")) (.println err (str "vis: " plain)))
+       (if tty (.print err (str "\r\u001b[K⟳ " label "…")) (.println err (str "vis-agent: " plain)))
        (.flush err))
 
      finish
@@ -375,7 +375,7 @@
    headless one-shots stay in-process and should not call here.
 
    Optional `:port`/`:host` overrides the bind used WHEN THIS CALL SPAWNS a fresh
-   daemon (e.g. `vis channels web --port`); a fresh daemon already registered for
+   daemon (e.g. `vis-agent channels web --port`); a fresh daemon already registered for
    the DB is a singleton and is attached to as-is, so the override is moot there.
 
    Freshness is DEBOUNCED: the full HTTP /healthz probe (via `probe-entry?`)
@@ -1049,7 +1049,7 @@
          :pid (:pid entry)
          :recovery (str "Inspect it with `lsof -nP -iTCP:"
                         (:port entry)
-                        " -sTCP:LISTEN`, stop that process, then retry `vis gateway stop`.")}
+                        " -sTCP:LISTEN`, stop that process, then retry `vis-agent gateway stop`.")}
         {:status "stopped" :stopping false}))))
 
 (defn- port-free?
@@ -1098,11 +1098,11 @@
    serves `path`. When [[ensure-gateway!]] attaches to an already-running daemon
    that 404s on `path` (started from a classpath missing the extension that owns
    it), respawn a fresh daemon from THIS process — whose classpath, by
-   construction, carries the route. This is what lets `vis channels web`
+   construction, carries the route. This is what lets `vis-agent channels web`
    self-heal instead of parking on a `/ui` that 404s.
 
    Optional `opts` (`{:port :host}`) overrides the bind used when THIS call has
-   to spawn a fresh daemon (the `vis channels web --port/--host` flags); it is
+   to spawn a fresh daemon (the `vis-agent channels web --port/--host` flags); it is
    moot when a fresh daemon is already registered for the DB.
 
    The respawn is NON-DESTRUCTIVE. A blind POST /v1/admin/stop is refcount-blind:

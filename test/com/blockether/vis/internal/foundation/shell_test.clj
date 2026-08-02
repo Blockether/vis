@@ -424,7 +424,71 @@
                      (expect (= :stopped (:result stop)))
                      (expect (< dt 8000))
                      (expect (empty? (resources/list-resources sid))))
-                   (finally (resources/stop-all! sid)))))))))
+                   (finally (resources/stop-all! sid))))))))
+  (it "atomically deduplicates simultaneous starts of the same session/id"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-ext-concurrent-dup"
+               env {:session-id sid}
+               gate (promise)
+               starts (mapv (fn [_]
+                              (future @gate (:result (shell-bg* env "same" "sleep 60"))))
+                            (range 20))]
+
+              (try (deliver gate true)
+                   (let
+                     [results (mapv #(deref % 15000 ::timed-out) starts)
+                      completed (remove #{::timed-out} results)
+                      pids (set (map #(get % "pid") completed))]
+
+                     ;; The live check and PTY spawn used to race: every caller saw
+                     ;; no entry, launched a child, and overwrote the sole stop
+                     ;; handle. Only one caller may spawn; every other result must
+                     ;; identify that exact process as already running.
+                     (expect (= 20 (count completed)))
+                     (expect (= 1 (count pids)))
+                     (expect (= 1 (count (remove #(get % "already_running") completed))))
+                     (expect (= 19 (count (filter #(get % "already_running") completed))))
+                     (let [registered (resources/list-resources sid)]
+                       (expect (= 1 (count registered)))
+                       (expect (= (first pids) (get (first registered) "pid")))))
+                   (finally (resources/stop-all! sid))))))))
+  (it
+    "serializes an external stop callback with replacement of the same shell id"
+    (with-shell-on
+      (fn []
+        (binding [workspace/*workspace-root* (workspace/trunk-root)]
+          (let
+            [sid "shell-ext-stop-replace-race"
+             env {:session-id sid}
+             kill-var (ns-resolve 'com.blockether.vis.internal.foundation.shell 'kill-tree!)
+             original-kill (var-get kill-var)
+             entered (promise)
+             release (promise)]
+
+            (try (shell-bg* env "same" "exit 0")
+                 (poll #(:result (shell-logs* env "same")) #(= "exited" (get % "status")))
+                 (with-redefs-fn {kill-var (fn [p]
+                                             (deliver entered true)
+                                             @release
+                                             (original-kill p))}
+                   (fn []
+                     (let [stopping (future (resources/stop! sid "same"))]
+                       @entered
+                       (let [starting (future (shell-bg* env "same" "sleep 60"))]
+                         ;; The replacement waits behind teardown instead of being
+                         ;; installed and then erased by the old callback's keyed drop.
+                         (expect (= ::blocked (deref starting 50 ::blocked)))
+                         (deliver release true)
+                         (expect (= :stopped (:result @stopping)))
+                         (let [replacement (:result @starting)]
+                           (expect (false? (get replacement "already_running")))
+                           (expect (= "running" (get replacement "status")))
+                           (expect (= (get replacement "pid")
+                                      (get (:result (shell-logs* env "same")) "pid"))))))))
+                 (finally (deliver release true) (resources/stop-all! sid)))))))))
 
 (defdescribe
   shell-wait-test

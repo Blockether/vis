@@ -532,10 +532,11 @@
          [oauth-token
           (or (:oauth-token cached)
               (:oauth-token (detect-oauth-token))
-              (throw (ex-info (str "No GitHub Copilot OAuth token found. Run `vis providers auth "
-                                   (name (account-provider-id account-type))
-                                   "` to authenticate.")
-                              {:type :vis/copilot-not-authenticated})))
+              (throw (ex-info
+                       (str "No GitHub Copilot OAuth token found. Run `vis-agent providers auth "
+                            (name (account-provider-id account-type))
+                            "` to authenticate.")
+                       {:type :vis/copilot-not-authenticated})))
 
           fresh
           (exchange-for-copilot-token! oauth-token (assoc opts :account-type account-type))]
@@ -841,7 +842,7 @@
 ;; Provider registration
 ;;
 ;; Loading this namespace plugs the GitHub Copilot provider into the
-;; generic registry. The CLI's `vis providers` tree lists every registered
+;; generic registry. The CLI's `vis-agent providers` tree lists every registered
 ;; provider; the runtime's token-resolution path looks providers up
 ;; by id. Drop this jar (or pick another `vis-provider-*` package)
 ;; to swap providers without touching vis-runtime.
@@ -871,10 +872,10 @@
      (if (detect-oauth-token)
        (do (print! "  Already authenticated with GitHub Copilot.")
            (print! (str "  Account type: " (name account-type)))
-           (print! (str "  Run `vis providers status "
+           (print! (str "  Run `vis-agent providers status "
                         (name (account-provider-id account-type))
                         "` for details."))
-           (print! (str "  Run `vis providers logout "
+           (print! (str "  Run `vis-agent providers logout "
                         (name (account-provider-id account-type))
                         "` first to re-authenticate."))
            :already-authenticated)

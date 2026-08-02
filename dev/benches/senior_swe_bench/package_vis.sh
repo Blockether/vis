@@ -38,31 +38,32 @@ EOF
   exit 2
 fi
 
+install -m 0755 "$repo_root/bin/vis-agent" "$stage/vis-agent/vis-agent"
+
 cat > "$stage/vis-agent/install.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 prefix="${1:-/opt/vis-agent}"
-mkdir -p "$prefix"
+vis_home="${VIS_HOME:-$HOME/.vis}"
+mkdir -p "$prefix" "$vis_home"
 cd "$(dirname "${BASH_SOURCE[0]}")"
+install -m 0755 vis-agent "$prefix/vis-agent"
 if [[ -x native/vis ]]; then
-  install -m 0755 native/vis "$prefix/vis"
+  install -m 0755 native/vis "$prefix/vis-agent-native"
+  printf 'native\n' > "$vis_home/runtime"
 elif [[ -f vis-source.tar.gz ]]; then
   mkdir -p "$prefix/source"
   tar -xzf vis-source.tar.gz -C "$prefix/source" --strip-components=1
-  chmod +x "$prefix/source/bin/vis"
-  cat > "$prefix/vis" <<EOF
-#!/usr/bin/env bash
-exec "$prefix/source/bin/vis" "\$@"
-EOF
-  chmod +x "$prefix/vis"
+  printf '%s\n' "$prefix/source" > "$vis_home/source-dir"
+  printf 'jvm\n' > "$vis_home/runtime"
 else
   echo "vis-agent artifact is missing native/vis and vis-source.tar.gz" >&2
   exit 2
 fi
 if [[ -w /usr/local/bin ]]; then
-  ln -sf "$prefix/vis" /usr/local/bin/vis
+  ln -sf "$prefix/vis-agent" /usr/local/bin/vis-agent
 fi
-"$prefix/vis" --version
+"$prefix/vis-agent" --version
 SH
 chmod +x "$stage/vis-agent/install.sh"
 

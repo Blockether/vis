@@ -21,7 +21,7 @@ SUBSET="${SWEBENCH_SUBSET:-inner}"
 ITER_TAG="${ITER_TAG:-$(date +%Y%m%d-%H%M%S)}"
 export VIS_MODEL="${VIS_MODEL:-glm-5.1}"
 export VIS_PROVIDER="${VIS_PROVIDER:-zai-coding-plan}"
-export VIS_BIN="${VIS_BIN:-$repo_root/bin/vis}"
+export VIS_BIN="${VIS_BIN:-$repo_root/bin/vis-agent}"
 
 case "$SUBSET" in
   inner)      INSTANCES="$here/instances.json"; DEFAULT_BUDGET=300;  DATASET="princeton-nlp/SWE-bench_Lite" ;;

@@ -165,8 +165,11 @@
               "assert_frame_equal(pd.DataFrame({'x':[1]}), pd.DataFrame({'x':[1]}))\n"
               "is_numeric_dtype('float64') and Day(2).days == 2 and scatter_matrix(pd.DataFrame({'x':[1]})) == []")))))))
 
-(defdescribe pandas-offset-regression-test
+(defdescribe
+  pandas-offset-regression-test
   (it "provides Day.n as well as timedelta-compatible days"
-    (with-python-context
-      (expect (true? (ev python-context
-                          "from pandas.tseries.offsets import Day\nx = Day(3)\nx.n == 3 and x.days == 3"))))))
+      (with-python-context
+        (expect
+          (true?
+            (ev python-context
+                "from pandas.tseries.offsets import Day\nx = Day(3)\nx.n == 3 and x.days == 3"))))))

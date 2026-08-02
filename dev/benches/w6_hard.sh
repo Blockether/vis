@@ -11,7 +11,7 @@
 #   VIS_PROVIDER / VIS_MODEL override the model (default zai-coding-plan/glm-5.1).
 set -euo pipefail
 
-VIS_BIN="${VIS_BIN:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/bin/vis}"
+VIS_BIN="${VIS_BIN:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/bin/vis-agent}"
 PROVIDER="${VIS_PROVIDER:-zai-coding-plan}"
 MODEL="${VIS_MODEL:-glm-5.1}"
 TURN_TIMEOUT="${W6_TURN_TIMEOUT:-360}"

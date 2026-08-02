@@ -7,7 +7,7 @@
    (`anthropic/claude-sonnet-4.5`, `openai/gpt-5.1`, ...).
 
    Auth lifecycle:
-     1. `vis providers auth openrouter` persists the key once under
+     1. `vis-agent providers auth openrouter` persists the key once under
         `~/.vis/openrouter-auth.json` as canonical snake_case JSON
         (`api_key` / `saved_at`) - every JSON this repo writes uses
         snake_case string keys.
@@ -16,9 +16,9 @@
         file. Config wins so status/limits report the key that model
         calls actually use; the env var beats the file so CI stays
         home-directory-free.
-     3. `vis providers status openrouter` shows the source without
+     3. `vis-agent providers status openrouter` shows the source without
         exposing the key.
-     4. `vis providers logout openrouter` deletes the persisted key.
+     4. `vis-agent providers logout openrouter` deletes the persisted key.
 
    Limits come from OpenRouter's `GET /api/v1/key`, which reports the
    credits consumed by the key and, for capped keys, the credit limit."
@@ -134,12 +134,12 @@
 
 (defn- get-token
   "Uniform token envelope for the central router adapter. Throws with a
-   pointer at `vis providers auth openrouter` instead of letting the call
+   pointer at `vis-agent providers auth openrouter` instead of letting the call
    die on an opaque 401."
   []
   (if-let [{:keys [api-key]} (detect-key)]
     {:token api-key :api-url BASE_URL}
-    (throw (ex-info (str "No OpenRouter API key. Run `vis providers auth "
+    (throw (ex-info (str "No OpenRouter API key. Run `vis-agent providers auth "
                          (name PROVIDER_ID)
                          "` to authenticate, or set "
                          (str/join " / " ENV_KEYS)
@@ -268,16 +268,17 @@
 
 (defn- auth-instruction-lines
   []
-  (vec (concat
-         ["" (str "  " LABEL " requires a static API key.") ""
-          "  Create one at https://openrouter.ai/keys." "" "  Two ways to authenticate:" ""
-          (str "    1. Set the env var, then re-run `vis providers auth " (name PROVIDER_ID) "`:")]
-         (mapv (fn [name*]
-                 (str "         export " name* "=<your-openrouter-api-key>"))
-               ENV_KEYS)
-         ["" "    2. Add the provider through the TUI (Ctrl+K -> Providers)."
-          "       The TUI prompts for the key directly and writes it to the config." ""
-          (str "  Endpoint: " BASE_URL)])))
+  (vec (concat ["" (str "  " LABEL " requires a static API key.") ""
+                "  Create one at https://openrouter.ai/keys." "" "  Two ways to authenticate:" ""
+                (str "    1. Set the env var, then re-run `vis-agent providers auth "
+                     (name PROVIDER_ID)
+                     "`:")]
+               (mapv (fn [name*]
+                       (str "         export " name* "=<your-openrouter-api-key>"))
+                     ENV_KEYS)
+               ["" "    2. Add the provider through the TUI (Ctrl+K -> Providers)."
+                "       The TUI prompts for the key directly and writes it to the config." ""
+                (str "  Endpoint: " BASE_URL)])))
 
 (defn- auth-fn
   "Non-blocking auth flow: the CLI dispatcher captures stdin/stdout, so we
@@ -293,8 +294,9 @@
     (cond (and existing (contains? #{:config :auth-file} (:source existing)))
           (do (print! (str "  Already authenticated with " LABEL "."))
               (print! (str "  Source: " (name (:source existing)) "."))
-              (print! (str "  Run `vis providers status " (name PROVIDER_ID) "` for details."))
-              (print! (str "  Run `vis providers logout "
+              (print!
+                (str "  Run `vis-agent providers status " (name PROVIDER_ID) "` for details."))
+              (print! (str "  Run `vis-agent providers logout "
                            (name PROVIDER_ID)
                            "` first to switch stored keys."))
               :already-authenticated)

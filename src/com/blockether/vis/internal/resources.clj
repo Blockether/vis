@@ -71,14 +71,19 @@
 (defn- persist-snapshot!
   "Persist the DATA of every registered resource, partitioned by session."
   []
-  (write-persisted! (into {}
-                          (map (fn [[sid id->rec]]
-                                 [sid
-                                  (into {}
-                                        (map (fn [[id r]]
-                                               [id (:data r)]))
-                                        id->rec)]))
-                          @registry)))
+  ;; Take the snapshot under the same monitor that serializes writes. Registry
+  ;; mutation itself stays lock-free, but every queued writer now reads the latest
+  ;; atom value only after older writes finish, so a delayed stale snapshot cannot
+  ;; overwrite a newer registration on disk.
+  (locking registry-lock
+    (write-persisted! (into {}
+                            (map (fn [[sid id->rec]]
+                                   [sid
+                                    (into {}
+                                          (map (fn [[id r]]
+                                                 [id (:data r)]))
+                                          id->rec)]))
+                            @registry))))
 
 ;; ---------------------------------------------------------------------------
 ;; Liveness — generic pid check; owners may supply a richer `:alive-fn`.
@@ -387,10 +392,40 @@
   (when-let [f (get-in @registry [(skey session) (str id) :logs-fn])]
     (try (vec (f)) (catch Throwable _ nil))))
 
+(defn- claim-stoppable!
+  "Atomically remove and return the current stoppable record for `sid`/`id`.
+   Removing BEFORE its stop callback runs gives `register!` a clean handoff:
+   a replacement registered while the old callback is blocked is newer state and
+   must not be erased when that callback eventually returns."
+  [sid id]
+  (loop []
+
+    (let
+      [snapshot
+       @registry
+
+       record
+       (get-in snapshot [sid id])]
+
+      (cond (nil? record) {:result :unknown}
+            (nil? (:stop-fn record)) {:result :not-stoppable}
+            :else (let
+                    [remaining
+                     (dissoc (get snapshot sid) id)
+
+                     next-registry
+                     (if (seq remaining) (assoc snapshot sid remaining) (dissoc snapshot sid))]
+
+                    (if (compare-and-set! registry snapshot next-registry)
+                      {:result :claimed :record record}
+                      (recur)))))))
+
 (defn stop!
-  "Run a resource's `:stop-fn` and unregister it. THE single stop path — the
-   agent tool and the footer both land here, always scoped to `session` so no
-   session can stop another's resource. Returns a result map."
+  "Atomically claim a resource, run its `:stop-fn`, and leave it unregistered.
+   THE single stop path — the agent tool and the footer both land here, always
+   scoped to `session` so no session can stop another's resource. A replacement
+   registered while the old stop callback is running is preserved. Returns a
+   result map."
   [session id]
   (let
     [sid
@@ -399,21 +434,31 @@
      id
      (str id)
 
-     r
-     (get-in @registry [sid id])]
+     {:keys [result record]}
+     (claim-stoppable! sid id)]
 
-    (cond (nil? r) {:result :unknown :id id :message "No such resource in this session."}
-          (nil? (:stop-fn r))
-          {:result :not-stoppable
-           :id id
-           :message "Resource has no stop handle (owner must re-register after a restart)."}
-          :else (let
-                  [res (try {:ok (do ((:stop-fn r)) true)}
-                            (catch Throwable t {:error (ex-message t)}))]
-                  (unregister! session id)
-                  (if (:error res)
-                    {:result :error :id id :message (:error res)}
-                    {:result :stopped :id id})))))
+    (case result
+      :unknown
+      {:result :unknown :id id :message "No such resource in this session."}
+
+      :not-stoppable
+      {:result :not-stoppable
+       :id id
+       :message "Resource has no stop handle (owner must re-register after a restart)."}
+
+      :claimed
+      (do
+        ;; Persist the claim before invoking arbitrary user lifecycle code. The
+        ;; callback can block or throw; either way the stopped record is already
+        ;; absent. `persist-snapshot!` reads the latest atom value, so a concurrent
+        ;; replacement is included rather than overwritten by a stale snapshot.
+        (persist-snapshot!)
+        (let
+          [res (try {:ok (do ((:stop-fn record)) true)}
+                    (catch Throwable t {:error (ex-message t)}))]
+          (if (:error res)
+            {:result :error :id id :message (:error res)}
+            {:result :stopped :id id}))))))
 
 (defn restart!
   "Run a resource's `:restart-fn` (kept registered). Scoped to `session`. The

@@ -1487,15 +1487,36 @@ export class GatewayClient {
     });
   }
 
-  async session(sid: string, signal?: AbortSignal): Promise<Session> {
-    const row = await this.request<Session>(
+  async session(
+    sid: string,
+    signal?: AbortSignal,
+    includeQueued = false,
+  ): Promise<Session> {
+    const response = await this.request<Session & { queued_turns?: unknown }>(
       'GET',
-      `/v1/sessions/${encodeURIComponent(sid)}`,
+      `/v1/sessions/${encodeURIComponent(sid)}${includeQueued ? '?include=queued' : ''}`,
       undefined,
       signal,
     );
-    const merged = reconcileRow(this.cachedSession(sid), row);
+    const { queued_turns: queuedTurns, ...row } = response;
+    const merged = reconcileRow(this.cachedSession(sid), row as Session);
     writeSnapshot(this.snapshotKey('session', sid), merged);
+
+    if (includeQueued) {
+      if (Array.isArray(queuedTurns)) {
+        this.storeQueuedTurns(sid, queuedTurns);
+      } else {
+        // Protocol-compatible older gateways ignore the additive `include`
+        // query. Only they pay the legacy second request.
+        try {
+          await this.queuedTurns(sid, signal);
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          // Keep metadata usable when only the optional queue read failed,
+          // matching the former pair of independent screen requests.
+        }
+      }
+    }
     return merged;
   }
 
@@ -1888,6 +1909,20 @@ export class GatewayClient {
    * `?status=queued` keeps this poll cheap: the current gateway returns only the
    * queued rows instead of the session's entire turn history and content.
    */
+  private storeQueuedTurns(sid: string, turns: unknown[]): QueuedTurn[] {
+    const fetched = turns
+      .filter(
+        (turn): turn is Record<string, unknown> =>
+          turn !== null && typeof turn === 'object' && !Array.isArray(turn),
+      )
+      .sort((a, b) => Number(a.queued_at ?? 0) - Number(b.queued_at ?? 0))
+      .map(queuedTurnFromWire)
+      .filter((row) => row.turnId !== '');
+    const rows = reconcileRows(this.cachedQueuedTurns(sid), fetched);
+    writeSnapshot(this.snapshotKey('queued', sid), rows);
+    return rows;
+  }
+
   async queuedTurns(sid: string, signal?: AbortSignal): Promise<QueuedTurn[]> {
     const response = await this.request<{ turns: SubmittedTurn[] }>(
       'GET',
@@ -1895,24 +1930,18 @@ export class GatewayClient {
       undefined,
       signal,
     );
-    const fetched = response.turns
-      .sort((a, b) => Number(a.queued_at ?? 0) - Number(b.queued_at ?? 0))
-      .map((turn) => queuedTurnFromWire(turn as unknown as Record<string, unknown>))
-      .filter((row) => row.turnId !== '');
-    const rows = reconcileRows(this.cachedQueuedTurns(sid), fetched);
-    writeSnapshot(this.snapshotKey('queued', sid), rows);
-    return rows;
+    return this.storeQueuedTurns(sid, response.turns);
   }
 
   /**
-   * Status of ONE turn as the gateway REGISTRY knows it — `null` only when this
-   * session has no such turn at all.
+   * Status of ONE turn as the gateway REGISTRY knows it — `null` when this
+   * daemon's live registry has no such row.
    *
    * This is the transport-independent liveness probe: the live bubble normally
    * settles on the terminal SSE frame, but a reconnect gap (or a backgrounded
    * tab whose stream was torn down mid-turn) can swallow that one frame, and
    * then the bubble streams forever for a turn the gateway finished minutes
-   * ago. Asking the registry costs one cheap listing and never lies.
+   * ago. Asking the registry costs one direct map lookup and never hydrates history.
    *
    * A still-`running`/`queued` turn is REPORTED, never flattened to `null`: a
    * caller that cannot tell "still working" from "never heard of it" has to
@@ -1926,22 +1955,25 @@ export class GatewayClient {
     tid: string,
     signal?: AbortSignal,
   ): Promise<Pick<TranscriptTurn, 'status' | 'content'> | null> {
-    const response = await this.request<{ turns?: Record<string, unknown>[] }>(
-      'GET',
-      `/v1/sessions/${encodeURIComponent(sid)}/turns`,
-      undefined,
-      signal,
-    );
-    const row = (response.turns ?? []).find(
-      (turn) => String(turn.turn_id ?? '') === tid,
-    );
-    if (!row) return null;
-    const status = String(row.status ?? '');
-    if (status === '') return null;
-    return {
-      status,
-      content: Array.isArray(row.content) ? row.content as TranscriptTurn['content'] : undefined,
-    };
+    try {
+      const row = await this.request<Record<string, unknown>>(
+        'GET',
+        `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}`,
+        undefined,
+        signal,
+      );
+      const status = String(row.status ?? '');
+      if (status === '') return null;
+      return {
+        status,
+        content: Array.isArray(row.content)
+          ? (row.content as TranscriptTurn['content'])
+          : undefined,
+      };
+    } catch (error) {
+      if (error instanceof GatewayError && error.status === 404) return null;
+      throw error;
+    }
   }
 
   /**

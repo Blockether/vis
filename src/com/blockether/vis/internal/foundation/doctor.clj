@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.foundation.doctor
-  "Foundation's contribution to the host `vis doctor` aggregator. ONE fn
+  "Foundation's contribution to the host `vis-agent doctor` aggregator. ONE fn
    (`doctor-fn`) returns the full message stream from two logical
    sections, each stamping its own `:check-id` so the formatter
    groups them under the same banner the original four-checks-vec
@@ -13,7 +13,7 @@
 
      ::provider-env      providers whose `${NAME}` config references point at
                           environment variables that are not set. Config loads
-                          leniently by design, so `vis doctor` is the moment a
+                          leniently by design, so `vis-agent doctor` is the moment a
                           user actually LOOKS — the right place to fail fast
                            without failing the gateway.
 
@@ -96,7 +96,7 @@
    busy days the store quietly holds gigabytes nobody is going to open again.
 
    Reported as :info, never :warn: stale state is untidy, not broken, and
-   `vis doctor` must not start exiting 1 on a machine that is working fine."
+   `vis-agent doctor` must not start exiting 1 on a machine that is working fine."
   [environment]
   (let
     [{:keys [days bytes drafts journals] :as report}
@@ -121,7 +121,7 @@
                       (housekeeping/format-bytes (long (or bytes 0)))
                       " reclaimable.")
         :remediation
-        "Review with `vis doctor --purge --dry-run`, then reclaim with `vis doctor --purge` (add `--days N` to change the 14-day cutoff)."
+        "Review with `vis-agent doctor --purge --dry-run`, then reclaim with `vis-agent doctor --purge` (add `--days N` to change the 14-day cutoff)."
         :data {:days days
                :count n
                :bytes bytes
@@ -155,7 +155,7 @@
    returns nil, so an SVG the build cannot rasterize is simply DROPPED and the
    model never sees the figure at all. A binary whose imaging native library
    failed to load therefore looks healthy while quietly dropping every
-   diagram a user attaches -- exactly what `vis doctor` exists to surface."
+   diagram a user attaches -- exactly what `vis-agent doctor` exists to surface."
   [_environment]
   (let
     [started
@@ -185,7 +185,7 @@
         :message
         "Image rendering unavailable: this build cannot rasterize an SVG, so attached .svg files are dropped."
         :remediation
-        "Report this build (`vis --version`) — a native binary needs the bundled `imaging` native library (libimaging_c) for its platform."}])))
+        "Report this build (`vis-agent --version`) — a native binary needs the bundled `imaging` native library (libimaging_c) for its platform."}])))
 
 (defn- stamp [check-id msgs] (mapv #(assoc % :check-id check-id) msgs))
 

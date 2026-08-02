@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-02-15
 **Applies to:** the *Vis Gateway Companion* app (`com.blockether.viscompanion`) for
-Android, iOS and web, and the `vis` command-line gateway it talks to.
+Android, iOS and web, and the `vis-agent` command-line gateway it talks to.
 **Provider:** Blockether (contact: contact@blockether.com).
 
 ## Short version
@@ -69,7 +69,7 @@ The app is a developer tool and is not directed at children under 13.
 
 Gateway credentials are held in app-private storage. Use HTTPS or a private
 network (Tailscale, cloudflared) when exposing a gateway beyond localhost, and
-revoke a token with `vis gateway pair` if a device is lost.
+revoke a token with `vis-agent gateway pair` if a device is lost.
 
 ## Your rights
 

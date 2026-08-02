@@ -274,31 +274,52 @@
                  :error
                  (str "Can't reach " label " at " host " (" (or (ex-message e) (str e)) ")"))))))))
 
+(declare provider-limits-safe)
+
 (defn provider-status
   "Auth/liveness status for a CONFIGURED provider map. Local providers
    are probed for real; an explicit `:api-key` is trusted; otherwise
-   the registered extension's status/detect fns answer. Never throws."
+   the registered extension's status/detect fns answer. When an authenticated
+   provider exposes live limits and that check says `:unauthenticated`, the
+   live verdict wins over a merely-present credential file. Never throws."
   [provider]
-  (let [registered (registry/provider-by-id (:id provider))]
-    (cond
-      ;; FIRST, ahead of the `:api-key` trust branch: an unresolved `${NAME}`
-      ;; leaves the literal reference sitting in `:api-key`, which is `some?` and
-      ;; would otherwise read as "authenticated from config" — the worst possible
-      ;; verdict, since the truth only surfaces as a 401 on the first real turn.
-      (config/provider-env-gap provider) (let [env-vars (config/provider-env-gap provider)]
-                                           {:is-authenticated false
-                                            :source :env
-                                            :needs-env (str/join ", " env-vars)
-                                            :error (config/provider-env-message (:id provider)
-                                                                                env-vars)})
-      ;; Local no-auth providers (Ollama / LM Studio) have no key and
-      ;; their registered status-fn is a hardcoded stub — probe the
-      ;; endpoint for real.
-      (contains? local-no-auth-provider-ids (:id provider)) (probe-local-reachable provider)
-      (some? (:api-key provider))
-      {:is-authenticated true :source :config :config-path config/state-path}
-      registered (or (safe-provider-status registered) {:is-authenticated false})
-      :else {:is-authenticated false})))
+  (let
+    [registered
+     (registry/provider-by-id (:id provider))
+
+     status
+     (cond
+       ;; FIRST, ahead of the `:api-key` trust branch: an unresolved `${NAME}`
+       ;; leaves the literal reference sitting in `:api-key`, which is `some?` and
+       ;; would otherwise read as "authenticated from config" — the worst possible
+       ;; verdict, since the truth only surfaces as a 401 on the first real turn.
+       (config/provider-env-gap provider) (let [env-vars (config/provider-env-gap provider)]
+                                            {:is-authenticated false
+                                             :source :env
+                                             :needs-env (str/join ", " env-vars)
+                                             :error (config/provider-env-message (:id provider)
+                                                                                 env-vars)})
+       ;; Local no-auth providers (Ollama / LM Studio) have no key and
+       ;; their registered status-fn is a hardcoded stub — probe the
+       ;; endpoint for real.
+       (contains? local-no-auth-provider-ids (:id provider)) (probe-local-reachable provider)
+       (some? (:api-key provider))
+       {:is-authenticated true :source :config :config-path config/state-path}
+       registered (or (safe-provider-status registered) {:is-authenticated false})
+       :else {:is-authenticated false})]
+
+    ;; OAuth credentials can remain on disk after their subscription has ended.
+    ;; A limits endpoint that rejects those credentials is the one live account
+    ;; signal available to every channel, so surface its explanation as status.
+    (if (and (:is-authenticated status) (:provider/limits-fn registered))
+      (let [limits (provider-limits-safe provider)]
+        (if (= :unauthenticated (:status limits))
+          (assoc status
+            :is-authenticated false
+            :error (or (get-in limits [:dynamic :note])
+                       "Provider rejected the current credentials."))
+          status))
+      status)))
 
 (defn provider-reachable?
   "Cheap ROUTING-time liveness verdict: local providers (Ollama /

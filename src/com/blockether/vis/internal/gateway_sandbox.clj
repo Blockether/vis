@@ -99,12 +99,12 @@
   (if-let [pf (and token (get @registry token))]
     (try (let [p (pf)]
            (assoc (if (map? p) p {}) :reserved-loopback-ports (reserved-loopback-ports)))
-         (catch Throwable _ {:deny-all? true :reason "vis: session policy error"}))
+         (catch Throwable _ {:deny-all? true :reason "vis-agent: session policy error"}))
     {:deny-all? true
      :proxy-auth-required? true
      :reason (if token
-               "vis: no live session for this proxy token"
-               "vis: missing Proxy-Authorization (unattributable egress)")}))
+               "vis-agent: no live session for this proxy token"
+               "vis-agent: missing Proxy-Authorization (unattributable egress)")}))
 
 (defn- ensure-ca-capability!
   []

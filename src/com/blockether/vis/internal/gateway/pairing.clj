@@ -199,10 +199,10 @@
       (emit "No QR printed: it would encode a URL your phone cannot open.")
       (emit "Restart on a host the phone can reach:")
       (emit (if ts
-              (str "  vis gateway start --host " ts
+              (str "  vis-agent gateway start --host " ts
                    " --require-token --pair"
                    "   # your Tailscale IP — reachable from the phone on your tailnet")
-              "  vis gateway start --host 0.0.0.0 --require-token --pair"))
+              "  vis-agent gateway start --host 0.0.0.0 --require-token --pair"))
       (flush)
       nil)
     (let

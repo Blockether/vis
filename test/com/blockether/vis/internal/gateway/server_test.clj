@@ -140,6 +140,42 @@
            (is (= 200 (:status ((rv 'list-turns-handler) request))))
            (is (= [[:all sid]] @calls))))))
 
+(deftest soul-handler-optionally-includes-queued-turns
+  (let
+    [sid
+     (random-uuid)
+
+     calls
+     (atom [])
+
+     request
+     {:path-params {:sid (str sid)}}]
+
+    (with-redefs-fn {#'state/soul (fn [actual]
+                                    (when (= sid actual) {:id sid}))
+                     #'state/list-queued-turns (fn [actual]
+                                                 (swap! calls conj actual)
+                                                 [{:turn_id "queued-1"}])}
+      #(do (let [response ((rv 'soul-handler) (assoc request :query-params {"include" "queued"}))]
+             (is (= 200 (:status response)))
+             (is (re-find #"\"id\"" (:body response)))
+             (is (re-find #"\"queued_turns\"" (:body response)))
+             (is (re-find #"\"turn_id\":\"queued-1\"" (:body response))))
+           (is (= [sid] @calls))
+           (reset! calls [])
+           (doseq
+             [plain-request [request (assoc request :query-params {"include" "anything-else"})]]
+             (let [response ((rv 'soul-handler) plain-request)]
+               (is (= 200 (:status response)))
+               (is (not (re-find #"\"queued_turns\"" (:body response))))))
+           (is (empty? @calls))
+           (let
+             [response ((rv 'soul-handler)
+                         {:path-params {:sid (str (random-uuid))}
+                          :query-params {"include" "queued"}})]
+             (is (= 404 (:status response))))
+           (is (empty? @calls))))))
+
 (deftest draft-management-client-builds-canonical-routes
   (let
     [sent

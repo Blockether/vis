@@ -365,7 +365,7 @@
          (dlg/text-view-dialog! screen
                                 label
                                 [(str "Auth failed: " (ex-message e)) "" "Fallback if needed:"
-                                 (str "  vis providers auth " (name provider-id))])
+                                 (str "  vis-agent providers auth " (name provider-id))])
          nil)))))
 
 (defn- gateway-pkce-login!
@@ -414,7 +414,7 @@
                              label
                              [(str "Auth failed: " (ex-message e)) ""
                               "If browser auth still fails here, run:"
-                              (str "  vis providers auth " (name provider-id))])
+                              (str "  vis-agent providers auth " (name provider-id))])
       nil)))
 
 (defn- codex-oauth-ready!
@@ -432,7 +432,7 @@
                                 ["Vis will start the ChatGPT/Codex browser OAuth flow." ""
                                  "After browser login, copy the final redirect URL from the"
                                  "address bar and paste it into the next dialog." ""
-                                 "Fallback if needed:" "  vis providers auth openai-codex"])
+                                 "Fallback if needed:" "  vis-agent providers auth openai-codex"])
        (boolean (gateway-pkce-login! screen :openai-codex "OpenAI Codex"))))))
 
 (defn- anthropic-oauth-ready!
@@ -449,7 +449,7 @@
                                  "After browser login, copy the final redirect URL from the"
                                  "address bar and paste it into the next dialog." ""
                                  "Fallback if needed:"
-                                 "  vis providers auth anthropic-coding-plan"])
+                                 "  vis-agent providers auth anthropic-coding-plan"])
        (boolean (gateway-pkce-login! screen :anthropic-coding-plan "Anthropic"))))))
 
 (declare gateway-api-key-login!)
@@ -629,8 +629,14 @@
      loading-limits?
      (= :loading (:status limits))
 
+     ;; A credential file can survive an expired subscription. The limits
+     ;; probe is the live account verdict, so it must override that stale
+     ;; credential-presence status on the card.
+     limits-unauthenticated?
+     (= :unauthenticated (:status limits))
+
      ok?
-     (boolean (get status "is_authenticated"))
+     (and (not limits-unauthenticated?) (boolean (get status "is_authenticated")))
 
      label
      (vis/display-label (:id provider))
@@ -725,7 +731,9 @@
     ;; instead of just a silent red dot.
     (let
       [error-text (when-not (or loading-status? loading-limits?)
-                    (or (:error status) (get-in limits [:error :message])))]
+                    (or (:error status)
+                        (when limits-unauthenticated? (get-in limits [:dynamic :note]))
+                        (get-in limits [:error :message])))]
       (if (seq error-text)
         (do (p/set-fg! g t/status-bad)
             (p/put-str! g text-x (inc row) (dlg/ellipsize (str "   ⚠ " error-text) text-w)))

@@ -504,7 +504,7 @@
 
 (defn render-tree
   "Top-level overview rendered when the binary is invoked with no
-   arguments (or via `vis help`). Shows the root doc, then a single
+   arguments (or via `vis-agent help`). Shows the root doc, then a single
    COMMANDS block listing every immediate subcommand."
   [root]
   (let
@@ -570,7 +570,7 @@
              ;; Strict-flag check fires only when the command actually
              ;; declares flags. Commands without `:cmd/args` (or with only
              ;; positionals) keep the loose, layer-your-own-flags posture
-             ;; - `vis providers status <provider>` and similar bespoke
+             ;; - `vis-agent providers status <provider>` and similar bespoke
              ;; handlers stay working without forcing every command to
              ;; declare its full surface up front.
              (let

@@ -111,7 +111,7 @@
           "do not print it or call `repl` status merely to" "reproduce before editing"
           "rerun the same check after the fix" "reads, `shell`/`git` `commands`" "Batch independent"
           "plural args" "Write only files the task asked" "Python extensions"
-          "`run_tests(\"python\")`" "native" "CLI: `vis python -m pytest <paths>`"
+          "`run_tests(\"python\")`" "native" "CLI: `vis-agent python -m pytest <paths>`"
           "on your own and report what you did" "Keep secrets out of answers"
           "Commit, push, publish" "Treat context as a budget" "act before the provider fails"
           "Fold obsolete settled work" "one broad `through`/range fold"

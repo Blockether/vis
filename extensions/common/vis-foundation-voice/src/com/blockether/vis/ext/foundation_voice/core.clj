@@ -56,19 +56,20 @@
 
 (defn- parakeet-message
   []
-  (try (if (:installed? (:parakeet (model-status)))
-         {:level :info :check-id ::parakeet :message "Parakeet ASR model: installed"}
-         {:level :warn
-          :check-id ::parakeet
-          :message "Parakeet ASR model: missing"
-          :remediation
-          "Run `vis extension voice models download --parakeet` or set VIS_PARAKEET_MODEL_DIR."})
-       (catch Throwable t
-         {:level :warn
-          :check-id ::parakeet
-          :message (str "Parakeet ASR model: check failed: " (or (ex-message t) t))
-          :remediation
-          "Run `vis extension voice models status` for detailed voice model diagnostics."})))
+  (try
+    (if (:installed? (:parakeet (model-status)))
+      {:level :info :check-id ::parakeet :message "Parakeet ASR model: installed"}
+      {:level :warn
+       :check-id ::parakeet
+       :message "Parakeet ASR model: missing"
+       :remediation
+       "Run `vis-agent extension voice models download --parakeet` or set VIS_PARAKEET_MODEL_DIR."})
+    (catch Throwable t
+      {:level :warn
+       :check-id ::parakeet
+       :message (str "Parakeet ASR model: check failed: " (or (ex-message t) t))
+       :remediation
+       "Run `vis-agent extension voice models status` for detailed voice model diagnostics."})))
 
 (defn doctor-fn [_environment] [(voice-runtime-message) (ffmpeg-message) (parakeet-message)])
 
@@ -113,19 +114,19 @@
      :ext/cli
      [{:cmd/name "voice"
        :cmd/doc "Voice extension commands."
-       :cmd/usage "vis extension voice <models>"
+       :cmd/usage "vis-agent extension voice <models>"
        :cmd/subcommands
        [{:cmd/name "models"
          :cmd/doc "Manage local voice models."
-         :cmd/usage "vis extension voice models <status|download>"
+         :cmd/usage "vis-agent extension voice models <status|download>"
          :cmd/subcommands
          [{:cmd/name "status"
            :cmd/doc "Show local Parakeet model status."
-           :cmd/usage "vis extension voice models status"
+           :cmd/usage "vis-agent extension voice models status"
            :cmd/run-fn #'voice-models-status-command}
           {:cmd/name "download"
            :cmd/doc "Download the local Parakeet ASR model."
-           :cmd/usage "vis extension voice models download [--parakeet|--all]"
+           :cmd/usage "vis-agent extension voice models download [--parakeet|--all]"
            :cmd/args
            [{:name "parakeet" :kind :flag :type :boolean :doc "Download/check Parakeet ASR model."}
             {:name "all" :kind :flag :type :boolean :doc "Download/check the voice model."}]

@@ -147,7 +147,7 @@
         (is (not (str/includes? text "vis://")) "no unreachable pairing URL")
         (is (not (str/includes? text "█")) "no QR")
         (is (str/includes? text "only this machine can reach it"))
-        (is (str/includes? text "vis gateway start --host 100.109.18.77")
+        (is (str/includes? text "vis-agent gateway start --host 100.109.18.77")
             "remediation points at the Tailscale IP when the tailnet is up"))))
   (testing "no Tailscale — fall back to 0.0.0.0 guidance"
     (with-redefs

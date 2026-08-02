@@ -676,7 +676,7 @@
       "    globals()['session'] = {__k__: __vis_pyify__(__v__) for __k__, __v__ in session.items()}")))
 
 (defn seed-cli-runtime!
-  "Seed a standalone `vis python` CLI context with script `argv` (bound to
+  "Seed a standalone `vis-agent python` CLI context with script `argv` (bound to
    `sys.argv`) and, when non-empty, an `env` map merged into `os.environ`.
    This is what gives the CLI real-`python` semantics: unlike the deny-by-
    default AGENT sandbox (env scrubbed for isolation — the human never sees
@@ -1743,7 +1743,7 @@
        ;; printed output to the model (see `ctx->stdout`). `.out` is
        ;; independent of IOAccess (which governs the filesystem).
        (.out stdout-baos)
-       ;; `vis python` (CLI) wires the human's REAL stdin so guest `sys.stdin`
+       ;; `vis-agent python` (CLI) wires the human's REAL stdin so guest `sys.stdin`
        ;; works alongside `-c`/FILE (real-python semantics). Agent sandboxes
        ;; pass nil here and keep the default (no host stdin) — unchanged.
        (cond->
@@ -2017,7 +2017,7 @@
    separate contexts) — so a session holds exactly one Context; the only extra is
    a transient `fork-context!` child, created solely for `sub_loop` parallelism.
    The 4-arity `stdin`
-   (optional InputStream) is wired to the guest `sys.stdin` — used by `vis python`
+   (optional InputStream) is wired to the guest `sys.stdin` — used by `vis-agent python`
    to forward the caller's real stdin; agent sandboxes leave it nil."
   ([custom-bindings] (create-python-context custom-bindings nil nil nil))
   ([custom-bindings roots-fn] (create-python-context custom-bindings roots-fn nil nil))

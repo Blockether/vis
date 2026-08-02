@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.foundation.shim-ruff
-  "Built-in sandbox SHIM: a `ruff` module (and `vis python -m ruff` CLI) for the
+  "Built-in sandbox SHIM: a `ruff` module (and `vis-agent python -m ruff` CLI) for the
    model's Python sandbox, backed by the SAME in-process ruff the Python
    language pack's `format_code`/`lint_code` use — the `com.blockether/ruff` FFI
    over a first-party cdylib. No pip, no `ruff` binary on PATH, and it survives
@@ -10,7 +10,7 @@
      - `import ruff` -> `ruff.format_str(src)`, `ruff.check_str(src)`,
        `ruff.format_file(path)`, `ruff.check_file(path)`, `ruff.config_for(path)`,
        `ruff.version()`.
-     - `vis python -m ruff check|format [paths]` -> the module's `console_main`
+     - `vis-agent python -m ruff check|format [paths]` -> the module's `console_main`
        is the `-m` entry point (sandbox shims have no `__file__`, so `runpy`
        cannot execute them; `main-clj/python-module-runner-src` calls
        `console_main(sys.argv[1:])` instead).
@@ -91,7 +91,7 @@
   (vis/extension
     {:ext/name "foundation-shim-ruff"
      :ext/description
-     "Sandbox in-process `ruff` formatter/linter: importable module plus `vis python -m ruff check|format`, backed by com.blockether/ruff. Honours nearest ruff.toml/.ruff.toml/pyproject.toml config; no pip/PATH binary."
+     "Sandbox in-process `ruff` formatter/linter: importable module plus `vis-agent python -m ruff check|format`, backed by com.blockether/ruff. Honours nearest ruff.toml/.ruff.toml/pyproject.toml config; no pip/PATH binary."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

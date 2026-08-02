@@ -614,14 +614,18 @@
                                                     "ax.patch.set_facecolor('#202024')\n"
                                                     "fig.set_dpi(120)\n"
                                                     "ax.plot([1,2,3],[3,1,2])")))))))
-(it "FigureCanvasAgg accepts and retains an OO figure"
-    (with-python-context
-      (expect (true? (ev python-context
-                         (str
-                           "from matplotlib.backends.backend_agg import FigureCanvasAgg\n"
-                           "from matplotlib.figure import Figure\n"
-                           "fig = Figure()\ncanvas = FigureCanvasAgg(fig)\n"
-                           "canvas.figure is fig and fig.canvas.figure is fig and canvas.get_width_height() == (640, 480)"))))))
+(it
+  "FigureCanvasAgg accepts and retains an OO figure"
+  (with-python-context
+    (expect
+      (true?
+        (ev
+          python-context
+          (str
+            "from matplotlib.backends.backend_agg import FigureCanvasAgg\n"
+            "from matplotlib.figure import Figure\n"
+            "fig = Figure()\ncanvas = FigureCanvasAgg(fig)\n"
+            "canvas.figure is fig and fig.canvas.figure is fig and canvas.get_width_height() == (640, 480)"))))))
 
 (defdescribe
   matplotlib-submodule-imports-test

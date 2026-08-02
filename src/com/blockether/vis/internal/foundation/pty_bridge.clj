@@ -10,7 +10,7 @@
 
    This namespace restores that capability WITHOUT tmux: each background PTY
    optionally exposes a per-shell UNIX-DOMAIN SOCKET. vis is the server (it holds
-   the master fd); `vis extension shell attach <id>` is a thin client the human runs in
+   the master fd); `vis-agent extension shell attach <id>` is a thin client the human runs in
    their OWN Terminal.app. On connect the server (a) tees live master output to the
    socket and (b) forwards the socket's bytes to the master (stdin) — a genuine
    bidirectional passthrough. Multiple humans can attach at once; detaching just
@@ -231,7 +231,7 @@
              (try (Files/deleteIfExists p) (catch Throwable _ nil)))}))
 
 ;; =============================================================================
-;; Client — the human's raw-terminal attach (`vis extension shell attach <id>`)
+;; Client — the human's raw-terminal attach (`vis-agent extension shell attach <id>`)
 ;; =============================================================================
 
 (def ^:private detach-byte
@@ -267,7 +267,7 @@
   (let [p (find-socket opts)]
     (if (or (nil? p) (not (Files/exists p (make-array LinkOption 0))))
       (do (binding [*out* *err*]
-            (println (str "vis: no live background shell socket for "
+            (println (str "vis-agent: no live background shell socket for "
                           (or (:socket opts) (:id opts) "?")
                           " — is it running? (see `resources` / background shell output)")))
           2)
@@ -277,7 +277,8 @@
          restore (fn []
                    (when saved (stty saved)))]
 
-        (println (str "vis: attached to " p " — press Ctrl-] to detach (child keeps running)."))
+        (println
+          (str "vis-agent: attached to " p " — press Ctrl-] to detach (child keeps running)."))
         (flush)
         (try (stty "raw" "-echo")
              (let

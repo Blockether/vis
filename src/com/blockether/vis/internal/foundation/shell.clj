@@ -669,6 +669,16 @@
   ;; :started-at} } }. defonce so a dev `:reload` never orphans live processes.
   (atom {}))
 
+(defonce ^:private bg-lifecycle-locks
+  ;; A fixed stripe set keeps monitor identity stable across reloads without leaking
+  ;; one lock per model-chosen id. Same session/id always lands on one stripe;
+  ;; unrelated shells remain concurrent except for harmless hash collisions.
+  (vec (repeatedly 64 #(Object.))))
+
+(defn- bg-lifecycle-lock
+  [session id]
+  (nth bg-lifecycle-locks (mod (hash [(str session) (str id)]) (count bg-lifecycle-locks))))
+
 (defonce ^:private _bridge-sweep
   ;; One-time GC at extension load: a prior vis crash/kill never ran serve!'s
   ;; :stop (the JVM held the AF_UNIX server), so stale attach sockets pile up in
@@ -790,7 +800,7 @@
                    "status" (if (some? exit) "exited" "running")
                    "exit" exit
                    "uptime_ms" (- (now-ms) (long (or (:started-at entry) (now-ms))))
-                   "attach" (when bridge (str "vis extension shell attach " id))
+                   "attach" (when bridge (str "vis-agent extension shell attach " id))
                    "socket" (:path bridge)})))
 
 (defn- shell-bg-spawn!
@@ -847,7 +857,7 @@
        (start-pump! session id p buffer exit-atom stopped? bridge-atom)
 
        ;; Passthrough bridge: expose this PTY over a per-shell AF_UNIX socket
-       ;; so a HUMAN can `vis extension shell attach <id>` into the live terminal
+       ;; so a HUMAN can `vis-agent extension shell attach <id>` into the live terminal
        ;; (browser OAuth, a prompt only a person can answer) and detach again,
        ;; child untouched. Best-effort — if AF_UNIX bind fails the shell still
        ;; runs, just without human attach.
@@ -884,23 +894,26 @@
                             :pid (:pid p)
                             :owner "foundation-shell"
                             :status :running}
-                           {:stop-fn (fn []
-                                       ;; Tell the pump to stop touching the registry, kill the
-                                       ;; tree, then wait for the pump to finish draining BEFORE
-                                       ;; the registry drops the resource — so the pump can never
-                                       ;; resurrect a partial entry after unregister.
-                                       (reset! stopped? true)
-                                       (kill-tree! p)
-                                       ;; Close the read end so the pump's blocking `.read`
-                                       ;; returns even if a detached grandchild still holds the
-                                       ;; write end — the pump thread can't outlive the stop.
-                                       (try (.close ^java.io.InputStream (:in p))
-                                            (catch Throwable _ nil))
-                                       (try (.join pump 3000) (catch InterruptedException _ nil))
-                                       ;; Tear down the attach socket last: no more human attachers
-                                       ;; once the child is gone.
-                                       (when bridge (try ((:stop bridge)) (catch Throwable _ nil)))
-                                       (drop-bg-entry! session id))
+                           {:stop-fn
+                            (fn []
+                              ;; Serialize teardown with replacement of this id. The
+                              ;; registry claims the old resource before calling us, so a
+                              ;; concurrent fresh start is valid; identity-check the final
+                              ;; drop to prevent this old callback erasing its successor.
+                              #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+                              (locking (bg-lifecycle-lock session id)
+                                (reset! stopped? true)
+                                (kill-tree! p)
+                                ;; Close the read end so the pump's blocking `.read`
+                                ;; returns even if a detached grandchild still holds the
+                                ;; write end — the pump thread can't outlive the stop.
+                                (try (.close ^java.io.InputStream (:in p)) (catch Throwable _ nil))
+                                (try (.join pump 3000) (catch InterruptedException _ nil))
+                                ;; Tear down the attach socket last: no more human attachers
+                                ;; once the child is gone.
+                                (when bridge (try ((:stop bridge)) (catch Throwable _ nil)))
+                                (when (identical? p (:proc (bg-entry session id)))
+                                  (drop-bg-entry! session id))))
                             ;; Alive while the buffer entry exists — an EXITED process is kept
                             ;; (status :exited) so its logs stay readable; only resource_stop
                             ;; (or replacing the id) lets the registry drop it.
@@ -947,47 +960,53 @@
      (:session-id env)
 
      id
-     (str id)
+     (str id)]
 
-     live
-     (when-let [existing (bg-entry session id)]
-       (when ((:alive? (:proc existing))) existing))]
-
-    (if live
-      (extension/success
-        {:result
-         (assoc (bg-core "background" id live)
-           "already_running" true
-           "note"
-           (str
-             "Background shell '"
-             id
-             "' was ALREADY running — nothing was restarted. Read its output "
-             "with await shell({\"op\": \"logs\", \"id\": \""
-             id
-             "\"}). To start a fresh process, first run await shell({\"op\": \"stop\", \"id\": \""
-             id
-             "\"})."))
-         :op :shell
-         :metadata {:command (:script live)
-                    :pid (:pid (:proc live))
-                    :started-at-ms (:started-at live)
-                    :finished-at-ms (now-ms)
-                    :duration-ms 0}})
-      (if-let
-        [commands (some->> commands
-                           (map str)
-                           (remove str/blank?)
-                           seq
-                           vec)]
-        (shell-bg-spawn! env id commands opts)
-        (throw (ex-info (str "No background shell '"
-                             id
-                             "' is running, so it must be STARTED:"
-                             " pass {\"commands\": [\"…\"], \"op\": \"background\", \"id\": \""
-                             id
-                             "\"} as one shell map.")
-                        {:type ::missing-command :op "background" :id id}))))))
+    ;; Starting a PTY and registering its lifecycle are side effects, so atomically
+    ;; updating `bg-procs` alone cannot make the preceding live check safe. Keep the
+    ;; entire check/spawn/register transition under the id's stable lifecycle lock:
+    ;; concurrent starts must observe the first process, never each spawn a child
+    ;; and overwrite its only stop handle. Waits/logs/sends and other ids stay free.
+    #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+    (locking (bg-lifecycle-lock session id)
+      (let
+        [live (when-let [existing (bg-entry session id)]
+                (when ((:alive? (:proc existing))) existing))]
+        (if live
+          (extension/success
+            {:result
+             (assoc (bg-core "background" id live)
+               "already_running" true
+               "note"
+               (str
+                 "Background shell '"
+                 id
+                 "' was ALREADY running — nothing was restarted. Read its output "
+                 "with await shell({\"op\": \"logs\", \"id\": \""
+                 id
+                 "\"}). To start a fresh process, first run await shell({\"op\": \"stop\", \"id\": \""
+                 id
+                 "\"})."))
+             :op :shell
+             :metadata {:command (:script live)
+                        :pid (:pid (:proc live))
+                        :started-at-ms (:started-at live)
+                        :finished-at-ms (now-ms)
+                        :duration-ms 0}})
+          (if-let
+            [commands (some->> commands
+                               (map str)
+                               (remove str/blank?)
+                               seq
+                               vec)]
+            (shell-bg-spawn! env id commands opts)
+            (throw (ex-info (str "No background shell '"
+                                 id
+                                 "' is running, so it must be STARTED:"
+                                 " pass {\"commands\": [\"…\"], \"op\": \"background\", \"id\": \""
+                                 id
+                                 "\"} as one shell map.")
+                            {:type ::missing-command :op "background" :id id}))))))))
 
 (defn- shell-logs-impl
   ([env id] (shell-logs-impl env id default-log-tail))
@@ -1267,11 +1286,11 @@
      t
      (now-ms)
 
-     entry
-     (bg-entry session id)
-
-     r
-     (resources/stop! session id)]
+     ;; Make a native stop linearizable against native starts of the same id.
+     ;; The stop callback re-enters this monitor (JVM monitors are reentrant).
+     [entry r]
+     #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+     (locking (bg-lifecycle-lock session id) [(bg-entry session id) (resources/stop! session id)])]
 
     (when (= :unknown (:result r))
       (throw (ex-info (str "No background shell '" id
@@ -1983,7 +2002,7 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
 (def shell-symbols [shell-symbol])
 
 (defn shell-attach-command
-  "`vis extension shell attach <id>` — the human-side passthrough: join a live
+  "`vis-agent extension shell attach <id>` — the human-side passthrough: join a live
    background shell's PTY in your OWN terminal (finish a browser OAuth, answer a
    prompt only a person can), then Ctrl-] to detach with the child untouched.
    `--socket PATH` targets an explicit socket; otherwise the newest shell whose
@@ -2005,19 +2024,19 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
     (pty-bridge/attach! {:id id :socket socket})))
 
 (def shell-cli
-  "CLI surface mounted under `vis extension shell`. Only `attach` for now — the human
+  "CLI surface mounted under `vis-agent extension shell`. Only `attach` for now — the human
    passthrough onto a background PTY the agent spawned."
   [{:cmd/name "shell"
     :cmd/doc "Attach a real terminal to a live background shell (shell op \"background\")."
-    :cmd/usage "vis extension shell attach <id>"
+    :cmd/usage "vis-agent extension shell attach <id>"
     :cmd/subcommands
     [{:cmd/name "attach"
       :cmd/doc
       "Join a background shell's PTY in your terminal; Ctrl-] detaches (child keeps running)."
-      :cmd/usage "vis extension shell attach <id> [--socket PATH]"
+      :cmd/usage "vis-agent extension shell attach <id> [--socket PATH]"
       :cmd/owns-tty? true
-      :cmd/examples ["vis extension shell attach slack-auth"
-                     "vis extension shell attach dev-server"]
+      :cmd/examples ["vis-agent extension shell attach slack-auth"
+                     "vis-agent extension shell attach dev-server"]
       :cmd/run-fn #'shell-attach-command}]}])
 
 (vis/register-toggle!

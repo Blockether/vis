@@ -3719,7 +3719,7 @@
            (str "\n\nAvailable sessions (most recent first):\n"
                 (str/join "\n" (map line available))
                 "\n\nUse the 8-char prefix or full UUID with --session-id.")
-           "\n\nNo sessions exist yet - run `vis channels tui` without --session-id first."))))
+           "\n\nNo sessions exist yet - run `vis-agent channels tui` without --session-id first."))))
 
 (defn- current-session-id
   []
@@ -7210,7 +7210,7 @@
              (.stopScreen screen))))))))
 
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
-(def ^:private tui-usage "vis channels tui [--session-id ID | --resume | --continue]")
+(def ^:private tui-usage "vis-agent channels tui [--session-id ID | --resume | --continue]")
 
 (defn- missing-value? [v] (or (nil? v) (str/starts-with? v "--")))
 
@@ -7222,7 +7222,7 @@
     v))
 
 (defn- parse-args
-  "Parse `vis channels tui` flags.
+  "Parse `vis-agent channels tui` flags.
      --session-id ID   Resume a session (full UUID or short prefix)
      --resume, -r           Open the session picker at startup
      --continue, -c         Reopen the most-recent :tui session
@@ -7304,7 +7304,7 @@
       ;; a carriage return to snap back to column 0 first.
       ;; Explicit `\n` (not println) so the banner is byte-identical on every OS.
       (.print out "\rResume with:\n")
-      (.print out (str "vis channels tui --session-id " id "\n"))
+      (.print out (str "vis-agent channels tui --session-id " id "\n"))
       (.flush out))))
 
 (defn channel-main
@@ -7333,12 +7333,12 @@
                    (doseq [line panel]
                      (.println ^java.io.PrintStream vis/original-stdout ^String (str line)))
                    (.println ^java.io.PrintStream vis/original-stdout
-                             (str "vis: " (.getMessage ^Throwable ue))))
+                             (str "vis-agent: " (.getMessage ^Throwable ue))))
                  (reset! exit-code 2))
              ;; Genuine fatal: dump the trace to the terminal AND the log
              ;; so we can post-mortem it.
              (do (.println ^java.io.PrintStream vis/original-stdout
-                           (str "vis: fatal error - " (.getMessage t)))
+                           (str "vis-agent: fatal error - " (.getMessage t)))
                  (.printStackTrace t (java.io.PrintStream. ^java.io.OutputStream @vis/tty-out true))
                  (throw t))))
          (finally (vis/shutdown!)

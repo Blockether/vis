@@ -4,15 +4,16 @@ name: Native Release
 # libraries/extensions). On each `v*` tag this builds one native distribution
 # per platform that a FREE runner can actually build (community only — there is
 # no air-gapped/"corporate" variant; see the matrix for why macOS is not here):
-#   vis-<os>-<arch>-community  — the FULL agent: every channel (TUI + web + Telegram),
-#                         voice ASR, AND the web/network `search` extension. The
-#                         ~465 MB Parakeet voice model is NOT embedded — it
-#                         downloads on first use, so the binary stays lean.
-# Each binary carries ONLY its own build host's native libs, never another
-# platform's.
+#   vis-agent-<os>-<arch>-community.tar.gz — the full distribution: the
+#                         `vis-agent` Bash wrapper plus its private native
+#                         runtime, with every channel (TUI + web + Telegram),
+#                         voice ASR, and the web/network `search` extension.
+#                         The ~465 MB Parakeet voice model is not embedded; it
+#                         downloads on first use, so the runtime stays lean.
+# Each runtime carries only its build host's native libraries.
 #
-# The native binary is the ONLY distributed application artifact — there is no
-# JVM uberjar release asset. Libraries/extensions still publish to Clojars from
+# The wrapper bundle is the distributed application artifact; there is no JVM
+# uberjar release asset. Libraries/extensions still publish to Clojars from
 # release.yml for people writing extensions. Tags only; never feature branches.
 on:
   push:
@@ -72,8 +73,8 @@ jobs:
           # 18g/22g (plus a swapfile, G1, no -Xms) only moved the builder into
           # swap, where the analysis thrashes instead of finishing. These exact
           # args produced the last GREEN native build (run 30353695813).
-          - { os: ubuntu-latest, bin: target/vis, asset: vis-linux-x64-community, extra_args: '-J-Xmx12g -J-Xms12g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
-          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-linux-arm64-community, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-latest, bin: target/vis, asset: vis-agent-linux-x64-community.tar.gz, extra_args: '-J-Xmx12g -J-Xms12g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-agent-linux-arm64-community.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
           # NO macOS job, and that is a hard constraint, not an oversight:
           #   * the only free arm64 macOS runners have 7 GB — less than half of
           #     what the builder needs (v0.1.6/v0.1.8 each burned 4 h there);
@@ -132,12 +133,19 @@ jobs:
           # in the middle of a 2 h release build.
           VIS_AUTO_INSTALL_GRAALVM: "0"
         run: clojure -T:build native
-      - name: Stage asset
+      - name: Stage wrapper bundle
         shell: bash
-        run: cp "${{ matrix.bin }}" "${{ matrix.asset }}"
-      - name: Smoke-test the binary
+        run: |
+          set -euo pipefail
+          rm -rf target/release-bundle
+          mkdir -p target/release-bundle
+          install -m 0755 bin/vis-agent target/release-bundle/vis-agent
+          install -m 0755 "${{ matrix.bin }}" target/release-bundle/vis-agent-native
+          install -m 0755 bin/install-native target/release-bundle/install-native
+          tar -C target/release-bundle -czf "${{ matrix.asset }}" .
+      - name: Smoke-test the installed wrapper
         shell: bash
-        run: ./"${{ matrix.bin }}" help >/dev/null
+        run: target/release-bundle/vis-agent --native help >/dev/null
       # Deeper smoke: boot the gateway. A client command auto-spawns the DETACHED
       # gateway daemon, which builds the FULL reitit router from EVERY channel's
       # route contributions and does a real HTTP round-trip. A broken/conflicting
@@ -149,13 +157,13 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          out="$(./"${{ matrix.bin }}" providers status anthropic 2>&1 || true)"
+          out="$(target/release-bundle/vis-agent --native providers status anthropic 2>&1 || true)"
           echo "$out"
           if printf '%s\n' "$out" | grep -q 'did not become ready'; then
             echo '::error::gateway daemon failed to boot — the route table is broken'
             exit 1
           fi
-          ./"${{ matrix.bin }}" gateway stop >/dev/null 2>&1 || true
+          target/release-bundle/vis-agent --native gateway stop >/dev/null 2>&1 || true
       - name: Attach to release
         uses: softprops/action-gh-release@v3
         with:

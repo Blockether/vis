@@ -525,14 +525,20 @@
               "try:\n    ImageGrab.grab()\nexcept NotImplementedError:\n    unavailable = True\n"
               "ok and unavailable")))))))
 
-(defdescribe pil-desktop-import-regression-test
-  (it "exposes conventional desktop symbols with a clear sandbox failure"
+(defdescribe
+  pil-desktop-import-regression-test
+  (it
+    "exposes conventional desktop symbols with a clear sandbox failure"
     (with-python-context
-      (expect (true? (ev python-context
-                          (str "from PIL.ImageTk import BitmapImage, getimage\n"
-                               "from PIL.ImageWin import Dib, HDC, Window\n"
-                               "from PIL.ImageQt import toqimage, toqpixmap\n"
-                               "from PIL.ImageShow import Viewer, register\n"
-                               "symbols = [BitmapImage, getimage, Dib, HDC, Window, toqimage, toqpixmap, Viewer, register]\n"
-                               "try:\n    Dib()\nexcept NotImplementedError as error:\n    unavailable = 'PIL.ImageWin.Dib' in str(error)\n"
-                               "all(callable(symbol) for symbol in symbols) and unavailable")))))))
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from PIL.ImageTk import BitmapImage, getimage\n"
+              "from PIL.ImageWin import Dib, HDC, Window\n"
+              "from PIL.ImageQt import toqimage, toqpixmap\n"
+              "from PIL.ImageShow import Viewer, register\n"
+              "symbols = [BitmapImage, getimage, Dib, HDC, Window, toqimage, toqpixmap, Viewer, register]\n"
+              "try:\n    Dib()\nexcept NotImplementedError as error:\n    unavailable = 'PIL.ImageWin.Dib' in str(error)\n"
+              "all(callable(symbol) for symbol in symbols) and unavailable")))))))

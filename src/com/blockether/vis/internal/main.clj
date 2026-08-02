@@ -1,31 +1,31 @@
 (ns com.blockether.vis.internal.main
-  "vis CLI binary - :db Telemere handler, one-shot agent helper,
+  "vis-agent CLI binary - :db Telemere handler, one-shot agent helper,
    built-in CLI commands, and the `-main` dispatcher entry point.
 
    Everything in this file is binary-only. The library surface
    (iteration loop, turn engine, environment lifecycle, session
    cache) lives in `com.blockether.vis.internal.loop`; this namespace requires
-   that one and wires it into the command tree the `vis` binary
+   that one and wires it into the command tree the `vis-agent` wrapper
    exposes.
 
    Public entry point:
 
-     (-main & args)   - invoked by the `:vis` alias / `bin/vis`.
+     (-main & args)   - invoked by the `:vis` alias / `bin/vis-agent`.
                         Configures logging, runs the unified extension
                         discovery scan, redirects stderr to ~/.vis/vis.log
                         for any TTY-owning channel, then dispatches to
                         the resolved command's `:cmd/run-fn`.
 
    Built-in commands registered here:
-     vis providers          - provider inspection, auth, and limits
-     vis sessions      - list persisted sessions
-     vis extension list     - list registered extensions
-     vis tui                - interactive terminal UI (alias for `channels tui`)
-     vis channels <name>    - auto-mounted via the channel registry
+     vis-agent providers          - provider inspection, auth, and limits
+     vis-agent sessions      - list persisted sessions
+     vis-agent extension list     - list registered extensions
+     vis-agent tui                - interactive terminal UI (alias for `channels tui`)
+     vis-agent channels <name>    - auto-mounted via the channel registry
 
-   `vis doctor` is host-owned. Extensions plug diagnostics into it
+   `vis-agent doctor` is host-owned. Extensions plug diagnostics into it
    with `:ext/doctor-fn`; extension-owned CLI commands stay under
-   `vis extension`."
+   `vis-agent extension`."
   (:refer-clojure :exclude [agent run!])
   (:require [babashka.process :as process]
             [charred.api :as json]
@@ -375,7 +375,7 @@
             (if required "required  " "optional  ")
             (or doc "")))]
 
-    (str "  vis extension "
+    (str "  vis-agent extension "
          cmd
          (when (seq usage) (str " " usage))
          "\n\n  "
@@ -389,12 +389,13 @@
   []
   (let [cmds (all-extension-cmds)]
     (if (empty? cmds)
-      "No extension commands available. Run 'vis extension' to see registered extensions."
+      "No extension commands available. Run 'vis-agent extension' to see registered extensions."
       (str "Extension commands:\n\n"
            (str/join "\n\n"
-                     (map (fn [{:keys [cmd doc ext-ns]}]
-                            (str "  vis extension " (pad cmd 20) (or doc "") "  (" ext-ns ")"))
-                          cmds))))))
+                     (map
+                       (fn [{:keys [cmd doc ext-ns]}]
+                         (str "  vis-agent extension " (pad cmd 20) (or doc "") "  (" ext-ns ")"))
+                       cmds))))))
 
 ;;; ── Dispatch ───────────────────────────────────────────────────────────
 
@@ -786,7 +787,7 @@
 (defn- json-key
   "Return a stable string key for CLI JSON output. Runtime trace maps can
    contain non-JSON map keys. Charred correctly rejects those, so normalize
-   keys before writing the public `vis --json` envelope."
+   keys before writing the public `vis-agent --json` envelope."
   [k]
   (cond (string? k) k
         (keyword? k) (name k)
@@ -811,7 +812,7 @@
         (instance? Throwable x)
         {"type" (str (type x)) "message" (ex-message x) "data" (json-safe (ex-data x))}
         ;; JSON has no NaN/Infinity: charred rejects them and the whole
-        ;; `vis --json` envelope would fail over one field.
+        ;; `vis-agent --json` envelope would fail over one field.
         (and (float? x) (not (Double/isFinite (double x)))) nil
         :else x))
 
@@ -1239,7 +1240,7 @@
 ;; `loop.clj`'s `streaming-fn` as the new tail since the previous chunk) so
 ;; each reasoning character is emitted exactly once across the whole run.
 ;; Output is identical in a TTY, a pipe, or a pty wrapper, and non-TTY
-;; consumers (CI logs, `vis ... | tee`) get the full stream.
+;; consumers (CI logs, `vis-agent ... | tee`) get the full stream.
 ;; ---------------------------------------------------------------------------
 
 (defn- make-pretty-trace-printer
@@ -1497,7 +1498,7 @@
 
 (defn- print-section-heading!
   "Render a section heading line for a grouped table - used when
-   `vis extension list` breaks the rows into per-`:ext/kind`
+   `vis-agent extension list` breaks the rows into per-`:ext/kind`
    sub-tables. `width` is the total visible width of the surrounding
    table so the rule under the label spans the same column run."
   [label width]
@@ -1594,7 +1595,7 @@
 
 (defn- print-run-usage!
   []
-  (stdout! "Usage: vis [FLAGS] \"prompt\"")
+  (stdout! "Usage: vis-agent [FLAGS] \"prompt\"")
   (stdout! "")
   (stdout! "Flags:")
   (stdout! "  --json            Print result as a single JSON envelope.")
@@ -1606,7 +1607,7 @@
   (stdout! "  --raw             Render the answer as raw text (no markdown")
   (stdout! "                    bold/italics/heading bars). This is also the")
   (stdout! "                    auto-default when stdout is not a TTY (piped")
-  (stdout! "                    or redirected), so `vis ... > out.txt`")
+  (stdout! "                    or redirected), so `vis-agent ... > out.txt`")
   (stdout! "                    produces clean text without ANSI noise.")
   (stdout! "  --toggles LIST    Comma-separated NAME=VALUE pairs setting any")
   (stdout! "                    registered snake_case toggle id for this run only, e.g.")
@@ -1630,12 +1631,13 @@
   (stdout! "")
   (stdout! "Examples:")
   (stdout!
-    "  vis --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"Task\"")
-  (stdout! "  vis \"Throwaway one-shot probe\"")
-  (stdout! "  vis --json --model gpt-4o \"Explain auth flow\"")
-  (stdout! "  vis --toggles reasoning_level=deep \"Run the test suite and fix failures\"")
-  (stdout! "  vis --toggles reasoning_level=balanced \"Refactor carefully\"")
-  (stdout! "  vis --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this\""))
+    "  vis-agent --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"Task\"")
+  (stdout! "  vis-agent \"Throwaway one-shot probe\"")
+  (stdout! "  vis-agent --json --model gpt-4o \"Explain auth flow\"")
+  (stdout! "  vis-agent --toggles reasoning_level=deep \"Run the test suite and fix failures\"")
+  (stdout! "  vis-agent --toggles reasoning_level=balanced \"Refactor carefully\"")
+  (stdout!
+    "  vis-agent --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this\""))
 
 (defn- parse-toggle-overrides
   "Parse a `--toggles` value like
@@ -1743,7 +1745,7 @@
      (parse-run-args residual)]
     (when (or help? (str/blank? prompt)) (print-run-usage!) (System/exit 0))
     ;; Auto-promote to raw when stdout is NOT a TTY (piped/redirected).
-    ;; Otherwise `vis ... > out.txt` leaves bold/italic ANSI markers in
+    ;; Otherwise `vis-agent ... > out.txt` leaves bold/italic ANSI markers in
     ;; the file. Structured output flags (--json/--edn/--code) win, and an
     ;; explicit --raw stays raw. The trace-stream flags own their own
     ;; output path and are unaffected.
@@ -1814,7 +1816,7 @@
       (shutdown-agents)
       (when (pos? (long exit-code)) (System/exit exit-code)))))
 
-;;; ── `vis sessions` ─────────────────────────────────────────────────
+;;; ── `vis-agent sessions` ─────────────────────────────────────────────────
 
 (def ^:private known-channels #{"tui" "cli" "api"})
 
@@ -1847,7 +1849,7 @@
   "Fork a session by id. Creates a new `session_state` row
    that points at the latest state as its parent, optionally with a
    user-supplied title. Prints the new state UUID; the session
-   id (soul-id) stays the same so `vis channels tui --session-id
+   id (soul-id) stays the same so `vis-agent channels tui --session-id
    <ID>` keeps working and now resumes from the fork."
   [cid-input title]
   (let
@@ -1860,37 +1862,37 @@
     (cond (nil? resolved) (do (stdout! (str "Session not found: " cid-input))
                               (stdout! "")
                               (stdout! "List existing sessions with:")
-                              (stdout! "  vis sessions")
+                              (stdout! "  vis-agent sessions")
                               (shutdown-agents)
                               (System/exit 1))
-          :else (let
-                  [;; Fork = new session_state = new workspace pin (1:1).
-                   ;; Mint a fresh isolated workspace for the fork.
-                   ws-id
-                   (:id (workspace/ensure-workspace! d {}))
+          :else
+          (let
+            [;; Fork = new session_state = new workspace pin (1:1).
+             ;; Mint a fresh isolated workspace for the fork.
+             ws-id
+             (:id (workspace/ensure-workspace! d {}))
 
-                   opts
-                   (cond-> {:workspace-id ws-id}
-                     (and title (not (str/blank? title)))
-                     (assoc :title title))
+             opts
+             (cond-> {:workspace-id ws-id}
+               (and title (not (str/blank? title)))
+               (assoc :title title))
 
-                   new-state
-                   (persistance/db-fork-session! d resolved opts)]
+             new-state
+             (persistance/db-fork-session! d resolved opts)]
 
-                  (if new-state
-                    (do (stdout! "")
-                        (stdout! (str "  Forked session " resolved))
-                        (when title (stdout! (str "  Title:        " title)))
-                        (stdout! (str "  New state-id: " new-state))
-                        (stdout! "")
-                        (stdout! (str "  Resume with: vis channels tui --session-id " resolved))
-                        (stdout! ""))
-                    (do (stdout! (str "Failed to fork session "
-                                      resolved
-                                      "; no existing state to fork from."))
-                        (shutdown-agents)
-                        (System/exit 1)))
-                  (shutdown-agents)))))
+            (if new-state
+              (do (stdout! "")
+                  (stdout! (str "  Forked session " resolved))
+                  (when title (stdout! (str "  Title:        " title)))
+                  (stdout! (str "  New state-id: " new-state))
+                  (stdout! "")
+                  (stdout! (str "  Resume with: vis-agent channels tui --session-id " resolved))
+                  (stdout! ""))
+              (do (stdout!
+                    (str "Failed to fork session " resolved "; no existing state to fork from."))
+                  (shutdown-agents)
+                  (System/exit 1)))
+            (shutdown-agents)))))
 
 (defn- session-sort-key
   [{:keys [last-turn-at created-at id]}]
@@ -1965,12 +1967,12 @@
                        {:key :created :label "Created" :width 16 :align :left}]
                       rows)
         (stdout! (str "\n  " (count rows) " session(s)\n"))
-        (stdout! "  Resume with: vis channels tui --session-id <ID>  (full or short)")
-        (stdout! "  Pick latest: vis channels tui --continue")
-        (stdout! "  Browse:      vis channels tui --resume")
-        (stdout! "  Show:        vis sessions show <ID>")
-        (stdout! "  Fork:        vis sessions fork <ID> [--title TITLE]")
-        (stdout! "  Export:      vis sessions export <ID> --md"))))
+        (stdout! "  Resume with: vis-agent channels tui --session-id <ID>  (full or short)")
+        (stdout! "  Pick latest: vis-agent channels tui --continue")
+        (stdout! "  Browse:      vis-agent channels tui --resume")
+        (stdout! "  Show:        vis-agent sessions show <ID>")
+        (stdout! "  Fork:        vis-agent sessions fork <ID> [--title TITLE]")
+        (stdout! "  Export:      vis-agent sessions export <ID> --md"))))
   (shutdown-agents))
 
 (defn- cli-sessions-list!
@@ -2000,7 +2002,7 @@
       (do (stdout! (str "Session not found: " cid-input))
           (stdout! "")
           (stdout! "List existing sessions with:")
-          (stdout! "  vis sessions list")
+          (stdout! "  vis-agent sessions list")
           (shutdown-agents)
           (System/exit 1)))))
 
@@ -2061,8 +2063,8 @@
                              :created (or (fmt/format-date (:created-at state)) "-")})
                           states)))
     (stdout! "")
-    (stdout! (str "  Resume:  vis channels tui --session-id " (:id session)))
-    (stdout! (str "  Export:  vis sessions export " (subs (str (:id session)) 0 8) " --md"))
+    (stdout! (str "  Resume:  vis-agent channels tui --session-id " (:id session)))
+    (stdout! (str "  Export:  vis-agent sessions export " (subs (str (:id session)) 0 8) " --md"))
     (stdout! "")
     (shutdown-agents)))
 
@@ -2083,12 +2085,12 @@
 
 (defn- resolve-out-path
   "Resolve a user-supplied output path against the invocation directory.
-   `bin/vis` runs the dev JVM from the repo root (so `clojure -M:vis` finds
+   `bin/vis-agent` runs the dev JVM from the repo root (so `clojure -M:vis` finds
    deps.edn) but passes the real invocation cwd as `-Duser.dir`. Java resolves
    relative `File` paths against the OS cwd, so a bare `out.html` would silently
    land in the repo root while the printed path (from `user.dir`) said
    otherwise. Anchor relatives to `user.dir` (same convention as
-   `vis extension scaffold`); absolute paths pass through untouched."
+   `vis-agent extension scaffold`); absolute paths pass through untouched."
   [path]
   (let [f (io/file path)]
     (.getPath (if (.isAbsolute f) f (io/file (System/getProperty "user.dir") path)))))
@@ -2247,7 +2249,7 @@
   (cli-fork-session! (get parsed "session-id") (get parsed "title")))
 
 (defn- cli-sessions-search!
-  "`vis sessions search <query>` handler. Uses the same transcript search as the
+  "`vis-agent sessions search <query>` handler. Uses the same transcript search as the
    TUI session navigator: token-prefix matching across user requests and assistant
    replies (answer + thinking), ordered newest-first. Hits print one per line:
 
@@ -2268,7 +2270,7 @@
                             Long/parseLong)
                     25)))]
 
-    (cond (str/blank? query) (do (stdout! "vis sessions search <query> [--limit N]")
+    (cond (str/blank? query) (do (stdout! "vis-agent sessions search <query> [--limit N]")
                                  (stdout! "")
                                  (stdout!
                                    "Searches transcripts exactly like the TUI session navigator.")
@@ -2302,19 +2304,19 @@
                             (shutdown-agents)))))))
 
 (defn- cli-sessions!
-  "`vis sessions` default handler. Bare `vis sessions` lists all
+  "`vis-agent sessions` default handler. Bare `vis-agent sessions` lists all
    sessions; every other operation is a canonical subcommand."
   [_parsed residual]
   (config/init-cli!)
   (if (seq residual)
     (do (stdout! (str "Unknown sessions command: " (first residual)))
         (stdout! "")
-        (stdout! "Run: vis sessions --help")
+        (stdout! "Run: vis-agent sessions --help")
         (shutdown-agents)
         (System/exit 2))
     (cli-list-sessions! nil)))
 
-;;; ── `vis providers` ─────────────────────────────────────────────────────
+;;; ── `vis-agent providers` ─────────────────────────────────────────────────────
 
 (def ^:private providers-table-cols
   [{:key :id :label "ID" :width 18 :align :left} {:key :label :label "Label" :width 28 :align :left}
@@ -2600,7 +2602,7 @@
      provider
      (when provider-id (registry/provider-by-id provider-id))]
 
-    (cond (nil? provider-id) (do (stdout! "Usage: vis providers auth <provider>")
+    (cond (nil? provider-id) (do (stdout! "Usage: vis-agent providers auth <provider>")
                                  (stdout! "")
                                  (print-registered-providers!))
           (nil? provider) (do (stdout! (str "Unknown provider: " provider-name))
@@ -2634,7 +2636,7 @@
      (boolean (some #(= (name provider-id) (get % "id"))
                     (get (config/load-config-raw) "providers")))]
 
-    (cond (nil? provider-id) (do (stdout! "Usage: vis providers logout <provider>")
+    (cond (nil? provider-id) (do (stdout! "Usage: vis-agent providers logout <provider>")
                                  (stdout! "")
                                  (print-registered-providers!))
           (nil? provider) (do (stdout! (str "Unknown provider: " provider-name))
@@ -2650,7 +2652,7 @@
                                   ". Tokens and config cleared.")))))
   (shutdown-agents))
 
-;;; ── `vis doctor` ────────────────────────────────────────────────────────
+;;; ── `vis-agent doctor` ────────────────────────────────────────────────────────
 
 (defn- housekeeping-line
   [{:keys [kind label root age-days bytes is-purged]}]
@@ -2677,7 +2679,7 @@
        root))
 
 (defn- cli-doctor!
-  "`vis doctor` — cross-extension diagnostics, plus the housekeeping valve.
+  "`vis-agent doctor` — cross-extension diagnostics, plus the housekeeping valve.
 
    Without flags it only REPORTS. `--purge` is the only thing that deletes,
    `--dry-run` turns it back into a listing, and `--days N` moves the staleness
@@ -2723,7 +2725,7 @@
                         (when is-dry-run "\n\nRe-run without --dry-run to reclaim."))))
         (System/exit 0)))))
 
-;;; ── `vis extension` ───────────────────────────────────────────────────────────
+;;; ── `vis-agent extension` ───────────────────────────────────────────────────────────
 
 (def ^:private extensions-table-cols
   [{:key :namespace :label "Namespace" :width 28 :align :left}
@@ -2876,8 +2878,9 @@
   (config/init-cli!)
   (let [{:keys [name dir force?] :as opts} (parse-scaffold-opts parsed residual)]
     (when-not name
-      (throw (ex-info "Usage: vis extension scaffold <name> [--dir DIR] [--namespace NS] [--force]"
-                      {:type :cli/usage})))
+      (throw (ex-info
+               "Usage: vis-agent extension scaffold <name> [--dir DIR] [--namespace NS] [--force]"
+               {:type :cli/usage})))
     (let
       [target-path (or dir (str ".vis/vis-extensions/" name))
        target (let [f (io/file target-path)]
@@ -2895,7 +2898,7 @@
         (str
           "Created extension scaffold at " (.getPath target)
           "\n"
-          "It is auto-loaded when you run vis from this project (or from ~/.vis/vis-extensions)."))))
+          "It is auto-loaded when you run vis-agent from this project (or from ~/.vis/vis-extensions)."))))
   (shutdown-agents))
 
 (defn- source-checkout-root
@@ -2965,7 +2968,7 @@
      :dirty? (boolean (git-line ["status" "--porcelain"] root))}))
 
 (defn- update-plan
-  "Pure decision for `vis update` from post-fetch facts. `:action` is one of
+  "Pure decision for `vis-agent update` from post-fetch facts. `:action` is one of
    `:no-upstream`, `:up-to-date`, `:ahead-only`, `:fast-forward`,
    `:diverged-dirty` (refuse), `:diverged-reset` (already authorised) or
    `:diverged-confirm` (needs a y/N answer or `--reset`)."
@@ -3065,7 +3068,7 @@
               (throw (ex-info
                        (str (diverged-line upstream plan)
                             " The working tree also has uncommitted changes:"
-                            " commit or stash them, then re-run `vis update --reset`"
+                            " commit or stash them, then re-run `vis-agent update --reset`"
                             " to discard the "
                             (:ahead plan)
                             " local commit(s).")
@@ -3085,14 +3088,14 @@
                                        (:ahead plan)
                                        " local commit(s)? [y/N] "))
                 (update-reset! root facts)
-                (throw (ex-info (str (diverged-line upstream plan)
-                                     " Working tree is clean, so this is most likely an upstream"
-                                     " force-push. Re-run `vis update --reset` to hard-reset onto "
-                                     upstream
-                                     " (the old HEAD stays recoverable via the reflog).")
-                                {:type :update/diverged
-                                 :ahead (:ahead plan)
-                                 :behind (:behind plan)}))))))))
+                (throw
+                  (ex-info
+                    (str (diverged-line upstream plan)
+                         " Working tree is clean, so this is most likely an upstream"
+                         " force-push. Re-run `vis-agent update --reset` to hard-reset onto "
+                         upstream
+                         " (the old HEAD stays recoverable via the reflog).")
+                    {:type :update/diverged :ahead (:ahead plan) :behind (:behind plan)}))))))))
   (shutdown-agents))
 
 (defn- cli-gateway-start!
@@ -3144,10 +3147,10 @@
     [{:keys [running? host port token loopback?]}
      ((requiring-resolve 'com.blockether.vis.internal.gateway.client/pairing-info))]
     (cond
-      (not running?) (throw (ex-info
-                              (str "no gateway is running for this DB. Start one reachable first:\n"
-                                   "  vis gateway start --host 0.0.0.0 --require-token --pair")
-                              {:vis/user-error true}))
+      (not running?)
+      (throw (ex-info (str "no gateway is running for this DB. Start one reachable first:\n"
+                           "  vis-agent gateway start --host 0.0.0.0 --require-token --pair")
+                      {:vis/user-error true}))
       loopback?
       (throw
         (ex-info
@@ -3156,12 +3159,12 @@
                           'com.blockether.vis.internal.gateway.pairing/tailscale-hosts)))]
             (str "the running gateway is bound to " host
                  " (loopback) \u2014 a phone cannot reach it.\n" "Restart it on a reachable host:\n"
-                 "  vis gateway stop\n"
+                 "  vis-agent gateway stop\n"
                  (if ts
-                   (str "  vis gateway start --host " ts
+                   (str "  vis-agent gateway start --host " ts
                         " --require-token --pair"
                         "   # your Tailscale IP \u2014 reachable from the phone on your tailnet")
-                   "  vis gateway start --host 0.0.0.0 --require-token --pair")))
+                   "  vis-agent gateway start --host 0.0.0.0 --require-token --pair")))
           {:vis/user-error true}))
       :else ((requiring-resolve 'com.blockether.vis.internal.gateway.pairing/print-pairing!)
               {:host host :port port :token token :require-token? (boolean token) :emit stdout!}))))
@@ -3186,7 +3189,7 @@
                                                           recovery)
                    :else (str "gateway stop requested: " (pr-str m))))))
 
-;;; ── `vis python` — standalone GraalPy interpreter ────────────────────────
+;;; ── `vis-agent python` — standalone GraalPy interpreter ────────────────────────
 ;;
 ;; Expose JUST the embedded GraalPy sandbox -- every foundation shim
 ;; (requests/pandas/numpy/yaml/sqlite3/...), the POSIX-compat shim, and
@@ -3256,14 +3259,14 @@
 
 (defn- configured-import-roots
   "Import roots the user declared in merged config as `python.source_paths` --
-   the explicit escape hatch for a project whose layout vis cannot infer (or
+   the explicit escape hatch for a project whose layout Vis cannot infer (or
    does not infer the way the user wants):
 
      python:
        source_paths: [src, lib/vendor]
 
    Relative entries resolve against `dir`, `~` expands, and any config failure
-   degrades to nothing rather than breaking `vis python`."
+   degrades to nothing rather than breaking `vis-agent python`."
   [^String dir]
   (try (let [configured (get-in (config/load-config-raw) ["python" "source_paths"])]
          (existing-import-roots dir
@@ -3287,7 +3290,7 @@
      setup.cfg [tool:pytest] / pytest.ini / tox.ini [pytest]  pythonpath = src
 
    Returns canonical paths of the directories that actually exist, in
-   declaration order, so `vis python -m pytest tests/` imports the project the
+   declaration order, so `vis-agent python -m pytest tests/` imports the project the
    same way an explicit `PYTHONPATH=src` invocation would. Inference is purely
    declarative: a project without such metadata gets nothing inferred, and
    `python.source_paths` is how a user says it outright."
@@ -3296,7 +3299,7 @@
                          (existing-import-roots dir (declared-import-roots ctx dir))))))
 
 (defn- python-cli-context
-  "Build a fresh standalone GraalPy sandbox for `vis python`: all shims
+  "Build a fresh standalone GraalPy sandbox for `vis-agent python`: all shims
    installed, filesystem rooted at the current working directory, network
    enabled unless `network?` is false. No tool bindings -- just the
    interpreter with its shims.
@@ -3375,7 +3378,7 @@
    Reads a whole block (terminated by a blank line, so multi-line defs work),
    evaluates it, and prints captured stdout. Ctrl-D / EOF quits."
   [ctx]
-  (stdout! (str "vis python -- embedded GraalPy sandbox (all shims, no tools). "
+  (stdout! (str "vis-agent python -- embedded GraalPy sandbox (all shims, no tools). "
                 "Blank line runs the block; use print(...) to see output; Ctrl-D quits."))
   (let [reader (java.io.BufferedReader. (java.io.InputStreamReader. System/in))]
     (loop []
@@ -3422,7 +3425,7 @@
         :else {:mode :file :file (first prog) :argv (vec prog)}))
 
 (defn- parse-python-cli-args
-  "Parse `vis python` residual args into a runtime plan. Leading options
+  "Parse `vis-agent python` residual args into a runtime plan. Leading options
    (`--no-network`, `--no-env`, `--env K=V`, and an explicit `--`) are
    consumed until the program selector (`-c`, `-`, or a FILE); everything
    from the selector on is the program plus its verbatim script `argv`
@@ -3465,7 +3468,7 @@
                 (if (empty? prog) {:mode :interactive :argv []} (python-program-plan prog))))))))
 
 (def ^:private python-module-runner-src
-  "Python helper installed for `vis python -m MODULE`.
+  "Python helper installed for `vis-agent python -m MODULE`.
 
    Real CPython drives `-m` through `runpy`, which needs a loader that can hand
    back module CODE. Sandbox shims are synthesised `types.ModuleType` objects
@@ -3476,11 +3479,11 @@
   (env/runtime-python-src "vis-python/module_runner.py"))
 
 (defn- run-python-module!
-  "Run `MODULE` as `__main__` in `ctx` (`vis python -m MODULE`), rendering its
+  "Run `MODULE` as `__main__` in `ctx` (`vis-agent python -m MODULE`), rendering its
    output to the real terminal. Returns the module's exit code."
   [ctx module]
   (if (str/blank? module)
-    (do (stdout! "vis python -m requires a MODULE argument.") 2)
+    (do (stdout! "vis-agent python -m requires a MODULE argument.") 2)
     (let
       [exit-name
        "__vis_cli_exit_code__"
@@ -3508,7 +3511,7 @@
             :else 0))))
 
 (defn- cli-python!
-  "`vis python` -- run code in the embedded GraalPy sandbox (all shims, no tool
+  "`vis-agent python` -- run code in the embedded GraalPy sandbox (all shims, no tool
    bindings). Modes: `-c CODE` (run a string), `FILE.py` (run a file), `-` or
    piped stdin (run stdin), or an interactive REPL on a bare TTY. Trailing args
    after the program selector become `sys.argv`. `--no-network` disables sandbox
@@ -3532,7 +3535,7 @@
        :code
        (if code
          (run-python-source! ctx code)
-         (do (stdout! "vis python -c requires a CODE argument.") 2))
+         (do (stdout! "vis-agent python -c requires a CODE argument.") 2))
 
        :stdin
        (run-python-source! ctx (slurp System/in))
@@ -3541,7 +3544,7 @@
        (let [f (io/file file)]
          (if (.isFile f)
            (run-python-source! ctx (slurp f))
-           (do (stdout! (str "vis python: no such file: " file)) 2)))
+           (do (stdout! (str "vis-agent python: no such file: " file)) 2)))
 
        :module
        (run-python-module! ctx module)
@@ -3558,29 +3561,30 @@
 ;;
 ;; `providers`, `sessions`, `doctor`, `update`, and `ext` are the
 ;; binary's own parent commands. They live at the top of the command
-;; tree -- `vis providers ...`, NOT `vis extension providers ...` -- so they
-;; bypass `:ext/cli` (the `vis extension` subcommand slot). Direct
+;; tree -- `vis-agent providers ...`, NOT `vis-agent extension providers ...` -- so they
+;; bypass `:ext/cli` (the `vis-agent extension` subcommand slot). Direct
 ;; `register-cmd!` is the right plumbing here; vis-runtime is the host,
-;; not an extension contributing to `vis extension`.
+;; not an extension contributing to `vis-agent extension`.
 
 (doseq
   [spec
    [{:cmd/name "providers"
      :cmd/doc "Inspect, authenticate, and introspect LLM providers."
-     :cmd/usage "vis providers <list|status|limits|auth|logout> [...]"
+     :cmd/usage "vis-agent providers <list|status|limits|auth|logout> [...]"
      :cmd/subcommands #(registry/registered-under ["providers"])}
     {:cmd/name "sessions"
      :cmd/doc "List, show, fork, delete, search, or export persisted sessions."
-     :cmd/usage "vis sessions <list|show|fork|delete|search|export> [...]"
+     :cmd/usage "vis-agent sessions <list|show|fork|delete|search|export> [...]"
      :cmd/examples
-     ["vis sessions" "vis sessions list" "vis sessions show 3a7b2c1d"
-      "vis sessions fork 3a7b2c1d --title \"Branch A\"" "vis sessions export 3a7b2c1d --md"
-      "vis sessions export 3a7b2c1d --html out.html" "vis sessions search \"foo bar\""]
+     ["vis-agent sessions" "vis-agent sessions list" "vis-agent sessions show 3a7b2c1d"
+      "vis-agent sessions fork 3a7b2c1d --title \"Branch A\""
+      "vis-agent sessions export 3a7b2c1d --md" "vis-agent sessions export 3a7b2c1d --html out.html"
+      "vis-agent sessions search \"foo bar\""]
      :cmd/subcommands #(registry/registered-under ["sessions"])
      :cmd/run-fn cli-sessions!}
     {:cmd/name "doctor"
      :cmd/doc "Run cross-extension diagnostics, and reclaim stale drafts / session journals."
-     :cmd/usage "vis doctor [--purge] [--dry-run] [--days N]"
+     :cmd/usage "vis-agent doctor [--purge] [--dry-run] [--days N]"
      :cmd/args [{:name "purge"
                  :kind :flag
                  :type :boolean
@@ -3590,50 +3594,53 @@
                  :type :boolean
                  :doc "With --purge, list exactly what would be deleted and delete nothing."}
                 {:name "days" :kind :flag :type :int :doc "Staleness cutoff in days (default 14)."}]
-     :cmd/examples ["vis doctor" "vis doctor --purge --dry-run" "vis doctor --purge --days 30"]
+     :cmd/examples ["vis-agent doctor" "vis-agent doctor --purge --dry-run"
+                    "vis-agent doctor --purge --days 30"]
      :cmd/run-fn cli-doctor!}
     {:cmd/name "extension"
      :cmd/doc "Inspect, scaffold, or run an extension-contributed CLI command."
-     :cmd/usage "vis extension <list|scaffold|...> [args...]"
+     :cmd/usage "vis-agent extension <list|scaffold|...> [args...]"
      :cmd/subcommands #(registry/registered-under ["extension"])}
     {:cmd/name "update"
      :cmd/doc "Update the source checkout used by this Vis installation."
-     :cmd/usage "vis update [--reset]"
+     :cmd/usage "vis-agent update [--reset]"
      :cmd/args [{:name "reset"
                  :kind :flag
                  :type :boolean
                  :doc (str "When history diverged (upstream force-push), hard-reset the branch"
                            " onto its upstream, discarding local commits.")}]
-     :cmd/examples ["vis update" "vis update --reset"]
+     :cmd/examples ["vis-agent update" "vis-agent update --reset"]
      :cmd/run-fn cli-update!}
     {:cmd/name "gateway"
      :cmd/doc "Start, inspect, or stop the long-lived gateway daemon."
-     :cmd/usage "vis gateway <start|status|stop|pair> [--db PATH]"
+     :cmd/usage "vis-agent gateway <start|status|stop|pair> [--db PATH]"
      :cmd/subcommands #(registry/registered-under ["gateway"])}
     {:cmd/name "python"
      :cmd/doc "Run code in the embedded GraalPy sandbox (all shims, no tool bindings)."
-     :cmd/usage "vis python [OPTS] [-c CODE | -m MODULE | FILE.py | -] [ARG...]"
-     :cmd/examples ["vis python -c \"import requests; print(requests.__version__)\""
-                    "vis python -m pytest tests/ -q   # module run as __main__"
-                    "vis python -m pytest tests/   # src layout inferred from project metadata"
-                    "PYTHONPATH=extra vis python -m pytest tests/   # merged with inferred roots"
-                    "vis python script.py --flag foo   # ARGs land in sys.argv"
-                    "vis python -c \"import os; print(os.environ['HOME'])\"   # env inherited"
-                    "vis python --no-env -c \"import os; print(dict(os.environ))\"   # scrubbed"
-                    "vis python --env FOO=bar -c \"import os; print(os.environ['FOO'])\""
-                    "echo 'print(1 + 1)' | vis python" "vis python   # interactive REPL"]
+     :cmd/usage "vis-agent python [OPTS] [-c CODE | -m MODULE | FILE.py | -] [ARG...]"
+     :cmd/examples
+     ["vis-agent python -c \"import requests; print(requests.__version__)\""
+      "vis-agent python -m pytest tests/ -q   # module run as __main__"
+      "vis-agent python -m pytest tests/   # src layout inferred from project metadata"
+      "PYTHONPATH=extra vis-agent python -m pytest tests/   # merged with inferred roots"
+      "vis-agent python script.py --flag foo   # ARGs land in sys.argv"
+      "vis-agent python -c \"import os; print(os.environ['HOME'])\"   # env inherited"
+      "vis-agent python --no-env -c \"import os; print(dict(os.environ))\"   # scrubbed"
+      "vis-agent python --env FOO=bar -c \"import os; print(os.environ['FOO'])\""
+      "echo 'print(1 + 1)' | vis-agent python" "vis-agent python   # interactive REPL"]
      :cmd/owns-tty? true
      :cmd/run-fn cli-python!}]]
   (registry/register-cmd! spec))
 
-;;; ── `vis gateway` subcommands ──────────────────────────────────────────
+;;; ── `vis-agent gateway` subcommands ──────────────────────────────────────────
 
 (doseq
   [spec
    [{:cmd/name "start"
      :cmd/parent ["gateway"]
      :cmd/doc "Start the long-lived gateway daemon (HTTP + SSE runtime) in the foreground."
-     :cmd/usage "vis gateway start [--port 7890] [--host 127.0.0.1] [--token-file PATH] [--pair]"
+     :cmd/usage
+     "vis-agent gateway start [--port 7890] [--host 127.0.0.1] [--token-file PATH] [--pair]"
      :cmd/args
      [{:name "port" :kind :flag :type :string :doc "TCP port to listen on (default 7890)."}
       {:name "host"
@@ -3659,13 +3666,14 @@
        :type :boolean
        :doc
        "Print a VIS companion pairing QR (URL + bearer token). Implies a phone-reachable bind (Tailscale IP, else 0.0.0.0) unless --host says otherwise."}]
-     :cmd/examples ["vis gateway start" "vis gateway start --port 8080" "vis gateway start --pair"
-                    "vis gateway start --host 0.0.0.0 --require-token --pair"]
+     :cmd/examples ["vis-agent gateway start" "vis-agent gateway start --port 8080"
+                    "vis-agent gateway start --pair"
+                    "vis-agent gateway start --host 0.0.0.0 --require-token --pair"]
      :cmd/run-fn cli-gateway-start!}
     {:cmd/name "status"
      :cmd/parent ["gateway"]
      :cmd/doc "Show the gateway daemon registered for the current DB without starting it."
-     :cmd/usage "vis gateway status [--db PATH]"
+     :cmd/usage "vis-agent gateway status [--db PATH]"
      :cmd/args [{:name "db"
                  :kind :flag
                  :type :string
@@ -3674,15 +3682,15 @@
     {:cmd/name "stop"
      :cmd/parent ["gateway"]
      :cmd/doc "Stop the gateway daemon registered for the current DB."
-     :cmd/usage "vis gateway stop [--db PATH]"
+     :cmd/usage "vis-agent gateway stop [--db PATH]"
      :cmd/args
      [{:name "db" :kind :flag :type :string :doc "SQLite DB path whose gateway should be stopped."}]
      :cmd/run-fn cli-gateway-stop!}
     {:cmd/name "pair"
      :cmd/parent ["gateway"]
      :cmd/doc "Print a companion pairing QR for the gateway already running for this DB."
-     :cmd/usage "vis gateway pair [--db PATH]"
-     :cmd/examples ["vis gateway pair"]
+     :cmd/usage "vis-agent gateway pair [--db PATH]"
+     :cmd/examples ["vis-agent gateway pair"]
      :cmd/args [{:name "db"
                  :kind :flag
                  :type :string
@@ -3690,94 +3698,96 @@
      :cmd/run-fn cli-gateway-pair!}]]
   (registry/register-cmd! spec))
 
-;;; ── `vis providers` subcommands ─────────────────────────────────────────
+;;; ── `vis-agent providers` subcommands ─────────────────────────────────────────
 
 (doseq
   [spec [{:cmd/name "list"
           :cmd/parent ["providers"]
           :cmd/doc "List registered providers with auth state, static limits, and base URLs."
-          :cmd/usage "vis providers list"
+          :cmd/usage "vis-agent providers list"
           :cmd/run-fn cli-providers-list!}
          {:cmd/name "status"
           :cmd/parent ["providers"]
           :cmd/doc "Show provider authentication status together with static/dynamic limits."
-          :cmd/usage "vis providers status [provider]"
-          :cmd/examples ["vis providers status" "vis providers status github-copilot-business"
-                         "vis providers status openai-codex"]
+          :cmd/usage "vis-agent providers status [provider]"
+          :cmd/examples ["vis-agent providers status"
+                         "vis-agent providers status github-copilot-business"
+                         "vis-agent providers status openai-codex"]
           :cmd/run-fn cli-providers-status!}
          {:cmd/name "limits"
           :cmd/parent ["providers"]
           :cmd/doc "Show provider rate-limit metadata and any dynamic quota report."
-          :cmd/usage "vis providers limits [provider]"
-          :cmd/examples ["vis providers limits" "vis providers limits openai-codex"
-                         "vis providers limits ollama"]
+          :cmd/usage "vis-agent providers limits [provider]"
+          :cmd/examples ["vis-agent providers limits" "vis-agent providers limits openai-codex"
+                         "vis-agent providers limits ollama"]
           :cmd/run-fn cli-providers-limits!}
          {:cmd/name "auth"
           :cmd/parent ["providers"]
           :cmd/doc "Run a provider's interactive authentication flow."
-          :cmd/usage "vis providers auth <provider>"
+          :cmd/usage "vis-agent providers auth <provider>"
           :cmd/args
           [{:name "provider"
             :kind :positional
             :type :string
             :doc "Registered provider id (for example: github-copilot-business or openai-codex)."}]
-          :cmd/examples ["vis providers auth github-copilot-business"
-                         "vis providers auth github-copilot-individual"
-                         "vis providers auth openai-codex"]
+          :cmd/examples ["vis-agent providers auth github-copilot-business"
+                         "vis-agent providers auth github-copilot-individual"
+                         "vis-agent providers auth openai-codex"]
           :cmd/run-fn cli-providers-auth!}
          {:cmd/name "logout"
           :cmd/parent ["providers"]
           :cmd/doc "Clear saved credentials for a provider."
-          :cmd/usage "vis providers logout <provider>"
+          :cmd/usage "vis-agent providers logout <provider>"
           :cmd/args
           [{:name "provider" :kind :positional :type :string :doc "Registered provider id."}]
-          :cmd/examples ["vis providers logout github-copilot-business"
-                         "vis providers logout github-copilot-individual"
-                         "vis providers logout openai-codex"]
+          :cmd/examples ["vis-agent providers logout github-copilot-business"
+                         "vis-agent providers logout github-copilot-individual"
+                         "vis-agent providers logout openai-codex"]
           :cmd/run-fn cli-providers-logout!}]]
   (registry/register-cmd! spec))
 
-;;; ── `vis sessions` subcommands ──────────────────────────────────────────
+;;; ── `vis-agent sessions` subcommands ──────────────────────────────────────────
 
 (doseq
   [spec
    [{:cmd/name "list"
      :cmd/parent ["sessions"]
      :cmd/doc "List persisted sessions."
-     :cmd/usage "vis sessions list [all|tui|cli]"
+     :cmd/usage "vis-agent sessions list [all|tui|cli]"
      :cmd/args [{:name "channel"
                  :kind :positional
                  :type :string
                  :doc "Optional channel filter (all|tui|cli; default all)."}]
-     :cmd/examples ["vis sessions list" "vis sessions list tui"]
+     :cmd/examples ["vis-agent sessions list" "vis-agent sessions list tui"]
      :cmd/run-fn cli-sessions-list!}
     {:cmd/name "show"
      :cmd/parent ["sessions"]
      :cmd/doc "Show one session's metadata, turns, and fork states."
-     :cmd/usage "vis sessions show <SESSION-ID>"
+     :cmd/usage "vis-agent sessions show <SESSION-ID>"
      :cmd/args [{:name "session-id"
                  :kind :positional
                  :type :string
                  :required true
                  :doc "Session id (full UUID or unambiguous prefix)."}]
-     :cmd/examples ["vis sessions show 3a7b2c1d"]
+     :cmd/examples ["vis-agent sessions show 3a7b2c1d"]
      :cmd/run-fn cli-show-session!}
     {:cmd/name "fork"
      :cmd/parent ["sessions"]
      :cmd/doc "Fork a session from its latest state."
-     :cmd/usage "vis sessions fork <SESSION-ID> [--title TITLE]"
+     :cmd/usage "vis-agent sessions fork <SESSION-ID> [--title TITLE]"
      :cmd/args [{:name "session-id"
                  :kind :positional
                  :type :string
                  :required true
                  :doc "Session id (full UUID or unambiguous prefix)."}
                 {:name "title" :kind :flag :type :string :doc "Title to set on the new fork."}]
-     :cmd/examples ["vis sessions fork 3a7b2c1d" "vis sessions fork 3a7b2c1d --title \"Branch A\""]
+     :cmd/examples ["vis-agent sessions fork 3a7b2c1d"
+                    "vis-agent sessions fork 3a7b2c1d --title \"Branch A\""]
      :cmd/run-fn cli-fork-session-command!}
     {:cmd/name "draft"
      :cmd/parent ["sessions"]
      :cmd/doc "Start an isolated workspace draft for a session (apply/abandon via the TUI)."
-     :cmd/usage "vis sessions draft <SESSION-ID> [--label NAME]"
+     :cmd/usage "vis-agent sessions draft <SESSION-ID> [--label NAME]"
      :cmd/args
      [{:name "session-id"
        :kind :positional
@@ -3785,24 +3795,25 @@
        :required true
        :doc "Session id (full UUID or unambiguous prefix)."}
       {:name "label" :kind :flag :type :string :doc "Draft folder label (default: auto)."}]
-     :cmd/examples ["vis sessions draft 3a7b2c1d" "vis sessions draft 3a7b2c1d --label feature-x"]
+     :cmd/examples ["vis-agent sessions draft 3a7b2c1d"
+                    "vis-agent sessions draft 3a7b2c1d --label feature-x"]
      :cmd/run-fn cli-draft-session!}
     {:cmd/name "delete"
      :cmd/parent ["sessions"]
      :cmd/doc "Delete a session tree from persistent storage."
-     :cmd/usage "vis sessions delete <SESSION-ID>"
+     :cmd/usage "vis-agent sessions delete <SESSION-ID>"
      :cmd/args [{:name "session-id"
                  :kind :positional
                  :type :string
                  :required true
                  :doc "Session id (full UUID or unambiguous prefix)."}]
-     :cmd/examples ["vis sessions delete 3a7b2c1d"]
+     :cmd/examples ["vis-agent sessions delete 3a7b2c1d"]
      :cmd/run-fn cli-delete-session!}
     {:cmd/name "export"
      :cmd/parent ["sessions"]
      :cmd/doc
      "Export a session: Markdown on stdout, HTML to a file, or a headless MP4 screencast of the TUI transcript."
-     :cmd/usage "vis sessions export <SESSION-ID> [--md | --html PATH | --mp4 PATH]"
+     :cmd/usage "vis-agent sessions export <SESSION-ID> [--md | --html PATH | --mp4 PATH]"
      :cmd/args
      [{:name "session-id"
        :kind :positional
@@ -3815,29 +3826,29 @@
        :kind :flag
        :type :string
        :doc "Write a pure-JVM H.264 .mp4 screencast of the (uncollapsed) TUI transcript to PATH."}]
-     :cmd/examples ["vis sessions export 3a7b2c1d --md"
-                    "vis sessions export 3a7b2c1d --html out.html"
-                    "vis sessions export 3a7b2c1d --mp4 session.mp4"]
+     :cmd/examples ["vis-agent sessions export 3a7b2c1d --md"
+                    "vis-agent sessions export 3a7b2c1d --html out.html"
+                    "vis-agent sessions export 3a7b2c1d --mp4 session.mp4"]
      :cmd/run-fn cli-export-session!}
     {:cmd/name "search"
      :cmd/parent ["sessions"]
      :cmd/doc "Transcript search with the same matching semantics as the TUI session navigator."
-     :cmd/usage "vis sessions search <query> [--limit N]"
+     :cmd/usage "vis-agent sessions search <query> [--limit N]"
      :cmd/args [{:name "query"
                  :kind :positional
                  :type :string
                  :doc "Words to search for (case-insensitive token prefixes, as in the TUI)."}
                 {:name "limit" :kind :flag :type :string :doc "Max hits to print (default 25)."}]
-     :cmd/examples ["vis sessions search \"provider credentials\""
-                    "vis sessions search \"authentication failed\" --limit 100"]
+     :cmd/examples ["vis-agent sessions search \"provider credentials\""
+                    "vis-agent sessions search \"authentication failed\" --limit 100"]
      :cmd/run-fn cli-sessions-search!}]]
   (registry/register-cmd! spec))
 
-;;; ── `vis extension` subcommands (host-owned canonical) ────────────────────────
+;;; ── `vis-agent extension` subcommands (host-owned canonical) ────────────────────────
 ;;
 ;; `list` and `scaffold` are NOT extension contributions -- they are
-;; the CANONICAL host commands the vis binary ships with. Extensions add
-;; to the `vis extension` parent through `:ext/cli`; the host marks its own
+;; the CANONICAL host commands the vis-agent binary ships with. Extensions add
+;; to the `vis-agent extension` parent through `:ext/cli`; the host marks its own
 ;; entries with `:cmd/internal? true` so help and listing layers can
 ;; tell host-owned canonical commands apart from extension-contributed
 ;; ones at a glance.
@@ -3847,15 +3858,16 @@
           :cmd/parent ["extension"]
           :cmd/internal? true
           :cmd/doc "List every registered extension with metadata."
-          :cmd/usage "vis extension list"
+          :cmd/usage "vis-agent extension list"
           :cmd/run-fn cli-extensions!}
          {:cmd/name "scaffold"
           :cmd/parent ["extension"]
           :cmd/internal? true
           :cmd/doc "Create a user extension project scaffold."
-          :cmd/usage "vis extension scaffold <name> [--dir DIR] [--namespace NS] [--force]"
-          :cmd/examples ["vis extension scaffold my-tools"
-                         "vis extension scaffold my-tools --dir ~/.vis/vis-extensions/my-tools"]
+          :cmd/usage "vis-agent extension scaffold <name> [--dir DIR] [--namespace NS] [--force]"
+          :cmd/examples
+          ["vis-agent extension scaffold my-tools"
+           "vis-agent extension scaffold my-tools --dir ~/.vis/vis-extensions/my-tools"]
           :cmd/run-fn cli-extensions-scaffold!}]]
   (registry/register-cmd! spec))
 
@@ -3974,8 +3986,8 @@
 ;;
 ;; The dispatcher's root has NO hard-coded subcommands. Every entry
 ;; comes from the global commandline registry. Built-ins (providers,
-;; sessions, doctor, ...) are registered by vis-runtime; the `vis channel` and
-;; `vis extension` parents are registered by the channel and extension
+;; sessions, doctor, ...) are registered by vis-runtime; the `vis-agent channel` and
+;; `vis-agent extension` parents are registered by the channel and extension
 ;; facades. Add a third-party jar with its own `register-cmd!`
 ;; calls and its commands appear here without any code change.
 ;; =============================================================================
@@ -3984,15 +3996,16 @@
   (str
     "Vis - a coding agent that edits, runs and verifies code in your repo, with a persistent sandboxed Python REPL.\n"
     "\n"
-    "USAGE\n" "  vis [FLAGS] \"prompt\"          Run one-shot agent work.\n"
-    "  vis [FLAGS]                    Show this help.\n"
-    "  vis <command> [args...]        Run a command.\n"
-    "  vis <command> --help           Show command help.\n" "\n"
-    "EXAMPLES\n" "  vis \"fix failing tests\"\n"
-    "  vis --json \"summarize this repo\"\n"
-    "  vis --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"task\"\n"
-    "  vis --full-trace-json-stream --db :memory \"debug startup\"\n" "  vis providers status\n"
-    "  vis sessions search sqlite\n" "\n"
+    "USAGE\n" "  vis-agent [FLAGS] \"prompt\"          Run one-shot agent work.\n"
+    "  vis-agent [FLAGS]                    Show this help.\n"
+    "  vis-agent <command> [args...]        Run a command.\n"
+    "  vis-agent <command> --help           Show command help.\n" "\n"
+    "EXAMPLES\n" "  vis-agent \"fix failing tests\"\n"
+    "  vis-agent --json \"summarize this repo\"\n"
+    "  vis-agent --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"task\"\n"
+    "  vis-agent --full-trace-json-stream --db :memory \"debug startup\"\n"
+    "  vis-agent providers status\n"
+    "  vis-agent sessions search sqlite\n" "\n"
     "ONE-SHOT FLAGS\n" "  --json                       Print result as JSON.\n"
     "  --code                       Print only final answer code blocks.\n"
     "  --raw                        Print plain text, no markdown styling.\n"
@@ -4010,11 +4023,11 @@
     "  --help, -h                   Show help."))
 
 (defn root-command
-  "Build the root `vis` command tree. Subcommands are pulled fresh on
+  "Build the root `vis-agent` command tree. Subcommands are pulled fresh on
    every call so newly registered extensions show up immediately."
   []
   (registry/command
-    {:cmd/name "vis" :cmd/doc DEFAULT_DOC :cmd/subcommands #(registry/registered-under [])}))
+    {:cmd/name "vis-agent" :cmd/doc DEFAULT_DOC :cmd/subcommands #(registry/registered-under [])}))
 
 ;; =============================================================================
 ;; Pre-redirect stderr for TTY-owning channels
@@ -4028,7 +4041,7 @@
 
 (defn- pre-redirect-stderr!
   [args]
-  (when-let [{:keys [command]} (commandline/find-leaf (root-command) (cons "vis" args))]
+  (when-let [{:keys [command]} (commandline/find-leaf (root-command) (cons "vis-agent" args))]
     (when (:cmd/owns-tty? command)
       (let [log-dir (java.io.File. (str (System/getProperty "user.home") "/.vis/logs"))]
         (when-not (.exists log-dir) (.mkdirs log-dir))
@@ -4050,7 +4063,7 @@
 
 (defn- version-request?
   "True when args ask only for the version. Like help, this short-circuits
-   BEFORE extension discovery / agent boot — `vis --version` must be instant and
+   BEFORE extension discovery / agent boot — `vis-agent --version` must be instant and
    must NOT create the GraalPy sandbox or contact a provider."
   [args]
   (contains? #{["--version"] ["-V"] ["version"]} (vec args)))
@@ -4075,7 +4088,7 @@
   (boolean (or (root-help-request? args) (some #{"--help" "-h"} args))))
 
 (defn- channel-help-request?
-  "True for `vis channels <first-party-channel> --help`. These requests need
+  "True for `vis-agent channels <first-party-channel> --help`. These requests need
    only the selected channel descriptor, not every extension namespace."
   [args]
   (let [[parent channel & more] (vec args)]
@@ -4084,7 +4097,7 @@
          (boolean (some #{"--help" "-h"} more)))))
 
 (defn- channel-parent-help-request?
-  "True for `vis channels --help`. Rendering the parent has to load
+  "True for `vis-agent channels --help`. Rendering the parent has to load
    channel-providing extensions first; otherwise the dynamic `channels`
    subtree is empty and help cannot list the available channels."
   [args]
@@ -4101,7 +4114,7 @@
     (and (= "channels" parent) help? (empty? before-help))))
 
 (defn- ext-help-request?
-  "True for any `vis extension ...` help invocation. The `vis extension` subtree is
+  "True for any `vis-agent extension ...` help invocation. The `vis-agent extension` subtree is
    populated by `:ext/cli` mounts that only land after
    `extension/discover-extensions!` has run, so help rendering for this
    subtree MUST trigger full extension discovery before the renderer
@@ -4126,7 +4139,7 @@
        (root-command)
 
        full-args
-       (cons "vis" args)
+       (cons "vis-agent" args)
 
        {:keys [residual]}
        (commandline/find-leaf root full-args)
@@ -4149,9 +4162,9 @@
       (and (= 1 (count path)) (seq residual)))))
 
 (defn- root-run-shortcut?
-  "True when bare `vis ...` should run the one-shot CLI agent.
+  "True when bare `vis-agent ...` should run the one-shot CLI agent.
    Unknown commands that ask for help stay errors, so typo diagnostics
-   remain honest (`vis sessions --help` must not become a prompt)."
+   remain honest (`vis-agent sessions --help` must not become a prompt)."
   [root args]
   (and (unknown-command? root args) (not-any? #{"--help" "-h"} args)))
 
@@ -4163,7 +4176,7 @@
   (if-let [panel (seq (:vis/panel (ex-data t)))]
     (doseq [line panel]
       (stdout! (str line)))
-    (stdout! (str "vis: " (or (ex-message t) "error"))))
+    (stdout! (str "vis-agent: " (or (ex-message t) "error"))))
   (shutdown-agents)
   (System/exit 2))
 
@@ -4193,7 +4206,7 @@
      same?
      (identical? rc t)]
 
-    (stdout! (str "vis: fatal error - " (or (ex-message t) (.getName (class t)))))
+    (stdout! (str "vis-agent: fatal error - " (or (ex-message t) (.getName (class t)))))
     ;; ExceptionInInitializerError etc. carry no message; surface the root cause
     ;; so failures (incl. native-image runtime class-init) are diagnosable.
     (when-not same?
@@ -4214,9 +4227,9 @@
    Points at the interactive welcome (the curated, zero-friction path)."
   []
   (stdout! "")
-  (stdout! "  vis needs an AI provider to get started.")
+  (stdout! "  vis-agent needs an AI provider to get started.")
   (stdout! "")
-  (stdout! "  ▸ Run  vis  with no arguments to open the welcome screen and")
+  (stdout! "  ▸ Run  vis-agent  with no arguments to open the welcome screen and")
   (stdout! "    connect one (Sign in with GitHub / OpenAI / Anthropic, paste an")
   (stdout! "    API key, or run a local model).")
   (stdout! "  ▸ Or hand-write ~/.vis/config.yml.")
@@ -4229,16 +4242,17 @@
 (defn- measure-arg? [arg] (= "--measure" arg))
 
 (def ^:private launcher-selector-args
-  ;; `bin/vis` normally consumes these before invoking Clojure, but keep
-  ;; the JVM entry point tolerant too (e.g. `clojure -M:vis channels --jvm --help`).
-  #{"--source" "--jvm" "--jar" "--native" "--jfr"})
+  ;; `bin/vis-agent` normally consumes these before invoking Clojure, but keep
+  ;; the JVM entry point tolerant too (e.g. `clojure -M:vis-agent channels --jvm --help`).
+  ;; There is intentionally no --jar runtime: jars are build artifacts only.
+  #{"--source" "--jvm" "--native" "--jfr"})
 
 (defn- global-arg? [arg] (or (measure-arg? arg) (contains? launcher-selector-args arg)))
 
 (defn- strip-global-args [args] (vec (remove global-arg? args)))
 
 (def ^:private session-shortcut-flags
-  ;; Top-level `vis --resume` / `vis --continue` (pi-parity) are
+  ;; Top-level `vis-agent --resume` / `vis-agent --continue` (pi-parity) are
   ;; ergonomic aliases for the `channels tui` session flags.
   {"--resume" "--resume" "-r" "--resume" "--continue" "--continue" "-c" "--continue"})
 
@@ -4246,7 +4260,7 @@
   "Rewrite a leading `--resume`/`-r`/`--continue`/`-c` into
    `channels tui <flag>` so the session shortcuts work at the root.
    Only fires when the shortcut is the FIRST token, so flag-shaped
-   one-shot prompts (e.g. `vis --json \"...\"`) are untouched."
+   one-shot prompts (e.g. `vis-agent --json \"...\"`) are untouched."
   [args]
   (if-let [canon (get session-shortcut-flags (first args))]
     (into ["channels" "tui" canon] (rest args))
@@ -4254,14 +4268,14 @@
 
 (defn- rewrite-tui-shortcut
   "Rewrite a leading `tui` into `channels tui` so the terminal UI is a
-   first-class top-level command (`vis tui`) that boots the channels TUI.
+   first-class top-level command (`vis-agent tui`) that boots the channels TUI.
    Only fires when `tui` is the FIRST token, so it never shadows a prompt."
   [args]
   (if (= "tui" (first args)) (into ["channels" "tui"] (rest args)) (vec args)))
 
 (defn- rewrite-ext-alias
   "Back-compat: rewrite a leading `ext` into the canonical `extension`
-   command so existing `vis ext ...` invocations keep working."
+   command so existing `vis-agent ext ...` invocations keep working."
   [args]
   (if (= "ext" (first args)) (into ["extension"] (rest args)) (vec args)))
 
@@ -4278,8 +4292,9 @@
 (defn- startup-measure-line!
   [label & kvs]
   (binding [*out* *err*]
-    (println
-      (str "[vis measure] jvm:" label (when (seq kvs) (str " " (str/join " " (map str kvs))))))))
+    (println (str "[vis-agent measure] jvm:"
+                  label
+                  (when (seq kvs) (str " " (str/join " " (map str kvs))))))))
 
 (defn- timed-startup!
   [measure? label f]
@@ -4337,7 +4352,7 @@
 
    Root prompt shortcut lives here, not in `commandline/dispatch!`, so
    the generic dispatcher stays a pure command tree while the binary owns
-   CLI ergonomics (`vis fix this`, `vis --json summarize`)."
+   CLI ergonomics (`vis-agent fix this`, `vis-agent --json summarize`)."
   [& raw-args]
   (let
     [main-started
@@ -4354,8 +4369,8 @@
          rewrite-ext-alias)]
 
     (when measure? (System/setProperty "vis.measure" "1"))
-    ;; Opt-in JFR profiling (VIS_JFR set by `bin/vis --jfr`). Role-tagged so a
-    ;; spawned gateway daemon (`vis gateway start`) records to its OWN file,
+    ;; Opt-in JFR profiling (VIS_JFR set by `bin/vis-agent --jfr`). Role-tagged so a
+    ;; spawned gateway daemon (`vis-agent gateway start`) records to its OWN file,
     ;; separate from this client's — see internal.jfr.
     (try ((requiring-resolve 'com.blockether.vis.internal.jfr/maybe-start!)
            (if (= "gateway" (first args)) "gateway" "client"))
@@ -4369,7 +4384,7 @@
       ;; nothing ever removed one. Off-thread and best-effort — see
       ;; `housekeeping/sweep-logs!` for the retention window and guards.
       (try (housekeeping/sweep-logs-async!) (catch Throwable _ nil))
-      (cond (version-request? args) (println (str "vis " (vis-version)))
+      (cond (version-request? args) (println (str "vis-agent " (vis-version)))
             (root-help-request? args) (println (commandline/render-tree (root-command)))
             (fast-help-dispatched? measure? args) nil
             :else (do (timed-startup! measure? "discover-all+extensions" #(discover-all!))
@@ -4380,7 +4395,7 @@
                          (root-command)
 
                          full-args
-                         (cons "vis" args)
+                         (cons "vis-agent" args)
 
                          unknown-root?
                          (unknown-command? root args)]
@@ -4398,7 +4413,7 @@
                               ;; args, unknown flags). Without an explicit `System/exit 1` here
                               ;; the process exited 0 even though the user-visible output was
                               ;; an error message + help text -- so any shell pipeline like
-                              ;; `vis foo --bogus && echo ok` printed `ok`. Map `:error` to
+                              ;; `vis-agent foo --bogus && echo ok` printed `ok`. Map `:error` to
                               ;; exit code 2 (POSIX convention for usage errors); `:no-match`
                               ;; can't actually fire here because `unknown-command?` above
                               ;; already short-circuited that case.
@@ -4416,7 +4431,7 @@
                                   ;; executors, some of which leave NON-daemon threads alive; a
                                   ;; bare `nil` return let `-main` finish while those threads
                                   ;; kept the JVM (and the native isolate) running, so a
-                                  ;; one-shot command like `vis sessions export` printed its
+                                  ;; one-shot command like `vis-agent sessions export` printed its
                                   ;; output and then HUNG the terminal forever. Draining agents
                                   ;; and calling `System/exit 0` guarantees termination.
                                   (do (shutdown-agents) (System/exit 0))))))))

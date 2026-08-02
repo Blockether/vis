@@ -5,11 +5,11 @@ session can be exported for sharing, archiving, or showing off. One command
 covers all three formats:
 
 ```bash
-vis sessions export <SESSION-ID> [--md | --html PATH | --mp4 PATH]
+vis-agent sessions export <SESSION-ID> [--md | --html PATH | --mp4 PATH]
 ```
 
 `<SESSION-ID>` is the full UUID or any unambiguous prefix (the short 8-char id
-Vis prints in `vis sessions list` works). Pick **exactly one** format — passing
+Vis prints in `vis-agent sessions list` works). Pick **exactly one** format — passing
 more than one is an error.
 
 ## Formats
@@ -26,8 +26,8 @@ The default. Prints the whole transcript — user turns, thinking, answers,
 tool calls — as Markdown to stdout, so you can pipe or redirect it:
 
 ```bash
-vis sessions export 3a7b2c1d > session.md
-vis sessions export 3a7b2c1d --md | pbcopy
+vis-agent sessions export 3a7b2c1d > session.md
+vis-agent sessions export 3a7b2c1d --md | pbcopy
 ```
 
 ### HTML — `--html`
@@ -36,7 +36,7 @@ Writes a styled, standalone HTML rendering of the session to the given path.
 Requires the web extension on the classpath (present in the standard build).
 
 ```bash
-vis sessions export 3a7b2c1d --html report.html
+vis-agent sessions export 3a7b2c1d --html report.html
 ```
 
 ### MP4 screencast — `--mp4`
@@ -57,7 +57,7 @@ scrolling through it:
   fully-expanded dump.
 
 ```bash
-vis sessions export 3a7b2c1d --mp4 session.mp4
+vis-agent sessions export 3a7b2c1d --mp4 session.mp4
 ```
 
 The MP4 path needs the `channel-tui` extension (present in the standard build).
@@ -77,11 +77,11 @@ On completion Vis prints the frame count and approximate duration, e.g.
 
 ```bash
 # Markdown to stdout (default)
-vis sessions export 3a7b2c1d --md
+vis-agent sessions export 3a7b2c1d --md
 
 # Styled HTML report
-vis sessions export 3a7b2c1d --html out.html
+vis-agent sessions export 3a7b2c1d --html out.html
 
 # Humanized MP4 screencast (extension auto-added)
-vis sessions export 3a7b2c1d --mp4 demo
+vis-agent sessions export 3a7b2c1d --mp4 demo
 ```

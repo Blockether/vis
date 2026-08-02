@@ -4,7 +4,7 @@ Every vis channel talks to one long-lived **gateway daemon**: an HTTP + SSE
 runtime that owns
 the sessions, turns, and the live event bus. You rarely start it by hand; a
 channel spawns it for you. This page explains its lifecycle, why
-`vis gateway start` stays in the foreground, the token model (and the
+`vis-agent gateway start` stays in the foreground, the token model (and the
 `HTTP 401` you hit on `--host 0.0.0.0`), and how to pair a phone over LAN or
 Tailscale.
 
@@ -13,7 +13,7 @@ Tailscale.
 When you run a client such as:
 
 ```sh
-vis tui
+vis-agent tui
 ```
 
 the client looks up the gateway registered for the current database
@@ -25,32 +25,32 @@ last client disconnects. So the normal flow is just "start the TUI" — the
 background gateway is automatic, and a herd of clients all attach to the
 same one.
 
-You do **not** need to run `vis gateway start` yourself for local use.
+You do **not** need to run `vis-agent gateway start` yourself for local use.
 
-### Why `vis gateway start` does not go to the background
+### Why `vis-agent gateway start` does not go to the background
 
-`vis gateway start` is deliberately a **foreground** daemon: it prints its
+`vis-agent gateway start` is deliberately a **foreground** daemon: it prints its
 connection line and parks until you stop it with `Ctrl-C` / `SIGTERM`. It is
 meant for running the gateway as a supervised, user-owned process (a
 `systemd`/`launchd` unit, a container entrypoint, a `tmux` pane) — not for a
-throwaway shell. A foreground `vis gateway start` is **not** refcounted, so
+throwaway shell. A foreground `vis-agent gateway start` is **not** refcounted, so
 it will not self-reap when clients come and go.
 
 To run it detached yourself, background it explicitly:
 
 ```sh
 # quick-and-dirty
-nohup vis gateway start --host 0.0.0.0 --require-token > ~/.vis/gateway.out 2>&1 &
+nohup vis-agent gateway start --host 0.0.0.0 --require-token > ~/.vis/gateway.out 2>&1 &
 
 # or let a client auto-spawn the managed background daemon for you
-vis tui
+vis-agent tui
 ```
 
 Inspect and control the daemon:
 
 ```sh
-vis gateway status     # pid, url, db, client count, auth mode
-vis gateway stop       # ask the running daemon to exit
+vis-agent gateway status     # pid, url, db, client count, auth mode
+vis-agent gateway stop       # ask the running daemon to exit
 ```
 
 ## The token model — and the `HTTP 401`
@@ -81,7 +81,7 @@ it means the client reached a token-gated gateway without a valid token.
 The usual causes: connecting from a different machine without pairing, or a
 stale/rotated `gateway.token`. Fixes: run the client on the same host as the
 gateway, re-pair the remote client, or restart the gateway on loopback
-(`vis gateway start`).
+(`vis-agent gateway start`).
 
 ## Getting the companion app (public testing)
 
@@ -110,7 +110,7 @@ for **your** gateway, so until you pair one it shows only the pairing screen.
 Start the gateway on a reachable host and print a pairing QR:
 
 ```sh
-vis gateway start --host 0.0.0.0 --require-token --pair
+vis-agent gateway start --host 0.0.0.0 --require-token --pair
 ```
 
 `--pair` prints a terminal QR encoding a tiny URL payload:
@@ -131,8 +131,8 @@ Open the companion (web, iOS, or Android). Its first screen is **Gateways**.
 Under **Add a gateway** there are two ways in:
 
 - **Pairing link** — the fastest path, and the only one that also carries the
-  token. Either tap **Scan QR** and point the camera at the QR from `vis gateway
-  pair` (or `vis gateway start … --pair`), or paste the
+  token. Either tap **Scan QR** and point the camera at the QR from `vis-agent gateway
+  pair` (or `vis-agent gateway start … --pair`), or paste the
   `vis://gateway?url=…&token=…` link into the field and tap **Pair**. Both fill
   in the URL and bearer token together, so there is nothing else to type.
 - **URL + token** — for a gateway whose address you already know. Enter the
@@ -152,21 +152,21 @@ so there is usually one running already — but bound to `127.0.0.1`, which a
 phone can never reach. To pair a running daemon **without a start flag**, use:
 
 ```sh
-vis gateway pair
+vis-agent gateway pair
 ```
 
 It reads the gateway registered for the current DB and prints the same QR that
 `--pair` prints at boot — no restart needed. Two guardrails:
 
 - **No gateway running** → it tells you to start one:
-  `vis gateway start --host 0.0.0.0 --require-token --pair`.
+  `vis-agent gateway start --host 0.0.0.0 --require-token --pair`.
 - **Running but loopback-bound** (the auto-spawned TUI daemon) → it refuses,
   because `127.0.0.1` is phone-local, and prints the exact restart to run:
-  `vis gateway stop` then `vis gateway start --host 0.0.0.0 --require-token --pair`.
+  `vis-agent gateway stop` then `vis-agent gateway start --host 0.0.0.0 --require-token --pair`.
 
-So: if you only ever ran `vis tui`, the daemon behind it is loopback
+So: if you only ever ran `vis-agent tui`, the daemon behind it is loopback
 and cannot be paired as-is — stop it and restart the gateway reachable (above).
-Once it is bound to `0.0.0.0` (or a Tailscale host), `vis gateway pair` prints
+Once it is bound to `0.0.0.0` (or a Tailscale host), `vis-agent gateway pair` prints
 the QR on demand any time.
 
 ## Tailscale (access from anywhere)
@@ -178,7 +178,7 @@ range):
 
 ```sh
 # with tailscale up on this machine
-vis gateway start --host 0.0.0.0 --require-token --pair
+vis-agent gateway start --host 0.0.0.0 --require-token --pair
 ```
 
 The pairing QR **automatically prefers the `100.x` Tailscale address** when a

@@ -1,4 +1,4 @@
-// Parse the gateway pairing payloads produced by `vis gateway pair`
+// Parse the gateway pairing payloads produced by `vis-agent gateway pair`
 // (src/com/blockether/vis/internal/gateway/pairing.clj).
 //
 // Two shapes are supported, matching the Clojure producers exactly:

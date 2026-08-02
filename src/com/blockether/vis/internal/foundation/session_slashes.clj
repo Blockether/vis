@@ -64,7 +64,7 @@
   "Core `/export` implementation. Writes this session's transcript to a file,
    choosing Markdown or HTML by `forced-fmt` when non-nil, otherwise the path
    extension. Defaults to `vis-transcript-<id8>.<ext>` in the working
-   directory. Same renderers as `vis sessions export --md|--html`."
+   directory. Same renderers as `vis-agent sessions export --md|--html`."
   [ctx forced-fmt]
   (let
     [sid

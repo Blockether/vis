@@ -108,7 +108,7 @@
 (defn- user-error?
   "True when `f` throws an ex-info carrying the `:vis/user-error` flag -
    the contract the channel entry point relies on to print a clean
-   `vis: <msg>` line and exit 2 instead of a Java stack trace."
+   `vis-agent: <msg>` line and exit 2 instead of a Java stack trace."
   [f]
   (try (f) false (catch clojure.lang.ExceptionInfo e (true? (:vis/user-error (ex-data e))))))
 
@@ -1345,7 +1345,7 @@
                        (print-session-id-on-exit!)
                        (.flush ps)
                        (let [out (.toString bytes "UTF-8")]
-                         (expect (= "\rResume with:\nvis channels tui --session-id abc123\n"
+                         (expect (= "\rResume with:\nvis-agent channels tui --session-id abc123\n"
                                     out))))))))
 
 (defdescribe parse-args-test
@@ -1357,7 +1357,7 @@
                  (expect (= {:session-id "abc123" :resume true}
                             (parse-args ["--session-id" "abc123" "--resume"]))))
              (it "unknown flag throws :vis/user-error (regression: typo silently swallowed)"
-                 ;; `vis channels tui --sessions-id <uuid>` used to succeed
+                 ;; `vis-agent channels tui --sessions-id <uuid>` used to succeed
                  ;; silently and start a fresh session. The user reported it
                  ;; explicitly: the flag with a stray "s" must blow up.
                  (expect (user-error? #(parse-args ["--sessions-id"

@@ -3367,8 +3367,13 @@
    diagnostic verbatim twice. What survives is the useful part: the edits that
    resolved cleanly and were still discarded by the atomic refusal."
   [checks failures]
-  (let [key-of (juxt :path :edit-index)
-        failed (into #{} (map key-of) failures)]
+  (let
+    [key-of
+     (juxt :path :edit-index)
+
+     failed
+     (into #{} (map key-of) failures)]
+
     (vec (remove (comp failed key-of) checks))))
 
 (defn- patch-syntax-failures
@@ -4543,8 +4548,13 @@
       ;; Failure: full structured `:error` map with `:reason`, per-edit
       ;; `:failures`, `:checks`, and the optional `:loop-hint` so the
       ;; model can read them as plain map keys (no try/catch needed).
-      (let [first-failure (first (:failures result))
-            other-checks (non-failure-checks (:checks result) (:failures result))]
+      (let
+        [first-failure
+         (first (:failures result))
+
+         other-checks
+         (non-failure-checks (:checks result) (:failures result))]
+
         (extension/failure
           {:result nil
            :op :patch
@@ -4566,10 +4576,10 @@
                          (:broken-paths result)))
            ;; Only facts the message does NOT already carry: nil `:loop-hint`
            ;; and failure-duplicating `:checks` are pure payload noise.
-           :error (cond-> {:message (:message result)
-                           :reason (:reason first-failure)
-                           :failures (:failures result)}
-
+           :error (cond->
+                    {:message (:message result)
+                     :reason (:reason first-failure)
+                     :failures (:failures result)}
                     (seq other-checks)
                     (assoc :checks other-checks)
 
@@ -4626,8 +4636,10 @@
                                   :changed-count (if (get summary "changed") 1 0)
                                   :op (:op plan)
                                   :file-befores [(select-keys plan [:path :before])]}}))
-      (let [first-failure (first (:failures result))
-            other-checks (non-failure-checks (:checks result) (:failures result))]
+      (let
+        [first-failure (first (:failures result))
+         other-checks (non-failure-checks (:checks result) (:failures result))]
+
         (extension/failure
           {:result nil
            :op :write
@@ -4639,11 +4651,11 @@
                       :started-at-ms (now-ms)
                       :finished-at-ms (now-ms)
                       :duration-ms 0}
-           :error (cond-> {:message (:message result)
-                           :reason (:reason first-failure)
-                           :failures (:failures result)
-                           :mode :write}
-
+           :error (cond->
+                    {:message (:message result)
+                     :reason (:reason first-failure)
+                     :failures (:failures result)
+                     :mode :write}
                     (seq other-checks)
                     (assoc :checks other-checks)
 

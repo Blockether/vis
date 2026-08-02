@@ -1555,7 +1555,7 @@
 
 (defn extract-code
   "Walk the AST and return a vector of strings, one per [:code ...] block,
-   in source order. Used by `vis --code`."
+   in source order. Used by `vis-agent --code`."
   [input]
   (let
     [ast

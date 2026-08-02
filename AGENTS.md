@@ -48,7 +48,7 @@ Use snake_case string IDs. Hydrate from merged config so `/reload` respects proj
 
 - One lazy `shim_*.clj` per shim, one registered extension, and `builtin-extension-nses` inclusion. Python lives in `resources/vis-shims/<name>.py`, referenced as `:shim/source "vis-shims/<name>.py"`; never embed it as a Clojure string. Verify lazy import behavior and native resource inclusion.
 - Python format/lint uses in-process `com.blockether/ruff`, not a subprocess or PyPI install. Honor ruff's nearest-config resolution; missing targets fail, and only syntax plus `E9xx`/`F6xx`/`F7xx`/`F82x` are errors.
-- The sandbox `ruff` shim supports `vis python -m ruff check|format <paths>`; root `ruff.toml` configures this repo. Upgrade ruff in sibling `clj-ruff`, release it, then move the `deps.edn` pin.
+- The sandbox `ruff` shim supports `vis-agent python -m ruff check|format <paths>`; root `ruff.toml` configures this repo. Upgrade ruff in sibling `clj-ruff`, release it, then move the `deps.edn` pin.
 
 ## TUI rendering
 

@@ -11,7 +11,7 @@
 
    This is internal plumbing, not a channel: it registers no channel
    descriptor and owns no renderer - it ships canonical IR and the
-   client renders (§4.1). Any host process (the `vis gateway start` daemon, a
+   client renders (§4.1). Any host process (the `vis-agent gateway start` daemon, a
    TUI run, an embedded caller) can start it alongside whatever else it
    is doing via `start!`."
   (:require [clojure.java.io :as io]
@@ -255,7 +255,7 @@
              (tel/log! :warn ["gateway: registry self-repair failed" (ex-message t)]))))))
 
 (defn- idle-shutdown-eligible?
-  "True when this daemon is allowed to stop itself. Foreground `vis gateway start`
+  "True when this daemon is allowed to stop itself. Foreground `vis-agent gateway start`
    is user-owned and lives until Ctrl-C/admin stop; auto-spawned gateway daemons are
    managed by client refcounts. A fresh auto-spawn gets a startup grace period so it
    does not exit before the spawning TUI has had a chance to register its lease."
@@ -1519,11 +1519,14 @@
 
 (defn- soul-handler
   [request]
-  (if-let
-    [soul (some-> (path-sid request)
-                  state/soul)]
-    (json-response soul)
-    (session-404 (get-in request [:path-params :sid]))))
+  (let [sid (path-sid request)]
+    (if-let
+      [soul (some-> sid
+                    state/soul)]
+      (json-response (cond-> soul
+                       (= "queued" (get-in request [:query-params "include"]))
+                       (assoc :queued_turns (state/list-queued-turns sid))))
+      (session-404 (get-in request [:path-params :sid])))))
 
 (defn- patch-session-handler
   "PATCH /v1/sessions/:sid — rename (`{title}`) OR change project membership
@@ -2491,7 +2494,7 @@
 ;; `extension/channel-contributions-for` whenever it (re)builds the
 ;; handler. A fingerprint check on each request notices contributions
 ;; that arrived AFTER the server started (extension loaded late, jar
-;; dropped + `vis extension reload`) and rebuilds — both orders just work.
+;; dropped + `vis-agent extension reload`) and rebuilds — both orders just work.
 ;;
 ;; Secondary source — imperative escape hatch for embedded/REPL callers:
 ;; `register-routes!` below.
@@ -2996,7 +2999,7 @@
 (defn start!
   "Start the gateway on the Ring Jetty adapter with virtual threads.
    Returns `{:port :host :token-file}`. Throws when already running.
-   Safe to call from any host process - the daemon (`vis gateway start`), a TUI
+   Safe to call from any host process - the daemon (`vis-agent gateway start`), a TUI
    run, or an embedded caller."
   ([] (start! {}))
   ([{:keys [port host token-file require-token? db managed?]}]
@@ -3131,7 +3134,7 @@
 
 (def ^:private GRACEFUL_DRAIN_MS
   "Max time `stop!` waits for in-flight turns to finish before forcing Jetty
-   down, so a SIGTERM / `vis gateway restart` landing mid-turn lets active work
+   down, so a SIGTERM / `vis-agent gateway restart` landing mid-turn lets active work
    complete instead of being cut off. Only ever waits when turns are actually
    running (the refcount-idle stop path already has zero)."
   8000)
@@ -3198,7 +3201,7 @@
 (defn running? [] (some? @server-state))
 
 (defn serve-main!
-  "Blocking entry for the `vis gateway start` command: start, print the
+  "Blocking entry for the `vis-agent gateway start` command: start, print the
    connection line, park forever (Ctrl-C / SIGTERM stops the JVM)."
   [{:keys [port host token-file require-token? db managed? pair?]}]
   ;; Profile the daemon into its own JFR file when VIS_JFR is inherited from the
@@ -3232,7 +3235,7 @@
        (.println config/original-stdout ^String (str line))
        (.flush config/original-stdout))]
 
-    (emit! (str "vis gateway listening on http://" host ":" port))
+    (emit! (str "vis-agent gateway listening on http://" host ":" port))
     (if require-token?
       (emit! (str "bearer token: " token-file))
       (emit! "auth: disabled (loopback default; pass --require-token to enable)"))

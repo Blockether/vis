@@ -32,7 +32,7 @@
 ;; `:cli` is added unconditionally because the CLI agent uses `:cli` as
 ;; its sessions-channel namespace WITHOUT registering a channel
 ;; descriptor (the `vis` dispatcher itself is the surface; there is no
-;; `vis channels cli` sub-command, so it has no `:channel/cmd`). Every
+;; `vis-agent channels cli` sub-command, so it has no `:channel/cmd`). Every
 ;; other channel id comes from the registry.
 ;; ---------------------------------------------------------------------------
 

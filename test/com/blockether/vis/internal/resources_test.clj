@@ -108,3 +108,100 @@
 
                    (expect (= resource (get-in view ["other" "process" "server"])))
                    (expect (nil? (get view "repls"))))))
+
+(defdescribe
+  lifecycle-race-test
+  (it
+    "does not unregister a replacement created while the old stop callback is blocked"
+    (let
+      [sid
+       (fresh-sid)
+
+       entered
+       (promise)
+
+       release
+       (promise)
+
+       old-stops
+       (atom 0)
+
+       replacement-stops
+       (atom 0)]
+
+      (try (resources/register! sid
+                                {:id "same" :kind :process :status :running :label "old"}
+                                {:stop-fn (fn []
+                                            (swap! old-stops inc)
+                                            (deliver entered true)
+                                            @release)})
+           (let [stopping (future (resources/stop! sid "same"))]
+             ;; Deterministically put registration inside the old implementation's
+             ;; vulnerable window: it had read the old record but had not yet run
+             ;; its unconditional post-callback `unregister!`.
+             @entered
+             (resources/register! sid
+                                  {:id "same" :kind :process :status :running :label "replacement"}
+                                  {:stop-fn #(swap! replacement-stops inc)})
+             (deliver release true)
+             (expect (= :stopped (:result @stopping)))
+             (expect (= 1 @old-stops))
+             (expect (= 0 @replacement-stops))
+             (let [[survivor] (resources/list-resources sid)]
+               (expect (some? survivor))
+               (expect (= "replacement" (get survivor "label")))))
+           (finally (deliver release true) (resources/stop-all! sid)))))
+  (it
+    "cannot let an older delayed persistence write erase a newer registration"
+    (let
+      [sid
+       (fresh-sid)
+
+       writer-var
+       (ns-resolve 'com.blockether.vis.internal.resources 'write-persisted!)
+
+       writer-entered
+       (promise)
+
+       release-writer
+       (promise)
+
+       writer-calls
+       (atom 0)
+
+       writes
+       (atom [])]
+
+      (try (resources/register! sid
+                                {:id "same" :kind :process :status :running :label "old"}
+                                {:stop-fn (fn [])})
+           (with-redefs-fn {writer-var (fn [snapshot]
+                                         (if (= 1 (swap! writer-calls inc))
+                                           (do (deliver writer-entered true)
+                                               @release-writer
+                                               (swap! writes conj snapshot))
+                                           (swap! writes conj snapshot)))}
+             (fn []
+               (let [stopping (future (resources/stop! sid "same"))]
+                 ;; Freeze the old stop's persistence after it captured the empty
+                 ;; state. Registration mutates the atom before trying to persist.
+                 @writer-entered
+                 (let
+                   [registering
+                    (future (resources/register!
+                              sid
+                              {:id "same" :kind :process :status :running :label "replacement"}
+                              {:stop-fn (fn [])}))]
+                   (loop [tries 1000]
+                     (when-not (= "replacement" (get (resources/get-resource sid "same") "label"))
+                       (when (zero? tries) (throw (ex-info "Replacement was not registered" {})))
+                       (Thread/sleep 1)
+                       (recur (dec tries))))
+                   (deliver release-writer true)
+                   (expect (= :stopped (:result (deref stopping 5000 {:result :timeout}))))
+                   (expect (not= ::timeout (deref registering 5000 ::timeout)))
+                   ;; The last disk write must reflect the latest registry state.
+                   ;; Without snapshot/write serialization these two writes land
+                   ;; in the opposite order and the replacement disappears on disk.
+                   (expect (= "replacement" (get-in (last @writes) [sid "same" "label"])))))))
+           (finally (deliver release-writer true) (resources/stop-all! sid))))))

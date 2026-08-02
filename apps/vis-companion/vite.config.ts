@@ -8,7 +8,7 @@ import pkg from './package.json' with { type: 'json' };
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const gatewayProxyToken = env.VIS_COMPANION_GATEWAY_TOKEN;
-  // The gateway binds whatever `vis gateway start --host` was given. When that is
+  // The gateway binds whatever `vis-agent gateway start --host` was given. When that is
   // a Tailscale/LAN IP (not loopback), point the dev proxy at it via this env var,
   // e.g. VIS_COMPANION_GATEWAY_TARGET=http://100.109.18.77:7890
   const gatewayTarget = env.VIS_COMPANION_GATEWAY_TARGET || 'http://127.0.0.1:7890';

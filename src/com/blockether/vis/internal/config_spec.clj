@@ -284,7 +284,7 @@
   ;; stdlib extracts at runtime). Read ONCE per process at polyglot-engine boot;
   ;; the explicit `-Dpolyglot.engine.userResourceCache` system property wins over
   ;; this key.
-  ;; `source_paths`: extra import roots prepended to `sys.path` for `vis python`,
+  ;; `source_paths`: extra import roots prepended to `sys.path` for `vis-agent python`,
   ;; on top of what the project's own packaging metadata declares -- the escape
   ;; hatch for a layout vis cannot infer. Relative to the working directory; `~`
   ;; expands.

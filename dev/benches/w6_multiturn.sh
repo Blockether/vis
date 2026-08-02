@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # W6 — multi-turn measurement scenario.
 #
-# Drives `bin/vis` through a 3-turn, SAME-FILE edit session (the shape the
+# Drives `bin/vis-agent` through a 3-turn, SAME-FILE edit session (the shape the
 # b117af1a teardown showed wasting iterations on re-location) so the engine
 # signals can be scored with `benches.ctx-metrics` against the frozen baseline
 # (task-set!=0, fact-set!=0, forms-per-iter={1 N}, locate-waste=13).
@@ -12,7 +12,7 @@
 #   VIS_PROVIDER / VIS_MODEL override the model (default zai-coding-plan/glm-5.1).
 set -euo pipefail
 
-VIS_BIN="${VIS_BIN:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/bin/vis}"
+VIS_BIN="${VIS_BIN:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/bin/vis-agent}"
 PROVIDER="${VIS_PROVIDER:-zai-coding-plan}"
 MODEL="${VIS_MODEL:-glm-5.1}"
 TURN_TIMEOUT="${W6_TURN_TIMEOUT:-300}"

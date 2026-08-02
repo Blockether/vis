@@ -41,9 +41,9 @@ ARG SPEL_SHA256=5fc16873fdd879522fe75a7ada5aeb57e3310bc1927571c60d6b9b2578444059
 ARG PARAKEET_MODEL=sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8
 ARG PARAKEET_RELEASE=asr-models
 
-# The shipped binary is the ONE distribution, `community`: the FULL agent —
-# every channel AND voice ASR — which is what makes baking the Parakeet model
-# below worth it. There is no leaner build to select, so nothing to configure.
+# The container ships the same public wrapper as every other distribution,
+# backed by the full community native runtime (all channels and voice ASR).
+# There is no leaner feature profile to select, so nothing to configure.
 ARG VIS_ORACLE_NATIVE_IMAGE=false
 ARG VIS_NATIVE_EXTRA_ARGS=
 ARG WITH_BROWSERS=true
@@ -252,7 +252,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #  2. the agent's own toolbelt — git, curl, ripgrep, jq, unzip, less, procps.
 #  3. voice: ffmpeg. The gateway TRANSCRIBES uploaded audio (there is no
 #     capture device in a container, and it needs none), and without ffmpeg it
-#     cannot convert .oga/.opus to the WAV the ASR consumes. `vis doctor`
+#     cannot convert .oga/.opus to the WAV the ASR consumes. `vis-agent doctor`
 #     reports it as missing — so it ships.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates zlib1g libstdc++6 libgomp1 \
@@ -358,21 +358,12 @@ RUN test "${WITH_BROWSERS}" != "true" || ls /opt/vis/playwright
 COPY --from=model /opt/vis/models /opt/vis/models
 ENV VIS_PARAKEET_MODEL_DIR=/opt/vis/models/${PARAKEET_MODEL}
 
-# ── the binary ──
-# Installed as `vis.bin` behind a wrapper. Two halves of one problem:
-#   - build time: top-level defs that read `user.home` are constant-folded into
-#     the binary, fixed by `-Duser.home=/home/vis` on the native-image line above.
-#   - run time: everything that reads `user.home` lazily. A native image DOES
-#     honour a leading -D at runtime (verified), so the wrapper pins it to the
-#     real HOME for every entry point — CMD, `docker exec`, and every tool the
-#     agent shells out to. Setting HOME alone fixes neither half: the JDK takes
-#     user.home from getpwuid(), not $HOME.
-COPY --from=builder /build/target/vis /usr/local/bin/vis.bin
-COPY --chmod=0755 <<'EOF' /usr/local/bin/vis
-#!/bin/sh
-exec /usr/local/bin/vis.bin -Duser.home="${HOME:-/home/vis}" "$@"
-EOF
-RUN chmod 0755 /usr/local/bin/vis.bin
+# ── Vis Agent wrapper + private native runtime ──
+# The Bash wrapper is the only public executable in every distribution. It pins
+# native-image's runtime user.home to HOME and selects the private sidecar.
+COPY --from=builder /build/target/vis /usr/local/bin/vis-agent-native
+COPY --from=builder /build/bin/vis-agent /usr/local/bin/vis-agent
+RUN chmod 0755 /usr/local/bin/vis-agent /usr/local/bin/vis-agent-native
 
 # Unprivileged. The gateway never runs as root, and neither does anything the
 # agent spawns. /work is the default workspace mount point.
@@ -393,8 +384,8 @@ RUN set -eux; \
     java -version; clojure --version; mvn -v | head -1; \
     python3 --version; node --version; gh --version | head -1; \
     ffmpeg -version | head -1; git --version; \
-    vis --version; \
-    vis extension voice models status; \
+    vis-agent --version; \
+    vis-agent extension voice models status; \
     test ! -e /root/.vis; \
     test -d /home/vis/.vis
 
@@ -408,5 +399,5 @@ EXPOSE 7890
 # tini reaps the processes the agent spawns; without a real init, PID 1 is the
 # gateway and every abandoned child becomes a zombie.
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["vis", "gateway", "start", "--host", "0.0.0.0", "--port", "7890", \
+CMD ["vis-agent", "gateway", "start", "--host", "0.0.0.0", "--port", "7890", \
      "--require-token", "--token-file", "/home/vis/.vis/gateway-token"]

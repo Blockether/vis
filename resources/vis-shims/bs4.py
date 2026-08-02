@@ -63,6 +63,10 @@ def __vis_install_bs4__():
             return _sibling(self, 1)
 
         @property
+        def next_element(self):
+            return _next_element(self)
+
+        @property
         def previous_sibling(self):
             return _sibling(self, -1)
 
@@ -101,7 +105,9 @@ def __vis_install_bs4__():
             return self.attrs[key]
 
         def __setitem__(self, key, value):
-            self.attrs[key] = self._norm_attr(key, value)
+            # Assignment preserves the caller's value; only parsed markup gets
+            # HTML multi-valued-attribute normalization.
+            self.attrs[key] = "" if value is None else value
 
         def __delitem__(self, key):
             del self.attrs[key]
@@ -126,11 +132,18 @@ def __vis_install_bs4__():
 
         @property
         def descendants(self):
-            for c in list(self.contents):
-                yield c
-                if isinstance(c, Tag):
-                    for d in c.descendants:
-                        yield d
+            # Iterative pre-order walk: no recursion frame per nesting level
+            # (deep markup would otherwise exhaust the interpreter stack) and no
+            # per-level copy of the child list.
+            stack = list(self.contents)
+            stack.reverse()
+            while stack:
+                node = stack.pop()
+                yield node
+                kids = node.contents if isinstance(node, Tag) else None
+                if kids:
+                    for c in reversed(kids):
+                        stack.append(c)
 
         @property
         def contents_tags(self):
@@ -146,9 +159,7 @@ def __vis_install_bs4__():
 
         @property
         def next_element(self):
-            if self.contents:
-                return self.contents[0]
-            return _sibling(self, 1)
+            return _next_element(self)
 
         @property
         def parents(self):
@@ -158,25 +169,46 @@ def __vis_install_bs4__():
                 p = p.parent
 
         def append(self, node):
-            if isinstance(node, str) and not isinstance(node, NavigableString):
-                node = NavigableString(node)
-            node.parent = self
+            # A document is a container, not an element: inserting one moves its
+            # children into this tag, matching BeautifulSoup's fragment behavior.
+            if isinstance(node, Tag) and node.name == "[document]":
+                self.extend(list(node.contents))
+                return
+            node = _adopt(self, node)
             self.contents.append(node)
 
+        def extend(self, nodes):
+            for node in nodes:
+                self.append(node)
+
+        def index(self, element):
+            i = _index_of(self.contents, element)
+            if i < 0:
+                raise ValueError("%r is not in list" % (element,))
+            return i
+
         def insert(self, position, node):
-            if isinstance(node, str) and not isinstance(node, NavigableString):
-                node = NavigableString(node)
-            node.parent = self
+            if node is None:
+                raise ValueError("Cannot insert None into a tag")
+            if isinstance(node, Tag) and node.name == "[document]":
+                for child in list(node.contents):
+                    self.insert(position, child)
+                    position += 1
+                return
+            node = _adopt(self, node)
             self.contents.insert(position, node)
 
         def _sib_insert(self, node, offset):
             p = self.parent
             if p is None:
-                return
-            if isinstance(node, str) and not isinstance(node, NavigableString):
-                node = NavigableString(node)
+                raise ValueError("Element has no parent")
+            if node is self:
+                raise ValueError("Cannot insert an element before or after itself")
             idx = _index_of(p.contents, self)
-            node.parent = p
+            node = _adopt(p, node)
+            # Moving an earlier sibling left-shifts the insertion point.
+            if _index_of(p.contents, self) != idx:
+                idx = _index_of(p.contents, self)
             p.contents.insert(idx + offset, node)
 
         def insert_before(self, *nodes):
@@ -190,19 +222,24 @@ def __vis_install_bs4__():
         def replace_with(self, new):
             p = self.parent
             if p is None:
-                return self
-            if isinstance(new, str) and not isinstance(new, NavigableString):
-                new = NavigableString(new)
+                raise ValueError("Element has no parent")
+            if new is self:
+                raise ValueError("Cannot replace an element with itself")
             idx = _index_of(p.contents, self)
-            new.parent = p
+            new = _adopt(p, new)
+            # `_adopt` may have moved an earlier sibling out of this parent.
+            idx = _index_of(p.contents, self)
             p.contents[idx] = new
             self.parent = None
             return self
 
-        replaceWith = replace_with
-
         def wrap(self, wrapper):
             p = self.parent
+            if wrapper is self:
+                raise ValueError("Cannot wrap a tag in itself")
+            if isinstance(wrapper, Tag):
+                _require_acyclic(wrapper, self)
+                _detach(wrapper)
             if p is not None:
                 idx = _index_of(p.contents, self)
                 p.contents[idx] = wrapper
@@ -216,13 +253,13 @@ def __vis_install_bs4__():
             if p is None:
                 return self
             idx = _index_of(p.contents, self)
-            p.contents[idx : idx + 1] = self.contents
-            for c in self.contents:
+            children = self.contents
+            p.contents[idx : idx + 1] = children
+            for c in children:
                 c.parent = p
+            self.contents = []
             self.parent = None
             return self
-
-        replaceWithChildren = unwrap
 
         # -- text ---------------------------------------------------------------
         def get_text(self, separator="", strip=False):
@@ -275,6 +312,8 @@ def __vis_install_bs4__():
             limit=None,
             **kwargs,
         ):
+            if string is None:
+                string = kwargs.pop("string", kwargs.pop("text", None))
             matcher = _make_matcher(name, attrs, string, kwargs)
             out = []
             src = self.descendants if recursive else self.children
@@ -320,12 +359,34 @@ def __vis_install_bs4__():
 
         def decompose(self):
             _detach(self)
+            # A decomposed subtree is no longer connected to the document at any
+            # depth. Clear descendant links iteratively for deep markup too.
+            stack = list(self.contents)
             self.contents = []
+            while stack:
+                c = stack.pop()
+                c.parent = None
+                if isinstance(c, Tag):
+                    stack.extend(c.contents)
+                    c.contents = []
+
+        def smooth(self):
+            i = 0
+            while i + 1 < len(self.contents):
+                left, right = self.contents[i : i + 2]
+                if type(left) is NavigableString and type(right) is NavigableString:
+                    merged = NavigableString(str(left) + str(right))
+                    merged.parent = self
+                    self.contents[i : i + 2] = [merged]
+                else:
+                    i += 1
+            return None
 
         def clear(self):
+            for c in self.contents:
+                c.parent = None
             self.contents = []
 
-        # -- dynamic tag attribute access (soup.a etc.) -------------------------
         def __getattr__(self, key):
             if key.startswith("__") and key.endswith("__"):
                 raise AttributeError(key)
@@ -353,23 +414,55 @@ def __vis_install_bs4__():
                 return i
         return -1
 
+    def _require_acyclic(parent, node):
+        """Reject inserting a tag into itself or one of its descendants."""
+        if not isinstance(node, Tag):
+            return
+        cur = parent
+        while cur is not None:
+            if cur is node:
+                raise ValueError("Cannot insert a tag into itself")
+            cur = cur.parent
+
+    def _adopt(parent, node):
+        if isinstance(node, str) and not isinstance(node, NavigableString):
+            node = NavigableString(node)
+        _require_acyclic(parent, node)
+        _detach(node)
+        node.parent = parent
+        return node
+
     def _detach(node):
         p = getattr(node, "parent", None)
-        if p is not None and node in p.contents:
-            p.contents.remove(node)
+        if p is not None:
+            i = _index_of(p.contents, node)
+            if i >= 0:
+                del p.contents[i]
         node.parent = None
 
     def _sibling(node, direction):
         p = getattr(node, "parent", None)
         if p is None:
             return None
-        try:
-            i = p.contents.index(node)
-        except ValueError:
+        # Identity, not equality: two equal NavigableStrings under one parent are
+        # still distinct nodes, and list.index would resolve to the first one.
+        i = _index_of(p.contents, node)
+        if i < 0:
             return None
         j = i + direction
         if 0 <= j < len(p.contents):
             return p.contents[j]
+        return None
+
+    def _next_element(node):
+        if isinstance(node, Tag) and node.contents:
+            return node.contents[0]
+        cur = node
+        while cur is not None:
+            sibling = _sibling(cur, 1)
+            if sibling is not None:
+                return sibling
+            cur = getattr(cur, "parent", None)
         return None
 
     def _attr_str(node, key):
@@ -568,12 +661,10 @@ def __vis_install_bs4__():
         return steps
 
     def _select(root, selector, limit=None):
+        groups = [g for g in (g.strip() for g in selector.split(",")) if g]
         results = []
         seen = set()
-        for group in selector.split(","):
-            group = group.strip()
-            if not group:
-                continue
+        for group in groups:
             steps = _tokenize_group(group)
             current = [root]
             for combinator, tok in steps:
@@ -585,18 +676,42 @@ def __vis_install_bs4__():
                             if _simple_match(c, simple):
                                 nxt.append(c)
                 else:
+                    # One subtree walk per step. `visited` stops a node reachable
+                    # from several candidates from being expanded and matched
+                    # once per path -- the combinatorial blow-up that made
+                    # chained descendant selectors explode on nested markup --
+                    # and lets a candidate nested inside an already walked
+                    # candidate be skipped outright.
+                    visited = set()
                     for node in current:
-                        for d in node.descendants if isinstance(node, Tag) else []:
+                        if not isinstance(node, Tag) or id(node) in visited:
+                            continue
+                        for d in node.descendants:
+                            key = id(d)
+                            if key in visited:
+                                continue
+                            visited.add(key)
                             if _simple_match(d, simple):
                                 nxt.append(d)
                 current = nxt
+                if not current:
+                    break
             for node in current:
                 if id(node) not in seen:
                     seen.add(id(node))
                     results.append(node)
-                    if limit and len(results) >= limit:
+                    # A single group already yields document order, so a limited
+                    # search can stop as soon as it is satisfied.
+                    if limit and len(groups) == 1 and len(results) >= limit:
                         return results
-        return results
+        if len(groups) > 1 and len(results) > 1:
+            # Comma groups are matched one at a time; re-order the union so the
+            # caller sees document order, the way a real CSS engine reports it.
+            order = {}
+            for i, d in enumerate(root.descendants):
+                order[id(d)] = i
+            results.sort(key=lambda n: order.get(id(n), -1))
+        return results[:limit] if limit else results
 
     # -- serialization -----------------------------------------------------------
     def _esc_text(s):
@@ -607,41 +722,117 @@ def __vis_install_bs4__():
         )
 
     def _esc_attr(s):
-        return s.replace(_AMP, _AMP + "amp;").replace(_Q, _AMP + "quot;")
+        return _esc_text(str(s)).replace(_Q, _AMP + "quot;")
 
-    def _render(node, pretty=False, depth=0):
-        if isinstance(node, Comment):
-            body = _LT + "!--" + str(node) + "--" + _GT
-            return (("  " * depth) + body) if pretty else body
-        if isinstance(node, NavigableString):
-            if pretty:
-                t = str(node).strip()
-                return ("  " * depth) + _esc_text(t) if t else ""
-            return _esc_text(str(node))
-        nl = _NL if pretty else ""
-        if node.name == "[document]":
-            kids = [_render(c, pretty, depth) for c in node.contents]
-            kids = [k for k in kids if k != ""]
-            return nl.join(kids)
-        pad = ("  " * depth) if pretty else ""
+    def _open_tag(node, pad=""):
         parts = [pad + _LT + node.name]
         for k, v in node.attrs.items():
             vs = " ".join(v) if isinstance(v, list) else (v if v is not None else "")
             parts.append(" " + k + "=" + _Q + _esc_attr(vs) + _Q)
         if node.name in _VOID and not node.contents:
             parts.append("/" + _GT)
-            return "".join(parts)
+            return "".join(parts), True
         parts.append(_GT)
-        open_tag = "".join(parts)
-        close_tag = _LT + "/" + node.name + _GT
-        if not pretty:
-            inner = "".join(_render(c, pretty, depth + 1) for c in node.contents)
-            return open_tag + inner + close_tag
-        kids = [_render(c, pretty, depth + 1) for c in node.contents]
+        return "".join(parts), False
+
+    def _render_flat(node):
+        # Compact serialization as one flat token stream: a single pass, a single
+        # join, and no recursion, so arbitrarily deep markup serializes in linear
+        # time without exhausting the interpreter stack.
+        out = []
+        stack = [node]
+        while stack:
+            cur = stack.pop()
+            if type(cur) is tuple:
+                out.append(cur[0])
+                continue
+            if isinstance(cur, Comment):
+                out.append(_LT + "!--" + str(cur) + "--" + _GT)
+                continue
+            if isinstance(cur, CData):
+                out.append("<![CDATA[" + str(cur) + "]]>")
+                continue
+            if isinstance(cur, Doctype):
+                out.append("<!DOCTYPE " + str(cur) + _GT)
+                continue
+            if isinstance(cur, ProcessingInstruction):
+                out.append("<?" + str(cur) + _GT)
+                continue
+            if isinstance(cur, NavigableString):
+                parent = getattr(cur, "parent", None)
+                raw = getattr(parent, "name", None) in ("script", "style")
+                out.append(str(cur) if raw else _esc_text(str(cur)))
+                continue
+            if cur.name != "[document]":
+                open_tag, is_void = _open_tag(cur)
+                out.append(open_tag)
+                if is_void:
+                    continue
+                stack.append((_LT + "/" + cur.name + _GT,))
+            for c in reversed(cur.contents):
+                stack.append(c)
+        return "".join(out)
+
+    def _pretty_string(node, depth):
+        pad = " " * depth
+        if isinstance(node, Comment):
+            return pad + _LT + "!--" + str(node) + "--" + _GT
+        if isinstance(node, CData):
+            return pad + "<![CDATA[" + str(node) + "]]>"
+        if isinstance(node, Doctype):
+            return pad + "<!DOCTYPE " + str(node) + _GT
+        if isinstance(node, ProcessingInstruction):
+            return pad + "<?" + str(node) + _GT
+        text = str(node).strip()
+        if not text:
+            return ""
+        parent = getattr(node, "parent", None)
+        return pad + (
+            text
+            if getattr(parent, "name", None) in ("script", "style")
+            else _esc_text(text)
+        )
+
+    def _join_pretty(node, depth, kids):
         kids = [k for k in kids if k != ""]
+        if node.name == "[document]":
+            return _NL.join(kids)
+        pad = " " * depth
+        open_tag, is_void = _open_tag(node, pad)
+        if is_void:
+            return open_tag
+        close_tag = _LT + "/" + node.name + _GT
         if not kids:
             return open_tag + close_tag
-        return open_tag + nl + nl.join(kids) + nl + pad + close_tag
+        return open_tag + _NL + _NL.join(kids) + _NL + pad + close_tag
+
+    def _render_pretty(node, depth=0):
+        if not isinstance(node, Tag):
+            return _pretty_string(node, depth)
+        # Explicit frames: [tag, depth, rendered kids, next child index]. Only
+        # leaf children recurse (one level), so nesting depth is unbounded.
+        stack = [[node, depth, [], 0]]
+        while stack:
+            frame = stack[-1]
+            cur, d, kids, i = frame
+            if i < len(cur.contents):
+                frame[3] = i + 1
+                kid_depth = d if cur.name == "[document]" else d + 1
+                child = cur.contents[i]
+                if isinstance(child, Tag):
+                    stack.append([child, kid_depth, [], 0])
+                else:
+                    kids.append(_render_pretty(child, kid_depth))
+                continue
+            stack.pop()
+            done = _join_pretty(cur, d, kids)
+            if not stack:
+                return done
+            stack[-1][2].append(done)
+        return ""
+
+    def _render(node, pretty=False, depth=0):
+        return _render_pretty(node, depth) if pretty else _render_flat(node)
 
     # -- parser ------------------------------------------------------------------
     class _Builder(_hp.HTMLParser):
@@ -675,8 +866,39 @@ def __vis_install_bs4__():
         def handle_comment(self, data):
             self._cur().append(Comment(data))
 
+        def handle_decl(self, decl):
+            if decl.lower().startswith("doctype"):
+                self._cur().append(Doctype(decl[7:].strip()))
+
+        def handle_pi(self, data):
+            self._cur().append(ProcessingInstruction(data))
+
+        def unknown_decl(self, data):
+            if data.startswith("CDATA[") and data.endswith("]"):
+                self._cur().append(CData(data[6:-1]))
+
         def handle_entityref(self, name):
             self._cur().append(NavigableString(_AMP + name + ";"))
+
+    def _strain(root, strainer):
+        # parse_only pruning: keep the outermost nodes the strainer accepts and
+        # drop everything else, the way bs4 narrows a parsed document.
+        keep = []
+        stack = list(root.contents)
+        stack.reverse()
+        while stack:
+            node = stack.pop()
+            if hasattr(strainer, "search"):
+                ok = strainer.search(node) is not None
+            else:
+                ok = bool(strainer(node))
+            if ok:
+                keep.append(node)
+                continue
+            if isinstance(node, Tag):
+                for c in reversed(node.contents):
+                    stack.append(c)
+        return keep
 
     class BeautifulSoup(Tag):
         def __init__(self, markup="", features=None, *args, **kwargs):
@@ -688,7 +910,11 @@ def __vis_install_bs4__():
             b = _Builder()
             b.feed(markup or "")
             b.close()
-            self.contents = b.root.contents
+            parse_only = kwargs.get("parse_only")
+            if parse_only is not None:
+                self.contents = _strain(b.root, parse_only)
+            else:
+                self.contents = b.root.contents
             for c in self.contents:
                 c.parent = self
 
@@ -715,6 +941,9 @@ def __vis_install_bs4__():
     class Doctype(NavigableString):
         pass
 
+    class ProcessingInstruction(NavigableString):
+        pass
+
     class FeatureNotFound(ValueError):
         pass
 
@@ -722,7 +951,8 @@ def __vis_install_bs4__():
         """Small callable name/attribute filter compatible with parse_only use."""
 
         def __init__(self, name=None, attrs=None, **kwargs):
-            self._matcher = _make_matcher(name, attrs, None, kwargs)
+            string = kwargs.pop("string", kwargs.pop("text", None))
+            self._matcher = _make_matcher(name, attrs, string, kwargs)
 
         def search(self, element):
             return element if self._matcher(element) else None
@@ -739,6 +969,7 @@ def __vis_install_bs4__():
     mod.Comment = Comment
     mod.CData = CData
     mod.Doctype = Doctype
+    mod.ProcessingInstruction = ProcessingInstruction
     mod.FeatureNotFound = FeatureNotFound
     mod.SoupStrainer = SoupStrainer
 
@@ -748,6 +979,7 @@ def __vis_install_bs4__():
     elem.Comment = Comment
     elem.CData = CData
     elem.Doctype = Doctype
+    elem.ProcessingInstruction = ProcessingInstruction
     elem.SoupStrainer = SoupStrainer
     mod.element = elem
 

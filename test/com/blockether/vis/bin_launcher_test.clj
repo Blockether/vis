@@ -42,10 +42,11 @@
      home
      (doto (io/file root "home") .mkdirs)]
 
-    (Files/copy (.toPath (io/file "bin/vis"))
-                (.toPath (io/file bin "vis"))
+    (Files/copy (.toPath (io/file "bin/vis-agent"))
+                (.toPath (io/file bin "vis-agent"))
                 (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
-    (.setExecutable (io/file bin "vis") true)
+    (.setExecutable (io/file bin "vis-agent") true)
+    (spit (io/file repo "deps.edn") "{}")
     (spit (io/file repo ".graalvm-version")
           (str "GRAAL_EDITION=\"GraalVM CE\"\n"
                "GRAAL_VERSION=\"25.1.3\"\n"
@@ -70,7 +71,8 @@
 
      pb
      (ProcessBuilder. ^java.util.List
-                      ["bash" (.getAbsolutePath (io/file repo "bin/vis")) "--jvm" "--version"])
+                      ["bash" (.getAbsolutePath (io/file repo "bin/vis-agent")) "--jvm"
+                       "--version"])
 
      env
      (.environment pb)]
@@ -125,3 +127,82 @@
                                       (str "JAVA_CMD="
                                            (.getAbsolutePath (io/file old-home "bin/java"))))))
              (finally (delete-tree! root))))))
+
+(defdescribe
+  wrapper-runtime-selection-test
+  (it
+    "persists the runtime choice, supports one-shot overrides, and rejects jar mode"
+    (let
+      [root
+       (.toFile (Files/createTempDirectory "vis-agent-runtime-test-" (make-array FileAttribute 0)))
+
+       install-dir
+       (doto (io/file root "install") .mkdirs)
+
+       source-dir
+       (doto (io/file root "source") .mkdirs)
+
+       home
+       (doto (io/file root "home") .mkdirs)
+
+       vis-home
+       (doto (io/file home ".vis") .mkdirs)
+
+       tools
+       (doto (io/file root "tools") .mkdirs)
+
+       launcher
+       (io/file install-dir "vis-agent")
+
+       run!
+       (fn [args]
+         (let
+           [pb
+            (ProcessBuilder. ^java.util.List (into ["bash" (.getAbsolutePath launcher)] args))
+
+            env
+            (.environment pb)]
+
+           (.directory pb root)
+           (.redirectErrorStream pb true)
+           (.put env "HOME" (.getAbsolutePath home))
+           (.put env "VIS_HOME" (.getAbsolutePath vis-home))
+           (.put env "VIS_NO_DEV_CHECKOUT" "1")
+           (.put env "PATH" (str (.getAbsolutePath tools) ":/usr/bin:/bin"))
+           (let
+             [process
+              (.start pb)
+
+              output
+              (slurp (.getInputStream process))]
+
+             {:exit (.waitFor process) :output output})))]
+
+      (try (Files/copy (.toPath (io/file "bin/vis-agent"))
+                       (.toPath launcher)
+                       (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+           (.setExecutable launcher true)
+           (spit (io/file source-dir "deps.edn") "{}")
+           (spit (io/file vis-home "source-dir") (.getAbsolutePath source-dir))
+           (write-executable! (io/file install-dir "vis-agent-native")
+                              "#!/usr/bin/env bash\nprintf 'NATIVE:%s\\n' \"$*\"\n")
+           (write-executable! (io/file tools "java") "#!/usr/bin/env bash\nexit 0\n")
+           (write-executable! (io/file tools "clojure")
+                              "#!/usr/bin/env bash\nprintf 'JVM:%s\\n' \"$*\"\n")
+           (let [{:keys [exit output]} (run! ["runtime" "show"])]
+             (expect (= 0 exit))
+             (expect (str/includes? output "Effective runtime: native")))
+           (expect (= 0 (:exit (run! ["runtime" "use" "jvm"]))))
+           (let [{:keys [exit output]} (run! ["--version"])]
+             (expect (= 0 exit))
+             (expect (str/includes? output "JVM:")))
+           (let [{:keys [exit output]} (run! ["--native" "--version"])]
+             (expect (= 0 exit))
+             (expect (str/includes? output "NATIVE:"))
+             (expect (str/includes? output "--version")))
+           (let [{:keys [exit output]} (run! ["--jar" "--version"])]
+             (expect (= 2 exit))
+             (expect (str/includes? output "--jar was removed")))
+           (let [{:keys [output]} (run! ["runtime" "show"])]
+             (expect (str/includes? output "Configured default: jvm")))
+           (finally (delete-tree! root))))))

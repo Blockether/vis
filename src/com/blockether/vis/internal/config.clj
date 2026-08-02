@@ -688,7 +688,7 @@
 ;; result self-describing: after interpolation, anything still matching
 ;; `env-ref-pattern` IS, by construction, an unresolved reference. That is what
 ;; `unresolved-env-refs` reads back for the provider verdict
-;; (`providers/provider-status`), for `vis doctor`, and for the hard error raised
+;; (`providers/provider-status`), for `vis-agent doctor`, and for the hard error raised
 ;; the moment a user EXPLICITLY selects such a provider
 ;; (`providers/save-default-selection!`). Fail at the point of intent, never
 ;; globally.

@@ -36,14 +36,16 @@
         (expect (ifn? (:provider/auth-fn oauth-provider)))
         (expect (ifn? (:provider/get-token-fn oauth-provider)))
         (expect (ifn? (:provider/limits-fn oauth-provider)))))
-  (it "parses callback URL, code#state, query string, and bare code"
-      (expect (= {:code "abc" :state "s1"}
-                 (anthropic/parse-authorization-input
-                   "http://localhost:53692/callback?code=abc&state=s1")))
-      (expect (= {:code "abc" :state "s1"} (anthropic/parse-authorization-input "abc#s1")))
-      (expect (= {:code "abc" :state "s1"}
-                 (anthropic/parse-authorization-input "code=abc&state=s1")))
-      (expect (= {:code "abc"} (anthropic/parse-authorization-input "abc"))))
+  (it
+    "parses callback URL, code#state, query string, and bare code"
+    (expect (= {:code "abc" :state "s1"}
+               (anthropic/parse-authorization-input
+                 "http://localhost:53692/callback?code=abc&state=s1")))
+    (expect (= {:code "abc" :state "s1"}
+               (anthropic/parse-authorization-input "localhost:53692/callback?code=abc&state=s1")))
+    (expect (= {:code "abc" :state "s1"} (anthropic/parse-authorization-input "abc#s1")))
+    (expect (= {:code "abc" :state "s1"} (anthropic/parse-authorization-input "code=abc&state=s1")))
+    (expect (= {:code "abc"} (anthropic/parse-authorization-input "abc"))))
   (it "creates Claude subscription authorization flow with PKCE"
       (let [flow (anthropic/create-authorization-flow)]
         (expect (string? (:verifier flow)))

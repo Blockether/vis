@@ -241,14 +241,14 @@
                    gateway-protocol
                    ".")
      :remedy ["Update Vis on the machine hosting the gateway."
-              "Restart it: vis gateway stop && vis gateway start"]}
+              "Restart it: vis-agent gateway stop && vis-agent gateway start"]}
 
     "unknown"
     (if (nil? gateway-protocol)
       {:title "Update the gateway"
        :summary "The gateway did not advertise the current Vis wire protocol and is unsupported."
        :remedy ["Update Vis on the machine hosting the gateway."
-                "Restart it: vis gateway stop && vis gateway start"]}
+                "Restart it: vis-agent gateway stop && vis-agent gateway start"]}
       {:title "Update this client"
        :summary (str "This "
                      (or client-name "client")

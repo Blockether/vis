@@ -10,7 +10,7 @@
      a friendly message + exit code 2 BEFORE the heavy
      `com.blockether.vis.ext.channel-tui.screen` namespace (Lanterna +
      ~14 sibling tui namespaces) is required. Catching the miss early on
-     the lightweight path keeps `vis channels tui --session-id <bad>`
+     the lightweight path keeps `vis-agent channels tui --session-id <bad>`
      from paying full TUI class-loading cost.
 
      Correct hits still go through the normal screen channel-main, so all
@@ -21,7 +21,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.builtin-hooks :as builtin-hooks]))
 
-(def tui-usage "vis channels tui [--session-id ID | --resume | --continue]")
+(def tui-usage "vis-agent channels tui [--session-id ID | --resume | --continue]")
 
 (defn render-for-tui
   "Project canonical typed content blocks to Markdown for the TUI."
@@ -111,13 +111,14 @@
 
          (str "  " id8 "  " (or title "(untitled)"))))]
 
-    (str "Session not found: "
-         cid
-         (if (seq available)
-           (str "\n\nAvailable sessions (most recent first):\n"
-                (str/join "\n" (map line available))
-                "\n\nUse the 8-char prefix or full UUID with --session-id.")
-           "\n\nNo sessions exist yet - run `vis channels tui` without --session-id first."))))
+    (str
+      "Session not found: "
+      cid
+      (if (seq available)
+        (str "\n\nAvailable sessions (most recent first):\n"
+             (str/join "\n" (map line available))
+             "\n\nUse the 8-char prefix or full UUID with --session-id.")
+        "\n\nNo sessions exist yet - run `vis-agent channels tui` without --session-id first."))))
 
 (defn- require-screen-channel-main
   "Resolve the heavyweight screen channel entry point. Pulled out so the fast
@@ -134,7 +135,7 @@
    `:vis/user-error` branch."
   [cid]
   (let [^java.io.PrintStream out vis/original-stdout]
-    (.println out (str "vis: " (format-session-not-found cid)))
+    (.println out (str "vis-agent: " (format-session-not-found cid)))
     (.flush out))
   (try (vis/shutdown!) (catch Throwable _ nil))
   (System/exit 2))

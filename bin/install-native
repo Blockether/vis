@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# Install the Vis Agent release distribution: public Bash wrapper + private
+# GraalVM native runtime sidecar. The native executable is never exposed as the
+# user-facing command.
+
+set -euo pipefail
+
+repo_slug="${VIS_REPO_SLUG:-Blockether/vis}"
+install_dir="${VIS_INSTALL_DIR:-${VIS_LOCAL_BIN_DIR:-$HOME/.local/bin}}"
+version="${VIS_VERSION:-latest}"
+vis_home="${VIS_HOME:-$HOME/.vis}"
+
+usage() {
+  cat <<EOF
+Usage: install-native [--version TAG|latest] [--install-dir PATH]
+
+Downloads one release bundle and installs:
+  $install_dir/vis-agent          public wrapper
+  $install_dir/vis-agent-native   private native runtime
+
+Environment overrides:
+  VIS_VERSION        release tag (default: latest)
+  VIS_INSTALL_DIR    command directory (default: ~/.local/bin)
+  VIS_LOCAL_BIN_DIR  deprecated alias for VIS_INSTALL_DIR
+  VIS_HOME           state directory (default: ~/.vis)
+  VIS_REPO_SLUG      GitHub OWNER/REPO (default: Blockether/vis)
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version)
+      [[ $# -ge 2 ]] || { echo "vis-agent install: --version requires a tag" >&2; exit 2; }
+      version="$2"
+      shift 2
+      ;;
+    --install-dir)
+      [[ $# -ge 2 ]] || { echo "vis-agent install: --install-dir requires a path" >&2; exit 2; }
+      install_dir="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "vis-agent install: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+for cmd in curl tar; do
+  command -v "$cmd" >/dev/null 2>&1 || {
+    echo "vis-agent install: missing required command: $cmd" >&2
+    exit 1
+  }
+done
+
+case "$(uname -s)" in
+  Darwin) os=macos ;;
+  Linux) os=linux ;;
+  *) echo "vis-agent install: unsupported operating system: $(uname -s)" >&2; exit 1 ;;
+esac
+case "$(uname -m)" in
+  arm64|aarch64) arch=arm64 ;;
+  x86_64|amd64) arch=x64 ;;
+  *) echo "vis-agent install: unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+
+asset="vis-agent-${os}-${arch}-community.tar.gz"
+if [[ "$version" == latest ]]; then
+  api="https://api.github.com/repos/$repo_slug/releases/latest"
+else
+  api="https://api.github.com/repos/$repo_slug/releases/tags/$version"
+fi
+
+echo "vis-agent install: resolving $asset"
+json="$(curl -fsSL "$api")" || {
+  echo "vis-agent install: could not resolve release '$version' from GitHub" >&2
+  exit 1
+}
+download_url="$(printf '%s' "$json" | grep -o "https://[^\"]*/${asset}\"" | head -1)"
+download_url="${download_url%\"}"
+if [[ -z "$download_url" ]]; then
+  echo "vis-agent install: release '$version' has no bundle for $os/$arch" >&2
+  echo "  Install the JVM source distribution instead:" >&2
+  echo "  curl -fsSL https://raw.githubusercontent.com/$repo_slug/main/bin/install-source | bash" >&2
+  exit 1
+fi
+
+archive="$(mktemp "${TMPDIR:-/tmp}/vis-agent-bundle.XXXXXX.tar.gz")"
+unpack="$(mktemp -d "${TMPDIR:-/tmp}/vis-agent-unpack.XXXXXX")"
+cleanup() { rm -rf "$archive" "$unpack"; }
+trap cleanup EXIT
+
+curl -fSL "$download_url" -o "$archive"
+tar -xzf "$archive" -C "$unpack"
+if [[ ! -x "$unpack/vis-agent" || ! -x "$unpack/vis-agent-native" ]]; then
+  echo "vis-agent install: invalid release bundle (wrapper or runtime missing)" >&2
+  exit 1
+fi
+
+if ! mkdir -p "$install_dir" 2>/dev/null || [[ ! -w "$install_dir" ]]; then
+  echo "vis-agent install: cannot write to $install_dir" >&2
+  echo "  Choose a user-writable location with VIS_INSTALL_DIR, or rerun with" >&2
+  echo "  the permissions required by that directory." >&2
+  exit 1
+fi
+if [[ -d "$install_dir/vis-agent" || -d "$install_dir/vis-agent-native" ]]; then
+  echo "vis-agent install: an install target is a directory; move it aside first" >&2
+  exit 1
+fi
+
+install -m 0755 "$unpack/vis-agent" "$install_dir/vis-agent.tmp"
+install -m 0755 "$unpack/vis-agent-native" "$install_dir/vis-agent-native.tmp"
+mv -f "$install_dir/vis-agent-native.tmp" "$install_dir/vis-agent-native"
+mv -f "$install_dir/vis-agent.tmp" "$install_dir/vis-agent"
+if [[ -f "$unpack/install-native" ]]; then
+  install -m 0755 "$unpack/install-native" "$install_dir/install-native"
+fi
+
+mkdir -p "$vis_home"
+printf 'native\n' > "$vis_home/runtime.tmp"
+mv -f "$vis_home/runtime.tmp" "$vis_home/runtime"
+
+path_configured=0
+case ":$PATH:" in
+  *":$install_dir:"*) path_configured=1 ;;
+esac
+
+profile=""
+if (( ! path_configured )); then
+  case "${SHELL:-}" in
+    */zsh) profile="${ZDOTDIR:-$HOME}/.zshrc" ;;
+    */bash)
+      if [[ "$(uname -s)" == Darwin ]]; then profile="$HOME/.bash_profile"; else profile="$HOME/.bashrc"; fi
+      ;;
+    *) profile="$HOME/.profile" ;;
+  esac
+
+  if [[ "$install_dir" == "$HOME/.local/bin" ]]; then
+    path_line="export PATH=\"\$HOME/.local/bin:\$PATH\""
+  else
+    printf -v quoted_install_dir '%q' "$install_dir"
+    path_line="export PATH=$quoted_install_dir:\$PATH"
+  fi
+  touch "$profile"
+  if ! grep -Fqx "$path_line" "$profile"; then
+    printf '\n# Vis Agent command\n%s\n' "$path_line" >> "$profile"
+  fi
+  echo "vis-agent install: added $install_dir to PATH in $profile"
+fi
+
+cat <<EOF
+
+Vis Agent is installed globally for this user:
+  $install_dir/vis-agent
+
+The public command is always the wrapper; its native runtime is the private
+vis-agent-native sidecar. New shells can run:
+  vis-agent runtime show
+  vis-agent help
+EOF
+
+if (( ! path_configured )); then
+  cat <<EOF
+
+Start a new shell (or run: source "$profile") before using vis-agent by name.
+EOF
+fi

@@ -32,11 +32,11 @@
      registered-under         filter by parent path
 
    Channel mounting:
-     channel-subcommands      compose `vis channels` subcommand vec
+     channel-subcommands      compose `vis-agent channels` subcommand vec
                               from the channel registry + any commands
                               registered with `:cmd/parent [\"channels\"]`.
                               Loading this ns also registers the
-                              `vis channels` parent itself.
+                              `vis-agent channels` parent itself.
 
    Specs for keyword fields (`:channel/id`, `:provider/id`, `:cmd/name`,
    ..., plus the descriptor specs `::channel`, `::provider`, `::command`,
@@ -83,7 +83,7 @@
 ;; in the registry.
 (s/def :channel/id keyword?)
 
-;; Sub-command word the CLI matches. `vis channels tui ...` -> :tui channel.
+;; Sub-command word the CLI matches. `vis-agent channels tui ...` -> :tui channel.
 ;; Two registered channels MUST NOT share the same :channel/cmd.
 ;; There is no "default" channel - invoking `vis` with no command
 ;; prints help. Every channel is an explicit subcommand.
@@ -104,7 +104,7 @@
 (s/def :channel/owns-tty? boolean?)
 
 ;; Entry point. (fn [args-vec] -> any). `args-vec` are the CLI tokens
-;; AFTER the channel command (so for `vis channels tui --foo bar` it is
+;; AFTER the channel command (so for `vis-agent channels tui --foo bar` it is
 ;; `["--foo" "bar"]`).
 ;; Accepts any IFn (functions OR vars) so callers can pass `#'channel-main`
 ;; and benefit from REPL redefinition.
@@ -116,7 +116,7 @@
 ;; could register an :html walker. Output type is channel-defined.
 (s/def :channel/messages-renderer-fn ifn?)
 
-;; Channel-owned nested commands, e.g. `vis channels tui approve`.
+;; Channel-owned nested commands, e.g. `vis-agent channels tui approve`.
 ;; This keeps channel subcommands inside the channel descriptor instead of
 ;; extension namespaces registering global command-registry entries directly.
 (s/def :channel/subcommands
@@ -228,8 +228,8 @@
 ;; command-names from the root, EXCLUDING the root itself and the
 ;; command's own `:cmd/name`. Examples:
 ;;   []                  - top-level (`vis <name>`)
-;;   ["extension"]       - nested under `vis extension`
-;;   ["channels"]        - nested under `vis channels`
+;;   ["extension"]       - nested under `vis-agent extension`
+;;   ["channels"]        - nested under `vis-agent channels`
 ;;   ["foo" "bar"]       - nested as `vis foo bar <name>`
 ;; Used by the CLI dispatcher's auto-mount via `registered-under`.
 (s/def :cmd/parent (s/coll-of string? :kind vector?))
@@ -439,9 +439,9 @@
     (vec (filter #(= k (or (:cmd/parent %) [])) @command-registry))))
 
 ;; =============================================================================
-;; CLI mounting - the `vis channels` parent
+;; CLI mounting - the `vis-agent channels` parent
 ;;
-;; The channel registry feeds the `vis channels <cmd>` subcommand
+;; The channel registry feeds the `vis-agent channels <cmd>` subcommand
 ;; tree. Loading this namespace registers the parent itself; subcommand
 ;; resolution is dynamic so newly registered channels appear without
 ;; a restart.
@@ -457,7 +457,7 @@
   [c]
   {:cmd/name (:channel/cmd c)
    :cmd/doc (:channel/doc c)
-   :cmd/usage (or (:channel/usage c) (str "vis channels " (:channel/cmd c)))
+   :cmd/usage (or (:channel/usage c) (str "vis-agent channels " (:channel/cmd c)))
    :cmd/owns-tty? (boolean (:channel/owns-tty? c))
    :cmd/subcommands #(let
                        [s
@@ -474,12 +474,12 @@
                  ((:channel/main-fn c) (vec residual)))})
 
 (defn channel-subcommands
-  "Compose subcommands for the `vis channels` parent from TWO sources:
+  "Compose subcommands for the `vis-agent channels` parent from TWO sources:
 
      1. Every entry in the channel registry (TUI, ...)
      2. Every commandline extension registered with
         `:cmd/parent [\"channels\"]` (escape hatch for non-channel
-        adapters that still want to live under `vis channels`)
+        adapters that still want to live under `vis-agent channels`)
 
    Source #1 wins on name collision - channels are first-class so a
    stray extension can't shadow a real channel name. Both sorted
@@ -499,5 +499,5 @@
 
 (register-cmd! {:cmd/name "channels"
                 :cmd/doc "Run a registered channel (TUI, ...)."
-                :cmd/usage "vis channels <name> [args...]"
+                :cmd/usage "vis-agent channels <name> [args...]"
                 :cmd/subcommands #'channel-subcommands})

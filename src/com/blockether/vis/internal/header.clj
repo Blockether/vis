@@ -185,7 +185,7 @@
 
 (def id-display-chars
   "How many leading characters of the session UUID every channel
-   shows next to the copy affordance. Matches `vis sessions`
+   shows next to the copy affordance. Matches `vis-agent sessions`
    short form."
   8)
 

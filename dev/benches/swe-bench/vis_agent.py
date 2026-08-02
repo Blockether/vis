@@ -29,7 +29,7 @@ REPO_CACHE = Path(
 PROVIDER = os.environ.get("VIS_PROVIDER", "zai-coding-plan")
 MODEL = os.environ.get("VIS_MODEL", "glm-5.1")
 TIMEOUT = int(os.environ.get("VIS_INSTANCE_TIMEOUT", "900"))
-VIS_BIN = os.environ.get("VIS_BIN", "vis")
+VIS_BIN = os.environ.get("VIS_BIN", "vis-agent")
 MODEL_NAME = f"vis+{PROVIDER}/{MODEL}"
 ARTIFACT_ROOT = os.environ.get("SWEBENCH_ARTIFACT_DIR")
 

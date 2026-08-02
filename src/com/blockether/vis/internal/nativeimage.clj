@@ -46,7 +46,9 @@
 
 (defn -getURL [_] "https://github.com/blockether/vis")
 
-(defn -getDescription [_] "vis: require app + extension namespaces with *warn-on-reflection* bound")
+(defn -getDescription
+  [_]
+  "vis-agent: require app + extension namespaces with *warn-on-reflection* bound")
 
 (defn -isInConfiguration [_ _] true)
 

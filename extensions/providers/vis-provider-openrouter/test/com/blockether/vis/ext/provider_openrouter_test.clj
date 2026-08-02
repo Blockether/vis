@@ -66,7 +66,7 @@
                    (fn []
                      (expect (= {:token "k" :api-url (svar/provider-base-url :openrouter)}
                                 ((:provider/get-token-fn (vis/provider-by-id :openrouter))))))))
-             (it "throws a pointer at `vis providers auth openrouter` when unauthenticated"
+             (it "throws a pointer at `vis-agent providers auth openrouter` when unauthenticated"
                  (require 'com.blockether.vis.ext.provider-openrouter :reload)
                  (with-redefs-fn {#'openrouter/detect-key (constantly nil)}
                    (fn []

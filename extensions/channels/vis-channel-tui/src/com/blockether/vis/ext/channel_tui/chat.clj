@@ -1353,6 +1353,6 @@
 (defn dispose!
   "Release the TUI's env handle. Session data stays in
    `~/.vis/vis.mdb` so other consumers of the `:tui` channel
-   (e.g. `vis sessions tui`, future inspectors) still see it."
+   (e.g. `vis-agent sessions tui`, future inspectors) still see it."
   [{:keys [id]}]
   (when id (vis/gateway-release-session! id)))

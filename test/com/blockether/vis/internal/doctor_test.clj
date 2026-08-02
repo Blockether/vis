@@ -16,7 +16,7 @@
                  :message "Piper missing"
                  :remediation "Install voice"}]
                {:use-ansi? false})]
-        (expect (str/starts-with? out "vis doctor\n\n  foundation\n  ──────────"))
+        (expect (str/starts-with? out "vis-agent doctor\n\n  foundation\n  ──────────"))
         (expect (str/includes? out "  ℹ agents-md: AGENTS.md loaded"))
         (expect (str/includes? out "\n\n  voice\n  ─────"))
         (expect (str/includes? out "  ⚠ piper: Piper missing"))

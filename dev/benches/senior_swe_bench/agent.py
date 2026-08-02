@@ -277,7 +277,7 @@ class VisInstalledAgent(BaseInstalledAgent):
         artifact = _artifact_path()
         install_prefix = _env_value(self, "VIS_BENCH_INSTALL_PREFIX", DEFAULT_INSTALL) or DEFAULT_INSTALL
         remote_home = _env_value(self, "VIS_BENCH_REMOTE_HOME", DEFAULT_REMOTE_HOME) or DEFAULT_REMOTE_HOME
-        vis_bin = f"{install_prefix}/vis"
+        vis_bin = f"{install_prefix}/vis-agent"
         remote_artifact = "/tmp/vis-agent.tar.gz"
         remote_stage = "/tmp/vis-agent-install"
 
@@ -334,7 +334,7 @@ class VisInstalledAgent(BaseInstalledAgent):
             timeout=30,
         )
         if _returncode(version) != 0:
-            raise RuntimeError(f"vis --version failed after install: {_result_text(version, 'stderr')[-1000:]}")
+            raise RuntimeError(f"vis-agent --version failed after install: {_result_text(version, 'stderr')[-1000:]}")
 
         meta = {
             "artifact": str(artifact),
@@ -356,7 +356,7 @@ class VisInstalledAgent(BaseInstalledAgent):
         stderr = trace_dir / "vis.stderr.txt"
 
         install_prefix = _env_value(self, "VIS_BENCH_INSTALL_PREFIX", DEFAULT_INSTALL) or DEFAULT_INSTALL
-        vis_bin = _env_value(self, "VIS_BENCH_VIS_BIN", f"{install_prefix}/vis") or f"{install_prefix}/vis"
+        vis_bin = _env_value(self, "VIS_BENCH_VIS_BIN", f"{install_prefix}/vis-agent") or f"{install_prefix}/vis-agent"
         remote_home = _env_value(self, "VIS_BENCH_REMOTE_HOME", DEFAULT_REMOTE_HOME) or DEFAULT_REMOTE_HOME
         provider = _env_value(self, "VIS_PROVIDER", "zai-coding-plan") or "zai-coding-plan"
         model = _env_value(self, "VIS_MODEL", "glm-5.2") or "glm-5.2"
@@ -403,7 +403,7 @@ class VisInstalledAgent(BaseInstalledAgent):
                 # rollout trace unavailable instead of manufacturing zeroes.
                 pass
         if _returncode(result) != 0:
-            raise RuntimeError(f"vis exited {_returncode(result)}; stderr artifact: {stderr}")
+            raise RuntimeError(f"vis-agent exited {_returncode(result)}; stderr artifact: {stderr}")
         return result
 
     def populate_context_post_run(self, context: Any) -> Any:

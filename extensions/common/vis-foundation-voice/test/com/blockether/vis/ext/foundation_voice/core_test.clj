@@ -4,7 +4,7 @@
 
 (defdescribe
   voice-config-test
-  (it "mounts voice model commands under vis extension voice"
+  (it "mounts voice model commands under vis-agent extension voice"
       (let
         [cli (-> voice/voice-extension
                  :ext/cli

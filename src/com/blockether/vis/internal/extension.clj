@@ -520,7 +520,7 @@
 (s/def :ext/source-nses (s/coll-of symbol? :kind vector?))
 ;; Top-level kind - the *category* of surface this extension
 ;; contributes. Used for prompt-rendering section labels AND as the
-;; section heading in `vis extension list`. Examples: "foundation",
+;; section heading in `vis-agent extension list`. Examples: "foundation",
 ;; "languages", "providers", "channels", "persistance". Authors may
 ;; set it explicitly; for the common categorical cases (extensions
 ;; that only contribute providers / channels / persistence backends)
@@ -859,7 +859,7 @@
 ;; descriptor map: :storage/id :storage/scheme :storage/put-fn :storage/get-fn
 ;; plus optional :storage/offload? :storage/priority).
 (s/def :ext/attachment-storage (s/coll-of map? :kind vector?))
-;; Doctor contribution from this extension: ONE function the `vis doctor`
+;; Doctor contribution from this extension: ONE function the `vis-agent doctor`
 ;; aggregator calls with the live environment and that returns a seq of
 ;; diagnostic message maps. Replaces the previous doctor check vector
 ;; of `{:check/id :check/name :check/description :check/run-fn}` maps -
@@ -2085,7 +2085,7 @@
    owner/registry-id) and the source forensics (paths/mtime/sha256)
    were stamped PER CALL and persisted with every form envelope — pure
    DB bloat with zero readers; `extension-info` still serves the ctx
-   `:extensions` digest and `vis extension list` from the registry."
+   `:extensions` digest and `vis-agent extension list` from the registry."
   [ext sym-entry result]
   (if (tool-result? result)
     (merge-into-metadata (stamp-public-result-op (ensure-tool-result-op ext sym-entry result))
@@ -2654,7 +2654,7 @@
    didn't set one. Extensions that contribute providers, channels,
    channel contributions, or persistence backends (and nothing forcing a different
    label) get bucketed under `\"providers\"` / `\"channels\"` /
-   `\"persistance\"` so `vis extension list` reads as a clean grouped
+   `\"persistance\"` so `vis-agent extension list` reads as a clean grouped
    table instead of a column of blanks.
 
    Explicit `:ext/kind` always wins. Extensions that fit no
@@ -3008,9 +3008,9 @@
 (def ^:private EXT_PARENT ["extension"])
 
 (defn- mount-under-ext
-  "Auto-place an `:ext/cli` entry under the `vis extension` parent.
+  "Auto-place an `:ext/cli` entry under the `vis-agent extension` parent.
 
-   Authors who want nested placement (e.g. `vis extension git status`)
+   Authors who want nested placement (e.g. `vis-agent extension git status`)
    can pass `:cmd/parent [\"extension\" \"git\"]` and the dispatcher
    respects it. The legacy `\"ext\"` first element is accepted and
    canonicalized to `\"extension\"`. Any other parent is rejected."
@@ -3806,7 +3806,7 @@
       (throw (ex-info (str "sandbox shim source not found on classpath: " res)
                       {:shim/name (:shim/name shim) :shim/source res})))))
 ;; =============================================================================
-;; CLI bridge -- the `vis extension` parent lives in `internal.main` next to the
+;; CLI bridge -- the `vis-agent extension` parent lives in `internal.main` next to the
 ;; other top-level built-in parents (`providers`, `sessions`, `doctor`,
 ;; `update`). Extensions populate it via `:ext/cli` on `extension`;
 ;; `register-extension!` above forwards each entry through `mount-under-ext`

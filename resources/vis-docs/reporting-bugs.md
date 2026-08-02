@@ -25,9 +25,9 @@ output, UI glitches, performance, docs) belongs in the public tracker.
 
 Almost every Vis bug is diagnosable from this, and none of it is proprietary:
 
-1. **Version and platform** — `vis --version`, your OS and architecture, and
+1. **Version and platform** — `vis-agent --version`, your OS and architecture, and
    whether you run the native binary or the JVM build.
-2. **`vis doctor` output.** It is the single highest-signal attachment:
+2. **`vis-agent doctor` output.** It is the single highest-signal attachment:
    provider/config/extension/sandbox health with credentials already redacted.
    Still skim it before pasting — it prints paths, and a path can name a
    client.
@@ -76,11 +76,11 @@ Sometimes the transcript really is the bug (bad tool call, mangled render, lost
 turn). Then export it and edit it — do not hand over the database:
 
 ```bash
-vis sessions list
-vis sessions export <SESSION-ID> --md > /tmp/report.md
+vis-agent sessions list
+vis-agent sessions export <SESSION-ID> --md > /tmp/report.md
 ```
 
-`vis sessions export` reproduces the conversation **faithfully and without
+`vis-agent sessions export` reproduces the conversation **faithfully and without
 redaction**. So, before attaching `/tmp/report.md`:
 
 1. Read it end to end. Every line of it.
@@ -100,7 +100,7 @@ repro in an empty directory is a better bug report than a redacted transcript.
 
 The TUI and the companion app show your real work: file names, branch names,
 diffs, tool output. Before you screenshot, switch to a scratch project, or crop
-to the broken widget. `vis sessions export --mp4` has the same exposure as a
+to the broken widget. `vis-agent sessions export --mp4` has the same exposure as a
 screen recording — it replays the real session.
 
 ## A template
@@ -119,7 +119,7 @@ screen recording — it replays the real session.
 
 **Extension:** <the 15-line greeter.py from the docs>
 
-**vis doctor:**
+**vis-agent doctor:**
 <paste>
 
 **Error:**

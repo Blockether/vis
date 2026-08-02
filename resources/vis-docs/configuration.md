@@ -7,7 +7,7 @@ Vis reads config from four YAML sources, deep-merged in order — later sources 
 3. `<project>/vis.yml` (or `vis.yaml`) — **project root**, visible. The natural home for team-shared, committed settings.
 4. `<project>/.vis/config.yml` (or `.vis/config.yaml`) — **project overlay**, hidden. The nested overlay wins over the root file: personal beats committed.
 
-"Project" means the directory you launched `vis` from. Everything else Vis owns lives next to the global config: the session database at `~/.vis/vis.mdb` and the log at `~/.vis/vis.log`.
+"Project" means the directory you launched `vis-agent` from. Everything else Vis owns lives next to the global config: the session database at `~/.vis/vis.mdb` and the log at `~/.vis/vis.log`.
 
 ## Keys are snake_case strings
 
@@ -106,8 +106,8 @@ Vis is model-agnostic: anything that speaks an OpenAI- or Anthropic-style chat A
 **A model may name its provider: `provider/model`.** Anywhere the CLI takes `--model`, a slash-qualified name is accepted and is the one-shot equivalent of passing `--provider` and `--model` together:
 
 ```bash
-vis --model zai-coding-plan/glm-5.2 "task"      # same as --provider zai-coding-plan --model glm-5.2
-vis --model glm-5.2 "task"                      # bare name: selects on the ACTIVE provider
+vis-agent --model zai-coding-plan/glm-5.2 "task"      # same as --provider zai-coding-plan --model glm-5.2
+vis-agent --model glm-5.2 "task"                      # bare name: selects on the ACTIVE provider
 ```
 
 The named provider is promoted to the router root for that run only, and it does not have to exist in `vis.yml` yet — an unconfigured one is synthesized from its built-in preset, so a provider that already has managed auth (a coding plan, Copilot) is usable without touching config. Nothing is persisted. A provider Vis cannot resolve is reported as a user error naming it, before the first request.
@@ -179,7 +179,7 @@ providers:
 An **unset** variable is not a load failure. Vis is a long-lived gateway whose config is re-read live and on `/reload`, so one unused provider's missing key must never kill a session running happily on a healthy provider. The reference is left verbatim instead, and that provider is reported unusable in three places:
 
 - the **provider manager** shows `NEEDS ENV · ANTHROPIC_API_KEY` instead of an authenticated verdict;
-- **`vis doctor`** warns `can't use anthropic: ANTHROPIC_API_KEY is not set` and names the export to run;
+- **`vis-agent doctor`** warns `can't use anthropic: ANTHROPIC_API_KEY is not set` and names the export to run;
 - one warning is logged at load time, once per set of missing variables.
 
 The provider is also dropped from the router fleet, so it can never be picked implicitly. Reaching for it **explicitly** — selecting it in the provider picker — is the one place that hard-errors, with the same message. Failure lands at the point of intent, never globally.
@@ -193,7 +193,7 @@ provider's exact effort value instead of Vis's adaptive, provider-agnostic
 reasoning levels:
 
 ```bash
-vis --provider zai-coding-plan --model glm-5.2 \
+vis-agent --provider zai-coding-plan --model glm-5.2 \
   --reasoning-effort high --json "task"
 ```
 
@@ -339,7 +339,7 @@ home, minimal CI), the very first Python block fails with
 Resolution order for the cache root:
 
 1. The GraalVM system property always wins:
-   `vis -J-Dpolyglot.engine.userResourceCache=/path` on the JVM launcher, or
+   `vis-agent -J-Dpolyglot.engine.userResourceCache=/path` on the JVM launcher, or
    `VIS_OPTS`/`JAVA_TOOL_OPTIONS` style `-D` flags where applicable.
 2. `python.resource_cache` in config (`~` expands to your home directory):
 
@@ -363,8 +363,8 @@ to steps 3–4 rather than failing startup.
 
 ## Python import roots
 
-`vis python` puts a project's own packages on `sys.path` before running, so
-`vis python -m pytest tests/` imports a `src/` layout the same way an explicit
+`vis-agent python` puts a project's own packages on `sys.path` before running, so
+`vis-agent python -m pytest tests/` imports a `src/` layout the same way an explicit
 `PYTHONPATH=src` invocation would.
 
 The roots are read from the project's packaging metadata with Python's own

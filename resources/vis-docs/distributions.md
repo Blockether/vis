@@ -1,24 +1,66 @@
-# Custom distributions
+# Runtime distributions
 
-A native-image is platform-specific: the binary that runs on Apple Silicon is not the one that runs on Linux x86-64. Vis builds a **per-platform distribution** for each target and publishes them, so users get a single native binary for their machine — no JVM, no runtime download for the core.
+Vis Agent has one public distribution shape: a **Bash wrapper** named
+`vis-agent`, plus whichever runtime that installation provides. Users never
+install or invoke the native image as `vis`.
 
-## Per-platform matrix
+## The wrapper is the product boundary
 
-The release builds across the platforms that matter:
+The wrapper is responsible for:
 
-| Platform | Target triple |
-| --- | --- |
-| Linux x86-64 | `x86_64-unknown-linux-gnu` |
-| Linux ARM64 | `aarch64-unknown-linux-gnu` |
-| macOS ARM64 | `aarch64-apple-darwin` |
-| macOS x86-64 | `x86_64-apple-darwin` |
+- keeping one collision-free command on PATH (`vis-agent`);
+- selecting native or live JVM source;
+- persisting the default with `vis-agent runtime use native|jvm`;
+- applying one-launch `--native` / `--jvm` overrides;
+- preserving the invocation working directory; and
+- producing a clear error when the selected runtime is unavailable.
 
-The Intel-mac artifact is **cross-built on the Apple-Silicon runner** (Xcode's SDK is universal) rather than waiting on a scarce Intel runner — fast and reliable.
+`vis-agent runtime show` reports the configured default, effective runtime, and
+the paths it discovered. There is no jar runtime. The AOT jar produced during a
+native build is an implementation artifact only.
 
-## Native dependencies, split out
+## Native release bundle
 
-Heavy native dependencies follow the same per-platform model rather than bloating one fat artifact. The tree-sitter language pack, for instance, publishes a small main jar plus one native jar per platform (`…-native-macos-arm64`, `…-native-linux-x86_64`, …); a resolver selects the right one at runtime, or it's embedded for the native build. The principle: **one small portable artifact, plus exactly the native payload your platform needs.**
+Native-image output is platform-specific, but it is a **private runtime
+sidecar**, not a standalone Vis distribution. Each release archive is named:
 
-## Build once, verify everywhere
+```text
+vis-agent-<os>-<arch>-community.tar.gz
+```
 
-Every platform's binary is built and smoke-tested in CI before release. A distribution is never published unless its native build is green on its own platform — so a broken grammar or a missing reachability entry surfaces in CI, not on a user's machine.
+and contains:
+
+```text
+vis-agent          # public Bash wrapper
+vis-agent-native   # private GraalVM native-image runtime
+install-native     # installer for the same bundle shape
+```
+
+The two executables stay next to each other. `bin/install-native` installs them
+together, and `vis-agent update` replaces them together. This prevents the
+launcher and runtime contract from drifting across versions.
+
+Release CI currently builds and smoke-tests:
+
+| Platform | Bundle |
+|---|---|
+| Linux x86-64 | `vis-agent-linux-x64-community.tar.gz` |
+| Linux ARM64 | `vis-agent-linux-arm64-community.tar.gz` |
+
+macOS users use the JVM source distribution unless a maintainer provides a
+matching locally built sidecar. Native builds require GraalVM Community Edition
+25.1.3 exactly; the repository pin is authoritative.
+
+## JVM source distribution
+
+`bin/install-source` clones or updates a source checkout, copies the same wrapper
+onto PATH, and records the checkout in `~/.vis/source-dir`. The runtime is
+`clojure -M:vis` from that checkout. No jar is copied or selected.
+
+A source installation and a native sidecar can coexist. Switching the persisted
+runtime does not reinstall anything:
+
+```bash
+vis-agent runtime use jvm
+vis-agent runtime use native
+```
