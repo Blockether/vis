@@ -104,6 +104,7 @@ jobs:
                 ;;
               *) echo "Unsupported release tag: $GITHUB_REF_NAME" >&2; exit 1 ;;
             esac
+          fi
 
           git merge-base --is-ancestor "$REGULAR_COMMIT" HEAD || {
             echo "$REGULAR must be an ancestor of this companion release" >&2
@@ -235,6 +236,7 @@ jobs:
                 ;;
               *) echo "Unsupported release tag: $GITHUB_REF_NAME" >&2; exit 1 ;;
             esac
+          fi
 
           git merge-base --is-ancestor "$REGULAR_COMMIT" HEAD || {
             echo "$REGULAR must be an ancestor of this companion release" >&2

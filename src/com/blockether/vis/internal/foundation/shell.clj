@@ -22,13 +22,15 @@
       as a session RESOURCE. Prefer this for long builds, test suites, servers,
       watchers, and interactive commands; reserve run for short bounded work.
 
-   3. LOGS / SEND / STOP `await shell({\"op\": \"logs\", \"id\": \"dev\"})` — tail
-      the ring buffer, type `{\"text\": \"…\"}` into the pty, or kill the tree.
+   3. WAIT / LOGS / SEND / STOP `await shell({\"op\": \"wait\", \"id\": \"dev\"})`
+      — wait on the host for completion and receive the final log tail, snapshot
+      the ring buffer immediately with `logs`, type `{\"text\": \"…\"}` into the
+      pty, or kill the tree.
 
    EVERY public call takes exactly one map. Process commands are its non-empty
    `commands` string array; command strings and command arrays are never
    positional. `text` is the map field only for `send` keystrokes. Resource IDs
-   live in that same map for background/logs/send/stop.
+   live in that same map for background/wait/logs/send/stop.
 
    Every op answers a stage-SCOPED total key set ([[result-core]] plus that one
    stage's own keys): a key the stage owns is nil / false / 0 / [] instead of
