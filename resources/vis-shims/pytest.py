@@ -881,10 +881,10 @@ def __vis_install_pytest_compat__():
                 elif a.startswith("-k") or a.startswith("--maxfail="):
                     callargs.append(a)
                 elif not a.startswith("-"):
-                    base = a.split("::")[0]
+                    base, _found, _sel = a.partition("::")
                     cand = self.path / base
                     if cand.exists():
-                        callargs.append(str(cand))
+                        callargs.append(str(cand) + (("::" + _sel) if _found else ""))
                         has_path = True
                 _j += 1
             if not has_path:
@@ -1727,6 +1727,10 @@ def __vis_install_pytest_compat__():
                     for pid, pkwargs, casemarks, indkw in _expand_params(base_marks):
                         combo = "-".join(x for x in (fid, pid) if x)
                         full_id = nodeid + (("[" + combo + "]") if combo else "")
+                        if ctl.get("sel") is not None and not _sel_match(
+                            full_id, ctl["sel"]
+                        ):
+                            continue
                         if ctl["kexpr"] is not None and not _kexpr_match(
                             ctl["kexpr"], full_id
                         ):
@@ -1780,11 +1784,47 @@ def __vis_install_pytest_compat__():
             fm.teardown("module")
             fm.teardown("session")
 
+    def _sel_match(full_id, selectors):
+        # Node-ID selection. A selector is everything after the FILE part of a
+        # `path.py::name`, `path.py::Class::method` or `path.py::name[param]`
+        # argument, and matches a collected id when it is that id's suffix
+        # exactly, its unparametrized base, or a class/prefix of it.
+        rest = full_id.split("::", 1)[1] if "::" in full_id else full_id
+        base = rest.split("[", 1)[0]
+        for s in selectors:
+            if s in (rest, base):
+                return True
+            if rest.startswith(s + "::") or base.startswith(s + "::"):
+                return True
+        return False
+
+    def _case_ids(tests, fm):
+        # Every id `_run_group` will build, WITHOUT running anything: one entry
+        # per parametrize / parametrized-fixture combination, exactly what
+        # pytest calls a collected item.
+        ids = []
+        for _kind, nodeid, func, _cls, _ln in tests:
+            base_marks = list(getattr(func, _MARKS_ATTR, []))
+            try:
+                fcases = _fixture_param_cases(func, fm)
+            except Exception:
+                fcases = [("", {})]
+            try:
+                pcases = _expand_params(base_marks)
+            except Exception:
+                pcases = [("", {}, [], {})]
+            for fid, _fmap in fcases or [("", {})]:
+                for pid, _pk, _cm, _ik in pcases or [("", {}, [], {})]:
+                    combo = "-".join(x for x in (fid, pid) if x)
+                    ids.append(nodeid + (("[" + combo + "]") if combo else ""))
+        return ids
+
     def main(args=None, ns=None):
         verbose = False
-        paths = []
+        specs = []
         kexpr = None
         maxfail = 0
+        collect_only = False
         if args:
             if isinstance(args, str):
                 args = [args]
@@ -1796,6 +1836,8 @@ def __vis_install_pytest_compat__():
                     verbose = True
                 elif a in ("-x", "--exitfirst"):
                     maxfail = 1
+                elif a in ("--collect-only", "--co"):
+                    collect_only = True
                 elif a == "-k":
                     _i += 1
                     if _i < len(args):
@@ -1815,37 +1857,65 @@ def __vis_install_pytest_compat__():
                     except ValueError:
                         pass
                 elif not a.startswith("-"):
-                    paths.append(a)
+                    # `path::name` / `path::Class::method` / `path::name[p]`:
+                    # the FILE part drives discovery, the rest selects nodes.
+                    _p, _found, _sel = a.partition("::")
+                    specs.append((_p, _sel if _found else None))
                 _i += 1
+        paths = [p for p, _s in specs]
         if ns is None:
             ns = sys._getframe(1).f_globals
         groups = []
         load_errors = []
-        if paths:
-            # Disk mode: discover + import files, collect test_* from each.
-            for fpath in _discover_paths(paths):
+        missing = []
+        if specs:
+            # Disk mode: discover + import files, collect test_* from each. A
+            # file named by several specs is loaded ONCE and their selectors
+            # merge; one bare path means "every test in this file".
+            order = []
+            selmap = {}
+            for p, sel in specs:
+                found = _discover_paths([p])
+                if not found and not os.path.exists(p):
+                    missing.append(p)
+                for f in found:
+                    if f not in selmap:
+                        order.append(f)
+                        selmap[f] = []
+                    if sel is None:
+                        selmap[f] = None
+                    elif selmap[f] is not None:
+                        selmap[f].append(sel)
+            for fpath in order:
                 try:
-                    groups.append(_group_from_file(fpath))
+                    _items, _fm, _src = _group_from_file(fpath)
+                    groups.append((_items, _fm, _src, selmap[fpath]))
                 except Exception as _e:
                     load_errors.append((fpath, _e))
         else:
             # Inline mode: collect from the caller's block globals.
             src = ns.get("__vis_src__")
             fm = FixtureManager(_fixtures_of(ns, _current_block_names(src)))
-            groups.append((_collect(ns, src), fm, src))
+            groups.append((_collect(ns, src), fm, src, None))
+        if missing:
+            # pytest's EXIT_USAGEERROR: a path the user named does not exist.
+            for p in missing:
+                sys.stdout.write("ERROR: file or directory not found: " + p + _NL)
+            sys.stdout.flush()
+            return 4
         # pytest counts COLLECTED CASES: every parametrize / parametrized-fixture
-        # combination is one item, not one per test function.
-        total = 0
-        for _tests, _fm, _src in groups:
-            for _t in _tests:
-                _func = _t[2]
-                try:
-                    _n = len(_fixture_param_cases(_func, _fm)) * len(
-                        _expand_params(list(getattr(_func, _MARKS_ATTR, [])))
-                    )
-                except Exception:
-                    _n = 1
-                total += max(1, _n)
+        # combination is one item, not one per test function. Node-ID selection
+        # filters the COLLECTION, so it changes this count too.
+        selected = []
+        for _tests, _fm, _src, _sel in groups:
+            selected.append(
+                [
+                    i
+                    for i in _case_ids(_tests, _fm)
+                    if _sel is None or _sel_match(i, _sel)
+                ]
+            )
+        total = sum(len(ids) for ids in selected)
         _buf = []
         write = _buf.append
         write(_NL + _sep("=", "test session starts") + _NL)
@@ -1878,10 +1948,30 @@ def __vis_install_pytest_compat__():
             + _NL
             + _NL
         )
+        if collect_only:
+            # `--collect-only` LISTS the selected node ids; it must never RUN
+            # them. An empty collection is pytest's EXIT_NOTESTSCOLLECTED.
+            for ids in selected:
+                for i in ids:
+                    write(i + _NL)
+            write(
+                _NL
+                + str(total)
+                + " test"
+                + ("" if total == 1 else "s")
+                + " collected"
+                + _NL
+            )
+            sys.stdout.write("".join(_buf))
+            sys.stdout.flush()
+            mod._vis_last_report = []
+            mod._vis_last_deselected = 0
+            return 0 if total else 5
         results = []
         t_start = time.time()
         ctl = {
             "kexpr": kexpr,
+            "sel": None,
             "maxfail": maxfail,
             "nfail": 0,
             "deselected": 0,
@@ -1892,9 +1982,10 @@ def __vis_install_pytest_compat__():
             "col": 0,
             "prefix": None,
         }
-        for tests, fm, src in groups:
+        for tests, fm, src, sel in groups:
             if ctl["stop"]:
                 break
+            ctl["sel"] = sel
             _run_group(tests, fm, src, results, write, verbose, ctl)
         for fpath, _e in load_errors:
             r = _Result(fpath)
@@ -1904,6 +1995,10 @@ def __vis_install_pytest_compat__():
             _flush_progress(write, ctl)
         elapsed = time.time() - t_start
         rc = _summary(results, write, elapsed, ctl["deselected"], ctl)
+        if rc == 0 and not results:
+            # pytest's EXIT_NOTESTSCOLLECTED. A run that executed NOTHING is not
+            # a pass: a mistyped node id must never look like a green suite.
+            rc = 5
         mod._vis_last_deselected = ctl["deselected"]
         sys.stdout.write("".join(_buf))
         sys.stdout.flush()
