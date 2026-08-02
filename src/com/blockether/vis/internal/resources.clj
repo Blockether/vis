@@ -3,8 +3,8 @@
    long-lived thing vis spawns (an nREPL, a daemon, a background shell, a file
    watch, a capture) registers under, so a single definition drives THREE spouts:
 
-     1. the agent     — `:session/resources` in ctx + `resource_stop`/`resource_restart`
-     2. the footer/TUI — a live count + a dialog that stops/restarts by id
+     1. the agent     — `:session/resources` in ctx + `resource_stop`
+     2. the footer/TUI — a live count + a dialog that stops by id
      3. the engine     — teardown on shutdown
 
    SESSION-SCOPED. The registry is partitioned by `session-id`: a resource one
@@ -17,10 +17,10 @@
    B-DISPATCH model. A resource is split into:
 
      - DATA (serializable, STRING-KEYED): id, kind, label, status, detail,
-       pid, owner, session, can_stop, can_restart, created_at. This is
+       pid, owner, session, can_stop, created_at. This is
        what the footer renders and what persists to `~/.vis/resources.edn` so a
        resource survives a vis restart (display + pid re-attach).
-     - LIFECYCLE THUNKS (live, in-memory only): `:stop-fn :restart-fn :alive-fn
+     - LIFECYCLE THUNKS (live, in-memory only): `:stop-fn :alive-fn
        :logs-fn :health-fn`. Never serialized. Across a restart the OWNER
        re-registers them (e.g. the Clojure pack re-attaches its nREPLs by pid on
        init) — exactly the pattern `repl-manager` already uses, lifted here so
@@ -36,14 +36,14 @@
    their model-facing identity. Ctx leaves are PROJECTED (`repl-ctx-keys` /
    `other-ctx-keys`) to what changes a decision — `can_stop` included, so ctx never
    stops advertising what the agent still has to tear down — never a callable, never the
-   pack's full detail. Killing goes through `stop!`/`restart!` (by session + id) — the
+   pack's full detail. Killing goes through `stop!` (by session + id) — the
    single path the agent tool AND the footer both call. `id` IS the binding."
   (:require [clojure.java.io :as io]
             [clojure.string :as str])
   (:import (java.lang ProcessHandle)))
 
 ;; ---------------------------------------------------------------------------
-;; In-memory registry: { session-id -> { id -> {:data {..} :stop-fn :restart-fn
+;; In-memory registry: { session-id -> { id -> {:data {..} :stop-fn
 ;; :alive-fn} } }. defonce so a `(require :reload)` during dev never drops live
 ;; resources.
 ;; ---------------------------------------------------------------------------
@@ -137,10 +137,10 @@
 
 (defn- ->data
   "Normalise a caller resource map into the canonical serializable DATA map.
-   `\"can_stop\"`/`\"can_restart\"` reflect whether a thunk was supplied;
+   `\"can_stop\"` reflects whether a thunk was supplied;
    `\"session\"` is stamped from the owning session."
   [session {:keys [id kind label status detail pid owner language]}
-   {:keys [stop-fn restart-fn logs-fn health-fn]}]
+   {:keys [stop-fn logs-fn health-fn]}]
   (cond->
     {"id" (str id)
      "session" (skey session)
@@ -148,7 +148,6 @@
      "label" (str (or label id))
      "status" (sval (or status :up))
      "can_stop" (boolean stop-fn)
-     "can_restart" (boolean restart-fn)
      "can_logs" (boolean logs-fn)
      "can_health" (boolean health-fn)
      "created_at" (System/currentTimeMillis)}
@@ -220,11 +219,11 @@
 (defn register!
   "Register (or replace) a resource UNDER `session`. `resource` is the DATA map
    (needs at least `:id`, unique within the session; `:kind` defaults to
-   `:resource`). `fns` carries the live lifecycle thunks `{:stop-fn :restart-fn
+   `:resource`). `fns` carries the live lifecycle thunks `{:stop-fn
    :alive-fn :logs-fn :health-fn}` (all optional — a resource with no `:stop-fn`
    reports `can_stop false`). Returns the stored DATA map."
   ([session resource] (register! session resource nil))
-  ([session resource {:keys [stop-fn restart-fn alive-fn logs-fn health-fn] :as fns}]
+  ([session resource {:keys [stop-fn alive-fn logs-fn health-fn] :as fns}]
    (let
      [sid
       (skey session)
@@ -240,9 +239,6 @@
        (cond-> {:data data}
          stop-fn
          (assoc :stop-fn stop-fn)
-
-         restart-fn
-         (assoc :restart-fn restart-fn)
 
          alive-fn
          (assoc :alive-fn alive-fn)
@@ -406,12 +402,12 @@
 
 (def ^:private repl-ctx-keys
   "Model-facing REPL leaf keys, in render order. `language`/`cwd` are already the
-   PATH, `id` addresses the REPL, `status` decides reuse vs start/restart,
+   PATH, `id` addresses the REPL, `status` decides reuse vs start,
    `can_stop` is the TEARDOWN affordance — the agent has to leave nothing of its
    own running, and a leaf that never says it is stoppable is one the agent
    forgets to stop — and `port`/`external`/`host` say whether vis may kill it or
    only detach. Everything else a pack records (versions, aliases, dialect, label,
-   log, tool, kind, pid, owner, created_at, can_restart, nrepl session id) is one
+   log, tool, kind, pid, owner, created_at, nrepl session id) is one
    `repl` status call away and changes no decision — carried in ctx it cost ~190
    tokens PER LIVE REPL on every request."
   ["id" "status" "can_stop" "port" "external" "host"])
@@ -559,28 +555,6 @@
               {:result :error :id id :message message})
             {:result :stopped :id id}))))))
 
-(defn restart!
-  "Run a resource's `:restart-fn` (kept registered). Scoped to `session`. The
-   restart-fn owns re-registration of any changed DATA (e.g. a new port)."
-  [session id]
-  (let
-    [sid
-     (skey session)
-
-     id
-     (str id)
-
-     r
-     (get-in @registry [sid id])]
-
-    (cond (nil? r) {:result :unknown :id id :message "No such resource in this session."}
-          (nil? (:restart-fn r))
-          {:result :not-restartable :id id :message "Resource has no restart handle."}
-          :else (let [res (try {:ok ((:restart-fn r))} (catch Throwable t {:error (ex-message t)}))]
-                  (if (:error res)
-                    {:result :error :id id :message (:error res)}
-                    {:result :restarted :id id})))))
-
 (defn stop-all!
   "Teardown spout for one `session` (engine end-of-session): stop every stoppable
    resource generation registered before or during teardown. Unlike one `stop!`,
@@ -674,15 +648,15 @@
   (teardown-sessions! (constantly true)))
 
 ;; ---------------------------------------------------------------------------
-;; Agent surface — B-dispatch. The sandbox gets two engine-builtin tools, each
-;; CLOSED OVER the owning session, that act on a resource purely by its `:id`;
+;; Agent surface — B-dispatch. The sandbox gets ONE engine-builtin tool,
+;; CLOSED OVER the owning session, that acts on a resource purely by its `:id`;
 ;; ctx (`session["resources"]`) already advertises which ids are
-;; `can_stop`/`can_restart`. Wired by the loop via env/set-python-binding!,
+;; `can_stop`. Wired by the loop via env/set-python-binding!,
 ;; which snake-cases the symbol: `resource-stop` -> `resource_stop(id)`.
 ;; ---------------------------------------------------------------------------
 
 (defn- ->model-result
-  "Project an internal `stop!`/`restart!` result map (`{:result :stopped
+  "Project an internal `stop!` result map (`{:result :stopped
    :id ...}`) to a strings-only payload for the model-facing tools — the return
    value crosses the Python boundary, so nothing keyword may survive."
   [{:keys [result id message]}]
@@ -702,10 +676,8 @@
   "Map of engine-builtin tool fns the loop merges into `session`'s agent sandbox.
    Closures bind the session so the tools are session-scoped by construction.
    Returns are projected to strings-only (`->model-result`) since they cross the
-   boundary as the tool result; `stop!`/`restart!` stay keyword-keyed for
+   boundary as the tool result; `stop!` stays keyword-keyed for
    internal callers (e.g. the REPL pack's `repl_stop`)."
   [session]
   {'resource-stop (fn [id]
-                    (->model-result (stop! session (->id id))))
-   'resource-restart (fn [id]
-                       (->model-result (restart! session (->id id))))})
+                    (->model-result (stop! session (->id id))))})

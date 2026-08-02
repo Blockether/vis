@@ -2115,14 +2115,6 @@
     (json-response (resources/stop! sid (req-rid request)))
     (session-404 (get-in request [:path-params :sid]))))
 
-(defn- resource-restart-handler
-  "POST /v1/sessions/:sid/resources/restart?rid=… — run the resource's restart-fn
-   in the daemon (it owns re-registration of any changed DATA)."
-  [request]
-  (if-let [sid (path-sid request)]
-    (json-response (resources/restart! sid (req-rid request)))
-    (session-404 (get-in request [:path-params :sid]))))
-
 (defn- resource-logs-handler
   "GET /v1/sessions/:sid/resources/logs?rid=… — captured output lines for a
    background via its logs-fn (nil when the resource has none)."
@@ -2900,7 +2892,6 @@
         [(sid-route "/transcript.html") {:get transcript-html-handler}]
         [(sid-route "/resources") {:get resources-handler}]
         [(sid-route "/resources/stop") {:post resource-stop-handler}]
-        [(sid-route "/resources/restart") {:post resource-restart-handler}]
         [(sid-route "/resources/logs") {:get resource-logs-handler}]
         [(sid-route "/iterations/:iid/attachments/:idx") {:get attachment-bytes-handler}]
         [(sid-route "/model") {:get session-model-handler :patch set-session-model-handler}]

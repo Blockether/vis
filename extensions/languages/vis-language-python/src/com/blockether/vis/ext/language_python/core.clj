@@ -60,7 +60,7 @@
 
 (defn register-repl-resource!
   "Mirror a managed Python REPL into the session resource registry (ctx + footer
-   + stop/restart by id). No-op without a session or a live pid."
+   + stop by id; no restart — stop, then start). No-op without a session or a live pid."
   [session dir result & [id]]
   ;; `result` is repl/start!'s STRING-keyed lifecycle map. The resource map is
   ;; the CENTRAL resources.clj DATA shape (keyword keys — ->data stringifies its
@@ -77,12 +77,7 @@
                              :owner :ext/language-python
                              :language :python}
                             {:stop-fn (fn []
-                                        (repl/stop! dir))
-                             :restart-fn (fn []
-                                           (repl/stop! dir)
-                                           (let [r (repl/start! dir {:session-id session})]
-                                             (register-repl-resource! session dir r id)
-                                             r))})
+                                        (repl/stop! dir))})
     (vis/notify! (str "● python REPL up — " (.getName (io/file dir)))
                  :level :success
                  :ttl-ms 4000)))
@@ -93,7 +88,8 @@
 
 (defn py-start-repl-fn
   "repl handler for Python. Positional `op` (default \"start\") + opts
-   `{dir, id}`. Lifecycle: start / restart / stop / status. `op` arrives as a
+   `{dir, id}`. Lifecycle: start / stop / status — there is NO restart (stop,
+   then start). `op` arrives as a
    STRING from the model (strings-only boundary) — dispatch on it, no keyword
    minting."
   [env op opts]
@@ -119,11 +115,10 @@
         (vis/unregister-resource! (:session-id env) (repl-resource-id dir id))
         (extension/success {:result r}))
 
-      ("start" "restart")
-      (do (when (= op "restart") (repl/stop! dir))
-          (let [r (repl/start! dir (assoc (or opts {}) :session-id (:session-id env)))]
-            (register-repl-resource! (:session-id env) dir r id)
-            (extension/success {:result r})))
+      "start"
+      (let [r (repl/start! dir (assoc (or opts {}) :session-id (:session-id env)))]
+        (register-repl-resource! (:session-id env) dir r id)
+        (extension/success {:result r}))
 
       (throw (ex-info (str "repl(python) unknown op: " (pr-str op))
                       {:type :py/bad-args :got op})))))

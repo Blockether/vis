@@ -5570,58 +5570,48 @@
        ;; — split it so the receipt (label + reclaimed tokens + utilization) is
        ;; the op-card HEADLINE and the gist the expandable body, instead of the
        ;; whole string hiding as a body-only card the user must expand.
-       native-renderers
-       (assoc (extension/native-tool-renderers active-extensions)
-         ;; `resource_stop` / `resource_restart` are ENGINE-level
-         ;; (no extension symbol), so their card renderer rides
-         ;; here: lift the outcome + stopped/restarted resource id
-         ;; into the HEADLINE so the label names WHICH resource,
-         ;; not a raw `{result, id}` dump the user must expand.
-         "resource_stop" (fn [result]
-                           (let
-                             [r (if (map? result) result {})
-                              outcome (str (get r "result"))
-                              id (str (get r "id"))
-                              msg (get r "message")]
+       native-renderers (assoc (extension/native-tool-renderers active-extensions)
+                          ;; `resource_stop` is ENGINE-level (no extension symbol),
+                          ;; so its card renderer rides here: lift the outcome +
+                          ;; stopped resource id into the HEADLINE so the label
+                          ;; names WHICH resource, not a raw `{result, id}` dump
+                          ;; the user must expand.
+                          "resource_stop" (fn [result]
+                                            (let
+                                              [r (if (map? result) result {})
+                                               outcome (str (get r "result"))
+                                               id (str (get r "id"))
+                                               msg (get r "message")]
 
-                             {:summary (str (if (seq outcome) outcome "stopped")
-                                            (when (seq id) (str " `" id "`")))
-                              :body (when (seq (str msg)) (str "\n" msg))}))
-         "resource_restart" (fn [result]
-                              (let
-                                [r (if (map? result) result {})
-                                 outcome (str (get r "result"))
-                                 id (str (get r "id"))
-                                 msg (get r "message")]
+                                              {:summary (str (if (seq outcome) outcome "stopped")
+                                                             (when (seq id) (str " `" id "`")))
+                                               :body (when (seq (str msg)) (str "\n" msg))}))
+                          "session_fold" session-fold-card
+                          ;; `doc` / `apropos` are ENGINE-level (no extension
+                          ;; symbol) and RETURN authored markdown. Render it
+                          ;; VERBATIM as the card body (channels paint bodies as
+                          ;; markdown) instead of the default python-literal fence,
+                          ;; and lift a real headline: the doc's symbol line, or
+                          ;; the apropos match count.
+                          "doc" (fn [result]
+                                  (let
+                                    [s (str/trim (str result))
+                                     nl (str/index-of s "\n")
+                                     head (if nl (subs s 0 (long nl)) s)]
 
-                                {:summary (str (if (seq outcome) outcome "restarted")
-                                               (when (seq id) (str " `" id "`")))
-                                 :body (when (seq (str msg)) (str "\n" msg))}))
-         "session_fold" session-fold-card
-         ;; `doc` / `apropos` are ENGINE-level (no extension
-         ;; symbol) and RETURN authored markdown. Render it
-         ;; VERBATIM as the card body (channels paint bodies as
-         ;; markdown) instead of the default python-literal fence,
-         ;; and lift a real headline: the doc's symbol line, or
-         ;; the apropos match count.
-         "doc" (fn [result]
-                 (let
-                   [s (str/trim (str result))
-                    nl (str/index-of s "\n")
-                    head (if nl (subs s 0 (long nl)) s)]
-
-                   {:summary (-> head
-                                 (str/replace #"^#+\s*" "")
-                                 str/trim
-                                 not-empty)
-                    :body (not-empty s)}))
-         "apropos" (fn [result]
-                     (let [s (str/trim (str result))]
-                       (if (str/starts-with? s "|")
-                         {:summary (let [n (max 0 (- (count (str/split-lines s)) 2))]
-                                     (str n " tool" (when (not= n 1) "s")))
-                          :body (not-empty s)}
-                         {:summary (not-empty s)}))))
+                                    {:summary (-> head
+                                                  (str/replace #"^#+\s*" "")
+                                                  str/trim
+                                                  not-empty)
+                                     :body (not-empty s)}))
+                          "apropos" (fn [result]
+                                      (let [s (str/trim (str result))]
+                                        (if (str/starts-with? s "|")
+                                          {:summary (let
+                                                      [n (max 0 (- (count (str/split-lines s)) 2))]
+                                                      (str n " tool" (when (not= n 1) "s")))
+                                           :body (not-empty s)}
+                                          {:summary (not-empty s)}))))
        ;; per-OP renderers for TOOL RESULTS the model print()ed in Python — keyed
        ;; by the result's `:op` (the only origin handle a printed value carries),
        ;; so `print(await rg(...))` paints rg's card just like a native call.
@@ -11287,9 +11277,8 @@
           'retry (fn retry [spec & more]
                    (retry-sub-loop! @environment-atom spec (first more)))}
        ;; Canonical stateful-resource lifecycle:
-       ;; `resource_stop(id)` / `resource_restart(id)`
-       ;; (B-dispatch — act by id; ctx advertises
-       ;; can_stop/can_restart). Session-scoped so the
+       ;; `resource_stop(id)` (B-dispatch — act by id;
+       ;; ctx advertises can_stop). Session-scoped so the
        ;; agent only touches THIS session's resources.
        ;; No context mutator or introspect
        ;; bindings are installed here.

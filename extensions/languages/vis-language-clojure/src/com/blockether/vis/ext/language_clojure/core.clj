@@ -120,10 +120,11 @@
 
 (defn register-repl-resource!
   "Mirror a session's managed nREPL into the session-scoped resource registry so
-   it shows in ctx (resources) + the footer, and can be stopped/restarted by id
-   from the agent or the UI. No-op without a session or a live spawn. The
-   stop-fn/restart-fn thunks ARE the canonical lifecycle — the footer and
-   resource_stop both drive repl-manager through them, scoped to `session-id`."
+   it shows in ctx (resources) + the footer, and can be stopped by id from the
+   agent or the UI. No-op without a session or a live spawn. The stop-fn IS the
+   canonical teardown — the footer and resource_stop both drive repl-manager
+   through it, scoped to `session-id`. There is deliberately NO restart thunk:
+   a REPL is stopped, then started, never silently swapped underneath a caller."
   [session-id dir aliases result]
   ;; `result` is repl-manager/start!'s STRING-keyed lifecycle map. The resource
   ;; map handed to `vis/register-resource!` is the CENTRAL resources.clj DATA
@@ -186,26 +187,10 @@
         (cond->
           {:stop-fn (fn []
                       (repl-manager/stop! session-id dir))
-           :restart-fn (if external?
-                         ;; External: re-CONNECT — never spawn a managed JVM
-                         ;; over the user's REPL (stop! only detaches).
-                         (fn []
-                           (repl-manager/stop! session-id dir)
-                           (let
-                             [r (repl-manager/connect! session-id
-                                                       dir
-                                                       {:host ext-host :port (get result "port")})]
-                             (register-repl-resource! session-id dir aliases r)
-                             r))
-                         (fn []
-                           (repl-manager/stop! session-id dir)
-                           (let [r (repl-manager/start! session-id dir {:aliases aliases})]
-                             (register-repl-resource! session-id dir aliases r)
-                             r)))
            ;; Keep a FAILED REPL visible (alive while a failure is on
            ;; record) instead of letting the registry prune it the moment
            ;; the pid dies — the failure + its log tail stay inspectable
-           ;; in F4 until an explicit stop/restart.
+           ;; in F4 until an explicit stop.
            :alive-fn (fn []
                        (boolean (or (repl-manager/repl-by-id session-id id)
                                     (repl-manager/last-failure session-id dir))))
@@ -234,7 +219,6 @@
 
      \"status\"  — managed-process view for this session (always allowed)
      \"start\"   — start a project nREPL subprocess (always allowed)
-     \"restart\" — stop then start (always allowed)
      \"stop\"    — stop a Vis-managed nREPL / DETACH an external one (always allowed)
      \"connect\" — attach to an EXTERNAL user-started nREPL: opts {\"port\": N,
                  \"host\"?: S (default localhost)}; vis never spawns/kills it
@@ -302,17 +286,15 @@
          (vis/unregister-resource! sid (repl-resource-id dir))
          (extension/success {:result r}))
 
-       ("start" "restart")
+       "start"
        (do (when-not (.isDirectory (io/file dir))
-             (throw (ex-info (str "repl \"" op
-                                  "\" target cwd does not exist: " (repl-manager/home-relativize
-                                                                     (str dir)))
+             (throw (ex-info (str "repl \"start\" target cwd does not exist: "
+                                  (repl-manager/home-relativize (str dir)))
                              {:type :clj/bad-args :dir dir})))
-           (let
-             [result (if (= op "restart")
-                       (do (repl-manager/stop! sid dir)
-                           (repl-manager/start! sid dir {:aliases aliases}))
-                       (repl-manager/start! sid dir {:aliases aliases}))]
+           ;; No "restart": start! REUSES a healthy REPL ("already-running") and
+           ;; a REPL you actually want replaced is stopped explicitly first, so a
+           ;; hung relaunch can never leave the caller with nothing.
+           (let [result (repl-manager/start! sid dir {:aliases aliases})]
              ;; Mirror the live REPL into the session resource registry → ctx +
              ;; footer + stoppable by id.
              (register-repl-resource! sid dir aliases result)
@@ -326,7 +308,7 @@
             :examples
             ["repl(\"clojure\")" "repl(\"clojure\", \"status\")" "repl(\"clojure\", \"start\")"
              "repl(\"clojure\", \"start\", {\"cwd\": \"extensions/languages/vis-language-clojure\", \"aliases\": [\"dev\", \"test\"]})"
-             "repl(\"clojure\", \"stop\")" "repl(\"clojure\", \"restart\")"]}))))))
+             "repl(\"clojure\", \"stop\")"]}))))))
 
 
 (defn available-aliases

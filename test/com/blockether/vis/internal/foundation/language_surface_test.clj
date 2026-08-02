@@ -91,16 +91,39 @@
         [env (fake-env [{:language "clojure"
                          :start-repl-fn (fn [_ op opts]
                                           {:success? true :result {:op op :opts opts}})}])]
-        (expect (= {:op "restart" :opts {"cwd" "ext" "aliases" ["dev"]}}
+        (expect (= {:op "connect" :opts {"cwd" "ext" "aliases" ["dev"]}}
                    (:result
-                     (language-surface/start-repl env "restart" {"cwd" "ext" "aliases" ["dev"]}))))
+                     (language-surface/start-repl env "connect" {"cwd" "ext" "aliases" ["dev"]}))))
         (expect (= {:op "start" :opts {"aliases" ["dev"]}}
                    (:result (language-surface/start-repl env {"aliases" ["dev"]}))))
-        (expect (= {:op "restart" :opts {"cwd" "ext"}}
-                   (:result (language-surface/start-repl env {"op" "restart" "cwd" "ext"}))))
+        (expect (= {:op "status" :opts {"cwd" "ext"}}
+                   (:result (language-surface/start-repl env {"op" "status" "cwd" "ext"}))))
         (expect (= {:op "start" :opts {}} (:result (language-surface/start-repl env))))))
+  (it "REFUSES the removed `restart` op on every arity instead of silently starting a REPL"
+      (let
+        [env
+         (fake-env [{:language "clojure"
+                     :start-repl-fn (fn [_ op opts]
+                                      {:success? true :result {:op op :opts opts}})}])
+
+         ;; `restart` must stay RECOGNIZED as an op: parsed as a repl *id* it
+         ;; would silently start a REPL, which is the bug we are removing.
+         refuses
+         (fn [& args]
+           (try (apply language-surface/start-repl env args)
+                nil
+                (catch clojure.lang.ExceptionInfo e (ex-data e))))]
+
+        (expect (= :language-surface/removed-op (:type (refuses "restart" {"cwd" "ext"}))))
+        (expect (= :language-surface/removed-op (:type (refuses "clojure" "restart" {}))))
+        (expect (= :language-surface/removed-op (:type (refuses "clojure" "main" "restart" {}))))
+        (expect (= :language-surface/removed-op (:type (refuses {"op" "restart" "cwd" "ext"}))))
+        (expect (= ["connect" "start" "status" "stop"] (:allowed (refuses "restart"))))
+        (expect (not (contains? (set (get-in language-surface/start-repl-symbol
+                                             [:ext.symbol/schema :properties "op" :enum]))
+                                "restart")))))
   (it "advertises explicit lifecycle op and no repl_eval auto-start"
-      (expect (= ["start" "restart" "connect" "stop" "status"]
+      (expect (= ["start" "connect" "stop" "status"]
                  (get-in language-surface/start-repl-symbol
                          [:ext.symbol/schema :properties "op" :enum])))
       (let
@@ -151,9 +174,9 @@
         [env (fake-env [{:language "clojure"
                          :start-repl-fn (fn [_ op opts]
                                           {:success? true :result {:op op :opts opts}})}])]
-        (expect (= {:op "restart" :opts {"id" "main" "cwd" "ext"}}
+        (expect (= {:op "connect" :opts {"id" "main" "cwd" "ext"}}
                    (:result
-                     (language-surface/start-repl env "clojure" "main" "restart" {"cwd" "ext"}))))
+                     (language-surface/start-repl env "clojure" "main" "connect" {"cwd" "ext"}))))
         (expect (= {:op "start" :opts {"id" "main" "aliases" ["dev"]}}
                    (:result (language-surface/start-repl env
                                                          "clojure"
@@ -291,7 +314,7 @@
         (expect (str/includes? m "do NOT reload namespaces automatically"))
         (expect (str/includes? m "tests may exercise stale code"))
         (expect (str/includes? m "every changed production and test namespace"))
-        (expect (str/includes? m "prefer restarting over `:reload-all`"))
+        (expect (str/includes? m "prefer a FRESH REPL (stop, then start) over `:reload-all`"))
         (expect (not (str/includes? m "session[\"resources\"]")))
         (expect (not (str/includes? m "Keep managed REPLs alive")))))
   (it "is nil when no language pack is active (nothing dead in the prompt)"
@@ -602,7 +625,7 @@
               (finally (process-jail/unregister-session-jail! session-id)))]
 
         (expect (true? (get-in result [:result :launch?])))))
-  (it "refreshes the session jail before starting or restarting a REPL"
+  (it "refreshes the session jail before starting a REPL"
       (let
         [env
          (fake-env [{:language "clojure"

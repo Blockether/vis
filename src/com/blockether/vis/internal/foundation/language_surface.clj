@@ -122,7 +122,7 @@
           "\n  clojure REPL tests reuse the managed REPL and execute its already-loaded Vars;"
           " they do NOT reload namespaces automatically. After edits `(require 'my.ns :reload)`"
           " every changed production and test namespace, or tests may exercise stale code;"
-          " prefer restarting over `:reload-all`."
+          " prefer a FRESH REPL (stop, then start) over `:reload-all`."
           "\n  clojure lint_code runs clj-kondo + `general` REFLECTION/BOXED-MATH checks;"
           " whole-project lint (omit code/paths) includes both; no separate reflection check.")))))
 
@@ -277,9 +277,33 @@
      (when (#{:test-fn :repl-eval-fn} capability) (vis/prepare-session-jail! env))
      (post handler ((:handler handler) env payload)))))
 
-(def ^:private repl-ops #{"status" "start" "stop" "restart" "connect"})
+(def ^:private repl-ops #{"status" "start" "stop" "connect"})
 
-(defn- repl-op? [x] (and (string? x) (contains? repl-ops x)))
+;; `restart` is GONE — not an op, not in the schema, not a silent alias for
+;; start. It was a stop+start pretending to be one atomic step: it tore down the
+;; REPL the turn was standing on, and when the relaunch hung (a slow cold boot,
+;; a wedged JVM) the caller was left with NO repl and no usable error. Stop and
+;; start are two decisions; the agent makes them separately.
+;;
+;; The token stays RECOGNIZED as an op purely so a stale `repl(lang, "restart")`
+;; is refused loudly instead of being parsed as a REPL *id* and silently
+;; starting something.
+(def ^:private removed-repl-ops #{"restart"})
+
+(defn- repl-op? [x] (and (string? x) (or (contains? repl-ops x) (contains? removed-repl-ops x))))
+
+(defn- reject-removed-op!
+  "Fail closed on an op that no longer exists, naming the two calls that replace it."
+  [op]
+  (when (contains? removed-repl-ops op)
+    (throw (ex-info (str "repl op " (pr-str op)
+                         " was REMOVED. Stop the REPL, then start a new one"
+                         " — two calls, so a failed start cannot masquerade as a live REPL.")
+                    {:type :language-surface/removed-op
+                     :got op
+                     :allowed (vec (sort repl-ops))
+                     :examples ["repl('clojure', 'stop', {'cwd': 'extensions/foo'})"
+                                "repl('clojure', 'start', {'cwd': 'extensions/foo'})"]}))))
 
 (defn- start-repl-payload
   [args]
@@ -319,10 +343,9 @@
           "repl expects (language?), (language, opts), (language, op, opts), or (language, id, op, opts)."
           {:type :language-surface/bad-args
            :got args
-           :examples ["repl('clojure')"
-                      "repl('clojure', {'op': 'restart', 'cwd': 'extensions/foo'})"
+           :examples ["repl('clojure')" "repl('clojure', {'op': 'start', 'cwd': 'extensions/foo'})"
                       "repl('clojure', 'status')"
-                      "repl('clojure', 'main', 'restart', {'cwd': 'extensions/foo'})"]})))))
+                      "repl('clojure', 'main', 'stop', {'cwd': 'extensions/foo'})"]})))))
 
 (defn repl-stop
   "Stop a REPL by session resource id. This is the REPL-specific wrapper around resource_stop(id)."
@@ -341,6 +364,7 @@
 (defn- dispatch-start-repl!
   [env args]
   (let [{:keys [language id op opts]} (start-repl-payload args)]
+    (reject-removed-op! op)
     (if (and (= "stop" op) id)
       ;; By-id stop is a generic session-resource op — no pack dispatch needed,
       ;; and it works even when the owning language pack is gone.
@@ -360,7 +384,7 @@
         ;; Refresh from the live env at the process boundary. This also repairs the
         ;; registry after a process-jail namespace reload without weakening fail-closed
         ;; handling for missing session identity or policy.
-        (when (#{"start" "restart"} op) (vis/prepare-session-jail! env))
+        (when (= "start" op) (vis/prepare-session-jail! env))
         ((:handler handler) env op opts)))))
 
 (defn- repl-resources
@@ -924,7 +948,7 @@
   (dispatch! env :repl-eval-fn args))
 
 (defn start-repl
-  "Start or restart a language REPL resource: `repl(language,{op,cwd,id,...})`. Pass `language` first; `op` defaults to `start`."
+  "Start a language REPL resource: `repl(language,{op,cwd,id,...})`. Pass `language` first; `op` defaults to `start`. There is no restart: `stop`, then `start`."
   [env & args]
   (dispatch-start-repl! env args))
 
@@ -1080,13 +1104,14 @@
      :result
      (str
        "String-keyed result stamped with `op`; never a `{resources: [...]}` list. Status: Clojure "
-       "`result,id,cwd,status`, Python/Bun `cwd,status`. Start/restart/connect may add "
+       "`result,id,cwd,status`, Python/Bun `cwd,status`. Start/connect may add "
        "`running,port,pid,cmd,tool,aliases,external,host,log,message`; stop by id returns "
        "`{result,id,message}`.")
      :description
      (str
        "REPL lifecycle. Check `session[\"resources\"][\"repls\"][language][cwd]` first: reuse `up`, recheck "
-       "`starting`, start when absent/down/failed, restart when unresponsive. `status` reports that "
+       "`starting`, start when absent/down/failed. There is NO restart op: a wedged REPL is `stop` "
+       "then `start`. `status` reports that "
        "directory's state; `stop` ends a managed REPL; `connect` attaches an external REPL by port and only detaches it.")
      :call {:lead-opt "language" :rest :always}
      :render render-repl-start-result
@@ -1095,7 +1120,7 @@
               :properties
               {"language" {:type "string" :minLength 1}
                "op" {:type "string"
-                     :enum ["start" "restart" "connect" "stop" "status"]
+                     :enum ["start" "connect" "stop" "status"]
                      :description "Default `start`."}
                "id" {:type "string" :minLength 1 :description "Exact id for stop."}
                "cwd" {:type "string" :minLength 1 :description "Dir (`.` default); connect key."}

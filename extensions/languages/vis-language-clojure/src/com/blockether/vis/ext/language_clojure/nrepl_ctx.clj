@@ -94,8 +94,8 @@
 
 (defn- ensure-resource!
   "Idempotently mirror one owned nREPL into `session-id`'s resource registry so
-   the footer badge + stop/restart dialog see it. No-op when already registered.
-   Managed REPLs get stop + restart thunks driving repl-manager."
+   the footer badge + stop dialog see it. No-op when already registered.
+   Managed REPLs get a stop thunk driving repl-manager — there is no restart."
   [session-id statuses {:keys [id dir port tool aliases log external? host]}]
   (let
     [existing
@@ -158,19 +158,6 @@
         (cond->
           {:stop-fn (fn []
                       (repl-manager/stop! session-id dir))
-           :restart-fn (if external?
-                         ;; External: re-CONNECT — never spawn a managed
-                         ;; JVM over the user's REPL (stop! only detaches).
-                         (fn []
-                           (repl-manager/stop! session-id dir)
-                           (let [r (repl-manager/connect! session-id dir {:host host :port port})]
-                             (vis/unregister-resource! session-id id)
-                             r))
-                         (fn []
-                           (repl-manager/stop! session-id dir)
-                           (let [r (repl-manager/start! session-id dir {:aliases aliases})]
-                             (vis/unregister-resource! session-id id)
-                             r)))
            ;; Keep a FAILED REPL visible (alive while a failure is on
            ;; record) so the crash + its log tail stay inspectable in F4
            ;; instead of being pruned the moment the pid dies.

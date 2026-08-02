@@ -22,7 +22,7 @@ Read only the section relevant to the change. Keep this file for durable, repo-w
 
 - Prefer the smallest relevant `run_tests` namespace; `only` takes fully qualified top-level Lazytest vars.
 - Never require `clojure.test`: it is silently undiscovered. Use `[lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]` when that style is useful, and use `lazytest.core/set-ns-context!` plus `around-each` instead of `use-fixtures`.
-- A managed REPL retains Vars. After editing, reload every changed production namespace, then every changed test namespace, before tests; restart rather than `:reload-all` when a clean load is safer.
+- A managed REPL retains Vars. After editing, reload every changed production namespace, then every changed test namespace, before tests; there is no restart op — `stop` then `start` a fresh REPL when a clean load is safer.
 - Clean JVM commands from the owning project: `clojure -M:test`, `clojure -M:test --namespace my.ns-test`, or `clojure -M:test --var my.ns-test/my-test`.
 
 ## Companion UI (`apps/vis-companion`)

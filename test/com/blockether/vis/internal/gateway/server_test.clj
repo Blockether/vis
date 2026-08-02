@@ -769,14 +769,14 @@
 ;; Percent-encoded into a PATH SEGMENT its `/` becomes `%2F`, which Jetty rejects
 ;; with "Ambiguous URI path separator" (400) — that 400 threw out of the client
 ;; and wedged F4 when you clicked logs on the clojure nREPL. The fix moves rid to
-;; the `rid` query param on stop/restart/logs. These lock that in on BOTH halves.
+;; the `rid` query param on stop/logs. These lock that in on BOTH halves.
 
 (def ^:private nrepl-rid
   "A real-shaped nREPL resource id: the `/`-embedding absolute path that broke."
   "nrepl:/Users/fierycod/vis")
 
 (deftest resource-client-builds-query-param-urls
-  (testing "stop/restart/logs put rid in the ?rid= query, never a path segment (no %2F in path)"
+  (testing "stop/logs put rid in the ?rid= query, never a path segment (no %2F in path)"
     (let [sent (atom [])]
       (with-redefs-fn {#'client/send-json! (fn [method path & _]
                                              (swap! sent conj [method path])
@@ -784,18 +784,13 @@
         (fn []
           (let [sid (str (random-uuid))]
             (client/stop-resource! sid nrepl-rid)
-            (client/restart-resource! sid nrepl-rid)
             (client/resource-logs sid nrepl-rid)
-            (let [[[_ stop] [_ restart] [_ logs]] @sent]
+            (let [[[_ stop] [_ logs]] @sent]
               (testing "each url ends with the rid encoded in a query param"
                 (is (= (str "/v1/sessions/"
                             sid
                             "/resources/stop?rid=nrepl%3A%2FUsers%2Ffierycod%2Fvis")
                        stop))
-                (is (= (str "/v1/sessions/"
-                            sid
-                            "/resources/restart?rid=nrepl%3A%2FUsers%2Ffierycod%2Fvis")
-                       restart))
                 (is (= (str "/v1/sessions/"
                             sid
                             "/resources/logs?rid=nrepl%3A%2FUsers%2Ffierycod%2Fvis")
@@ -806,7 +801,7 @@
                   (is (not (re-find #"resources/nrepl" path))))))))))))
 
 (deftest resource-handlers-read-rid-from-query-param
-  (testing "stop/restart/logs handlers forward the rid QUERY param to the resources ns"
+  (testing "stop/logs handlers forward the rid QUERY param to the resources ns"
     (let
       [seen
        (atom [])
@@ -820,9 +815,6 @@
       (with-redefs-fn {#'resources/stop! (fn [_ rid]
                                            (swap! seen conj [:stop rid])
                                            {:result "stopped"})
-                       #'resources/restart! (fn [_ rid]
-                                              (swap! seen conj [:restart rid])
-                                              {:result "restarted"})
                        #'resources/logs (fn [_ rid]
                                           (swap! seen conj [:logs rid])
                                           ["line-1"])}
@@ -831,17 +823,13 @@
             [stop
              ((rv 'resource-stop-handler) req)
 
-             restart
-             ((rv 'resource-restart-handler) req)
-
              logs
              ((rv 'resource-logs-handler) req)]
 
             (testing "each handler answers 200 and threads the exact slash-embedding rid through"
               (is (= 200 (:status stop)))
-              (is (= 200 (:status restart)))
               (is (= 200 (:status logs)))
-              (is (= [[:stop nrepl-rid] [:restart nrepl-rid] [:logs nrepl-rid]] @seen)))
+              (is (= [[:stop nrepl-rid] [:logs nrepl-rid]] @seen)))
             (testing "logs handler surfaces the captured lines"
               (is (= ["line-1"] (get (wire/parse-json (:body logs)) "lines"))))))))))
 

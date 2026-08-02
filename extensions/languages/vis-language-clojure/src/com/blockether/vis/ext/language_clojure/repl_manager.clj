@@ -895,13 +895,11 @@
               {"result" "crash-looping"
                "status" "failed"
                "cwd" dir
-               "message" (str "nREPL for this dir crashed "
-                              max-crashes-in-window
-                              "+ times in "
-                              (quot (long crash-window-ms) 60000)
+               "message" (str "nREPL for this dir crashed " max-crashes-in-window
+                              "+ times in " (quot (long crash-window-ms) 60000)
                               " min — autostart is SUSPENDED. Fix the boot failure"
-                              " (see log_tail), then repl(\"clojure\", \"restart\")"
-                              " to reset.")}
+                              " (see log_tail), then repl(\"clojure\", \"stop\")"
+                              " + repl(\"clojure\", \"start\")" " to reset.")}
               (get f "exit")
               (assoc "exit" (get f "exit"))
 

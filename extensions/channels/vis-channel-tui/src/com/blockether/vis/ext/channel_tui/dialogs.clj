@@ -1196,7 +1196,7 @@
                       :else (recur)))
               (recur))))))))
 
-;;; ── Managed-resource dialog (stop / restart by id) ─────────────────────────
+;;; ── Managed-resource dialog (stop by id) ──────────────────────────────────
 
 (declare text-view-dialog!)
 

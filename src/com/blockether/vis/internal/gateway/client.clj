@@ -797,11 +797,6 @@
   [sid rid]
   (send-json! "POST" (str "/v1/sessions/" (enc sid) "/resources/stop?rid=" (enc rid))))
 
-(defn restart-resource!
-  "Run the resource's restart-fn in the daemon. Returns the restart result map."
-  [sid rid]
-  (send-json! "POST" (str "/v1/sessions/" (enc sid) "/resources/restart?rid=" (enc rid))))
-
 (defn resource-logs
   "Captured output lines for a background via its daemon-side logs-fn, or nil."
   [sid rid]
