@@ -399,8 +399,124 @@
               {:source-root (file-path source-root) :store-root (file-path store-root) :name name})]
       {:root (file-path root) :backend (:workspace.backend/id backend)})))
 
+(defn- git*
+  "Run `git <args>` inside `dir` and return `{:exit :out}` — `:exit` is nil when
+   git could not be spawned or timed out. `env` entries are added to the child's
+   environment (used to point git at a PRIVATE index). Deliberately LOCAL:
+   `internal.git` already requires this namespace, so requiring it back would
+   close a load cycle."
+  ([^File dir args] (git* dir args nil))
+  ([^File dir args env]
+   (try (let
+          [pb
+           (doto (ProcessBuilder. ^java.util.List (into ["git"] (map str) args))
+             (.directory dir)
+             (.redirectErrorStream true))
+
+           _
+           (doseq [[k v] env]
+             (.put (.environment pb) (str k) (str v)))
+
+           p
+           (.start pb)
+
+           out
+           (slurp (.getInputStream p))
+
+           done
+           (.waitFor p 120 java.util.concurrent.TimeUnit/SECONDS)]
+
+          (when-not done (.destroyForcibly p))
+          {:exit (when done (.exitValue p)) :out out})
+        (catch Throwable t {:exit nil :out (str (ex-message t))}))))
+
+(defn- git-lines
+  "Non-blank stdout lines of a SUCCESSFUL `git <args>` in `dir`, else []."
+  [^File dir args]
+  (let [{:keys [exit out]} (git* dir args)]
+    (if (= 0 exit) (into [] (remove str/blank?) (str/split-lines (str out))) [])))
+
+(defn committed-head?
+  "True when `root` sits in a git repository that ALREADY HAS a commit — the
+   only thing a CLEAN draft can be seeded from."
+  [root]
+  (= 0 (:exit (git* (io/file root) ["rev-parse" "--verify" "--quiet" "HEAD"]))))
+
+(defn- clean-seed-manifest
+  "Sidecar file listing the repo-relative paths a CLEAN seed dropped from
+   `clone`. It lives NEXT TO the clone, dot-prefixed: housekeeping ignores dot
+   entries, the agent never sees it inside its workspace, and it can never be
+   mistaken for repo content that `apply!` should land."
+  ^File [clone]
+  (let [f (io/file clone)]
+    (io/file (.getParentFile f) (str "." (.getName f) ".clean-seed"))))
+
+(defn- clean-seed-skips
+  "Paths the clean seed deliberately left OUT of `clone`: the user's own
+   uncommitted trunk files. They are absent from the clone by construction, so
+   `deleted-paths` must never read that absence as an agent deletion and wipe
+   them from trunk."
+  [clone]
+  (let [f (clean-seed-manifest clone)]
+    (if (.isFile f) (into #{} (remove str/blank?) (str/split-lines (slurp f))) #{})))
+
+(defn- clean-seed!
+  "Scrub `clone` back to its COMMITTED HEAD: restore every tracked file to its
+   committed content and delete the files HEAD does not carry (untracked plus
+   index-added), while leaving gitignored build/dependency trees in place so the
+   draft still builds. Returns — and records in `clean-seed-manifest` — the
+   repo-relative paths it dropped, which is exactly the set `deleted-paths` must
+   ignore forever after.
+
+   Deliberately NOT `git reset --hard`: when trunk is a LINKED WORKTREE the
+   clone's `.git` still points at the ORIGINAL repository's admin directory, so
+   a reset would rewrite the user's real index and silently unstage their work.
+   Reading HEAD into a PRIVATE index and checking that out touches only files
+   inside the clone; no shared git state is ever written."
+  [clone]
+  (let
+    [dir
+     (io/file clone)
+
+     ;; Snapshot BEFORE scrubbing — afterwards these files are gone and git can
+     ;; no longer name them. Untracked files plus files staged as ADDED but
+     ;; never committed: neither exists in HEAD, both are the user's own.
+     dropped
+     (into (sorted-set)
+           (concat (git-lines dir ["ls-files" "--others" "--exclude-standard"])
+                   (git-lines dir ["diff" "--cached" "--name-only" "--diff-filter=A" "HEAD"])))
+
+     index
+     (io/file (.getParentFile (io/file clone)) (str "." (.getName (io/file clone)) ".clean-index"))
+
+     env
+     {"GIT_INDEX_FILE" (.getCanonicalPath index)}
+
+     read-tree
+     (git* dir ["read-tree" "HEAD"] env)
+
+     checkout
+     (when (= 0 (:exit read-tree)) (git* dir ["checkout-index" "-a" "-f"] env))]
+
+    (try (when-not (and (= 0 (:exit read-tree)) (= 0 (:exit checkout)))
+           (throw (ex-info "Could not seed the draft from the committed HEAD"
+                           {:type :workspace/clean-seed-failed
+                            :root (file-path clone)
+                            :read-tree-out (:out read-tree)
+                            :checkout-out (:out checkout)})))
+         ;; `git clean` would consult the SHARED index (and so keep index-added
+         ;; files); deleting the snapshot directly is both exact and inert.
+         (doseq [rel dropped]
+           (io/delete-file (io/file dir (str rel)) true))
+         (spit (clean-seed-manifest clone) (str/join "\n" dropped))
+         (vec dropped)
+         (finally (io/delete-file index true)))))
+
 (defn- discard-root!
   [backend-id root]
+  ;; The clean-seed sidecar lives NEXT TO the clone, so the backend's own
+  ;; discard never sees it — drop it with the clone it describes.
+  (when root (io/delete-file (clean-seed-manifest root) true))
   (when (and root (not= :live backend-id))
     (if-let [backend (clojure.core/get @backend-registry backend-id)]
       ((:workspace.backend/discard-fn backend) {:root (file-path root)})
@@ -510,7 +626,12 @@
    unconditionally, whatever the trees contain. The hard exit (rather than
    relying on the `<` comparison alone) also keeps pathological trunk
    mtimes (epoch/pre-epoch, e.g. unpacked from a tarball) from ever
-   comparing below the baseline into a real `.delete` of the user's files."
+   mtimes (epoch/pre-epoch, e.g. unpacked from a tarball) from ever
+   comparing below the baseline into a real `.delete` of the user's files.
+
+   Paths a CLEAN seed dropped (`clean-seed-skips`) are excluded too: the
+   clone never received the user's UNCOMMITTED trunk files, so their absence
+   is the SEED's doing and applying it must not delete them from trunk."
   [clone trunk fork-ms]
   (if-not (pos? (long fork-ms))
     []
@@ -524,6 +645,10 @@
        nofollow
        (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])
 
+       skips
+       ;; Absent from the clone BY CONSTRUCTION, never by the agent.
+       (clean-seed-skips clone)
+
        acc
        (java.util.ArrayList.)]
 
@@ -534,12 +659,19 @@
                                 FileVisitResult/SKIP_SUBTREE
                                 FileVisitResult/CONTINUE))
                             (visitFile [file ^BasicFileAttributes attrs]
-                              (let [rel (.relativize troot ^Path file)]
+                              (let
+                                [rel
+                                 (.relativize troot ^Path file)
+
+                                 ;; Repo-relative DISPLAY paths are `/`-separated on every OS.
+                                 rel-str
+                                 (paths/unixify rel)]
+
                                 (when (and (not (prune-dir? rel))
+                                           (not (contains? skips rel-str))
                                            (< (.toMillis (.lastModifiedTime attrs)) (long fork-ms))
                                            (not (Files/exists (.resolve croot rel) nofollow)))
-                                  ;; Repo-relative DISPLAY paths are `/`-separated on every OS.
-                                  (.add acc (paths/unixify rel))))
+                                  (.add acc rel-str)))
                               FileVisitResult/CONTINUE)
                             (visitFileFailed [_file _exc] FileVisitResult/CONTINUE)))
       (vec acc))))
@@ -887,11 +1019,28 @@
    fresh-lineage workspace (a sub-loop child, a revision) keeps baseline 0
    too — its clone still lacks the trunk files the lineage never saw, so
    applying it with a real fork timestamp would mass-report trunk's files
-   as deletions and wipe the repo."
-  [db-info {:keys [session-state-id label from required-capabilities blank?]}]
+   never saw. The ZERO baseline is HEREDITARY: a draft forked `:from` a
+   fresh-lineage workspace (a sub-loop child, a revision) keeps baseline 0
+   too — its clone still lacks the trunk files the lineage never saw, so
+   applying it with a real fork timestamp would mass-report trunk's files
+   as deletions and wipe the repo.
+
+   `:clean? true` forks the REAL tree and then scrubs the clone back to the
+   committed HEAD: every tracked file is present at its committed content and
+   the user's uncommitted work is left behind in trunk. The baseline is a
+   real timestamp captured AFTER the scrub, so the revert itself is not read
+   as agent edits, and the dropped paths are recorded so `deleted-paths`
+   never mistakes them for deletions. Requires a repository with a commit;
+   throws `:workspace/clean-seed-unavailable` otherwise."
+  [db-info {:keys [session-state-id label from required-capabilities blank? clean?]}]
   (let
     [trunk
      (or (:repo-root from) (trunk-root))
+
+     _
+     (when (and clean? (not (committed-head? trunk)))
+       (throw (ex-info "This project has no commit to start a clean draft from"
+                       {:type :workspace/clean-seed-unavailable :root (file-path trunk)})))
 
      parent
      (if blank? (fresh-seed-root trunk) (or (:root from) (trunk-root)))
@@ -904,6 +1053,14 @@
 
      {:keys [root backend]}
      (backend-fork! parent trunk nm (or required-capabilities draft-required-capabilities))
+
+     ;; BEFORE the baseline below: the revert rewrites mtimes, and a clone
+     ;; that cannot be scrubbed must never survive as a half-seeded draft.
+     _
+     (when clean?
+       (try
+         (clean-seed! root)
+         (catch Throwable t (try (discard-root! backend root) (catch Throwable _ nil)) (throw t))))
 
      ;; Capture AFTER the clone returns: cloned files keep their (older)
      ;; source mtime, so only post-fork agent edits exceed this. A FRESH

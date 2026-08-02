@@ -779,29 +779,35 @@
   "Create and enter a named draft for `sid` in the daemon. If the session is
    already in a draft, park that draft first; creating from the picker is thus
    non-destructive and always forks the real repo trunk. `blank?` creates an
-   empty draft lineage. Returns refreshed canonical workspace info."
-  [sid label blank?]
-  (let
-    [label (some-> label
-                   str
-                   str/trim)]
-    (when (str/blank? label)
-      (throw (ex-info "Draft name cannot be blank" {:type :workspace/blank-draft-label})))
-    (when-let [db (lp/db-info)]
-      (when-let [state-id (resolve-state-id db sid)]
-        (let
-          [current (resolve-workspace db sid)
-           repo-root (or (:repo-root current) (:root current) (workspace/trunk-root))]
+   empty draft lineage; `clean?` seeds from the COMMITTED HEAD, leaving the
+   user's uncommitted work behind in their repo. Returns refreshed canonical
+   workspace info."
+  ([sid label blank?] (create-draft! sid label blank? false))
+  ([sid label blank? clean?]
+   (let
+     [label (some-> label
+                    str
+                    str/trim)]
+     (when (str/blank? label)
+       (throw (ex-info "Draft name cannot be blank" {:type :workspace/blank-draft-label})))
+     (when-let [db (lp/db-info)]
+       (when-let [state-id (resolve-state-id db sid)]
+         (let
+           [current (resolve-workspace db sid)
+            repo-root (or (:repo-root current) (:root current) (workspace/trunk-root))]
 
-          (when-not (workspace/isolated-workspaces-supported? repo-root)
-            (throw (ex-info "No workspace backend can create an isolated draft here"
-                            {:type :workspace/isolation-unavailable :root repo-root})))
-          (when (workspace/draft? current) (workspace/stash! db state-id))
-          (let [trunk (resolve-workspace db sid)]
-            (workspace/create!
-              db
-              {:session-state-id state-id :label label :from trunk :blank? (boolean blank?)}))))))
-  (session-workspace-info sid))
+           (when-not (workspace/isolated-workspaces-supported? repo-root)
+             (throw (ex-info "No workspace backend can create an isolated draft here"
+                             {:type :workspace/isolation-unavailable :root repo-root})))
+           (when (workspace/draft? current) (workspace/stash! db state-id))
+           (let [trunk (resolve-workspace db sid)]
+             (workspace/create! db
+                                {:session-state-id state-id
+                                 :label label
+                                 :from trunk
+                                 :blank? (boolean blank?)
+                                 :clean? (boolean clean?)}))))))
+   (session-workspace-info sid)))
 
 (defn abandon-draft!
   "Permanently discard one active draft owned by `sid`'s current repo. A parked

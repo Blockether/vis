@@ -231,6 +231,83 @@
         (finally (delete-tree! base))))))
 
 (defdescribe
+  clean-draft-roundtrip-test
+  (it
+    "create! :clean? seeds from the COMMITTED HEAD and apply! never deletes the uncommitted files it left behind"
+    (let [base (temp-dir "vis-ws-clean")]
+      (try
+        (if-not (ws/isolated-workspaces-supported? base)
+          ;; No copy-on-write backend here (CI) — the live round-trip can't run.
+          (expect (not (ws/isolated-workspaces-supported? base)))
+          (do (init-repo! (io/file base))
+              (spit (io/file base "tracked.txt") "COMMITTED\n")
+              (io/make-parents (io/file base "sub" "deep.txt"))
+              (spit (io/file base "sub" "deep.txt") "NESTED\n")
+              (git! (io/file base) "add" "tracked.txt" "sub/deep.txt")
+              (git! (io/file base) "commit" "-q" "-m" "tracked")
+              ;; the user's UNCOMMITTED work: one dirty tracked file and one
+              ;; untracked file. Neither may reach the draft, and neither may
+              ;; ever be deleted from — or overwritten in — trunk on apply!
+              (spit (io/file base "tracked.txt") "DIRTY\n")
+              (spit (io/file base "scratch.txt") "UNTRACKED\n")
+              (io/make-parents (io/file base "notes" "x.md"))
+              (spit (io/file base "notes" "x.md") "NOTES\n")
+              ;; staged but never committed — also absent from HEAD
+              (spit (io/file base "staged.txt") "STAGED\n")
+              (git! (io/file base) "add" "staged.txt")
+              (with-store
+                (fn [store]
+                  (let
+                    [seed (seed-workspace! store base)
+                     draft (ws/create! store {:from seed :clean? true})
+                     draft-id (:id draft)
+                     root (:root draft)]
+
+                    (try (expect (some? root))
+                         (expect (not= base root))
+                         ;; committed files, at their COMMITTED content
+                         (expect (= "COMMITTED\n" (slurp (io/file root "tracked.txt"))))
+                         (expect (.exists (io/file root "a.txt")))
+                         ;; and nothing uncommitted
+                         (expect (not (.exists (io/file root "scratch.txt"))))
+                         (expect (not (.exists (io/file root "notes" "x.md"))))
+                         (expect (not (.exists (io/file root "staged.txt"))))
+                         ;; nested committed content is restored, directories included
+                         (expect (= "NESTED\n" (slurp (io/file root "sub" "deep.txt"))))
+                         ;; a REAL baseline, unlike a blank draft: this draft saw
+                         ;; trunk's committed files and may report deletions of them
+                         (expect (pos? (long (:fork-ms draft))))
+                         (spit (io/file root "made.txt") "MADE\n")
+                         (let [{:keys [changed]} (ws/apply! store {:workspace-id draft-id})]
+                           (expect (contains? (set (map :path changed)) "made.txt"))
+                           ;; what the SEED dropped is not an agent deletion
+                           (expect (not (some #(= :delete (:status %)) changed)))
+                           (expect (= "MADE\n" (slurp (io/file base "made.txt"))))
+                           (expect (= "UNTRACKED\n" (slurp (io/file base "scratch.txt"))))
+                           (expect (= "NOTES\n" (slurp (io/file base "notes" "x.md"))))
+                           (expect (= "STAGED\n" (slurp (io/file base "staged.txt"))))
+                           ;; the revert happened BEFORE the baseline, so trunk's
+                           ;; dirty file is left exactly as the user had it
+                           (expect (= "DIRTY\n" (slurp (io/file base "tracked.txt")))))
+                         (finally (try (ws/abandon! store {:workspace-id draft-id})
+                                       (catch Throwable _ nil)))))))))
+        (finally (delete-tree! base))))))
+
+(defdescribe
+  clean-draft-requires-commit-test
+  (it
+    "create! :clean? refuses a root with no committed HEAD instead of silently forking the working tree"
+    (let [base (temp-dir "vis-ws-clean-nogit")]
+      (try (with-store (fn [store]
+                         (let [seed (seed-workspace! store base)]
+                           (expect (try (ws/create! store {:from seed :clean? true})
+                                        false
+                                        (catch clojure.lang.ExceptionInfo e
+                                          (= :workspace/clean-seed-unavailable
+                                             (:type (ex-data e)))))))))
+           (finally (delete-tree! base))))))
+
+(defdescribe
   linked-worktree-source-test
   (it
     "refuses linked Git worktrees before entering the native rift clone path"

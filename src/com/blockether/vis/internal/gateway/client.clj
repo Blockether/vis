@@ -940,12 +940,15 @@
 
 (defn create-draft!
   "Create and enter a named draft for `sid` IN THE DAEMON. Any current draft is
-   stashed first. Pass `blank?` to start from an empty tree."
-  [sid label blank?]
-  (decode-workspace (get (send-json! "POST"
-                                     (str "/v1/sessions/" (enc sid) "/workspace/drafts")
-                                     {:label label :blank (boolean blank?)})
-                         "workspace")))
+   stashed first. Pass `blank?` to start from an empty tree, or `clean?` to seed
+   from the committed HEAD without the user's uncommitted files."
+  ([sid label blank?] (create-draft! sid label blank? false))
+  ([sid label blank? clean?]
+   (decode-workspace (get (send-json!
+                            "POST"
+                            (str "/v1/sessions/" (enc sid) "/workspace/drafts")
+                            {:label label :blank (boolean blank?) :clean (boolean clean?)})
+                          "workspace"))))
 
 (defn abandon-draft!
   "Permanently abandon `workspace-id` IN THE DAEMON. The target may be current or

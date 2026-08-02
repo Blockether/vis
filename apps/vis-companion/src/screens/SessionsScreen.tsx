@@ -79,11 +79,12 @@ const START_MENU_WIDTH = 320;
  * Where a new session begins. `trunk` is the plain session this screen always made:
  * the agent edits the project directly. The other two are DRAFTS — isolated clones
  * parked at `~/.vis/drafts/<repo>/<label>` — either forked fresh (a clone of the repo
- * as it stands, or an empty one) or an existing draft someone stashed earlier.
+ * as it stands, or one rewound to the last commit) or an existing draft someone
+ * stashed earlier.
  */
 type StartIn =
   | { kind: 'trunk' }
-  | { kind: 'fork'; label: string; blank: boolean }
+  | { kind: 'fork'; label: string; clean: boolean }
   | { kind: 'resume'; draft: WorkspaceDraft };
 
 interface Props {
@@ -121,7 +122,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
   const [draftsError, setDraftsError] = useState<string | null>(null);
   // Forking asks for the draft's name first: the gateway rejects a blank label, and
   // the name is what `/draft list` and every later resume will show.
-  const [namePrompt, setNamePrompt] = useState<{ blank: boolean } | null>(null);
+  const [namePrompt, setNamePrompt] = useState<{ clean: boolean } | null>(null);
   const [draftLabel, setDraftLabel] = useState('');
   const pollStartedAt = useRef<number | null>(null);
   // Swipe-revealed row actions. One dialog serves both: renaming asks for the new
@@ -390,7 +391,8 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
       const session = await api.createSession({});
       if (startIn.kind !== 'trunk') {
         try {
-          if (startIn.kind === 'fork') await api.createDraft(session.id, startIn.label, startIn.blank);
+          if (startIn.kind === 'fork')
+            await api.createDraft(session.id, startIn.label, false, startIn.clean);
           else await api.resumeDraft(session.id, startIn.draft.workspace_id);
         } catch (cause) {
           await api.deleteSession(session.id).catch(() => {});
@@ -408,18 +410,18 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
     }
   }
 
-  function askDraftName(blank: boolean) {
+  function askDraftName(clean: boolean) {
     setStartMenu(null);
     setDraftLabel('');
-    setNamePrompt({ blank });
+    setNamePrompt({ clean });
   }
 
   function commitDraftName() {
     const label = draftLabel.trim();
     if (!namePrompt || !label) return;
-    const blank = namePrompt.blank;
+    const clean = namePrompt.clean;
     setNamePrompt(null);
-    void createSession({ kind: 'fork', label, blank });
+    void createSession({ kind: 'fork', label, clean });
   }
 
   const startRename = useCallback((session: Session) => {
@@ -564,7 +566,9 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
                 title-bar ink, not the accent: two amber halves read as one 33px-wider
                 button, while amber + black reads as "there is a second thing here".
                 Neither half animates on press — the caret ANCHORS the popover, and a
-                transform would drag the menu's measured box with it. */}
+                transform would drag the menu's measured box with it. The seam is the
+                caret's OWN foreground, not the accent: one shipped palette paints its
+                title bar amber, and there the halves would otherwise fuse. */}
             <div className="flex shrink-0 items-stretch">
               <Button
                 variant="solid"
@@ -593,7 +597,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
                 ref={startAnchorRef}
                 variant="contrast"
                 pressEffect="none"
-                className="min-h-6 px-2 py-0.5 font-mono text-chip sm:min-h-6"
+                className="min-h-6 border-l-dialog-title-foreground/30 px-2 py-0.5 font-mono text-chip sm:min-h-6"
                 disabled={createBusy || !active}
                 aria-haspopup="menu"
                 aria-expanded={startMenu !== null}
@@ -757,12 +761,12 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
             />
             <StartOption
               title="A new draft"
-              hint="A private copy of this project's files. The real project stays untouched."
+              hint="A private copy of this project exactly as it is now — your uncommitted changes come with it. The real project stays untouched."
               onSelect={() => askDraftName(false)}
             />
             <StartOption
-              title="A new empty draft"
-              hint="A private workspace that starts with NO files — nothing is copied from this project."
+              title="A new draft, without my uncommitted changes"
+              hint="A private copy of this project as of your last commit. Your uncommitted work stays here, in the real project, untouched."
               onSelect={() => askDraftName(true)}
             />
             <div className="flex items-baseline justify-between gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2">
@@ -810,14 +814,14 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
             onClick={(event) => event.stopPropagation()}
           >
             <DialogFrame
-              title={namePrompt.blank ? 'Name the empty draft' : 'Name the draft'}
+              title={namePrompt.clean ? 'Name the clean draft' : 'Name the draft'}
               onClose={() => setNamePrompt(null)}
             >
               <div className="space-y-3 p-4">
                 <p className="font-mono text-meta text-dialog-hint">
-                  {namePrompt.blank
-                    ? 'A private workspace that starts with NO files — nothing is copied from this project.'
-                    : "A private copy of this project's files as they stand right now. Applying it later is what moves the work back."}
+                  {namePrompt.clean
+                    ? 'A private copy of this project as of your last commit — your uncommitted changes stay here and are not copied in. Applying it later is what moves the work back.'
+                    : 'A private copy of this project exactly as it is now, uncommitted changes included. Applying it later is what moves the work back.'}
                 </p>
                 <label className="block">
                   <span className="mb-1 block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">

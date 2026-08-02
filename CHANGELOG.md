@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- drafts: `/draft clean <label>` (and the companion's "A new draft, without my
+  uncommitted changes") forks the project and rewinds the copy to the committed
+  `HEAD`, so a fresh draft starts from your last commit while modified tracked
+  files, untracked files, and staged-but-uncommitted ones stay in the real
+  project. The skipped paths are recorded, so applying the draft later never
+  deletes work it never received; a repo without a commit is refused instead of
+  silently forking a dirty tree.
+
 ### Changed
 
 - launcher: `vis-agent` is one coherent surface — run Vis, `vis-agent runtime

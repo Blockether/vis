@@ -2176,8 +2176,8 @@
 (defn- create-draft-handler
   [request]
   (if-let [sid (path-sid request)]
-    (let [{:strs [label blank]} (body-json request)]
-      (try (json-response {:workspace (state/create-draft! sid label blank)})
+    (let [{:strs [label blank clean]} (body-json request)]
+      (try (json-response {:workspace (state/create-draft! sid label blank clean)})
            (catch clojure.lang.ExceptionInfo e
              (error-response 409 (:type (ex-data e) :draft-create-failed) (ex-message e)))))
     (session-404 (get-in request [:path-params :sid]))))

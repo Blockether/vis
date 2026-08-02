@@ -115,8 +115,8 @@
 ;; =============================================================================
 (defdescribe
   specs-shape-test
-  (it "exposes the full slash spec set (/draft tree, /draft blank, /cd)"
-      (expect (= 9 (count ws-slashes/specs))))
+  (it "exposes the full slash spec set (/draft tree, /draft clean, /draft blank, /cd)"
+      (expect (= 10 (count ws-slashes/specs))))
   (it "exposes a TOP-LEVEL /cd (change the session's root)"
       (let [tops (filter #(nil? (:slash/parent %)) ws-slashes/specs)]
         (expect (contains? (set (map :slash/name tops)) "cd"))))
@@ -124,17 +124,17 @@
       (let [fs-fam (filter #(#{"cd"} (:slash/name %)) ws-slashes/specs)]
         (expect (every? #(nil? (:slash/availability-fn %)) fs-fam))))
   (it
-    "subcommands are new + blank + apply + abandon + stash + resume + list under `:slash/parent [\"draft\"]`"
+    "subcommands are new + clean + blank + apply + abandon + stash + resume + list under `:slash/parent [\"draft\"]`"
     (let [subs (filter #(= ["draft"] (:slash/parent %)) ws-slashes/specs)]
-      (expect (= 7 (count subs)))
-      (expect (= #{"new" "blank" "apply" "abandon" "stash" "resume" "list"}
+      (expect (= 8 (count subs)))
+      (expect (= #{"new" "clean" "blank" "apply" "abandon" "stash" "resume" "list"}
                  (set (map :slash/name subs))))))
   (it "registered through `:ext/slash-commands` without path collisions"
       (let [env (env-with nil)]
-        ;; 9 specs: /draft + new/blank/apply/abandon/stash/resume/list
+        ;; 10 specs: /draft + new/clean/blank/apply/abandon/stash/resume/list
         ;; + /cd. active-slashes is pure aggregation (no synthetic nodes) —
         ;; count == spec count.
-        (expect (= 9 (count (slash/active-slashes env))))
+        (expect (= 10 (count (slash/active-slashes env))))
         (expect (some? (slash/slash-by-path env ["draft" "apply"])))
         (expect (some? (slash/slash-by-path env ["cd"]))))))
 
@@ -279,7 +279,7 @@
   (it "/draft remains discoverable when no isolation backend is available"
       (with-redefs [workspace/isolated-workspaces-supported? (constantly false)]
         (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
-          (expect (= #{"draft" "new" "apply" "abandon" "stash" "resume" "blank" "list" "cd"}
+          (expect (= #{"draft" "new" "clean" "apply" "abandon" "stash" "resume" "blank" "list" "cd"}
                      names)))))
   (it "/draft new reports the unavailable capability matrix"
       (with-store

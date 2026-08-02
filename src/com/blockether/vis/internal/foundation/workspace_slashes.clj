@@ -13,7 +13,9 @@
      /draft apply          land the draft's changes into cwd, leave the draft
      /draft abandon [why]  discard the draft, leave it
      /draft blank <label>  like /draft new, but the draft starts EMPTY —
-                           no files from the current HEAD are carried in
+                           no files at all are carried in
+     /draft clean <label>  like /draft new, but seeded from the LAST COMMIT —
+                           your uncommitted changes stay in cwd
 
    Filesystem (`/cd`) — session-scoped, every channel. What the jail ALLOWS is
    derived from config (`jail.filesystem` in vis.yml, global or project); `/cd`
@@ -76,9 +78,11 @@
 ;; Handlers
 ;; =============================================================================
 (defn- handle-create
-  "Shared `/draft new` + `/draft blank` implementation. `blank?` forks an
-   EMPTY draft — nothing from the current HEAD is carried into it."
-  [ctx blank?]
+  "Shared `/draft new` + `/draft blank` + `/draft clean` implementation. `kind`
+   is :new (clone cwd exactly as it stands, uncommitted work included), :blank
+   (start with NO files at all) or :clean (clone, then rewind to the COMMITTED
+   HEAD so uncommitted work stays behind in cwd)."
+  [ctx kind]
   (let
     [db
      (ctx-db ctx)
@@ -94,8 +98,21 @@
      current
      (session-workspace ctx)
 
+     blank?
+     (= :blank kind)
+
+     clean?
+     (= :clean kind)
+
      usage
-     (if blank? "/draft blank <label>" "/draft new <label>")]
+     (case kind
+       :blank
+       "/draft blank <label>"
+
+       :clean
+       "/draft clean <label>"
+
+       "/draft new <label>")]
 
     (cond
       (nil? state-id) (err (str "Send a message first, then " usage " (session not ready yet)"))
@@ -114,30 +131,60 @@
            :slash/data {:capability-matrix (workspace/workspace-capability-matrix
                                              (or (:root current) (workspace/trunk-root)))})
       :else
-      (let
-        [draft (workspace/create!
-                 db
-                 {:session-state-id state-id :label label :from current :blank? blank?})]
-        {:slash/status :ok
-         :slash/title (str (if blank? "Blank draft '" "Draft '")
-                           (workspace/display-label draft)
-                           "' — you're in it now")
-         :slash/body
-         (if blank?
-           "Started EMPTY — nothing from your repo was carried in. /draft apply lands created files into your repo · /draft abandon discards."
-           "Edits here stay isolated. /draft apply lands them into your repo · /draft abandon discards.")
-         :slash/data {:workspace-id (:id draft) :label (:label draft) :blank? blank?}}))))
+      (try
+        (let
+          [draft
+           (workspace/create!
+             db
+             {:session-state-id state-id :label label :from current :blank? blank? :clean? clean?})]
+          {:slash/status :ok
+           :slash/title (str (case kind
+                               :blank
+                               "Blank draft '"
+
+                               :clean
+                               "Clean draft '"
+
+                               "Draft '")
+                             (workspace/display-label draft)
+                             "' — you're in it now")
+           :slash/body
+           (case kind
+             :blank
+             "Started EMPTY — nothing from your repo was carried in. /draft apply lands created files into your repo · /draft abandon discards."
+
+             :clean
+             "Started from your last commit — your uncommitted changes stayed in your repo, untouched. /draft apply lands this draft's changes into your repo · /draft abandon discards."
+
+             "Edits here stay isolated. /draft apply lands them into your repo · /draft abandon discards.")
+           :slash/data
+           {:workspace-id (:id draft) :label (:label draft) :blank? blank? :clean? clean?}})
+        ;; The only expected failure is "no commit to rewind to" — everything
+        ;; else is a real fault and must keep its own error path.
+        (catch clojure.lang.ExceptionInfo e
+          (if (= :workspace/clean-seed-unavailable (:type (ex-data e)))
+            (err "This project has no commit yet — there is nothing to start a clean draft from"
+                 :slash/body
+                 "Make a first commit, or use /draft new to carry your working tree in as it is.")
+            (throw e)))))))
 
 (defn- handle-new
   "`/draft new <label>` — clone cwd into a draft named <label> and enter it."
   [ctx]
-  (handle-create ctx false))
+  (handle-create ctx :new))
 
 (defn- handle-new-blank
   "`/draft blank <label>` — like /draft new, but the draft starts EMPTY: no
-   files from the current HEAD are carried into it."
+   files at all are carried into it."
   [ctx]
-  (handle-create ctx true))
+  (handle-create ctx :blank))
+
+(defn- handle-new-clean
+  "`/draft clean <label>` — like /draft new, but the draft is seeded from the
+   COMMITTED HEAD: every committed file is there, and the uncommitted work in
+   cwd stays behind in cwd."
+  [ctx]
+  (handle-create ctx :clean))
 
 (defn- handle-apply
   "`/draft apply` — land the draft's changes into cwd, then leave the draft."
@@ -402,12 +449,13 @@
     [{:slash/name "draft"
       :slash/doc "Drafts — isolated workspace copies of your repo (opt-in)."
       :slash/usage
-      "/draft <new <label> | blank <label> | apply | stash | resume <label> | list | abandon>"
+      "/draft <new <label> | clean <label> | blank <label> | apply | stash | resume <label> | list | abandon>"
       :slash/ui {:kind :navigator}
       :slash/run-fn handle-status}
      {:slash/name "new"
       :slash/parent ["draft"]
-      :slash/doc "Clone cwd into an isolated draft named <label> and enter it."
+      :slash/doc
+      "Clone cwd into an isolated draft named <label> and enter it — uncommitted changes included."
       :slash/usage "/draft new <label>"
       :slash/prompt-arg "Draft label (e.g. feature-x)"
       :slash/requires #{:session}
@@ -445,11 +493,19 @@
      {:slash/name "blank"
       :slash/parent ["draft"]
       :slash/doc
-      "Like /draft new, but the draft starts EMPTY — no files from your current repo (HEAD) are carried in."
+      "Like /draft new, but the draft starts with NO files at all — not even what is committed."
       :slash/usage "/draft blank <label>"
       :slash/prompt-arg "Draft label (e.g. feature-x)"
       :slash/requires #{:session}
-      :slash/run-fn handle-new-blank}]
+      :slash/run-fn handle-new-blank}
+     {:slash/name "clean"
+      :slash/parent ["draft"]
+      :slash/doc
+      "Like /draft new, but seeded from your last commit — uncommitted changes stay in your repo."
+      :slash/usage "/draft clean <label>"
+      :slash/prompt-arg "Draft label (e.g. feature-x)"
+      :slash/requires #{:session}
+      :slash/run-fn handle-new-clean}]
     ;; Filesystem — session-scoped, every channel. What the jail ALLOWS is
     ;; derived from config (`jail.filesystem`); `/cd` moves the session's
     ;; PRIMARY LIVE root within that grant.

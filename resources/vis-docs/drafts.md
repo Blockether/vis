@@ -91,7 +91,7 @@ manage your Git history, and apply is not a three-way Git merge.
                          /draft apply    (land, consume)
                        ┌──────────────────────────────────┐
                        │                                  ▼
-trunk ── new/blank ──► draft ── /draft stash ──► trunk
+trunk ── new/clean/blank ──► draft ── /draft stash ──► trunk
   ▲                    │                         │
   │                    └── /draft abandon ───────┘
   │                              (destroy)
@@ -135,6 +135,19 @@ A blank draft has one special apply rule: because it never saw the original
 files, it can add or overwrite files on trunk, but it cannot infer that an
 absent trunk file was deleted. Applying a blank draft therefore does not delete
 pre-existing files merely because they are absent from the draft.
+
+### `/draft clean <label>`
+
+Creates and enters a draft seeded from the **last commit**. Vis forks the tree as
+usual and then rewinds the copy to `HEAD`: every committed file is present at its
+committed content, and your uncommitted work — modified tracked files and new
+untracked ones — stays in your real project and is never copied in. Ignored
+build and dependency directories are left in place so the draft still builds.
+
+The repository must already have a commit; otherwise the command reports that
+there is nothing to start a clean draft from. The paths the seed left out are
+recorded, so applying the draft later never deletes the uncommitted files it
+never received.
 
 ### Before the first command
 
@@ -309,7 +322,8 @@ capability matrix. Fix or install an appropriate backend, then retry.
 | Command | Valid from | Effect |
 | --- | --- | --- |
 | `/draft` | trunk or draft | Show the current workspace state. |
-| `/draft new <label>` | trunk | Fork the current tree, enter the new draft. |
+| `/draft new <label>` | trunk | Fork the current tree (uncommitted changes included), enter the new draft. |
+| `/draft clean <label>` | trunk | Fork, rewind the copy to the last commit, enter it — uncommitted work stays in the repo. |
 | `/draft blank <label>` | trunk | Create an empty draft and enter it. |
 | `/draft apply` | draft | Land changes into real directories, consume draft, return to trunk. |
 | `/draft stash` | draft | Keep the draft active, return to trunk. |
@@ -325,7 +339,7 @@ They return canonical JSON with string keys.
 | Method + path | Request | Result |
 | --- | --- | --- |
 | `GET /v1/sessions/:sid/workspace/drafts` | — | `{"drafts": [...]}` for the session's current repo. |
-| `POST /v1/sessions/:sid/workspace/drafts` | `{"label":"…","blank":false}` | Stash any current draft, create an isolated draft from trunk, and enter it. |
+| `POST /v1/sessions/:sid/workspace/drafts` | `{"label":"…","blank":false,"clean":false}` | Stash any current draft, create an isolated draft from trunk, and enter it. `clean` seeds from the committed HEAD; `blank` seeds nothing. |
 | `DELETE /v1/sessions/:sid/workspace/drafts/:workspace_id` | `{"reason":"…"}` | Permanently abandon a current or parked draft; rejects drafts from another repo or in use elsewhere. |
 | `POST /v1/sessions/:sid/workspace/stash` | `{}` | Park the current draft; on trunk this is an idempotent no-op. |
 | `POST /v1/sessions/:sid/workspace/resume` | `{"workspace_id":"…"}` | Stash any current draft, then enter the target. |

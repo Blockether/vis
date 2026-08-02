@@ -194,7 +194,7 @@
         (is (= {"root" "/repo"} (client/create-draft! sid "feature-c" false)))
         (is (= {"root" "/repo"} (client/abandon-draft! sid wid "done")))
         (is (= [["POST" (str "/v1/sessions/" sid "/workspace/drafts")
-                 {:label "feature-c" :blank false}]
+                 {:label "feature-c" :blank false :clean false}]
                 ["DELETE" (str "/v1/sessions/" sid "/workspace/drafts/" wid) {:reason "done"}]]
                @sent))))))
 
