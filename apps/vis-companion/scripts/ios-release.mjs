@@ -40,7 +40,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { buildNotes, publishNotes } from './release-notes.mjs';
 import { exportArchiveArgs, exportOptionsPlist, signingPlan } from './ios-export.mjs';
-import { ensureProfiles, hasDistributionIdentity, installProfile, stampManualSigning } from './ios-signing.mjs';
+import { distributionIdentity, ensureProfiles, installProfile, stampManualSigning } from './ios-signing.mjs';
 import { distribute } from './testflight.mjs';
 import { syncPackageVersion } from './version.mjs';
 
@@ -320,7 +320,8 @@ console.log(
 // signing would fail at codesign, so automatic signing stays.
 let profileNames = { [appBundleId]: provisioningProfileName, [shareBundleId]: shareProfileName };
 let manualArchive = false;
-if (hasApiKey && hasDistributionIdentity()) {
+const identity = hasApiKey ? distributionIdentity() : undefined;
+if (identity) {
   try {
     const profiles = await ensureProfiles({
       keyId,
@@ -334,10 +335,10 @@ if (hasApiKey && hasDistributionIdentity()) {
       console.log(`· ${id} → ${profile.name}`);
     }
     profileNames = Object.fromEntries(Object.entries(profiles).map(([id, p]) => [id, p.name]));
-    const stamp = stampManualSigning(readFileSync(pbxproj, 'utf8'), { teamId, profileNames });
+    const stamp = stampManualSigning(readFileSync(pbxproj, 'utf8'), { teamId, profileNames, identity });
     writeFileSync(pbxproj, stamp.text);
     manualArchive = stamp.stamped.length > 0;
-    console.log(`· manual distribution signing for ${stamp.stamped.join(', ')}`);
+    console.log(`· ${identity} signing for ${stamp.stamped.join(', ')}`);
   } catch (error) {
     // Never fatal: an expired key or a portal outage falls back to the signing
     // that has always worked, instead of failing a release outright.

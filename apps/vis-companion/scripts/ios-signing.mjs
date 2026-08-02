@@ -153,7 +153,10 @@ export function stampManualSigning(
         `\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "${profileName}";\n`;
       const settings = body
         .replaceAll(owned, "")
-        .replace(/(^|\n)\t\t\tbuildSettings = \{\n/, (match) => `${match}${insert}`);
+        .replace(
+          /(^|\n)\t\t\tbuildSettings = \{\n/,
+          (match) => `${match}${insert}`,
+        );
       // A configuration whose settings block we could not find is left exactly as
       // it was, and never reported as signed.
       if (!settings.includes("CODE_SIGN_STYLE = Manual;")) return whole;
@@ -324,26 +327,34 @@ export function installProfile({ uuid, content }, home = homedir()) {
 }
 
 /**
- * Is a distribution identity available to sign with?
+ * The generic distribution identity this keychain can sign with, if any.
  *
  * Manual signing cannot invent one: without the certificate's PRIVATE KEY in a
  * keychain — the workflow imports it, a laptop usually has not — the release has
  * to fall back to automatic signing rather than fail at the codesign step.
  *
- * @param {string} [identity] the identity name to look for
- * @returns {boolean} whether the keychain can sign for distribution
+ * The NAME matters as much as the presence. A certificate created as
+ * IOS_DISTRIBUTION is issued to "iPhone Distribution: …", the modern DISTRIBUTION
+ * type to "Apple Distribution: …", and codesign matches CODE_SIGN_IDENTITY by
+ * prefix — so guessing the wrong generic name finds no identity at all. Read it
+ * back from the keychain instead of assuming.
+ *
+ * @param {string} [output] `security find-identity` output; for tests
+ * @returns {string|undefined} "Apple Distribution", "iPhone Distribution", or none
  */
-export function hasDistributionIdentity(identity = "Apple Distribution") {
-  if (process.platform !== "darwin") return false;
-  try {
-    return execFileSync(
-      "security",
-      ["find-identity", "-v", "-p", "codesigning"],
-      {
-        encoding: "utf8",
-      },
-    ).includes(identity);
-  } catch {
-    return false;
+export function distributionIdentity(output) {
+  let text = output;
+  if (text === undefined) {
+    if (process.platform !== "darwin") return undefined;
+    try {
+      text = execFileSync(
+        "security",
+        ["find-identity", "-v", "-p", "codesigning"],
+        { encoding: "utf8" },
+      );
+    } catch {
+      return undefined;
+    }
   }
+  return text.match(/"(Apple Distribution|iPhone Distribution):/)?.[1];
 }

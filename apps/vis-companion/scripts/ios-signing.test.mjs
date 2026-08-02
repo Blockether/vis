@@ -1,6 +1,11 @@
 import crypto from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { ascJwt, pickProfile, stampManualSigning } from "./ios-signing.mjs";
+import {
+  ascJwt,
+  distributionIdentity,
+  pickProfile,
+  stampManualSigning,
+} from "./ios-signing.mjs";
 
 // A project.pbxproj in miniature: the two project-level configurations (no bundle
 // id of their own), the app target's pair, and the share extension's pair.
@@ -101,6 +106,44 @@ describe("stampManualSigning", () => {
     expect(text).toContain(
       "PRODUCT_BUNDLE_IDENTIFIER = com.blockether.viscompanion.share;",
     );
+  });
+});
+
+describe("distributionIdentity", () => {
+  // Verbatim `security find-identity -v -p codesigning` output.
+  const listing = (...names) =>
+    `${names
+      .map((name, i) => `  ${i + 1}) ${"0".repeat(40)} "${name}"`)
+      .join("\n")}\n     ${names.length} valid identities found\n`;
+
+  it("reads the generic name back rather than assuming one", () => {
+    expect(
+      distributionIdentity(
+        listing(
+          "Apple Development: Someone (ABC123)",
+          "Apple Distribution: Blockether (JSZTFUBUBB)",
+        ),
+      ),
+    ).toBe("Apple Distribution");
+  });
+
+  // A certificate created as IOS_DISTRIBUTION is issued to the legacy name, and
+  // CODE_SIGN_IDENTITY = "Apple Distribution" would then match nothing.
+  it("recognises the legacy iPhone Distribution certificate", () => {
+    expect(
+      distributionIdentity(
+        listing("iPhone Distribution: Blockether (JSZTFUBUBB)"),
+      ),
+    ).toBe("iPhone Distribution");
+  });
+
+  it("finds nothing in a keychain that can only sign for development", () => {
+    expect(
+      distributionIdentity(listing("Apple Development: Someone (ABC123)")),
+    ).toBeUndefined();
+    expect(
+      distributionIdentity("     0 valid identities found\n"),
+    ).toBeUndefined();
   });
 });
 
