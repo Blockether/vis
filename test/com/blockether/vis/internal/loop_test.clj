@@ -2879,6 +2879,23 @@
 
             (expect (= :anthropic-coding-plan (:id (first (:providers routed)))))
             (expect (= "claude-fable-5" (:root (first (:providers routed)))))))
+      (it "a slash INSIDE a model id is not a provider tag"
+          ;; openrouter serves ids like `z-ai/glm-4.6v`. Splitting them on the
+          ;; slash asked for provider `:z-ai`, which no fleet has, so the
+          ;; default the user picked never became the router's root.
+          (let
+            [fleet [{:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}
+                    {:id :openrouter :models [{:name "glm-5.2"} {:name "z-ai/glm-4.6v"}]}]
+             router {:providers fleet}
+             config {:default-provider "openrouter"
+                     :default-model "z-ai/glm-4.6v"
+                     :providers fleet}
+             routed (f router config)
+             p (first (:providers routed))]
+
+            (expect (= :openrouter (:id p)))
+            (expect (= "z-ai/glm-4.6v" (:root p)))
+            (expect (= "z-ai/glm-4.6v" (:name (lp/resolve-effective-model routed))))))
       (it "default_model accepts the provider/model form and its provider wins"
           (let
             [router {:providers [{:id :zai-coding-plan
@@ -3720,9 +3737,7 @@
   (merge (shapes-from @ed/editing-symbols sh/shell-symbols lsf/symbols)
          {"mcp__servers" {:pos []}
           "mcp__tools" {:pos ["server"]}
-          "mcp__call" {:pos ["server" "tool"] :opt-pos ["args"]}
-          "mcp__connect" {:pos ["server"]}
-          "mcp__disconnect" {:pos ["server"]}}))
+          "mcp__call" {:pos ["server" "tool"] :opt-pos ["args"]}}))
 
 (defdescribe
   native-introspection-tools-test
@@ -3942,10 +3957,7 @@
         (expect (= "mcp__call(\"fs\", \"read\", {\"p\": 1})"
                    (synth {:name "mcp__call" :input {"server" "fs" "tool" "read" "args" {"p" 1}}})))
         (expect (= "mcp__call(\"fs\", \"read\")"
-                   (synth {:name "mcp__call" :input {"server" "fs" "tool" "read"}})))
-        (expect (= "mcp__connect(\"fs\")" (synth {:name "mcp__connect" :input {"server" "fs"}})))
-        (expect (= "mcp__disconnect(\"fs\")"
-                   (synth {:name "mcp__disconnect" :input {"server" "fs"}}))))))
+                   (synth {:name "mcp__call" :input {"server" "fs" "tool" "read"}}))))))
 
 ;; ===========================================================================
 ;; All-observation concurrent batch
@@ -4534,6 +4546,137 @@
         (expect (= 1200 (auth-propagation-backoff-ms 0)))
         (expect (= 3600 (auth-propagation-backoff-ms 2)))
         (expect (= 5000 (auth-propagation-backoff-ms 10))))))
+
+;; ── request-bound OAuth credentials + forced-refresh circuit breaker ──────
+(def ^:private auth-refresh-events (deref #'lp/auth-refresh-events))
+
+(def ^:private auth-refresh-allowed? (deref #'lp/auth-refresh-allowed?))
+
+(def ^:private hydrate-router-credentials (deref #'lp/hydrate-router-credentials))
+
+(def ^:private try-refresh-provider-token! (deref #'lp/try-refresh-provider-token!))
+
+(def ^:private AUTH_REFRESH_WINDOW_MS (deref #'lp/AUTH_REFRESH_WINDOW_MS))
+
+(def ^:private AUTH_REFRESH_WINDOW_MAX (deref #'lp/AUTH_REFRESH_WINDOW_MAX))
+
+(defdescribe
+  auth-refresh-circuit-breaker-test
+  "The breaker budgets forced refreshes per window and drains once they stop."
+  (it "grants exactly the per-window budget, reports open, then denies without recording"
+      (reset! auth-refresh-events {})
+      (expect (every? true?
+                      (repeatedly AUTH_REFRESH_WINDOW_MAX
+                                  #(auth-refresh-allowed? :ap))))
+      (expect (= #{:ap} (:breaker-open (lp/auth-refresh-metrics))))
+      (dotimes [_ 25] (expect (false? (auth-refresh-allowed? :ap))))
+      (expect (= (long AUTH_REFRESH_WINDOW_MAX)
+                 (long (count (get @auth-refresh-events :ap))))))
+
+  (it "closes again once the recorded refreshes age out of the window"
+      (let [stale (- (System/currentTimeMillis) (long AUTH_REFRESH_WINDOW_MS) 1)]
+        (reset! auth-refresh-events
+                {:ap (vec (repeat AUTH_REFRESH_WINDOW_MAX stale))})
+        (expect (true? (auth-refresh-allowed? :ap)))
+        (expect (= 1 (count (get @auth-refresh-events :ap))))))
+
+  (it "budgets each provider independently"
+      (reset! auth-refresh-events {})
+      (dotimes [_ AUTH_REFRESH_WINDOW_MAX] (auth-refresh-allowed? :ap))
+      (expect (false? (auth-refresh-allowed? :ap)))
+      (expect (true? (auth-refresh-allowed? :other)))
+      (reset! auth-refresh-events {})))
+
+(defdescribe
+  request-bound-credential-hydration-test
+  "Every provider attempt reads dynamic auth fields without rebuilding router state."
+  (it "replaces all dynamic credential fields while preserving router state"
+      (let [state (atom {:health :warm})
+            router {:providers [{:id :ap
+                                 :api-key "old"
+                                 :base-url "https://old.example"
+                                 :llm-headers {"old" "header"}
+                                 :responses-path "/old"}]
+                    :state state
+                    :budget {:spent 42}}]
+        (with-redefs
+          [registry/provider-by-id
+           (fn [_]
+             {:provider/get-token-fn
+              (fn []
+                {:token "fresh"
+                 :api-url "https://fresh.example"
+                 :llm-headers {"fresh" "header"}
+                 :responses-path "/responses"})})]
+          (let [hydrated (hydrate-router-credentials router)]
+            (expect (identical? state (:state hydrated)))
+            (expect (= {:spent 42} (:budget hydrated)))
+            (expect (= {:id :ap
+                        :api-key "fresh"
+                        :base-url "https://fresh.example"
+                        :llm-headers {"fresh" "header"}
+                        :responses-path "/responses"}
+                       (first (:providers hydrated))))))))
+
+  (it "retains the exact old provider snapshot when token lookup fails"
+      (let [provider {:id :ap :api-key "still-usable" :base-url "https://old.example"}
+            router {:providers [provider]}]
+        (with-redefs
+          [registry/provider-by-id
+           (fn [_]
+             {:provider/get-token-fn (fn [] (throw (ex-info "disk race" {})))})]
+          (expect (= provider (first (:providers (hydrate-router-credentials router))))))))
+
+  (it "leaves static providers untouched"
+      (let [router {:providers [{:id :static :api-key "configured"}]}]
+        (with-redefs [registry/provider-by-id (constantly nil)]
+          (expect (= router (hydrate-router-credentials router)))))))
+
+(defdescribe
+  request-bound-auth-refresh-test
+  "401 recovery adopts peer rotations first and refreshes only the exact rejected token."
+  (it "adopts a peer token without spending breaker budget or calling refresh"
+      (let [refreshes (atom [])
+            attempt-router {:providers [{:id :ap :api-key "rejected"}]}]
+        (reset! auth-refresh-events {})
+        (with-redefs
+          [registry/provider-by-id
+           (fn [_]
+             {:provider/get-token-fn (fn [] {:token "peer-fresh"})
+              :provider/refresh-token-fn (fn [rejected] (swap! refreshes conj rejected))})]
+          (expect (true? (try-refresh-provider-token! attempt-router {:provider :ap})))
+          (expect (= [] @refreshes))
+          (expect (= {} @auth-refresh-events)))))
+
+  (it "passes the exact attempt token to refresh, not a process-global baked token"
+      (let [refreshes (atom [])
+            attempt-router {:providers [{:id :ap :api-key "attempt-rejected"}]}]
+        (reset! auth-refresh-events {})
+        (with-redefs
+          [config/baked-token (constantly "wrong-global-token")
+           registry/provider-by-id
+           (fn [_]
+             {:provider/get-token-fn (fn [] {:token "attempt-rejected"})
+              :provider/refresh-token-fn (fn [rejected] (swap! refreshes conj rejected))})]
+          (expect (true? (try-refresh-provider-token! attempt-router {:provider :ap})))
+          (expect (= ["attempt-rejected"] @refreshes))
+          (expect (= 1 (count (get @auth-refresh-events :ap)))))))
+
+  (it "an open breaker neither refreshes nor mistakes the rejected token for a peer"
+      (let [refreshes (atom 0)
+            attempt-router {:providers [{:id :ap :api-key "same"}]}]
+        (reset! auth-refresh-events
+                {:ap (vec (repeat AUTH_REFRESH_WINDOW_MAX (System/currentTimeMillis)))})
+        (with-redefs
+          [registry/provider-by-id
+           (fn [_]
+             {:provider/get-token-fn (fn [] {:token "same"})
+              :provider/refresh-token-fn (fn [& _] (swap! refreshes inc))})]
+          (expect (false? (try-refresh-provider-token! attempt-router {:provider :ap})))
+          (expect (= 0 @refreshes))
+          (expect (= AUTH_REFRESH_WINDOW_MAX
+                     (count (get @auth-refresh-events :ap))))))
+      (reset! auth-refresh-events {})))
 
 (def ^:private env-cache (deref #'lp/cache))
 

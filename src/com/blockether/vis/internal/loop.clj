@@ -6359,7 +6359,10 @@
    or nil when the role names no provider.
 
    The model key accepts the same `provider/model` form as `--model`; its
-   provider part wins over the sibling provider key. Resolution mirrors
+   provider part wins over the sibling provider key, but ONLY when the fleet
+   really has that provider — model ids CONTAIN slashes (openrouter serves
+   `z-ai/glm-4.6v`), and splitting those seated the wrong root, so a default the
+   user picked never took effect. Resolution mirrors
    `providers/default-selection` / `providers/fallback-selection` so the picker
    and the router can never disagree: once the provider resolves it is promoted
    even when the model name does not match its catalog, in which case its first
@@ -6372,24 +6375,36 @@
              str/trim
              not-empty)
 
-     slash
-     (when requested-model
-       (when-let [idx (str/index-of requested-model "/")]
-         (let [idx (long idx)]
-           [(keyword (subs requested-model 0 idx)) (not-empty (subs requested-model (inc idx)))])))
+     provider-by-id
+     (fn [id] (some #(when (= id (:id %)) %) (:providers config)))
 
-     provider-value
-     (or (first slash) (get config provider-key) implicit-provider)
+     tagged-value
+     (or (get config provider-key) implicit-provider)
+
+     tagged
+     (cond (keyword? tagged-value) tagged-value
+           (string? tagged-value) (keyword tagged-value))
+
+     whole-model?
+     (boolean (some #(= requested-model (config/model-name %))
+                    (:models (provider-by-id tagged))))
+
+     slash
+     (when (and requested-model (not whole-model?))
+       (when-let [idx (str/index-of requested-model "/")]
+         (let [idx (long idx)
+               prefix (keyword (subs requested-model 0 (long idx)))]
+           (when (provider-by-id prefix)
+             [prefix (not-empty (subs requested-model (inc idx)))]))))
 
      provider
-     (cond (keyword? provider-value) provider-value
-           (string? provider-value) (keyword provider-value))
+     (or (first slash) tagged)
 
      wanted-model
      (or (if slash (second slash) requested-model)
          ;; No explicit model tag: the configured provider's FIRST model is
          ;; the selection, exactly as when no default was ever picked.
-         (some-> (some #(when (= provider (:id %)) %) (:providers config))
+         (some-> (provider-by-id provider)
                  :models
                  first
                  config/model-name))]
@@ -6544,19 +6559,16 @@
     (reset! router-atom r)
     r))
 
-;; ── OAuth 401 recovery ──────────────────────────────────────────────────
+;; ── OAuth credential hydration + 401 recovery ────────────────────────────
 ;;
-;; A provider's access token can be locally-unexpired yet rejected by the
-;; server (401/403) — classic refresh-token rotation: another client (or a
-;; second vis process sharing the same on-disk creds) refreshed and rotated
-;; the token, silently invalidating the one this router baked in at build
-;; time. `:provider/get-token-fn` only refreshes on LOCAL expiry, so a plain
-;; router rebuild would re-bake the same dead token. The fix: on an auth
-;; error from a provider that exposes `:provider/refresh-token-fn`, FORCE a
-;; refresh-token exchange (persists rotated creds), rebuild the router so the
-;; fresh token is resolved in, reseat cached envs, and retry the turn once.
-
-(declare refresh-cached-routers!)
+;; svar routers intentionally retain provider health/budget state, but their
+;; provider maps are immutable snapshots. OAuth credentials must not share that
+;; lifetime: another tab/process can rotate a token at any moment. Therefore
+;; every provider attempt gets a shallow router copy whose dynamic credential
+;; fields are resolved immediately before network I/O. The shared router keeps
+;; all of its state; only the attempt's provider vector is credential-hydrated.
+;; A 401 then refreshes storage only. The retry boundary reads the new credential
+;; itself, so recovery never depends on rebuilding global or cached routers.
 
 ;; ── auth-refresh circuit breaker ─────────────────────────────────────────
 ;; The convergence fix (feed the real baked token) collapses the normal
@@ -6611,12 +6623,18 @@
   (atom {}))
 
 (defn- auth-refresh-allowed?
-  "Circuit breaker for forced OAuth refreshes. Atomically records this attempt
-   for `pid`, prunes timestamps older than the rolling window, and returns true
-   while the provider is still under the per-window budget. When it returns
-   false the breaker is OPEN: the caller must NOT refresh and should surface the
-   provider's auth error, so the user re-authenticates once instead of the
-   daemon flapping the token endpoint."
+  "Circuit breaker for forced OAuth refreshes. Atomically prunes timestamps older
+   than the rolling window for `pid`, records this attempt ONLY when it is
+   GRANTED, and returns true while the provider is still under the per-window
+   budget. When it returns false the breaker is OPEN: the caller must NOT refresh
+   and must recover without touching the token endpoint, so the user
+   re-authenticates once instead of the daemon flapping it.
+
+   Recording only GRANTED refreshes is what lets the breaker CLOSE again. An
+   earlier version stamped every call, denials included, so a fleet of tabs still
+   retrying inside the window kept re-arming the breaker they had just tripped:
+   the window never drained and the process stayed in permanent auth fallback
+   until restart, even once the on-file token was healthy again."
   [pid]
   (let
     [now
@@ -6625,21 +6643,28 @@
      cutoff
      (- now (long AUTH_REFRESH_WINDOW_MS))
 
-     recent
-     (-> (swap! auth-refresh-events
-           update
-           pid
-           (fn [ts]
-             (conj (filterv #(> (long %) cutoff) (or ts [])) now)))
-         (get pid))]
+     live
+     (fn [ts]
+       (filterv #(> (long %) cutoff) (or ts [])))
 
-    (<= (long (count recent)) (long AUTH_REFRESH_WINDOW_MAX))))
+     [before after]
+     (swap-vals! auth-refresh-events
+                 update
+                 pid
+                 (fn [ts]
+                   (let [kept (live ts)]
+                     (cond-> kept
+                       (< (long (count kept)) (long AUTH_REFRESH_WINDOW_MAX))
+                       (conj now)))))]
+
+    (> (long (count (get after pid)))
+       (long (count (live (get before pid)))))))
 
 (defn auth-refresh-metrics
   "Observability snapshot of the OAuth-refresh circuit breaker. Returns the
    rolling window, the trip threshold, the per-provider count of forced
-   refreshes still inside the window, and the set of providers currently OVER
-   budget (breaker OPEN). Surfaced by the gateway `/metrics` endpoint so an
+   refreshes still inside the window, and the set of providers at the refresh
+   limit (breaker OPEN). Surfaced by the gateway `/metrics` endpoint so an
    auth-refresh flap is visible at a glance instead of needing a `vis.log`
    grep."
   []
@@ -6664,7 +6689,7 @@
      :refreshes-in-window in-window
      :breaker-open (into #{}
                          (keep (fn [[pid n]]
-                                 (when (> (long n) (long AUTH_REFRESH_WINDOW_MAX)) pid)))
+                                 (when (>= (long n) (long AUTH_REFRESH_WINDOW_MAX)) pid)))
                          in-window)}))
 
 (defn- auth-error-shaped?
@@ -6712,19 +6737,10 @@
 
 (defn- refresh-just-failed?
   "True when we FORCED an OAuth refresh for this provider very recently (within
-   [[AUTH_PROPAGATION_WINDOW_MS]]) and the token is STILL auth-failing — i.e.
-   re-minting did NOT clear the 401. Signals PROPAGATION LAG (back off and retry
-   the SAME token) rather than a genuinely dead credential.
-
-   Keyed on refresh RECENCY, not token VALUE. The earlier value-equality check
-   (`minted == baked-token`) only held for providers that keep the same access
-   token across a router rebuild; providers like GitHub Copilot mint a FRESH
-   token on every exchange (`ensure-router-has-current-token!` re-exchanges on
-   rebuild), so the minted token never equalled the current baked one, the guard
-   fell open, and the loop re-minted on every post-refresh 401 → the 401 storm.
-   A recency marker matches EVERY provider. It is cleared on the first accepted
-   request ([[note-provider-request-ok!]]) so a genuine rotation minutes later is
-   read as a fresh 401 (re-mint), not misread as lag."
+   [[AUTH_PROPAGATION_WINDOW_MS]]) and the credential is STILL auth-failing.
+   Signals propagation lag (back off and retry the request-bound hydrated token)
+   rather than a genuinely dead credential. The recency marker is provider-wide
+   and is cleared by [[note-provider-request-ok!]] after accepted I/O."
   [^Throwable e resolved-model]
   (let [pid (:provider resolved-model)]
     (and (auth-error-shaped? e)
@@ -6765,37 +6781,60 @@
                   (some-> (registry/provider-by-id pid)
                           :provider/refresh-token-fn)))))
 
-(defn- ensure-router-has-current-token!
-  "Rebuild the global router + reseat cached envs so provider `pid`'s freshly
-   rotated/reused token goes live — but COALESCE a 401 storm: if the live router
-   already bakes the current on-file token (a peer tab just rebuilt after the
-   same refresh), skip the process-global rebuild+reseat entirely. Only the
-   first tab through pays for the global work; the rest ride its result (the
-   retry path reseats this turn's env from the now-fresh global router). This is
-   what turns N concurrent 401s into ONE rebuild instead of N."
-  [pid]
-  (let
-    [current (try (:token ((:provider/get-token-fn (registry/provider-by-id pid))))
-                  (catch Throwable _ nil))]
-    (when (or (nil? current) (not= current (config/baked-token pid)))
-      (let [r (rebuild-router! (config/resolve-config))]
-        (refresh-cached-routers! r)))))
+(defn- hydrate-router-credentials
+  "Return an attempt-local copy of `router` with every registry-backed provider's
+   current credential fields resolved immediately before request dispatch.
+
+   Router health, budget and retry state are preserved by sharing the original
+   map and replacing only `:providers`. A provider token lookup failure is
+   deliberately failure-safe: that provider retains its previous snapshot so
+   normal request/error handling remains authoritative."
+  [router]
+  (update router
+          :providers
+          (fn [provider-entries]
+            (mapv
+              (fn [{:keys [id] :as provider-entry}]
+                (if-let [get-token-fn
+                         (some-> (registry/provider-by-id id)
+                                 :provider/get-token-fn)]
+                  (try
+                    (let [{:keys [token api-url llm-headers responses-path]} (get-token-fn)]
+                      (cond-> provider-entry
+                        (some? token) (assoc :api-key token)
+                        (some? api-url) (assoc :base-url api-url)
+                        (some? llm-headers) (assoc :llm-headers llm-headers)
+                        (some? responses-path) (assoc :responses-path responses-path)))
+                    (catch Throwable t
+                      (tel/log! {:level :warn
+                                 :id ::provider-credential-hydration-failed
+                                 :data {:provider id :error (ex-message t)}}
+                                (str "Could not hydrate current credential for " id
+                                     "; retaining the previous request snapshot"))
+                      provider-entry))
+                  provider-entry))
+              provider-entries))))
+
+(defn- hydrate-environment-router
+  "Hydrate only the router snapshot used by this provider attempt."
+  [environment]
+  (update environment :router hydrate-router-credentials))
+
+(defn- router-provider-token
+  "Token actually carried by provider `pid` in this exact router snapshot."
+  [router pid]
+  (some #(when (= pid (:id %)) (:api-key %)) (:providers router)))
 
 (defn- try-refresh-provider-token!
-  "Force an OAuth refresh for the failing provider, then rebuild + reseat
-   routers so the fresh token is live. Returns true when a refresh actually
-   happened (caller may retry), false otherwise (caller surfaces the error).
+  "Recover a refreshable auth rejection without mutating any router.
 
-   Threads the REJECTED access token — the one THIS router baked in at build
-   time and the server just 401'd (`config/baked-token`), NOT the current
-   on-file token — into the force-refresh hook. The distinction matters under
-   concurrency: a peer tab/process may already have rotated the on-file token to
-   a fresh one, so re-reading it would hand the single-flight reuse a token that
-   is NOT the one that failed — it would then refuse a perfectly good peer token
-   and force yet another rotation, and the 401 storm never converges. Feeding the
-   real rejected token lets reuse hand back the peer's fresh token instead,
-   collapsing the storm to a single exchange."
-  [resolved-model]
+   `attempt-router` is the exact request snapshot that received the 401, making
+   its provider `:api-key` the exact rejected token. Before spending refresh
+   budget, resolve current storage once: if a peer already installed a different
+   token, simply retry and let request-bound hydration adopt it. Otherwise force
+   one persisted refresh. The next attempt hydrates from storage; no global
+   rebuild or cached-environment reseat is involved."
+  [attempt-router resolved-model]
   (let
     [pid
      (:provider resolved-model)
@@ -6806,11 +6845,31 @@
      f
      (:provider/refresh-token-fn provider)
 
+     get-token-fn
+     (:provider/get-token-fn provider)
+
      rejected
-     (config/baked-token pid)]
+     (router-provider-token attempt-router pid)
+
+     current
+     (try (some-> get-token-fn
+                  (apply [])
+                  :token)
+          (catch Throwable _ nil))]
 
     (boolean
       (cond (not f) false
+            ;; A concurrent request/process already won the rotation. Do not
+            ;; touch either the breaker or token endpoint; retry hydration will
+            ;; pick this value up at the request boundary.
+            (and (some? current) (not= current rejected))
+            (do (tel/log! {:level :warn
+                           :id ::auth-peer-token-adopted
+                           :data {:provider pid}}
+                          (str "Auth 401 for " pid
+                               " used a stale request credential; adopting the peer token"))
+                true)
+
             (not (auth-refresh-allowed? pid))
             (do (tel/log! {:level :error
                            :id ::auth-refresh-circuit-open
@@ -6818,37 +6877,29 @@
                                   :window-ms AUTH_REFRESH_WINDOW_MS
                                   :max AUTH_REFRESH_WINDOW_MAX}}
                           (str "Auth 401 — OAuth refresh circuit OPEN for " pid
-                               " (> " AUTH_REFRESH_WINDOW_MAX
+                               " (" AUTH_REFRESH_WINDOW_MAX
                                " refreshes in " (quot (long AUTH_REFRESH_WINDOW_MS) 1000)
                                "s); NOT refreshing — surfacing provider error,"
                                " re-authenticate this provider"))
                 false)
+
             :else
-            ;; force refresh-token exchange + persist; pass the rejected token so
-            ;; reuse can't return it. Fall back to 0-arity for older/third-party
-            ;; hooks that don't accept it.
-            (try (try (f rejected) (catch clojure.lang.ArityException _ (f)))
-                 (ensure-router-has-current-token! pid)
-                 ;; Stamp the refresh time. If the very next re-send ALSO
-                 ;; auth-fails within AUTH_PROPAGATION_WINDOW_MS,
-                 ;; `refresh-just-failed?` reads this recency marker and treats
-                 ;; it as PROPAGATION LAG — backing off and retrying the SAME
-                 ;; token instead of re-minting (the storm). Cleared on the
-                 ;; first accepted request by `note-provider-request-ok!`.
-                 (swap! auth-last-refreshed assoc pid {:at (System/currentTimeMillis)})
-                 (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
-                           (str "Auth 401 — force-refreshed OAuth token for "
-                                pid
-                                " and rebuilt router; retrying turn"))
-                 true
-                 (catch Throwable t
-                   (tel/log! {:level :error
-                              :id ::auth-token-refresh-failed
-                              :data {:provider pid :error (ex-message t)}}
-                             (str "Auth 401 — OAuth token refresh FAILED for "
-                                  pid
-                                  "; surfacing provider error"))
-                   false))))))
+            (try
+              ;; Pass exactly what this attempt sent. Older/third-party hooks
+              ;; may still expose only a zero-arity implementation.
+              (try (f rejected) (catch clojure.lang.ArityException _ (f)))
+              (swap! auth-last-refreshed assoc pid {:at (System/currentTimeMillis)})
+              (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
+                        (str "Auth 401 — force-refreshed OAuth token for " pid
+                             "; retrying with request-bound credential hydration"))
+              true
+              (catch Throwable t
+                (tel/log! {:level :error
+                           :id ::auth-token-refresh-failed
+                           :data {:provider pid :error (ex-message t)}}
+                          (str "Auth 401 — OAuth token refresh FAILED for " pid
+                               "; surfacing provider error"))
+                false))))))
 
 (defn ask-code!
   "One-shot routed `svar/ask-code!` against the global router.
@@ -8097,11 +8148,14 @@
                     env environment]
 
                    (let
-                     [result
+                     [attempt-env
+                      (hydrate-environment-router env)
+
+                      result
                       (try
                         (reset! provider-output-started? false)
                         (run-iteration
-                          env
+                          attempt-env
                           @effective-messages-atom
                           {:iteration iteration
                            :reasoning-level reasoning-level
@@ -8191,15 +8245,15 @@
                             (and (< (long attempt) (long MAX_AUTH_REFRESH_RETRIES))
                                  (refresh-just-failed? e resolved-model))
                             ::retry-auth-backoff
-                            ;; Auth 401/403 from a refreshable
-                            ;; provider: force an OAuth refresh +
-                            ;; router rebuild, then re-send once.
-                            ;; `try-refresh-provider-token!` does
-                            ;; the work and returns true only when
-                            ;; a refresh actually happened.
+                            ;; Auth 401/403 from a refreshable provider: adopt a
+                            ;; peer credential or persist one forced refresh, then
+                            ;; re-send. The exact attempt router supplies the
+                            ;; rejected token; the next request boundary hydrates
+                            ;; the new value without rebuilding shared routers.
                             (and (< (long attempt) (long MAX_AUTH_REFRESH_RETRIES))
                                  (auth-refreshable-error? e resolved-model)
-                                 (try-refresh-provider-token! resolved-model))
+                                 (try-refresh-provider-token! (:router attempt-env)
+                                                              resolved-model))
                             ::retry-auth-refresh
                             ;; Refresh/backoff failed or credentials were revoked.
                             ;; Release the dead provider, then let svar walk the fleet.
@@ -8322,12 +8376,14 @@
                                       current-extra-body
                                       env))
                            (= result ::retry-auth-refresh)
-                           ;; Token refreshed; reseat this turn on the rebuilt router.
+                           ;; Storage changed (or a peer already changed it). The
+                           ;; next loop pass hydrates this same persistent router
+                           ;; immediately before dispatch.
                            (recur attempt*
                                   max-tokens-attempt*
                                   pu-attempt*
                                   current-extra-body
-                                  (assoc env :router (get-router)))
+                                  env)
                            (= result ::retry-auth-backoff)
                            ;; Retry the same fresh token; propagation may still be settling.
                            (do (Thread/sleep (long (auth-propagation-backoff-ms attempt)))
@@ -9427,29 +9483,16 @@
      ;; Turn-start health gate: probe LOCAL providers (Ollama/LM Studio)
      ;; and sink unreachable ones to the END of this turn's router, so a
      ;; dead local endpoint can't catch the turn or an svar fallback.
-     ;; Dead providers are HIDDEN from `routing.available`
-     ;; for this turn — the model can't route a child to what it
-     ;; can't see (the per-turn env binding is local, so a provider
-     ;; that comes back reappears next turn) — and the demotion
-     ;; raises an engine warning so the user knows. Remote providers
-     ;; are not network-checked here.
+     ;; The demotion is per-turn (the env binding is local, so a provider
+     ;; that comes back reappears next turn) and raises an engine warning
+     ;; so the user knows. Remote providers are not network-checked here.
      env
      (let
        [{:keys [router demoted]}
         (health-gated-router (:router env) :turn)
 
-        ;; Digest entries are string-keyed/string-valued (they cross
-        ;; the boundary); demoted ids are internal keywords — compare
-        ;; on the stringified id.
-        dset
-        (into #{} (map name) demoted)
-
         env'
-        (cond-> (assoc env :router router)
-          (and (seq dset) (seq (get (:routing env) "available")))
-          (update-in [:routing "available"]
-                     (fn [avail]
-                       (vec (remove #(contains? dset (get % "provider")) avail)))))]
+        (assoc env :router router)]
 
        (when (seq demoted)
          (when-let [ca (:ctx-atom env)]
@@ -9458,9 +9501,9 @@
              (fnil conj [])
              {:code :provider-unreachable
               :anchor ["session_routing"]
-              :message (str "Local provider(s) " (str/join ", " (map name demoted))
-                            " unreachable — demoted to last-resort and hidden"
-                            " from routing for this turn.")})))
+              :message (str "Local provider(s) "
+                            (str/join ", " (map name demoted))
+                            " unreachable — demoted to last-resort for this turn.")})))
        env')
 
      slash-result
@@ -9745,7 +9788,7 @@
                      ;; the default provider (e.g. zai) even after
                      ;; the user switched models — the forced pref
                      ;; bound the actual call but never the displayed
-                     ;; routing. `:available` is preserved.
+                     ;; routing.
                      (and (seq (:routing env)) (or root-model root-provider))
                      (update :routing
                              (fn [r]
@@ -10715,22 +10758,15 @@
      root-provider
      (:provider root-resolved-model)
 
-     ;; Routing digest surfaced in the model-facing ctx (`routing`) so
-     ;; the agent can SEE its current model + what's available, and pick a
-     ;; cheaper/faster one for an easy `sub_loop` (the `model` arg). Read-only;
-     ;; the agent never reconfigures routing, it just routes children by cost.
-     ;; STRING-KEYED: this digest lands in ctx as `session_routing` and
-     ;; crosses the Python boundary. Provider ids stringify at the source.
+     ;; Routing digest surfaced in the model-facing ctx (`routing`): the CURRENT
+     ;; model + provider, nothing more. The provider/model CATALOG is deliberately
+     ;; NOT shipped — child dispatch (`sub_loop`) is unadvertised, so nothing could
+     ;; act on it, and it cost ~445 tokens on EVERY request. STRING-KEYED: this
+     ;; digest lands in ctx as `session_routing` and crosses the Python boundary.
      routing-digest
      (cond-> {"model" root-model}
        root-provider
-       (assoc "provider" (name root-provider))
-
-       (seq (:providers router))
-       (assoc "available"
-         (mapv (fn [p]
-                 {"provider" (name (:id p)) "models" (mapv :name (:models p))})
-               (:providers router))))
+       (assoc "provider" (name root-provider)))
 
      ;; Snapshot a base system prompt for the session row so the
      ;; sidebar / DB inspectors have something stable to display.
@@ -11202,7 +11238,7 @@
         ;; — dispose-environment! must NOT close a borrowed DB.
         :owns-db? owns-db?
         ;; routing digest → rendered into ctx as `routing`
-        ;; (current model + available, for sub_loop model choice).
+        ;; (current model + provider only).
         :routing routing-digest
         :db-info db-info
         ;; Per-session OS-jail policy fn — the shell jail is ALWAYS ON; nil only when
