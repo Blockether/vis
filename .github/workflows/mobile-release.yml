@@ -14,7 +14,9 @@ name: Mobile release
 # Repository secrets (Settings ▸ Secrets and variables ▸ Actions):
 #   iOS      VIS_ASC_KEY_ID, VIS_ASC_ISSUER_ID, VIS_ASC_KEY (the .p8 CONTENTS), VIS_IOS_TEAM_ID,
 #            VIS_IOS_DISTRIBUTION_P12 (base64 .p12), VIS_IOS_DISTRIBUTION_P12_PASSWORD,
-#            VIS_IOS_PROVISIONING_PROFILE (base64 .mobileprovision), VIS_IOS_PROVISIONING_PROFILE_NAME
+#            VIS_IOS_PROVISIONING_PROFILE (base64 .mobileprovision), VIS_IOS_PROVISIONING_PROFILE_NAME,
+#            VIS_IOS_SHARE_PROVISIONING_PROFILE_NAME (optional: the share extension's own profile.
+#            Manual signing is all-or-nothing, so without it the export signs automatically)
 #   Android  VIS_PLAY_SERVICE_ACCOUNT (service-account JSON), VIS_ANDROID_KEYSTORE (base64 .jks),
 #            VIS_ANDROID_KEYSTORE_PASSWORD, VIS_ANDROID_KEY_ALIAS, VIS_ANDROID_KEY_PASSWORD,
 #            VIS_ANDROID_GOOGLE_SERVICES (google-services.json, optional — push only)
@@ -190,6 +192,7 @@ jobs:
         env:
           VIS_ASC_KEY_ID: ${{ secrets.VIS_ASC_KEY_ID }}
           VIS_IOS_PROVISIONING_PROFILE_NAME: ${{ secrets.VIS_IOS_PROVISIONING_PROFILE_NAME }}
+          VIS_IOS_SHARE_PROVISIONING_PROFILE_NAME: ${{ secrets.VIS_IOS_SHARE_PROVISIONING_PROFILE_NAME }}
           VIS_ASC_ISSUER_ID: ${{ secrets.VIS_ASC_ISSUER_ID }}
           VIS_IOS_TEAM_ID: ${{ secrets.VIS_IOS_TEAM_ID }}
         run: |
