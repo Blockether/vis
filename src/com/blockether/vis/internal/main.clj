@@ -51,6 +51,7 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.progress :as progress]
+            [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.toggles :as toggles]
             [taoensso.telemere :as tel]))
@@ -2746,12 +2747,16 @@
                               (print-registered-providers!))
           (and (nil? (:provider/logout-fn provider)) (not configured?))
           (stdout! (str "Provider " (:provider/label provider) " does not persist credentials."))
-          :else (do (when-let [logout-fn (:provider/logout-fn provider)]
-                      (logout-fn))
-                    (config/remove-config-provider! provider-id :cli-provider-logout)
+          :else (do (if-let [logout-fn (:provider/logout-fn provider)]
+                      (logout-fn)
+                      ;; Key-only provider: forget the KEY, keep the entry.
+                      (providers/clear-provider-api-key! provider-id :cli-provider-logout))
+                    ;; The config entry stays: logging out drops the credential, not
+                    ;; the provider's models/base-url, so signing back in is one
+                    ;; `providers auth` away.
                     (stdout! (str "  Logged out of "
                                   (:provider/label provider)
-                                  ". Tokens and config cleared.")))))
+                                  ". Credentials cleared; provider stays configured.")))))
   (shutdown-agents))
 
 ;;; ── `vis-agent doctor` ────────────────────────────────────────────────────────

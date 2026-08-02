@@ -416,3 +416,38 @@
       (is (nil? (get @saved "fallback_provider"))
           "the fallback cannot stay on the provider that just became primary")
       (is (nil? (get @saved "fallback_model"))))))
+
+(deftest clear-provider-api-key-test
+  ;; "Log out" for a key-only provider forgets the CREDENTIAL and nothing else:
+  ;; the config entry — models, base-url, tags — has to survive so signing back in
+  ;; is one key away (issue #80).
+  (let
+    [saved
+     (atom nil)
+
+     fleet
+     [{:id :zai-coding-plan
+       :api-key "sk-live"
+       :base-url "https://example.invalid"
+       :models [{:name "glm-4.7"}]} {:id :openai :api-key "sk-other"}]
+
+     entry
+     (fn [providers id]
+       (some #(when (= id (:id %)) %) providers))]
+
+    (with-redefs-fn {#'config/load-global-config-raw (constantly {:providers fleet})
+                     (rv 'save-providers!) (fn [providers _source]
+                                             (reset! saved (vec providers))
+                                             true)}
+      (fn []
+        (is (= true (providers/clear-provider-api-key! :zai-coding-plan :test)))
+        (let [cleared (entry @saved :zai-coding-plan)]
+          (is (nil? (:api-key cleared)))
+          (is (= [{:name "glm-4.7"}] (:models cleared)))
+          (is (= "https://example.invalid" (:base-url cleared))))
+        ;; Other providers are untouched…
+        (is (= "sk-other" (:api-key (entry @saved :openai))))
+        ;; …and with nothing stored there is no write at all.
+        (reset! saved nil)
+        (is (= false (providers/clear-provider-api-key! :unknown-provider :test)))
+        (is (nil? @saved))))))

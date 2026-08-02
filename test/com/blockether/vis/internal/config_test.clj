@@ -141,8 +141,9 @@
 
 (defdescribe
   remove-config-provider-test
-  "`remove-config-provider!` is the logout write path. Dropping the provider
-   entry alone is not enough: a FALLBACK tag naming it would stay behind in
+  "`remove-config-provider!` is the provider REMOVE write path (logout only clears
+   the credential). Dropping the provider entry alone is not enough: a FALLBACK
+   tag naming it would stay behind in
    state.yml. The read path hides such a tag (the provider is no longer in the
    fleet), so no UI can show or clear it — and it silently resurrects the moment
    that provider is authenticated again. The tag must go with the provider."

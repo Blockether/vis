@@ -340,8 +340,16 @@
   {:ok? true :status "cancelled"})
 
 (defn logout!
-  "Clear `provider-id`'s persisted credentials through its registered logout,
-   then invalidate the cached fleet so status flips on the next read."
+  "Clear `provider-id`'s persisted credentials, then invalidate the cached fleet so
+   status flips on the next read.
+
+   Two shapes of credential:
+     - a registered `:logout` (OAuth/device providers) revokes the session;
+     - everything else is an API key, which is cleared from the config entry.
+
+   The CONFIG ENTRY always survives — logging out forgets the credential, never the
+   provider's models/base-url. Returning `:auth-unsupported` for key providers made
+   the gateway answer 400 and channels surface an ordinary logout as a fatal error."
   [provider-id]
   ;; A flow still in flight for this provider would land AFTER the logout and
   ;; silently re-authenticate it.
@@ -349,7 +357,12 @@
                  (= provider-id (:provider-id e))))
   (let [logout-fn (:logout (auth-kinds provider-id))]
     (if-not logout-fn
-      {:ok? false :error :auth-unsupported :message (str (name provider-id) " has no logout")}
+      (try (let [cleared? (providers/clear-provider-api-key! provider-id :provider-auth-logout)]
+             (settle! provider-id)
+             (tel/log! :info ["provider-auth: cleared stored api key" provider-id])
+             {:ok? true :status (if cleared? "logged-out" "not-authenticated")})
+           (catch Throwable t
+             {:ok? false :error :logout-failed :message (or (ex-message t) "logout failed")}))
       (try (logout-fn)
            (settle! provider-id)
            (tel/log! :info ["provider-auth: logged out" provider-id])

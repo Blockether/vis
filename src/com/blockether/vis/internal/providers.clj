@@ -1073,6 +1073,25 @@
                                   (assoc :base-url (:base-url tmpl))))
                           source))))))
 
+(defn clear-provider-api-key!
+  "Forget `provider-id`'s stored API key while KEEPING its config entry.
+
+   This is what \"log out\" means for a key-only provider: the credential goes, the
+   provider stays configured with its models, base-url and tags, so signing back in
+   is one key away. Returns true when a key was actually cleared."
+  ([provider-id] (clear-provider-api-key! provider-id nil))
+  ([provider-id source]
+   (let
+     [current
+      (vec (:providers (config/runtime-config (or (config/load-global-config-raw) {}))))
+
+      entry
+      (some #(when (= provider-id (:id %)) %) current)]
+
+     (boolean (when (some? (:api-key entry))
+                (update-config-provider! provider-id #(dissoc % :api-key) source)
+                true)))))
+
 (defn remove-provider!
   "Remove a provider from the persisted fleet AND run the registered
    extension's logout when present. Invalidates the fleet snapshot.

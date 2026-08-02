@@ -150,9 +150,35 @@
                                                                       (reset! logged-out? true))})]
           (expect (= "logged-out" (:status (pauth/logout! :fake-pkce))))
           (expect (= true @logged-out?)))))
-  (it "refuses to log out a provider that registered no logout"
-      (with-redefs [registry/provider-by-id (constantly {})]
-        (expect (= :auth-unsupported (:error (pauth/logout! :fake-pkce)))))))
+  ;; A key-only provider has no OAuth session to revoke, but "log out" still has to
+  ;; MEAN something: forget the key, keep the provider configured. Answering
+  ;; :auth-unsupported made the gateway reply 400 and channels treat an ordinary
+  ;; logout as a fatal error.
+  (it "clears the stored api key and keeps the config entry when there is no logout"
+      (let [cleared (atom nil)]
+        (with-redefs
+          [registry/provider-by-id (constantly {})
+           providers/clear-provider-api-key! (fn [provider-id source]
+                                               (reset! cleared {:provider-id provider-id
+                                                                :source source})
+                                               true)]
+
+          (let [result (pauth/logout! :fake-key-provider)]
+            (expect (= true (:ok? result)))
+            (expect (= "logged-out" (:status result)))
+            (expect (= {:provider-id :fake-key-provider :source :provider-auth-logout}
+                       @cleared))))))
+  (it "reports not-authenticated when there was no stored key to clear"
+      (with-redefs
+        [registry/provider-by-id
+         (constantly {})
+
+         providers/clear-provider-api-key!
+         (constantly false)]
+
+        (let [result (pauth/logout! :fake-key-provider)]
+          (expect (= true (:ok? result)))
+          (expect (= "not-authenticated" (:status result)))))))
 
 (defdescribe
   provider-auth-api-key-test

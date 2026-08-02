@@ -554,37 +554,6 @@
   (boolean (and (some? (:provider-id selection))
                 (same-id? (:id provider) (:provider-id selection)))))
 
-(defn- tags-after-removal
-  "The `{:default … :fallback …}` tag pair after `removed-id` leaves the fleet
-   (`items` is the REMAINING fleet), mirroring what the daemon reports next read.
-
-   The PRIMARY is implicit — the daemon's `default-selection` falls back to the
-   FIRST provider in the fleet — so losing the tagged provider RESEATS it instead
-   of leaving a tag naming nobody. The FALLBACK is never implicit: it is dropped
-   when it named the removed provider, and dropped again when the new implicit
-   primary would collide with it, because the daemon refuses that pair."
-  [items removed-id default-selection fallback-selection]
-  (let
-    [primary
-     (if (same-id? removed-id (:provider-id default-selection))
-       (when-let [next-primary (first items)]
-         {:provider-id (some-> (:id next-primary)
-                               name
-                               keyword)
-          :model (some-> next-primary
-                         :models
-                         first
-                         vis/model-name)})
-       default-selection)
-
-     fallback
-     (when (and (some? (:provider-id fallback-selection))
-                (not (same-id? removed-id (:provider-id fallback-selection)))
-                (not (same-id? (:provider-id primary) (:provider-id fallback-selection))))
-       fallback-selection)]
-
-    {:default primary :fallback fallback}))
-
 (defn- role-chip
   "Chip ink `[fg bg]` for one router-root tag.
 
@@ -847,8 +816,6 @@
                  (when (seq limit-summary) {:text (str " / " limit-summary) :fg t/dialog-hint})]))
             (p/set-colors! g t/dialog-fg t/dialog-bg))))))
 
-(defn- remove-provider-by-id [items provider-id] (vec (remove #(= provider-id (:id %)) items)))
-
 ;; Channel-neutral status / limits / persistence shapes — the core
 ;; provider service (channel-neutral). Aliased privately so
 ;; the dialog code below reads unchanged.
@@ -1076,29 +1043,41 @@
          :else (gateway-api-key-login! screen provider))))
 
 (defn- perform-logout!
-  "Network logout + config removal for `provider`. No dialogs — the caller owns
-   confirmation and any success feedback. Returns true."
+  "Network logout for `provider`, KEEPING its config entry. No dialogs — the caller
+   owns confirmation and any feedback.
+
+   Logging out forgets the CREDENTIAL, not the configuration: models, base-url and
+   tags survive, so signing back in is one dialog away. It also never throws — a
+   gateway refusal (the 400 an api-key provider used to answer with) escaped as a
+   fatal error instead of a message.
+
+   Returns nil on success, or a human-readable failure string."
   [provider]
   (let [provider-id (:id provider)]
     ;; Logout runs IN THE DAEMON: it owns the credential file, which may live
     ;; on another machine entirely.
-    (vis/gateway-provider-logout! provider-id)
-    (vis/remove-config-provider! provider-id :tui-provider-logout)
-    true))
+    (try (vis/gateway-provider-logout! provider-id)
+         nil
+         (catch Throwable t (or (not-empty (str (ex-message t))) (str t))))))
 
 (defn logout-provider!
+  "Confirm, then log `provider` out through the gateway. The provider STAYS in the
+   config — only its credential is dropped. Returns true when the logout ran."
   [^TerminalScreen screen provider]
   (let [provider-id (:id provider)]
     (when (dlg/confirm-dialog! screen
                                (str (vis/display-label provider-id) " Authentication")
                                [(str "Log out of " (vis/display-label provider-id) "?")])
-      (vis/gateway-provider-logout! provider-id)
-      (vis/remove-config-provider! provider-id :tui-provider-logout)
-      (dlg/text-view-dialog!
-        screen
-        (str (vis/display-label provider-id) " Authentication")
-        [(str "Logged out of " (vis/display-label provider-id) ". Provider removed from config.")])
-      true)))
+      (if-let [err (perform-logout! provider)]
+        (do (dlg/text-view-dialog! screen
+                                   (str (vis/display-label provider-id) " Authentication")
+                                   [(str "Logout failed: " err)])
+            false)
+        (do (dlg/text-view-dialog! screen
+                                   (str (vis/display-label provider-id) " Authentication")
+                                   [(str "Logged out of " (vis/display-label provider-id) ".")
+                                    "Provider stays configured; sign in again anytime."])
+            true)))))
 
 (defn auth-provider-items
   "One row per auth-capable provider, labelled with its GATEWAY auth verdict.
@@ -1885,24 +1864,23 @@
                         (do (reset! status-scroll 0) (reset! mode :status))
 
                         :logout
-                        (do (reset! pending {:prompt (str "Log out of "
-                                                          (vis/display-label (:id provider))
-                                                          "?  y / n")
-                                             :run
-                                             (fn []
-                                               (when (perform-logout! provider)
-                                                 (swap! items remove-provider-by-id (:id provider))
-                                                 (swap! statuses dissoc (:id provider))
-                                                 (swap! limits dissoc (:id provider))
-                                                 (let
-                                                   [tags (tags-after-removal @items
-                                                                             (:id provider)
-                                                                             @default-selection
-                                                                             @fallback-selection)]
-                                                   (reset! default-selection (:default tags))
-                                                   (reset! fallback-selection (:fallback tags)))
-                                                 (swap! selected
-                                                   #(p/clamp % 0 (max 0 (dec (count @items)))))))})
+                        (do (reset! pending
+                              {:prompt
+                               (str "Log out of " (vis/display-label (:id provider)) "?  y / n")
+                               :run
+                               (fn []
+                                 (if-let [err (perform-logout! provider)]
+                                   (dlg/text-view-dialog! screen
+                                                          (str (vis/display-label (:id provider))
+                                                               " Authentication")
+                                                          [(str "Logout failed: " err)])
+                                   ;; The provider KEEPS its config row: only the
+                                   ;; credential is gone, so drop the cached
+                                   ;; verdicts and let the row re-probe as
+                                   ;; unauthenticated.
+                                   (do (swap! statuses dissoc (:id provider))
+                                       (swap! limits dissoc (:id provider))
+                                       (refresh-provider-diagnostics! provider statuses limits))))})
                             (reset! mode :confirm))
 
                         (reset! mode :list))

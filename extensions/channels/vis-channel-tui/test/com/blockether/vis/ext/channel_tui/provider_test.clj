@@ -125,55 +125,6 @@
           (expect (= {:provider-id :alpha :model "alpha-1"} @selected)))
         (finally (.stopScreen screen))))))
 
-(defdescribe remove-provider-by-id-test
-             (it "removes a logged-out provider from the router list"
-                 (let [remove-provider-by-id @#'provider/remove-provider-by-id]
-                   (expect (= [{:id :openai}]
-                              (remove-provider-by-id [{:id :anthropic-coding-plan} {:id :openai}]
-                                                     :anthropic-coding-plan))))))
-
-(defdescribe
-  tags-after-removal-test
-  (it
-    "reseats the primary and drops a fallback the removal invalidated"
-    (let
-      [tags-after-removal
-       @#'provider/tags-after-removal
-
-       fleet
-       [{:id :alpha :models [{:name "alpha-1"}]} {:id :beta :models [{:name "beta-1"}]}]]
-
-      ;; Losing an untagged provider leaves both tags exactly as they were.
-      (expect (= {:default {:provider-id :alpha :model "alpha-1"}
-                  :fallback {:provider-id :beta :model "beta-1"}}
-                 (tags-after-removal fleet
-                                     :gamma
-                                     {:provider-id :alpha :model "alpha-1"}
-                                     {:provider-id :beta :model "beta-1"})))
-      ;; Losing the FALLBACK's provider drops the tag; the primary is untouched.
-      (expect (= {:default {:provider-id :alpha :model "alpha-1"} :fallback nil}
-                 (tags-after-removal [{:id :alpha :models [{:name "alpha-1"}]}]
-                                     :beta
-                                     {:provider-id :alpha :model "alpha-1"}
-                                     {:provider-id :beta :model "beta-1"})))
-      ;; Losing the PRIMARY's provider reseats it on the first remaining
-      ;; provider — the same implicit choice the daemon makes.
-      (expect (= {:default {:provider-id :beta :model "beta-1"} :fallback nil}
-                 (tags-after-removal [{:id :beta :models [{:name "beta-1"}]}]
-                                     :alpha
-                                     {:provider-id :alpha :model "alpha-1"}
-                                     nil)))
-      ;; ...and when that reseated primary IS the fallback's provider, the
-      ;; fallback goes too: the daemon refuses both tags on one provider.
-      (expect (= {:default {:provider-id :beta :model "beta-1"} :fallback nil}
-                 (tags-after-removal [{:id :beta :models [{:name "beta-1"}]}]
-                                     :alpha
-                                     {:provider-id :alpha :model "alpha-1"}
-                                     {:provider-id :beta :model "beta-1"})))
-      ;; An empty fleet leaves nothing tagged rather than a dangling provider.
-      (expect (= {:default nil :fallback nil}
-                 (tags-after-removal [] :alpha {:provider-id :alpha :model "alpha-1"} nil))))))
-
 (defdescribe provider-card-scroll-test
              (it "keeps selected provider cards inside a visible scroll window"
                  (let
@@ -453,7 +404,7 @@
 (defdescribe
   logout-provider-test
   (it
-    "clears provider token storage and removes the persisted provider entry"
+    "clears the credential through the gateway and KEEPS the persisted provider"
     (let
       [logout-called?
        (atom false)
@@ -485,8 +436,39 @@
 
         (expect (= true (provider/logout-provider! nil {:id :anthropic-coding-plan})))
         (expect (= true @logout-called?))
-        (expect (= {:provider-id :anthropic-coding-plan :source :tui-provider-logout} @removed))
-        (expect (str/includes? (str @message) "Provider removed from config"))))))
+        ;; Logging out forgets the CREDENTIAL, never the configuration: models,
+        ;; base-url and tags have to survive so signing back in is one dialog away.
+        (expect (nil? @removed))
+        (expect (str/includes? (str @message) "stays configured")))))
+  (it "reports a gateway refusal instead of letting it escape as a fatal error"
+      (let
+        [removed
+         (atom nil)
+
+         message
+         (atom nil)]
+
+        (with-redefs
+          [vis/gateway-provider-logout!
+           (fn [_]
+             (throw (ex-info "provider logout failed: 400" {:status 400})))
+
+           vis/remove-config-provider!
+           (fn [provider-id source]
+             (reset! removed {:provider-id provider-id :source source})
+             true)
+
+           dlg/confirm-dialog!
+           (fn [& _]
+             true)
+
+           dlg/text-view-dialog!
+           (fn [& args]
+             (reset! message args))]
+
+          (expect (= false (provider/logout-provider! nil {:id :anthropic-coding-plan})))
+          (expect (nil? @removed))
+          (expect (str/includes? (str @message) "Logout failed"))))))
 
 (defdescribe
   api-key-auth-prompt-test
