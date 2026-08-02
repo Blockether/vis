@@ -391,7 +391,10 @@ Run host Git serially from the workspace root. Pass ONE map whose non-empty `com
     {:symbol 'git
      :native-tool? true
      :result
-     "Per command: `command`, `args`, `stdout`, `stderr`, `exit`, `timed_out`, `duration_ms`."
+     (str
+       "Top level is a MAP `{\"op\": \"git\", \"commands\": [row, ...]}`: read `r[\"commands\"][i]`, "
+       "never `r[0]`. Per row: `command`, `args`, `stdout`, `stderr`, `exit`, `timed_out`, "
+       "`duration_ms`.")
      :name "git"
      :description
      (str "Run SERIAL host Git only when `session[\"workspace\"]` lacks VCS facts or to act. "

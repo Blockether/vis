@@ -72,7 +72,23 @@
              {"exit" 0 "stdout" "clean\n" "stderr" "" "timed_out" false "duration_ms" 1})]
           (let [result (:result (handler {} {"commands" [["status" "--short"]]}))]
             (expect (= ["git" "status" "--short"] @seen))
-            (expect (= "clean\n" (get-in result ["commands" 0 "stdout"]))))))))
+            (expect (= "clean\n" (get-in result ["commands" 0 "stdout"])))))))
+  (it "states the TOP-LEVEL result shape, not just the per-command row"
+      ;; Regression: the contract read "Per command: `command`, `args`, `stdout`, ..."
+      ;; and never named the map holding those rows, so callers wrote `r[0]["stdout"]`
+      ;; and hit a KeyError. Name the container AND the lookup that reaches a row.
+      (let [contract (:ext.symbol/result gt/git-symbol)]
+        (expect (str/includes? contract "commands"))
+        (expect (str/includes? contract "r[\"commands\"][i]"))
+        (expect (str/includes? contract "never `r[0]`"))
+        (expect (str/includes? contract "stdout"))))
+  (it "returns exactly the documented top-level keys"
+      (with-redefs
+        [shell/run-argv (fn [_ _ _]
+                          {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
+        (let [result (:result (git-impl {} {"commands" [["status" "--short"]]}))]
+          (expect (= #{"commands"} (set (keys result))))
+          (expect (vector? (get result "commands")))))))
 (defdescribe
   git-python-sandbox-test
   (it
