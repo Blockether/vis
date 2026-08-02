@@ -1025,6 +1025,27 @@ export class GatewayClient {
     return pref;
   }
 
+  /**
+   * Record a pin this client did NOT write — the gateway's own
+   * `session.model_updated` broadcast, raised whenever ANOTHER surface repoints
+   * the same session (the TUI picker, a second device, an embedded caller).
+   *
+   * The gateway is the ONE writer of the pin, so the snapshot has to follow its
+   * broadcast: it is the header chip's first frame, and leaving it stale paints
+   * a reopened session with a model that session no longer runs on.
+   *
+   * Blank provider AND model = the override was cleared (`state.clj` labels a
+   * cleared pref as empty strings), so store `null` — the chip then falls back
+   * to the gateway default instead of rendering an empty pin.
+   */
+  noteSessionModel(sid: string, pref: ModelPref | null): ModelPref | null {
+    const provider = pref?.provider?.trim() || undefined;
+    const model = pref?.model?.trim() || undefined;
+    const next = provider || model ? { provider, model } : null;
+    writeSnapshot(this.snapshotKey('model', sid), next);
+    return next;
+  }
+
   /** The gateway default as last seen — same first-frame job as above. */
   cachedDefaultModel(): ModelPref | null {
     return readSnapshot<ModelPref>(this.snapshotKey('model-default'));

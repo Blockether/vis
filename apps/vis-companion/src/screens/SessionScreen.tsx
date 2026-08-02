@@ -2561,6 +2561,20 @@ export function SessionScreen({
           case 'queue.resumed':
             setQueuePaused(null);
             break;
+          // Someone ELSE repointed this session — the TUI picker, another
+          // device, an embedded caller. The gateway broadcasts the new pin, and
+          // it is the single writer of that fact, so follow the frame instead of
+          // trusting this screen's last local pick until a reopen (the TUI
+          // projects the same event onto its footer chip). Blank provider AND
+          // model means the override was cleared.
+          case 'session.model_updated':
+            setModelPref(
+              client.noteSessionModel(sid, {
+                provider: stringField(event, 'provider'),
+                model: stringField(event, 'model'),
+              }),
+            );
+            break;
           default:
             break;
         }
