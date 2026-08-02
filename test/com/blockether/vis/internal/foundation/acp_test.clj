@@ -2092,25 +2092,27 @@
                                                    "args" [(.getAbsolutePath f)]
                                                    "env" [{"name" "ACP_TEST" "value" "1"}]}]))
                       "sessionId")]
-            (try (expect (= [{:name "fake" :transport "stdio" :is-connected true}]
-                            (mcp/session-servers sid)))
-                 ;; The tools reach the MODEL through exactly the env the engine
-                 ;; passes a tool call — anything less is a session that only LOOKS
-                 ;; wired up.
-                 (expect (= ["echo"]
-                            (mapv #(get % "name")
-                                  (get-in (mcp/mcp-tools {:session-id sid} "fake")
-                                          [:result "tools"]))))
-                 (expect (= "echo: hi"
-                            (get-in (mcp/mcp-call {:session-id sid} "fake" "echo" {"msg" "hi"})
-                                    [:result "content" 0 "text"])))
-                 (expect (= "session"
-                            (get-in (mcp/mcp-servers {:session-id sid})
-                                    [:result "servers" 0 "scope"])))
-                 ;; …and NOWHERE else: one editor's server is not the machine's.
-                 (expect (empty? (get-in (mcp/mcp-servers {:session-id "someone-else"})
-                                         [:result "servers"])))
-                 (finally (mcp/clear-session-servers! sid)))
+            (try
+              (expect (= [{:name "fake" :transport "stdio" :is-connected true}]
+                         (mcp/session-servers sid)))
+              ;; The tools reach the MODEL through exactly the env the engine
+              ;; passes a tool call — anything less is a session that only LOOKS
+              ;; wired up.
+              (expect (= ["echo"]
+                         (mapv #(get % "name")
+                               (get-in (mcp/mcp-call {:session-id sid} "fake") [:result "tools"]))))
+              (expect (= "echo: hi"
+                         (get-in (mcp/mcp-call {:session-id sid} "fake" "echo" {"msg" "hi"})
+                                 [:result "content" 0 "text"])))
+              ;; The inventory reaches the model through ctx, not through a verb.
+              (let [ctx! (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'contribute)]
+                (expect (= "session"
+                           (get-in (ctx! {:session-id sid})
+                                   ["session_env" "mcp" "servers" "fake" "scope"])))
+                ;; …and NOWHERE else: one editor's server is not the machine's.
+                (expect (nil? (get-in (ctx! {:session-id "someone-else"})
+                                      ["session_env" "mcp" "servers" "fake"]))))
+              (finally (mcp/clear-session-servers! sid)))
             (expect (empty? (mcp/session-servers sid))))))))
   (it "a server that cannot be reached FAILS session/new instead of yielding a crippled session"
       (let [[c _] (conn+out)]

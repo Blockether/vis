@@ -1271,13 +1271,19 @@
               not-empty)
 
       provider-ids
-      (into #{} (keep #(some-> (get % "id") str str/trim not-empty)) providers)
+      (into #{}
+            (keep #(some-> (get % "id")
+                           str
+                           str/trim
+                           not-empty))
+            providers)
 
       ;; A slash INSIDE a model id (`z-ai/glm-4.6v`) is not a provider tag: the
       ;; prefix only tags a provider when the config actually has that provider.
       tagged-provider
-      (or (when-let [prefix (when (str/includes? (str fallback-model) "/")
-                              (not-empty (str/trim (first (str/split fallback-model #"/" 2)))))]
+      (or (when-let
+            [prefix (when (str/includes? (str fallback-model) "/")
+                      (not-empty (str/trim (first (str/split fallback-model #"/" 2)))))]
             (when (contains? provider-ids prefix) prefix))
           (some-> (get raw "fallback_provider")
                   str

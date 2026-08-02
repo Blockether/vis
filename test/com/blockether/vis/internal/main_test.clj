@@ -60,45 +60,44 @@
   (it "strips launcher selectors when they leak into JVM args"
       (expect (= ["channels" "--help"] (#'main/strip-global-args ["channels" "--jvm" "--help"])))))
 
-(defdescribe parse-run-args-test
-             (it "parses --toggles as a run-scoped override list"
-                 (expect
-                   (= {:toggles "main_test_flag=true,reasoning_level=deep" :prompt "run tests"}
-                      (#'main/parse-run-args
-                       ["--toggles" "main_test_flag=true,reasoning_level=deep" "run" "tests"]))))
-             (it "parses --session-id as persistent continuation"
-                 (expect (= {:session-id "abc123"
-                             :persist? true
-                             :provider "anthropic-coding-plan"
-                             :model "claude-sonnet-4-6"
-                             :prompt "what do I like?"}
-                            (#'main/parse-run-args
-                             ["--provider" "anthropic-coding-plan" "--model" "claude-sonnet-4-6"
-                              "--session-id" "abc123" "what" "do" "I" "like?"]))))
-             (it "refuses a flag typo instead of smuggling it into the prompt"
-                 (expect (= ["unknown flag --modle"]
-                            (:flag-errors (#'main/parse-run-args ["--modle" "gpt" "fix" "tests"])))))
-             (it "refuses a value flag left without a value"
-                 (expect (= ["--model needs a value"]
-                            (:flag-errors (#'main/parse-run-args ["--model"])))))
-             (it "consumes --verbose / -v as debug rather than prompt text"
-                 (expect (= {:debug? true :prompt "fix"} (#'main/parse-run-args ["--verbose" "fix"])))
-                 (expect (= {:debug? true :prompt "fix"} (#'main/parse-run-args ["-v" "fix"]))))
-             (it "treats everything after -- as prompt text"
-                 (expect (= {:prompt "--modle is a typo"}
-                            (#'main/parse-run-args ["--" "--modle" "is" "a" "typo"]))))
-             (it "keeps quoted prose that merely starts with dashes"
-                 (expect (= {:prompt "--json output is broken"}
-                            (#'main/parse-run-args ["--json output is broken"]))))
-             (it "refuses a value flag whose value is blank or another flag"
-                 (expect (= ["--model needs a value"]
-                            (:flag-errors (#'main/parse-run-args ["--model" "" "hi"]))))
-                 (expect (= ["--model needs a value (got --json)"]
-                            (:flag-errors (#'main/parse-run-args ["--model" "--json" "task"]))))
-                 (expect (= ["--toggles needs a value"]
-                            (:flag-errors (#'main/parse-run-args ["--toggles" "" "hi"]))))
-                 (expect (= ["--model needs a value"]
-                            (:flag-errors (#'main/parse-run-args ["--model" "--" "hi"]))))))
+(defdescribe
+  parse-run-args-test
+  (it "parses --toggles as a run-scoped override list"
+      (expect (= {:toggles "main_test_flag=true,reasoning_level=deep" :prompt "run tests"}
+                 (#'main/parse-run-args
+                  ["--toggles" "main_test_flag=true,reasoning_level=deep" "run" "tests"]))))
+  (it "parses --session-id as persistent continuation"
+      (expect (= {:session-id "abc123"
+                  :persist? true
+                  :provider "anthropic-coding-plan"
+                  :model "claude-sonnet-4-6"
+                  :prompt "what do I like?"}
+                 (#'main/parse-run-args
+                  ["--provider" "anthropic-coding-plan" "--model" "claude-sonnet-4-6" "--session-id"
+                   "abc123" "what" "do" "I" "like?"]))))
+  (it "refuses a flag typo instead of smuggling it into the prompt"
+      (expect (= ["unknown flag --modle"]
+                 (:flag-errors (#'main/parse-run-args ["--modle" "gpt" "fix" "tests"])))))
+  (it "refuses a value flag left without a value"
+      (expect (= ["--model needs a value"] (:flag-errors (#'main/parse-run-args ["--model"])))))
+  (it "consumes --verbose / -v as debug rather than prompt text"
+      (expect (= {:debug? true :prompt "fix"} (#'main/parse-run-args ["--verbose" "fix"])))
+      (expect (= {:debug? true :prompt "fix"} (#'main/parse-run-args ["-v" "fix"]))))
+  (it "treats everything after -- as prompt text"
+      (expect (= {:prompt "--modle is a typo"}
+                 (#'main/parse-run-args ["--" "--modle" "is" "a" "typo"]))))
+  (it "keeps quoted prose that merely starts with dashes"
+      (expect (= {:prompt "--json output is broken"}
+                 (#'main/parse-run-args ["--json output is broken"]))))
+  (it "refuses a value flag whose value is blank or another flag"
+      (expect (= ["--model needs a value"]
+                 (:flag-errors (#'main/parse-run-args ["--model" "" "hi"]))))
+      (expect (= ["--model needs a value (got --json)"]
+                 (:flag-errors (#'main/parse-run-args ["--model" "--json" "task"]))))
+      (expect (= ["--toggles needs a value"]
+                 (:flag-errors (#'main/parse-run-args ["--toggles" "" "hi"]))))
+      (expect (= ["--model needs a value"]
+                 (:flag-errors (#'main/parse-run-args ["--model" "--" "hi"]))))))
 
 (defdescribe run-output-mode-conflict-test
              (it "refuses two output modes instead of silently picking one"
@@ -114,16 +113,22 @@
                  (expect (nil? (:flag-errors (#'main/check-run-conflicts
                                               (#'main/parse-run-args ["--json" "--raw" "hi"])))))))
 
-(defdescribe run-db-target-test
-             (it "names the unusable --db path instead of failing inside the pool"
-                 (expect (= ["--db /nonexistent-dir-xyz/vis.mdb needs an existing directory; /nonexistent-dir-xyz does not exist"]
-                            (:flag-errors (#'main/check-db-target {:db "/nonexistent-dir-xyz/vis.mdb"}))))
-                 (expect (= ["--db /tmp is a directory, not a database file"]
-                            (:flag-errors (#'main/check-db-target {:db "/tmp"})))))
-             (it "accepts :memory and a writable path"
-                 (expect (nil? (:flag-errors (#'main/check-db-target {:db ":memory"}))))
-                 (expect (nil? (:flag-errors (#'main/check-db-target {:db (str (System/getProperty "java.io.tmpdir") "/vis-check-db-target.mdb")}))))
-                 (expect (nil? (:flag-errors (#'main/check-db-target {}))))))
+(defdescribe
+  run-db-target-test
+  (it
+    "names the unusable --db path instead of failing inside the pool"
+    (expect
+      (=
+        ["--db /nonexistent-dir-xyz/vis.mdb needs an existing directory; /nonexistent-dir-xyz does not exist"]
+        (:flag-errors (#'main/check-db-target {:db "/nonexistent-dir-xyz/vis.mdb"}))))
+    (expect (= ["--db /tmp is a directory, not a database file"]
+               (:flag-errors (#'main/check-db-target {:db "/tmp"})))))
+  (it "accepts :memory and a writable path"
+      (expect (nil? (:flag-errors (#'main/check-db-target {:db ":memory"}))))
+      (expect (nil? (:flag-errors (#'main/check-db-target
+                                   {:db (str (System/getProperty "java.io.tmpdir")
+                                             "/vis-check-db-target.mdb")}))))
+      (expect (nil? (:flag-errors (#'main/check-db-target {}))))))
 
 (defdescribe reasoning-effort-cli-parse-test
              (it "parses exact provider-native reasoning effort separately"
@@ -210,7 +215,8 @@
                     ^String help
                     (commandline/render-command command ["vis-agent" "sessions"])]
 
-                   (expect (.contains help "vis-agent sessions <list|show|fork|delete|search|export>"))
+                   (expect (.contains help
+                                      "vis-agent sessions <list|show|fork|delete|search|export>"))
                    (expect (.contains help "list"))
                    (expect (.contains help "show"))
                    (expect (.contains help "fork"))
@@ -231,23 +237,38 @@
                         (expect (= :vis.cli/unknown-model-provider (:type (ex-data e))))
                         (expect (true? (:vis/user-error (ex-data e))))))))
 
-(defdescribe model-override-slash-test
+(defdescribe
+  model-override-slash-test
   "Model ids may contain a slash (`z-ai/glm-4.6v`). `--model` must not read that
    prefix as a provider tag when a configured provider lists the WHOLE name."
   (it "promotes the provider whose catalog owns the slash-containing model"
-      (let [config {:providers [{:id :anthropic :models [{:name "claude-opus-5"}]}
-                               {:id :openrouter :models [{:name "gpt-oss-120b"}
-                                                         {:name "z-ai/glm-4.6v"}]}]}
-            out (#'main/config-with-model-override config "z-ai/glm-4.6v")
-            [active] (:providers out)]
+      (let
+        [config
+         {:providers [{:id :anthropic :models [{:name "claude-opus-5"}]}
+                      {:id :openrouter
+                       :models [{:name "gpt-oss-120b"} {:name "z-ai/glm-4.6v"}]}]}
+
+         out
+         (#'main/config-with-model-override config "z-ai/glm-4.6v")
+
+         [active]
+         (:providers out)]
+
         (expect (= :openrouter (:id active)))
         (expect (= "z-ai/glm-4.6v" (:name (first (:models active)))))
         (expect (= [:openrouter :anthropic] (mapv :id (:providers out))))))
   (it "still tags a real provider prefix"
-      (let [config {:providers [{:id :anthropic :models [{:name "claude-opus-5"}]}
-                               {:id :openrouter :models [{:name "gpt-oss-120b"}]}]}
-            out (#'main/config-with-model-override config "openrouter/gpt-oss-120b")
-            [active] (:providers out)]
+      (let
+        [config
+         {:providers [{:id :anthropic :models [{:name "claude-opus-5"}]}
+                      {:id :openrouter :models [{:name "gpt-oss-120b"}]}]}
+
+         out
+         (#'main/config-with-model-override config "openrouter/gpt-oss-120b")
+
+         [active]
+         (:providers out)]
+
         (expect (= :openrouter (:id active)))
         (expect (= "gpt-oss-120b" (:name (first (:models active))))))))
 
@@ -270,26 +291,25 @@
              (expect (= :vis.cli/unknown-toggle (:type (ex-data e))))
              (expect (true? (:vis/user-error (ex-data e))))))))
 
-(defdescribe
-  launcher-owned-commands-test
-  (let [by-name (into {} (map (juxt :cmd/name identity)) (registry/registered-under []))]
-    (it "lists the launcher's runtime and update commands in the binary's help"
-        (doseq [nm ["runtime" "update"]]
-          (let [cmd (get by-name nm)]
-            (expect (some? cmd))
-            (expect (not (str/blank? (:cmd/doc cmd))))
-            (expect (str/starts-with? (:cmd/usage cmd) (str "vis-agent " nm))))))
-    (it "documents exactly the launcher's own words, not a source-checkout updater"
-        (expect (= "vis-agent runtime [show | use native|jvm|dev|auto]"
-                   (:cmd/usage (get by-name "runtime"))))
-        (expect (= "vis-agent update [--native|--jvm|--dev] [--rebuild] [vX.Y.Z|<sha>]"
-                   (:cmd/usage (get by-name "update"))))
-        (expect (not (str/includes? (:cmd/usage (get by-name "update")) "--reset"))))
-    (it "refuses to run them inside the binary and names the launcher instead"
-        (doseq [nm ["runtime" "update"]]
-          (try ((:cmd/run-fn (get by-name nm)) {} [])
-               (expect false)
-               (catch clojure.lang.ExceptionInfo e
-                 (expect (= :vis.cli/launcher-owned-command (:type (ex-data e))))
-                 (expect (true? (:vis/user-error (ex-data e))))
-                 (expect (str/includes? (ex-message e) "vis-agent launcher"))))))))
+(defdescribe launcher-owned-commands-test
+             (let [by-name (into {} (map (juxt :cmd/name identity)) (registry/registered-under []))]
+               (it "lists the launcher's runtime and update commands in the binary's help"
+                   (doseq [nm ["runtime" "update"]]
+                     (let [cmd (get by-name nm)]
+                       (expect (some? cmd))
+                       (expect (not (str/blank? (:cmd/doc cmd))))
+                       (expect (str/starts-with? (:cmd/usage cmd) (str "vis-agent " nm))))))
+               (it "documents exactly the launcher's own words, not a source-checkout updater"
+                   (expect (= "vis-agent runtime [show | use native|jvm|dev|auto]"
+                              (:cmd/usage (get by-name "runtime"))))
+                   (expect (= "vis-agent update [--native|--jvm|--dev] [--rebuild] [vX.Y.Z|<sha>]"
+                              (:cmd/usage (get by-name "update"))))
+                   (expect (not (str/includes? (:cmd/usage (get by-name "update")) "--reset"))))
+               (it "refuses to run them inside the binary and names the launcher instead"
+                   (doseq [nm ["runtime" "update"]]
+                     (try ((:cmd/run-fn (get by-name nm)) {} [])
+                          (expect false)
+                          (catch clojure.lang.ExceptionInfo e
+                            (expect (= :vis.cli/launcher-owned-command (:type (ex-data e))))
+                            (expect (true? (:vis/user-error (ex-data e))))
+                            (expect (str/includes? (ex-message e) "vis-agent launcher"))))))))

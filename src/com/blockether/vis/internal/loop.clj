@@ -6622,6 +6622,102 @@
   ;; Cleared on the first accepted request by `note-provider-request-ok!`.
   (atom {}))
 
+(def ^:private AUTH_COOLDOWN_MS
+  "How long (ms) a provider stays EXCLUDED from routing after its credentials were
+   rejected and the turn had to rescue itself on another provider.
+
+   The rescue route itself is per-ITERATION state, so without a process-wide
+   cooldown the very next iteration re-probes the dead credential: every single
+   iteration then pays a 401 round-trip, a fallback log line and a visible
+   progress chunk until the user re-authenticates."
+  300000)
+
+(defonce ^:private provider-auth-cooldown
+  ;; provider-id -> {:until <epoch-ms>, :since <epoch-ms>, :hits <long>}. Opened by
+  ;; `note-provider-auth-cooldown!` when auth recovery is exhausted and the turn
+  ;; falls back to another provider; closed by `note-provider-request-ok!` as soon
+  ;; as the provider accepts a request again (fresh login / rotated key).
+  (atom {}))
+
+(defn- note-provider-auth-cooldown!
+  "Open (or extend) the auth cooldown for `pid` after a fallback. Returns true only
+   for the FIRST trip of a cooldown window so the caller can log the escape once at
+   :warn and keep the repeats at :debug."
+  [pid]
+  (boolean
+    (when pid
+      (let
+        [now
+         (System/currentTimeMillis)
+
+         after
+         (swap! provider-auth-cooldown
+                (fn [m]
+                  (let [prev (get m pid)
+                        live? (and prev (> (long (:until prev)) now))]
+                    (assoc m
+                           pid
+                           {:until (+ now (long AUTH_COOLDOWN_MS))
+                            :since (if live? (:since prev) now)
+                            :hits (if live? (inc (long (:hits prev))) 1)}))))]
+
+        (= 1 (long (:hits (get after pid))))))))
+
+(defn- clear-provider-auth-cooldown!
+  "Close the auth cooldown for `pid`; called once the provider accepts a request.
+   Returns true when a cooldown was actually cleared."
+  [pid]
+  (boolean
+    (when (and pid (contains? @provider-auth-cooldown pid))
+      (swap! provider-auth-cooldown dissoc pid)
+      true)))
+
+(defn- auth-cooled-providers
+  "Set of providers whose credentials are still inside their auth cooldown. Prunes
+   expired entries on the way so the map cannot grow without bound."
+  []
+  (let [now (System/currentTimeMillis)]
+    (set (keys (swap! provider-auth-cooldown
+                      (fn [m]
+                        (into {}
+                              (filter (fn [[_ v]] (> (long (:until v)) now)))
+                              m)))))))
+
+(defn auth-cooldown-metrics
+  "Observability snapshot of the per-provider auth cooldown: the window length and
+   the providers still excluded, with the epoch-ms the exclusion lifts and how many
+   fallbacks landed inside the window."
+  []
+  (let [cooled (auth-cooled-providers)]
+    {:cooldown-ms AUTH_COOLDOWN_MS
+     :cooled-providers cooled
+     :cooldowns (select-keys @provider-auth-cooldown cooled)}))
+
+(defn- apply-auth-cooldown-routing
+  "Seed an iteration's routing with the providers still serving an auth cooldown so
+   the dead credential is skipped BEFORE the request instead of being rediscovered
+   with another 401. A provider the caller pinned explicitly is never excluded — an
+   explicit pin outranks the cooldown, and its own 401 re-arms the window."
+  [routing]
+  (let
+    [current
+     (or routing {})
+
+     pinned
+     (or (:provider current) (:force-provider current))
+
+     cooled
+     (disj (auth-cooled-providers) pinned)]
+
+    (if (empty? cooled)
+      current
+      (cond-> (-> current
+                  (assoc :on-auth-error :fallback-provider)
+                  (update :exclude-providers (fnil into #{}) cooled))
+        (or (nil? (:on-transient-error current))
+            (= :fallback-model-in-the-same-provider (:on-transient-error current)))
+        (assoc :on-transient-error :hybrid)))))
+
 (defn- auth-refresh-allowed?
   "Circuit breaker for forced OAuth refreshes. Atomically prunes timestamps older
    than the rolling window for `pid`, records this attempt ONLY when it is
@@ -6749,14 +6845,17 @@
                        (long AUTH_PROPAGATION_WINDOW_MS)))))))
 
 (defn- note-provider-request-ok!
-  "Clear the just-refreshed propagation marker for this turn's provider once a
-   request has been ACCEPTED (auth succeeded). Keeps [[refresh-just-failed?]]'s
-   recency window scoped to the post-refresh settling burst, so a real
-   credential rotation later is treated as a fresh 401 (re-mint), never misread
-   as propagation lag. No-op when the provider has no marker."
+  "Clear the just-refreshed propagation marker AND any auth cooldown for this
+   turn's provider once a request has been ACCEPTED (auth succeeded). Keeps
+   [[refresh-just-failed?]]'s recency window scoped to the post-refresh settling
+   burst, so a real credential rotation later is treated as a fresh 401 (re-mint),
+   never misread as propagation lag, and lets a re-authenticated provider re-enter
+   routing immediately instead of waiting out [[AUTH_COOLDOWN_MS]]. No-op when the
+   provider has neither marker."
   [resolved-model]
   (when-let [pid (:provider resolved-model)]
-    (when (contains? @auth-last-refreshed pid) (swap! auth-last-refreshed dissoc pid))))
+    (when (contains? @auth-last-refreshed pid) (swap! auth-last-refreshed dissoc pid))
+    (clear-provider-auth-cooldown! pid)))
 
 (defn- auth-refreshable-error?
   "True when exception `e` is a provider auth rejection (401/403 or an
@@ -8119,7 +8218,10 @@
                  provider-output-started? (atom false)
                  effective-messages provider-messages
                  resolved-model pre-resolved-model
-                 effective-routing (or routing {})
+                 ;; Providers still serving an auth cooldown are excluded up front:
+                 ;; the per-iteration rescue route below dies with the iteration, so
+                 ;; only this seeding keeps a dead credential from being re-probed.
+                 effective-routing (apply-auth-cooldown-routing routing)
                  ;; Mutates once only when exhausted auth recovery releases a dead provider.
                  iteration-routing (atom effective-routing)
                  iteration-result
@@ -8261,6 +8363,11 @@
                             (let
                               [fallback-routing
                                (auth-fallback-routing e @iteration-routing resolved-model)
+                               ;; Persist the release ACROSS iterations. Without the
+                               ;; cooldown the next iteration rebuilds routing from
+                               ;; scratch and re-sends to the dead provider.
+                               first-trip?
+                               (note-provider-auth-cooldown! (:provider resolved-model))
                                chunk (provider-retry-progress-chunk
                                        (inc (long iteration))
                                        e
@@ -8271,11 +8378,13 @@
                                         :max-retries 1
                                         :delay-ms 0})]
 
-                              (emit-hook! on-chunk chunk "Auth fallback progress hook failed")
-                              (tel/log! {:level :warn
+                              (when first-trip?
+                                (emit-hook! on-chunk chunk "Auth fallback progress hook failed"))
+                              (tel/log! {:level (if first-trip? :warn :debug)
                                          :id ::auth-provider-fallback
                                          :data {:iteration iteration
                                                 :provider (:provider resolved-model)
+                                                :cooldown-ms AUTH_COOLDOWN_MS
                                                 :status (:status (ex-data e))}}
                                         "Provider auth recovery exhausted; falling back")
                               {::retry-auth-fallback fallback-routing})
@@ -9586,6 +9695,50 @@
           (and model (some owns? (:providers router))) {:model model}
           :else {})))
 
+(defn- router-with-pinned-model
+  "Teach `router` about a session-pinned model its CONFIG does not list.
+
+   Provider `:models` in config is a curated subset; the gateway deliberately
+   accepts any model the provider's LIVE catalog exposes, and the model picker
+   offers exactly those. `forced-routing-for-pref` however validates the pin
+   against `:models`, so a live-catalog pick degraded to `{}` and the turn silently
+   ran the DEFAULT model — the pick looked applied in the UI and never bound. svar
+   `resolve-routing` throws on a model it does not know, so the pin has to be
+   MATERIALISED instead: synthesize a minimal `{:name model}` entry on the pinned
+   provider (the same shape catalog hydration produces) and let provider-level
+   settings inherit as usual.
+
+   Returns `router` unchanged when there is no pin, the provider is unknown, or it
+   already lists the model."
+  [router provider model]
+  (let
+    [model
+     (some-> model
+             str
+             str/trim
+             not-empty)
+
+     pid
+     (some-> provider
+             name
+             keyword)
+
+     ps
+     (vec (:providers router))
+
+     idx
+     (when (and model pid)
+       (first (keep-indexed (fn [i p] (when (= (:id p) pid) i)) ps)))
+
+     p
+     (when idx (nth ps idx))]
+
+    (if (and p (not (some #(= (:name %) model) (:models p))))
+      (assoc router
+             :providers
+             (assoc ps idx (update p :models (fnil conj []) {:name model})))
+      router)))
+
 (defn- router-for-pinned-provider
   "Hoist `provider-id`'s entry to the router HEAD.
 
@@ -9652,7 +9805,11 @@
        ;; the router). Computed once: it drives BOTH the display/cost root
        ;; (env-router below) and svar's forced `:routing`, so the two can never
        ;; name different providers again.
-       pref-forced (forced-routing-for-pref (:router env) pref-provider model)
+       ;; A pick may name a model only the provider's LIVE catalog lists (the
+       ;; picker offers those); materialise it on the pinned provider or the pin
+       ;; validates away and the turn silently runs the default model.
+       pref-router (router-with-pinned-model (:router env) pref-provider model)
+       pref-forced (forced-routing-for-pref pref-router pref-provider model)
        ;; Cancellation TOKEN carries the cooperative flag AND the
        ;; on-cancel! callback registry that hard-cancels Python /
        ;; provider futures. Callers create one via
@@ -9698,7 +9855,7 @@
        ;; DISPLAY + COST: `resolve-effective-model` reads the vector head, so
        ;; root-model/root-provider (and the persisted cost label) reflect the
        ;; pick. Blank/unknown names degrade to the config order.
-       env-router (cond-> (:router env)
+       env-router (cond-> pref-router
                     (and model (not (str/blank? (str model))))
                     (router-for-model model)
 

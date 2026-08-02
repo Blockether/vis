@@ -221,7 +221,7 @@
                  :start-byte (.startByte h)
                  :end-byte (.endByte h)
                  :anchor (patch/line-anchor line (nth lines (dec line) ""))}))
-            (StructuralApi/findReferences source language name)))
+            (StructuralApi/findReferences ^String source ^String language ^String name)))
     []))
 
 (defn- occurrence-entries
@@ -286,7 +286,7 @@
                                 (occurrence-entries line-anchor (get defs-by-name (key e)) hits))
                         acc)))
                   (transient {})
-                  (StructuralApi/findReferences source language ^java.util.Collection wanted))))
+                  (StructuralApi/findReferences ^String source ^String language ^java.util.Collection wanted))))
       {})))
 
 (defn occurrences

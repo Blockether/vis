@@ -6,34 +6,38 @@
             [com.blockether.vis.internal.foundation.mcp.core :as mcp]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defdescribe mcp-native-contract-test
-             (it "keeps native/Python alias routing in each compact description"
-                 (let [symbols (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])]
-                   (doseq [s symbols]
-                     (let [description (:ext.symbol/description s)]
-                       (expect (str/includes? description "In `python_execution`"))
-                       (expect (< (count description) 350))))))
-             (it "closes the dispatcher schemas while leaving MCP tool args open"
-                 (let
-                   [symbols
-                    (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])
+(defdescribe
+  mcp-native-contract-test
+  (it "keeps native/Python alias routing in each compact description"
+      (let [symbols (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])]
+        (doseq [s symbols]
+          (let [description (:ext.symbol/description s)]
+            (expect (str/includes? description "In `python_execution`"))
+            (expect (< (count description) 350))))))
+  (it "closes the dispatcher schemas while leaving MCP tool args open"
+      (let
+        [symbols
+         (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])
 
-                    call
-                    (first (filter #(= "mcp__call" (:ext.symbol/name %)) symbols))]
+         call
+         (first (filter #(= "mcp__call" (:ext.symbol/name %)) symbols))]
 
-                   (doseq [s symbols]
-                     (expect (false? (get-in s [:ext.symbol/schema :additionalProperties]))))
-                   (expect (= "object"
-                              (get-in call [:ext.symbol/schema :properties "args" :type])))))
-             (it "exposes exactly three verbs — connecting is the gateway's job, not a session's"
-                 (let
-                   [names (set (map :ext.symbol/name
-                                    (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])))]
-                   (expect (= #{"mcp__servers" "mcp__tools" "mcp__call"} names))
-                   ;; A session must not be able to yank a connection every other session is
-                   ;; using, nor be expected to establish one the daemon already owes it.
-                   (expect (not (contains? names "mcp__connect")))
-                   (expect (not (contains? names "mcp__disconnect"))))))
+        (doseq [s symbols]
+          (expect (false? (get-in s [:ext.symbol/schema :additionalProperties]))))
+        (expect (= "object" (get-in call [:ext.symbol/schema :properties "args" :type])))))
+  (it "exposes exactly ONE verb — the inventory is ctx's job, connecting is the gateway's"
+      (let
+        [names (set (map :ext.symbol/name
+                         (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])))]
+        (expect (= #{"mcp__call"} names))
+        ;; Server names, status and tool names ride in `env.mcp`, so a listing
+        ;; verb would only re-fetch what the session object already carries.
+        (expect (not (contains? names "mcp__servers")))
+        (expect (not (contains? names "mcp__tools")))
+        ;; A session must not be able to yank a connection every other session is
+        ;; using, nor be expected to establish one the daemon already owes it.
+        (expect (not (contains? names "mcp__connect")))
+        (expect (not (contains? names "mcp__disconnect"))))))
 
 (defdescribe
   gateway-mcp-management-test
@@ -275,10 +279,7 @@
        @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'killed)
 
        call!
-       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'mcp-call-impl)
-
-       tools!
-       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'mcp-tools-impl)]
+       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'mcp-call-impl)]
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
@@ -304,7 +305,7 @@
                  ;; so "not configured" would send the user editing a correct file.
                  (expect (str/includes? answer "was stopped"))
                  (expect (str/includes? answer "actions/start")))
-               (expect (str/includes? (str (tools! {:session-id "s1"} "local")) "was stopped"))
+               (expect (str/includes? (str (call! {:session-id "s1"} "local")) "was stopped"))
                (expect (empty? @connects))
                (finally (reset! conns {}) (reset! killed #{})))))))
   (it "refuses OAuth where it cannot apply and answers unknown flows as such"
@@ -442,8 +443,8 @@
        killed
        @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'killed)
 
-       tools!
-       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'mcp-tools-impl)]
+       call!
+       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'mcp-call-impl)]
 
       (with-redefs-fn {#'config/load-global-config-raw (fn []
                                                          @store)
@@ -461,7 +462,7 @@
         (fn []
           (reset! conns {})
           (reset! killed #{})
-          (let [request (future (tools! {:session-id "s1"} "local"))]
+          (let [request (future (call! {:session-id "s1"} "local"))]
             (try (expect (= true (deref entered 5000 ::timeout)))
                  ;; The kill can win while `connect` is still handshaking and before
                  ;; there is a pooled conn for `disconnect!` to see.
@@ -575,7 +576,7 @@
                  ;; structural diff, so a list would re-send every server on any change.
                  (expect (= ["alpha" "beta"] (vec (keys before))))
                  ;; NAMES, sorted — the whole point is answering "what can I call?"
-                 ;; without spending an `mcp__tools` round trip first.
+                 ;; without spending a listing round trip first.
                  (expect (= ["read_file" "write_file"] (get-in before ["alpha" "tools"])))
                  (expect (= "connected" (get-in before ["alpha" "status"])))
                  (expect (= "global" (get-in before ["alpha" "scope"])))
@@ -594,3 +595,64 @@
                    (expect (str/includes? delta "session[\"env\"][\"mcp\"][\"servers\"][\"beta\"]"))
                    (expect (not (str/includes? delta "alpha")))))
                (finally (reset! conns {}) (reset! killed #{}))))))))
+
+(defdescribe
+  mcp-call-two-shapes-test
+  (it
+    "answers `server` alone with schemas, and refuses an unknown tool with the names it has"
+    (let
+      [store
+       (atom {"mcp" {"servers" {"alpha" {"transport" "stdio" "command" "echo"}}}})
+
+       conns
+       @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
+
+       reconcile!
+       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile!)
+
+       reconcile-async!
+       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile-async!)
+
+       call!
+       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'mcp-call-impl)
+
+       called
+       (atom nil)]
+
+      (with-redefs-fn {#'config/load-global-config-raw (fn []
+                                                         @store)
+                       #'config/load-config-raw (fn []
+                                                  @store)
+                       #'client/connect (fn [_name _spec]
+                                          {:transport :stdio :tools (atom nil)})
+                       #'client/list-tools (constantly [{"name" "write_file"
+                                                         "description" "Write it"
+                                                         "inputSchema" {"type" "object"}}])
+                       #'client/alive? (constantly true)
+                       #'client/close (constantly nil)
+                       #'client/call-tool (fn [_conn tool args]
+                                            (reset! called [tool args])
+                                            {"content" [{"text" "ok"}]})
+                       reconcile-async! (constantly nil)}
+        (fn []
+          (try (reset! conns {})
+               (reconcile!)
+               ;; Naming ONLY the server IS the schema lookup - the reason no separate
+               ;; listing verb has to exist, and nothing is invoked to get it.
+               (let [listed (:result (call! {:session-id "s1"} "alpha"))]
+                 (expect (= "alpha" (get listed "server")))
+                 (expect (= [{"name" "write_file"
+                              "description" "Write it"
+                              "input_schema" {"type" "object"}}]
+                            (get listed "tools")))
+                 (expect (nil? @called)))
+               ;; A name ctx never advertised is refused WITH the real ones, instead of
+               ;; being forwarded to the server as a guess.
+               (let [refusal (str (call! {:session-id "s1"} "alpha" "wrte_file" {}))]
+                 (expect (str/includes? refusal "exposes no tool"))
+                 (expect (str/includes? refusal "write_file"))
+                 (expect (nil? @called)))
+               (let [answer (:result (call! {:session-id "s1"} "alpha" "write_file" {"path" "p"}))]
+                 (expect (= ["write_file" {"path" "p"}] @called))
+                 (expect (= "ok" (get-in answer ["content" 0 "text"]))))
+               (finally (reset! conns {}))))))))

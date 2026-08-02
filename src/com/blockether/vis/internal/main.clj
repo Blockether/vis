@@ -498,7 +498,10 @@
   [providers model-name]
   (let [wanted (str/lower-case (str model-name))]
     (some (fn [provider]
-            (when (some #(= wanted (some-> (config/model-name %) str str/lower-case))
+            (when (some #(= wanted
+                            (some-> (config/model-name %)
+                                    str
+                                    str/lower-case))
                         (:models provider))
               provider))
           providers)))
@@ -533,11 +536,11 @@
                     str/trim
                     not-empty)]
     (let [providers (vec (:providers config))]
-      (if-let [[provider-id model-name]
-               (if-let [owner (when (str/includes? model* "/")
-                                (provider-with-model providers model*))]
-                 [(:id owner) model*]
-                 (split-provider-model model*))]
+      (if-let
+        [[provider-id model-name]
+         (if-let [owner (when (str/includes? model* "/") (provider-with-model providers model*))]
+           [(:id owner) model*]
+           (split-provider-model model*))]
         (let
           [provider (or (some #(when (= provider-id (:id %)) %) providers)
                         (provider-from-template provider-id)
@@ -1578,13 +1581,16 @@
    output mode. Aliases (`--trace`, `--full-trace-json-stream-raw`) report
    under their canonical flag."
   [opts]
-  (let [named (->> renderer-flags
-                   (keep (fn [[k flag]] (when (get opts k) flag)))
-                   sort
-                   vec)]
+  (let
+    [named (->> renderer-flags
+                (keep (fn [[k flag]]
+                        (when (get opts k) flag)))
+                sort
+                vec)]
     (cond-> opts
       (< 1 (count named))
-      (update :flag-errors (fnil conj [])
+      (update :flag-errors
+              (fnil conj [])
               (str "name one output mode, not " (str/join " and " named))))))
 
 (defn- check-db-target
@@ -1594,22 +1600,24 @@
   [{:keys [db] :as opts}]
   (if (or (nil? db) (= ":memory" db))
     opts
-    (let [^java.io.File f (.getAbsoluteFile (io/file db))
-          ^java.io.File parent (.getParentFile f)
-          err (cond (.isDirectory f)
-                    (str "--db " db " is a directory, not a database file")
+    (let
+      [^java.io.File f
+       (.getAbsoluteFile (io/file db))
 
-                    (and parent (not (.isDirectory parent)))
-                    (str "--db " db " needs an existing directory; " (.getPath parent)
-                         " does not exist")
+       ^java.io.File parent
+       (.getParentFile f)
 
-                    (and (.exists f) (not (.canWrite f)))
-                    (str "--db " db " is not writable")
+       err
+       (cond (.isDirectory f) (str "--db " db " is a directory, not a database file")
+             (and parent (not (.isDirectory parent)))
+             (str "--db " db " needs an existing directory; " (.getPath parent) " does not exist")
+             (and (.exists f) (not (.canWrite f))) (str "--db " db " is not writable")
+             (and (not (.exists f)) parent (not (.canWrite parent)))
+             (str "--db " db " cannot be created; " (.getPath parent) " is not writable"))]
 
-                    (and (not (.exists f)) parent (not (.canWrite parent)))
-                    (str "--db " db " cannot be created; " (.getPath parent) " is not writable"))]
       (cond-> opts
-        err (update :flag-errors (fnil conj []) err)))))
+        err
+        (update :flag-errors (fnil conj []) err)))))
 
 (defn- parse-run-args
   "Parse root one-shot run arguments into {:prompt str :json? bool ...}.
@@ -1642,15 +1650,11 @@
          (next args)]
 
         (cond (= "--" arg) (assoc opts :prompt (str/join " " (into prompt-parts more)))
-
-              (contains? #{"--help" "-h"} arg)
-              (assoc opts
-                :help? true
-                :prompt "")
-
+              (contains? #{"--help" "-h"} arg) (assoc opts
+                                                 :help? true
+                                                 :prompt "")
               (contains? run-boolean-flags arg)
               (recur more (assoc opts (run-boolean-flags arg) true) prompt-parts)
-
               (contains? run-value-flags arg)
               ;; A value flag with no usable value used to vanish: `--model ""`
               ;; ran the DEFAULT model, and `--model --json "task"` ran a model
@@ -1659,20 +1663,21 @@
               (let [v (first more)]
                 (if (or (str/blank? v) (= "--" v) (option-token? v))
                   (recur more
-                         (update opts :flag-errors (fnil conj [])
-                                 (str arg " needs a value"
-                                      (when (option-token? v) (str " (got " v ")"))))
+                         (update
+                           opts
+                           :flag-errors
+                           (fnil conj [])
+                           (str arg " needs a value" (when (option-token? v) (str " (got " v ")"))))
                          prompt-parts)
                   (recur (next more)
                          (cond-> (assoc opts (run-value-flags arg) v)
-                           (= "--session-id" arg) (assoc :persist? true))
+                           (= "--session-id" arg)
+                           (assoc :persist? true))
                          prompt-parts)))
-
               (option-token? arg)
               (recur more
                      (update opts :flag-errors (fnil conj []) (str "unknown flag " arg))
                      prompt-parts)
-
               :else (recur more opts (conj prompt-parts arg)))))))
 
 (defn- print-run-usage!
@@ -1826,12 +1831,16 @@
     [{:keys [prompt json? code? raw? full-trace-stream? full-trace-json-stream? help? agent-name db
              toggles]
       :as opts}
-     (-> residual parse-run-args check-run-conflicts check-db-target)]
+     (-> residual
+         parse-run-args
+         check-run-conflicts
+         check-db-target)]
     ;; A flag typo used to be smuggled into the prompt: `vis-agent --modle x "task"`
     ;; ran with the DEFAULT model and never said so. Refuse instead, and name the
     ;; escape hatch for prompts that really do start with dashes.
     (when-let [errors (seq (:flag-errors opts))]
-      (doseq [e errors] (stdout! (str "vis-agent: " e)))
+      (doseq [e errors]
+        (stdout! (str "vis-agent: " e)))
       (stdout! "  See the flag list:            vis-agent --help")
       (when (some #(str/starts-with? % "unknown flag") errors)
         (stdout! "  Or make it the prompt text:   vis-agent -- <text>"))
@@ -3010,13 +3019,11 @@
    binary was invoked directly, so name the command that does work."
   [command]
   (fn [_parsed _residual]
-    (throw (ex-info (str "`vis-agent "
-                        command
-                        "` is handled by the vis-agent launcher, not by this runtime binary."
-                        " Run it through the `vis-agent` wrapper on your PATH.")
-                    {:type :vis.cli/launcher-owned-command
-                     :vis/user-error true
-                     :command command}))))
+    (throw (ex-info
+             (str "`vis-agent " command
+                  "` is handled by the vis-agent launcher, not by this runtime binary."
+                  " Run it through the `vis-agent` wrapper on your PATH.")
+             {:type :vis.cli/launcher-owned-command :vis/user-error true :command command}))))
 
 (defn- cli-gateway-start!
   "Run the HTTP/SSE gateway daemon. Lazy resolve keeps
@@ -3533,8 +3540,7 @@
     {:cmd/name "update"
      :cmd/doc "Update the runtime this installation runs on."
      :cmd/usage "vis-agent update [--native|--jvm|--dev] [--rebuild] [vX.Y.Z|<sha>]"
-     :cmd/examples ["vis-agent update" "vis-agent update --native"
-                    "vis-agent update --jvm v1.2.3"]
+     :cmd/examples ["vis-agent update" "vis-agent update --native" "vis-agent update --jvm v1.2.3"]
      :cmd/run-fn (launcher-owned! "update")}
     {:cmd/name "gateway"
      :cmd/doc "Start, inspect, or stop the long-lived gateway daemon."
@@ -3920,18 +3926,18 @@
 (def ^:private DEFAULT_DOC
   (str
     "Vis - a coding agent that edits, runs and verifies code in your repo, with a persistent sandboxed Python REPL.\n"
-    "\n"
-    "USAGE\n" "  vis-agent [FLAGS] \"prompt\"          Run one-shot agent work.\n"
+    "\n" "USAGE\n"
+    "  vis-agent [FLAGS] \"prompt\"          Run one-shot agent work.\n"
     "  vis-agent [FLAGS]                    Show this help.\n"
     "  vis-agent <command> [args...]        Run a command.\n"
-    "  vis-agent <command> --help           Show command help.\n" "\n"
-    "EXAMPLES\n" "  vis-agent \"fix failing tests\"\n"
-    "  vis-agent --json \"summarize this repo\"\n"
+    "  vis-agent <command> --help           Show command help.\n"
+    "\n" "EXAMPLES\n"
+    "  vis-agent \"fix failing tests\"\n" "  vis-agent --json \"summarize this repo\"\n"
     "  vis-agent --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"task\"\n"
     "  vis-agent --full-trace-json-stream --db :memory \"debug startup\"\n"
-    "  vis-agent providers status\n"
-    "  vis-agent sessions search sqlite\n" "\n"
-    "ONE-SHOT FLAGS\n" "  --json                       Print result as JSON.\n"
+    "  vis-agent providers status\n" "  vis-agent sessions search sqlite\n"
+    "\n" "ONE-SHOT FLAGS\n"
+    "  --json                       Print result as JSON.\n"
     "  --code                       Print only final answer code blocks.\n"
     "  --raw                        Print plain text, no markdown styling.\n"
     "  --toggles NAME=VAL[,..]      Set registered toggles for this run only (e.g. reasoning_level=deep).\n"
