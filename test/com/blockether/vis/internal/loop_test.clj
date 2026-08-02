@@ -3041,6 +3041,33 @@
              (expect (= "ornith" (:root-model ctx)))
              (expect (= {:provider :lmstudio :model "ornith"}
                         (:routing ctx))))))
+    (it "trims the persisted pin so the display root names the model that RAN"
+        ;; The routing helpers trim; the display/cost root did not. A pref with
+        ;; stray whitespace (a hand-edited DB row, a client that pads the field)
+        ;; therefore BOUND "ornith" while the turn card named LM Studio's FIRST
+        ;; model — a model that turn never ran.
+        (with-redefs-fn {#'session-model/model-of (fn [& _]
+                                                    {:provider "  lmstudio  "
+                                                     :model "  ornith  "})}
+          #(let [ctx (prepare env messages {})]
+             (expect (= :lmstudio (:root-provider ctx)))
+             (expect (= "ornith" (:root-model ctx)))
+             (expect (= {:provider :lmstudio :model "ornith"}
+                        (:routing ctx))))))
+    (it "honors a live-catalog model the pinned provider does not list statically"
+        ;; What the pickers actually offer: `/v1/providers/:id/models` (the TUI's
+        ;; "show all models", the companion's router dialog) lists the provider's
+        ;; LIVE catalog, which is wider than vis.yml. Such a pick used to fall
+        ;; through to the default model because the pinned provider's static
+        ;; `:models` did not contain it.
+        (with-redefs-fn {#'session-model/model-of (fn [& _]
+                                                    {:provider "lmstudio"
+                                                     :model "qwen3-next-80b"})}
+          #(let [ctx (prepare env messages {})]
+             (expect (= :lmstudio (:root-provider ctx)))
+             (expect (= "qwen3-next-80b" (:root-model ctx)))
+             (expect (= {:provider :lmstudio :model "qwen3-next-80b"}
+                        (:routing ctx))))))
     (it "does not combine a caller model with the persisted provider"
         (with-redefs-fn {#'session-model/model-of (fn [& _]
                                                     {:provider "lmstudio"

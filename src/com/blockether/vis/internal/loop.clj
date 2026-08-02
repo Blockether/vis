@@ -9809,7 +9809,17 @@
        ;; A persisted provider belongs only to the persisted model it was saved
        ;; with. Never combine it with an explicit caller model: that creates a
        ;; synthetic provider/model pair and can silently degrade to config order.
-       pref-provider (:provider session-pref)
+       ;; Same canonical spelling for the provider half of the pin: padded here
+       ;; and `forced-routing-for-pref` matched NO provider, dropping `:provider`
+       ;; from the forced routing while the display root still named it — the two
+       ;; halves of the pin disagreeing is exactly what this binding prevents.
+       ;; Keywords survive as their bare name (`:lmstudio` -> "lmstudio"), never
+       ;; as `":lmstudio"`.
+       pref-provider (let [p (:provider session-pref)]
+                       (some-> (if (keyword? p) (name p) p)
+                               str
+                               str/trim
+                               not-empty))
        ;; The pin the session actually BINDS (provider+model, validated against
        ;; the router). Computed once: it drives BOTH the display/cost root
        ;; (env-router below) and svar's forced `:routing`, so the two can never

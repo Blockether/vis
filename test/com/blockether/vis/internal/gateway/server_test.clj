@@ -79,24 +79,24 @@
      (atom nil)]
 
     (with-redefs-fn {(rv 'body-json) (constantly body)
-                     #'mcp-core/gateway-servers (constantly {:servers [{:name "filesystem"
-                                                                        :transport "stdio"
-                                                                        :enabled true
-                                                                        :is-connected false
-                                                                        :tools 0}]})
+                     #'mcp-core/gateway-servers (constantly {"servers" [{"name" "filesystem"
+                                                                         "transport" "stdio"
+                                                                         "enabled" true
+                                                                         "is_connected" false
+                                                                         "tools" 0}]})
                      #'mcp-core/save-gateway-server!
                      (fn [name spec]
                        (reset! saved [name spec])
-                       {:name name :transport "stdio" :enabled true})
+                       {"name" name "transport" "stdio" "enabled" true})
                      #'mcp-core/set-gateway-server-enabled! (fn [name value]
                                                               (reset! enabled [name value])
-                                                              {:name name :enabled value})
+                                                              {"name" name "enabled" value})
                      #'mcp-core/delete-gateway-server! (fn [name]
                                                          (reset! deleted name)
-                                                         {:name name :is-deleted true})
+                                                         {"name" name "is_deleted" true})
                      #'mcp-core/test-gateway-server!
                      (fn [name _spec]
-                       {:name name :is-connected true :tools [{:name "list_files"}]})}
+                       {"name" name "is_connected" true "tools" [{"name" "list_files"}]})}
       (fn []
         (let [listed (wire/parse-json (:body ((rv 'mcp-servers-handler) {})))]
           (is (= 200 (:status ((rv 'mcp-servers-handler) {}))))
@@ -988,8 +988,14 @@
          {:path-params {:sid sid}
           :body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str m) "UTF-8"))})]
 
-      (with-redefs-fn {#'providers/configured-providers-cached
-                       (constantly [{:id :zai-coding-plan} {:id :anthropic-coding-plan}])
+      (with-redefs-fn {;; The PICKER fleet is what both clients offer: configured providers
+                       ;; PLUS presets that are authenticated but not yet written into
+                       ;; vis.yml. Validating the pin against `configured-providers`
+                       ;; answered 400 for a provider the picker had just listed.
+                       #'providers/picker-fleet (constantly [{:id :zai-coding-plan}
+                                                             {:id :anthropic-coding-plan}
+                                                             {:id :openai-codex}])
+                       #'providers/configured-providers-cached (constantly [{:id :zai-coding-plan}])
                        #'state/set-session-model! (fn [_sid p m]
                                                     (reset! wrote [p m]))
                        #'state/session-model (fn [_sid]
@@ -1006,6 +1012,12 @@
                    (:status ((rv 'set-session-model-handler)
                               (body {:provider "zai-coding-plan" :model "glm-live-preview"})))))
             (is (= ["zai-coding-plan" "glm-live-preview"] @wrote)))
+          (testing "a provider the picker offers but vis.yml does not configure is accepted"
+            (reset! wrote nil)
+            (is (= 200
+                   (:status ((rv 'set-session-model-handler)
+                              (body {:provider "openai-codex" :model "gpt-5.4"})))))
+            (is (= ["openai-codex" "gpt-5.4"] @wrote)))
           (testing "an unknown provider is a 400 and writes NOTHING"
             (reset! wrote :untouched)
             (let
@@ -1255,11 +1267,11 @@
   (testing "runtime kill/start and every headless OAuth leg answer through the ring layer"
     (let
       [flow
-       {:flow-id "f-1"
-        :server "remote"
-        :kind "pkce"
-        :url "https://auth.example.test/authorize"
-        :status "pending"}
+       {"flow_id" "f-1"
+        "server" "remote"
+        "kind" "pkce"
+        "url" "https://auth.example.test/authorize"
+        "status" "pending"}
 
        calls
        (atom [])]
@@ -1268,23 +1280,24 @@
         {(rv 'body-json) (constantly {"flow_id" "f-1" "input" "https://cb.example.test/?code=abc"})
          #'mcp-core/kill-gateway-server! (fn [name]
                                            (swap! calls conj [:kill name])
-                                           {:name name :is-killed true})
+                                           {"name" name "is_killed" true})
          #'mcp-core/start-gateway-server! (fn [name]
                                             (swap! calls conj [:start name])
-                                            {:name name :is-killed false})
+                                            {"name" name "is_killed" false})
          #'mcp-core/start-gateway-server-auth! (fn [name]
                                                  (swap! calls conj [:auth-start name])
                                                  flow)
          #'mcp-core/complete-gateway-server-auth! (fn [flow-id input]
-                                                    (swap! calls conj [:auth-complete flow-id input])
-                                                    (assoc flow :status "ok"))
+                                                    (swap! calls conj
+                                                      [:auth-complete flow-id input])
+                                                    (assoc flow "status" "ok"))
          #'mcp-core/poll-gateway-server-auth! (fn [flow-id]
                                                 (swap! calls conj [:auth-poll flow-id])
                                                 flow)
          #'mcp-core/cancel-gateway-server-auth! (fn [flow-id]
-                                                  {:flow-id flow-id :is-cancelled true})
+                                                  {"flow_id" flow-id "is_cancelled" true})
          #'mcp-core/logout-gateway-server-auth! (fn [name]
-                                                  {:server name :is-authorized false})}
+                                                  {"server" name "is_authorized" false})}
         (fn []
           (let [params {:path-params {:name "remote"}}]
             (is (= 200 (:status ((rv 'kill-mcp-server-handler) params))))

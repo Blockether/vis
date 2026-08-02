@@ -51,6 +51,40 @@
                      (expect (= after (state/set-session-model! "audit-session" "openai" "gpt-5")))
                      (expect (= [:db "audit-session" before after :gateway] @recorded))))))
 
+(defdescribe session-model-broadcast-test
+             ;; The pin is shared, but every attached surface renders its OWN copy: the TUI
+             ;; footer chip (`chat/gateway-event->chunk` -> `:sync-session-model`) and the
+             ;; companion's header chip (`SessionScreen` -> `client.noteSessionModel`) both
+             ;; follow THIS frame. Without it, switching the model in one surface leaves
+             ;; every other surface naming the model it no longer runs on.
+             (let
+               [broadcasts (fn [provider model]
+                             (let [appended (atom [])]
+                               (with-redefs
+                                 [lp/db-info (constantly :db)
+                                  smodel/model-of (constantly nil)
+                                  smodel/set-model! (fn [_db _sid p m]
+                                                      {:provider p :model m})
+                                  smodel/record-switch! (fn [& _])
+                                  state/append-event! (fn [& args]
+                                                        (swap! appended conj (vec args)))]
+
+                                 (state/set-session-model! "sess-1" provider model)
+                                 @appended)))]
+               (it "broadcasts the new pin live-only, so a cursor replay cannot re-apply it"
+                   (expect (= [["sess-1" "session.model_updated" {:provider "openai" :model "gpt-5"}
+                                {:store? false}]]
+                              (broadcasts "openai" "gpt-5"))))
+               (it "a CLEARED override broadcasts too, as a blank pair rather than silence"
+                   ;; Blank fields are how every client learns to fall back to the router
+                   ;; default; dropping the event would freeze the last pick on their chips.
+                   (expect (= [["sess-1" "session.model_updated" {:provider nil :model nil}
+                                {:store? false}]]
+                              (broadcasts nil ""))))
+               (it "a keyword provider still crosses the wire as its bare name"
+                   (expect (= {:provider "anthropic" :model "claude-opus-5"}
+                              (nth (first (broadcasts :anthropic "claude-opus-5")) 2))))))
+
 (defdescribe
   soul-model-pin-test
   "The session's model PIN rides the soul, so ONE `GET /v1/sessions` already says

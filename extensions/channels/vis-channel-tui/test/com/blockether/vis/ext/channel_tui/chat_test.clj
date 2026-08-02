@@ -771,6 +771,22 @@
                                        "titled_session_id" "other-session"
                                        "title" "X"})))))))
 
+(defdescribe model-sync-event-chunk-test
+             ;; `session.model_updated` — this session was repointed at another model
+             ;; SOMEWHERE ELSE (the companion app, a sibling TUI process/tab, an embedded
+             ;; caller). Dropping the event left the footer chip naming this process's last
+             ;; local pick until the tab was reopened, while the turns already ran on the
+             ;; provider/model the gateway had stored.
+             (let [g->c @#'chat/gateway-event->chunk]
+               (it "projects the newly pinned provider/model pair"
+                   (expect (= {:phase :model-sync :provider "zai-coding-plan" :model "glm-4.7"}
+                              (g->c {"type" "session.model_updated"
+                                     "provider" "zai-coding-plan"
+                                     "model" "glm-4.7"}))))
+               (it "a cleared override still projects — blank pair, not a dropped event"
+                   (expect (= {:phase :model-sync :provider nil :model nil}
+                              (g->c {"type" "session.model_updated"}))))))
+
 (defdescribe terminal-event-chunk-test
              ;; The persistent mux must carry terminal lifecycle events independently of
              ;; the blocking submit transport, otherwise a completed backend turn can
