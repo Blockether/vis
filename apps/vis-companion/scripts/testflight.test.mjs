@@ -1,0 +1,67 @@
+import { describe, expect, it } from 'vitest';
+import { retryUnauthorized } from './testflight.mjs';
+
+const asc = (status) => Object.assign(new Error(`ASC POST /v1/betaAppReviewSubmissions → ${status}`), { status });
+
+describe('retryUnauthorized', () => {
+  it('mints one token and stops when the call works', async () => {
+    const tokens = [];
+    const minted = ['t1', 't2'];
+    const res = await retryUnauthorized(
+      () => minted.shift(),
+      (token) => {
+        tokens.push(token);
+        return Promise.resolve('ok');
+      },
+    );
+    expect(res).toBe('ok');
+    expect(tokens).toEqual(['t1']);
+  });
+
+  // The failure that took build 3083's release down after the .ipa was already uploaded.
+  it('retries a 401 once, with a FRESH token', async () => {
+    const tokens = [];
+    const minted = ['stale', 'fresh'];
+    const res = await retryUnauthorized(
+      () => minted.shift(),
+      (token) => {
+        tokens.push(token);
+        return tokens.length === 1 ? Promise.reject(asc(401)) : Promise.resolve('submitted');
+      },
+    );
+    expect(res).toBe('submitted');
+    expect(tokens).toEqual(['stale', 'fresh']);
+  });
+
+  it('gives up when the second attempt is refused too', async () => {
+    let calls = 0;
+    await expect(
+      retryUnauthorized(
+        () => 'token',
+        () => {
+          calls += 1;
+          return Promise.reject(asc(401));
+        },
+      ),
+    ).rejects.toThrow('401');
+    expect(calls).toBe(2);
+  });
+
+  // A duplicate submission must still reach the caller's isDuplicate() check, and a
+  // real refusal must still fail the step: only 401 is worth a second try.
+  it('never retries any other status', async () => {
+    for (const status of [409, 403, 422, 500]) {
+      let calls = 0;
+      await expect(
+        retryUnauthorized(
+          () => 'token',
+          () => {
+            calls += 1;
+            return Promise.reject(asc(status));
+          },
+        ),
+      ).rejects.toThrow(String(status));
+      expect(calls).toBe(1);
+    }
+  });
+});

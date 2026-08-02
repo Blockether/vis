@@ -47,6 +47,23 @@ const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const isDuplicate = (err) =>
   err.status === 409 || /already/i.test(err.message) || /not in a valid processing state/i.test(err.message);
 
+/**
+ * Run `call` with a token, and on 401 mint a fresh one and run it exactly once more.
+ *
+ * Apple answered a perfectly good token with 401 on POST /v1/betaAppReviewSubmissions
+ * (run 30766271157) moments after that same token had read the app and its beta groups,
+ * and accepted the identical request minutes later. A release whose build is already
+ * uploaded must not die on that.
+ */
+export const retryUnauthorized = async (mint, call) => {
+  try {
+    return await call(mint());
+  } catch (err) {
+    if (err.status !== 401) throw err;
+    return call(mint());
+  }
+};
+
 /** Beta App Review refuses a submission when these are unset; they are per-app and set once. */
 const ensureBetaMeta = async (token, appId, { locale = 'en-US', feedbackEmail, description, contact = {}, log }) => {
   const missing = [];
@@ -168,9 +185,13 @@ export const distribute = async ({
 
     if (review) {
       try {
-        await asc(token, 'POST', '/v1/betaAppReviewSubmissions', {
-          data: { type: 'betaAppReviewSubmissions', relationships: { build: { data: { type: 'builds', id: found.id } } } },
-        });
+        await retryUnauthorized(
+          () => ascToken(credentials),
+          (fresh) =>
+            asc(fresh, 'POST', '/v1/betaAppReviewSubmissions', {
+              data: { type: 'betaAppReviewSubmissions', relationships: { build: { data: { type: 'builds', id: found.id } } } },
+            }),
+        );
         log('submitted for Beta App Review (Apple usually answers within a day)');
       } catch (err) {
         if (!isDuplicate(err)) throw err;
@@ -180,7 +201,10 @@ export const distribute = async ({
 
     // Linking is idempotent server-side, but a duplicate POST still 409s on some paths.
     try {
-      await asc(token, 'POST', `/v1/betaGroups/${grp.id}/relationships/builds`, { data: [{ type: 'builds', id: found.id }] });
+      await retryUnauthorized(
+        () => ascToken(credentials),
+        (fresh) => asc(fresh, 'POST', `/v1/betaGroups/${grp.id}/relationships/builds`, { data: [{ type: 'builds', id: found.id }] }),
+      );
       log(`linked build ${build} to "${group}"`);
     } catch (err) {
       if (!isDuplicate(err)) throw err;
