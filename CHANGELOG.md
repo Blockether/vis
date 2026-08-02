@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- persistence: the shared SQLite pool is no longer torn down underneath live
+  queries. The snapshot behind "was `~/.vis/vis.mdb/vis.db` replaced under this
+  JVM?" compared the file's size and mtime, and SQLite rewrites `vis.db` in
+  place on every WAL checkpoint — so ordinary write traffic made the store look
+  replaced forever after. The gateway answered by closing its connection pool
+  and opening a new one, over and over: a crashed 3h21m process had reached
+  pool generation 351, leaked seven housekeeper threads, and died with SIGBUS
+  inside `NativeDB.step`, taking every live session with it. The check now
+  compares the filesystem `(dev, ino)` identity only, which moves exactly when
+  a reopen is the right answer.
+
+## [v0.1.23] - 2026-08-02
+
+### Changed
+
+- release: v0.1.23
+- test: cover external-opener, notifications and serial-batch
+- perf(ls): serve directory listings from the warm fff index
+- fix(acp): answer `cancelled` when the cancel itself throws, and bind cancels to turn numbers
+- fix(companion): resume a live turn from the row already in hand
+- feat(drafts): a draft can start from your last commit, not your dirty tree
+- fix(cli): no dead ends — launcher owns runtime/update, flag typos are refused
+- fix(acp): refuse phantom resumes and walk tool arguments iteratively
+- fix(launcher): dev names one checkout, never a silent substitute
+- docs(changelog): record the coherent vis-agent runtime surface
+- Advertise cat's directory listing (ls) and compress native tool prose
+- chore: vis-agent runtime docs, ACP concurrency fixes, bs4 fidelity, companion polish
+- feat(rewind): land the /rewind slash surface with context reporting
+- Compress fs tool reference prose
+- Ratchet the native tool prose budget to 1250
+- Compress shell and grep reference prose
+- Compress structural tool reference prose
+- docs(runtime): document release-following default and dev mode precisely
+- Compress the core system prompt and ratchet its budget
+- feat(launcher): follow releases by default, opt in to dev mode
+- chore: land in-flight foundation, gateway, TUI, and companion work
+- fix(loop): align the overflow-rescue tests with graduated folding
+- refactor(installer): drop pre-bundle release asset fallback
+- fix: bs4 4.12 serialization fidelity and preflight context-overflow recovery
+- feat: unify the vis-agent installer and harden reconnect/teardown paths
+- fix(shims): restore two-space prettify indent in the bs4 shim
+- feat: launcher restructure, provider relogin fix, and shim/docs refresh
+- fix(release): close mobile lineage guards
+- feat(shell): add background job completion waits
+- style: normalize sqlite test formatting
+- feat: improve companion session details and runtime support
+- feat(ui): show running raw invocation only for shell and python_execution
+- release: update release notes for v0.1.22
+
 ### Added
 
 - drafts: `/draft clean <label>` (and the companion's "A new draft, without my
@@ -37,16 +88,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- persistence: the shared SQLite pool is no longer torn down underneath live
-  queries. The snapshot behind "was `~/.vis/vis.mdb/vis.db` replaced under this
-  JVM?" compared the file's size and mtime, and SQLite rewrites `vis.db` in
-  place on every WAL checkpoint — so ordinary write traffic made the store look
-  replaced forever after. The gateway answered by closing its connection pool
-  and opening a new one, over and over: a crashed 3h21m process had reached
-  pool generation 351, leaked seven housekeeper threads, and died with SIGBUS
-  inside `NativeDB.step`, taking every live session with it. The check now
-  compares the filesystem `(dev, ino)` identity only, which moves exactly when
-  a reopen is the right answer.
 - sandbox: a Python block's `open(path, "w").write(text)` reaches the disk. The
   sandbox runs on GraalPy, which does not refcount, so a handle dropped without
   `close()` was never finalized at the end of the statement — the bytes stayed
@@ -89,7 +130,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   refused instead of silently honouring one and dropping the other, and an
   unusable `--db` path is named instead of surfacing a raw SQLite pool error.
 - cli: `--help` described `--persist` as the opposite of what it does, twice.
-
 
 ## [v0.1.22] - 2026-08-01
 
@@ -375,8 +415,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 #### com.blockether/vis-language-typescript-bun
 - Reduce Bun language extension discovery docs (6d25d2ad5)
 
-
-
 ## [v0.1.21] - 2026-08-01
 
 ### Changed
@@ -393,8 +431,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 #### com.blockether/vis-channel-tui
 - feat: unify releases and harden live companion behavior (52953cd36)
-
-
 
 ## [v0.1.20] - 2026-08-01
 
@@ -491,8 +527,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 #### com.blockether/vis-persistance-sqlite
 - feat: ship viewport speedups and accumulated runtime work (66b0c31d8)
-
-
 
 ## [v0.1.14] - 2026-07-30
 
@@ -640,8 +674,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Unify tool input carriers and refresh companion diff view (7e3b8a2c2)
 - chore: update GraalVM and extension runtime (fe6d2949a)
 - Limit NTR browsing to latest turn (ce8f20afa)
-
-
 
 ### Added
 
@@ -925,8 +957,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 #### com.blockether/vis-provider-zai
 - Lint clean, dependency refresh, repo-wide format and top-level spacing pass (947e61281)
 
-
-
 ### Changed
 - feat(workspace): move `/draft-blank` under the draft tree as `/draft blank <label>`
 
@@ -954,8 +984,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(config,ui): ${VAR} config references, provider-level env gaps, drop "gateway" from user-facing copy (796c917ad)
 - feat(tui): dissolve the transcript in when a session opens (708e19504)
 
-
-
 ## [v0.1.10] - 2026-07-27
 
 ### Changed
@@ -967,8 +995,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 #### com.blockether/vis
 - fix(native): ship linux x64 + arm64 from CI, drop the impossible macOS job (005b9b806)
 - release: update version files for v0.1.9, bump to next dev version (d00e41718)
-
-
 
 ## [v0.1.9] - 2026-07-27
 
@@ -991,8 +1017,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 #### com.blockether/vis-channel-tui
 - fix(tui): make the code-band accordion reachable and header-first (928ab62ea)
-
-
 
 ## [v0.1.8] - 2026-07-27
 
@@ -1028,8 +1052,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(copilot): use svar 0.7.84 current models (3fc447867)
 - Improve transcript previews and runtime reliability (5162cee30)
 
-
-
 ## [v0.1.7] - 2026-07-27
 
 ### Changed
@@ -1041,8 +1063,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 #### com.blockether/vis
 - ci: provision swap for corporate native image (2bdc2096a)
 - release: update version files for v0.1.6, bump to next dev version (f977db0da)
-
-
 
 ## [v0.1.6] - 2026-07-27
 
@@ -1065,8 +1085,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 #### com.blockether/vis-persistance-sqlite
 - Improve compaction persistence and agent guidance (a5da90763)
 - fix(persistence): restore canonical assistant blocks (8e2e145b1)
-
-
 
 ## [v0.1.5] - 2026-07-26
 
@@ -1730,8 +1748,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - big refactor (be1dbaa62)
 - fix(channel-tui): let Ctrl+C quit while a cancel is already in flight (f5d09ea93)
 
-
-
 ### Changed
 - feat(workspace): rename `/draft-fresh` slash command to `/draft-blank` (empty drafts start with no HEAD files)
 
@@ -2174,8 +2190,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 #### com.blockether/vis-provider-zai
 - perf(boxed-math): eliminate the remaining 127 boxed-math warnings project-wide (f918dc90)
 
-
-
 ### Fixed
 
 - fix(openai-codex): give new Codex models svar's pinned catalog doesn't know
@@ -2308,8 +2322,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 #### com.blockether/vis-provider-zai
 - feat(gateway): route interactive clients through daemon (c23d8035)
 
-
-
 ## [v0.1.2] - 2026-07-10
 
 ### Changed
@@ -2326,8 +2338,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 #### com.blockether/vis-provider-github-copilot
 - fix(release): auto-publish extension packages (1408366a)
-
-
 
 ## [v0.1.1] - 2026-07-10
 
@@ -2378,7 +2388,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(loop): capture matplotlib figure bytes into iteration attachments
 - feat(persist): V2 session_iteration_attachment table + store/read
 - tui(navigator): drop empty Modified column, rename Directory -> Dir
-
 
 ### Added
 - GitHub Copilot **Enterprise** provider (`:github-copilot-enterprise`). The
@@ -2431,7 +2440,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.22...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.23...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -2449,3 +2458,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.20]: https://github.com/Blockether/vis/releases/tag/v0.1.20
 [v0.1.21]: https://github.com/Blockether/vis/releases/tag/v0.1.21
 [v0.1.22]: https://github.com/Blockether/vis/releases/tag/v0.1.22
+[v0.1.23]: https://github.com/Blockether/vis/releases/tag/v0.1.23
