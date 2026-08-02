@@ -127,3 +127,64 @@
               " chart.plots[0].categories[0], chart.plots[0].categories[1],\n"
               " repr(list(chart.series[0].values)), again.slides[0].notes_slide.notes_text_frame.text,\n"
               " shapes[0].text, b2.getvalue()[:2] == b'PK']")))))))
+
+;; A 1x1 PNG — the smallest thing the Rust writer will accept as a picture part.
+(def ^:private png-b64
+  (str "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+       "AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
+
+(defdescribe
+  pptx-picture-crop-test
+  (it
+    "keeps picture crop fractions and the embedded image across save/re-open"
+    (with-python-context
+      (expect
+        (=
+          ;; crop-left/top/right/bottom, image bytes, `<a:srcRect>` in the slide
+          ;; part, and the media part the picture points at.
+          [0.25 0.125 0.0625 0.5 70 true ["ppt/media/image1.png"]]
+          (ev
+            python-context
+            (str
+              "import io, base64, zipfile\n"
+              "from pptx import Presentation\n" "from pptx.util import Inches\n"
+              "png = base64.b64decode('" png-b64 "')\n"
+              "prs = Presentation()\n"
+              "s = prs.slides.add_slide(prs.slide_layouts[6])\n"
+              "pic = s.shapes.add_picture(io.BytesIO(png), Inches(1), Inches(1), Inches(2), Inches(2))\n"
+              "pic.crop_left, pic.crop_top = 0.25, 0.125\n"
+              "pic.crop_right, pic.crop_bottom = 0.0625, 0.5\n"
+              "b = io.BytesIO()\n" "prs.save(b)\n" "raw = b.getvalue()\n"
+              "again = Presentation(io.BytesIO(raw))\n"
+              "p2 = next(x for x in again.slides[0].shapes if hasattr(x, 'crop_left'))\n"
+              "z = zipfile.ZipFile(io.BytesIO(raw))\n"
+              "slidexml = z.read('ppt/slides/slide1.xml').decode('utf-8', 'ignore')\n"
+              "[round(p2.crop_left, 4), round(p2.crop_top, 4),\n"
+              " round(p2.crop_right, 4), round(p2.crop_bottom, 4),\n"
+              " len(p2.image.blob), '<a:srcRect' in slidexml,\n"
+              " sorted(n for n in z.namelist() if 'media' in n)]")))))))
+
+(defdescribe
+  pptx-chart-part-test
+  (it
+    "writes a real ppt/charts/chartN.xml part, not a picture of a chart"
+    (with-python-context
+      (expect
+        (= [["ppt/charts/chart1.xml"] true true true true]
+           (ev
+             python-context
+             (str
+               "import io, zipfile\n" "from pptx import Presentation\n"
+               "from pptx.chart.data import CategoryChartData\n"
+               "from pptx.enum.chart import XL_CHART_TYPE\n"
+               "from pptx.util import Inches\n" "prs = Presentation()\n"
+               "s = prs.slides.add_slide(prs.slide_layouts[6])\n"
+               "cd = CategoryChartData()\n" "cd.categories = ['Q1', 'Q2']\n"
+               "cd.add_series('Sales', [3, 7])\n"
+               "s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(4), Inches(1), Inches(5), Inches(3), cd)\n"
+               "b = io.BytesIO()\n" "prs.save(b)\n" "raw = b.getvalue()\n"
+               "z = zipfile.ZipFile(io.BytesIO(raw))\n"
+               "cx = z.read('ppt/charts/chart1.xml').decode('utf-8', 'ignore')\n"
+               "[sorted(n for n in z.namelist() if n.startswith('ppt/charts/')),\n"
+               " '<c:barChart' in cx, 'Sales' in cx, 'Q1' in cx,\n"
+               " 'ppt/charts/chart1.xml' in z.read('[Content_Types].xml').decode('utf-8', 'ignore')]")))))))
