@@ -1298,3 +1298,562 @@
              (it "leaves a sequence at or under the cap byte-identical"
                  (expect (= [1 2 3] (acp/json-safe [1 2 3])))
                  (expect (= (vec (range 10000)) (acp/json-safe (vec (range 10000)))))))
+
+;; =============================================================================
+;; Concurrency — `serve!` runs EVERY line on its own virtual thread
+;; =============================================================================
+
+(defn- prompt-msg
+  [id sid]
+  {"jsonrpc" "2.0"
+   "id" id
+   "method" "session/prompt"
+   "params" {"sessionId" sid "prompt" [{"type" "text" "text" "hi"}]}})
+
+(defdescribe
+  concurrent-prompt-test
+  (it
+    "lets exactly ONE prompt own a session however many arrive at once"
+    (let
+      [gate
+       (promise)
+
+       started
+       (atom 0)
+
+       backend
+       (assoc (acp/echo-backend)
+         :prompt (fn [_]
+                   (swap! started inc)
+                   (deref gate 5000 ::timeout)
+                   {:status "completed"}))
+
+       [c _]
+       (conn+out {:backend backend})
+
+       _
+       (init! c)
+
+       sid
+       (new-session! c)
+
+       answers
+       (mapv (fn [i]
+               (future (send! c (prompt-msg i sid))))
+             (range 8))
+
+       _
+       (loop [n 0]
+         (when (and (< n 500) (zero? @started)) (Thread/sleep 2) (recur (inc n))))
+
+       ;; give every loser time to get past the guard too
+       _
+       (Thread/sleep 100)
+
+       in-flight
+       @started
+
+       _
+       (deliver gate true)
+
+       resps
+       (mapv #(deref % 10000 ::timeout) answers)]
+
+      ;; a read-then-write guard lets all 8 through: two turns then interleave
+      ;; their `session/update` streams and the first to finish marks the session
+      ;; idle under the others
+      (expect (= 1 in-flight))
+      (expect (= 1 (count (filter #(contains? % "result") resps))))
+      (expect (= 7 (count (filter #(= (:invalid-request acp/error-codes) (code %)) resps))))
+      ;; and the session is idle again, never wedged in :running
+      (expect (= :idle (get-in @c [:sessions sid :state])))
+      (expect (empty? (:cancelled @c)))))
+  (it
+    "still runs two DIFFERENT sessions of one connection at the same time"
+    (let
+      [gate
+       (promise)
+
+       started
+       (atom 0)
+
+       backend
+       (assoc (acp/echo-backend)
+         :prompt (fn [_]
+                   (swap! started inc)
+                   (deref gate 5000 ::timeout)
+                   {:status "completed"}))
+
+       [c _]
+       (conn+out {:backend backend})
+
+       _
+       (init! c)
+
+       a
+       (new-session! c)
+
+       b
+       (new-session! c)
+
+       answers
+       [(future (send! c (prompt-msg 1 a))) (future (send! c (prompt-msg 2 b)))]
+
+       _
+       (loop [n 0]
+         (when (and (< n 500) (< @started 2)) (Thread/sleep 2) (recur (inc n))))
+
+       in-flight
+       @started
+
+       _
+       (deliver gate true)
+
+       resps
+       (mapv #(deref % 10000 ::timeout) answers)]
+
+      ;; the claim is per SESSION, not per connection
+      (expect (= 2 in-flight))
+      (expect (every? #(= "end_turn" (get-in % ["result" "stopReason"])) resps)))))
+
+;; =============================================================================
+;; Cancel bookkeeping — a notification anyone can send, with any id
+;; =============================================================================
+
+(defdescribe
+  cancel-bookkeeping-test
+  (it
+    "never remembers a session id it did not hand out"
+    (let
+      [seen
+       (atom [])
+
+       backend
+       (assoc (acp/echo-backend)
+         :cancel (fn [{:keys [session-id]}]
+                   (swap! seen conj session-id)
+                   true))
+
+       [c out]
+       (conn+out {:backend backend})
+
+       _
+       (init! c)
+
+       sid
+       (new-session! c)
+
+       quiet
+       (count @out)]
+
+      (dotimes [i 2000]
+        (acp/handle-line! c
+                          (acp/encode {"jsonrpc" "2.0"
+                                       "method" "session/cancel"
+                                       "params" {"sessionId" (str "ghost-" i)}})))
+      ;; `session/cancel` is a NOTIFICATION: unknown ids must not accumulate, or a
+      ;; chatty editor grows the connection without bound and never sees an error
+      (expect (empty? (:cancelled @c)))
+      (expect (empty? @seen))
+      ;; a notification is never answered, whatever it carried
+      (expect (= quiet (count @out)))
+      ;; and a cancel for a KNOWN session with no turn in flight is ignored too:
+      ;; remembering it would abort the next prompt instead — a turn the user did
+      ;; ask for
+      (acp/handle-line! c
+                        (acp/encode
+                          {"jsonrpc" "2.0" "method" "session/cancel" "params" {"sessionId" sid}}))
+      (expect (empty? (:cancelled @c)))
+      (expect (empty? @seen))
+      (expect (= "end_turn" (get (result (send! c (prompt-msg 9 sid))) "stopReason")))))
+  (it "drops the cancel flag with the turn it aborted"
+      (let
+        [cell
+         (atom nil)
+
+         backend
+         (assoc (acp/echo-backend)
+           :prompt (fn [{:keys [session-id]}]
+                     ;; the editor cancels WHILE the turn is running
+                     (acp/handle-line! @cell
+                                       (acp/encode {"jsonrpc" "2.0"
+                                                    "method" "session/cancel"
+                                                    "params" {"sessionId" session-id}}))
+                     {:status "completed"}))
+
+         [c _]
+         (conn+out {:backend backend})
+
+         _
+         (reset! cell c)
+
+         _
+         (init! c)
+
+         sid
+         (new-session! c)]
+
+        (expect (= "cancelled" (get (result (send! c (prompt-msg 1 sid))) "stopReason")))
+        (expect (empty? (:cancelled @c)))
+        (expect (= :idle (get-in @c [:sessions sid :state]))))))
+
+;; =============================================================================
+;; HTTP transport — what the LRU cap actually has to bound
+;; =============================================================================
+
+(defdescribe
+  http-eviction-test
+  (it
+    "unregisters the sessions of every HTTP connection it evicts"
+    (let
+      [reg
+       @#'acp/connections
+
+       http
+       @#'acp/http-connections
+
+       cap
+       (long @#'acp/max-http-connections)
+
+       reg0
+       @reg
+
+       http0
+       @http]
+
+      (try (reset! reg {})
+           (reset! http {})
+           (let
+             [pairs
+              (doall (for [i (range (* 3 cap))]
+                       (let
+                         [c (#'acp/http-connection (str "evict-" i))
+                          sid (str "evict-sess-" i)]
+
+                         (swap! c assoc-in [:sessions sid] {:cwd "/tmp" :state :idle})
+                         (acp/register-connection! sid c)
+                         [sid c])))
+
+              [oldest-sid oldest-conn]
+              (first pairs)
+
+              [newest-sid _]
+              (last pairs)]
+
+             (expect (= cap (count @http)))
+             ;; capping the connection table is worthless while the GLOBAL
+             ;; registry keeps every session of every evicted connection: the map
+             ;; grows for the life of the daemon and op-hooks keep resolving vis
+             ;; sessions onto a connection nobody can answer on
+             (expect (= cap (count @reg)))
+             (expect (nil? (acp/connection-for oldest-sid)))
+             (expect (some? (acp/connection-for newest-sid)))
+             ;; an evicted connection is closed, so a late write cannot resurrect
+             ;; its parked backlog
+             (expect (true? (:closed? @oldest-conn))))
+           (finally (reset! reg reg0) (reset! http http0))))))
+
+;; =============================================================================
+;; `serve!` — order in, order out, without losing cancel-mid-prompt
+;; =============================================================================
+
+(defn- serve-lines
+  "Feed `lines` to a real `serve!` loop as ONE burst and decode what came back."
+  [lines & [backend]]
+  (let
+    [out
+     (ByteArrayOutputStream.)
+
+     done
+     (future (acp/serve! {:in (ByteArrayInputStream. (.getBytes ^String (str/join "\n" lines)
+                                                                "UTF-8"))
+                          :out out
+                          :backend (or backend (acp/echo-backend))}))
+
+     finished
+     (deref done 15000 ::timeout)]
+
+    {:timed-out? (= ::timeout finished)
+     :messages (->> (str/split-lines (.toString out "UTF-8"))
+                    (remove str/blank?)
+                    (mapv decode-line))}))
+
+(defdescribe
+  serve-order-test
+  (it "never lets a pipelined line overtake the handshake it depends on"
+      (let
+        [pairs
+         20
+
+         lines
+         (mapcat (fn [i]
+                   [(acp/encode {"jsonrpc" "2.0" "id" (* 2 i) "method" "initialize" "params" {}})
+                    (acp/encode {"jsonrpc" "2.0"
+                                 "id" (inc (* 2 i))
+                                 "method" "session/new"
+                                 "params" {"cwd" "/tmp"}})])
+                 (range pairs))
+
+         {:keys [timed-out? messages]}
+         (serve-lines lines)
+
+         by-id
+         (into {} (map (juxt #(get % "id") identity)) messages)]
+
+        (expect (not timed-out?))
+        (expect (= (* 2 pairs) (count messages)))
+        ;; a thread per line lets `session/new` land before the `initialize` that
+        ;; must precede it, and the client gets `:not-initialized` for a message it
+        ;; only order the protocol allows
+        (expect (every? #(string? (get-in by-id [(inc (* 2 %)) "result" "sessionId"]))
+                        (range pairs)))))
+  (it "still answers session/cancel while a prompt is streaming"
+      (let
+        [backend
+         (assoc (acp/echo-backend)
+           :prompt (fn [{:keys [cancelled?]}]
+                     ;; the turn only ends when the cancel LANDS: a serve loop that
+                     ;; handled every line in order would spin here until the guard
+                     ;; expires and answer "end_turn"
+                     (loop [n 0]
+                       (cond (cancelled?) {:status "cancelled"}
+                             (> n 600) {:status "completed"}
+                             :else (do (Thread/sleep 5) (recur (inc n)))))))
+
+         lines
+         [(acp/encode {"jsonrpc" "2.0" "id" 1 "method" "initialize" "params" {}})
+          (acp/encode {"jsonrpc" "2.0" "id" 2 "method" "session/new" "params" {"cwd" "/tmp"}})
+          (acp/encode (prompt-msg 3 "acp-echo-1"))
+          (acp/encode
+            {"jsonrpc" "2.0" "method" "session/cancel" "params" {"sessionId" "acp-echo-1"}})]
+
+         {:keys [timed-out? messages]}
+         (serve-lines lines backend)
+
+         by-id
+         (into {} (map (juxt #(get % "id") identity)) messages)]
+
+        (expect (not timed-out?))
+        (expect (= "acp-echo-1" (get-in by-id [2 "result" "sessionId"])))
+        (expect (= "cancelled" (get-in by-id [3 "result" "stopReason"]))))))
+
+;; =============================================================================
+;; Conformance with the published ACP v1 schema
+;; =============================================================================
+
+(defdescribe
+  spec-conformance-test
+  (it "refuses request ids ACP cannot represent, and answers with id null"
+      ;; `RequestId` is null | i64 | string. A response carrying 1.5 or 2^63 is
+      ;; undeserializable for a typed client, which drops the whole connection
+      ;; instead of surfacing our error — so it never reaches the wire.
+      (let [[c _] (conn+out)]
+        (doseq [raw ["1.5" "9223372036854775808" "-9223372036854775809" "1e30" "true" "[]"]]
+          (let
+            [resp (acp/handle-line! c
+                                    (str "{\"jsonrpc\":\"2.0\",\"id\":"
+                                         raw
+                                         ",\"method\":\"authenticate\",\"params\":{}}"))]
+            (expect (= (:invalid-request acp/error-codes) (code resp)) raw)
+            (expect (contains? resp "id") raw)
+            (expect (nil? (get resp "id")) raw)))))
+  (it "echoes every id ACP does allow, i64 edges included"
+      (let [[c _] (conn+out)]
+        (doseq
+          [[raw expected] [["9223372036854775807" 9223372036854775807]
+                           ["-9223372036854775808" -9223372036854775808] ["0" 0] ["\"abc\"" "abc"]]]
+          (let
+            [resp (acp/handle-line! c
+                                    (str "{\"jsonrpc\":\"2.0\",\"id\":"
+                                         raw
+                                         ",\"method\":\"authenticate\",\"params\":{}}"))]
+            (expect (= {} (result resp)) raw)
+            (expect (= expected (get resp "id")) raw)))))
+  (it "negotiates only the version it actually implements"
+      ;; v0 sat in this set while every shape on the wire was v1: we answered
+      ;; `protocolVersion 0` and then spoke v1 anyway. Answer what we speak and
+      ;; let the client disconnect on its own terms, as the spec tells it to.
+      (expect (= #{acp/protocol-version} acp/supported-protocol-versions))
+      (let
+        [[c _]
+         (conn+out)
+
+         r
+         (result (send! c
+                        {"jsonrpc" "2.0"
+                         "id" 1
+                         "method" "initialize"
+                         "params" {"protocolVersion" 0 "clientCapabilities" {}}}))]
+
+        (expect (= acp/protocol-version (get r "protocolVersion")))))
+  (it "introduces itself with an ACP Implementation"
+      (let
+        [[c _]
+         (conn+out)
+
+         info
+         (get (result (init! c)) "agentInfo")]
+
+        (expect (string? (get info "name")))
+        (expect (seq (get info "name")))
+        (expect (string? (get info "version")))
+        (expect (seq (get info "version")))))
+  (it "advertises no prompt capability it silently drops"
+      (let
+        [[c _]
+         (conn+out)
+
+         caps
+         (get-in (result (init! c)) ["agentCapabilities" "promptCapabilities"])]
+
+        ;; `content-block->text` flattens these to a placeholder and throws the
+        ;; bytes away, so promising them only makes clients ship payloads the
+        ;; model never sees.
+        (expect (false? (get caps "image")))
+        (expect (= "[image]" (acp/content-block->text {"type" "image" "data" "…"})))
+        (expect (false? (get caps "audio")))
+        (expect (= "[audio]" (acp/content-block->text {"type" "audio"})))
+        ;; embedded context IS honored, and stays advertised
+        (expect (true? (get caps "embeddedContext")))
+        (expect (= "body"
+                   (acp/content-block->text {"type" "resource" "resource" {"text" "body"}})))))
+  (it "never reuses an error code ACP already assigned a meaning"
+      ;; ACP spends JSON-RPC's implementation-defined range itself: -32000 auth
+      ;; required, -32002 resource not found, -32800 request cancelled. Ours must
+      ;; not collide, or a client that special-cases them mis-reports us.
+      (expect (= -32001 (:not-initialized acp/error-codes)))
+      (expect (not-any? #{-32002 -32800} (vals acp/error-codes)))
+      (expect (apply distinct? (vals acp/error-codes)))))
+
+;; =============================================================================
+;; Resume (`session/load`) and the untrusted-shape walk under it
+;; =============================================================================
+
+(defdescribe
+  session-load-guards-test
+  (it "refuses a session the backend never had instead of resuming a PHANTOM"
+      (let
+        [[c out]
+         (conn+out)
+
+         _
+         (init! c)
+
+         resp
+         (send! c
+                {"jsonrpc" "2.0"
+                 "id" 9
+                 "method" "session/load"
+                 "params" {"sessionId" "ghost-42" "cwd" "/tmp"}})]
+
+        (expect (= -32602 (code resp)))
+        (expect (str/includes? (get-in resp ["error" "message"]) "ghost-42"))
+        ;; nothing about the phantom may survive: not the session table, not the
+        ;; process-wide registry the tool op-hooks route through.
+        (expect (nil? (acp/connection-for "ghost-42")))
+        ;; no transcript was replayed for a session that does not exist
+        (expect (empty? (filter #(str/includes? % "session/update") @out)))
+        ;; and a prompt for it is still an unknown session, not a half-live turn
+        (expect (= -32602
+                   (code (send! c
+                                {"jsonrpc" "2.0"
+                                 "id" 10
+                                 "method" "session/prompt"
+                                 "params" {"sessionId" "ghost-42"
+                                           "prompt" [{"type" "text" "text" "hi"}]}}))))))
+  (it
+    "insists on the same ABSOLUTE cwd `session/new` does — resume is not the lax door"
+    (let
+      [[c _]
+       (conn+out)
+
+       _
+       (init! c)
+
+       sid
+       (get (result (send! c
+                           {"jsonrpc" "2.0" "id" 2 "method" "session/new" "params" {"cwd" "/tmp"}}))
+            "sessionId")
+
+       load
+       (fn [cwd]
+         (send!
+           c
+           {"jsonrpc" "2.0" "id" 3 "method" "session/load" "params" {"sessionId" sid "cwd" cwd}}))]
+
+      (expect (= -32602 (code (load "rel/path"))))
+      (expect (= -32602 (code (load ""))))
+      (expect (= -32602 (code (load 42))))
+      (expect (= {} (result (load "/tmp"))))))
+  (it
+    "replays a REAL session's turns and leaves it promptable"
+    (let
+      [backend
+       (assoc (acp/echo-backend)
+         :load-session (fn [_]
+                         [{:role "user" :text "first"} {:role "assistant" :text "second"}]))
+
+       [c out]
+       (conn+out {:backend backend})
+
+       _
+       (init! c)
+
+       resp
+       (send! c
+              {"jsonrpc" "2.0"
+               "id" 4
+               "method" "session/load"
+               "params" {"sessionId" "sess-real" "cwd" "/tmp"}})
+
+       updates
+       (keep #(let
+                [m
+                 (decode-line %)]
+
+                (when (= "session/update" (get m "method")) (get-in m ["params" "update"])))
+             @out)]
+
+      (expect (= {} (result resp)))
+      (expect (= 2 (count updates)))
+      (expect (some? (acp/connection-for "sess-real")))
+      (expect (= "end_turn"
+                 (get (result (send! c
+                                     {"jsonrpc" "2.0"
+                                      "id" 5
+                                      "method" "session/prompt"
+                                      "params" {"sessionId" "sess-real"
+                                                "prompt" [{"type" "text" "text" "hi"}]}}))
+                      "stopReason"))))))
+
+(defdescribe arg-paths-depth-test
+             (it "walks arbitrarily deep arguments without a StackOverflowError"
+                 ;; `arg-paths` runs inside the permission/mirror hook on UNTRUSTED argument
+                 ;; JSON. A recursive walk dies with an `Error` no handler catches, so a deep
+                 ;; value would kill the turn instead of degrading like `json-safe` does.
+                 (let
+                   [deep-map
+                    (reduce (fn [acc _]
+                              {"a" acc})
+                            {"path" "/deep"}
+                            (range 100000))
+
+                    deep-vec
+                    (reduce (fn [acc _]
+                              [acc])
+                            [{"path" "/vec"}]
+                            (range 100000))
+
+                    walk
+                    (fn [x]
+                      (try (acp/arg-paths x) (catch StackOverflowError _ :stack-overflow)))]
+
+                   (expect (= ["/deep"] (walk deep-map)))
+                   (expect (= ["/vec"] (walk deep-vec)))
+                   ;; the same value must still ENCODE, which is where the depth cap lives
+                   (expect (string? (acp/encode {"rawInput" (acp/json-safe deep-map)})))))
+             (it "is total over nil holes and keeps the shallow path FIRST for the permission title"
+                 (expect (= ["/top" "/x"]
+                            (acp/arg-paths {"a" nil "b" [nil {"path" "/x"} nil] "path" "/top"})))
+                 (expect (= [] (acp/arg-paths [nil nil])))
+                 (expect (= ["/a" "/b"] (acp/arg-paths {"src" "/a" "dest" "/b"})))))

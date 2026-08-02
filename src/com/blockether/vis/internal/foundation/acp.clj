@@ -51,17 +51,42 @@
 
 (def protocol-version "Newest ACP protocol version this agent implements." 1)
 
-(def supported-protocol-versions "Versions [[handle-line!]] can negotiate down to." #{0 1})
+(def supported-protocol-versions
+  "Versions [[handle-line!]] will echo back as negotiated.
+
+   ONLY v1, deliberately. v0 was listed here too, but nothing in this namespace
+   ever branched on it: we answered `protocolVersion 0` and then spoke v1 shapes
+   at the client anyway. Claiming a version we do not implement is worse than
+   refusing it — a v0-only client now reads `1` out of the initialize response
+   and disconnects on its own terms, per the spec's instruction to the client."
+  #{1})
+
+(def agent-info
+  "ACP `Implementation` for the initialize response — what a client shows the
+   user and puts in bug reports. Version is the `vis/VERSION` build resource,
+   \"dev\" when running from source."
+  {"name" "vis"
+   "version" (or (some-> (io/resource "vis/VERSION")
+                         slurp
+                         str/trim
+                         not-empty)
+                 "dev")})
 
 (def error-codes
-  "JSON-RPC 2.0 codes plus the two ACP reserves."
+  "JSON-RPC 2.0 codes plus ACP's own reserves.
+
+   ACP hands out meanings inside JSON-RPC's implementation-defined range: -32000
+   is `Authentication required`, -32002 is `Resource not found`, -32800 is
+   `Request cancelled`. `:not-initialized` is ours alone, so it sits on -32001,
+   which the spec leaves free — it used to squat on -32002 and told any client
+   that special-cases the standard codes that a FILE was missing."
   {:parse-error -32700
    :invalid-request -32600
    :method-not-found -32601
    :invalid-params -32602
    :internal-error -32603
    :auth-required -32000
-   :not-initialized -32002})
+   :not-initialized -32001})
 
 (def ^:dynamic *client-call-timeout-ms*
   "How long the agent waits for an editor to answer `fs/*` or
@@ -207,18 +232,21 @@
                                {:cwd cwd :channel "acp"})]
                     (or (session-id-of created)
                         (fail! :internal-error "the gateway did not return a session id" created))))
+   ;; nil when the daemon has no such session (`soul` answers nil on 404), so
+   ;; `session/load` can refuse a stale id instead of resuming a phantom.
    :load-session (fn [{:keys [session-id]}]
-                   (let
-                     [page ((resolve+ 'com.blockether.vis.internal.gateway.client/transcript-page)
-                             session-id
-                             {:limit 50})]
-                     (vec (mapcat (fn [t]
-                                    (keep (fn [[role k]]
-                                            (let [v (get t k)]
-                                              (when (and (string? v) (seq (str/trim v)))
-                                                {:role role :text v})))
-                                          [["user" "request"] ["assistant" "answer"]]))
-                                  (get page "turns")))))
+                   (when ((resolve+ 'com.blockether.vis.internal.gateway.client/soul) session-id)
+                     (let
+                       [page ((resolve+ 'com.blockether.vis.internal.gateway.client/transcript-page)
+                               session-id
+                               {:limit 50})]
+                       (vec (mapcat (fn [t]
+                                      (keep (fn [[role k]]
+                                              (let [v (get t k)]
+                                                (when (and (string? v) (seq (str/trim v)))
+                                                  {:role role :text v})))
+                                            [["user" "request"] ["assistant" "answer"]]))
+                                    (get page "turns"))))))
    :prompt (fn [{:keys [session-id text on-event]}]
              ((resolve+ 'com.blockether.vis.internal.gateway.client/submit-turn-sync!)
                session-id
@@ -229,13 +257,24 @@
 
 (defn echo-backend
   "A dependency-free backend used by tests and by `--self-test`: it never starts a
-   daemon and answers every prompt from `f` (default: echo the prompt text)."
+   daemon and answers every prompt from `f` (default: echo the prompt text).
+
+   `:load-session` answers `nil` for a session it never created, which is the
+   backend contract for \"no such session\"."
   [& [f]]
-  (let [n (atom 0)]
+  (let
+    [n
+     (atom 0)
+
+     known
+     (atom #{})]
+
     {:new-session (fn [_]
-                    (str "acp-echo-" (swap! n inc)))
-     :load-session (fn [_]
-                     [])
+                    (let [sid (str "acp-echo-" (swap! n inc))]
+                      (swap! known conj sid)
+                      sid))
+     :load-session (fn [{:keys [session-id]}]
+                     (when (contains? @known session-id) []))
      :prompt (fn [{:keys [text on-event]}]
                (when on-event
                  (on-event {"type" "content.block.delta" "field" "markdown" "text" (str text)}))
@@ -374,7 +413,7 @@
   "Map a vis tool name onto an ACP tool-call kind."
   [tool]
   (case (if (keyword? tool) (name tool) (str tool))
-    ("cat" "struct_index" "struct_nodes")
+    ("cat" "ls" "struct_index" "struct_nodes")
     "read"
 
     ("write" "patch" "struct_patch" "format_code")
@@ -477,8 +516,13 @@
     (let [negotiated (if (contains? supported-protocol-versions v) (long v) protocol-version)]
       (swap! conn assoc :initialized? true :protocol-version negotiated :client-caps (or caps {}))
       {"protocolVersion" negotiated
+       "agentInfo" agent-info
        "agentCapabilities"
-       {"loadSession" true "promptCapabilities" {"image" true "audio" false "embeddedContext" true}}
+       ;; `image`/`audio` stay FALSE while [[content-block->text]] flattens a
+       ;; non-text block to "[image]" and drops the bytes: advertising them only
+       ;; makes clients ship payloads the model never sees.
+       {"loadSession" true
+        "promptCapabilities" {"image" false "audio" false "embeddedContext" true}}
        "authMethods" []})))
 
 (defn- handle-authenticate
@@ -511,28 +555,33 @@
      (session-id! params)
 
      cwd
-     (get params "cwd")
+     (get params "cwd")]
 
-     turns
-     ((:load-session (:backend @conn)) {:session-id sid :cwd cwd})]
+    ;; `session/new` insists on an absolute cwd; a resumed session must not be
+    ;; the lax door into the same state.
+    (when (and (some? cwd) (not (and (string? cwd) (seq cwd) (.isAbsolute (io/file ^String cwd)))))
+      (fail! :invalid-params "cwd must be an absolute path"))
+    (let [turns ((:load-session (:backend @conn)) {:session-id sid :cwd cwd})]
+      ;; nil = the backend has never heard of this session. Registering it anyway
+      ;; hands the editor a PHANTOM: `session/load` says ok, the transcript is
+      ;; empty, every later prompt fails deep inside the turn, and the id lingers
+      ;; in the global connection registry.
+      (when (nil? turns) (fail! :invalid-params (str "unknown sessionId: " sid)))
+      (swap! conn assoc-in [:sessions sid] {:cwd cwd :state :idle})
+      (register-connection! sid conn)
+      (doseq
+        [t turns
+         :let [text (str (:text t))]
+         :when (not (str/blank? text))]
 
-    (swap! conn assoc-in [:sessions sid] {:cwd cwd :state :idle})
-    (register-connection! sid conn)
-    (doseq
-      [t
-       turns
-
-       :let [text
-             (str (:text t))]
-       :when (not (str/blank? text))]
-
-      (notify! conn
-               "session/update"
-               {"sessionId" sid
-                "update" {"sessionUpdate"
-                          (if (= "user" (str (:role t))) "user_message_chunk" "agent_message_chunk")
-                          "content" {"type" "text" "text" text}}}))
-    {}))
+        (notify! conn
+                 "session/update"
+                 {"sessionId" sid
+                  "update" {"sessionUpdate" (if (= "user" (str (:role t)))
+                                              "user_message_chunk"
+                                              "agent_message_chunk")
+                            "content" {"type" "text" "text" text}}}))
+      {})))
 
 (defn- stop-reason
   [result cancelled?]
@@ -545,6 +594,29 @@
                  (json-safe result))
           :else "end_turn")))
 
+(defn- mark-pending!
+  "Best-effort IN-ORDER claim. `serve!` marks a session pending the moment it
+   READS the prompt line, before handing the turn to a worker: a `session/cancel`
+   that follows on the wire would otherwise be dropped for a session that is not
+   `:running` yet, and the user's escape key would do nothing."
+  [conn sid]
+  (when (string? sid)
+    (swap! conn (fn [s]
+                  (if (= :idle (get-in s [:sessions sid :state]))
+                    (assoc-in s [:sessions sid :state] :pending)
+                    s))))
+  nil)
+
+(defn- release-pending!
+  "Undo [[mark-pending!]] for a prompt that never reached its claim. Only touches
+   `:pending`, so it can never free a turn some other thread is running."
+  [conn sid]
+  (swap! conn (fn [s]
+                (if (= :pending (get-in s [:sessions sid :state]))
+                  (assoc-in s [:sessions sid :state] :idle)
+                  s)))
+  nil)
+
 (defn- handle-session-prompt
   [conn params]
   (require-initialized! conn)
@@ -556,18 +628,18 @@
      (prompt->text (get params "prompt"))]
 
     (when (str/blank? text)
+      (release-pending! conn sid)
       (fail! :invalid-params "prompt must carry at least one non-empty content block"))
-    ;; Claim the session ATOMICALLY. `serve!` hands every line to its own virtual
+    ;; Claim the session ATOMICALLY. `serve!` hands prompts to their own virtual
     ;; thread, so a read-then-write guard lets two prompts own one session at
     ;; once: their `session/update` streams interleave and whichever finishes
     ;; first marks the session idle while the other is still streaming.
-    (let [[before] (swap-vals! conn
-                               (fn [s]
-                                 (if (= :running (get-in s [:sessions sid :state]))
-                                   s
-                                   (-> s
-                                       (assoc-in [:sessions sid :state] :running)
-                                       (update :cancelled disj sid)))))]
+    (let
+      [[before] (swap-vals! conn
+                            (fn [s]
+                              (if (= :running (get-in s [:sessions sid :state]))
+                                s
+                                (assoc-in s [:sessions sid :state] :running))))]
       (when (= :running (get-in before [:sessions sid :state]))
         (fail! :invalid-request (str "a prompt is already running for session " sid))))
     (try (let
@@ -583,18 +655,26 @@
          (finally
            ;; The cancel flag dies with the turn it aborted, so it can never leak
            ;; into the next prompt for this session.
-           (swap! conn
-                  (fn [s]
-                    (-> s (assoc-in [:sessions sid :state] :idle) (update :cancelled disj sid))))))))
+           (swap! conn (fn [s]
+                         (-> s
+                             (assoc-in [:sessions sid :state] :idle)
+                             (update :cancelled disj sid))))))))
 
 (defn- handle-session-cancel
   [conn params]
-  (let [sid (session-id! params)]
+  (let
+    [sid
+     (session-id! params)
+
+     state
+     (get-in @conn [:sessions sid :state])]
+
     ;; `session/cancel` is a NOTIFICATION: any client can send any id at any time
     ;; and never sees an answer. Remembering ids we never handed out would let a
-    ;; buggy or hostile editor grow `:cancelled` without bound, so an unknown
-    ;; session is ignored instead of recorded.
-    (when (contains? (:sessions @conn) sid)
+    ;; buggy or hostile editor grow `:cancelled` without bound, and remembering a
+    ;; cancel for a session with no turn in flight would abort the NEXT prompt
+    ;; instead — a turn the user never asked to stop.
+    (when (contains? #{:pending :running} state)
       (swap! conn update :cancelled conj sid)
       (try ((:cancel (:backend @conn)) {:session-id sid})
            (catch Throwable t (tel/log! :warn ["acp: cancel failed" (ex-message t)]))))
@@ -613,7 +693,17 @@
 ;; Dispatch — every hostile shape answered, never thrown
 ;; =============================================================================
 
-(defn- valid-id? [x] (or (nil? x) (string? x) (number? x)))
+(defn- valid-id?
+  "True for a JSON-RPC id this agent can echo back verbatim.
+
+   ACP's `RequestId` is `null | i64 | string`. A fractional or oversized number
+   is therefore NOT a usable id: echoing `1.5` — or 2^63 — into the response
+   makes the whole frame undeserializable for a typed client, which drops the
+   connection instead of surfacing our error. Reject it and answer with id null."
+  [x]
+  (or (nil? x)
+      (string? x)
+      (and (integer? x) (<= (bigint Long/MIN_VALUE) (bigint x) (bigint Long/MAX_VALUE)))))
 
 (defn- error-of
   "The JSON-RPC error object for a Throwable raised inside a handler."
@@ -660,11 +750,12 @@
                            (catch Throwable t
                              (tel/log! :debug ["acp: notification failed" method (ex-message t)])))
                       nil)
-                  (not (valid-id? id)) (emit! conn
-                                              (error-message
-                                                nil
-                                                (err-obj :invalid-request
-                                                         "id must be a string, a number, or null")))
+                  (not (valid-id? id))
+                  (emit! conn
+                         (error-message
+                           nil
+                           (err-obj :invalid-request
+                                    "id must be null, a string, or an integer that fits i64")))
                   :else
                   (try (emit! conn (response-message id (dispatch! conn method (get msg "params"))))
                        (catch Throwable t (emit! conn (error-message id (error-of t))))))))))
@@ -752,21 +843,50 @@
 ;; =============================================================================
 
 (defn arg-paths
-  "Every `:path`/`\"path\"` value anywhere inside a tool's arguments."
+  "Every `:path`/`\"path\"` value anywhere inside a tool's arguments.
+
+   The walk is ITERATIVE on purpose. Arguments are untrusted JSON that an editor,
+   a model, or an extension can nest arbitrarily deep, and this runs inside the
+   permission/mirror hook: a recursive walk answers a deep value with a
+   `StackOverflowError`, which is an `Error` no handler catches — it kills the
+   turn instead of degrading the way [[json-safe]] does."
   [x]
-  (letfn [(walk [x acc]
-            (cond (map? x) (reduce-kv (fn [acc k v]
-                                        (if (and (contains? #{:path "path" :dest "dest" :src "src"}
-                                                            k)
-                                                 (string? v)
-                                                 (seq v))
-                                          (conj acc v)
-                                          (walk v acc)))
-                                      acc
-                                      x)
-                  (sequential? x) (reduce #(walk %2 %1) acc x)
-                  :else acc))]
-    (vec (distinct (walk x [])))))
+  (let
+    [path-key?
+     #{:path "path" :dest "dest" :src "src"}
+
+     hit?
+     (fn [k v]
+       (and (path-key? k) (string? v) (seq v)))]
+
+    (loop
+      [stack
+       [x]
+
+       acc
+       []]
+
+      (if-let [v (peek stack)]
+        (let [stack (pop stack)]
+          (cond (map? v) (let
+                           [hits (reduce-kv (fn [a k vv]
+                                              (if (hit? k vv) (conj a vv) a))
+                                            []
+                                            v)
+                            kids (reduce-kv (fn [a k vv]
+                                              (if (hit? k vv) a (conj a vv)))
+                                            []
+                                            v)]
+
+                           ;; children go on REVERSED so the stack pops them in source order:
+                           ;; a deep `first` stays the same path it has always been.
+                           (recur (into stack (reverse kids)) (into acc hits)))
+                (sequential? v) (recur (into stack (reverse v)) acc)
+                :else (recur stack acc)))
+        (if (seq stack)
+          ;; a nil child: `peek` cannot tell it from an empty stack.
+          (recur (pop stack) acc)
+          (vec (distinct acc)))))))
 
 (defn- mirror-to-editor!
   "After a successful edit, push each touched file's new content into the
@@ -836,8 +956,9 @@
 
 (defn serve!
   "Run the ACP agent loop over `:in`/`:out` (default stdin/stdout) until EOF.
-   Each message is handled on its own virtual thread, so `session/cancel` lands
-   while a `session/prompt` is still streaming. Returns the closed connection."
+   Lines are handled IN ORDER, except `session/prompt`, which runs on its own
+   virtual thread so `session/cancel` lands while the turn is still streaming.
+   Returns the closed connection."
   [& [{:keys [in out backend]}]]
   (let
     [^InputStream in
@@ -873,10 +994,20 @@
 
            (when-let [line (.readLine rdr)]
              (when-not (str/blank? line)
-               (.submit pool
-                        ^Runnable
-                        (fn []
-                          (handle-line! conn line))))
+               ;; A stream has an ORDER and a client may pipeline: handing every
+               ;; line to its own thread lets `session/new` overtake the
+               ;; `initialize` it depends on, or one `session/prompt` overtake
+               ;; the `session/load` that has to precede it. Only a prompt runs
+               ;; long enough to deserve a thread — and that is exactly what
+               ;; keeps `session/cancel` answerable mid-turn.
+               (let [m (:msg (decode line))]
+                 (if (= "session/prompt" (get m "method"))
+                   (do (mark-pending! conn (get-in m ["params" "sessionId"]))
+                       (.submit pool
+                                ^Runnable
+                                (fn []
+                                  (handle-line! conn line))))
+                   (handle-line! conn line))))
              (recur)))
          (finally (.shutdown pool)
                   (try (.awaitTermination pool 5 TimeUnit/SECONDS)
@@ -967,12 +1098,13 @@
        old
 
        :when (not (contains? m cid))
-
-       :let [c (:conn entry)]
+       :let [c
+             (:conn entry)]
        :when c]
 
       (swap! c assoc :closed? true)
-      (doseq [sid (keys (:sessions @c))] (unregister-connection! sid)))
+      (doseq [sid (keys (:sessions @c))]
+        (unregister-connection! sid)))
     (:conn (get m client-id))))
 
 (defn- json-response
