@@ -60,30 +60,35 @@ The app is useless on its own: it needs a gateway. Start one with `vis-agent gat
 
 ## Choose the runtime
 
-`vis-agent` is always the stable public wrapper, and by default it follows the
-releases: the published native runtime, or JVM source pinned to the newest
-release tag. A live, moving checkout is **dev mode** — you have to ask for it.
+`vis-agent` is always the stable public wrapper, and it **follows the releases**
+by default: the published native runtime, or JVM source pinned to the newest
+release tag. A live, moving checkout is **dev mode** — opt in; it is never
+picked for you, not even inside a Vis checkout.
+
+| Runtime | Runs |
+|---|---|
+| `native` | the private sidecar downloaded by `vis-agent update` |
+| `jvm` | source pinned to the newest `vX.Y.Z` tag |
+| `dev` | a live checkout (`~/vis`, or `$VIS_DEV_CHECKOUT`), tracking its branch |
+| `auto` | native if installed, else tagged source |
 
 ```bash
 vis-agent runtime show
-vis-agent runtime use native   # release runtime downloaded by `vis-agent update`
-vis-agent runtime use jvm      # source pinned to the newest release tag
-vis-agent runtime use dev      # live checkout (~/vis, or $VIS_DEV_CHECKOUT)
-vis-agent runtime use auto     # back to automatic: native, else tagged source
-
-vis-agent --native help        # one launch only
-vis-agent --jvm help           # one launch only; --source is an alias
-vis-agent --dev help           # one launch only; VIS_RUNTIME=dev does the same
+vis-agent runtime use native|jvm|dev|auto   # persisted default
+vis-agent --native|--jvm|--dev help         # one launch only (--source = --jvm)
+VIS_RUNTIME=dev vis-agent help              # one process only
 ```
 
-With no persisted choice the wrapper uses the installed native runtime, else
-release-tagged JVM source. `vis-agent update` follows the same rule: it installs
-the newest release bundle, or moves the managed checkout onto the newest `vX.Y.Z`
-tag. Only `vis-agent update --dev` (or dev mode) fast-forwards a live checkout's
-branch. A selected but unavailable runtime fails with an actionable error rather
-than silently changing runtimes.
+A one-launch flag beats `VIS_RUNTIME`, which beats the persisted default.
+`vis-agent update` follows the same channel: the newest release bundle, or the
+managed checkout moved onto the newest tag. Only `update --dev` (or dev mode)
+fast-forwards a live checkout's branch, and `update <sha>` pins an exact commit.
+A selected but unavailable runtime fails with an actionable error rather than
+silently changing runtimes.
 
-There is deliberately no `--jar` distribution. `target/vis.jar` is only an intermediate/build artifact and is never shipped or selected.
+There is deliberately no `--jar` distribution: `target/vis.jar` is an
+intermediate build artifact, never shipped or selected. Full flag, update, and
+state-file matrix: [Runtime distributions](resources/vis-docs/distributions.md).
 
 ## Build / develop
 

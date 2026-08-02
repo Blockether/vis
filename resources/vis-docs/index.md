@@ -99,8 +99,6 @@ Afterwards every runtime action belongs to vis-agent:
 vis-agent runtime show      # configured default, effective runtime, paths
 vis-agent update            # command + runtime, updated together
 vis-agent update --native   # (re)download just the native runtime
-vis-agent runtime use jvm   # switch to release-tagged source
-vis-agent runtime use dev   # switch to a live checkout (dev mode)
 ```
 
 ### Variants
@@ -148,38 +146,34 @@ host entirely — it installs the checkout's own wrapper.
 ## Choose native, tagged source, or dev
 
 The wrapper owns runtime selection, and it follows releases unless told
-otherwise:
+otherwise: the installed native runtime, else JVM source pinned to the newest
+`vX.Y.Z` tag. Being *inside* a Vis checkout changes nothing — a live checkout is
+**dev mode**, and it has to be selected.
 
 ```bash
 vis-agent runtime show
-vis-agent runtime use native   # release runtime downloaded by `vis-agent update`
-vis-agent runtime use jvm      # source pinned to the newest release tag
-vis-agent runtime use dev      # live checkout (~/vis, or $VIS_DEV_CHECKOUT)
-vis-agent runtime use auto     # back to automatic
-
-vis-agent --native help        # one-launch override
-vis-agent --jvm help           # one-launch override; --source is an alias
-vis-agent --dev help           # one-launch override; same as VIS_RUNTIME=dev
+vis-agent runtime use native|jvm|dev|auto   # persisted default (auto = follow releases)
+vis-agent --native|--jvm|--dev help         # one launch only (--source = --jvm)
+VIS_RUNTIME=dev vis-agent help              # one process only
 ```
 
-A persisted choice wins. Without one, the installed native runtime wins, with
-release-tagged JVM source as the fallback — being inside a Vis checkout does not
-change that, because a live checkout is dev mode and must be selected. Dev mode
-also hands off to `$VIS_DEV_CHECKOUT` (default `~/vis`) when the command was
-installed elsewhere. If the selected runtime is unavailable, the wrapper stops
-and explains how to install or switch—it never silently picks another.
+A one-launch flag beats `VIS_RUNTIME`, which beats the persisted default in
+`~/.vis/runtime`. Dev mode also hands off to `$VIS_DEV_CHECKOUT` (default
+`~/vis`) when the command was installed elsewhere. If the selected runtime is
+unavailable, the wrapper stops and explains how to install or switch — it never
+silently picks another.
 
 `vis-agent update` matches the same channel: it installs the newest release
-bundle, or fetches tags and checks the managed source out at the newest `vX.Y.Z`
-tag. `vis-agent update --dev` is the only form that fast-forwards a live
-checkout's branch, and `vis-agent update <sha>` still pins an exact commit.
+bundle, or moves the managed checkout (`~/.vis/install/src`) onto the newest
+`vX.Y.Z` tag. `vis-agent update --dev` is the only form that fast-forwards a live
+checkout's branch, and `vis-agent update <sha>` still pins an exact commit. Full
+matrix: [Runtime distributions](distributions.md).
 
-There is no jar distribution and no `--jar` selector. `target/vis.jar` exists only
-as an intermediate build artifact. The JVM runtime means live source plus Java
-25 and the Clojure CLI; the native runtime remains private behind the wrapper.
-GraalVM builds require Community Edition 25.1.3 exactly and at least 16 GB RAM;
-25.2.x is unsupported because its native-image analysis does not converge within
-memory.
+There is no jar distribution and no `--jar` selector; `target/vis.jar` exists only
+as an intermediate build artifact. The JVM runtime means source plus Java 25 and
+the Clojure CLI; the native runtime remains private behind the wrapper. GraalVM
+builds require Community Edition 25.1.3 exactly and at least 16 GB RAM; 25.2.x is
+unsupported because its native-image analysis does not converge within memory.
 
 ## Features
 
