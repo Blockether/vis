@@ -909,6 +909,9 @@ def __vis_install_matplotlib__():
     class _Canvas(object):
         # `fig.canvas.draw()` and friends: no live event loop, but the size
         # query answers from figure state so blitting code gets sane numbers.
+        def __init__(self, figure=None):
+            self.figure = figure
+
         def draw(self, *a, **k):
             return None
 
@@ -1010,7 +1013,7 @@ def __vis_install_matplotlib__():
 
         @property
         def canvas(self):
-            return _Canvas()
+            return _Canvas(self)
 
         @property
         def axes(self):

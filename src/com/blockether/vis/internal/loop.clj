@@ -4800,8 +4800,10 @@
      "natives, then print only needed output. State persists; project packages cannot be imported "
      "— use a project REPL. Only `print` returns; bare expressions drop and errors surface. Native "
      "results return inline and remain at `ntr[tool_id]`; engine-bound natives are bare snake_case, "
-     "native-only ones absent." (when-let [cap (python-execution-capability-line caps)]
-                                  (str " " cap)))
+     "native-only ones absent. Do not use `time.sleep`/`asyncio.sleep` to wait or poll for background "
+     "shell completion — use `shell` op `wait`, concurrently via `gather` when needed."
+     (when-let [cap (python-execution-capability-line caps)]
+       (str " " cap)))
    :result
    "Exactly captured `print(...)` output (empty string when none); evaluation failures are failed tool results, not result objects."
    :schema {:type "object"

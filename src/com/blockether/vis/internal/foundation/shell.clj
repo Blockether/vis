@@ -393,7 +393,7 @@
 (def ^:private result-core
   "Keys EVERY `shell` result carries, whatever stage produced it: who was asked,
    and the GROUP summary. `stage` names the stage that produced it (run /
-   background / logs / send / stop) and these keys stay present-but-neutral
+   background / logs / wait / send / stop) and these keys stay present-but-neutral
    rather than vanishing, so ordinary model Python (`r[\"exit\"]`,
    `r[\"commands\"]`) can never KeyError on a field every stage owns.
 
@@ -434,13 +434,8 @@
    "background"
    {"pid" nil "status" nil "uptime_ms" nil "attach" nil "socket" nil "already_running" false}
    "logs" {"pid" nil "status" nil "uptime_ms" nil "lines" [] "line_count" 0 "dropped" 0}
-   "wait" {"pid" nil
-            "status" nil
-            "uptime_ms" nil
-            "lines" []
-            "line_count" 0
-            "dropped" 0
-            "timeout_secs" nil}
+   "wait"
+   {"pid" nil "status" nil "uptime_ms" nil "lines" [] "line_count" 0 "dropped" 0 "timeout_secs" nil}
    "send" {"pid" nil "status" nil "sent" 0 "text" nil "keys" nil}
    "stop" {"pid" nil "status" nil "uptime_ms" nil "stopped" false}})
 
@@ -1047,6 +1042,109 @@
           :op :shell
           :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))))
 
+(defn- shell-wait-impl
+  "Wait on the HOST for one background shell to exit, then return its final log
+   tail. This is the completion primitive for long jobs: unlike sleeping inside
+   `python_execution`, it occupies only the shell worker and composes safely with
+   `await gather(...)` across independent ids. A timeout is observational — it
+   leaves the process and retained resource running."
+  ([env id] (shell-wait-impl env id nil default-log-tail))
+  ([env id timeout-secs n]
+   (let
+     [session
+      (:session-id env)
+
+      id
+      (str id)
+
+      entry
+      (bg-entry session id)]
+
+     (when-not entry
+       (throw (ex-info
+                (str "No background shell '"
+                     id
+                     "' in this session — start one with"
+                     " await shell({\"commands\": [\"…\"], \"op\": \"background\", \"id\": id});"
+                     " live ids are listed in resources.")
+                {:type ::unknown-bg-id :id id})))
+     (let
+       [timeout-secs
+        (clamp-timeout-secs timeout-secs)
+
+        n
+        (-> (long (or (->pos-long n "n") default-log-tail))
+            (max 1)
+            long
+            (min (long max-bg-lines)))
+
+        started
+        (now-ms)
+
+        deadline
+        (+ started (* 1000 timeout-secs))
+
+        exit-code
+        (loop []
+
+          (if-some [code @(:exit entry)]
+            code
+            (let
+              [now (now-ms)
+               proc (:proc entry)
+               alive? (try ((:alive? proc)) (catch Throwable _ true))]
+
+              (cond (not alive?) (let [code (try ((:wait proc)) (catch Throwable _ nil))]
+                                   ;; The pump normally records this after draining the PTY. If
+                                   ;; this waiter wins the reap race, publish the same code and
+                                   ;; briefly let the pump consume the final bytes.
+                                   (when (some? code) (compare-and-set! (:exit entry) nil code))
+                                   (when-let [^Thread pump (:pump entry)]
+                                     (let [remaining (- deadline (now-ms))]
+                                       (when (pos? remaining)
+                                         (try (.join pump (long remaining))
+                                              (catch InterruptedException e (throw e))))))
+                                   (or @(:exit entry) code))
+                    (>= now deadline) nil
+                    :else (do (Thread/sleep (long (min 50 (max 1 (- deadline now))))) (recur))))))
+
+        {:keys [lines dropped next-seq]}
+        @(:buffer entry)
+
+        total
+        (dec (long next-seq))
+
+        shown
+        (if (> (count lines) n) (subvec lines (- (count lines) n)) lines)
+
+        finished
+        (now-ms)
+
+        timed-out?
+        (nil? exit-code)]
+
+       (extension/success
+         {:result (assoc (bg-core "wait" id entry)
+                    "status" (if timed-out? "running" "exited")
+                    "exit" exit-code
+                    "duration_ms" (- finished started)
+                    "timed_out" timed-out?
+                    "timeout_secs" timeout-secs
+                    "lines" (mapv second shown)
+                    "line_count" total
+                    "dropped" (long (or dropped 0))
+                    "note" (when timed-out?
+                             (str "Background shell '"
+                                  id
+                                  "' is still running after "
+                                  timeout-secs
+                                  "s; wait again, inspect logs, or stop it.")))
+          :op :shell
+          :metadata {:id id
+                     :started-at-ms started
+                     :finished-at-ms finished
+                     :duration-ms (- finished started)}})))))
+
 (def ^:private control-key-names
   "Human names for the control characters `send` writes into a PTY, so a card can
    show WHAT was typed even when the payload prints nothing at all."
@@ -1287,17 +1385,24 @@
       "logs"
       (do (reject-commands) (reject-text) (shell-logs-impl env (need-id) (opt opts :n)))
 
+      "wait"
+      (do (reject-commands)
+          (reject-text)
+          (shell-wait-impl env (need-id) (opt opts :timeout_secs) (opt opts :n)))
+
       "send"
       (do (reject-commands) (shell-send-impl env (need-id) (need-text) opts))
 
       "stop"
       (do (reject-commands) (reject-text) (shell-stop-impl env (need-id)))
 
-      (throw (ex-info (str
-                        "Unknown shell op "
-                        (pr-str op)
-                        " — use \"run\" (default), \"background\", \"logs\", \"send\" or \"stop\".")
-                      {:type ::unknown-op :op op})))))
+      (throw
+        (ex-info
+          (str
+            "Unknown shell op "
+            (pr-str op)
+            " — use \"run\" (default), \"background\", \"logs\", \"wait\", \"send\" or \"stop\".")
+          {:type ::unknown-op :op op})))))
 
 (defn run-argv
   "Run ONE literal argv through the SAME bounded machinery `shell` runs its own
@@ -1374,18 +1479,20 @@
 Examples:
 await shell({\"commands\": [\"git status\"]})
 await shell({\"commands\": [\"npm test\"], \"op\": \"background\", \"id\": \"tests\"})
+await shell({\"op\": \"wait\", \"id\": \"tests\", \"timeout_secs\": 300})
 await shell({\"op\": \"logs\", \"id\": \"tests\"})
 await shell({\"op\": \"send\", \"id\": \"tests\", \"text\": \"y\"})
 await shell({\"op\": \"stop\", \"id\": \"tests\"})
 
 `commands` is a non-empty string array. `op` defaults to `run`, or `background` when `id` is supplied:
 - `run`: blocking `bash -lc`; `cwd` defaults to workspace root; `timeout_secs` defaults to 120 (max 600); nonzero exit is data.
-- `background`: returns immediately without a timeout and owns a session resource; use for long or interactive work, then poll `logs`.
-- `logs`: last 200 lines by default; `n` max 2000.
+- `background`: returns immediately without a timeout and owns a session resource; use for long or interactive work.
+- `wait`: host-side bounded wait for completion; returns the final `lines` tail and does not stop a timed-out process. Use concurrent waits with `await gather(...)` instead of sleeping or polling in Python.
+- `logs`: immediate snapshot of the last 200 `lines` by default; `n` max 2000.
 - `send`: writes `text` verbatim; `is_enter` defaults true.
 - `stop`: kills the process tree and drops its logs/resource.
 
-Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`, `timed_out`, and `note`; stages add process/status/log/send fields. Each command reports its text, timing, stdout/stderr, exit, timeout, truncation counts, status, and note."
+Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`, `timed_out`, and `note`; stages add process/status/log/send fields. Background log output is in `lines`; foreground command output is under each command's `stdout`/`stderr`."
     :arglists '([opts])}
   shell
   shell-dispatch)
@@ -1806,6 +1913,9 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
     "logs"
     (render-shell-logs-result r)
 
+    "wait"
+    (render-shell-logs-result r)
+
     "send"
     (render-shell-send-result r)
 
@@ -1833,14 +1943,16 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
      (str
        "Always includes `stage`, `id`, `cwd`, `commands`, timing/exit fields, and `note`; run adds "
        "`timeout_secs`, lifecycle adds `pid`, `status`, and stage fields. Commands include command "
-       "text, timing/exit, stdout/stderr with truncation counts, status, and note.")
+       "text, timing/exit, stdout/stderr with truncation counts, status, and note. `logs` and `wait` "
+       "return background output in `lines`.")
      :name "shell"
      :description
      (str
        "Run bounded commands or manage background shells with ONE options map, never a positional string or array. "
-       "Long/interactive: `background`, then `logs`; `send` writes `text`; `stop` kills. Live ids: "
-       "`session[\"resources\"]`. Output: `r[\"commands\"][0][\"stdout\"]`; `*_omitted_chars` means "
-       "truncation. Await in `python_execution`.")
+       "Long/interactive: `background`, then `wait` for completion; `logs` is an immediate snapshot; `send` writes "
+       "`text`; `stop` kills. Live ids: `session[\"resources\"]`. Foreground output: "
+       "`r[\"commands\"][0][\"stdout\"]`; background `logs`/`wait` output: `r[\"lines\"]`. "
+       "`*_omitted_chars` means truncation. Await in `python_execution`.")
      :render render-shell-result
      :color-role :tool-color/shell
      :schema
@@ -1850,14 +1962,15 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
                                             :description
                                             "Required for run/new background: `bash -lc` lines."})
        "op" {:type "string"
-             :enum ["run" "background" "logs" "send" "stop"]
+             :enum ["run" "background" "logs" "wait" "send" "stop"]
              :description "Stage; default run, or background with `id`."}
        "id" {:type "string" :minLength 1 :description "Background id for lifecycle ops."}
        "timeout_secs"
-       {:type "integer" :minimum 1 :maximum 600 :description "run timeout; default 120s."}
+       {:type "integer" :minimum 1 :maximum 600 :description "run/wait timeout; default 120s."}
        "cwd" {:type "string"
               :description "Working directory under allowed root; relative uses workspace."}
-       "n" {:type "integer" :minimum 1 :maximum 2000 :description "logs tail lines; default 200."}
+       "n"
+       {:type "integer" :minimum 1 :maximum 2000 :description "logs/wait tail lines; default 200."}
        "text" {:type "string" :description "send keystrokes."}
        "is_enter" {:type "boolean" :description "send newline; default true."}}
       :additionalProperties false}
@@ -1909,8 +2022,8 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
   {:id "shell"
    :label "Shell commands"
    :description (str "Expose the ONE `shell` tool: bounded runs plus the background lifecycle "
-                     "(background / logs / send / stop). When OFF the shell compatibility layer "
-                     "is not bound. Contained by the OS process jail whenever it is ON.")
+                     "(background / logs / wait / send / stop). When OFF the shell compatibility "
+                     "layer is not bound. Contained by the OS process jail whenever it is ON.")
    :default true
    :owner :vis
    :persist? true
@@ -1920,7 +2033,7 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
   (vis/extension
     {:ext/name "foundation-shell"
      :ext/description
-     "One `shell` tool: bounded commands and background PTY lifecycle (`run`, `background`, `logs`, `send`, `stop`); `resource_stop` also stops PTYs. Default-on behind the `shell` toggle and OS process jail."
+     "One `shell` tool: bounded commands and background PTY lifecycle (`run`, `background`, `logs`, `wait`, `send`, `stop`); `resource_stop` also stops PTYs. Default-on behind the `shell` toggle and OS process jail."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

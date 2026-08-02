@@ -120,8 +120,13 @@ channels:
   `await shell({"commands": ["<cmd>"], "op": "background", "id": …})` under an
   auto-generated resource id (`background-<hex>`) and returns right away. Prefer it
   for commands that may take a while: builds, test suites, servers, watchers, and
-  interactive processes. Read output with
-  `await shell({"op": "logs", "id": id})` and stop it with
+  interactive processes. `logs` is an immediate snapshot of output:
+  `await shell({"op": "logs", "id": id})`. To wait for completion and receive
+  the final tail in `result["lines"]`, use
+  `await shell({"op": "wait", "id": id, "timeout_secs": 300})`. A wait timeout
+  leaves the process running. Wait for independent jobs concurrently with
+  `await gather(*(shell(op="wait", id=i, timeout_secs=300) for i in ids))` — do
+  not sleep or poll in `python_execution`. Stop a job with
   `await shell({"op": "stop", "id": id})`.
 - A bare `!` (or `!&`) with no command is ordinary prose and runs as a normal
   LLM turn.

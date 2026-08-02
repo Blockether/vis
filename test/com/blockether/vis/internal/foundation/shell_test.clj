@@ -24,6 +24,8 @@
 
 (def ^:private shell-logs* @#'shell/shell-logs-impl)
 
+(def ^:private shell-wait* @#'shell/shell-wait-impl)
+
 (def ^:private shell-send* @#'shell/shell-send-impl)
 
 (def ^:private shell* shell/shell)
@@ -424,6 +426,44 @@
                      (expect (empty? (resources/list-resources sid))))
                    (finally (resources/stop-all! sid)))))))))
 
+(defdescribe
+  shell-wait-test
+  (it "waits for completion on the host and returns the final bounded log tail"
+      (with-shell-on (fn []
+                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                         (let
+                           [sid (str "shell-wait-exit-" (System/nanoTime))
+                            env {:session-id sid}]
+
+                           (try (shell-bg* env "job" "printf 'one\\ntwo\\n'; sleep 0.2; exit 7")
+                                (let [r (:result (shell-wait* env "job" 5 1))]
+                                  (expect (= "wait" (get r "stage")))
+                                  (expect (= "exited" (get r "status")))
+                                  (expect (= 7 (get r "exit")))
+                                  (expect (false? (get r "timed_out")))
+                                  (expect (= 5 (get r "timeout_secs")))
+                                  (expect (= ["two"] (get r "lines")))
+                                  (expect (= 2 (get r "line_count")))
+                                  (expect (number? (get r "duration_ms"))))
+                                (finally (resources/stop-all! sid))))))))
+  (it "times out without stopping or unregistering a still-running shell"
+      (with-shell-on (fn []
+                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                         (let
+                           [sid (str "shell-wait-timeout-" (System/nanoTime))
+                            env {:session-id sid}]
+
+                           (try (shell-bg* env "job" "echo started; sleep 30")
+                                (let [r (:result (shell-wait* env "job" 1 10))]
+                                  (expect (= "wait" (get r "stage")))
+                                  (expect (= "running" (get r "status")))
+                                  (expect (nil? (get r "exit")))
+                                  (expect (true? (get r "timed_out")))
+                                  (expect (= 1 (get r "timeout_secs")))
+                                  (expect (str/includes? (get r "note") "still running"))
+                                  (expect (some? (first (resources/list-resources sid)))))
+                                (finally (resources/stop-all! sid)))))))))
+
 (defdescribe shell-send-test
              (it "types into a running background shell's stdin and the program reads it"
                  (with-shell-on
@@ -641,7 +681,7 @@
         (expect (contains? props "commands"))
         (expect (contains? props "text"))
         (expect (not (contains? props "cmd")))
-        (expect (= ["run" "background" "logs" "send" "stop"] (get-in props ["op" :enum])))
+        (expect (= ["run" "background" "logs" "wait" "send" "stop"] (get-in props ["op" :enum])))
         (expect (= "array" (get-in props ["commands" :type])))))
   (it "closes every native shell input schema"
       (doseq [s shell/shell-symbols]
@@ -816,4 +856,29 @@
                 "l = __vis_settle__(shell({'op':'logs', 'id':job, 'n':1}))\n"
                 "s = __vis_settle__(shell({'op':'stop', 'id':job}))\n"
                 "[b['stage'], l['stage'], s['stage']]"))))
+        (finally (resources/stop-all! sid))))))
+
+(defdescribe
+  python-shell-wait-surface-test
+  (it
+    "exposes the host-side wait stage through ordinary Python shell calls"
+    (let
+      [sid
+       (str "py-shell-wait-" (System/nanoTime))
+
+       c
+       (py-ctx {:session-id sid})]
+
+      (try
+        (expect
+          (=
+            ["wait" "exited" 0 ["done"]]
+            (py
+              c
+              (str
+                "job = " (pr-str sid)
+                "\n"
+                "__vis_settle__(shell({'commands':['sleep 0.1; echo done'], 'op':'background', 'id':job}))\n"
+                "w = __vis_settle__(shell({'op':'wait', 'id':job, 'timeout_secs':5}))\n"
+                "[w['stage'], w['status'], w['exit'], w['lines']]"))))
         (finally (resources/stop-all! sid))))))
