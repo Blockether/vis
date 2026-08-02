@@ -760,7 +760,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
               onSelect={() => void createSession()}
             />
             <StartOption
-              title="A new draft"
+              title="A new draft, with my uncommitted changes"
               hint="A private copy of this project exactly as it is now — your uncommitted changes come with it. The real project stays untouched."
               onSelect={() => askDraftName(false)}
             />
