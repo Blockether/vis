@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- launcher: `vis-agent` is one coherent surface — run Vis, `vis-agent runtime
+  show|use native|jvm|dev|auto`, and `vis-agent update [--native|--jvm|--dev]
+  [--rebuild] [vX.Y.Z|<ref>]`. Vis follows releases by default and `dev` is the
+  only runtime that follows a moving branch.
+- installer: `bin/install-vis-agent --runtime native|jvm` installs the wrapper
+  and lets it acquire its own runtime, so wrapper and runtime cannot drift.
+
+### Removed
+
+- launcher: the `--source` alias, the `--jar` tombstone, the wrapper-owned
+  `native`/`uber` build commands, `VIS_SOURCE_DIR`, and `VIS_LOCAL_BIN_DIR`.
+- installer: `bin/install-source` (use `install-vis-agent --runtime jvm`).
+- state: `~/.vis/source-dir`, `~/.vis/sourcecode`, `~/.vis/install/mode`, and
+  `~/.vis/install/sha`. Runtime state is now `~/.vis/runtime` plus
+  `~/.vis/install/{vis-agent-native,src,ref}`.
+
+### Fixed
+
+- launcher: `vis-agent update --native|--jvm|--dev` reached the update path
+  again (the launch-flag loop used to swallow them), and a `[[ … ]] && cmd`
+  tail no longer makes a successful `runtime use` exit 1.
+
+
 ## [v0.1.22] - 2026-08-01
 
 ### Changed
