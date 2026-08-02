@@ -8,6 +8,7 @@ import type {
   ThemeSummary,
   Toggle,
   ToggleGroup,
+  McpAuthFlow,
   McpServer,
   McpServerInput,
   McpTestResult,
@@ -466,6 +467,8 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [test, setTest] = useState<McpTestResult | null>(null);
+  const [authFlow, setAuthFlow] = useState<McpAuthFlow | null>(null);
+  const [authInput, setAuthInput] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -479,6 +482,30 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // A browser that can reach the gateway's loopback listener finishes the flow
+  // by itself, and the pasted-URL leg is then never used. Poll so the UI notices.
+  useEffect(() => {
+    if (!authFlow) return;
+    const timer = window.setInterval(() => {
+      void (async () => {
+        try {
+          const verdict = await client.mcpAuthPoll(authFlow.server, authFlow.flow_id);
+          if (verdict.status === 'ok') {
+            setAuthFlow(null);
+            setAuthInput('');
+            await load();
+          } else if (verdict.status === 'error') {
+            setAuthFlow(null);
+            setError(verdict.error ?? 'Authorization failed.');
+          }
+        } catch {
+          // Expired or already swept; the Finish button reports it in context.
+        }
+      })();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [authFlow, client, load]);
 
   const spec = (): McpServerInput => {
     const keyValues = (text: string) =>
@@ -552,6 +579,83 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
     }
   }
 
+  // Kill / start are RUNTIME ops: they stop or revive the child process without
+  // touching anybody's config, so they stay available for hand-written servers
+  // too. A kill holds until Start — the gateway will not silently reconnect it.
+  async function setRunning(server: McpServer, running: boolean) {
+    setBusy(server.name);
+    try {
+      await (running ? client.startMcpServer(server.name) : client.killMcpServer(server.name));
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // OAuth is headless: the gateway mints the flow and keeps the PKCE verifier and
+  // the token. This device only opens the URL and hands back where the browser
+  // landed — which is the only thing a phone away from that gateway can do.
+  async function authorize(server: McpServer) {
+    setBusy(server.name);
+    try {
+      const flow = await client.mcpAuthStart(server.name);
+      setError(null);
+      setAuthInput('');
+      setAuthFlow(flow);
+      window.open(flow.url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function finishAuth() {
+    if (!authFlow) return;
+    setBusy(authFlow.server);
+    try {
+      const verdict = await client.mcpAuthComplete(authFlow.server, authFlow.flow_id, authInput.trim());
+      if (verdict.status === 'error') {
+        setError(verdict.error ?? 'Authorization failed.');
+        return;
+      }
+      setAuthFlow(null);
+      setAuthInput('');
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function cancelAuth() {
+    const flow = authFlow;
+    setAuthFlow(null);
+    setAuthInput('');
+    if (!flow) return;
+    try {
+      await client.mcpAuthCancel(flow.server, flow.flow_id);
+    } catch {
+      // Already swept on the gateway — nothing left to release.
+    }
+  }
+
+  async function signOut(server: McpServer) {
+    if (!window.confirm(`Forget ${server.name}'s OAuth tokens on this gateway?`)) return;
+    setBusy(server.name);
+    try {
+      await client.mcpAuthLogout(server.name);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function remove(server: McpServer) {
     if (!window.confirm(`Remove ${server.name} from this gateway?`)) return;
     setBusy(server.name);
@@ -579,10 +683,34 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
               <p className="truncate font-mono text-ui font-bold text-white">{server.name}</p>
               <p className="mt-0.5 truncate font-mono text-meta text-dialog-hint">
                 {server.transport === 'stdio' ? server.command : server.url} · {server.tools} tools ·{' '}
-                {server.is_connected ? 'connected' : server.enabled ? 'connecting' : 'disabled'}
+                {server.is_killed
+                  ? 'killed'
+                  : server.is_connected
+                    ? 'connected'
+                    : server.enabled
+                      ? 'connecting'
+                      : 'disabled'}
+                {server.url ? (server.is_authorized ? ' · signed in' : ' · not signed in') : null}
               </p>
             </div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center justify-end gap-1.5">
+              {server.url && (
+                <Button variant="ghost" disabled={busy !== null} onClick={() => void authorize(server)}>
+                  {server.is_authorized ? 'Re-auth' : 'Sign in'}
+                </Button>
+              )}
+              {server.url && server.is_authorized && (
+                <Button variant="ghost" disabled={busy !== null} onClick={() => void signOut(server)}>
+                  Sign out
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                disabled={busy !== null}
+                onClick={() => void setRunning(server, server.is_killed)}
+              >
+                {server.is_killed ? 'Start' : 'Kill'}
+              </Button>
               {server.is_managed ? (
                 <>
                   <Switch
@@ -600,6 +728,38 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
                 <p className="font-mono text-chip text-dialog-hint">config file</p>
               )}
             </div>
+            {authFlow?.server === server.name && (
+              <div className="col-span-2 mt-2 space-y-2 border-t border-dialog-edge pt-2">
+                <p className="font-mono text-meta text-dialog-hint">
+                  Approve the sign-in in the browser tab we opened. If it stayed shut, use this link — then paste
+                  the URL the browser lands on. Nothing secret ever reaches this device.
+                </p>
+                <a
+                  className="block truncate font-mono text-meta text-accent underline"
+                  href={authFlow.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {authFlow.url}
+                </a>
+                <Input
+                  value={authInput}
+                  onChange={(event) => setAuthInput(event.target.value)}
+                  placeholder="http://127.0.0.1:…/callback?code=…"
+                  inputMode="url"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                />
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button variant="ghost" disabled={busy !== null} onClick={() => void cancelAuth()}>
+                    Cancel
+                  </Button>
+                  <Button disabled={busy !== null || !authInput.trim()} onClick={() => void finishAuth()}>
+                    Finish sign-in
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         ))}
         {servers?.length === 0 && !showForm && (

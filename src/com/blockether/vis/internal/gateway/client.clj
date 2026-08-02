@@ -894,6 +894,65 @@
   [provider-id]
   (send-json! "POST" (str "/v1/providers/" (enc (name provider-id)) "/logout")))
 
+;; ── MCP servers ────────────────────────────────────────────────────────────────
+;; MCP is configured and RUN on the gateway: it owns the connection pool, the
+;; child processes, and the OAuth tokens. A channel only inspects that inventory,
+;; toggles/kills a server, and drives the headless auth legs — exactly the same
+;; boundary as provider auth above.
+
+(defn mcp-servers
+  "Sanitized MCP inventory (string-keyed rows: `name`, `transport`, `enabled`,
+   `is_connected`, `is_managed`, `is_killed`, `tools`, `is_authorized`, …)."
+  []
+  (vec (get (send-json! "GET" "/v1/mcp/servers") "servers")))
+
+(defn mcp-kill-server!
+  "Stop a server NOW and hold it down until it is started again. Runtime only —
+   nothing in the user's config changes."
+  [server]
+  (send-json! "POST" (str "/v1/mcp/servers/" (enc server) "/actions/kill")))
+
+(defn mcp-start-server!
+  "Release a kill and connect the server again."
+  [server]
+  (send-json! "POST" (str "/v1/mcp/servers/" (enc server) "/actions/start")))
+
+(defn mcp-set-server-enabled!
+  "Persist a server's on/off switch in the gateway's own state."
+  [server enabled]
+  (send-json! "POST"
+              (str "/v1/mcp/servers/" (enc server) "/actions/enable")
+              {:enabled (boolean enabled)}))
+
+(defn mcp-delete-server! [server] (send-json! "DELETE" (str "/v1/mcp/servers/" (enc server))))
+
+(defn mcp-auth-start!
+  "Begin headless OAuth for an HTTP MCP server. Returns the wire flow
+   (`flow_id`, `kind`, `url`, `redirect_uri`, `expires_at_ms`, `status`)."
+  [server]
+  (send-json! "POST" (str "/v1/mcp/servers/" (enc server) "/auth/start")))
+
+(defn mcp-auth-complete!
+  "Finish a flow with the redirect URL the user pasted back (or a bare code)."
+  [server flow-id input]
+  (send-json! "POST"
+              (str "/v1/mcp/servers/" (enc server) "/auth/complete")
+              {:flow_id flow-id :input input}))
+
+(defn mcp-auth-poll!
+  "Read a flow's verdict without blocking: `pending`, `ok`, or `error`."
+  [server flow-id]
+  (send-json! "POST" (str "/v1/mcp/servers/" (enc server) "/auth/poll") {:flow_id flow-id}))
+
+(defn mcp-auth-cancel!
+  [server flow-id]
+  (send-json! "POST" (str "/v1/mcp/servers/" (enc server) "/auth/cancel") {:flow_id flow-id}))
+
+(defn mcp-auth-logout!
+  "Forget the gateway's persisted OAuth tokens for a server."
+  [server]
+  (send-json! "POST" (str "/v1/mcp/servers/" (enc server) "/auth/logout")))
+
 (defn- decode-workspace
   "The gateway serves the workspace in THE canonical string-keyed wire shape
    (`wire/canonical`) on BOTH transports, so the remote client passes it through

@@ -22,16 +22,21 @@
    `PageElement`/`ResultSet`/`SoupStrainer`, `output_ready`, `sourceline`,
    `is_empty_element`, `soup.builder` + `bs4.builder`, formatter objects, and
    encoding detection (`original_encoding`, `bs4.dammit.UnicodeDammit`).
-   Differentially tested against real beautifulsoup4 4.12.3 over 193 probes with
-   zero output mismatches. A deliberate subset of full bs4 (no lxml or html5lib
-   parsers — another `features` argument is honored leniently rather than raising
-   `FeatureNotFound` — and no soupsieve namespace or `:has()` selectors).
+   A bundled soupsieve-compatible engine (published as `soupsieve`, version 2.5,
+   next to `soup.css`) backs the selector layer, so `:has()`, namespace selectors,
+   custom `:--name` selectors, `iselect` and soupsieve's error surface behave like
+   upstream. Differentially tested against real beautifulsoup4 4.12.3 + soupsieve
+   2.5 over 200+ probes with zero output mismatches outside documented
+   divergences. A deliberate subset of full bs4 (no lxml or html5lib parsers —
+   another `features` argument is honored leniently rather than raising
+   `FeatureNotFound` — and generic CSS syntax errors carry a simpler message).
 
    Like `shim-requests` there are NO `:shim/bindings`: the shim is a
    self-contained Python preamble with zero host callables. It publishes `bs4`
-   (+ `bs4.element`, `bs4.formatter`, `bs4.builder`, `bs4.dammit`,
-   `bs4.diagnose`) into `sys.modules` (so `from bs4 import BeautifulSoup` works)
-   and staples `BeautifulSoup` onto builtins."
+   (+ `bs4.element`, `bs4.formatter`, `bs4.builder`, `bs4.dammit`, `bs4.css`,
+   `bs4.diagnose`) and `soupsieve` into `sys.modules` (so `from bs4 import
+   BeautifulSoup` and `import soupsieve` both work) and staples `BeautifulSoup`
+   onto builtins."
   (:require [com.blockether.vis.core :as vis]))
 
 
@@ -47,9 +52,9 @@
      :ext/kind "foundation"
      :ext/sandbox-shims
      [{:shim/name "bs4"
-       :shim/imports ["bs4"]
+       :shim/imports ["bs4" "soupsieve"]
        :shim/description
-       "`bs4` BeautifulSoup API (`find`, `find_all`, `select`, `get_text`, mutation, serialization, plus PageElement/ResultSet/SoupStrainer, `soup.builder`, formatters and `bs4.dammit` encoding detection) via stdlib `html.parser`. No lxml/html5lib parsers, no soupsieve `:has()`/namespace selectors."
+       "`bs4` BeautifulSoup API (`find`, `find_all`, `select`, `get_text`, mutation, serialization, plus PageElement/ResultSet/SoupStrainer, `soup.builder`, formatters and `bs4.dammit` encoding detection) via stdlib `html.parser`, with a bundled soupsieve-compatible engine (`soupsieve` 2.5, `soup.css`, `:has()`, namespace and custom selectors). No lxml/html5lib parsers."
        :shim/source "vis-shims/bs4.py"}]}))
 
 (vis/register-extension! vis-extension)

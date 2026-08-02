@@ -9,6 +9,7 @@
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.header :as header]
             [com.blockether.vis.ext.channel-tui.input :as input]
+            [com.blockether.vis.ext.channel-tui.mcp :as mcp]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
@@ -6637,6 +6638,11 @@
                                                             {:open-settings (fn [] (open-settings-modal! screen))}))]
                                     (state/dispatch [:set-config c])
                                     (state/dispatch [:force-provider-limits-refresh]))
+
+                                  ;; MCP servers: kill/start a server, toggle it,
+                                  ;; and run the gateway's headless OAuth leg.
+                                  :mcp
+                                  (with-dialog-lock #(mcp/show-mcp-dialog! screen))
 
                                   :settings
                                   (with-dialog-lock #(open-settings-modal! screen))

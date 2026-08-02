@@ -174,6 +174,10 @@ export interface McpServer {
   /** False when the server comes from a hand-written config tier: listed, but this API never rewrites it. */
   is_managed: boolean;
   tools: number;
+  /** True while the server is force-stopped at runtime. Config is untouched; `start` releases it. */
+  is_killed: boolean;
+  /** HTTP servers only: whether the gateway already holds a usable OAuth token. */
+  is_authorized?: boolean;
   command?: string;
   cwd?: string;
   url?: string;
@@ -181,6 +185,32 @@ export interface McpServer {
 
 export interface McpServersResponse {
   servers: McpServer[];
+}
+
+/**
+ * One headless MCP OAuth flow. The daemon keeps the PKCE verifier, the state
+ * nonce, and the token; only these fields ever travel, so this device can drive
+ * a sign-in for a gateway running somewhere else entirely.
+ */
+export interface McpAuthFlow {
+  flow_id: string;
+  server: string;
+  kind: 'pkce';
+  url: string;
+  redirect_uri?: string;
+  expires_at_ms?: number;
+  status: 'pending' | 'ok' | 'error';
+  error?: string;
+}
+
+/** Non-secret view of a server's persisted MCP OAuth tokens. */
+export interface McpAuthStatus {
+  server: string;
+  is_authorized: boolean;
+  is_expired: boolean;
+  has_refresh_token: boolean;
+  expires_at_ms?: number;
+  scope?: string;
 }
 
 export interface McpServerInput {

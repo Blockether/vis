@@ -5895,10 +5895,9 @@
 
    The palette is THE discoverable entry point for every app verb: opened with
    C-x p (reliable on every terminal, unlike Alt/Option chords on macOS) and
-   filtered by typing. Mirrors the web command palette so both channels expose
-   the same command set."
-  ;; Whole-session Markdown copy lives in the header as an icon. Workspace ops
-  ;; are slash-only (`/workspace …`) and surface through `menu-commands` which
+   filtered by typing."
+  ;; Whole-session Markdown copy lives in the header as an icon. Draft ops
+  ;; are slash-only (`/draft …`) and surface through `menu-commands` which
   ;; aggregates them from the engine slash registry (passed as extra-commands).
   [{:id :cycle-model :label "Cycle Model"} {:id :pick-model :label "Choose Model…"}
    {:id :cycle-reasoning :label "Cycle Reasoning Effort"}
@@ -5911,7 +5910,8 @@
    {:id :fork-session :label "Fork Session" :show-when :has-turns}
    {:id :fork-at-turn :label "Fork Session at Turn…" :show-when :has-turns}
    {:id :close-tab :label "Close Tab"} {:id :providers :label "Providers"}
-   {:id :settings :label "Settings"} {:id :toggle-all-details :label "Fold / Unfold All"}
+   {:id :mcp :label "MCP Servers"} {:id :settings :label "Settings"}
+   {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}
    {:id :toggle-help :label "Keyboard Shortcuts"}])
 

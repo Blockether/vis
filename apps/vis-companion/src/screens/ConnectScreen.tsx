@@ -1,10 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayConn } from '../lib/types';
 import { GatewayClient, GatewayError } from '../lib/gateway';
 import { parsePairing } from '../lib/pairing';
 import { REACH_LABEL, bestAddress, mergeAddresses, reachOf } from '../lib/endpoints';
-import { QrScanner } from '../components/QrScanner';
 import { Banner, Button, Input } from '../components/ui';
+
+// The QR scanner drags in jsqr (~250 kB of source, a fifth of the launch chunk)
+// plus the getUserMedia/canvas plumbing, and it is only ever mounted after an
+// explicit tap on "Scan". Keep it out of the launch chunk and warm it on idle
+// once this screen is up, so the tap still opens the camera immediately.
+const QrScanner = lazy(() =>
+  import('../components/QrScanner').then((m) => ({ default: m.QrScanner })),
+);
+
+function prefetchScanner() {
+  void import('../components/QrScanner');
+}
 
 interface Props {
   conns: GatewayConn[];
@@ -148,6 +159,18 @@ export function ConnectScreen({
     return () => window.clearInterval(id);
   }, [connsKey, probe]);
 
+  // Warm the scanner chunk once this screen is idle. Whoever is here is one tap
+  // away from "Scan", and the fetch is off the launch critical path.
+  useEffect(() => {
+    const ric = window.requestIdleCallback;
+    if (typeof ric !== 'function') {
+      const id = window.setTimeout(prefetchScanner, 1200);
+      return () => window.clearTimeout(id);
+    }
+    const handle = ric(prefetchScanner, { timeout: 3000 });
+    return () => window.cancelIdleCallback?.(handle);
+  }, []);
+
   // Handshake first: never save a gateway we cannot reach. `ping()` returns true
   // on a 2xx /healthz, throws GatewayError(401) when reachable-but-unauthorized, and
   // returns false on a genuine network failure. We only persist a gateway that
@@ -252,10 +275,12 @@ export function ConnectScreen({
   return (
     <div className="mx-auto w-full max-w-3xl space-y-5 px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(2rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-4 transition-[opacity,translate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-1.5 starting:opacity-0 motion-reduce:transition-none sm:space-y-6 sm:px-6 sm:py-6">
       {scanning && (
-        <QrScanner
-          onResult={(raw) => void onScanned(raw)}
-          onCancel={() => setScanning(false)}
-        />
+        <Suspense fallback={null}>
+          <QrScanner
+            onResult={(raw) => void onScanned(raw)}
+            onCancel={() => setScanning(false)}
+          />
+        </Suspense>
       )}
 
       {conns.length > 0 && (

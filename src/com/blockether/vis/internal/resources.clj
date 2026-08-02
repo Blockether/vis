@@ -33,8 +33,9 @@
 
    Model ctx stays PURE DATA and groups the flat registry through `model-view`:
    REPLs live at `session[\"resources\"][\"repls\"][language][cwd]`; `cwd` is
-   their model-facing identity. It advertises `can_stop`/`can_restart` but never
-   carries a callable. Killing goes through `stop!`/`restart!` (by session + id) — the
+   their model-facing identity. Ctx leaves are PROJECTED (`repl-ctx-keys` /
+   `other-ctx-keys`) to what changes a decision — never a callable, never the
+   pack's full detail. Killing goes through `stop!`/`restart!` (by session + id) — the
    single path the agent tool AND the footer both call. `id` IS the binding."
   (:require [clojure.java.io :as io]
             [clojure.string :as str])
@@ -402,11 +403,37 @@
                      str)
              "."))))
 
+(def ^:private repl-ctx-keys
+  "Model-facing REPL leaf keys, in render order. `language`/`cwd` are already the
+   PATH, `id` addresses the REPL, `status` decides reuse vs start/restart, and
+   `port`/`external`/`host` say whether vis may kill it or only detach. Everything
+   else a pack records (versions, aliases, dialect, label, log, tool, kind, pid,
+   owner, created_at, can_*, nrepl session id) is one `repl` status call away and
+   changes no decision — carried in ctx it cost ~190 tokens PER LIVE REPL on every
+   request."
+  ["id" "status" "port" "external" "host"])
+
+(def ^:private other-ctx-keys
+  "Model-facing leaf keys for non-REPL resources (`[\"other\"][kind][id]`): what to
+   address, whether it is alive, what it is running."
+  ["id" "status" "detail" "pid"])
+
+(defn- ctx-leaf
+  "Project a registry DATA map onto `ks`, dropping absent keys and preserving `ks`
+   order so the ctx delta stays stable."
+  [ks m]
+  (reduce (fn [acc k]
+            (if (contains? m k) (assoc acc k (get m k)) acc))
+          (array-map)
+          ks))
+
 (defn model-view
   "Nested model-facing resource ground truth. REPLs are directly addressable as
    `[\"repls\"][language][workspace-relative-dir]`; active languages are seeded
    with empty maps so absence at a dir means inactive. Non-REPL resources live
-   under `[\"other\"][kind][id]`. The registry/footer keep their flat DATA API."
+   under `[\"other\"][kind][id]`. Leaves are PROJECTED to the decision-bearing keys
+   (`repl-ctx-keys` / `other-ctx-keys`); the registry, the footer and the `repl`
+   status result keep the full flat DATA API."
   [resource-data {:keys [root languages]}]
   (let
     [seed-repls
@@ -423,13 +450,13 @@
                      [language (str/lower-case (str (or (get resource "language") "unknown")))
                       detail (or (get resource "detail") {})
                       dir (model-dir root (get detail "cwd"))
-                      leaf (-> resource
-                               (dissoc "detail")
-                               (merge detail)
-                               (assoc "cwd" dir))]
+                      leaf (ctx-leaf repl-ctx-keys (merge (dissoc resource "detail") detail))]
 
                      (assoc acc :repls (assoc-in repls [language dir] leaf)))
-                   (assoc acc :other (assoc-in other [(str kind) (get resource "id")] resource)))))
+                   (assoc acc
+                     :other (assoc-in other
+                              [(str kind) (get resource "id")]
+                              (ctx-leaf other-ctx-keys resource))))))
              {:repls seed-repls :other (sorted-map)}
              (sort-by #(get % "id") resource-data))]
 

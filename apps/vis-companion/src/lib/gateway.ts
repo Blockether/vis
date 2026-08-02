@@ -36,6 +36,8 @@ import type {
   PushStatus,
   VoiceModelState,
   VoiceTranscript,
+  McpAuthFlow,
+  McpAuthStatus,
   McpServer,
   McpServerInput,
   McpServersResponse,
@@ -771,6 +773,65 @@ export class GatewayClient {
 
   async deleteMcpServer(name: string): Promise<void> {
     await this.request('DELETE', `/v1/mcp/servers/${encodeURIComponent(name)}`);
+  }
+
+  // Kill/start are RUNTIME ops, not config edits: they work for hand-written
+  // servers too, because stopping a runaway child process is not rewriting
+  // somebody's `vis.yml`. A kill holds until `startMcpServer`.
+  async killMcpServer(name: string): Promise<McpServer> {
+    return this.request<McpServer>(
+      'POST',
+      `/v1/mcp/servers/${encodeURIComponent(name)}/actions/kill`,
+    );
+  }
+
+  async startMcpServer(name: string): Promise<McpServer> {
+    return this.request<McpServer>(
+      'POST',
+      `/v1/mcp/servers/${encodeURIComponent(name)}/actions/start`,
+    );
+  }
+
+  // MCP OAuth, headless: the gateway mints the flow and keeps every secret. This
+  // device only shows `url` and hands back whatever the browser landed on. When
+  // that browser can reach the gateway's loopback listener the flow finishes by
+  // itself and `mcpAuthPoll` reports it.
+  async mcpAuthStart(name: string): Promise<McpAuthFlow> {
+    return this.request<McpAuthFlow>(
+      'POST',
+      `/v1/mcp/servers/${encodeURIComponent(name)}/auth/start`,
+    );
+  }
+
+  async mcpAuthComplete(name: string, flowId: string, input: string): Promise<McpAuthFlow> {
+    return this.request<McpAuthFlow>(
+      'POST',
+      `/v1/mcp/servers/${encodeURIComponent(name)}/auth/complete`,
+      { flow_id: flowId, input },
+    );
+  }
+
+  async mcpAuthPoll(name: string, flowId: string): Promise<McpAuthFlow> {
+    return this.request<McpAuthFlow>(
+      'POST',
+      `/v1/mcp/servers/${encodeURIComponent(name)}/auth/poll`,
+      { flow_id: flowId },
+    );
+  }
+
+  async mcpAuthCancel(name: string, flowId: string): Promise<void> {
+    await this.request(
+      'POST',
+      `/v1/mcp/servers/${encodeURIComponent(name)}/auth/cancel`,
+      { flow_id: flowId },
+    );
+  }
+
+  async mcpAuthLogout(name: string): Promise<McpAuthStatus> {
+    return this.request<McpAuthStatus>(
+      'POST',
+      `/v1/mcp/servers/${encodeURIComponent(name)}/auth/logout`,
+    );
   }
 
   async testMcpServer(name: string, server: McpServerInput): Promise<McpTestResult> {

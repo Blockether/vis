@@ -1250,3 +1250,73 @@
          (testing "the negative live-only sentinel is unchanged"
            (is (= 12 (resolve-cursor sid -1))))
          (finally (swap! registry dissoc sid)))))
+
+(deftest mcp-kill-start-and-oauth-routes-test
+  (testing "runtime kill/start and every headless OAuth leg answer through the ring layer"
+    (let
+      [flow
+       {:flow-id "f-1"
+        :server "remote"
+        :kind "pkce"
+        :url "https://auth.example.test/authorize"
+        :status "pending"}
+
+       calls
+       (atom [])]
+
+      (with-redefs-fn
+        {(rv 'body-json) (constantly {"flow_id" "f-1" "input" "https://cb.example.test/?code=abc"})
+         #'mcp-core/kill-gateway-server! (fn [name]
+                                           (swap! calls conj [:kill name])
+                                           {:name name :is-killed true})
+         #'mcp-core/start-gateway-server! (fn [name]
+                                            (swap! calls conj [:start name])
+                                            {:name name :is-killed false})
+         #'mcp-core/start-gateway-server-auth! (fn [name]
+                                                 (swap! calls conj [:auth-start name])
+                                                 flow)
+         #'mcp-core/complete-gateway-server-auth! (fn [flow-id input]
+                                                    (swap! calls conj [:auth-complete flow-id input])
+                                                    (assoc flow :status "ok"))
+         #'mcp-core/poll-gateway-server-auth! (fn [flow-id]
+                                                (swap! calls conj [:auth-poll flow-id])
+                                                flow)
+         #'mcp-core/cancel-gateway-server-auth! (fn [flow-id]
+                                                  {:flow-id flow-id :is-cancelled true})
+         #'mcp-core/logout-gateway-server-auth! (fn [name]
+                                                  {:server name :is-authorized false})}
+        (fn []
+          (let [params {:path-params {:name "remote"}}]
+            (is (= 200 (:status ((rv 'kill-mcp-server-handler) params))))
+            (is (= 200 (:status ((rv 'start-mcp-server-handler) params))))
+            ;; The flow crosses the wire snake_cased, and the id is the ONLY handle
+            ;; a client ever holds: the verifier and the token stay in the daemon.
+            (let [started (wire/parse-json (:body ((rv 'mcp-auth-start-handler) params)))]
+              (is (= "f-1" (get started "flow_id")))
+              (is (= "pkce" (get started "kind")))
+              (is (nil? (get started "code_verifier"))))
+            (is (= "ok"
+                   (get (wire/parse-json (:body ((rv 'mcp-auth-complete-handler) params)))
+                        "status")))
+            (is (= 200 (:status ((rv 'mcp-auth-poll-handler) params))))
+            (is (= 200 (:status ((rv 'mcp-auth-cancel-handler) params))))
+            (is (= 200 (:status ((rv 'mcp-auth-logout-handler) params))))
+            (is (= [[:kill "remote"] [:start "remote"] [:auth-start "remote"]
+                    [:auth-complete "f-1" "https://cb.example.test/?code=abc"] [:auth-poll "f-1"]]
+                   @calls))))))))
+
+(deftest mcp-oauth-flow-errors-map-to-status-test
+  (testing "a missing flow id is 400 and an expired one 404 — never a 500"
+    (with-redefs-fn {(rv 'body-json) (constantly {})}
+      (fn []
+        (is (= 400 (:status ((rv 'mcp-auth-poll-handler) {:path-params {:name "remote"}}))))))
+    (with-redefs-fn {(rv 'body-json) (constantly {"flow_id" "gone"})
+                     #'mcp-core/poll-gateway-server-auth!
+                     (fn [flow-id]
+                       (throw (ex-info "Unknown or expired MCP auth flow"
+                                       {:type :mcp/oauth-flow-not-found :flow-id flow-id})))}
+      (fn []
+        (let [response ((rv 'mcp-auth-poll-handler) {:path-params {:name "remote"}})]
+          (is (= 404 (:status response)))
+          (is (= "oauth-flow-not-found"
+                 (get-in (wire/parse-json (:body response)) ["error" "type"]))))))))

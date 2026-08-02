@@ -105,8 +105,8 @@ cache-aware: it returns a full body once while live, then compact
 
 A line that starts with `!` is a shell escape — the command runs directly,
 **without an LLM round-trip**, so it's instant and costs no tokens. It's the
-shell analogue of `/slash`, and works the same way in the **TUI** and **web**
-channels:
+shell analogue of `/slash`, and works the same way in the **TUI** and the
+**companion** app:
 
 ```
 !git status            # run synchronously, foreground (shell)
@@ -133,8 +133,8 @@ channels:
 
 While you're typing a shell shortcut, the composer flags it visually so a
 shell command never looks like an ordinary message — with **no layout shift**.
-The TUI tints just the leading `!`/`!&` marker in the shell tool color; the web
-composer tints its frame and shows a small `shell` / `shell &` pill in the
+The TUI tints just the leading `!`/`!&` marker in the shell tool color; the
+companion composer tints its frame and shows a small `shell` / `shell &` pill in the
 corner. The cue only lights up once a real command follows the marker (a bare
 `!`/`!&` stays neutral), mirroring the run/no-run rule above.
 

@@ -340,7 +340,7 @@ They return canonical JSON with string keys.
 | --- | --- | --- |
 | `GET /v1/sessions/:sid/workspace/drafts` | — | `{"drafts": [...]}` for the session's current repo. |
 | `POST /v1/sessions/:sid/workspace/drafts` | `{"label":"…","blank":false,"clean":false}` | Stash any current draft, create an isolated draft from trunk, and enter it. `clean` seeds from the committed HEAD; `blank` seeds nothing. |
-| `DELETE /v1/sessions/:sid/workspace/drafts/:workspace_id` | `{"reason":"…"}` | Permanently abandon a current or parked draft; rejects drafts from another repo or in use elsewhere. |
+| `DELETE /v1/sessions/:sid/workspace/drafts/:workspace-id` | `{"reason":"…"}` | Permanently abandon a current or parked draft; rejects drafts from another repo or in use elsewhere. |
 | `POST /v1/sessions/:sid/workspace/stash` | `{}` | Park the current draft; on trunk this is an idempotent no-op. |
 | `POST /v1/sessions/:sid/workspace/resume` | `{"workspace_id":"…"}` | Stash any current draft, then enter the target. |
 

@@ -120,25 +120,36 @@
    different key, and a failed parse throws instead of being remembered."
   (atom {:m {} :order []}))
 
-(defn- cache-parse!
-  "Remember `res` under `k`, evicting the oldest entry past `parse-cache-size`.
-   Returns `res`."
-  [k res]
-  (swap! parse-cache (fn [{:keys [m order] :as c}]
-                       (cond (contains? m k) c
-                             (>= (count order) (long parse-cache-size))
-                             {:m (-> m
-                                     (dissoc (nth order 0))
-                                     (assoc k res))
-                              :order (conj (subvec order 1) k)}
-                             :else {:m (assoc m k res) :order (conj order k)})))
-  res)
+(defn- remember!
+  "Remember `v` under `k` in the FIFO `cache` atom (`{:m {k v} :order [k …]}`),
+   evicting the oldest entry past `parse-cache-size`. Returns `v`."
+  [cache k v]
+  (swap! cache (fn [{:keys [m order] :as c}]
+                 (cond (contains? m k) c
+                       (>= (count order) (long parse-cache-size))
+                       {:m (-> m
+                               (dissoc (nth order 0))
+                               (assoc k v))
+                        :order (conj (subvec order 1) k)}
+                       :else {:m (assoc m k v) :order (conj order k)})))
+  v)
+
+(def ^:private defs-cache
+  "CONTENT-ADDRESSED cache of the FULL, unfiltered definition rows for
+   `[language source]` — same FIFO shape and bound as `parse-cache`.
+
+   `definitions` with a `name` is only a filter over that vector, yet `occurrences`
+   asks for ONE name at a time while tracing runs every declared name over every
+   indexed path. Without this the flatten + docstring walk is rebuilt, identically,
+   once per name per file: 28.5 s of a 122 s 140-file trace."
+  (atom {:m {} :order []}))
 
 (defn clear-parse-cache!
   "Drop every cached parse. Only needed to reclaim memory or to measure a cold
    parse — correctness never needs it, since the cache is keyed by content."
   []
   (reset! parse-cache {:m {} :order []})
+  (reset! defs-cache {:m {} :order []})
   nil)
 
 (defn- parse-source
@@ -176,7 +187,7 @@
   (let [k [language source]]
     (if-let [hit (get (:m @parse-cache) k)]
       hit
-      (cache-parse! k (parse-source source language)))))
+      (remember! parse-cache k (parse-source source language)))))
 
 (defn- structure-items
   "List<StructureItem> for `source` parsed as `language` (empty when none)."
@@ -648,6 +659,31 @@
                     items))]
     (walk items 0)))
 
+(defn- all-definitions
+  "EVERY definition row in `source` (parsed as `language`) — the unfiltered vector
+   `definitions` is a view over — memoised per `[language source]` in `defs-cache`.
+
+   The rows are forced INSIDE the `*docstrings*` binding, so the docs they carry
+   are always the ones for this parse."
+  [source language]
+  (let [k [language source]]
+    (if-let [hit (get (:m @defs-cache) k)]
+      hit
+      (let
+        [res
+         (process-source source language)
+
+         items
+         (or (.structure res) [])
+
+         lines
+         (str/split-lines source)]
+
+        (remember! defs-cache
+                   k
+                   (binding [*docstrings* (docstring-index (.docstrings res))]
+                     (vec (defs-tree lines items))))))))
+
 (defn definitions
   "The DATA behind `file-skeleton`: every definition in `source` (parsed as
    `language`), flattened across nesting, as
@@ -657,22 +693,11 @@
    `struct_index` → `patch` needs no re-cat. With `name`, only the definitions with that
    exact name (there may be several — same name in different scopes). Empty when
    the language is unsupported or nothing structural was found."
-  ([source language] (definitions source language nil))
+  ([source language] (all-definitions source language))
   ([source language name]
-   (let
-     [res
-      (process-source source language)
-
-      items
-      (or (.structure res) [])
-
-      lines
-      (str/split-lines source)]
-
-     (binding [*docstrings* (docstring-index (.docstrings res))]
-       (cond->> (defs-tree lines items)
-         (some? name)
-         (filterv #(= name (:name %))))))))
+   (cond->> (all-definitions source language)
+     (some? name)
+     (filterv #(= name (:name %))))))
 
 (defn file-skeleton
   "Skeleton string for `path` (items + line ranges + full start..end anchors),

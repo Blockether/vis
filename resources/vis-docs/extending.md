@@ -561,6 +561,8 @@ my-extension/
 
 Channels, providers, persistence backends, and workspace backends register through their own keys (`:ext/channels`, `:ext/providers`, `:ext/persistance`, `:ext/workspace-backends`) — read a first-party extension of the matching kind as the reference implementation.
 
+The remaining accepted keys are declarative registrations: the host applies them when the extension registers and undoes them when it unregisters, so nothing needs a global atom or an imperative `register-*!` call. `:ext/cli` adds CLI commands (auto-placed under the `vis-agent extension` parent unless the entry names its own `:cmd/parent`); `:ext/language-tools` contributes a language's format/lint/test/REPL handlers; `:ext/hooks` and `:ext/op-hooks` run at named lifecycle phases; `:ext/network-filters` adds egress predicates; `:ext/protected-paths` guards paths from edits; `:ext/attachment-storage` supplies an attachment backend; `:ext/channel-contributions` fills channel UI slots; `:ext/theme` ships theme overrides; `:ext/requires` names extensions that must register first (load order is topologically sorted); `:ext/source-nses` marks the namespaces the extension is built from. The authoritative, complete list is the `::extension` spec in `com.blockether.vis.internal.extension`.
+
 ### Tools: symbols
 
 A tool is a Clojure `defn` wrapped with `vis/symbol` and listed under `:ext.engine/symbols`:
@@ -694,7 +696,7 @@ An inactive extension costs zero prompt tokens.
 
 ### Slash commands (Clojure)
 
-User-facing `/commands` (TUI and web) are data too:
+User-facing `/commands` (TUI and companion) are data too:
 
 ```clojure
 :ext/slash-commands

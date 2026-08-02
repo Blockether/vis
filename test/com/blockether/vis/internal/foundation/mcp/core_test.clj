@@ -174,3 +174,95 @@
           (expect (= 2 (tool-count {:name "owned" :tools (atom nil)})))
           (expect (= 1 (tool-count {:name "owned" :tools (atom [{"name" "a"}])})))
           (expect (= 0 (tool-count nil)))))))
+
+(defdescribe
+  gateway-mcp-runtime-test
+  (it
+    "keeps a killed server down across reconciles until it is started again"
+    (let
+      [store
+       (atom {"mcp" {"servers" {"local" {"transport" "stdio" "command" "echo"}}}})
+
+       connects
+       (atom [])
+
+       conns
+       @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'conns)
+
+       killed
+       @(ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'killed)
+
+       reconcile!
+       (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile!)]
+
+      (with-redefs-fn {#'config/load-global-config-raw (fn [] @store)
+                       #'config/load-config-raw (fn [] @store)
+                       #'config/save-config! (fn [value _source]
+                                               (reset! store value))
+                       #'client/connect (fn [name _spec]
+                                          (swap! connects conj name)
+                                          ::connection)
+                       #'client/list-tools (constantly [])
+                       #'client/close (constantly nil)}
+        (fn []
+          (try (reset! conns {})
+               (reset! killed #{})
+               (reconcile!)
+               (expect (= ["local"] @connects))
+               (let [row (mcp/kill-gateway-server! "local")]
+                 (expect (true? (:is-killed row)))
+                 (expect (false? (:is-connected row))))
+               (expect (empty? @conns))
+               ;; The brake has to survive the per-turn reconcile: closing the
+               ;; connection alone let the very next turn respawn the stdio child
+               ;; the user just killed.
+               (reconcile!)
+               (expect (= ["local"] @connects))
+               (let [row (mcp/start-gateway-server! "local")]
+                 (expect (false? (:is-killed row)))
+                 (expect (true? (:is-connected row))))
+               (expect (= ["local" "local"] @connects))
+               ;; A kill is a RUNTIME brake, never an edit to anybody's config.
+               (expect (= {"transport" "stdio" "command" "echo"}
+                          (get-in @store ["mcp" "servers" "local"])))
+               (finally (reset! conns {}) (reset! killed #{})))))))
+  (it
+    "refuses OAuth where it cannot apply and answers unknown flows as such"
+    (let
+      [merged
+       {"mcp" {"servers" {"local" {"transport" "stdio" "command" "echo"}}}}
+
+       thrown
+       (fn [f]
+         (try (f) ::no-throw (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+
+      (with-redefs-fn {#'config/load-global-config-raw (constantly merged)
+                       #'config/load-config-raw (constantly merged)}
+        (fn []
+          (expect (= :mcp/invalid-server (thrown #(mcp/start-gateway-server-auth! "local"))))
+          (expect (= :mcp/not-found (thrown #(mcp/start-gateway-server-auth! "absent"))))
+          ;; An expired or forged flow id is a typed refusal the gateway maps to a
+          ;; 404 — a client polling a stale flow must never see a stack trace.
+          (expect (= :mcp/oauth-flow-not-found (thrown #(mcp/poll-gateway-server-auth! "gone"))))
+          (expect (= :mcp/oauth-flow-not-found
+                     (thrown #(mcp/complete-gateway-server-auth! "gone" "code-1"))))
+          ;; Cancelling one is idempotent: a client may always retry the cleanup.
+          (expect (:is-cancelled (mcp/cancel-gateway-server-auth! "gone")))))))
+  (it
+    "takes the authorization code from a pasted redirect URL or a bare code"
+    (let
+      [code-of
+       (requiring-resolve 'com.blockether.vis.internal.foundation.mcp.oauth/code-of)
+
+       thrown
+       (fn [f]
+         (try (f) ::no-throw (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+
+      ;; A user on another device can only hand back the whole URL their browser
+      ;; landed on, so both shapes have to work.
+      (expect (= "abc123" (code-of "abc123")))
+      (expect (= "abc123" (code-of "  abc123  ")))
+      (expect (= "abc123" (code-of "http://127.0.0.1:8976/callback?code=abc123&state=xyz")))
+      (expect (= :mcp/oauth-error
+                 (thrown #(code-of "http://127.0.0.1:8976/callback?error=access_denied"))))
+      (expect (= :mcp/oauth-error (thrown #(code-of "   ")))))))

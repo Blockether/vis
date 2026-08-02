@@ -8,7 +8,7 @@
 # and stapled onto builtins.
 #
 # Parity: differentially tested against REAL beautifulsoup4 4.12.3 + soupsieve 2.5
-# (CPython) over 193 probes -- malformed/unclosed/mis-nested markup, entity and
+# (CPython) over 200+ probes -- malformed/unclosed/mis-nested markup, entity and
 # charref decoding (including unknown and out-of-range refs), whitespace-only text
 # collapsing, pre/textarea preservation, script/style/textarea raw text, CDATA,
 # doctype and processing instructions, multi-valued and valueless attributes,
@@ -17,7 +17,14 @@
 # :nth-child/:nth-of-type, :first-child/:last-child/:empty and attribute operators,
 # mutation (append/insert/wrap/unwrap/replace_with/extract/decompose/smooth/clear),
 # copy.copy, len/iter/call/bool protocols, prettify, encode and get_text -- with
-# ZERO output mismatches.
+# ZERO output mismatches outside the deliberate divergences listed below.
+#
+# A soupsieve-compatible engine ships with it: `soupsieve` is published into
+# sys.modules (version 2.5) next to `bs4.css`, so soup.css / sv.compile / select /
+# select_one / iselect (a real generator) / match / filter / closest all work, as do
+# :has(), namespace selectors with a `namespaces` map, custom `:--name` selectors,
+# and the upstream error surface (SelectorSyntaxError for unknown or undefined
+# selectors, NotImplementedError for pseudo-elements, TypeError for non-Tag input).
 #
 # Introspection parity is part of that surface, because real-world code reads it:
 # PageElement/PreformattedString/ResultSet class hierarchy (and PageElement owning
@@ -25,20 +32,30 @@
 # output_ready, sourceline/sourcepos under store_line_numbers, hidden/is_xml/
 # known_xml/namespace/prefix, is_empty_element/can_be_empty_element, string
 # containers (Script/Stylesheet/TemplateString/Ruby*), the legacy *Generator
-# aliases, soup.builder plus the bs4.builder TreeBuilder/registry, formatter
-# objects and the "minimal"/"html"/"html5"/None formatter stack behind
-# decode/prettify/decode_contents/encode/renderContents, encoding detection
+# aliases, soup.builder plus the bs4.builder TreeBuilder/registry, the
+# on_duplicate_attribute and element_classes builder options, formatter objects and
+# the "minimal"/"html"/"html5"/None formatter stack behind
+# decode/prettify/decode_contents/encode/renderContents, meta charset substitution
+# for the eventual encoding, MarkupResemblesLocatorWarning, encoding detection
 # (original_encoding, declared_html_encoding, contains_replacement_characters,
 # bs4.dammit UnicodeDammit/EncodingDetector), SoupStrainer str/search/search_tag,
 # and the bs4.element/formatter/builder/dammit/diagnose submodules. `bs4.__all__`
-# is upstream's single name, so `from bs4 import *` behaves identically.
+# is upstream's single name, so `from bs4 import *` behaves identically. Upstream's
+# error messages and quirks are reproduced verbatim, down to "Cannot insert a tag
+# into itself.", the `<br><br/>` already-closed-empty-element quirk, and
+# TypeError from BeautifulSoup(None) (upstream measures len(markup) first).
 #
 # Known deliberate divergences from upstream: the tree is built only by html.parser
 # (no lxml/html5lib, so no implied-tag recovery beyond html.parser's, and asking
 # for another parser is honored leniently instead of raising FeatureNotFound, since
-# the sandbox cannot install one), soupsieve's :has() and namespace selectors are
-# unsupported, and inserting a tag into itself or a descendant raises ValueError
-# instead of building a cycle that upstream then hangs on while serializing.
+# the sandbox cannot install one); html.parser corner cases (unterminated comments,
+# raw comment events) track the sandbox's own Python version rather than any fixed
+# CPython release; a generic SelectorSyntaxError carries "Invalid CSS selector: %r"
+# instead of soupsieve's multi-line positional text (this engine matches fragment by
+# fragment and has no absolute offsets), and the `soupsieve` module's dir()/inspect
+# signatures expose neither its internal submodules nor annotations; and inserting
+# a tag into itself or a descendant raises ValueError instead of building a cycle
+# that upstream then hangs on while serializing.
 
 
 def __vis_install_bs4__():
@@ -2326,10 +2343,18 @@ def __vis_install_bs4__():
                 break
         return current, sibling_step
 
+    def _css_pattern(selector):
+        """Accept a pre-compiled SoupSieve anywhere a selector string is taken."""
+        return getattr(selector, "_pattern", None) or getattr(
+            selector, "pattern", selector
+        )
+
     def _select(root, selector, limit=None):
         # soupsieve scopes :scope to the element select() was called on -- for a
         # whole soup that is its root element.
+        selector = _css_pattern(selector)
         _css_check_pseudo_elements(selector)
+        _css_require_tag(root)
         scope = root
         if getattr(root, "name", None) == "[document]":
             scope = None
@@ -3044,12 +3069,23 @@ def __vis_install_bs4__():
             root = root.parent
         return root
 
-    def _css_match(tag, selector):
+    def _css_require_tag(tag):
+        """soupsieve refuses anything that is not a bs4 Tag, strings included."""
         if not isinstance(tag, Tag):
-            return False
+            raise TypeError(
+                "Expected a BeautifulSoup 'Tag', but instead received type %s"
+                % (type(tag),)
+            )
+        return tag
+
+    def _css_match(tag, selector):
+        selector = _css_pattern(selector)
+        _css_require_tag(tag)
         return any(m is tag for m in _select(_css_root(tag), selector))
 
     def _css_closest(tag, selector):
+        _css_require_tag(tag)
+        selector = _css_pattern(selector)
         node = tag
         while node is not None:
             if _css_match(node, selector):
@@ -3058,9 +3094,16 @@ def __vis_install_bs4__():
         return None
 
     def _css_filter(iterable, selector):
+        selector = _css_pattern(selector)
         if isinstance(iterable, Tag):
             iterable = iterable.contents
-        return [n for n in iterable if _css_match(n, selector)]
+        # soupsieve quietly skips strings that are part of the tree, but any
+        # other non-Tag reaches match() and is rejected there.
+        return [
+            n
+            for n in iterable
+            if not isinstance(n, NavigableString) and _css_match(n, selector)
+        ]
 
     def _css_escape(ident):
         """CSS.escape from the CSSOM spec, which is what soupsieve implements."""
@@ -3083,15 +3126,99 @@ def __vis_install_bs4__():
                 out.append("\\" + ch)
         return "".join(out)
 
+    _CSS_CUSTOM_NAME_RE = re.compile(r"^:--[\w-]*$")
+    _CSS_CUSTOM_USE_RE = re.compile(r":--[\w-]*")
+
+    def _css_position_message(text, pattern, index):
+        """soupsieve points a caret at the offending character; mirror that shape."""
+        return "%s at position %d\n  line 1:\n%s\n%s^" % (
+            text,
+            index,
+            pattern,
+            " " * index,
+        )
+
+    def _css_ascii_lower(text):
+        """soupsieve's util.lower(): ASCII-only, one character at a time."""
+        out = []
+        for char in text:
+            code = ord(char)
+            out.append(chr(code + 32) if 65 <= code <= 90 else char)
+        return "".join(out)
+
+    def _css_pairs(arg):
+        """Build a dict the way soupsieve does, so bad input fails identically."""
+        if isinstance(arg, dict):
+            return dict(arg)
+        mapping = {}
+        for key, value in arg:
+            mapping[key] = value
+        return mapping
+
+    def _css_namespaces(namespaces):
+        """soupsieve funnels `namespaces` through ct.Namespaces, which validates."""
+        if namespaces is None:
+            return None
+        mapping = _css_pairs(namespaces)
+        for value in mapping.values():
+            if not isinstance(value, str):
+                raise TypeError("Namespaces values must be hashable")
+        return mapping
+
+    def _css_custom(custom):
+        """Custom selector names must look like `:--name`, as soupsieve demands."""
+        if custom is None:
+            return None
+        mapping = _css_pairs(custom)
+        for key, value in mapping.items():
+            if not isinstance(value, str):
+                raise TypeError("CustomSelectors values must be hashable")
+            name = _css_ascii_lower(key)
+            if not _CSS_CUSTOM_NAME_RE.match(name):
+                raise SelectorSyntaxError(
+                    "The name %r is not a valid custom pseudo-class name" % (name,)
+                )
+        return mapping
+
+    def _css_expand_custom(pattern, custom, depth=0):
+        """Inline `:--name` custom selectors before the selector is parsed."""
+        if not isinstance(pattern, str) or ":--" not in pattern:
+            return pattern
+        if depth > 20:
+            raise SelectorSyntaxError(
+                "Custom selector recursion is too deep: %r" % (pattern,)
+            )
+        out = []
+        pos = 0
+        for match in _CSS_CUSTOM_USE_RE.finditer(pattern):
+            name = match.group(0)
+            value = None if custom is None else custom.get(name)
+            if value is None:
+                raise SelectorSyntaxError(
+                    _css_position_message(
+                        "Undefined custom selector '%s' found"
+                        % _css_ascii_lower(name),
+                        pattern,
+                        match.end(),
+                    )
+                )
+            out.append(pattern[pos : match.start()])
+            out.append(":is(%s)" % _css_expand_custom(value, custom, depth + 1))
+            pos = match.end()
+        out.append(pattern[pos:])
+        return "".join(out)
+
     class SoupSieve:
         """What css.compile() hands back: soupsieve's object, in miniature."""
 
         def __init__(self, pattern, namespaces=None, flags=0, custom=None, **kwargs):
-            _css_check_pseudo_elements(pattern)
+            self.namespaces = _css_namespaces(namespaces)
+            self.custom = _css_custom(custom)
+            # soupsieve masks the flags, so a non-int argument fails right here.
+            self.flags = flags & ~0
             self.pattern = pattern
-            self.namespaces = namespaces
-            self.custom = custom
-            self.flags = flags
+            self._pattern = _css_expand_custom(pattern, self.custom)
+            _css_check_pseudo_elements(self._pattern)
 
         def __repr__(self):
             return "SoupSieve(pattern=%r, namespaces=%r, custom=%r, flags=%r)" % (
@@ -3102,23 +3229,25 @@ def __vis_install_bs4__():
             )
 
         def match(self, tag):
-            return _css_match(tag, self.pattern)
+            return _css_match(tag, self._pattern)
 
         def closest(self, tag):
-            return _css_closest(tag, self.pattern)
+            return _css_closest(tag, self._pattern)
 
         def filter(self, iterable):
-            return _css_filter(iterable, self.pattern)
+            return _css_filter(iterable, self._pattern)
 
         def select(self, tag, limit=0):
-            return _select(tag, self.pattern, limit=limit or None)
+            return _select(tag, self._pattern, limit=limit or None)
 
         def select_one(self, tag):
-            found = _select(tag, self.pattern, limit=1)
+            found = _select(tag, self._pattern, limit=1)
             return found[0] if found else None
 
         def iselect(self, tag, limit=0):
-            return iter(self.select(tag, limit))
+            # soupsieve hands back a generator, so even argument errors surface
+            # only once the caller starts iterating.
+            yield from self.select(tag, limit)
 
     class CSS:
         """bs4.css.CSS: the object behind `tag.css`."""
@@ -3136,26 +3265,42 @@ def __vis_install_bs4__():
             return _css_escape(ident)
 
         def compile(self, select, namespaces=None, flags=0, **kwargs):
+            # bs4 hands this straight to soupsieve, which returns an
+            # already-compiled selector unchanged and rejects extra arguments.
+            if self.api is not None:
+                return self.api.compile(select, namespaces, flags, **kwargs)
             return SoupSieve(select, namespaces, flags, **kwargs)
 
+        def _compiled(self, select, namespaces, flags, kwargs):
+            # bs4.css.CSS._ns(): an uncompiled selector inherits the tag's own
+            # namespace map when the caller does not supply one. `custom` reaches
+            # soupsieve's shortcuts, which drop it, so it is dropped here too.
+            kwargs.pop("custom", None)
+            if namespaces is None and not isinstance(select, SoupSieve):
+                namespaces = self.tag._namespaces
+            return _ss_compile(select, namespaces, flags, **kwargs)
+
         def select_one(self, select, namespaces=None, flags=0, **kwargs):
-            found = _select(self.tag, select, limit=1)
-            return found[0] if found else None
+            return self._compiled(select, namespaces, flags, kwargs).select_one(self.tag)
 
         def select(self, select, namespaces=None, limit=0, flags=0, **kwargs):
-            return ResultSet(None, _select(self.tag, select, limit=limit or None))
+            sieve = self._compiled(select, namespaces, flags, kwargs)
+            return ResultSet(None, sieve.select(self.tag, limit))
 
         def iselect(self, select, namespaces=None, limit=0, flags=0, **kwargs):
-            return iter(_select(self.tag, select, limit=limit or None))
+            yield from self._compiled(select, namespaces, flags, kwargs).iselect(
+                self.tag, limit
+            )
 
         def closest(self, select, namespaces=None, flags=0, **kwargs):
-            return _css_closest(self.tag, select)
+            return self._compiled(select, namespaces, flags, kwargs).closest(self.tag)
 
         def match(self, select, namespaces=None, flags=0, **kwargs):
-            return _css_match(self.tag, select)
+            return self._compiled(select, namespaces, flags, kwargs).match(self.tag)
 
         def filter(self, select, namespaces=None, flags=0, **kwargs):
-            return ResultSet(None, _css_filter(self.tag.contents, select))
+            sieve = self._compiled(select, namespaces, flags, kwargs)
+            return ResultSet(None, sieve.filter(self.tag.contents))
 
     class BeautifulSoup(Tag):
         ROOT_TAG_NAME = "[document]"
@@ -5277,22 +5422,28 @@ def __vis_install_bs4__():
             return pattern
         return SoupSieve(pattern, namespaces, flags, custom, **kwargs)
 
-    def _ss_select(pattern, tag, namespaces=None, limit=0, flags=0, **kwargs):
+    # soupsieve 2.5 accepts `custom` on these shortcuts but never forwards it to
+    # compile(), so a custom selector fails as undefined; mirrored deliberately.
+    def _ss_select(
+        pattern, tag, namespaces=None, limit=0, flags=0, custom=None, **kwargs
+    ):
         return _ss_compile(pattern, namespaces, flags, **kwargs).select(tag, limit)
 
-    def _ss_select_one(pattern, tag, namespaces=None, flags=0, **kwargs):
+    def _ss_select_one(pattern, tag, namespaces=None, flags=0, custom=None, **kwargs):
         return _ss_compile(pattern, namespaces, flags, **kwargs).select_one(tag)
 
-    def _ss_iselect(pattern, tag, namespaces=None, limit=0, flags=0, **kwargs):
-        return _ss_compile(pattern, namespaces, flags, **kwargs).iselect(tag, limit)
+    def _ss_iselect(
+        pattern, tag, namespaces=None, limit=0, flags=0, custom=None, **kwargs
+    ):
+        yield from _ss_compile(pattern, namespaces, flags, **kwargs).iselect(tag, limit)
 
-    def _ss_match(pattern, tag, namespaces=None, flags=0, **kwargs):
+    def _ss_match(pattern, tag, namespaces=None, flags=0, custom=None, **kwargs):
         return _ss_compile(pattern, namespaces, flags, **kwargs).match(tag)
 
-    def _ss_closest(pattern, tag, namespaces=None, flags=0, **kwargs):
+    def _ss_closest(pattern, tag, namespaces=None, flags=0, custom=None, **kwargs):
         return _ss_compile(pattern, namespaces, flags, **kwargs).closest(tag)
 
-    def _ss_filter(pattern, iterable, namespaces=None, flags=0, **kwargs):
+    def _ss_filter(pattern, iterable, namespaces=None, flags=0, custom=None, **kwargs):
         return _ss_compile(pattern, namespaces, flags, **kwargs).filter(iterable)
 
     def _ss_purge():

@@ -180,6 +180,24 @@
 
 (defonce ^:private reconciling? (atom false)) ; single-flight guard
 
+;; Servers a client explicitly KILLED. `reconcile!` runs on every turn and every
+;; `/reload`, so simply closing a connection is not a stop: the very next turn
+;; respawns the stdio child the user just killed. A kill is therefore REMEMBERED
+;; until someone starts the server again (connect, save, enable). Deliberately
+;; in-memory and never persisted: this is a runtime brake for a runaway or
+;; unwanted server, not an edit to the user's config, so a gateway restart brings
+;; the server back exactly as declared.
+(defonce ^:private killed (atom #{})) ; #{server}
+
+(defn- killed? [server] (contains? @killed server))
+
+(defn- revive!
+  "Release the kill brake on `server` — every explicit start path calls this, or
+   the start would be undone by the next reconcile."
+  [server]
+  (swap! killed disj server)
+  server)
+
 ;; Session-scoped servers — servers a CLIENT attaches to ONE session (an ACP
 ;; editor's `session/new` / `session/load` `mcpServers`). They are NEVER written
 ;; to config and never leak into another session: an editor wiring a server for
@@ -262,9 +280,10 @@
   []
   (let [cfg (configured-servers)]
     (doseq [[server {:keys [conn spec]}] @conns]
-      (when (or (not= spec (get cfg server)) (not (mcp/alive? conn))) (disconnect! server)))
+      (when (or (killed? server) (not= spec (get cfg server)) (not (mcp/alive? conn)))
+        (disconnect! server)))
     (doseq [server (keys cfg)]
-      (ensure-connected! server))
+      (when-not (killed? server) (ensure-connected! server)))
     (doseq [[k {:keys [conn]}] @session-conns]
       (when-not (mcp/alive? conn) (close-in-pool! session-conns k)))
     nil))
@@ -321,10 +340,10 @@
    forks a stale duplicate of the user's own spec into `state.yml`."
   [name]
   (when (and (not (contains? (machine-servers) name)) (contains? (raw-servers) name))
-    (throw (ex-info (str "MCP server '"
-                         name
-                         "' is declared in a hand-written config file, not in this gateway's state; "
-                         "edit it there.")
+    (throw (ex-info (str
+                      "MCP server '" name
+                      "' is declared in a hand-written config file, not in this gateway's state; "
+                      "edit it there.")
                     {:type :mcp/not-managed :server name}))))
 
 (defn- with-preserved-secrets
@@ -421,6 +440,8 @@
        ;; Whether the GATEWAY owns this entry. A server declared in a hand-written
        ;; tier is the user's file: listed, never rewritten from here.
        :is-managed (boolean is-managed)
+       ;; Stopped by a client and HELD down until explicitly started again.
+       :is-killed (killed? name)
        :tools (tool-count conn)}
       (:command spec)
       (assoc :command (:command spec))
@@ -429,7 +450,11 @@
       (assoc :cwd (:cwd spec))
 
       (:url spec)
-      (assoc :url (:url spec)))))
+      ;; OAuth is only ever an HTTP concern; `:is-authorized` lets a client offer
+      ;; "Sign in" instead of letting the user stare at a server that 401s.
+      (assoc :url
+        (:url spec) :is-authorized
+        (:is-authorized (mcp-oauth/token-status name))))))
 
 (defn gateway-servers
   "Sanitized MCP inventory for gateway management. Secrets (env and header values)
@@ -478,6 +503,9 @@
       ;; save-config! is the strict schema and secret-preserving write boundary.
       (config/save-config! next-config :gateway-mcp)
       (reset-server-cache!)
+      ;; Saving a server is an explicit start: never leave it pinned down by a
+      ;; kill the user has plainly moved on from.
+      (revive! name)
       (disconnect! name)
       (reconcile-async!)
       (server-summary name spec true))))
@@ -527,8 +555,116 @@
 
       (config/save-config! next-config :gateway-mcp)
       (reset-server-cache!)
+      (revive! name)
       (disconnect! name)
       {:name name :is-deleted true})))
+
+(defn kill-gateway-server!
+  "Stop `name` NOW and keep it stopped: close the connection (for stdio that
+   destroys the child process, forcibly if it will not go) and set the kill brake
+   so the per-turn reconcile does not respawn it. Nothing is persisted — use
+   `set-gateway-server-enabled!` for a durable off switch. Works for hand-written
+   servers too: killing a runaway process is not editing the user's file."
+  [name]
+  (let
+    [name
+     (server-name name)
+
+     spec
+     (get (raw-servers) name)]
+
+    (when-not spec (throw (ex-info "Unknown MCP server" {:type :mcp/not-found :server name})))
+    (swap! killed conj name)
+    (disconnect! name)
+    (tel/log! {:level :info :id ::killed :data {:server name}} (str "MCP server killed: " name))
+    (server-summary name spec (contains? (machine-servers) name))))
+
+(defn start-gateway-server!
+  "Undo a kill: release the brake and connect `name` right now. A disabled server
+   stays down — `enabled false` is the user's decision, not a stale brake."
+  [name]
+  (let
+    [name
+     (server-name name)
+
+     spec
+     (get (raw-servers) name)]
+
+    (when-not spec (throw (ex-info "Unknown MCP server" {:type :mcp/not-found :server name})))
+    (revive! name)
+    (ensure-connected! name)
+    (server-summary name spec (contains? (machine-servers) name))))
+
+;; ---------------------------------------------------------------------------
+;; Headless OAuth — the Companion app and the TUI are CLIENTS of this gateway,
+;; possibly on another device, so they cannot use the loopback browser dance the
+;; daemon runs for itself. They start a flow, show the URL, and either the flow
+;; lands by itself (the browser did reach this host's listener) or they hand back
+;; the redirect URL the user was dumped on.
+;; ---------------------------------------------------------------------------
+
+(defn- oauth-server-spec
+  "The live client spec for an HTTP `name`, or a typed refusal."
+  [name]
+  (let [spec (get (configured-servers) name)]
+    (when-not spec
+      (throw (ex-info "Unknown or disabled MCP server" {:type :mcp/not-found :server name})))
+    (when-not (:url spec)
+      (throw (ex-info (str "MCP server '" name "' is a stdio server; OAuth applies to HTTP servers")
+                      {:type :mcp/invalid-server :server name})))
+    spec))
+
+(defn start-gateway-server-auth!
+  "Begin a headless OAuth 2.1 flow for HTTP server `name`. Returns
+   `{:flow-id :server :kind :url :redirect-uri :expires-at-ms :status}`; the
+   caller shows `:url` and the user authorizes in their own browser."
+  [name]
+  (let
+    [name
+     (server-name name)
+
+     spec
+     (oauth-server-spec name)]
+
+    (mcp-oauth/start-authorization! name (:url spec) {:auth-hint (:auth spec)})))
+
+(defn- settle-auth!
+  "A flow that landed leaves the server connected with a STALE 401'd session (or
+   not connected at all), so reconnect it once the tokens exist."
+  [{:keys [status server] :as row}]
+  (when (and (= "ok" status) server (not (conn-of server))) (revive! server) (reconcile-async!))
+  row)
+
+(defn complete-gateway-server-auth!
+  "Finish flow `flow-id` with the redirect URL the user pasted back (or a bare
+   authorization code) and reconnect the server."
+  [flow-id input]
+  (settle-auth! (mcp-oauth/complete-authorization! flow-id input)))
+
+(defn poll-gateway-server-auth!
+  "Non-blocking verdict for `flow-id`: `pending`, `ok`, or `error`. This is how a
+   client learns the loopback listener already finished the flow for it."
+  [flow-id]
+  (settle-auth! (mcp-oauth/poll-authorization! flow-id)))
+
+(defn cancel-gateway-server-auth!
+  "Forget an abandoned flow and release its listener."
+  [flow-id]
+  (mcp-oauth/cancel-authorization! flow-id))
+
+(defn gateway-server-auth-status
+  "Non-secret OAuth state for `name`: whether tokens exist, whether they expired."
+  [name]
+  (mcp-oauth/token-status (server-name name)))
+
+(defn logout-gateway-server-auth!
+  "Forget the persisted OAuth tokens for `name` and drop the connection that was
+   using them."
+  [name]
+  (let [name (server-name name)]
+    (mcp-oauth/forget! name)
+    (disconnect! name)
+    (mcp-oauth/token-status name)))
 
 (defn test-gateway-server!
   "Connect a candidate spec without saving it. The connection is always closed;
@@ -582,6 +718,9 @@
                                 "scope" (if session? "session" "global")
                                 "connected" (boolean conn)
                                 "enabled" true}
+                               (and (not session?) (killed? nm))
+                               (assoc "killed" true)
+
                                conn
                                (assoc "tools" (tool-count conn))
 
@@ -626,6 +765,7 @@
 
 (defn- mcp-connect-impl
   [env server]
+  (revive! server)
   (if-let [conn (ensure-connected! (:session-id env) server)]
     (ok :mcp/connect
         {"server" server
@@ -634,14 +774,22 @@
     (err :mcp/connect (str "Could not connect to MCP server '" server "'."))))
 
 (defn- mcp-disconnect-impl
+  "Stop `server` for real. A daemon-wide server is also KILLED — closing it alone
+   is undone by the next per-turn reconcile, which is not what anyone asking to
+   disconnect means. `mcp__connect` starts it again. A session-scoped server has
+   no config to be reconciled from, so closing it is enough."
   [env server]
   (let
     [sid
      (:session-id env)
 
+     session?
+     (some? (session-spec-of sid server))
+
      connected
      (some? (conn-of sid server))]
 
+    (when-not session? (swap! killed conj server))
     (disconnect! sid server)
     (ok :mcp/disconnect {"server" server "result" (if connected "disconnected" "not_connected")})))
 
@@ -873,10 +1021,7 @@
 
      row
      (fn [scope nm conn]
-       {"name" nm
-        "scope" scope
-        "transport" (name (:transport conn))
-        "tools" (tool-count conn)})
+       {"name" nm "scope" scope "transport" (name (:transport conn)) "tools" (tool-count conn)})
 
      session-rows
      (keep (fn [[[s nm] {:keys [conn]}]]

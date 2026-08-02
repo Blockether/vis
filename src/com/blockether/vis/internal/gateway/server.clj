@@ -1306,6 +1306,12 @@
        :mcp/not-managed
        409
 
+       ;; An auth flow the gateway no longer has: abandoned, cancelled, spent, or
+       ;; swept after its TTL. The client must start a new one.
+       :mcp/oauth-flow-not-found
+       404
+
+       409
        400)]
 
     (error-response status (or type :mcp/invalid-request) (ex-message e))))
@@ -1362,6 +1368,90 @@
                           (or (get body "server") body))))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))
        (catch Throwable e (error-response 400 :mcp/test-failed (ex-message e)))))
+
+(defn- kill-mcp-server-handler
+  "Stop a server NOW and hold it down. Not a config edit — works for hand-written
+   servers too, because killing a runaway process is not rewriting the user's file."
+  [request]
+  (try (json-response ((requiring-resolve
+                         'com.blockether.vis.internal.foundation.mcp.core/kill-gateway-server!)
+                        (get-in request [:path-params :name])))
+       (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
+
+(defn- start-mcp-server-handler
+  [request]
+  (try (json-response ((requiring-resolve
+                         'com.blockether.vis.internal.foundation.mcp.core/start-gateway-server!)
+                        (get-in request [:path-params :name])))
+       (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
+
+(defn- mcp-auth-start-handler
+  "Begin a headless OAuth flow for an HTTP MCP server. The response carries the
+   URL the CLIENT shows its user — the gateway never assumes a browser of its own."
+  [request]
+  (try (json-response
+         ((requiring-resolve
+            'com.blockether.vis.internal.foundation.mcp.core/start-gateway-server-auth!)
+           (get-in request [:path-params :name])))
+       (catch clojure.lang.ExceptionInfo e (mcp-error-response e))
+       (catch Throwable e (error-response 400 :mcp/oauth-failed (ex-message e)))))
+
+(defn- mcp-auth-flow-id
+  [body]
+  (let [flow-id (get body "flow_id")]
+    (when (and (string? flow-id) (seq (str/trim flow-id))) (str/trim flow-id))))
+
+(defn- mcp-auth-complete-handler
+  [request]
+  (try (let
+         [body
+          (body-json request)
+
+          flow-id
+          (mcp-auth-flow-id body)
+
+          input
+          (or (get body "input") (get body "redirect_url") (get body "code"))]
+
+         (if (and flow-id (string? input) (seq (str/trim ^String input)))
+           (json-response
+             ((requiring-resolve
+                'com.blockether.vis.internal.foundation.mcp.core/complete-gateway-server-auth!)
+               flow-id
+               input))
+           (error-response 400
+                           :mcp/invalid-request
+                           "flow_id and input (redirect URL or code) are required")))
+       (catch clojure.lang.ExceptionInfo e (mcp-error-response e))
+       (catch Throwable e (error-response 400 :mcp/oauth-failed (ex-message e)))))
+
+(defn- mcp-auth-poll-handler
+  [request]
+  (try (if-let [flow-id (mcp-auth-flow-id (body-json request))]
+         (json-response
+           ((requiring-resolve
+              'com.blockether.vis.internal.foundation.mcp.core/poll-gateway-server-auth!)
+             flow-id))
+         (error-response 400 :mcp/invalid-request "flow_id is required"))
+       (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
+
+(defn- mcp-auth-cancel-handler
+  [request]
+  (try (if-let [flow-id (mcp-auth-flow-id (body-json request))]
+         (json-response
+           ((requiring-resolve
+              'com.blockether.vis.internal.foundation.mcp.core/cancel-gateway-server-auth!)
+             flow-id))
+         (error-response 400 :mcp/invalid-request "flow_id is required"))
+       (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
+
+(defn- mcp-auth-logout-handler
+  [request]
+  (try (json-response
+         ((requiring-resolve
+            'com.blockether.vis.internal.foundation.mcp.core/logout-gateway-server-auth!)
+           (get-in request [:path-params :name])))
+       (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
 
 (defn- configured-theme-id
   "Theme selected by the TUI's persisted settings, normalized to a theme that
@@ -2754,6 +2844,13 @@
         ["/mcp/servers/actions/test" {:post test-mcp-server-handler}]
         ["/mcp/servers/:name" {:put save-mcp-server-handler :delete delete-mcp-server-handler}]
         ["/mcp/servers/:name/actions/enable" {:post set-mcp-server-enabled-handler}]
+        ["/mcp/servers/:name/actions/kill" {:post kill-mcp-server-handler}]
+        ["/mcp/servers/:name/actions/start" {:post start-mcp-server-handler}]
+        ["/mcp/servers/:name/auth/start" {:post mcp-auth-start-handler}]
+        ["/mcp/servers/:name/auth/complete" {:post mcp-auth-complete-handler}]
+        ["/mcp/servers/:name/auth/poll" {:post mcp-auth-poll-handler}]
+        ["/mcp/servers/:name/auth/cancel" {:post mcp-auth-cancel-handler}]
+        ["/mcp/servers/:name/auth/logout" {:post mcp-auth-logout-handler}]
         ["/settings/:id" {:get get-setting-handler}]
         ["/theme" {:get get-theme-handler :post set-theme-handler}]
         ["/slashes" {:get slashes-handler}]

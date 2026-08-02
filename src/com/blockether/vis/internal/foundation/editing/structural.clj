@@ -208,7 +208,11 @@
    language). `:anchor` is the line's `<lineno>:<hash>` patch anchor, so a hit
    can be edited directly with patch — same anchors cat / index emit."
   [path source name]
-  (if-let [language (index/detect-language path)]
+  ;; Cheap reject: an identifier that never occurs as raw text in `source` cannot
+  ;; have a reference here, so skip the native parse instead of walking a whole
+  ;; tree to return []. Tracing runs every declared name against every indexed
+  ;; path, and on real batches ~93% of those pairs are exactly this case.
+  (if-let [language (when (str/includes? source name) (index/detect-language path))]
     (let [lines (vec (str/split-lines source))]
       (mapv (fn [^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
               (let [line (.line h)]
@@ -239,7 +243,9 @@
    `:anchor`..`:end-anchor` line span IS its declaration name (findReferences
    returns hits in source order), so it survives decorators / attributes above it."
   [path source name]
-  (if-let [language (index/detect-language path)]
+  ;; Cheap reject: see `references`. No raw occurrence ⇒ no reference AND no
+  ;; definition, so both native passes below are skippable.
+  (if-let [language (when (str/includes? source name) (index/detect-language path))]
     (let
       [lines (vec (str/split-lines source))
        line-anchor #(patch/line-anchor % (nth lines (dec (long %)) ""))

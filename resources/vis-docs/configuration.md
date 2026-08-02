@@ -15,6 +15,15 @@ The gateway API — and the Companion on top of it — writes MCP servers to the
 
 Saving a managed server keeps its stored `env` and `headers` when the request omits those keys — the inventory a client reads never carries secret values, so a round-trip through a UI cannot wipe them. Sending the key explicitly, including as an empty map, still replaces it.
 
+## Killing a server, and signing one in
+
+Two things are **runtime**, not config, so they work on hand-written servers too:
+
+- **Kill / Start.** Killing a server closes its connection — and, for a `stdio` server, its child process — and keeps it closed: the gateway reconciles connections every turn, and a killed server is skipped instead of reconnected. Nothing is written to disk, so a kill does not survive a gateway restart and never edits your YAML. `Start` releases it. Disabling, by contrast, persists `enabled: false` and is only available for gateway-managed servers. The inventory reports both: `is_killed` (runtime) beside `enabled` (config).
+- **Browser sign-in.** An HTTP MCP server that answers `401` needs OAuth. The gateway runs the whole flow — discovery, dynamic client registration, PKCE — and holds the tokens; a client only receives an authorization URL to open and hands back the code. Start a flow, open the URL, and either let the loopback redirect complete it by itself or paste the redirect URL (or the bare `code`) back. Poll until it reports `authorized`; `is_authorized` on the inventory row says whether tokens are already stored. Signing out forgets them.
+
+Because the flow lives on the gateway, a Companion on your phone and a TUI attached to a remote gateway authorize a server exactly the same way, and neither one ever holds a token or a PKCE verifier. In the TUI it is the `MCP Servers` command in the palette.
+
 ## Keys are snake_case strings
 
 Config is YAML only, validated exactly as parsed:
@@ -31,8 +40,9 @@ Config is YAML only, validated exactly as parsed:
 
 `com.blockether.vis.internal.config-spec/config` is the complete `clojure.spec`
 contract for the original string-keyed YAML representation. It covers these closed
-top-level blocks: `providers`, `router`, `system_prompt`, `workspace`, `jail`,
-`environment`, `db_spec`, `search`, `toggles`, `tui_settings`, `mcp`, `python`, `titling`, and `message_queue`. Filesystem
+top-level blocks: `providers`, `default_provider`, `default_model`, `fallback_provider`,
+`fallback_model`, `router`, `system_prompt`, `workspace`, `jail`, `environment`,
+`db_spec`, `grep`, `toggles`, `tui_settings`, `mcp`, `python`, `titling`, and `message_queue`. Filesystem
 admission is a closed block at `jail.filesystem`, and egress policy is a closed block at `jail.network`.
 
 Nested maps are also closed except maps whose keys are user-defined, such as environment
@@ -54,15 +64,15 @@ with status 2:
   Invalid Vis configuration in /project/.vis/config.yml:
 
   - providers[0].models[0].contxt: unknown key (config is closed) — did you mean "providers[0].models[0].context"?
-  - search.include-gitignored-paths: unknown key (config is closed) — did you mean "search.include_gitignored_paths"?
+  - grep.include-gitignored-paths: unknown key (config is closed) — did you mean "grep.include_gitignored_paths"?
   - jail.filesystem.allow_reed: unknown key (config is closed)
   - mcp.servers.docs.transport: value rejected by the transport contract
 
   Fix the entries above and run vis again.
 ```
 
-The most common cause is kebab-case: `search.include-gitignored-paths` must be
-`search.include_gitignored_paths`. Kebab-case names such as
+The most common cause is kebab-case: `grep.include-gitignored-paths` must be
+`grep.include_gitignored_paths`. Kebab-case names such as
 `:include-gitignored-paths` appear in the CHANGELOG and in engine internals — they
 are the *internal keyword* mirrors of the YAML keys, never the YAML spelling.
 Model names (`providers[].models[].name`) are free-form strings and are never
@@ -346,7 +356,7 @@ Resolution order for the cache root:
 
 1. The GraalVM system property always wins:
    `vis-agent -J-Dpolyglot.engine.userResourceCache=/path` on the JVM launcher, or
-   `VIS_OPTS`/`JAVA_TOOL_OPTIONS` style `-D` flags where applicable.
+   `JAVA_TOOL_OPTIONS`-style `-D` flags where applicable.
 2. `python.resource_cache` in config (`~` expands to your home directory):
 
    ```yaml
@@ -427,7 +437,7 @@ For a repository already found by search, `download_code("owner/repo", {"ref": "
 
 ## Feature toggles
 
-Built-in extensions can expose a boolean toggle under `toggles:`. Toggle values merge with the rest of the config and take effect after `/reload` (or the next environment build):
+Built-in extensions can expose a toggle under `toggles:` — boolean, or an enum with a fixed set of choices. Toggle values merge with the rest of the config and take effect after `/reload` (or the next environment build):
 
 ```yaml
 toggles:
@@ -435,6 +445,9 @@ toggles:
   web_search: false
   # Default: true. Set false to remove the shell command tool, including from sub-agents.
   shell: false
+  # Default: false. Set true to let the agent read its own session database and
+  # gateway event journals (session introspection).
+  introspection: true
 ```
 
 After editing `vis.yml`, run `/reload` in the session. With `shell: false`, Vis does not bind the `shell` tool (including for sub-agents), so it cannot launch commands or managed language processes. `jail.enabled` is independent: it confines commands when shell access is enabled.

@@ -78,36 +78,46 @@
                           (expect (= "failed" (get r "status"))))
                         (finally (resources/unregister! sid "r5"))))))
 
-(defdescribe model-view-test
-             (it "indexes REPL state by language and workspace-relative dir without a flat mirror"
-                 (let
-                   [view (resources/model-view
-                           [{"id" "main"
-                             "kind" "nrepl"
-                             "language" "clojure"
-                             "status" "up"
-                             "detail" {"cwd" "/repo" "port" 7888}}
-                            {"id" "api"
-                             "kind" "repl"
-                             "language" "python"
-                             "status" "starting"
-                             "detail" {"cwd" "/repo/apps/api" "cmd" "python -i"}}]
-                           {:root "/repo" :languages ["clojure" "python" "typescript"]})]
-                   (expect (= "up" (get-in view ["repls" "clojure" "." "status"])))
-                   (expect (= 7888 (get-in view ["repls" "clojure" "." "port"])))
-                   (expect (= "starting" (get-in view ["repls" "python" "apps/api" "status"])))
-                   (expect (= {} (get-in view ["repls" "typescript"])))
-                   (expect (not (vector? view)))))
-             (it "groups non-REPL resources without reviving the flat legacy shape"
-                 (let
-                   [resource
-                    {"id" "server" "kind" "process" "status" "up"}
+(defdescribe
+  model-view-test
+  (it "indexes REPL state by language and workspace-relative dir without a flat mirror"
+      (let
+        [view (resources/model-view
+                [{"id" "main"
+                  "kind" "nrepl"
+                  "language" "clojure"
+                  "status" "up"
+                  "label" "nREPL repo :dev"
+                  "can_stop" true
+                  "created_at" 1
+                  "session" "sid"
+                  "detail"
+                  {"cwd" "/repo" "port" 7888 "managed" true "versions" {"clojure" "1.12.4"}}}
+                 {"id" "api"
+                  "kind" "repl"
+                  "language" "python"
+                  "status" "starting"
+                  "detail" {"cwd" "/repo/apps/api" "cmd" "python -i"}}]
+                {:root "/repo" :languages ["clojure" "python" "typescript"]})]
+        (expect (= "up" (get-in view ["repls" "clojure" "." "status"])))
+        (expect (= 7888 (get-in view ["repls" "clojure" "." "port"])))
+        (expect (= "starting" (get-in view ["repls" "python" "apps/api" "status"])))
+        (expect (= {} (get-in view ["repls" "typescript"])))
+        ;; Ctx carries only what changes a decision: id/status/port —
+        ;; never the pack's label/versions/created_at/can_* noise.
+        (expect (= ["id" "status" "port"] (vec (keys (get-in view ["repls" "clojure" "."])))))
+        (expect (= ["id" "status"] (vec (keys (get-in view ["repls" "python" "apps/api"])))))
+        (expect (not (vector? view)))))
+  (it "groups non-REPL resources without reviving the flat legacy shape"
+      (let
+        [resource
+         {"id" "server" "kind" "process" "status" "up" "created_at" 1 "can_stop" true}
 
-                    view
-                    (resources/model-view [resource] {:root "/repo"})]
+         view
+         (resources/model-view [resource] {:root "/repo"})]
 
-                   (expect (= resource (get-in view ["other" "process" "server"])))
-                   (expect (nil? (get view "repls"))))))
+        (expect (= {"id" "server" "status" "up"} (get-in view ["other" "process" "server"])))
+        (expect (nil? (get view "repls"))))))
 
 (defdescribe
   lifecycle-race-test

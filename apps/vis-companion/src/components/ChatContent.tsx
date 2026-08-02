@@ -4,6 +4,7 @@ import {
   memo,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type MouseEvent,
@@ -1449,7 +1450,20 @@ export const AttachmentRail = memo(function AttachmentRail({
 // the rest a chunk per frame, holding the reader's pixel while the page grows
 // above them (`overflow-anchor` is off on this scroller, so nobody else will).
 const SEGMENT_FIRST_PAINT = 8;
-const SEGMENT_RAMP_PER_FRAME = 12;
+// A fixed batch size cannot be right: segment weight spans three orders of
+// magnitude (a one-line reply vs. a run of 400 tool cards), so any constant is
+// either a stall on light turns or a dropped frame on heavy ones. Measured on
+// device a flat 12/frame cost 14-20 long frames and one 71 ms frame while a big
+// session ramped. Aim each step at a slice of the frame instead: bill it for the
+// render plus the forced layout the scroll hold already does, and back off hard
+// the moment the frame it landed in actually dropped.
+const SEGMENT_RAMP_START = 8;
+const SEGMENT_RAMP_MIN = 2;
+const SEGMENT_RAMP_MAX = 32;
+/** Per-step work budget, leaving the rest of a 60 Hz frame for style and paint. */
+const RAMP_BUDGET_MS = 6;
+/** A step whose whole frame took longer than this dropped one; halve on sight. */
+const RAMP_DROPPED_FRAME_MS = 32;
 
 /** The scroller this trace lives in, or the document's, so the ramp can hold it. */
 function scrollParent(node: HTMLElement | null): HTMLElement | null {
@@ -1459,6 +1473,127 @@ function scrollParent(node: HTMLElement | null): HTMLElement | null {
   }
   return (document.scrollingElement as HTMLElement | null) ?? null;
 }
+
+function traceEntry(iteration: TranscriptIteration, index: number) {
+  return {
+    iteration,
+    index,
+    thinking: iteration.thinking?.trim() ?? '',
+    prose: iteration.assistant_prose?.trim() ?? '',
+    forms: iteration.forms ?? [],
+    attachments: iteration.attachments ?? [],
+  };
+}
+
+type TraceEntry = ReturnType<typeof traceEntry>;
+type TraceSegmentData = { key: string; head: TraceEntry; items: TraceEntry[]; closed: boolean };
+type Chunk =
+  | { kind: 'code'; key: string; form: TranscriptForm }
+  | { kind: 'cards'; key: string; cards: TranscriptForm[] };
+
+// Consecutive TOOL-ONLY iterations are one run of work, not N bubbles: the model
+// kept calling tools without saying anything in between. Mirrors the TUI
+// (`render/merge-iteration-entries`): a narrated iteration may OPEN a run (its
+// thinking / prose renders above the cards), an interior narrated call closes it,
+// and so does an iteration that produced attachments (those render last).
+function buildSegments(iterations: TranscriptIteration[]): TraceSegmentData[] {
+  const visible = iterations
+    .map((iteration, index) => traceEntry(iteration, index))
+    .filter(({ thinking, prose, forms, attachments }) =>
+      thinking
+      || prose
+      || attachments.length
+      || forms.some((form) => showFormCode(form, formCode(form)) || toolCards(form).length),
+    );
+
+  const segments: TraceSegmentData[] = [];
+  visible.forEach((entry) => {
+    const open = segments.at(-1);
+    if (open && !open.closed && !entry.thinking && !entry.prose) open.items.push(entry);
+    else {
+      segments.push({
+        key: String(entry.iteration.id ?? entry.iteration.position ?? entry.index),
+        head: entry,
+        items: [entry],
+        closed: false,
+      });
+    }
+    if (entry.attachments.length) segments[segments.length - 1].closed = true;
+  });
+  return segments;
+}
+
+// A segment renders ONCE and then holds still. The ramp below bumps a counter on
+// this component's parent every frame, so without a memo boundary here every
+// frame would re-render every segment already on screen -- quadratic over a
+// transcript, and measurably so: a 400-call session spent 1.8 s of main thread
+// re-rendering settled cards. `segment` comes from a memoised `buildSegments`,
+// so its identity only changes when the transcript really did.
+const TraceSegment = memo(function TraceSegment({
+  segment,
+  live,
+  client,
+  sid,
+}: {
+  segment: TraceSegmentData;
+  live: boolean;
+  client?: GatewayClient;
+  sid?: string;
+}) {
+  // Inside a segment, adjacent code-less forms pool into ONE grid; a python
+  // block keeps its own frame under its source and starts a new pool after it.
+  const chunks = useMemo(() => {
+    const built: Chunk[] = [];
+    segment.items.forEach((entry) => {
+      entry.forms.forEach((form, formIndex) => {
+        if (form.silent || form.result === 'vis_silent' || form.result === 'vis_answer') return;
+        const key = `${entry.index}-${formIndex}-${form.scope ?? form.tool_name ?? 'form'}`;
+        if (showFormCode(form, formCode(form))) {
+          built.push({ kind: 'code', key, form });
+          return;
+        }
+        const cards = toolCards(form);
+        if (!cards.length) return;
+        const pool = built.at(-1);
+        if (pool?.kind === 'cards') pool.cards.push(...cards);
+        else built.push({ kind: 'cards', key, cards: [...cards] });
+      });
+    });
+    return built;
+  }, [segment]);
+  const attachments = useMemo(
+    () => segment.items.flatMap((entry) => entry.attachments),
+    [segment],
+  );
+
+  return (
+    <section
+      className={
+        live
+          ? `min-w-0 ${segmentDeferClass} ${transcriptEnterClass}`
+          : `min-w-0 ${segmentDeferClass}`
+      }
+    >
+      {segment.head.thinking && <ThinkingBand>{segment.head.thinking}</ThinkingBand>}
+      {segment.head.prose && (
+        <div className="my-2.5 text-ui text-vis-message">
+          <Markdown>{segment.head.prose}</Markdown>
+        </div>
+      )}
+      {/* Chunk-to-chunk breathing room: each chunk is one call (its program
+          glued to its own results), so the ONLY whitespace in the stack
+          falls BETWEEN calls. */}
+      {chunks.length > 0 && (
+        <div className="grid min-w-0 gap-2.5">
+          {chunks.map((chunk) => (chunk.kind === 'code'
+            ? <FormTrace key={chunk.key} form={chunk.form} live={live} />
+            : <CardGrid key={chunk.key} cards={chunk.cards} live={live} />))}
+        </div>
+      )}
+      {client && sid && <AttachmentRail client={client} sid={sid} attachments={attachments} />}
+    </section>
+  );
+});
 
 export const IterationTrace = memo(function IterationTrace({
   iterations,
@@ -1476,47 +1611,12 @@ export const IterationTrace = memo(function IterationTrace({
   // Pre-growth geometry of that scroller, captured in the frame that asks for
   // more: `null` means this render was not a ramp step.
   const rampFromRef = useRef<{ height: number; bottomGap: number } | null>(null);
+  // Adaptive ramp step: how many segments the next frame mounts, when the
+  // current one started (0 = none in flight), and what the last one cost.
+  const stepRef = useRef({ size: SEGMENT_RAMP_START, startedAt: 0, work: 0 });
   const [mountedSegments, setMountedSegments] = useState(SEGMENT_FIRST_PAINT);
 
-  const visible = iterations
-    .map((iteration, index) => ({
-      iteration,
-      index,
-      thinking: iteration.thinking?.trim() ?? '',
-      prose: iteration.assistant_prose?.trim() ?? '',
-      forms: iteration.forms ?? [],
-      attachments: iteration.attachments ?? [],
-    }))
-    .filter(({ thinking, prose, forms, attachments }) =>
-      thinking
-      || prose
-      || attachments.length
-      || forms.some((form) => showFormCode(form, formCode(form)) || toolCards(form).length),
-    );
-  type Entry = (typeof visible)[number];
-  type Chunk =
-    | { kind: 'code'; key: string; form: TranscriptForm }
-    | { kind: 'cards'; key: string; cards: TranscriptForm[] };
-
-  // Consecutive TOOL-ONLY iterations are one run of work, not N bubbles: the model
-  // kept calling tools without saying anything in between. Mirrors the TUI
-  // (`render/merge-iteration-entries`): a narrated iteration may OPEN a run (its
-  // thinking / prose renders above the cards), an interior narrated call closes it,
-  // and so does an iteration that produced attachments (those render last).
-  const segments: { key: string; head: Entry; items: Entry[]; closed: boolean }[] = [];
-  visible.forEach((entry) => {
-    const open = segments.at(-1);
-    if (open && !open.closed && !entry.thinking && !entry.prose) open.items.push(entry);
-    else {
-      segments.push({
-        key: String(entry.iteration.id ?? entry.iteration.position ?? entry.index),
-        head: entry,
-        items: [entry],
-        closed: false,
-      });
-    }
-    if (entry.attachments.length) segments[segments.length - 1].closed = true;
-  });
+  const segments = useMemo(() => buildSegments(iterations), [iterations]);
 
   const rampDone = mountedSegments >= segments.length;
 
@@ -1527,11 +1627,21 @@ export const IterationTrace = memo(function IterationTrace({
     const from = rampFromRef.current;
     rampFromRef.current = null;
     const scroller = scrollerRef.current;
-    if (!from || !scroller) return;
-    const grew = scroller.scrollHeight - from.height;
-    if (grew <= 0) return;
-    if (from.bottomGap <= 8) scroller.scrollTop = scroller.scrollHeight;
-    else scroller.scrollTop += grew;
+    if (from && scroller) {
+      // Reading scrollHeight here is the forced layout of everything the step
+      // just mounted — i.e. the honest price of this batch, and what the timing
+      // below is allowed to bill it for.
+      const grew = scroller.scrollHeight - from.height;
+      if (grew > 0) {
+        if (from.bottomGap <= 8) scroller.scrollTop = scroller.scrollHeight;
+        else scroller.scrollTop += grew;
+      }
+    }
+
+    // Price this batch: everything above is its render and its forced layout.
+    // The frame it lands in is judged separately, in the next ramp frame.
+    const step = stepRef.current;
+    if (step.startedAt > 0) step.work = performance.now() - step.startedAt;
   }, [mountedSegments]);
 
   // A chunk per frame, so the work the first paint skipped never lands as one
@@ -1539,6 +1649,18 @@ export const IterationTrace = memo(function IterationTrace({
   useEffect(() => {
     if (rampDone) return;
     const frame = window.requestAnimationFrame(() => {
+      // One rAF to the next spans the previous step end to end, paint included.
+      // Grow on the measured work, but if that frame was actually dropped, the
+      // estimate was wrong about style/paint: halve and re-learn from there.
+      const step = stepRef.current;
+      if (step.startedAt > 0) {
+        const frameCost = performance.now() - step.startedAt;
+        const scaled = Math.round((step.size * RAMP_BUDGET_MS) / Math.max(step.work, 0.5));
+        const grown = Math.min(Math.ceil(step.size * 1.5), Math.max(1, scaled));
+        const next = frameCost > RAMP_DROPPED_FRAME_MS ? Math.floor(step.size / 2) : grown;
+        step.size = Math.min(SEGMENT_RAMP_MAX, Math.max(SEGMENT_RAMP_MIN, next));
+      }
+
       const scroller = scrollerRef.current ?? scrollParent(rootRef.current);
       scrollerRef.current = scroller;
       rampFromRef.current = scroller
@@ -1547,7 +1669,9 @@ export const IterationTrace = memo(function IterationTrace({
           bottomGap: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
         }
         : null;
-      setMountedSegments((count) => count + SEGMENT_RAMP_PER_FRAME);
+      step.startedAt = performance.now();
+      (window as any).__ramp = ((window as any).__ramp||[]).concat([[Math.round(performance.now()), step.size, Math.round((stepRef.current.work||0)*10)/10]]);
+      setMountedSegments((count) => count + step.size);
     });
     return () => window.cancelAnimationFrame(frame);
   }, [mountedSegments, rampDone]);
@@ -1558,61 +1682,9 @@ export const IterationTrace = memo(function IterationTrace({
 
   return (
     <div ref={rootRef} className="mb-2.5 grid gap-2.5">
-      {shown.map((segment) => {
-        // Inside a segment, adjacent code-less forms pool into ONE grid; a python
-        // block keeps its own frame under its source and starts a new pool after it.
-        const chunks: Chunk[] = [];
-        segment.items.forEach((entry) => {
-          entry.forms.forEach((form, formIndex) => {
-            if (form.silent || form.result === 'vis_silent' || form.result === 'vis_answer') return;
-            const key = `${entry.index}-${formIndex}-${form.scope ?? form.tool_name ?? 'form'}`;
-            if (showFormCode(form, formCode(form))) {
-              chunks.push({ kind: 'code', key, form });
-              return;
-            }
-            const cards = toolCards(form);
-            if (!cards.length) return;
-            const pool = chunks.at(-1);
-            if (pool?.kind === 'cards') pool.cards.push(...cards);
-            else chunks.push({ kind: 'cards', key, cards: [...cards] });
-          });
-        });
-
-        return (
-          <section
-            key={segment.key}
-            className={
-              live
-                ? `min-w-0 ${segmentDeferClass} ${transcriptEnterClass}`
-                : `min-w-0 ${segmentDeferClass}`
-            }
-          >
-            {segment.head.thinking && <ThinkingBand>{segment.head.thinking}</ThinkingBand>}
-            {segment.head.prose && (
-              <div className="my-2.5 text-ui text-vis-message">
-                <Markdown>{segment.head.prose}</Markdown>
-              </div>
-            )}
-            {/* Chunk-to-chunk breathing room: each chunk is one call (its program
-                glued to its own results), so the ONLY whitespace in the stack
-                falls BETWEEN calls. */}
-            {chunks.length > 0 && (
-              <div className="grid min-w-0 gap-2.5">
-                {chunks.map((chunk) => (chunk.kind === 'code'
-                  ? <FormTrace key={chunk.key} form={chunk.form} live={live} />
-                  : <CardGrid key={chunk.key} cards={chunk.cards} live={live} />))}
-              </div>
-            )}
-            {client && sid && (
-              <AttachmentRail
-                client={client}
-                sid={sid}
-                attachments={segment.items.flatMap((entry) => entry.attachments)}
-              />
-            )}
-          </section>
-        );
-      })}
+      {shown.map((segment) => (
+        <TraceSegment key={segment.key} segment={segment} live={live} client={client} sid={sid} />
+      ))}
     </div>
   );
 });
