@@ -28,7 +28,12 @@ import 'prismjs/components/prism-yaml';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { parseUserMessage } from '../lib/paste';
-import { readerOwnsScroll } from '../lib/reader-gesture';
+import {
+  captureReaderAnchor,
+  readerOwnsScroll,
+  restoreReaderAnchor,
+  type ReaderAnchor,
+} from '../lib/reader-gesture';
 import { formatCost, formatTokens, turnUsage } from '../lib/usage';
 import { isViewportRotating, onViewportRotation } from '../lib/viewport';
 import type {
@@ -1501,6 +1506,14 @@ function releaseRamp(id: symbol): void {
   if (at >= 0) rampQueue.splice(at, 1);
 }
 
+/**
+ * The element the reader's eye is on: whatever sits at the top edge of the
+ * scroller, plus where that edge is right now. Putting THIS element back after
+ * a mutation is the only correction that survives content which shrinks as well
+ * as grows, and it self-corrects against any other corrector that moved the
+ * scroller in the same layout pass — the drift it measures is already zero.
+ */
+
 /** The scroller this trace lives in, or the document's, so the ramp can hold it. */
 function scrollParent(node: HTMLElement | null): HTMLElement | null {
   for (let el = node?.parentElement ?? null; el; el = el.parentElement) {
@@ -1638,9 +1651,15 @@ export const IterationTrace = memo(function IterationTrace({
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
-  // Pre-growth height of that scroller, captured in the frame that asks for
-  // more: `null` means this render was not a ramp step.
-  const rampFromRef = useRef<number | null>(null);
+  // What this trace measured in the frame that asks for more segments: its own
+  // height, how far the reader was from the end, and the element their eye is on
+  // with the exact screen offset it had. `null` means this render was not a ramp
+  // step.
+  const rampFromRef = useRef<{
+    own: number;
+    gap: number;
+    anchor: ReaderAnchor | null;
+  } | null>(null);
   // Identity in the ramp queue, so only the bottom-most trace backfills at once.
   const [rampId] = useState(() => Symbol('trace-ramp'));
   useEffect(() => () => releaseRamp(rampId), [rampId]);
@@ -1660,26 +1679,31 @@ export const IterationTrace = memo(function IterationTrace({
     const from = rampFromRef.current;
     rampFromRef.current = null;
     const scroller = scrollerRef.current;
-    if (from != null && scroller) {
-      // Reading scrollHeight here is the forced layout of everything the step
-      // just mounted — i.e. the honest price of this batch, and what the timing
-      // below is allowed to bill it for.
-      const grew = scroller.scrollHeight - from;
-      if (grew > 0) {
-        // Where the reader was is derived from AFTER the mutation, never from a
-        // snapshot taken before it: the growth lands above them, so it widened
-        // the gap to the end by exactly `grew`. A pre-snapshot loses a scroll
-        // that happened inside this frame and yanks a reader who just flicked
-        // up back down.
-        const gapBefore =
-          scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight - grew;
-        // Pin only a reader who was already at the end AND is not touching the
-        // scroller: a slow drag travels less than this tolerance in one frame,
-        // so the pin would otherwise swallow the drag itself. Everyone else
-        // keeps their pixel, gesture or not — that is compensation, not a pin.
-        if (gapBefore <= 8 && !readerOwnsScroll()) scroller.scrollTop = scroller.scrollHeight;
-        else scroller.scrollTop += grew;
-      }
+    const root = rootRef.current;
+    // Reading this height forces the layout of everything the step just mounted:
+    // the honest price of this batch, charged to it below instead of leaking into
+    // the next frame.
+    const grew = from && root ? root.offsetHeight - from.own : 0;
+    if (from && scroller && root && (grew !== 0 || from.gap <= 8)) {
+      // Whether the reader was following the end is measured BEFORE the batch
+      // lands, in the frame that scheduled it. Deriving it afterwards by
+      // subtracting this trace's growth silently assumed the growth was appended
+      // below the reader — true for the newest trace, false for the 400 traces a
+      // "load earlier" prepends ABOVE them. That assumption turned every 2 000 px
+      // batch into "they are within 2 000 px of the end, so pin them there" and
+      // fired 16 unwanted jumps worth 46 000 px in one load.
+      // Pin only a reader who was already at the end AND is not touching the
+      // scroller: a slow drag travels less than this tolerance in one frame, so
+      // the pin would otherwise swallow the drag itself.
+      if (from.gap <= 8 && !readerOwnsScroll()) scroller.scrollTop = scroller.scrollHeight;
+      // Everyone else keeps their line, and the only honest way to keep it is to
+      // put the element they were looking at back where it was. Compensating
+      // "how much did something above me grow" instead was a RATCHET: traces
+      // shrink too (a batch re-wraps, a highlight re-lays-out), growth was paid
+      // for and shrinkage was never refunded, so 33k px of new history walked
+      // the scroller 133k px and left the reader 99k px above their own line.
+      // Measuring drift is signed, self-correcting, and costs one rect.
+      else restoreReaderAnchor(scroller, from.anchor);
     }
 
     // Price this batch: everything above is its render and its forced layout.
@@ -1720,7 +1744,17 @@ export const IterationTrace = memo(function IterationTrace({
 
       const scroller = scrollerRef.current ?? scrollParent(rootRef.current);
       scrollerRef.current = scroller;
-      rampFromRef.current = scroller ? scroller.scrollHeight : null;
+      const root = rootRef.current;
+      rampFromRef.current =
+        scroller && root
+          ? {
+              own: root.offsetHeight,
+              // Measured here, before the batch lands, because only now does it
+              // mean "the reader is following the end".
+              gap: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
+              anchor: captureReaderAnchor(scroller),
+            }
+          : null;
       step.startedAt = performance.now();
       setMountedSegments((count) => count + step.size);
     };

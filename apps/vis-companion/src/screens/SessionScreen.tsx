@@ -42,7 +42,12 @@ import {
   writeDraftMessage,
 } from '../lib/draft-messages';
 import { clearPendingVoice, readPendingVoice, savePendingVoice } from '../lib/pending-voice';
-import { readerOwnsScroll } from '../lib/reader-gesture';
+import {
+  captureReaderAnchor,
+  readerOwnsScroll,
+  restoreReaderAnchor,
+  type ReaderAnchor,
+} from '../lib/reader-gesture';
 import type {
   ContentBlock,
   IterationAttachment,
@@ -1163,7 +1168,11 @@ export function SessionScreen({
   const pasteCounterRef = useRef(peekDraftMessage(draftMessageId).counter);
   const resizeScrollFrameRef = useRef<number | null>(null);
   const disclosureScrollFrameRef = useRef<number | null>(null);
-  const prependScrollHeightRef = useRef<number | null>(null);
+  // The line the reader is on while rows land ABOVE it. An anchored element,
+  // never a height: two correctors comparing heights each bill the same growth,
+  // and one "↑ Load earlier" then moved the scroller 57 564 px for 40 030 px of
+  // history. Restoring an anchor is idempotent across owners.
+  const prependAnchorRef = useRef<ReaderAnchor | null>(null);
   const scrollMetricsFrameRef = useRef<number | null>(null);
   // A rotation has one terminal scroll write: keep observers and stale scroll
   // events from competing with that write until it has landed.
@@ -2717,10 +2726,10 @@ export function SessionScreen({
 
   useLayoutEffect(() => {
     const viewport = scrollRef.current;
-    const previousHeight = prependScrollHeightRef.current;
-    if (viewport && previousHeight !== null) {
-      viewport.scrollTop += viewport.scrollHeight - previousHeight;
-      prependScrollHeightRef.current = null;
+    const anchored = prependAnchorRef.current;
+    if (viewport && anchored) {
+      restoreReaderAnchor(viewport, anchored);
+      prependAnchorRef.current = null;
       return;
     }
     if (initialScrollPendingRef.current && turns.length) {
@@ -2748,8 +2757,8 @@ export function SessionScreen({
     let frame: number | null = window.requestAnimationFrame(() => {
       frame = null;
       const viewport = scrollRef.current;
-      if (viewport && !followingRef.current && prependScrollHeightRef.current === null) {
-        prependScrollHeightRef.current = viewport.scrollHeight;
+      if (viewport && !followingRef.current && prependAnchorRef.current === null) {
+        prependAnchorRef.current = captureReaderAnchor(viewport);
       }
       setHydratedTurnCount((count) => count + HYDRATE_TURNS_PER_FRAME);
     });
@@ -3809,7 +3818,9 @@ export function SessionScreen({
   // do not shove it. The layout effect reads this height on the next paint.
   const anchorPrepend = () => {
     const viewport = scrollRef.current;
-    if (viewport) prependScrollHeightRef.current = viewport.scrollHeight;
+    if (viewport) {
+      prependAnchorRef.current = captureReaderAnchor(viewport);
+    }
     followingRef.current = false;
   };
 
