@@ -5943,15 +5943,15 @@
      :native-tool? true
      :result
      (str
-       "`{results, occurrences?}` has string keys. `results` preserves one row/file: `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, `ranges`. "
-       "With `include_occurrences`, each declared-name group has `name`; definition `symbols` (`path`, `anchor`, `end_anchor`, `kind`, `visibility`, `signature`, `use_count`, `uses` as `{path, anchors}`); conservative `other_uses`; `count`, `definition_count`, `scanned`, `failed`. "
-       "No source: use row `anchor` in `struct_nodes` (verbatim node + cursor) or `cat` (anchored lines).")
+       "String-keyed `{results, occurrences?}`. One row/file: `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, `ranges`. "
+       "With `include_occurrences`, each declared-name group has `name`; `symbols` (`path`, `anchor`, `end_anchor`, `kind`, `visibility`, `signature`, `use_count`, `uses` as `{path, anchors}`); `other_uses`; `count`, `definition_count`, `scanned`, `failed`. "
+       "No source: use row `anchor` in `struct_nodes` or `cat`.")
      :active-fn structural-supported?
      :description
      (str
-       "Inspect supported source before bodies: imports, nested definition skeleton, signatures, doc gists, and "
-       "fresh start/end anchors for `cat`/`struct_patch`. `include_occurrences` traces each indexed definition's "
-       "syntactic occurrences across supplied files.")
+       "Inspect supported source before bodies: imports, definition skeleton, signatures, doc gists, and "
+       "fresh start/end anchors for `cat`/`struct_patch`. `include_occurrences` traces each definition's "
+       "occurrences across the given files.")
      :render render-index-result
      :color-role :tool-color/read
      :schema
@@ -5974,11 +5974,11 @@
         :description
         (str
           "Exact physical source paths from grep/cat/struct_index; copy unchanged and batch. Shared `ranges` "
-          "apply to all; object entries override one file. `include_occurrences` traces only these files.")}
+          "apply to all; object entries override one file.")}
        "include_occurrences"
        {:type "boolean"
         :description
-        "True adds each indexed definition's syntactic occurrence group; omit/false returns only `results`."}
+        "True adds each definition's occurrence group; omit/false returns only `results`."}
        "ranges"
        {:type "array"
         :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
@@ -6548,15 +6548,14 @@
     {:symbol 'struct_patch
      :native-tool? true
      :result
-     (str
-       "One row/edit has `path`, `op`, `changed`, `diff`; small regions may add reusable `anchors` "
-       "(`{\"lineno:hash\":{\"text\":line}}`) for the next `from_anchor` without rereading. A `paths` rename "
-       "returns one row/file; failures set `changed` false plus `error`.")
+     (str "One row/edit: `path`, `op`, `changed`, `diff`; small regions may add reusable `anchors` "
+          "(`{\"lineno:hash\":{\"text\":line}}`) for the next `from_anchor`. A `paths` rename "
+          "returns one row/file; failures set `changed` false plus `error`.")
      :active-fn structural-supported?
      :description
      (str
-       "Structurally edit supported code: definition by NAME (`target`)—no stale anchors/blobs—or node by "
-       "`at`/`anchor`. Supports file/project rename, docs, moves, `append_child`. Re-parses writes: code that "
+       "Structurally edit supported code: definition by NAME (`target`)—no stale anchors—or node by "
+       "`at`/`anchor`. Does rename, docs, moves, `append_child`. Re-parses writes: code that "
        "will not parse is REFUSED; unbalanced Clojure delimiters auto-repaired.")
      :render render-patch-result
      :color-role :tool-color/edit
@@ -6564,18 +6563,17 @@
      {:type "object"
       :properties
       {"path" {:type "string" :description "Edit file, or shared default for `edits`."}
-       "paths"
-       {:type "array"
-        :items {:type "string" :minLength 1}
-        :minItems 1
-        :description
-        "`rename` only: rewrite `target` to `code` in scopes (`[\".\"]` = project). Check via grep, then struct_index(paths)."}
+       "paths" {:type "array"
+                :items {:type "string" :minLength 1}
+                :minItems 1
+                :description
+                "`rename` only: rewrite `target` to `code` in scopes (`[\".\"]` = project)."}
        "edits"
        {:type "array"
         :minItems 1
         :items {:type "object"}
         :description
-        "ORDERED BATCH: single-edit entries; top-level defaults allow one path/many ops or several files. Applied in order, never rolled back. Omit for a lone edit."}
+        "ORDERED BATCH of single-edit entries; top-level keys are defaults. Applied in order, never rolled back. Omit for a lone edit."}
        "op" {:type "string"
              :enum ["replace" "delete" "insert_before" "insert_after" "append" "add_doc"
                     "replace_doc" "replace_node" "rename" "move_before" "move_after" "append_child"
@@ -6590,10 +6588,10 @@
        "anchor"
        {:type "string"
         :description
-        "`move_before`/`move_after`: adjacent def NAME; otherwise a struct_index/cat `lineno:hash` entering its node. Composes with `nav`."}
+        "`move_before`/`move_after`: adjacent def NAME; else a `lineno:hash` entering its node. Composes with `nav`."}
        "at" {:type "array"
              :items {:type "integer" :minimum 0}
-             :description "Named-child path from a `struct_nodes` row; for path-based ops."}
+             :description "Named-child path from a `struct_nodes` row."}
        "nav" {:type "array" :description "Relative zipper moves after `at` (strings/maps)."}}
       ;; Either a lone `path`+`op` edit or an `edits` batch — validated in the tool.
       :additionalProperties false}
