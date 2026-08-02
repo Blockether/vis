@@ -438,6 +438,41 @@
   (it "leaves a bare transport drop alone"
       (expect (= :transport (perr/provider-error-kind {:message "closed" :data {}})))))
 
+(def ^:private bedrock-timeout-throwable
+  "The SAME failure as `bedrock-timeout-err`, but as the live `ex-info` svar's
+   router actually throws: the message is only `Provider unavailable` and the
+   real cause rides `:attempts` inside `ex-data`, never a trace entry's `:data`."
+  (ex-info "Provider unavailable"
+           {:type :svar.llm/provider-unavailable
+            :tried [:bedrock]
+            :attempts [{:provider :bedrock
+                        :model "claude-opus-4-8"
+                        :reason :transient-error
+                        :error (str "litellm.Timeout: BedrockException: Timeout Error - "
+                                    "litellm.Timeout: Connection timed out. Timeout "
+                                    "passed=Timeout(connect=5.0, read=600.0), time "
+                                    "taken=0.001 seconds. Received Model "
+                                    "Group=claude-opus-4-8")}]}))
+
+(defdescribe
+  live-routing-throwable-attempts-test
+  "Attempts must be read off a THROWABLE too, not only off a trace entry (#60)."
+  (it "reads the attempts out of ex-data"
+      (expect (= 1 (count (perr/provider-error-attempts bedrock-timeout-throwable))))
+      (expect (= :bedrock
+                 (:provider (first (perr/provider-error-attempts bedrock-timeout-throwable))))))
+  (it "classifies the hidden timeout instead of the generic outage"
+      (expect (= :upstream-timeout (perr/provider-error-kind bedrock-timeout-throwable)))
+      (expect (= "Provider request timed out"
+                 (perr/provider-error-title bedrock-timeout-throwable))))
+  (it "says the model never saw it, and calls it retryable"
+      (expect (str/includes? (perr/provider-error-explanation bedrock-timeout-throwable)
+                             "never reached the model"))
+      (expect (true? (perr/provider-error-retryable? bedrock-timeout-throwable))))
+  (it "names why the provider bowed out in the attempts summary"
+      (expect (str/includes? (perr/provider-error-attempts-summary bedrock-timeout-throwable)
+                             "claude-opus-4-8"))))
+
 (defdescribe resource-mismatch-classification-test
              "A conversation pinned to another backend resource is TERMINAL, not an outage."
              (it "classifies the Azure resource-mismatch body"

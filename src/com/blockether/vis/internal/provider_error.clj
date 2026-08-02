@@ -705,9 +705,15 @@
 (defn provider-error-attempts
   "The per-provider failure records svar accumulates on an `all-providers-exhausted`
    error — `[{:provider :model :status :reason :error} …]`, one per provider tried.
-   Empty when svar didn't attach them (older svar / a non-routing failure)."
+   Empty when svar didn't attach them (older svar / a non-routing failure).
+
+   Read `ex-data` too, not only a trace entry's `:data`: svar's router throws a
+   LIVE `ex-info` whose message is just `Provider unavailable` and keeps the real
+   cause (`litellm.Timeout: BedrockException: Timeout Error …`) on `:attempts` in
+   its `ex-data`. Missing that reduced every routed failure to the generic card
+   on the surface that presents the throwable itself."
   [err]
-  (let [data (:data err)]
+  (let [data (or (:data err) (ex-data err) err)]
     (vec (or (:attempts data) (:attempts err) []))))
 
 (defn attempt->line
