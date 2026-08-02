@@ -43,11 +43,20 @@
                    (try (expect (= [(.getCanonicalPath root)]
                                    (resolve-test-paths (.getPath root) {})))
                         (finally (cleanup root)))))
-             (it "honors explicit {paths}, resolved to absolute"
+             (it "honors explicit {paths} that EXIST, resolved to absolute"
                  (let [root (tmp-dir)]
-                   (try (expect (= [(.getCanonicalPath (io/file root "a"))
+                   (try (.mkdirs (io/file root "a"))
+                        (.mkdirs (io/file root "b"))
+                        (expect (= [(.getCanonicalPath (io/file root "a"))
                                     (.getCanonicalPath (io/file root "b"))]
                                    (resolve-test-paths (.getPath root) {"paths" ["a" "b"]})))
+                        (finally (cleanup root)))))
+             (it "throws on a {paths} entry that does not exist"
+                 (let [root (tmp-dir)]
+                   (try (expect (= :py/bad-args
+                                   (try (resolve-test-paths (.getPath root) {"paths" ["ghost"]})
+                                        nil
+                                        (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
                         (finally (cleanup root))))))
 
 (defdescribe
@@ -102,3 +111,55 @@
                  (expect (vector? (get res "cmd")))
                  (expect (some #{"-m" "pytest"} (get res "cmd"))))
                (finally (process-jail/unregister-session-jail! session-id) (cleanup root)))))))
+
+(defdescribe
+  explicit-target-test
+  "A named test FILE actually runs, relative paths follow the run's `cwd`, a
+   missing target is a user error, and a run that discovered nothing is never
+   green (issue #70: explicit target came back is_pass=true, 0/0)."
+  (it "runs an explicitly named *.py file (not only a directory)"
+      (let [root (tmp-dir)]
+        (try (.mkdirs (io/file root "tests"))
+             (spit (io/file root "tests" "test_one.py")
+                   (str "def test_ok():\n" "    assert 1 + 1 == 2\n"))
+             (spit (io/file root "tests" "test_two.py")
+                   (str "def test_other():\n" "    assert 1 == 2\n"))
+             (let
+               [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                              {"paths" ["tests/test_one.py"]}))]
+               (expect (= 1 (get res "files")))
+               (expect (= 1 (get res "passed")))
+               (expect (= 0 (get res "failed")))
+               (expect (true? (get res "ok"))))
+             (finally (cleanup root)))))
+  (it "resolves relative paths against {cwd}, not the workspace root"
+      (let [root (tmp-dir)]
+        (try (.mkdirs (io/file root "proj" "tests"))
+             (spit (io/file root "proj" "tests" "test_deep.py")
+                   (str "def test_ok():\n" "    assert True\n"))
+             (let
+               [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                              {"cwd" "proj" "paths" ["tests"]}))]
+               (expect (= 1 (get res "files")))
+               (expect (= 1 (get res "passed")))
+               (expect (true? (get res "ok"))))
+             (finally (cleanup root)))))
+  (it "rejects a target that does not exist instead of running nothing"
+      (let [root (tmp-dir)]
+        (try (expect (= :py/bad-args
+                        (try (core/py-test-fn {:workspace/root (.getPath root)}
+                                              {"paths" ["nope/test_missing.py"]})
+                             nil
+                             (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+             (finally (cleanup root)))))
+  (it "is NOT a pass when the target discovered no test file"
+      (let [root (tmp-dir)]
+        (try (.mkdirs (io/file root "tests"))
+             (spit (io/file root "tests" "helpers.py") "X = 1\n")
+             (let
+               [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                              {"paths" ["tests"]}))]
+               (expect (= 0 (get res "files")))
+               (expect (false? (get res "ok")))
+               (expect (string? (get res "error"))))
+             (finally (cleanup root))))))

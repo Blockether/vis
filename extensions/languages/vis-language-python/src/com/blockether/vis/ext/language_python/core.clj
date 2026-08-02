@@ -178,13 +178,25 @@
   (if (<= (count s) (long n)) s (str "…" (subs s (- (count s) (long n))))))
 
 (defn- resolve-test-paths
-  "Absolute path strings to hand a test runner. Honors `{paths}`; else defaults
-   to `tests/` when it exists, otherwise the workspace root."
-  [^String root opts]
+  "Absolute path strings to hand a test runner. Honors `{paths}` — FILES or
+   directories, resolved against `dir` (the run's `cwd`), never the workspace
+   root; else defaults to `tests/` under `dir` when it exists, otherwise `dir`.
+   A named path that does not exist THROWS: silently running nothing reads as a
+   false green."
+  [^String dir opts]
   (let [given (seq (map str (get opts "paths")))]
-    (cond given (mapv #(resolve-dir root %) given)
-          (.isDirectory (io/file root "tests")) [(resolve-dir root "tests")]
-          :else [(resolve-dir root nil)])))
+    (cond given (let
+                  [abs (mapv #(resolve-dir dir %) given)
+                   missing (vec (remove #(.exists (io/file ^String %)) abs))]
+
+                  (when (seq missing)
+                    (throw (ex-info (str "run_tests(python) target does not exist: "
+                                         (str/join ", " missing)
+                                         " — relative paths resolve against the run's cwd")
+                                    {:type :py/bad-args :paths missing})))
+                  abs)
+          (.isDirectory (io/file dir "tests")) [(resolve-dir dir "tests")]
+          :else [(resolve-dir dir nil)])))
 
 (defn- graalpy-test
   "Hermetic backend: discover test_*.py / *_test.py under `paths` and run each in
@@ -218,6 +230,14 @@
        "output" (ptr/render-test-report res)}
       (:error res)
       (assoc "error" (:error res))
+
+      ;; Nothing was discovered: a run that executed no test is NOT a pass.
+      (zero? (long (or (:files res) 0)))
+      (assoc "ok"
+        false "error"
+        (str "No test file discovered under " (str/join ", " paths)
+             " — looked for test_*.py / *_test.py (a directly named *.py file "
+             "is taken as a test file). Nothing ran, so this is not a pass."))
 
       dep-smell?
       (assoc "hint"
@@ -292,7 +312,10 @@
   "run_tests handler for Python. Two backends behind `{runner}`:
      - \"graalpy\" (DEFAULT) — hermetic, stdlib-only. Discovers `test_*.py` /
        `*_test.py` under `{paths}` (default: `tests/` if present, else the
-       workspace root) and runs each in a TRUSTED GraalPy context via the
+       run's `cwd`) and runs each in a TRUSTED GraalPy context via the
+       built-in pytest shim. `{paths}` entries may be FILES or dirs, resolve
+       against `cwd`, must exist, and discovering nothing is NOT a pass. No
+       project deps visible.
        built-in pytest shim. No project deps visible.
      - \"project\" — shells the project interpreter's pytest
        (`uv`/`poetry`/`.venv`/`python3` `-m pytest <paths>`) so installed test
@@ -316,7 +339,7 @@
        (if (contains? #{"project" "interpreter" "real" "system"} r) "project" "graalpy"))
 
      paths
-     (resolve-test-paths root opts)]
+     (resolve-test-paths dir opts)]
 
     (extension/success {:result (assoc (if (= "project" runner)
                                          (project-test (:session-id env) dir paths)

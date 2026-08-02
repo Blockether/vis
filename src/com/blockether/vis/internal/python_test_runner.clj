@@ -54,19 +54,31 @@
             (sort-by #(.getName ^File %) (.listFiles d)))))
 
 (defn- discover-tests
-  "`[scan-dir test-file]` pairs across the extension dirs — every `test_*.py` /
-   `*_test.py` at any depth (top-level single-file siblings AND inside package
-   extensions). Deduped on the test file's canonical path."
+  "`[scan-dir test-file]` pairs across the given roots, deduped on the test file's
+   canonical path.
+
+   A DIRECTORY root contributes every `test_*.py` / `*_test.py` at any depth
+   (top-level single-file siblings AND inside package extensions). A root that
+   names a `*.py` FILE directly IS that test file, whatever it is called — an
+   explicitly named target is honored (pytest behaves the same) instead of
+   silently discovering nothing; its own directory is the scan root."
   [dirs]
   (->> (for
-         [^File d
+         [^File e
           (map io/file dirs)
 
-          :when (.isDirectory d)
-          ^File f
-          (walk-py d)
+          :when (.exists e)
+          [^File d ^File f]
+          (if (.isDirectory e)
+            (for
+              [^File f
+               (walk-py e)
 
-          :when (pyx/test-file? f)]
+               :when (pyx/test-file? f)]
+
+              [e f])
+            (when (str/ends-with? (.getName e) ".py")
+              [[(.getParentFile (.getCanonicalFile e)) e]]))]
 
          [d f])
        (reduce (fn [[seen acc] [_ ^File f :as pair]]
