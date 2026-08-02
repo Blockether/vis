@@ -3761,9 +3761,7 @@
 
 (def ^:private real-call-shapes
   (merge (shapes-from @ed/editing-symbols sh/shell-symbols lsf/symbols)
-         {"mcp__servers" {:pos []}
-          "mcp__tools" {:pos ["server"]}
-          "mcp__call" {:pos ["server" "tool"] :opt-pos ["args"]}}))
+         {"mcp__call" {:pos ["server"] :opt-pos ["tool" "args"]}}))
 
 (defdescribe
   native-introspection-tools-test
@@ -3977,9 +3975,8 @@
         (expect (= "run_tests({\"namespaces\": [\"a.b\"]})"
                    (synth {:name "run_tests" :input {"namespaces" ["a.b"]}})))
         (expect (= "repl_stop(\"r1\")" (synth {:name "repl_stop" :input {"id" "r1"}}))))
-    (it "mcp verbs bind positionally under the wire name"
-        (expect (= "mcp__servers()" (synth {:name "mcp__servers" :input {}})))
-        (expect (= "mcp__tools(\"fs\")" (synth {:name "mcp__tools" :input {"server" "fs"}})))
+    (it "mcp binds positionally: server first, tool and args optional"
+        (expect (= "mcp__call(\"fs\")" (synth {:name "mcp__call" :input {"server" "fs"}})))
         (expect (= "mcp__call(\"fs\", \"read\", {\"p\": 1})"
                    (synth {:name "mcp__call" :input {"server" "fs" "tool" "read" "args" {"p" 1}}})))
         (expect (= "mcp__call(\"fs\", \"read\")"
