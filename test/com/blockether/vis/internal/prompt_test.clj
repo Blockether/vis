@@ -105,12 +105,11 @@
           "hard preconditions" "`python_execution`" "`await gather(...)` only for independent calls"
           "Direct native tools: single operations" "simple edits" "small fixed call sets"
           "default for most Python/data work" "YAML/JSON/TOML/CSV" "over shell." "background shells"
-          "`shell` op `wait`" "REQUIRED `until` regex" "`logs` snapshots" "`time.sleep`"
-          "`asyncio.sleep`" "poll in Python" "higher-order Python helpers"
-          "functions that accept or return callables" "Call advertised native tools directly"
-          "for unadvertised sandbox" "read-only `session`" "raw data, not rendered text"
-          "Use documented keys" "never a `session_fold` receipt" "# saved:"
-          "Before re-running or scanning transcript" "recover raw result" "saved id"
+          "`shell` op `wait`" "REQUIRED `until` regex" "`logs` snapshots"
+          "higher-order Python helpers" "functions that accept or return callables"
+          "Call advertised native tools directly" "for unadvertised sandbox" "read-only `session`"
+          "raw data, not rendered text" "Use documented keys" "never a `session_fold` receipt"
+          "# saved:" "Before re-running or scanning transcript" "recover raw result" "saved id"
           "`ntr.describe()`" "labelled candidates" "not `ntr.keys()`/`items()` to discover results"
           "shape before indexing" "inspect keys/types" "then adapt"
           "do not print it or call `repl` status merely to" "reproduce before editing"
@@ -159,7 +158,13 @@
                   ;; schema-owned or removed contracts stay out of the core prompt
                   "stales anchors" "benchmark/profile" "Route vis issues upstream"
                   "Before every `session_fold`" "`await session_state" "≤120 words"
-                  "never offer a menu"]]
+                  "never offer a menu"
+                  ;; The sleep/poll prohibition is OWNED by `python_execution`'s own
+                  ;; description (pinned in loop_test). §1 already makes native
+                  ;; descriptions authoritative, so a core copy is dead weight: the
+                  ;; core keeps only the routing rule (background shells → `shell`
+                  ;; op `wait`), never the tool-local prohibition.
+                  "`time.sleep`" "`asyncio.sleep`" "poll in Python"]]
         (expect (not (str/includes? text surplus))))))
   (it "advertises exact model-facing Python capabilities, never internal shim ids"
       (let

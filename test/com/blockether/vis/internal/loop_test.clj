@@ -3823,7 +3823,11 @@
       (let [python-description (get-in by-name ["python_execution" :description])]
         (doseq
           [fact ["project packages need a project REPL" "ntr[tool_id]" "bare snake_case"
-                 "errors surface"]]
+                 "errors surface"
+                 ;; The sleep/poll prohibition lives HERE and nowhere else: the core
+                 ;; prompt deliberately dropped its duplicate copy.
+                 "`time.sleep`/poll for background shells" "`shell` op `wait`"
+                 "REQUIRED `until` regex"]]
           (expect (str/includes? python-description fact))))
       (expect (str/includes? (get-in by-name ["session_fold" :description])
                              "finished iterations"))))
