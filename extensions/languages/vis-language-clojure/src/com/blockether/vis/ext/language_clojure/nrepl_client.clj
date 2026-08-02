@@ -1039,7 +1039,7 @@
        — evaluated `\"2\"` cleanly; the eval path is healthy.
      {:status :unresponsive :form \"(+ 1 1)\" :ms N :hint \"...\"}
        — connected but the eval TIMED OUT or didn't return `\"2\"`: the REPL is
-         wedged and should be killed & restarted (or reprobed).
+         wedged and should be stopped, then started fresh (or reprobed).
      {:status :down         :form \"(+ 1 1)\"}
        — could not connect (stale `.nrepl-port` / dead process).
 
@@ -1083,34 +1083,40 @@
               {:status :unresponsive
                :form health-form
                :ms ms
-               :hint (str "nREPL eval timed out after "
-                          timeout-ms
-                          "ms on "
-                          health-form
-                          " — the REPL is UNRESPONSIVE. Kill & restart it (F4 / repl) or reprobe.")}
+               :hint
+               (str
+                 "nREPL eval timed out after "
+                 timeout-ms
+                 "ms on "
+                 health-form
+                 " — the REPL is UNRESPONSIVE. Stop it, then start a fresh one (F4 / repl), or reprobe.")}
               (= "2" (str/trim (str (get combined "value")))) {:status :up :ms ms}
               :else
               {:status :unresponsive
                :form health-form
                :ms ms
                :hint
-               (str "nREPL returned "
-                    (pr-str (get combined "value"))
-                    " for "
-                    health-form
-                    " (expected \"2\") — the REPL is UNHEALTHY. Kill & restart it (F4 / repl).")})))
+               (str
+                 "nREPL returned "
+                 (pr-str (get combined "value"))
+                 " for "
+                 health-form
+                 " (expected \"2\") — the REPL is UNHEALTHY. Stop it, then start a fresh one (F4 / repl).")})))
         (catch clojure.lang.ExceptionInfo e
           (if (= :clj/nrepl-connect-failed (:type (ex-data e)))
             {:status :down :form health-form}
             {:status :unresponsive
              :form health-form
-             :hint (str "nREPL connection error on "
-                        health-form
-                        " — the REPL is UNRESPONSIVE. Kill & restart it (F4 / repl).")}))
+             :hint (str
+                     "nREPL connection error on "
+                     health-form
+                     " — the REPL is UNRESPONSIVE. Stop it, then start a fresh one (F4 / repl).")}))
         (catch IOException _ (evict! host port) {:status :down :form health-form})
         (catch Throwable _
           {:status :unresponsive
            :form health-form
-           :hint (str "nREPL health check failed unexpectedly on "
-                      health-form
-                      " — the REPL may be UNRESPONSIVE. Kill & restart it (F4 / repl).")})))))
+           :hint
+           (str
+             "nREPL health check failed unexpectedly on "
+             health-form
+             " — the REPL may be UNRESPONSIVE. Stop it, then start a fresh one (F4 / repl).")})))))

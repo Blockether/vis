@@ -858,7 +858,7 @@
        spawn — reconnect or detach is the user's call.
      - Crash loop (`crash-looping?`, VS Code semantics) → \"crash-looping\":
        autostart is suspended instead of burning a JVM boot per eval; an
-       explicit stop/restart resets the guard."
+       explicit stop (or the next successful start) resets the guard."
   [session-id dir]
   (let
     [k
@@ -882,7 +882,7 @@
                             (or (:host info) "localhost")
                             ":"
                             (:port info)
-                            " is not answering — restart it and reconnect"
+                            " is not answering — bring it back up and reconnect"
                             " (repl(\"clojure\", \"connect\", {\"port\": ...})), or"
                             " repl(\"clojure\", \"stop\") to detach.")})
           (and (proc-alive? info)

@@ -610,12 +610,12 @@
 (defn- teardown-sessions!
   "Stop every stoppable resource of each registered session `select?` accepts,
    INCLUDING sessions that first appear while an earlier stop callback is still
-   blocked — teardown of one session can start another (a restart handler, a
-   re-registering owner), and a single `(keys @registry)` snapshot would leave
-   that child running past the process that owns its stop-fn. Each session is
-   torn down once (`stop-all!` already chases replacements within a session), so
-   non-stoppable and failed generations that stay registered cannot spin this
-   loop. Returns `{session-id [stop! results]}`."
+   blocked — teardown of one session can start another (a stop callback that
+   respawns, a re-registering owner), and a single `(keys @registry)` snapshot
+   would leave that child running past the process that owns its stop-fn. Each
+   session is torn down once (`stop-all!` already chases replacements within a
+   session), so non-stoppable and failed generations that stay registered cannot
+   spin this loop. Returns `{session-id [stop! results]}`."
   [select?]
   (loop
     [acc

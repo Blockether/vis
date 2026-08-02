@@ -51,7 +51,7 @@
    so a WEDGED eval executor is caught even though `describe` still answers. The
    eval result WINS — when the health check is not `:up`, its `:status`/`:form`/
    `:hint` override, so ctx shows `unresponsive` with the failing form + a clear
-   kill/restart hint."
+   stop-then-start hint."
   [host port]
   (let [p (nrepl-client/probe! {:host host :port port :timeout-ms probe-timeout-ms})]
     (if (= :up (:status p))

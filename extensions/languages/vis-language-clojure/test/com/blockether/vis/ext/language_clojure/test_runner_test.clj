@@ -67,35 +67,35 @@
 
 (defdescribe
   recover-if-unusable-test
-  (it "runs the CLI suite and restarts the nREPL when the server was unusable"
-      (let [restarted (atom nil)]
+  (it "runs the CLI suite and relaunches the nREPL when the server was unusable"
+      (let [relaunched (atom nil)]
         (with-redefs
-          [com.blockether.vis.ext.language-clojure.test-runner/restart-repl-async!
+          [com.blockether.vis.ext.language-clojure.test-runner/relaunch-repl-async!
            (fn [_sid dir]
-             (reset! restarted dir)
+             (reset! relaunched dir)
              nil)
            com.blockether.vis.ext.language-clojure.test-runner/run-via-cli
            (fn [_root _norm]
              {"mode" "cli" "is_pass" true "note" "7 cases"})]
 
           (let [r (recover-if-unusable "sid" "/proj" {} {"repl_unusable" true "error" "down"})]
-            (expect (= "/proj" @restarted))
+            (expect (= "/proj" @relaunched))
             (expect (= "cli" (get r "mode")))
             (expect (true? (get r "recovered")))
             (expect (re-find #"ran the suite via CLI" (get r "note")))
             (expect (re-find #"7 cases" (get r "note")))))))
-  (it "restarts the nREPL but keeps the timeout error for a wedged eval (no CLI)"
+  (it "relaunches the nREPL but keeps the timeout error for a wedged eval (no CLI)"
       (let
-        [restarted
+        [relaunched
          (atom nil)
 
          cli-called
          (atom false)]
 
         (with-redefs
-          [com.blockether.vis.ext.language-clojure.test-runner/restart-repl-async!
+          [com.blockether.vis.ext.language-clojure.test-runner/relaunch-repl-async!
            (fn [_sid dir]
-             (reset! restarted dir)
+             (reset! relaunched dir)
              nil)
 
            com.blockether.vis.ext.language-clojure.test-runner/run-via-cli
@@ -104,22 +104,22 @@
              {})]
 
           (let [r (recover-if-unusable "sid" "/proj" {} {"repl_wedged" true "error" "timed out"})]
-            (expect (= "/proj" @restarted))
+            (expect (= "/proj" @relaunched))
             (expect (false? @cli-called))
             (expect (re-find #"background" (get r "error")))))))
-  (it "passes a healthy result through untouched (no restart, no CLI)"
-      (let [restarted (atom false)]
+  (it "passes a healthy result through untouched (no relaunch, no CLI)"
+      (let [relaunched (atom false)]
         (with-redefs
-          [com.blockether.vis.ext.language-clojure.test-runner/restart-repl-async!
+          [com.blockether.vis.ext.language-clojure.test-runner/relaunch-repl-async!
            (fn [& _]
-             (reset! restarted true)
+             (reset! relaunched true)
              nil)]
           (let
             [orig {"mode" "repl" "pass" 5}
              r (recover-if-unusable "sid" "/proj" {} orig)]
 
             (expect (= orig r))
-            (expect (false? @restarted)))))))
+            (expect (false? @relaunched)))))))
 
 (defdescribe
   group-faults-by-cwd-test

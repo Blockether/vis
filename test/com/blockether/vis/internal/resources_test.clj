@@ -106,7 +106,7 @@
       ;; Ctx carries only what changes a decision: id/status/can_stop/port.
       ;; `can_stop` STAYS: it is the teardown affordance the agent acts on before
       ;; finishing, and a leaf that never advertises it is a REPL nobody stops.
-      ;; The pack's label/versions/created_at/can_restart noise stays out.
+      ;; The pack's label/versions/created_at noise stays out.
       (expect (= ["id" "status" "can_stop" "port"]
                  (vec (keys (get-in view ["repls" "clojure" "."])))))
       (expect (true? (get-in view ["repls" "clojure" "." "can_stop"])))

@@ -44,28 +44,29 @@
           (expect (= :clj (get-in @mirrored [:statuses 7001 :dialect])))
           (expect (= "nrepl:/proj" (get-in @mirrored [:repl :id])))))))
 
-(defdescribe
-  eval-health-block-test
-  (it "passes unresponsive eval diagnostics to the canonical resource mirror"
-      (reset-cache!)
-      (let [mirrored (atom nil)]
-        (with-redefs
-          [rm/session-repls (fn [_]
-                              [{:id "nrepl:/proj" :dir "/proj" :port 7001 :tool :clj}])
-           nc/probe! (fn [_]
-                       {:status :up :versions {:clojure "1.12.4"} :dialect :clj})
-           nc/health-check!
-           (fn [_]
-             {:status :unresponsive :form "(+ 1 1)" :hint "UNRESPONSIVE — restart or reprobe"})
-           nx/ensure-resource! (fn [_ statuses _]
-                                 (reset! mirrored (get statuses 7001)))]
+(defdescribe eval-health-block-test
+             (it "passes unresponsive eval diagnostics to the canonical resource mirror"
+                 (reset-cache!)
+                 (let [mirrored (atom nil)]
+                   (with-redefs
+                     [rm/session-repls (fn [_]
+                                         [{:id "nrepl:/proj" :dir "/proj" :port 7001 :tool :clj}])
+                      nc/probe! (fn [_]
+                                  {:status :up :versions {:clojure "1.12.4"} :dialect :clj})
+                      nc/health-check! (fn [_]
+                                         {:status :unresponsive
+                                          :form "(+ 1 1)"
+                                          :hint "UNRESPONSIVE — stop it, then start a fresh one"})
+                      nx/ensure-resource! (fn [_ statuses _]
+                                            (reset! mirrored (get statuses 7001)))]
 
-          (nx/contribute
-            {:workspace/root "/proj" :session-id "s1" :ctx-atom (atom {:session/turn 1})})
-          (expect (= :unresponsive (:status @mirrored)))
-          (expect (= "(+ 1 1)" (:form @mirrored)))
-          (expect (re-find #"(?i)restart|reprobe" (:hint @mirrored)))
-          (expect (= :clj (:dialect @mirrored)))))))
+                     (nx/contribute {:workspace/root "/proj"
+                                     :session-id "s1"
+                                     :ctx-atom (atom {:session/turn 1})})
+                     (expect (= :unresponsive (:status @mirrored)))
+                     (expect (= "(+ 1 1)" (:form @mirrored)))
+                     (expect (re-find #"(?i)stop it, then start|reprobe" (:hint @mirrored)))
+                     (expect (= :clj (:dialect @mirrored)))))))
 
 (defdescribe
   resource-mirror-logs-test

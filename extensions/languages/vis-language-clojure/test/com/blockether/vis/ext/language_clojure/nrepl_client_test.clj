@@ -141,14 +141,14 @@
                      (nc/health-check! {:port port :timeout-ms 2000})
                      ;; *1 read back through the user session is untouched
                      (expect (= "77" (get (nc/eval! {:port port :code "*1"}) "value"))))))
-  (it "reports :unresponsive with the form + a kill/restart hint when the eval overruns"
+  (it "reports :unresponsive with the form + a stop-then-start hint when the eval overruns"
       (with-server (fn [port]
                      ;; a 1ms budget cannot complete the round-trip -> wedged-path branch
                      (let [r (nc/health-check! {:port port :timeout-ms 1})]
                        (when (= :unresponsive (:status r))
                          (expect (= "(+ 1 1)" (:form r)))
                          (expect (re-find #"(?i)unresponsive" (:hint r)))
-                         (expect (re-find #"(?i)restart|reprobe" (:hint r))))))))
+                         (expect (re-find #"(?i)stop it, then start|reprobe" (:hint r))))))))
   (it "reports :down (with the form) on a closed port and never throws"
       (expect (= {:status :down :form "(+ 1 1)"} (nc/health-check! {:port 1 :timeout-ms 200})))
       (expect (= {:status :down :form "(+ 1 1)"} (nc/health-check! {:port nil})))))

@@ -845,7 +845,7 @@
 (defn prepare-session-jail!
   "Bind the language surface's live session env to the managed-process contract.
    Missing session identity or policy fails closed before a language handler can
-   start/restart a REPL or project test process. Safe and idempotent per dispatch."
+   start a REPL or project test process. Safe and idempotent per dispatch."
   [{:keys [session-id jail-policy-fn]}]
   (when-not session-id
     (throw (ex-info "Managed language process denied: session id is unavailable"
