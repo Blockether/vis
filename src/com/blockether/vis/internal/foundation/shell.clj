@@ -722,13 +722,10 @@
    then record the exit code and flip the registered resource to :exited.
    The resource stays listed (logs + exit readable) until resource_stop.
 
-   `stopped?` is the cooperative-shutdown flag the stop-fn sets BEFORE it
-   unregisters the resource: once set, the pump does NOT call
-   `resources/update!`. That matters because `resources/update!` guards with
-   a non-atomic `get-in` then `update-in` — calling it after `unregister!`
-   would resurrect a partial `:data`-only entry (TOCTOU). The stop-fn also
-   joins this thread, so on a manual stop the pump has fully drained before
-   the resource is removed. Returns the started Thread."
+   `stopped?` is the cooperative-shutdown flag the stop-fn or an exited-entry
+   replacement sets before retiring this generation. Final bridge/registry work
+   is serialized with same-id start/stop and guarded by process identity, so an
+   old pump can never update or unlink its successor. Returns the started Thread."
   ^Thread [session id p buffer exit-atom stopped? bridge-atom]
   (doto
     (Thread.
@@ -752,19 +749,22 @@
              (catch Throwable _ nil))
         (let [code (try ((:wait p)) (catch Throwable _ nil))]
           (reset! exit-atom code)
+          ;; Avoid contending with a manual stop in the normal case: it sets the
+          ;; flag before closing the reader and then joins this thread.
           (when-not @stopped?
-            ;; Natural child exit (not resource_stop): tear down the attach
-            ;; bridge so its AF_UNIX socket doesn't linger — otherwise a human
-            ;; could `attach` a dead shell and find-socket could pick the
-            ;; stale .sock. On a manual stop the stop-fn owns this teardown.
-            (when-let [b @bridge-atom]
-              (try ((:stop b)) (catch Throwable _ nil)))
-            (try (resources/update! session
-                                    id
-                                    {:status :exited
-                                     :detail
-                                     (str "exit " code " — logs retained until resource_stop")})
-                 (catch Throwable _ nil))))))
+            #_{:clj-kondo/ignore [:locking-suspicious-lock]}
+            (locking (bg-lifecycle-lock session id)
+              ;; Re-check under the same monitor a replacement uses. If it won,
+              ;; its entry and socket path belong to the successor and are sacred.
+              (when (and (not @stopped?) (identical? p (:proc (bg-entry session id))))
+                (when-let [b @bridge-atom]
+                  (try ((:stop b)) (catch Throwable _ nil)))
+                (try (resources/update! session
+                                        id
+                                        {:status :exited
+                                         :detail
+                                         (str "exit " code " — logs retained until resource_stop")})
+                     (catch Throwable _ nil))))))))
     (.setName (str "vis-shell-bg-" id))
     (.setDaemon true)
     (.start)))
@@ -830,7 +830,17 @@
     (when (str/blank? script)
       (throw (ex-info "The shell background op needs its `commands` as the first argument."
                       {:type ::blank-command})))
-    (when (bg-entry session id) (resources/unregister! session id) (drop-bg-entry! session id))
+    (when-let [stale (bg-entry session id)]
+      ;; The caller established that this generation has exited. Retire its
+      ;; async pump/bridge under the lifecycle lock before reusing the socket path.
+      ;; The pump re-checks this flag + process identity under the same lock, so it
+      ;; cannot publish the old exit status onto the replacement.
+      (reset! (:stopped? stale) true)
+      (try (.close ^java.io.InputStream (:in (:proc stale))) (catch Throwable _ nil))
+      (when-let [bridge (:bridge stale)]
+        (try ((:stop bridge)) (catch Throwable _ nil)))
+      (resources/unregister! session id)
+      (drop-bg-entry! session id))
     (let
       [dir
        (resolve-dir (assoc (or opts {}) ::environment env))

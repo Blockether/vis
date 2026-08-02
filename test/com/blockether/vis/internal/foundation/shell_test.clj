@@ -488,6 +488,42 @@
                            (expect (= "running" (get replacement "status")))
                            (expect (= (get replacement "pid")
                                       (get (:result (shell-logs* env "same")) "pid"))))))))
+                 (finally (deliver release true) (resources/stop-all! sid))))))))
+  (it
+    "prevents an exiting old pump from publishing status onto its replacement"
+    (with-shell-on
+      (fn []
+        (binding [workspace/*workspace-root* (workspace/trunk-root)]
+          (let
+            [sid (str "shell-ext-exit-replace-race-" (System/nanoTime))
+             env {:session-id sid}
+             update-var #'resources/update!
+             original-update (var-get update-var)
+             entered (promise)
+             release (promise)]
+
+            (try (with-redefs-fn {update-var (fn [& args]
+                                               (when (= sid (str (first args)))
+                                                 (deliver entered true)
+                                                 @release)
+                                               (apply original-update args))}
+                   (fn []
+                     (shell-bg* env "same" "exit 7")
+                     (expect (not= ::timed-out (deref entered 5000 ::timed-out)))
+                     (let [starting (future (shell-bg* env "same" "sleep 60"))]
+                       ;; Exit finalization owns the same lifecycle lock as replacement.
+                       ;; Without it, the replacement starts and the old delayed update
+                       ;; marks that new resource exited/failed.
+                       (expect (= ::blocked (deref starting 50 ::blocked)))
+                       (deliver release true)
+                       (let
+                         [replacement (:result (deref starting 10000 ::timed-out))
+                          registered (resources/get-resource sid "same")]
+
+                         (expect (not= ::timed-out replacement))
+                         (expect (= "running" (get replacement "status")))
+                         (expect (= (get replacement "pid") (get registered "pid")))
+                         (expect (= "running" (get registered "status")))))))
                  (finally (deliver release true) (resources/stop-all! sid)))))))))
 
 (defdescribe

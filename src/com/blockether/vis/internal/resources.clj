@@ -166,6 +166,55 @@
 ;; Public API — every verb is scoped to the owning `session`.
 ;; ---------------------------------------------------------------------------
 
+(defn- replace-record-if-current!
+  "Atomically transform `expected` only while it is still the exact record stored
+   at `sid`/`id`. A replacement is a new record object even when its DATA is equal;
+   stale async work must never patch that successor. Returns the updated record or
+   nil when the generation changed."
+  [sid id expected transform]
+  (loop []
+
+    (let
+      [snapshot
+       @registry
+
+       current
+       (get-in snapshot [sid id])]
+
+      (when (identical? expected current)
+        (let
+          [updated
+           (transform current)
+
+           next-registry
+           (assoc-in snapshot [sid id] updated)]
+
+          (if (compare-and-set! registry snapshot next-registry) updated (recur)))))))
+
+(defn- remove-record-if-current!
+  "Atomically remove `expected` only while it is still the exact record stored at
+   `sid`/`id`. Returns true only when that generation was removed."
+  [sid id expected]
+  (loop []
+
+    (let
+      [snapshot
+       @registry
+
+       current
+       (get-in snapshot [sid id])]
+
+      (if-not (identical? expected current)
+        false
+        (let
+          [remaining
+           (dissoc (get snapshot sid) id)
+
+           next-registry
+           (if (seq remaining) (assoc snapshot sid remaining) (dissoc snapshot sid))]
+
+          (if (compare-and-set! registry snapshot next-registry) true (recur)))))))
+
 (defn register!
   "Register (or replace) a resource UNDER `session`. `resource` is the DATA map
    (needs at least `:id`, unique within the session; `:kind` defaults to
@@ -205,26 +254,34 @@
      data)))
 
 (defn update!
-  "Patch the DATA of an existing resource (e.g. flip `:status`, refresh
-   `:detail`). No-op if unknown. Returns the updated DATA map or nil."
+  "Patch the DATA of the resource generation current when this call began (e.g.
+   flip `:status`, refresh `:detail`). No-op if unknown or if that generation was
+   replaced while the patch was being prepared. Returns the updated DATA map or
+   nil."
   [session id patch]
   (let
     [sid
      (skey session)
 
      id
-     (str id)]
+     (str id)
 
-    (when (get-in @registry [sid id])
-      (let
-        [data (-> (swap! registry update-in [sid id :data] merge (normalize-patch patch))
-                  (get-in [sid id :data]))]
-        (persist-snapshot!)
-        data))))
+     expected
+     (get-in @registry [sid id])]
+
+    (when expected
+      ;; Normalize after capturing the generation: option coercion or caller code
+      ;; can take time, and its result belongs only to the record it started from.
+      (let [normalized (normalize-patch patch)]
+        (when-let
+          [updated (replace-record-if-current! sid id expected #(update % :data merge normalized))]
+          (persist-snapshot!)
+          (:data updated))))))
 
 (defn unregister!
-  "Drop a resource from `session` (does NOT run its stop-fn — caller decides).
-   Returns true if something was removed."
+  "Drop the resource generation current when this call began from `session`
+   (does NOT run its stop-fn — caller decides). A concurrent replacement is never
+   removed. Returns true only when the captured generation was removed."
   [session id]
   (let
     [sid
@@ -233,49 +290,54 @@
      id
      (str id)
 
-     present
-     (boolean (get-in @registry [sid id]))]
+     expected
+     (get-in @registry [sid id])
 
-    (when present
-      (swap! registry update sid dissoc id)
-      (when (empty? (get @registry sid)) (swap! registry dissoc sid))
-      (persist-snapshot!))
-    present))
+     removed?
+     (and expected (remove-record-if-current! sid id expected))]
+
+    (when removed? (persist-snapshot!))
+    (boolean removed?)))
 
 (defn prune!
-  "Drop `session` resources whose process is gone (per `:alive-fn`/pid). Returns
-   the vector of pruned ids. Cheap enough to call before every list/render."
+  "Drop `session` resource generations whose process is gone (per
+   `:alive-fn`/pid). A replacement installed while an old liveness probe is
+   blocked survives. Returns the vector of generations actually pruned. Cheap
+   enough to call before every list/render."
   [session]
   (let
     [sid
      (skey session)
 
-     snap
+     snapshot
      (get @registry sid)
 
      dead
      (into []
-           (comp (filter (fn [[_ r]]
-                           (not (record-alive? r))))
-                 (map key))
-           snap)]
+           (filter (fn [[_ record]]
+                     (not (record-alive? record))))
+           snapshot)
 
-    (when (seq dead)
-      (apply swap! registry update sid dissoc dead)
-      (when (empty? (get @registry sid)) (swap! registry dissoc sid))
-      (persist-snapshot!))
-    dead))
+     removed
+     (into []
+           (keep (fn [[id record]]
+                   (when (remove-record-if-current! sid id record) id)))
+           dead)]
+
+    (when (seq removed) (persist-snapshot!))
+    removed))
 
 ;; Hard per-probe deadline for a `:health-fn`. One wedged health thunk (a hung
 ;; server, a blocking connect) must NEVER stall a footer render or a ctx build.
 (def ^:private health-timeout-ms 300)
 
 (defn- refresh-health!
-  "Probe every health-capable resource of `session` IN PARALLEL, each under a
-   hard `health-timeout-ms` deadline, and flip the stored `status` where it
-   changed. A `:health-fn` returns a keyword status (:up :starting :failed
-   :down …); nil / a throw / a timeout means UNKNOWN and leaves the stored
-   status alone. Best-effort; persists once when anything flipped."
+  "Probe every health-capable resource generation of `session` IN PARALLEL, each
+   under a hard `health-timeout-ms` deadline, and flip that same generation's
+   stored `status` where it changed. A replacement installed while an old probe
+   is blocked is never patched. A `:health-fn` returns a keyword status (:up
+   :starting :failed :down …); nil / a throw / a timeout means UNKNOWN and leaves
+   the stored status alone. Best-effort; persists once when anything flipped."
   [session]
   (let
     [sid
@@ -283,21 +345,21 @@
 
      probes
      (into []
-           (keep (fn [[id {:keys [health-fn]}]]
-                   (when health-fn [id (future (try (health-fn) (catch Throwable _ nil)))])))
+           (keep (fn [[id {:keys [health-fn] :as record}]]
+                   (when health-fn [id record (future (try (health-fn) (catch Throwable _ nil)))])))
            (get @registry sid))
 
      changed?
      (volatile! false)]
 
-    (doseq [[id fut] probes]
+    (doseq [[id record fut] probes]
       (let [st (deref fut health-timeout-ms nil)]
         (when-not (realized? fut) (future-cancel fut))
         (when (keyword? st)
-          (let [s (name st)]
-            (when (and (get-in @registry [sid id])
-                       (not= s (get-in @registry [sid id :data "status"])))
-              (swap! registry assoc-in [sid id :data "status"] s)
+          (let [status (name st)]
+            (when
+              (and (not= status (get-in record [:data "status"]))
+                   (replace-record-if-current! sid id record #(assoc-in % [:data "status"] status)))
               (vreset! changed? true))))))
     (when @changed? (persist-snapshot!))))
 
@@ -483,10 +545,53 @@
                     {:result :restarted :id id})))))
 
 (defn stop-all!
-  "Teardown spout for one `session` (engine end-of-session): stop every resource
-   that session registered. Best-effort; returns the vector of stop! results."
+  "Teardown spout for one `session` (engine end-of-session): stop every stoppable
+   resource generation registered before or during teardown. Unlike one `stop!`,
+   teardown also chases replacements installed while an older callback is
+   blocked. Non-stoppable generations are reported once and left registered.
+   Best-effort; returns the vector of stop! results."
   [session]
-  (mapv (partial stop! session) (keys (get @registry (skey session)))))
+  (loop
+    [results
+     []
+
+     skipped
+     {}
+
+     budget
+     1024]
+
+    (let
+      [sid
+       (skey session)
+
+       snapshot
+       (get @registry sid)
+
+       actionable
+       (into []
+             (remove (fn [[id record]]
+                       (identical? record (get skipped id))))
+             snapshot)]
+
+      (cond (empty? actionable) results
+            (<= budget 0)
+            (conj results
+                  {:result :error :id "*" :message "Resource teardown exceeded 1024 generations."})
+            :else
+            (let
+              [steps
+               (mapv (fn [[id record]]
+                       [id record (stop! session id)])
+                     actionable)
+
+               skipped
+               (reduce (fn [m [id record result]]
+                         (if (= :not-stoppable (:result result)) (assoc m id record) (dissoc m id)))
+                       skipped
+                       steps)]
+
+              (recur (into results (map #(nth % 2)) steps) skipped (- budget (count steps))))))))
 
 (defn shutdown!
   "Process-wide teardown spout (daemon/engine shutdown): stop EVERY registered

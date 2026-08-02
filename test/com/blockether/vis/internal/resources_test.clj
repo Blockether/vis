@@ -204,4 +204,132 @@
                    ;; Without snapshot/write serialization these two writes land
                    ;; in the opposite order and the replacement disappears on disk.
                    (expect (= "replacement" (get-in (last @writes) [sid "same" "label"])))))))
-           (finally (deliver release-writer true) (resources/stop-all! sid))))))
+           (finally (deliver release-writer true) (resources/stop-all! sid)))))
+  (it
+    "does not apply a delayed update to a replacement generation"
+    (let
+      [sid
+       (fresh-sid)
+
+       normalize-var
+       (ns-resolve 'com.blockether.vis.internal.resources 'normalize-patch)
+
+       original-normalize
+       (var-get normalize-var)
+
+       entered
+       (promise)
+
+       release
+       (promise)]
+
+      (try (resources/register! sid {:id "same" :kind :process :status :running :label "old"})
+           (with-redefs-fn {normalize-var (fn [patch]
+                                            (deliver entered true)
+                                            @release
+                                            (original-normalize patch))}
+             (fn []
+               (let [updating (future (resources/update! sid "same" {:status :failed}))]
+                 @entered
+                 (resources/unregister! sid "same")
+                 (resources/register!
+                   sid
+                   {:id "same" :kind :process :status :running :label "replacement"})
+                 (deliver release true)
+                 (expect (nil? @updating))
+                 (let [survivor (resources/get-resource sid "same")]
+                   (expect (= "replacement" (get survivor "label")))
+                   (expect (= "running" (get survivor "status")))))))
+           (finally (deliver release true) (resources/unregister! sid "same")))))
+  (it "does not prune a replacement installed while the old liveness probe is blocked"
+      (let
+        [sid
+         (fresh-sid)
+
+         entered
+         (promise)
+
+         release
+         (promise)]
+
+        (try (resources/register! sid
+                                  {:id "same" :kind :process :status :running :label "old"}
+                                  {:alive-fn (fn []
+                                               (deliver entered true)
+                                               @release
+                                               false)})
+             (let [pruning (future (resources/prune! sid))]
+               @entered
+               (resources/register!
+                 sid
+                 {:id "same" :kind :process :status :running :label "replacement"})
+               (deliver release true)
+               (expect (empty? @pruning))
+               (expect (= "replacement" (get (resources/get-resource sid "same") "label"))))
+             (finally (deliver release true) (resources/unregister! sid "same")))))
+  (it "does not apply an old delayed health result to a replacement generation"
+      (let
+        [sid
+         (fresh-sid)
+
+         entered
+         (promise)
+
+         release
+         (promise)]
+
+        (try (resources/register! sid
+                                  {:id "same" :kind :process :status :running :label "old"}
+                                  {:health-fn (fn []
+                                                (deliver entered true)
+                                                @release
+                                                :failed)})
+             (let [listing (future (resources/list-resources sid))]
+               @entered
+               (resources/register!
+                 sid
+                 {:id "same" :kind :process :status :running :label "replacement"})
+               (deliver release true)
+               @listing
+               (let [survivor (resources/get-resource sid "same")]
+                 (expect (= "replacement" (get survivor "label")))
+                 (expect (= "running" (get survivor "status")))))
+             (finally (deliver release true) (resources/unregister! sid "same")))))
+  (it
+    "stop-all chases a replacement installed while the old callback is blocked"
+    (let
+      [sid
+       (fresh-sid)
+
+       entered
+       (promise)
+
+       release
+       (promise)
+
+       old-stops
+       (atom 0)
+
+       replacement-stops
+       (atom 0)]
+
+      (try (resources/register! sid
+                                {:id "same" :kind :process :status :running :label "old"}
+                                {:stop-fn (fn []
+                                            (swap! old-stops inc)
+                                            (deliver entered true)
+                                            @release)})
+           (let [stopping-all (future (resources/stop-all! sid))]
+             @entered
+             (resources/register! sid
+                                  {:id "same" :kind :process :status :running :label "replacement"}
+                                  {:stop-fn #(swap! replacement-stops inc)})
+             (deliver release true)
+             (let [results (deref stopping-all 5000 ::timed-out)]
+               (expect (not= ::timed-out results))
+               (expect (= 2 (count results)))
+               (expect (every? #(= :stopped (:result %)) results))
+               (expect (= 1 @old-stops))
+               (expect (= 1 @replacement-stops))
+               (expect (nil? (resources/get-resource sid "same")))))
+           (finally (deliver release true) (resources/stop-all! sid))))))

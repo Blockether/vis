@@ -774,7 +774,7 @@ def __vis_install_bs4__():
         return "".join(out)
 
     def _pretty_string(node, depth):
-        pad = " " * depth
+        pad = "  " * depth
         if isinstance(node, Comment):
             return pad + _LT + "!--" + str(node) + "--" + _GT
         if isinstance(node, CData):
@@ -797,7 +797,7 @@ def __vis_install_bs4__():
         kids = [k for k in kids if k != ""]
         if node.name == "[document]":
             return _NL.join(kids)
-        pad = " " * depth
+        pad = "  " * depth
         open_tag, is_void = _open_tag(node, pad)
         if is_void:
             return open_tag
