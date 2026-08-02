@@ -7077,8 +7077,11 @@
 
 (def ^:private FRESH_ITER_CARRY
   ;; `:trailer-iters` is a vec of `[iteration-position {:thinking :blocks}]`
-  ;; pairs (oldest-first). The prompt renderer trims the rendered trailer
-  ;; by token budget (50% of model context), not fixed iteration count.
+  ;; pairs (oldest-first). NOTHING trims this by token budget: neither the
+  ;; seed (cross-turn carry) nor the renderer. `max-context-tokens` only
+  ;; feeds the advisory context-pressure hint. The sole token-driven
+  ;; reduction is reactive — `context-overflow-recovery` after the provider
+  ;; refuses the request.
   {:trailer-iters []})
 
 (def ^:private balanced-reasoning :balanced)
@@ -7254,14 +7257,26 @@
          ;; Folding more can only shrink the projection, so the smallest fitting
          ;; prefix is a binary search — O(log n) estimator passes, not O(n).
          chosen
-         (loop [lo 1 hi (count foldable) best nil]
+         (loop
+           [lo
+            1
+
+            hi
+            (count foldable)
+
+            best
+            nil]
+
            (if (> (long lo) (long hi))
              (or best (project (count foldable)))
-             (let [mid (quot (+ (long lo) (long hi)) 2)
-                   candidate (project mid)]
-               (if (fits? candidate)
-                 (recur lo (dec mid) candidate)
-                 (recur (inc mid) hi best)))))]
+             (let
+               [mid
+                (quot (+ (long lo) (long hi)) 2)
+
+                candidate
+                (project mid)]
+
+               (if (fits? candidate) (recur lo (dec mid) candidate) (recur (inc mid) hi best)))))]
 
         (when (fits? chosen)
           {:messages (:messages chosen)
@@ -7286,29 +7301,29 @@
   [{:keys [error output-started? recovery-state ctx-atom turn-input-tokens base-messages
            trailer-iters summaries protected-scopes replay-target replay-policies model]}]
   (let [overflow (ex-data error)]
-    (when (and (contains? perr/CONTEXT_OVERFLOW_TYPES (:type overflow))
-               (not @output-started?))
-      (let [{:keys [attempts last-after-tokens]} (swap! recovery-state update :attempts (fnil inc 0))
-            attempt (long attempts)]
+    (when (and (contains? perr/CONTEXT_OVERFLOW_TYPES (:type overflow)) (not @output-started?))
+      (let
+        [{:keys [attempts last-after-tokens]} (swap! recovery-state update :attempts (fnil inc 0))
+         attempt (long attempts)]
+
         (when (<= attempt (count CONTEXT_OVERFLOW_FOLD_RATIOS))
           (stamp-utilization! ctx-atom
                               (ctx-engine/utilization (:input-tokens overflow)
                                                       (:max-input-tokens overflow)
                                                       turn-input-tokens
                                                       ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))
-          (when-let [projection (emergency-fold-projection
-                                  base-messages
-                                  trailer-iters
-                                  summaries
-                                  protected-scopes
-                                  replay-target
-                                  replay-policies
-                                  model
-                                  (some-> (:max-input-tokens overflow)
-                                          long
-                                          (* (double (nth CONTEXT_OVERFLOW_FOLD_RATIOS
-                                                          (dec attempt))))
-                                          long))]
+          (when-let
+            [projection (emergency-fold-projection
+                          base-messages
+                          trailer-iters
+                          summaries
+                          protected-scopes
+                          replay-target
+                          replay-policies
+                          model
+                          (when-let [limit (:max-input-tokens overflow)]
+                            (long (* (double limit)
+                                     (double (nth CONTEXT_OVERFLOW_FOLD_RATIOS (dec attempt)))))))]
             (when (or (nil? last-after-tokens)
                       (< (long (:after-tokens projection)) (long last-after-tokens)))
               (swap! recovery-state assoc :last-after-tokens (:after-tokens projection))

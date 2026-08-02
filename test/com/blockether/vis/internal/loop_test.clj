@@ -4808,7 +4808,7 @@
   (describe
     "one-shot overflow rescue"
     (it
-      "uses fold projection, shrinks wire input, and leaves canonical history unchanged"
+      "folds the OLDEST settled work only, shrinks wire input, and leaves canonical history unchanged"
       (let
         [large
          (apply str (repeat 20000 "x"))
@@ -4834,7 +4834,9 @@
 
         (expect (some? recovery))
         (expect (< (:after-tokens recovery) (:before-tokens recovery)))
-        (expect (= #{"t1/i1" "t1/i2"} (:scopes recovery)))
+        ;; Graduated: the newest iteration survives verbatim because folding the
+        ;; oldest one already fits the budget.
+        (expect (= #{"t1/i1"} (:scopes recovery)))
         (expect (= original trailer))
         (expect (= "stable"
                    (-> recovery
@@ -4843,8 +4845,54 @@
                        :content)))
         (expect (some #(re-find #"Emergency transport fold" (str (:content %)))
                       (:messages recovery)))
-        (expect (some #(re-find #"2 searches, 2 tool calls" (str (:content %)))
+        (expect (some #(re-find #"1 search, 1 tool call" (str (:content %)))
                       (:messages recovery)))))
+    (it "escalates: each rescue folds strictly more, then goes terminal"
+        (let
+          [content
+           [{:type "text" :text (apply str (repeat 5000 "x"))}
+            {:type "tool_use" :id "tc" :name "grep" :input {"query" "x"}}]
+
+           trailer
+           (mapv (fn [i] (stub-tool-iter {:id i :content content})) (range 1 13))
+
+           state
+           (atom {:attempts 0})
+
+           overflow
+           (ex-info "Context overflow"
+                    {:type :svar.core/context-overflow
+                     :source :preflight
+                     :input-tokens 20000
+                     :max-input-tokens 10000})
+
+           rescue
+           (fn []
+             (context-overflow-recovery! {:error overflow
+                                          :output-started? (atom false)
+                                          :recovery-state state
+                                          :ctx-atom (atom {})
+                                          :turn-input-tokens 0
+                                          :base-messages []
+                                          :trailer-iters trailer
+                                          :summaries []
+                                          :protected-scopes #{}
+                                          :replay-target {:provider :openai :model "gpt"}
+                                          :replay-policies {}
+                                          :model "gpt-4o"}))
+
+           rescues
+           (mapv (fn [_] (rescue)) (range 4))]
+
+          (expect (= [1 2 3 nil] (mapv :attempt rescues)))
+          (expect (nil? (last rescues)))
+          ;; Every rescue keeps recent work; only the oldest prefix collapses.
+          (expect (every? #(< (count (:scopes %)) (count trailer)) (butlast rescues)))
+          (expect (apply < (mapv #(count (:scopes %)) (butlast rescues))))
+          (expect (apply > (mapv :after-tokens (butlast rescues))))
+          (expect (every? #(<= (long (:after-tokens %)) (long (:max-input-tokens %)))
+                          (butlast rescues)))
+          (expect (not-any? #(contains? (:scopes %) "t1/i12") (butlast rescues)))))
     (it "preserves existing semantic fold gists"
         (let
           [large
@@ -4938,8 +4986,8 @@
          calls
          (atom [])
 
-         attempted?
-         (atom false)
+         rescue-state
+         (atom {:attempts 0})
 
          output?
          (atom false)
@@ -4963,7 +5011,7 @@
              (if-let
                [recovery (context-overflow-recovery! {:error result
                                                       :output-started? output?
-                                                      :recovery-attempted? attempted?
+                                                      :recovery-state rescue-state
                                                       :ctx-atom ctx-atom
                                                       :turn-input-tokens 0
                                                       :base-messages base
