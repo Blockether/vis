@@ -565,5 +565,5 @@
            ;; One runtime per update: naming two is a refusal, not a guess.
            (let [{:keys [exit output]} (run! ["update" "--native" "--dev"])]
              (expect (= 1 exit) output)
-             (expect (str/includes? output "name one runtime to update")))
+             (expect (str/includes? output "name one runtime, not --native and --dev")))
            (finally (delete-tree! root))))))

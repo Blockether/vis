@@ -1514,11 +1514,49 @@
 
 ;;; ── Root one-shot run - handler + bespoke arg parser ─────────────────────
 
+(def ^:private run-boolean-flags
+  "Root one-shot flags that take no value, mapped to their opts key."
+  {"--json" :json?
+   "--code" :code?
+   "--raw" :raw?
+   "--full-trace-stream" :full-trace-stream?
+   "--trace" :full-trace-stream?
+   "--full-trace-json-stream" :full-trace-json-stream?
+   "--full-trace-json-stream-raw" :full-trace-json-stream?
+   ;; `--verbose` / `-v` are read by `configure-logging!` too; they are listed
+   ;; here so they are consumed rather than glued into the prompt.
+   "--debug" :debug?
+   "--verbose" :debug?
+   "-v" :debug?
+   "--persist" :persist?})
+
+(def ^:private run-value-flags
+  "Root one-shot flags that consume the NEXT token as their value."
+  {"--toggles" :toggles
+   "--provider" :provider
+   "--model" :model
+   "--reasoning-effort" :reasoning-effort
+   "--name" :agent-name
+   "--db" :db
+   "--session-id" :session-id})
+
+(defn- option-token?
+  "True for a bare token SHAPED like a flag (`-v`, `--json`, `--full-trace-stream`).
+   Prompt prose never qualifies: a quoted prompt that opens with dashes carries
+   whitespace (`vis-agent \"--json output is broken\"`), and `--` ends flag parsing."
+  [arg]
+  (boolean (re-matches #"-{1,2}[A-Za-z][A-Za-z0-9-]*" (str arg))))
+
 (defn- parse-run-args
   "Parse root one-shot run arguments into {:prompt str :json? bool ...}.
 
    Bespoke instead of `commandline.base/parse-args` because everything
-   that ISN'T a known flag is glued together as the prompt body."
+   that ISN'T a known flag is glued together as the prompt body. A token
+   shaped like a flag but unknown, or a value flag left without a value,
+   lands in `:flag-errors` instead of the prompt: `vis-agent --modle x
+   \"task\"` used to run silently with the DEFAULT model and a prompt
+   polluted with the typo. `--` ends flag parsing, so a prompt can still
+   start with dashes."
   [args]
   (loop
     [args
@@ -1539,59 +1577,32 @@
          more
          (next args)]
 
-        (case arg
-          "--json"
-          (recur more (assoc opts :json? true) prompt-parts)
+        (cond (= "--" arg) (assoc opts :prompt (str/join " " (into prompt-parts more)))
 
-          "--code"
-          (recur more (assoc opts :code? true) prompt-parts)
+              (contains? #{"--help" "-h"} arg)
+              (assoc opts
+                :help? true
+                :prompt "")
 
-          "--raw"
-          (recur more (assoc opts :raw? true) prompt-parts)
+              (contains? run-boolean-flags arg)
+              (recur more (assoc opts (run-boolean-flags arg) true) prompt-parts)
 
-          "--toggles"
-          (recur (next more) (assoc opts :toggles (first more)) prompt-parts)
+              (contains? run-value-flags arg)
+              (if (nil? (first more))
+                (recur more
+                       (update opts :flag-errors (fnil conj []) (str arg " needs a value"))
+                       prompt-parts)
+                (recur (next more)
+                       (cond-> (assoc opts (run-value-flags arg) (first more))
+                         (= "--session-id" arg) (assoc :persist? true))
+                       prompt-parts))
 
-          ("--full-trace-stream" "--trace")
-          (recur more (assoc opts :full-trace-stream? true) prompt-parts)
+              (option-token? arg)
+              (recur more
+                     (update opts :flag-errors (fnil conj []) (str "unknown flag " arg))
+                     prompt-parts)
 
-          ("--full-trace-json-stream" "--full-trace-json-stream-raw")
-          (recur more (assoc opts :full-trace-json-stream? true) prompt-parts)
-
-          ("--help" "-h")
-          (assoc opts
-            :help? true
-            :prompt "")
-
-          "--debug"
-          (recur more (assoc opts :debug? true) prompt-parts)
-
-          "--provider"
-          (recur (next more) (assoc opts :provider (first more)) prompt-parts)
-
-          "--model"
-          (recur (next more) (assoc opts :model (first more)) prompt-parts)
-
-          "--reasoning-effort"
-          (recur (next more) (assoc opts :reasoning-effort (first more)) prompt-parts)
-
-          "--name"
-          (recur (next more) (assoc opts :agent-name (first more)) prompt-parts)
-
-          "--db"
-          (recur (next more) (assoc opts :db (first more)) prompt-parts)
-
-          "--session-id"
-          (recur (next more)
-                 (assoc opts
-                   :session-id (first more)
-                   :persist? true)
-                 prompt-parts)
-
-          "--persist"
-          (recur more (assoc opts :persist? true) prompt-parts)
-
-          (recur more opts (conj prompt-parts arg)))))))
+              :else (recur more opts (conj prompt-parts arg)))))))
 
 (defn- print-run-usage!
   []
@@ -1626,7 +1637,9 @@
   (stdout! "  --db PATH|:memory    Override the SQLite path (or :memory).")
   (stdout! "  --session-id ID      Continue an existing persisted session.")
   (stdout! "  --persist            Write this run to ~/.vis/vis.mdb as a")
-  (stdout! "                       `:cli` session. Default is ephemeral:")
+  (stdout! "                       no resume, no session row on disk.")
+  (stdout! "  --                   End flag parsing: every later word is prompt")
+  (stdout! "                       text, dashes and all.")
   (stdout! "                       no resume, no session row on disk.")
   (stdout! "")
   (stdout! "Examples:")
@@ -1743,6 +1756,14 @@
              toggles]
       :as opts}
      (parse-run-args residual)]
+    ;; A flag typo used to be smuggled into the prompt: `vis-agent --modle x "task"`
+    ;; ran with the DEFAULT model and never said so. Refuse instead, and name the
+    ;; escape hatch for prompts that really do start with dashes.
+    (when-let [errors (seq (:flag-errors opts))]
+      (doseq [e errors] (stdout! (str "vis-agent: " e)))
+      (stdout! "  See the flag list:            vis-agent --help")
+      (stdout! "  Or make it the prompt text:   vis-agent -- <text>")
+      (System/exit 2))
     (when (or help? (str/blank? prompt)) (print-run-usage!) (System/exit 0))
     ;; Auto-promote to raw when stdout is NOT a TTY (piped/redirected).
     ;; Otherwise `vis-agent ... > out.txt` leaves bold/italic ANSI markers in
@@ -2901,202 +2922,29 @@
           "It is auto-loaded when you run vis-agent from this project (or from ~/.vis/vis-extensions)."))))
   (shutdown-agents))
 
-(defn- source-checkout-root
-  []
-  (or (some-> (System/getenv "VIS_SOURCE_ROOT")
-              not-empty
-              io/file)
-      (when-let
-        [^java.io.File f (some-> (io/resource "com/blockether/vis/internal/main.clj")
-                                 str
-                                 (str/replace-first #"^file:" "")
-                                 java.net.URLDecoder/decode
-                                 io/file)]
-        (loop
-          [^java.io.File d f
-           n 6]
 
-          (if (or (nil? d) (zero? n)) d (recur (.getParentFile d) (dec n)))))
-      (io/file ".")))
 
-(defn- git-checkout? [dir] (.exists (io/file dir ".git")))
 
-(defn- process-result
-  [cmd dir]
-  (let
-    [p
-     (process/process {:cmd cmd :dir (.getPath (io/file dir)) :out :string :err :string})
 
-     proc
-     (:proc p)
 
-     _
-     (.waitFor ^Process proc)
 
-     result
-     @p]
 
-    {:exit (:exit result) :out (:out result) :err (:err result)}))
 
-(defn- git-line
-  "Trimmed stdout of a successful git command, or nil (non-zero exit or empty)."
-  [args dir]
-  (let [{:keys [exit out]} (process-result (into ["git"] args) dir)]
-    (when (zero? (long exit)) (not-empty (str/trim (or out ""))))))
 
-(defn- update-facts
-  "Post-fetch state of the checkout: tracking branch, ahead/behind counts
-   against it, and whether the working tree is dirty."
-  [root]
-  (let
-    [upstream
-     (git-line ["rev-parse" "--abbrev-ref" "--symbolic-full-name" "@{upstream}"] root)
-
-     counts
-     (when upstream (git-line ["rev-list" "--left-right" "--count" (str "HEAD..." upstream)] root))
-
-     [ahead behind]
-     (some->> counts
-              (re-seq #"\d+")
-              (mapv parse-long))]
-
-    {:branch (git-line ["rev-parse" "--abbrev-ref" "HEAD"] root)
-     :upstream upstream
-     :head (git-line ["rev-parse" "HEAD"] root)
-     :ahead (or ahead 0)
-     :behind (or behind 0)
-     :dirty? (boolean (git-line ["status" "--porcelain"] root))}))
-
-(defn- update-plan
-  "Pure decision for `vis-agent update` from post-fetch facts. `:action` is one of
-   `:no-upstream`, `:up-to-date`, `:ahead-only`, `:fast-forward`,
-   `:diverged-dirty` (refuse), `:diverged-reset` (already authorised) or
-   `:diverged-confirm` (needs a y/N answer or `--reset`)."
-  [{:keys [upstream ahead behind dirty?]} {:keys [reset?]}]
-  (let
-    [ahead
-     (long (or ahead 0))
-
-     behind
-     (long (or behind 0))
-
-     base
-     {:ahead ahead :behind behind}]
-
-    (cond (nil? upstream) {:action :no-upstream}
-          (and (zero? ahead) (zero? behind)) (assoc base :action :up-to-date)
-          (zero? behind) (assoc base :action :ahead-only)
-          (zero? ahead) (assoc base :action :fast-forward)
-          dirty? (assoc base :action :diverged-dirty)
-          reset? (assoc base :action :diverged-reset)
-          :else (assoc base :action :diverged-confirm))))
-
-(defn- diverged-line
-  "The exact sentence git itself prints, so the report is recognisable."
-  [upstream {:keys [ahead behind]}]
-  (str "Your branch and '" upstream "' have diverged, " ahead " and " behind " commits each."))
-
-(defn- update-reset!
-  "Discard the local commits by moving the branch onto its upstream. The old
-   HEAD is printed first: `git reset --hard <sha>` puts the work back."
-  [root {:keys [upstream head]}]
-  (let [reset (process-result ["git" "reset" "--hard" upstream] root)]
-    (when-not (zero? (long (:exit reset)))
-      (throw (ex-info "git reset --hard failed"
-                      {:type :update/git-reset-failed :stderr (:err reset) :stdout (:out reset)})))
-    (stdout! (str/trim (or (:out reset) "")))
-    (when head (stdout! (str "Discarded commits stay reachable: git reset --hard " head)))))
-
-(defn- confirm-reset?
-  "Ask on the controlling terminal; no terminal means no consent."
-  [prompt]
-  (when-let [console (System/console)]
-    (.printf console "%s" (into-array Object [prompt]))
-    (let
-      [answer (some-> (.readLine console)
-                      str/trim
-                      str/lower-case)]
-      (contains? #{"y" "yes"} answer))))
-
-(defn- cli-update!
-  [parsed _residual]
-  (config/init-cli!)
-  (let [^java.io.File root (source-checkout-root)]
-    (when-not (git-checkout? root)
-      (throw (ex-info "Vis update requires a git source checkout"
-                      {:type :update/not-git-checkout :path (.getPath root)})))
-    (stdout! (str "Updating Vis source at " (.getPath root)))
-    (let [fetch (process-result ["git" "fetch" "--tags" "origin"] root)]
-      (when-not (zero? (long (:exit fetch)))
-        (throw (ex-info
-                 "git fetch failed"
-                 {:type :update/git-fetch-failed :stderr (:err fetch) :stdout (:out fetch)})))
-      (let
-        [{:keys [branch upstream] :as facts} (update-facts root)
-         plan (update-plan facts {:reset? (boolean (get parsed "reset"))})
-         fast-forward! (fn []
-                         (let [pull (process-result ["git" "merge" "--ff-only" upstream] root)]
-                           (when-not (zero? (long (:exit pull)))
-                             (throw (ex-info "git merge --ff-only failed"
-                                             {:type :update/git-pull-failed
-                                              :stderr (:err pull)
-                                              :stdout (:out pull)})))
-                           (stdout! (str/trim (or (:out pull) "")))))
-         local-commits
-         (fn []
-           (when-let
-             [log (git-line ["log" "--oneline" "--max-count" "10" (str upstream "..HEAD")] root)]
-             (stdout! (str "Local commits not on " upstream ":\n" log))))]
-
-        (case (:action plan)
-          :no-upstream
-          (throw (ex-info (str "Branch '" branch "' has no upstream to update from")
-                          {:type :update/no-upstream :branch branch}))
-
-          :up-to-date
-          (stdout! (str "Already up to date with " upstream "."))
-
-          :ahead-only
-          (stdout!
-            (str "Nothing to pull: " (:ahead plan) " local commit(s) ahead of " upstream "."))
-
-          :fast-forward
-          (fast-forward!)
-
-          :diverged-dirty
-          (do (stdout! (diverged-line upstream plan))
-              (throw (ex-info
-                       (str (diverged-line upstream plan)
-                            " The working tree also has uncommitted changes:"
-                            " commit or stash them, then re-run `vis-agent update --reset`"
-                            " to discard the "
-                            (:ahead plan)
-                            " local commit(s).")
-                       {:type :update/diverged-dirty :ahead (:ahead plan) :behind (:behind plan)})))
-
-          :diverged-reset
-          (do (stdout! (diverged-line upstream plan)) (local-commits) (update-reset! root facts))
-
-          :diverged-confirm
-          (do (stdout! (diverged-line upstream plan))
-              (local-commits)
-              (if (confirm-reset? (str "Reset "
-                                       branch
-                                       " to "
-                                       upstream
-                                       " and discard "
-                                       (:ahead plan)
-                                       " local commit(s)? [y/N] "))
-                (update-reset! root facts)
-                (throw
-                  (ex-info
-                    (str (diverged-line upstream plan)
-                         " Working tree is clean, so this is most likely an upstream"
-                         " force-push. Re-run `vis-agent update --reset` to hard-reset onto "
-                         upstream
-                         " (the old HEAD stays recoverable via the reflog).")
-                    {:type :update/diverged :ahead (:ahead plan) :behind (:behind plan)}))))))))
-  (shutdown-agents))
+(defn- launcher-owned!
+  "`runtime` and `update` are executed by the `vis-agent` launcher, which never
+   forwards them to this binary. They stay in the command tree so `--help`
+   documents the real product surface; reaching this body means the runtime
+   binary was invoked directly, so name the command that does work."
+  [command]
+  (fn [_parsed _residual]
+    (throw (ex-info (str "`vis-agent "
+                        command
+                        "` is handled by the vis-agent launcher, not by this runtime binary."
+                        " Run it through the `vis-agent` wrapper on your PATH.")
+                    {:type :vis.cli/launcher-owned-command
+                     :vis/user-error true
+                     :command command}))))
 
 (defn- cli-gateway-start!
   "Run the HTTP/SSE gateway daemon. Lazy resolve keeps
@@ -3559,7 +3407,7 @@
 
 ;;; ── Top-level binary built-ins (registry/register-cmd! direct) ─────────
 ;;
-;; `providers`, `sessions`, `doctor`, `update`, and `ext` are the
+;; `providers`, `sessions`, `doctor`, `runtime`, `update`, and `ext` are the
 ;; binary's own parent commands. They live at the top of the command
 ;; tree -- `vis-agent providers ...`, NOT `vis-agent extension providers ...` -- so they
 ;; bypass `:ext/cli` (the `vis-agent extension` subcommand slot). Direct
@@ -3601,16 +3449,21 @@
      :cmd/doc "Inspect, scaffold, or run an extension-contributed CLI command."
      :cmd/usage "vis-agent extension <list|scaffold|...> [args...]"
      :cmd/subcommands #(registry/registered-under ["extension"])}
+    ;; `runtime` and `update` belong to the launcher, which intercepts them
+    ;; before this binary starts. They are registered here so `--help` lists
+    ;; the whole product surface instead of half of it.
+    {:cmd/name "runtime"
+     :cmd/doc "Show or persist which runtime this installation runs on."
+     :cmd/usage "vis-agent runtime [show | use native|jvm|dev|auto]"
+     :cmd/examples ["vis-agent runtime show" "vis-agent runtime use jvm"
+                    "vis-agent runtime use auto"]
+     :cmd/run-fn (launcher-owned! "runtime")}
     {:cmd/name "update"
-     :cmd/doc "Update the source checkout used by this Vis installation."
-     :cmd/usage "vis-agent update [--reset]"
-     :cmd/args [{:name "reset"
-                 :kind :flag
-                 :type :boolean
-                 :doc (str "When history diverged (upstream force-push), hard-reset the branch"
-                           " onto its upstream, discarding local commits.")}]
-     :cmd/examples ["vis-agent update" "vis-agent update --reset"]
-     :cmd/run-fn cli-update!}
+     :cmd/doc "Update the runtime this installation runs on."
+     :cmd/usage "vis-agent update [--native|--jvm|--dev] [--rebuild] [vX.Y.Z|<sha>]"
+     :cmd/examples ["vis-agent update" "vis-agent update --native"
+                    "vis-agent update --jvm v1.2.3"]
+     :cmd/run-fn (launcher-owned! "update")}
     {:cmd/name "gateway"
      :cmd/doc "Start, inspect, or stop the long-lived gateway daemon."
      :cmd/usage "vis-agent gateway <start|status|stop|pair> [--db PATH]"
@@ -4019,7 +3872,8 @@
     "  --db PATH|:memory            SQLite DB path or in-memory DB.\n"
     "  --session-id ID              Continue an existing persisted session.\n"
     "  --persist                    Persist as a :cli session.\n"
-    "  --debug                      Enable verbose debug logging.\n"
+    "  --debug, --verbose, -v       Enable verbose debug logging.\n"
+    "  --                           End flags: every later word is prompt text.\n"
     "  --help, -h                   Show help."))
 
 (defn root-command

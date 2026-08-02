@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.main-test
-  (:require [com.blockether.vis.internal.commandline :as commandline]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.main :as main]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.toggles :as toggles]
@@ -73,7 +74,22 @@
                              :prompt "what do I like?"}
                             (#'main/parse-run-args
                              ["--provider" "anthropic-coding-plan" "--model" "claude-sonnet-4-6"
-                              "--session-id" "abc123" "what" "do" "I" "like?"])))))
+                              "--session-id" "abc123" "what" "do" "I" "like?"]))))
+             (it "refuses a flag typo instead of smuggling it into the prompt"
+                 (expect (= ["unknown flag --modle"]
+                            (:flag-errors (#'main/parse-run-args ["--modle" "gpt" "fix" "tests"])))))
+             (it "refuses a value flag left without a value"
+                 (expect (= ["--model needs a value"]
+                            (:flag-errors (#'main/parse-run-args ["--model"])))))
+             (it "consumes --verbose / -v as debug rather than prompt text"
+                 (expect (= {:debug? true :prompt "fix"} (#'main/parse-run-args ["--verbose" "fix"])))
+                 (expect (= {:debug? true :prompt "fix"} (#'main/parse-run-args ["-v" "fix"]))))
+             (it "treats everything after -- as prompt text"
+                 (expect (= {:prompt "--modle is a typo"}
+                            (#'main/parse-run-args ["--" "--modle" "is" "a" "typo"]))))
+             (it "keeps quoted prose that merely starts with dashes"
+                 (expect (= {:prompt "--json output is broken"}
+                            (#'main/parse-run-args ["--json output is broken"])))))
 
 (defdescribe reasoning-effort-cli-parse-test
              (it "parses exact provider-native reasoning effort separately"
@@ -201,28 +217,25 @@
              (expect (true? (:vis/user-error (ex-data e))))))))
 
 (defdescribe
-  update-plan-test
-  (let [up {:upstream "origin/main"}]
-    (it "reports a missing upstream instead of pulling"
-        (expect (= :no-upstream (:action (#'main/update-plan {:upstream nil} {})))))
-    (it "does nothing when the branch matches its upstream"
-        (expect (= :up-to-date (:action (#'main/update-plan (merge up {:ahead 0 :behind 0}) {})))))
-    (it "does not pull when the branch is only ahead"
-        (expect (= :ahead-only (:action (#'main/update-plan (merge up {:ahead 2 :behind 0}) {})))))
-    (it "fast-forwards when the branch is only behind"
-        (expect (= :fast-forward
-                   (:action (#'main/update-plan (merge up {:ahead 0 :behind 3}) {})))))
-    (it "asks before discarding local commits on diverged history"
-        (expect (= :diverged-confirm
-                   (:action (#'main/update-plan (merge up {:ahead 1 :behind 2}) {})))))
-    (it "resets diverged history only once --reset authorises it"
-        (expect (= :diverged-reset
-                   (:action (#'main/update-plan (merge up {:ahead 1 :behind 2}) {:reset? true})))))
-    (it "refuses to reset over uncommitted changes even with --reset"
-        (expect (= :diverged-dirty
-                   (:action (#'main/update-plan
-                             (merge up {:ahead 1 :behind 2 :dirty? true})
-                             {:reset? true})))))
-    (it "renders the divergence sentence git itself prints"
-        (expect (= "Your branch and 'origin/main' have diverged, 1 and 2 commits each."
-                   (#'main/diverged-line "origin/main" {:ahead 1 :behind 2}))))))
+  launcher-owned-commands-test
+  (let [by-name (into {} (map (juxt :cmd/name identity)) (registry/registered-under []))]
+    (it "lists the launcher's runtime and update commands in the binary's help"
+        (doseq [nm ["runtime" "update"]]
+          (let [cmd (get by-name nm)]
+            (expect (some? cmd))
+            (expect (not (str/blank? (:cmd/doc cmd))))
+            (expect (str/starts-with? (:cmd/usage cmd) (str "vis-agent " nm))))))
+    (it "documents exactly the launcher's own words, not a source-checkout updater"
+        (expect (= "vis-agent runtime [show | use native|jvm|dev|auto]"
+                   (:cmd/usage (get by-name "runtime"))))
+        (expect (= "vis-agent update [--native|--jvm|--dev] [--rebuild] [vX.Y.Z|<sha>]"
+                   (:cmd/usage (get by-name "update"))))
+        (expect (not (str/includes? (:cmd/usage (get by-name "update")) "--reset"))))
+    (it "refuses to run them inside the binary and names the launcher instead"
+        (doseq [nm ["runtime" "update"]]
+          (try ((:cmd/run-fn (get by-name nm)) {} [])
+               (expect false)
+               (catch clojure.lang.ExceptionInfo e
+                 (expect (= :vis.cli/launcher-owned-command (:type (ex-data e))))
+                 (expect (true? (:vis/user-error (ex-data e))))
+                 (expect (str/includes? (ex-message e) "vis-agent launcher"))))))))

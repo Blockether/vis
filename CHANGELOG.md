@@ -33,6 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - launcher: the `dev` runtime names one checkout. When `$VIS_DEV_CHECKOUT` does
   not hold one, `vis-agent` now says so instead of silently running whichever
   checkout the launcher happens to sit in.
+- cli: `runtime` and `update` are listed by `vis-agent --help` and are owned by
+  the launcher, so the binary no longer advertised a second, different `update`
+  that failed on its own documented flag.
+- cli: a mistyped one-shot flag is refused instead of being glued into the
+  prompt. `vis-agent --modle gpt-5 "task"` used to run with the DEFAULT model
+  and a polluted prompt; it now exits 2 naming the flag. A value flag left
+  without a value is refused the same way, `--verbose`/`-v` are consumed as
+  debug flags, and `--` ends flag parsing for prompts that start with dashes.
+- launcher: `runtime use` and JVM/dev launches report a missing runtime,
+  missing `clojure`, or missing `java` with the command that fixes it, instead
+  of exiting 127 from `exec`.
 
 
 ## [v0.1.22] - 2026-08-01

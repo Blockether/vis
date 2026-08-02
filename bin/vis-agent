@@ -78,6 +78,9 @@ for arg in "$@"; do
     --measure) export VIS_MEASURE=1 ;;
     --jfr)     jfr=1 ;;
     --native|--jvm|--dev)
+      if [[ -n "$flag_runtime" && "$flag_runtime" != "${arg#--}" ]]; then
+        die "name one runtime, not --$flag_runtime and $arg"
+      fi
       flag_runtime="${arg#--}"
       if (( update_cmd )); then args+=("$arg"); fi
       ;;
@@ -270,6 +273,11 @@ runtime_effective() {
 vis_runtime() {
   case "${1:-show}" in
     show)
+      if [[ -n "${2:-}" ]]; then
+        warn "runtime show takes no arguments (got '$2')"
+        vis_runtime_usage
+        return 2
+      fi
       local effective native source_root ref
       effective="$(runtime_effective)"
       native="$(find_native 2>/dev/null || printf 'not installed')"
@@ -283,25 +291,62 @@ vis_runtime() {
       printf 'Dev checkout: %s\n' "$dev_checkout"
       ;;
     use)
+      if [[ -n "${3:-}" ]]; then
+        warn "runtime use names one runtime (got '$2' and '$3')"
+        vis_runtime_usage
+        return 2
+      fi
       case "${2:-}" in
         native|jvm|dev)
           mkdir -p "$vis_home"
           printf '%s\n' "$2" > "$vis_runtime_file.tmp"
           mv -f "$vis_runtime_file.tmp" "$vis_runtime_file"
           say "runtime is now $2"
-          if [[ "$2" == dev ]]; then
-            say "dev follows the live checkout at $dev_checkout (VIS_DEV_CHECKOUT overrides it)"
-          fi
+          runtime_readiness "$2"
           ;;
         auto)
           rm -f "$vis_runtime_file"
           say "runtime is now automatic: native if installed, else source at the newest release tag"
           ;;
+        -h|--help) vis_runtime_usage; return 0 ;;
         *) vis_runtime_usage; return 2 ;;
       esac
       ;;
+    -h|--help|help) vis_runtime_usage; return 0 ;;
     *) vis_runtime_usage; return 2 ;;
   esac
+}
+
+# A persisted choice must not become a surprise at the next launch: say now what
+# the chosen runtime still needs, with the command that supplies it.
+runtime_readiness() {
+  case "$1" in
+    native)
+      if ! find_native >/dev/null 2>&1; then
+        say "no native runtime is installed yet — get it: vis-agent update --native"
+      fi
+      ;;
+    jvm)
+      if [[ ! -f "$managed_src/deps.edn" ]] && (( ! launcher_is_checkout )); then
+        say "no source is installed yet — get it: vis-agent update --jvm"
+      fi
+      say_missing_clojure
+      ;;
+    dev)
+      say "dev follows the live checkout at $dev_checkout (VIS_DEV_CHECKOUT overrides it)"
+      if [[ ! -f "$dev_checkout/deps.edn" ]]; then
+        say "there is no checkout there yet — clone one, or point VIS_DEV_CHECKOUT at yours"
+      fi
+      say_missing_clojure
+      ;;
+  esac
+}
+
+say_missing_clojure() {
+  if ! command -v clojure >/dev/null 2>&1; then
+    say "source runtimes run 'clojure -M:vis', and 'clojure' is not on PATH yet"
+    say "  install it: https://clojure.org/guides/install_clojure"
+  fi
 }
 
 vis_runtime_usage() {
@@ -484,18 +529,27 @@ update_native() {
   [[ "$(runtime_effective)" == native ]] || say "run it with 'vis-agent runtime use native'"
 }
 
+vis_update_usage() {
+  cat >&2 <<'EOF'
+Usage: vis-agent update [--native|--jvm|--dev] [--rebuild] [vX.Y.Z|<sha>]
+         (no flag)  update the runtime that is in effect
+         --native   download the published launcher + native runtime
+         --jvm      move the source Vis owns onto the newest release tag, or onto a ref you name
+         --dev      fast-forward your live checkout
+         --rebuild  after a source update, build the native runtime from that source
+EOF
+}
+
 # `update` updates the runtime that is in effect; a flag updates another one.
 vis_do_update() {
-  local target="" rebuild=0 want="" arg word
+  local target="" rebuild=0 want="" arg
   for arg in "$@"; do
     case "$arg" in
       --native|--jvm|--dev)
-        word="${arg#--}"
-        [[ -z "$want" || "$want" == "$word" ]] || \
-          die "update: name one runtime to update, not --$want and $arg"
-        want="$word"
+        want="${arg#--}"
         ;;
       --rebuild) rebuild=1 ;;
+      -h|--help) vis_update_usage; exit 0 ;;
       -*) die "update: unknown option $arg" "Usage: vis-agent update [--native|--jvm|--dev] [--rebuild] [vX.Y.Z|<sha>]" ;;
       *)
         [[ -z "$target" ]] || die "update: one target at a time, not '$target' and '$arg'"
@@ -576,6 +630,18 @@ case "$runtime" in
           "Install release-tagged source:  vis-agent update --jvm" \
           "Or use the native runtime:      vis-agent update --native"
     fi
+    # A source runtime is only as real as its toolchain. Say which tool is
+    # missing here, instead of letting exec fail with 'clojure: not found'.
+    if ! command -v clojure >/dev/null 2>&1; then
+      die "the $runtime runtime runs 'clojure -M:vis', but 'clojure' is not on PATH" \
+          "Install the Clojure CLI:  https://clojure.org/guides/install_clojure" \
+          "Or run the published one: vis-agent update --native && vis-agent runtime use native"
+    fi
+    if ! command -v java >/dev/null 2>&1 && [[ -z "${JAVA_CMD:-}" && -z "${JAVA_HOME:-}" ]]; then
+      die "the $runtime runtime needs a Java 25 runtime, and no 'java' is on PATH" \
+          "Install the pinned JDK:   $source_root/bin/require-graalvm --install" \
+          "Or run the published one: vis-agent update --native && vis-agent runtime use native"
+    fi
     ;;
 esac
 
@@ -642,7 +708,7 @@ esac
 # Preserve the invocation directory through user.dir while resolving deps from
 # the selected source.
 measure_log "exec cold clojure -M:vis from $source_root"
-ensure_compatible_jvm_runtime
+ensure_compatible_jvm_runtime || exit 1
 cd "$source_root"
 if (( ${#vis_extension_sdeps[@]} > 0 )); then
   run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" ${stream_trace_jvm_opts[@]+"${stream_trace_jvm_opts[@]}"} "${vis_extension_sdeps[@]}" -M:vis "$@"
