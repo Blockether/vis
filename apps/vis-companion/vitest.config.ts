@@ -9,6 +9,8 @@ export default defineConfig({
     // Pure logic modules only. Anything needing a DOM should say so per file
     // with a `@vitest-environment` docblock rather than slowing every run.
     environment: 'node',
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    // `scripts/` holds the release plumbing; only its side-effect-free helpers
+    // are importable, and those are exactly the ones worth pinning down.
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/**/*.test.mjs'],
   },
 });

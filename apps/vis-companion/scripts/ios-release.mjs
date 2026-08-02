@@ -39,6 +39,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { buildNotes, publishNotes } from './release-notes.mjs';
+import { exportArchiveArgs } from './ios-export.mjs';
 import { distribute } from './testflight.mjs';
 import { syncPackageVersion } from './version.mjs';
 
@@ -370,16 +371,14 @@ run('xcodebuild', archiveArgs, { cwd: projectDir });
 
 run(
   'xcodebuild',
-  [
-    '-exportArchive',
-    '-archivePath',
+  exportArchiveArgs({
     archivePath,
-    '-exportOptionsPlist',
     exportOptions,
-    '-exportPath',
     ipaDir,
-    ...(provisioningProfileName ? [] : ['-allowProvisioningUpdates', ...authenticationArgs]),
-  ],
+    hasApiKey,
+    provisioningProfileName,
+    authenticationArgs,
+  }),
   { cwd: projectDir },
 );
 
