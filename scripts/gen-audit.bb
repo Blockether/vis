@@ -143,14 +143,25 @@
   (format "%s/%s/%s/%s/%s-%s.pom"
           repo (str/replace group "." "/") artifact version artifact version))
 
+(defn- m2-file
+  "The locally cached ~/.m2 artifact, when Maven already resolved this
+   coordinate. That cache is exactly what the build consumed, so it is a
+   truthful offline source for both the license and the jar size."
+  [group artifact version ext]
+  (let [f (fs/file (fs/home) ".m2" "repository"
+                   (str/replace group "." "/") artifact version
+                   (format "%s-%s.%s" artifact version ext))]
+    (when (fs/exists? f) f)))
+
 (defn- fetch-pom-body [group artifact version]
-  (some (fn [repo]
-          (try
-            (let [r (http/get (pom-url repo group artifact version)
-                              {:throw false :headers {"User-Agent" "vis-audit"}})]
-              (when (http-ok? r) (:body r)))
-            (catch Exception _ nil)))
-        repos))
+  (or (some (fn [repo]
+              (try
+                (let [r (http/get (pom-url repo group artifact version)
+                                  {:throw false :headers {"User-Agent" "vis-audit"}})]
+                  (when (http-ok? r) (:body r)))
+                (catch Exception _ nil)))
+            repos)
+      (some-> (m2-file group artifact version "pom") slurp)))
 
 (defn- parent-coords
   "[group artifact version] of the POM's <parent>, if any."
@@ -175,37 +186,68 @@
 (defn- jar-size-bytes [head-resp]
   (some-> head-resp :headers (get "content-length") parse-long))
 
-(defn- fmt-size [bytes]
+(defn- fmt-size
+  "Human size for one artifact. Locale-INDEPENDENT on purpose: `format` would
+   otherwise render `1,1 MB` under a comma-decimal locale and churn the whole
+   document (and fail `--check`) on any developer machine that is not en_US."
+  [bytes]
   (cond
     (nil? bytes)          "—"
-    (>= bytes (* 1024 1024)) (format "%.1f MB" (/ bytes 1024.0 1024.0))
+    (>= bytes (* 1024 1024)) (String/format java.util.Locale/ROOT "%.1f MB"
+                                            (into-array Object [(/ bytes 1024.0 1024.0)]))
     :else                 (format "%d KB" (long (Math/round (/ bytes 1024.0))))))
 
 (defn- in-house? [sym] (= "com.blockether" (namespace sym)))
 
+(defn- previous-rows
+  "The license + jar-size cells audit/README.md ALREADY states, keyed by
+   \"coord version\". This file is a compliance record: when a lookup fails —
+   a just-released artifact the CDN has not published yet, or no network — the
+   vetted value for that exact version is reused instead of silently regressing
+   a real license to UNKNOWN/—."
+  [root]
+  (let [f (fs/file root "audit" "README.md")]
+    (if-not (fs/exists? f)
+      {}
+      (into {}
+            (keep (fn [line]
+                    (when-let [[_ sym version lic size]
+                               (re-matches #"\|\s+`([^`]+)`\s+\|\s+`([^`]+)`\s+\|([^|]+)\|([^|]+)\|.*"
+                                           line)]
+                      [(str sym " " version)
+                       {:license (str/trim lic) :size (str/trim size)}])))
+            (str/split-lines (slurp f))))))
+
 (defn- artifact-info
-  "License + jar size for one coordinate (floating RELEASE/LATEST -> unknown)."
-  [sym version]
+  "License + jar size for one coordinate (floating RELEASE/LATEST -> unknown).
+   `prev` carries what the document already states, so a transient lookup
+   failure keeps the vetted cell rather than downgrading it."
+  [prev sym version]
   (binding [*out* *err*] (println "  ·" (str sym) version))
   (if (contains? #{"RELEASE" "LATEST"} version)
     {:license "(floating)" :size-bytes nil :floating true}
-    (let [head (fetch-first :head sym version)]
+    (let [head  (fetch-first :head sym version)
+          known (get prev (str sym " " version))
+          bytes (or (jar-size-bytes head)
+                    (some-> (m2-file (namespace sym) (name sym) version "jar") fs/size))]
       {:license    (or (license-overrides (str sym))
                        (resolve-license (namespace sym) (name sym) version)
+                       (:license known)
                        "UNKNOWN")
-       :size-bytes (jar-size-bytes head)})))
+       :size-bytes bytes
+       :size       (when (nil? bytes) (:size known))})))
 
 ;; ------------------------------------------------------------------- rendering
 
 (defn- inventory-rows
   "De-duped [module sym version info] rows: each coord under its first module."
-  [modules]
+  [prev modules]
   (let [seen (atom #{})]
     (for [[label _ coords] modules
           [sym version]    (sort-by (comp str first) coords)
           :when            (not (@seen sym))
           :let             [_ (swap! seen conj sym)]]
-      [label sym version (artifact-info sym version)])))
+      [label sym version (artifact-info prev sym version)])))
 
 (defn- section-header [label]
   (if (= label "core") "### core (deps.edn)" (format "### `%s` extension" label)))
@@ -219,14 +261,15 @@
               "|---|---|---|---|---|"]
              (for [[_ sym version info] rows]
                (format "| `%s` | `%s` | %s | %s | %s |"
-                       (str sym) version (:license info) (fmt-size (:size-bytes info))
+                       (str sym) version (:license info)
+                       (or (:size info) (fmt-size (:size-bytes info)))
                        (if (in-house? sym) "Blockether (in-house)" "3rd-party")))
              [""])))
 
 (defn- gen [root]
   (binding [*out* *err*] (println "Discovering modules…"))
   (let [modules  (discover-modules root)
-        rows     (vec (inventory-rows modules))
+        rows     (vec (inventory-rows (previous-rows root) modules))
         by-mod   (group-by first rows)
         licenses (frequencies (map (comp :license #(nth % 3)) rows))
         heavy    (->> rows
