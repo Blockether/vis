@@ -1698,13 +1698,25 @@ export function SessionScreen({
       // -> 0, row id -> every iteration so far). Reading by the registry id is why
       // a resumed session adopted an EMPTY bubble and only filled from the next
       // delta onwards, losing everything the turn had already done.
-      const traceId = running ? rowId(running) : tid;
+      //
+      // With the row in hand there is nothing left to ask: `/transcript` inlines
+      // the running row's `iterations`, byte-for-byte what `/turns/<row id>/trace`
+      // answers for that id (both measured on a live daemon). The endpoint stays
+      // for the two cases that have no row — a registry claim the transcript has
+      // not caught up with, and a daemon too old to inline. An EMPTY inline trace
+      // is an answer, not a miss (a row whose first iteration has not persisted
+      // yet), so a missing key is the only thing that may fall through to it.
+      const inlineTrace = running?.iterations;
       let iterations: TranscriptIteration[];
-      try {
-        iterations = await client.turnTrace(sid, traceId, signal);
-      } catch {
-        // Older gateway, or a flaky link. The next reconcile tick retries.
-        return;
+      if (inlineTrace != null) {
+        iterations = inlineTrace;
+      } else {
+        try {
+          iterations = await client.turnTrace(sid, running ? rowId(running) : tid, signal);
+        } catch {
+          // Older gateway, or a flaky link. The next reconcile tick retries.
+          return;
+        }
       }
       if (signal?.aborted) return;
       const now = liveTurnRef.current;
@@ -1786,13 +1798,6 @@ export function SessionScreen({
     // bug. Stamp the start instead and treat an older one as lost.
     const STALE_RECONCILE_MS = 20_000;
     let inflightSince: number | null = null;
-    // Trace pulls for a turn the registry has lost (below). The response carries
-    // EVERY iteration of the turn, so it is rate-limited and only ever issued
-    // when nothing is being pushed into the bubble.
-    const TRACE_PULL_MIN_MS = 10_000;
-    let lastTraceId = '';
-    let lastTraceCount = -1;
-    let lastTraceAt = 0;
     const reconcileOnce = async () => {
       if (document.visibilityState === 'hidden') return;
       // Liveness is sampled HERE but only acted on after two more round-trips
@@ -1911,18 +1916,14 @@ export function SessionScreen({
           return settledTurn;
         });
       }
-      // Last, against the row this tick read: the gateway is running a turn we
-      // are not painting. That is every way the seed frame can be missed — a
-      // webview the OS reloaded while backgrounded, a turn another client
-      // started, a stream that reconnected past it. Cheap when healthy: it only
-      // costs a request when the ids actually disagree.
       if (cancelled) return;
       // Gateway idle, engine still writing: nothing will be PUSHED into the bubble
-      // either — the hub's liveness comes from the same registry — so PULL the
-      // trace while the disagreement lasts. Skipped while the bubble is growing on
-      // its own, and rate-limited, because this response carries the whole turn.
+      // either — the hub's liveness comes from the same registry — so repair it
+      // from the row this tick ALREADY read. `/transcript` inlines the running
+      // row's `iterations`, so this costs no request at all; pulling
+      // `/turns/:tid/trace` on top of it would re-download the entire turn every
+      // few seconds, for as long as a stall that can run for hours.
       if (!gatewayLive && persistedRunning) {
-        const tid = rowId(persistedRunning);
         const painted = liveTurnRef.current;
         // Two mints, one turn: a bubble seeded by `turn.started` carries the
         // GATEWAY's id, this row carries the ENGINE's, and the frozen bubble in
@@ -1930,41 +1931,28 @@ export function SessionScreen({
         // repair would leave the only case this branch exists for unhandled, so
         // the submitted text stands as the second witness when the ids differ.
         const rowRequest = (persistedRunning.user_request ?? persistedRunning.request ?? '').trim();
-        const target =
+        const traced = persistedRunning.iterations;
+        // Never shrink: deltas that did land are newer than any persisted row, and
+        // a row read before them is no evidence that they never came.
+        const grown: LiveTurn | null =
           painted?.status === 'running' &&
-          (painted.id === tid || (rowRequest !== '' && painted.request.trim() === rowRequest))
-            ? painted
+          (painted.id === rowId(persistedRunning) ||
+            (rowRequest !== '' && painted.request.trim() === rowRequest)) &&
+          traced != null &&
+          traced.length > painted.iterations.length
+            ? { ...painted, iterations: traced }
             : null;
-        const count = target ? target.iterations.length : -1;
-        const grew = tid === lastTraceId && count > lastTraceCount;
-        lastTraceId = tid;
-        lastTraceCount = count;
-        if (target && !grew && Date.now() - lastTraceAt >= TRACE_PULL_MIN_MS) {
-          lastTraceAt = Date.now();
-          let iterations: TranscriptIteration[] | null = null;
-          try {
-            iterations = await client.turnTrace(sid, tid);
-          } catch {
-            iterations = null;
-          }
-          if (cancelled) return;
-          const current = liveTurnRef.current;
-          // Never shrink: a delta that landed while the trace was in flight is
-          // newer than the trace itself. And never graft onto a bubble that was
-          // swapped underneath us while the request was out.
-          if (
-            iterations &&
-            current?.status === 'running' &&
-            current.id === target.id &&
-            iterations.length > current.iterations.length
-          ) {
-            const grown: LiveTurn = { ...current, iterations };
-            liveTurnRef.current = grown;
-            setLiveTurn(grown);
-            lastTraceCount = iterations.length;
-          }
+        if (grown) {
+          liveTurnRef.current = grown;
+          setLiveTurn(grown);
         }
       }
+      // Last, against the row this tick read: the gateway is running a turn we
+      // are not painting. That is every way the seed frame can be missed — a
+      // webview the OS reloaded while backgrounded, a turn another client
+      // started, a stream that reconnected past it. Free when the transcript
+      // carries the row; it costs a request only when the registry claims a turn
+      // the transcript has not caught up with.
       await adoptRunningTurn(next, undefined, nextTurns ?? turnsRef.current);
       // Consumed either way: with no new turns the wake's own pin was enough.
       resumePinRef.current = false;
@@ -3309,8 +3297,12 @@ export function SessionScreen({
             status: 'running',
             attachments: sent.length ? sent : undefined,
           });
-          followingRef.current = true;
-          requestAnimationFrame(() => scrollToEnd());
+          // This bubble goes into the TRANSCRIPT, so ride it down on the settle
+          // schedule: a single scroll measures the height before the deferred
+          // segments land, and its own late scroll event then clears
+          // `followingRef`. A QUEUED submission needs none of this — its tray row
+          // renders in the footer, above the composer, always in view.
+          pinToEnd();
         }
       } catch (cause) {
         setPrompt(authoredRequest);
@@ -3346,8 +3338,9 @@ export function SessionScreen({
       status: 'running',
       attachments: sent.length ? sent : undefined,
     });
-    followingRef.current = true;
-    requestAnimationFrame(() => scrollToEnd());
+    // The optimistic bubble has just been added to the transcript: same settle
+    // schedule, for the same reason one frame is not enough.
+    pinToEnd();
 
     try {
       const submitted = await client.submitTurn(sid, request, {
