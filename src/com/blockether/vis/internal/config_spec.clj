@@ -512,7 +512,7 @@
 (defn explain-problems
   "Best-effort, model-readable reasons a string-keyed YAML `config` fails the
    contract — one line per offending FIELD, named by its dotted path
-   (`search.include_gitignored_paths`, `providers[1].models[0].context`,
+   (`grep.include_gitignored_paths`, `providers[1].models[0].context`,
    `mcp.servers.docs.transport`): a non-string key, an unknown key (maps are
    closed, with a did-you-mean when a known key is close), a missing required
    key, or a value the schema rejects. Returns [] for a valid or nil map, so a

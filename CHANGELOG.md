@@ -7,7 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.24] - 2026-08-02
+
+### Added
+
+- mcp: the whole MCP server lifecycle is reachable outside a terminal. The
+  gateway exposes kill, start and auth start/complete/poll/cancel/logout per
+  server; the companion drives them from Settings (and surfaces them at connect
+  time), and the TUI gets a matching MCP dialog. A server that needs a browser
+  login is no longer a dead end you can only watch fail.
+
 ### Fixed
+
+- bs4 shim: `BeautifulSoup(None, ...)` now raises
+  `TypeError: object of type 'NoneType' has no len()` exactly like upstream bs4
+  4.12 instead of quietly parsing as empty markup, plus soupsieve and
+  tree-builder parity work cross-validated probe-by-probe against real
+  beautifulsoup4 4.12.3 + soupsieve 2.5.
+- release: the workflow's "Commit release notes" step rebases onto
+  `origin/main` and retries, so a `main` that moved during the run no longer
+  fails the release job and skips the mobile release with it.
 
 - persistence: the shared SQLite pool is no longer torn down underneath live
   queries. The snapshot behind "was `~/.vis/vis.mdb/vis.db` replaced under this
