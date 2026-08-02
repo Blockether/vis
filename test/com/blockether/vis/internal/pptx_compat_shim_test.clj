@@ -147,14 +147,16 @@
             python-context
             (str
               "import io, base64, zipfile\n"
-              "from pptx import Presentation\n" "from pptx.util import Inches\n"
-              "png = base64.b64decode('" png-b64 "')\n"
-              "prs = Presentation()\n"
-              "s = prs.slides.add_slide(prs.slide_layouts[6])\n"
+              "from pptx import Presentation\n"
+              "from pptx.util import Inches\n"
+              "png = base64.b64decode('"
+              png-b64
+              "')\n"
+              "prs = Presentation()\n" "s = prs.slides.add_slide(prs.slide_layouts[6])\n"
               "pic = s.shapes.add_picture(io.BytesIO(png), Inches(1), Inches(1), Inches(2), Inches(2))\n"
               "pic.crop_left, pic.crop_top = 0.25, 0.125\n"
-              "pic.crop_right, pic.crop_bottom = 0.0625, 0.5\n"
-              "b = io.BytesIO()\n" "prs.save(b)\n" "raw = b.getvalue()\n"
+              "pic.crop_right, pic.crop_bottom = 0.0625, 0.5\n" "b = io.BytesIO()\n"
+              "prs.save(b)\n" "raw = b.getvalue()\n"
               "again = Presentation(io.BytesIO(raw))\n"
               "p2 = next(x for x in again.slides[0].shapes if hasattr(x, 'crop_left'))\n"
               "z = zipfile.ZipFile(io.BytesIO(raw))\n"
@@ -170,21 +172,53 @@
     "writes a real ppt/charts/chartN.xml part, not a picture of a chart"
     (with-python-context
       (expect
-        (= [["ppt/charts/chart1.xml"] true true true true]
-           (ev
-             python-context
-             (str
-               "import io, zipfile\n" "from pptx import Presentation\n"
-               "from pptx.chart.data import CategoryChartData\n"
-               "from pptx.enum.chart import XL_CHART_TYPE\n"
-               "from pptx.util import Inches\n" "prs = Presentation()\n"
-               "s = prs.slides.add_slide(prs.slide_layouts[6])\n"
-               "cd = CategoryChartData()\n" "cd.categories = ['Q1', 'Q2']\n"
-               "cd.add_series('Sales', [3, 7])\n"
-               "s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(4), Inches(1), Inches(5), Inches(3), cd)\n"
-               "b = io.BytesIO()\n" "prs.save(b)\n" "raw = b.getvalue()\n"
-               "z = zipfile.ZipFile(io.BytesIO(raw))\n"
-               "cx = z.read('ppt/charts/chart1.xml').decode('utf-8', 'ignore')\n"
-               "[sorted(n for n in z.namelist() if n.startswith('ppt/charts/')),\n"
-               " '<c:barChart' in cx, 'Sales' in cx, 'Q1' in cx,\n"
-               " 'ppt/charts/chart1.xml' in z.read('[Content_Types].xml').decode('utf-8', 'ignore')]")))))))
+        (=
+          [["ppt/charts/chart1.xml"] true true true true]
+          (ev
+            python-context
+            (str
+              "import io, zipfile\n"
+              "from pptx import Presentation\n" "from pptx.chart.data import CategoryChartData\n"
+              "from pptx.enum.chart import XL_CHART_TYPE\n" "from pptx.util import Inches\n"
+              "prs = Presentation()\n" "s = prs.slides.add_slide(prs.slide_layouts[6])\n"
+              "cd = CategoryChartData()\n" "cd.categories = ['Q1', 'Q2']\n"
+              "cd.add_series('Sales', [3, 7])\n"
+              "s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(4), Inches(1), Inches(5), Inches(3), cd)\n"
+              "b = io.BytesIO()\n" "prs.save(b)\n"
+              "raw = b.getvalue()\n" "z = zipfile.ZipFile(io.BytesIO(raw))\n"
+              "cx = z.read('ppt/charts/chart1.xml').decode('utf-8', 'ignore')\n"
+              "[sorted(n for n in z.namelist() if n.startswith('ppt/charts/')),\n"
+              " '<c:barChart' in cx, 'Sales' in cx, 'Q1' in cx,\n"
+              " 'ppt/charts/chart1.xml' in z.read('[Content_Types].xml').decode('utf-8', 'ignore')]")))))))
+
+(defdescribe
+  pptx-shape-format-roundtrip-test
+  (it
+    "keeps solid fill, outline colour/width/dash and a no-fill shape on re-open"
+    (with-python-context
+      (expect
+        ;; The Rust reader hydrates `<a:solidFill>`/`<a:ln>` back into the same
+        ;; fill and line specs the writer emits, so an edit-in-place deck does not
+        ;; silently lose the formatting it came in with.
+        (=
+          ["solid" "009933" "112233" 2.25 "dash" "none"]
+          (ev
+            python-context
+            (str
+              "import io\n" "from pptx import Presentation\n"
+              "from pptx.util import Inches, Pt\n" "from pptx.dml.color import RGBColor\n"
+              "from pptx.enum.shapes import MSO_SHAPE\n"
+              "from pptx.enum.dml import MSO_LINE_DASH_STYLE\n"
+              "prs = Presentation()\n" "s = prs.slides.add_slide(prs.slide_layouts[6])\n"
+              "sh = s.shapes.add_shape(MSO_SHAPE.OVAL, Inches(1), Inches(1), Inches(3), Inches(2))\n"
+              "sh.fill.solid()\n"
+              "sh.fill.fore_color.rgb = RGBColor(0x00, 0x99, 0x33)\n"
+              "sh.line.color.rgb = RGBColor(0x11, 0x22, 0x33)\n"
+              "sh.line.width = Pt(2.25)\n" "sh.line.dash_style = MSO_LINE_DASH_STYLE.DASH\n"
+              "bare = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1), Inches(4), Inches(2), Inches(1))\n"
+              "bare.fill.background()\n"
+              "b = io.BytesIO()\n" "prs.save(b)\n"
+              "again = Presentation(io.BytesIO(b.getvalue()))\n"
+              "x, y = again.slides[0].shapes[0], again.slides[0].shapes[1]\n"
+              "[x.fill.type, str(x.fill.fore_color.rgb), str(x.line.color.rgb),\n"
+              " x.line.width.pt, str(x.line.dash_style), y.fill.type]")))))))
