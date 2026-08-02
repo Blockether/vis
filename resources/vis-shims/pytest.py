@@ -1819,6 +1819,42 @@ def __vis_install_pytest_compat__():
                     ids.append(nodeid + (("[" + combo + "]") if combo else ""))
         return ids
 
+    def _import_root_hint(load_errors):
+        # Issue #62: a collection ImportError sitting right next to an UNDECLARED
+        # source root is almost always a src-layout project that told nobody about
+        # its layout. `vis-agent python` infers import roots ONLY from declarative
+        # metadata, so name the missing declaration instead of leaving the user
+        # with a bare ModuleNotFoundError.
+        if not any(isinstance(exc, ImportError) for _p, exc in load_errors):
+            return None
+        on_path = set()
+        for p in sys.path:
+            try:
+                on_path.add(os.path.realpath(p))
+            except Exception:
+                pass
+        bases = []
+        try:
+            bases.append(os.getcwd())
+        except Exception:
+            pass
+        for fpath, _exc in load_errors:
+            d = os.path.dirname(os.path.abspath(fpath))
+            bases.append(d)
+            bases.append(os.path.dirname(d))
+        for base in bases:
+            cand = os.path.join(base, "src")
+            if os.path.isdir(cand) and os.path.realpath(cand) not in on_path:
+                return (
+                    "hint: "
+                    + cand
+                    + " exists but is not an import root. Declare it -- "
+                    + '[tool.pytest.ini_options] pythonpath = ["src"], packaging '
+                    + "metadata (setuptools/poetry/hatch/pdm), or python.source_paths "
+                    + "in vis.yml -- or run with PYTHONPATH=src."
+                )
+        return None
+
     def main(args=None, ns=None):
         verbose = False
         specs = []
@@ -1995,6 +2031,9 @@ def __vis_install_pytest_compat__():
             _flush_progress(write, ctl)
         elapsed = time.time() - t_start
         rc = _summary(results, write, elapsed, ctl["deselected"], ctl)
+        _hint = _import_root_hint(load_errors)
+        if _hint:
+            write(_hint + _NL)
         if rc == 0 and not results:
             # pytest's EXIT_NOTESTSCOLLECTED. A run that executed NOTHING is not
             # a pass: a mistyped node id must never look like a green suite.

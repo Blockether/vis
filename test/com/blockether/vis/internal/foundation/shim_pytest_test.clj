@@ -409,8 +409,13 @@
   "Issue #78: `path.py::name` must SELECT that node, and a run that executed
    nothing must not exit 0."
   (it "runs only the named function of a node id"
-      (let [d (tmp-dir)
-            f (str d "/test_pick.py")]
+      (let
+        [d
+         (tmp-dir)
+
+         f
+         (str d "/test_pick.py")]
+
         (spit f "def test_one():\n    assert True\ndef test_two():\n    assert False\n")
         (with-fs-context d
                          (expect (= "RC=0;test_pick.py::test_one|passed"
@@ -418,11 +423,15 @@
                                         (str "import pytest\nrc = pytest.main(['" f
                                              "::test_one'])\n" report-code)))))))
   (it "selects a class method, and a bare class name selects its methods"
-      (let [d (tmp-dir)
-            f (str d "/test_cls.py")]
+      (let
+        [d
+         (tmp-dir)
+
+         f
+         (str d "/test_cls.py")]
+
         (spit f
-              (str "class TestBox:\n"
-                   "    def test_a(self):\n        assert True\n"
+              (str "class TestBox:\n" "    def test_a(self):\n        assert True\n"
                    "    def test_b(self):\n        assert True\n"
                    "def test_loose():\n    assert False\n"))
         (with-fs-context d
@@ -436,8 +445,13 @@
                                         (str "import pytest\nrc = pytest.main(['" f
                                              "::TestBox'])\n" report-code)))))))
   (it "selects one parametrized case by its bracketed id"
-      (let [d (tmp-dir)
-            f (str d "/test_param.py")]
+      (let
+        [d
+         (tmp-dir)
+
+         f
+         (str d "/test_param.py")]
+
         (spit f
               (str "import pytest\n"
                    "@pytest.mark.parametrize('n', [1, 2])\n"
@@ -448,8 +462,13 @@
                                         (str "import pytest\nrc = pytest.main(['" f
                                              "::test_pos[2]'])\n" report-code)))))))
   (it "merges several node ids naming the same file into ONE load"
-      (let [d (tmp-dir)
-            f (str d "/test_merge.py")]
+      (let
+        [d
+         (tmp-dir)
+
+         f
+         (str d "/test_merge.py")]
+
         (spit f
               (str "def test_a():\n    assert True\n"
                    "def test_b():\n    assert True\n"
@@ -459,11 +478,16 @@
                                          ";test_merge.py::test_b|passed")
                                     (ev python-context
                                         (str "import pytest\nrc = pytest.main(['" f
-                                             "::test_a', '" f "::test_b'])\n"
-                                             report-code)))))))
+                                             "::test_a', '" f
+                                             "::test_b'])\n" report-code)))))))
   (it "exits 5 (no tests collected), never 0, when a node id matches nothing"
-      (let [d (tmp-dir)
-            f (str d "/test_none.py")]
+      (let
+        [d
+         (tmp-dir)
+
+         f
+         (str d "/test_none.py")]
+
         (spit f "def test_one():\n    assert True\n")
         (with-fs-context d
                          (expect (= "RC=5;"
@@ -473,16 +497,66 @@
   (it "exits 4 with a diagnostic when a named path does not exist"
       (let [d (tmp-dir)]
         (with-fs-context d
-                         (expect (= 4
-                                    (ev python-context
-                                        (str "import pytest\npytest.main(['" d
-                                             "/test_absent.py'])")))))))
+                         (expect
+                           (= 4
+                              (ev python-context
+                                  (str "import pytest\npytest.main(['" d "/test_absent.py'])")))))))
   (it "--collect-only LISTS node ids and runs nothing"
-      (let [d (tmp-dir)
-            f (str d "/test_co.py")]
+      (let
+        [d
+         (tmp-dir)
+
+         f
+         (str d "/test_co.py")]
+
         (spit f "def test_one():\n    assert True\ndef test_two():\n    assert False\n")
         (with-fs-context d
                          (expect (= "RC=0;"
                                     (ev python-context
                                         (str "import pytest\nrc = pytest.main(['" f
                                              "', '--collect-only'])\n" report-code))))))))
+
+(defn- hint?
+  "Run `pytest.main([target])` after `prelude`, and reduce the shim's own stdout
+   to whether it printed the undeclared-import-root hint."
+  [^Context c prelude target]
+  (ev c
+      (str "import pytest, io, contextlib, sys\n" prelude
+           "_b = io.StringIO()\n" "with contextlib.redirect_stdout(_b):\n"
+           "    pytest.main(['" target
+           "'])\n" "'HINT' if 'is not an import root' in _b.getvalue() else 'NONE'\n")))
+
+(defdescribe
+  import-root-hint-test
+  "Issue #62: `vis-agent python` infers import roots from DECLARATIVE packaging
+   metadata only, so a src-layout project that declares nothing anywhere still
+   fails collection with a bare `ModuleNotFoundError`. When that happens the run
+   must name the declaration that is missing — and must stay quiet whenever the
+   failure has nothing to do with an unreachable source root."
+  (it "hints at an undeclared `src` root when collection dies on an import"
+      (let [d (tmp-dir)]
+        (.mkdirs (java.io.File. (str d "/src/einmal")))
+        (.mkdirs (java.io.File. (str d "/tests")))
+        (spit (str d "/src/einmal/__init__.py") "VALUE = 42\n")
+        (spit (str d "/tests/test_g.py")
+              "from einmal import VALUE\n\n\ndef test_v():\n    assert VALUE == 42\n")
+        (with-fs-context d
+                         (expect (= "HINT" (hint? python-context "" (str d "/tests/test_g.py")))))))
+  (it "stays quiet when that same `src` root is already importable"
+      (let [d (tmp-dir)]
+        (.mkdirs (java.io.File. (str d "/src/einmal")))
+        (.mkdirs (java.io.File. (str d "/tests")))
+        (spit (str d "/src/einmal/__init__.py") "VALUE = 42\n")
+        (spit (str d "/tests/test_bad.py") "import nope_missing\n")
+        (with-fs-context d
+                         (expect (= "NONE"
+                                    (hint? python-context
+                                           (str "sys.path.insert(0, '" d "/src')\n")
+                                           (str d "/tests/test_bad.py")))))))
+  (it "stays quiet when the unimportable module has no source root to blame"
+      (let [d (tmp-dir)]
+        (.mkdirs (java.io.File. (str d "/tests")))
+        (spit (str d "/tests/test_bad.py") "import nope_missing\n")
+        (with-fs-context d
+                         (expect (= "NONE"
+                                    (hint? python-context "" (str d "/tests/test_bad.py"))))))))
