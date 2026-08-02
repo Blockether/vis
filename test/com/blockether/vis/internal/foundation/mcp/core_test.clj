@@ -60,10 +60,10 @@
                                              {"transport" "stdio"
                                               "command" "npx"
                                               "env" {"API_TOKEN" "not-for-the-client"}})]
-              (expect (= "filesystem" (:name row)))
-              (expect (= "stdio" (:transport row)))
-              (expect (nil? (:env row)))
-              (expect (nil? (:headers row)))
+              (expect (= "filesystem" (get row "name")))
+              (expect (= "stdio" (get row "transport")))
+              (expect (nil? (get row "env")))
+              (expect (nil? (get row "headers")))
               (expect (= :gateway-mcp (second @saved)))
               (expect (= "not-for-the-client"
                          (get-in (first @saved)
@@ -94,9 +94,10 @@
                                               {"transport" "streamable_http"
                                                "url" "https://mcp.example.test/mcp"
                                                "headers" {"Authorization" "Bearer private"}})]
-            (expect (= "remote" (:name result)))
-            (expect (= [{:name "list_files" :description "Enumerate files"}] (:tools result)))
-            (expect (nil? (:headers result)))
+            (expect (= "remote" (get result "name")))
+            (expect (= [{"name" "list_files" "description" "Enumerate files"}]
+                       (get result "tools")))
+            (expect (nil? (get result "headers")))
             (expect (= ::connection @closed))
             (expect (= :streamable-http (get-in @seen [1 :transport])))
             (expect (= "Bearer private" (get-in @seen [1 :headers "Authorization"])))))))
@@ -176,16 +177,16 @@
         (with-redefs-fn {#'config/load-global-config-raw (constantly machine)
                          #'config/load-config-raw (constantly machine)}
           (fn []
-            (let [row (first (:servers (mcp/gateway-servers)))]
+            (let [row (first (get (mcp/gateway-servers) "servers"))]
               ;; The TUI and the app build their edit form from this row: without
               ;; `args` an edit round-trip saves the server back with its
               ;; arguments silently dropped.
-              (expect (= ["-y" "server-filesystem" "/srv"] (:args row)))
-              (expect (= 45000 (:timeout-ms row)))
-              (expect (= "/srv" (:cwd row)))
+              (expect (= ["-y" "server-filesystem" "/srv"] (get row "args")))
+              (expect (= 45000 (get row "timeout_ms")))
+              (expect (= "/srv" (get row "cwd")))
               ;; Secrets still never cross: a save that omits them keeps them.
-              (expect (nil? (:env row)))
-              (expect (nil? (:headers row))))))))
+              (expect (nil? (get row "env")))
+              (expect (nil? (get row "headers"))))))))
   (it "marks the rows this gateway owns and counts tools that are not cached yet"
       (let
         [machine
@@ -200,9 +201,9 @@
         (with-redefs-fn {#'config/load-global-config-raw (constantly machine)
                          #'config/load-config-raw (constantly merged)}
           (fn []
-            (let [rows (:servers (mcp/gateway-servers))]
-              (expect (= ["owned" "team"] (mapv :name rows)))
-              (expect (= [true false] (mapv :is-managed rows))))))
+            (let [rows (get (mcp/gateway-servers) "servers")]
+              (expect (= ["owned" "team"] (mapv #(get % "name") rows)))
+              (expect (= [true false] (mapv #(get % "is_managed") rows))))))
         (with-redefs [client/list-tools (constantly [{"name" "a"} {"name" "b"}])]
           ;; A freshly connected server's tool cache is still nil; reading the atom
           ;; alone reported 0 tools for every healthy server.
@@ -247,8 +248,8 @@
                (reconcile!)
                (expect (= ["local"] @connects))
                (let [row (mcp/kill-gateway-server! "local")]
-                 (expect (true? (:is-killed row)))
-                 (expect (false? (:is-connected row))))
+                 (expect (true? (get row "is_killed")))
+                 (expect (false? (get row "is_connected"))))
                (expect (empty? @conns))
                ;; The brake has to survive the per-turn reconcile: closing the
                ;; connection alone let the very next turn respawn the stdio child
@@ -256,8 +257,8 @@
                (reconcile!)
                (expect (= ["local"] @connects))
                (let [row (mcp/start-gateway-server! "local")]
-                 (expect (false? (:is-killed row)))
-                 (expect (true? (:is-connected row))))
+                 (expect (false? (get row "is_killed")))
+                 (expect (true? (get row "is_connected"))))
                (expect (= ["local" "local"] @connects))
                ;; A kill is a RUNTIME brake, never an edit to anybody's config.
                (expect (= {"transport" "stdio" "command" "echo"}
@@ -328,7 +329,7 @@
             (expect (= :mcp/oauth-flow-not-found
                        (thrown #(mcp/complete-gateway-server-auth! "gone" "code-1"))))
             ;; Cancelling one is idempotent: a client may always retry the cleanup.
-            (expect (:is-cancelled (mcp/cancel-gateway-server-auth! "gone")))))))
+            (expect (get (mcp/cancel-gateway-server-auth! "gone") "is_cancelled"))))))
   (it "takes the authorization code from a pasted redirect URL or a bare code"
       (let
         [code-of
@@ -656,3 +657,94 @@
                  (expect (= ["write_file" {"path" "p"}] @called))
                  (expect (= "ok" (get-in answer ["content" 0 "text"]))))
                (finally (reset! conns {}))))))))
+
+(defdescribe
+  mcp-oauth-visibility-test
+  (it
+    "tells \"sign in\" apart from \"it is down\", in ctx and in every refusal"
+    (let
+      [store
+       (atom {"mcp" {"servers" {"down" {"transport" "streamable_http"
+                                        "url" "https://down.example.test/mcp"}
+                                "signed-out" {"transport" "streamable_http"
+                                              "url" "https://signed-out.example.test/mcp"}}}})
+
+       resolve*
+       (fn [sym]
+         (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core sym))
+
+       conns
+       @(resolve* 'conns)
+
+       killed
+       @(resolve* 'killed)
+
+       configured-servers
+       (resolve* 'configured-servers)
+
+       reconcile-async!
+       (resolve* 'reconcile-async!)
+
+       contribute
+       (resolve* 'contribute)
+
+       unavailable-err
+       (resolve* 'unavailable-err)
+
+       call-failed-err
+       (resolve* 'call-failed-err)
+
+       msg
+       (fn [r]
+         (get-in r [:error :message]))
+
+       hint
+       (fn [r]
+         (get-in r [:error :hint]))
+
+       env
+       {:session-id "s1"}]
+
+      (with-redefs-fn {#'config/load-global-config-raw (fn []
+                                                         @store)
+                       #'config/load-config-raw (fn []
+                                                  @store)
+                       #'client/connect (fn [_name _spec]
+                                          (throw (ex-info "connection refused" {})))
+                       #'client/alive? (constantly false)
+                       #'client/close (constantly nil)
+                       reconcile-async! (constantly nil)}
+        (fn []
+          (try
+            (reset! conns {})
+            (reset! killed #{})
+            ;; Only a real Bearer challenge means "sign in". EVERY http server
+            ;; without a static Authorization header gets a synthesised
+            ;; :bearer-fn, so keying off that alone would send the user of a
+            ;; server that is merely DOWN hunting for a login screen that does
+            ;; not exist.
+            (reset! (:www-auth-atom (get (configured-servers) "signed-out"))
+              "Bearer resource_metadata=\"https://signed-out.example.test/.well-known/oauth-protected-resource\"")
+            (let [block (get-in (contribute env) ["session_env" "mcp" "servers"])]
+              (expect (= "needs_auth" (get-in block ["signed-out" "status"])))
+              (expect (= "disconnected" (get-in block ["down" "status"])))
+              ;; snake_case on every wire surface: `/v1/mcp/servers` answers
+              ;; `streamable_http`, so ctx may not spell it `streamable-http`.
+              (expect (= "streamable_http" (get-in block ["signed-out" "transport"]))))
+            (expect (str/includes? (msg (unavailable-err env "signed-out")) "not authorized"))
+            (expect (str/includes? (hint (unavailable-err env "signed-out")) "/auth/start"))
+            ;; Configured but unreachable is a transport problem: calling it "not
+            ;; configured" while listing it as enabled in the same breath is a lie.
+            (expect (str/includes? (msg (unavailable-err env "down")) "unreachable"))
+            (expect (str/includes? (msg (unavailable-err env "ghost")) "not configured"))
+            ;; Nothing below the extension may escape as a throw: an exception
+            ;; ends the turn, an envelope leaves the model free to react.
+            (expect (str/includes? (msg (call-failed-err env
+                                                         "signed-out"
+                                                         "x"
+                                                         (ex-info "401"
+                                                                  {:type :mcp/oauth-required})))
+                                   "not authorized"))
+            (expect (str/includes? (msg (call-failed-err env "down" "x" (ex-info "boom" {})))
+                                   "boom"))
+            (finally (reset! conns {}) (reset! killed #{}))))))))

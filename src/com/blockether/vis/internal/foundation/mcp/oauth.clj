@@ -472,7 +472,7 @@
    refresh it throws `:mcp/oauth-required` immediately; authorizing is the
    explicit headless flow below, which hands back a URL instead of waiting for
    one."
-  [server-name server-url www-auth-atom _auth-hint]
+  [server-name server-url www-auth-atom]
   (oauth/refresher
     (fn [rejected]
       (let [creds (read-tokens server-name)]
@@ -498,12 +498,12 @@
    credentials."
   [server-name]
   (let [creds (read-tokens server-name)]
-    {:server server-name
-     :is-authorized (boolean (:token creds))
-     :is-expired (boolean (and (:token creds) (expired? creds)))
-     :has-refresh-token (boolean (:refresh-token creds))
-     :expires-at-ms (:expires-at-ms creds)
-     :scope (:scope creds)}))
+    {"server" server-name
+     "is_authorized" (boolean (:token creds))
+     "is_expired" (boolean (and (:token creds) (expired? creds)))
+     "has_refresh_token" (boolean (:refresh-token creds))
+     "expires_at_ms" (:expires-at-ms creds)
+     "scope" (:scope creds)}))
 
 ;; ---------------------------------------------------------------------------
 ;; Headless flows — authorizing from a client that is NOT this daemon's terminal
@@ -547,15 +547,16 @@
   nil)
 
 (defn- flow-view
-  "The ONLY fields that may cross the wire. The PKCE verifier, the state nonce and
-   the discovery context stay in this process."
+  "The ONLY fields that may cross the wire, string-keyed like every MCP surface.
+   The PKCE verifier, the state nonce and the discovery context stay in this
+   process."
   [{:keys [id server url redirect-uri expires-at-ms state]}]
-  (merge {:flow-id id
-          :server server
-          :kind "pkce"
-          :url url
-          :redirect-uri redirect-uri
-          :expires-at-ms expires-at-ms}
+  (merge {"flow_id" id
+          "server" server
+          "kind" "pkce"
+          "url" url
+          "redirect_uri" redirect-uri
+          "expires_at_ms" expires-at-ms}
          @state))
 
 (defn- code-of
@@ -583,18 +584,19 @@
    that started the flow on one device can read the outcome from another."
   [{:keys [ctx client-id redirect-uri state] :as flow} code]
   (try (exchange-code! ctx client-id code redirect-uri)
-       (reset! state {:status "ok"})
+       (reset! state {"status" "ok"})
        (catch Throwable t
-         (reset! state {:status "error" :error (or (ex-message t) (str t))})
+         (reset! state {"status" "error" "error" (or (ex-message t) (str t))})
          (throw t))
        (finally (stop-loopback! flow)))
   (flow-view flow))
 
 (defn start-authorization!
   "Begin a HEADLESS OAuth flow for `server-name` at `server-url` and return its
-   public view `{:flow-id :server :kind :url :redirect-uri :expires-at-ms :status}`.
+   public view `{flow_id, server, kind, url, redirect_uri, expires_at_ms,
+   status}` — string-keyed, like every MCP surface.
 
-   The caller shows `:url`; the user authorizes in their own browser. NO browser
+   The caller shows `url`; the user authorizes in their own browser. NO browser
    is opened here — the user may be nowhere near this machine. The flow completes
    by itself when that browser can reach the loopback listener on this host (the
    local TUI case), otherwise the client posts the redirect URL back through
@@ -621,7 +623,7 @@
       :redirect-uri redirect-uri
       :loopback server
       :expires-at-ms (+ (System/currentTimeMillis) (long flow-ttl-ms))
-      :state (atom {:status "pending"})}]
+      :state (atom {"status" "pending"})}]
 
     (swap! flows assoc (:id flow) flow)
     (future (let [q (deref result flow-ttl-ms ::timeout)]
@@ -660,4 +662,4 @@
   [flow-id]
   (sweep!)
   (drop-flow! flow-id)
-  {:flow-id flow-id :is-cancelled true})
+  {"flow_id" flow-id "is_cancelled" true})

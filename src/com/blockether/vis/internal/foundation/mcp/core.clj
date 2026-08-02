@@ -118,7 +118,12 @@
 (defn- ->client-spec
   "Coerce a user spec (already `runtime-config`'d) into what `mcp/connect`
    wants: env-interpolated, `:bearer-fn` synthesised for HTTP servers without a
-   static `Authorization` header, `:timeout-ms` / `:listen?` forwarded."
+   static `Authorization` header, `:timeout-ms` / `:listen?` forwarded.
+
+   The `WWW-Authenticate` atom is SHARED with the transport instead of staying
+   private to the token provider: every HTTP server without a static header gets
+   a `:bearer-fn`, so having one says nothing about whether the server wants
+   OAuth - a recorded Bearer challenge does."
   [server-name spec]
   (let
     [s
@@ -135,9 +140,12 @@
              (= "authorization" (str/lower-case (name k))))
            headers)
 
+     www-auth
+     (atom nil)
+
      bearer-fn
      (when (and (= :streamable-http transport) (not has-static-auth?))
-       (mcp-oauth/make-bearer-fn server-name (:url s) (atom nil) (:auth s)))]
+       (mcp-oauth/make-bearer-fn server-name (:url s) www-auth))]
 
     (cond-> (assoc s :transport transport)
       (:timeout_ms s)
@@ -147,7 +155,9 @@
       (assoc :listen? true)
 
       bearer-fn
-      (assoc :bearer-fn bearer-fn))))
+      (assoc :bearer-fn
+        bearer-fn :www-auth-atom
+        www-auth))))
 
 (defonce ^:private servers-cache
   ;; {:hash <hash-of-raw-mcp-map> :value {server-name coerced-spec}}
@@ -420,13 +430,13 @@
   nil)
 
 (defn session-servers
-  "The session-scoped servers attached to `session-id` as
-   `[{:name :transport :is-connected}]`, in name order."
+  "The session-scoped servers attached to `session-id` as string-keyed rows
+   `[{name, transport, is_connected}]`, in name order — like every MCP surface."
   [session-id]
   (mapv (fn [[nm spec]]
-          {:name nm
-           :transport (name (transport-of spec))
-           :is-connected (boolean (get-in @session-conns [[session-id nm] :conn]))})
+          {"name" nm
+           "transport" (name (transport-of spec))
+           "is_connected" (boolean (get-in @session-conns [[session-id nm] :conn]))})
         (sort-by key (get @session-specs session-id))))
 
 ;; ---------------------------------------------------------------------------
@@ -563,6 +573,9 @@
     {:names (vec (take cap names)) :omitted (max 0 (- n cap))}))
 
 (defn- server-summary
+  "One sanitized inventory row. STRING-KEYED, snake_case — exactly what a client
+   reads off the wire. Nothing here is a keyword: this map is JSON the moment it
+   leaves the gateway, and the TUI/Companion read it back by string key."
   [name raw-spec is-managed]
   (let
     [spec
@@ -572,56 +585,58 @@
      (conn-of name)]
 
     (cond->
-      {:name name
-       :transport (wire-transport spec)
-       :enabled (enabled? spec)
-       :is-connected (boolean conn)
+      {"name" name
+       "transport" (wire-transport spec)
+       "enabled" (enabled? spec)
+       "is_connected" (boolean conn)
        ;; Whether the GATEWAY owns this entry. A server declared in a hand-written
        ;; tier is the user's file: listed, never rewritten from here.
-       :is-managed (boolean is-managed)
+       "is_managed" (boolean is-managed)
        ;; Stopped by a client and HELD down until explicitly started again.
-       :is-killed (killed? name)
-       :tools (tool-count conn)}
+       "is_killed" (killed? name)
+       "tools" (tool-count conn)}
       (:command spec)
-      (assoc :command (:command spec))
+      (assoc "command" (:command spec))
 
       (:cwd spec)
-      (assoc :cwd (:cwd spec))
+      (assoc "cwd" (:cwd spec))
 
       ;; `args` and `timeout_ms` are NOT secrets — they are the rest of the spec a
       ;; client needs to render an edit form. Without them an edit round-trip
       ;; would save back a server that had silently lost its arguments; `env` and
       ;; `headers` stay out and are instead preserved by omission on save.
       (seq (:args spec))
-      (assoc :args (mapv str (:args spec)))
+      (assoc "args" (mapv str (:args spec)))
 
       ;; `runtime-config` has already kebab-cased the wire key `timeout_ms`.
       (:timeout-ms spec)
-      (assoc :timeout-ms (:timeout-ms spec))
+      (assoc "timeout_ms" (:timeout-ms spec))
 
       (:url spec)
-      ;; OAuth is only ever an HTTP concern; `:is-authorized` lets a client offer
+      ;; OAuth is only ever an HTTP concern; `is_authorized` lets a client offer
       ;; "Sign in" instead of letting the user stare at a server that 401s.
-      (assoc :url
-        (:url spec) :is-authorized
-        (:is-authorized (mcp-oauth/token-status name))))))
+      (assoc "url"
+        (:url spec) "is_authorized"
+        (get (mcp-oauth/token-status name) "is_authorized")))))
 
 (defn gateway-servers
   "Sanitized MCP inventory for gateway management. Secrets (env and header values)
    deliberately never cross this boundary. Every configured server is listed —
-   gateway-owned and hand-written alike — and `:is-managed` says which of them
+   gateway-owned and hand-written alike — and `is_managed` says which of them
    this API may write. Reading the inventory also nudges the pool toward config
    and arms the health loop, so a client that has not run a turn yet still gets —
-   not merely sees — the connections the gateway owes it."
+   not merely sees — the connections the gateway owes it.
+
+   String-keyed throughout, like every MCP surface."
   []
   (reconcile-async!)
   (let [machine (machine-servers)]
-    {:servers (->> (raw-servers)
-                   (map (fn [[name spec]]
-                          [(str name) spec]))
-                   (sort-by first)
-                   (mapv (fn [[name spec]]
-                           (server-summary name spec (contains? machine name)))))}))
+    {"servers" (->> (raw-servers)
+                    (map (fn [[name spec]]
+                           [(str name) spec]))
+                    (sort-by first)
+                    (mapv (fn [[name spec]]
+                            (server-summary name spec (contains? machine name)))))}))
 
 (defn- reset-server-cache! [] (reset! servers-cache {:hash ::none :value {}}))
 
@@ -710,7 +725,7 @@
       (reset-server-cache!)
       (revive! name)
       (disconnect! name)
-      {:name name :is-deleted true})))
+      {"name" name "is_deleted" true})))
 
 (defn kill-gateway-server!
   "Stop `name` NOW and keep it stopped: close the connection (for stdio that
@@ -769,8 +784,9 @@
 
 (defn start-gateway-server-auth!
   "Begin a headless OAuth 2.1 flow for HTTP server `name`. Returns
-   `{:flow-id :server :kind :url :redirect-uri :expires-at-ms :status}`; the
-   caller shows `:url` and the user authorizes in their own browser."
+   `{flow_id, server, kind, url, redirect_uri, expires_at_ms, status}` —
+   string-keyed, like every MCP surface. The caller shows `url` and the user
+   authorizes in their own browser."
   [name]
   (let
     [name
@@ -783,9 +799,14 @@
 
 (defn- settle-auth!
   "A flow that landed leaves the server connected with a STALE 401'd session (or
-   not connected at all), so reconnect it once the tokens exist."
-  [{:keys [status server] :as row}]
-  (when (and (= "ok" status) server (not (conn-of server))) (revive! server) (reconcile-async!))
+   not connected at all), so reconnect it once the tokens exist. `row` is the
+   string-keyed wire view of the flow."
+  [row]
+  (let [status (get row "status")
+        server (get row "server")]
+    (when (and (= "ok" status) server (not (conn-of server)))
+      (revive! server)
+      (reconcile-async!)))
   row)
 
 (defn complete-gateway-server-auth!
@@ -821,7 +842,7 @@
 
 (defn test-gateway-server!
   "Connect a candidate spec without saving it. The connection is always closed;
-   only non-secret tool metadata is returned."
+   only non-secret tool metadata is returned, string-keyed like the inventory."
   [name raw-spec]
   (let
     [name
@@ -836,11 +857,11 @@
      conn
      (mcp/connect name spec)]
 
-    (try {:name name
-          :is-connected true
-          :tools (mapv (fn [tool]
-                         {:name (get tool "name") :description (get tool "description")})
-                       (mcp/list-tools conn))}
+    (try {"name" name
+          "is_connected" true
+          "tools" (mapv (fn [tool]
+                          {"name" (get tool "name") "description" (get tool "description")})
+                        (mcp/list-tools conn))}
          (finally (mcp/close conn)))))
 
 ;; ---------------------------------------------------------------------------
@@ -850,21 +871,45 @@
 (defn- ok [op result] (extension/success {:op op :result result}))
 
 (defn- err
+  "Failure envelope. `:message` and `:hint` are the ENGINE's error contract (and
+   the only keywords allowed through here); every MCP fact carried alongside them
+   — server, tool, catalog, target — is snake_case STRING-keyed, so nothing
+   keyword-shaped can reach the model or a client."
   [op message & {:as extra}]
   (extension/failure {:result nil
                       :op op
                       :metadata {:started-at-ms (now-ms) :finished-at-ms (now-ms) :duration-ms 0}
-                      :error (merge {:message message} extra)}))
+                      :error (reduce-kv (fn [m k v]
+                                          (assoc m
+                                            (if (= :hint k) :hint (str/replace (name k) "-" "_"))
+                                            v))
+                                        {:message message}
+                                        extra)}))
 
 (defn- needs-auth?
-  "True when `server` is an OAuth server nobody has signed into: its spec carries
-   a synthesised `:bearer-fn` (HTTP transport with no static `Authorization`
-   header) and no token is persisted. Kept distinct from `disconnected` on
-   purpose - \"sign in\" and \"it is broken\" are different instructions, and only
-   one of them is the user's to act on."
+  "True when `server` is an OAuth server nobody has signed into: it answered a
+   request with a `WWW-Authenticate` challenge and no usable token is persisted.
+
+   The challenge is the load-bearing half. Every HTTP server without a static
+   `Authorization` header gets a synthesised `:bearer-fn`, so keying off that
+   alone would label a plain unauthenticated server that is merely DOWN as
+   \"signed out\" and send its user hunting for a login screen that does not
+   exist."
   [session-id server]
-  (let [spec (get (visible-servers session-id) server)]
-    (boolean (and (:bearer-fn spec) (not (:is-authorized (mcp-oauth/token-status server)))))))
+  (let
+    [spec
+     (get (visible-servers session-id) server)
+
+     challenged?
+     (boolean (some-> ^clojure.lang.IDeref (:www-auth-atom spec)
+                      deref))
+
+     status
+     (when challenged? (mcp-oauth/token-status server))]
+
+    (boolean (and challenged?
+                  (or (not (get status "is_authorized"))
+                      (and (get status "is_expired") (not (get status "has_refresh_token"))))))))
 
 (defn- authorize-hint
   "Where a human goes to authorize `server`. The gateway route is headless: it
@@ -876,28 +921,40 @@
        "/auth/start, which answers with the URL to open."))
 
 (defn- unavailable-err
-  "The refusal for a server ctx advertises but the pool cannot reach. Three very
+  "The refusal for a server ctx advertises but the pool cannot reach. Four very
    different instructions hide behind one failure, so they are told apart: an
    OAuth server nobody signed into needs a sign-in; a KILLED server is configured
    and enabled, so pointing at `:mcp :servers` would send its user editing a file
-   that is already right; anything else really is configuration."
+   that is already right; a configured server that simply will not connect is a
+   transport problem, and telling its user it \"is not configured\" while listing
+   it as enabled in the same breath is a lie; only an unknown name is config."
   [env server]
-  (cond (needs-auth? (:session-id env) server)
-        (err :mcp/call (str "MCP server '" server "' is not authorized yet - nobody has signed in.")
-             :server server
-             :hint (authorize-hint server))
-        (killed? server)
-        (err :mcp/call
-             (str "MCP server '" server "' was stopped and is held down until it is started again.")
-             :hint (str "Start it from Settings -> MCP Servers, or POST /v1/mcp/servers/"
-                        server
-                        "/actions/start"))
-        :else (err :mcp/call
-                   (str "MCP server '"
-                        server
-                        "' is not configured or is disabled (see ~/.vis/state.yml :mcp :servers).")
-                   :hint (str "Enabled servers: "
-                              (pr-str (vec (keys (visible-servers (:session-id env)))))))))
+  (let [spec (get (visible-servers (:session-id env)) server)]
+    (cond
+      (needs-auth? (:session-id env) server)
+      (err :mcp/call (str "MCP server '" server "' is not authorized yet - nobody has signed in.")
+           :server server
+           :hint (authorize-hint server))
+      (killed? server)
+      (err :mcp/call
+           (str "MCP server '" server "' was stopped and is held down until it is started again.")
+           :hint (str "Start it from Settings -> MCP Servers, or POST /v1/mcp/servers/"
+                      server
+                      "/actions/start"))
+      spec
+      (err
+        :mcp/call
+        (str "MCP server '" server "' is configured but unreachable - the connection failed.")
+        :server server
+        :target (or (:url spec) (:command spec))
+        :hint
+        "Check its url/command and that the server is up; the daemon retries on its own, so a later call may work.")
+      :else (err :mcp/call
+                 (str "MCP server '"
+                      server
+                      "' is not configured or is disabled (see ~/.vis/state.yml :mcp :servers).")
+                 :hint (str "Enabled servers: "
+                            (pr-str (vec (keys (visible-servers (:session-id env))))))))))
 
 (defn- tool-rows
   "`conn`'s catalog in wire shape. Reads the conn's CACHED listing, so asking for

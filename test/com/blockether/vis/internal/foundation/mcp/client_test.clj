@@ -164,3 +164,34 @@
         ;; standard Streamable HTTP spelling.
         (expect (= :streamable-http (transport-of {:transport "http"})))
         (expect (= :streamable-http (transport-of {:url "https://mcp.example.test/mcp"}))))))
+
+(defdescribe mcp-json-encoding-total-test
+             (it "encodes ANY tool argument instead of throwing inside the JSON-RPC write"
+                 (let
+                   [->json
+                    (ns-resolve 'com.blockether.vis.internal.foundation.mcp.client '->json)
+
+                    out
+                    (->json {"n" ##NaN
+                             "i" ##Inf
+                             "-i" ##-Inf
+                             :kw "v"
+                             7 "int-key"
+                             "nested" {:deep [1/3 #{:x} (java.util.Date. 0)]}})]
+
+                   ;; `arguments` come from a model or another extension. One NaN, one keyword
+                   ;; key, one stray object used to throw a raw CharredException from INSIDE
+                   ;; the write - after the request id was allocated, leaving broken framing
+                   ;; instead of a tool error.
+                   (expect (string? out))
+                   (expect (str/includes? out "\"n\":null"))
+                   (expect (str/includes? out "\"i\":null"))
+                   (expect (str/includes? out "\"-i\":null"))
+                   (expect (str/includes? out "\"kw\":\"v\""))
+                   ;; JSON has exactly one kind of key.
+                   (expect (str/includes? out "\"7\":\"int-key\""))
+                   ;; Pathological nesting is data, not a StackOverflowError.
+                   (expect (string? (->json (reduce (fn [m _]
+                                                      {"k" m})
+                                                    {"leaf" 1}
+                                                    (range 400))))))))
