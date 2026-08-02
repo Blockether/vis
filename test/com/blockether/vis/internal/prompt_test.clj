@@ -64,8 +64,8 @@
   (it
     "keeps the sectioned core contract explicit and non-contradictory"
     (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-      ;; Context safety is worth a small fixed prompt cost; keep the whole core below 4.7k.
-      (expect (< (count text) 4700))
+      ;; Context safety is worth a small fixed prompt cost; keep the whole core below 4.4k.
+      (expect (< (count text) 4400))
       (let
         [steps (mapv #(str/index-of text %)
                      ["`grep` locates unknown code" "`struct_index` every known file"
