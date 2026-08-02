@@ -311,6 +311,10 @@
 
 (def ^:private context-overflow-recovery! (deref #'lp/context-overflow-recovery!))
 
+(def ^:private estimator-undercount (deref #'lp/estimator-undercount))
+
+(def ^:private overflow-fold-budget (deref #'lp/overflow-fold-budget))
+
 (def ^:private provider-output-chunk? (deref #'lp/provider-output-chunk?))
 
 (def ^:private MAX_PROVIDER_UNAVAILABLE_RETRIES (deref #'lp/MAX_PROVIDER_UNAVAILABLE_RETRIES))
@@ -4830,7 +4834,7 @@
                                     {:provider :openai :model "gpt"}
                                     {}
                                     "gpt-4o"
-                                    1000000)]
+                                    (constantly 1000000))]
 
         (expect (some? recovery))
         (expect (< (:after-tokens recovery) (:before-tokens recovery)))
@@ -4847,6 +4851,32 @@
                       (:messages recovery)))
         (expect (some #(re-find #"1 search, 1 tool call" (str (:content %)))
                       (:messages recovery)))))
+    (it "measures the estimator's undercount from the refused request, never a constant"
+        (let
+          [;; Session cd24926e: the provider priced the very same 132-iteration seed at
+           ;; 1,437,952 where the local estimator read 963,503.
+           factor
+           (estimator-undercount 1437952 963503)
+
+           budget
+           (overflow-fold-budget {:provider-tokens 1437952 :provider-limit 1000000 :margin 0.9}
+                                 963503)]
+
+          (expect (< 1.49 (double factor) 1.5))
+          ;; A DIFFERENT mix measures differently — that is the point of measuring.
+          (expect (< 1.09 (double (estimator-undercount 1100 1000)) 1.11))
+          ;; A generous estimator buys no extra room, and an unmeasurable side stays nil.
+          (expect (= 1.0 (estimator-undercount 500 1000)))
+          (expect (nil? (estimator-undercount nil 963503)))
+          (expect (nil? (estimator-undercount 1437952 0)))
+          ;; The budget is spent in LOCAL currency, and priced back through the measured
+          ;; factor it lands under the provider's limit instead of hoping to.
+          (expect (< 600000 (long budget) 606000))
+          (expect (< (* (double budget) (double factor)) 1000000.0))
+          ;; Blind path: no provider numbers to measure, so bisect our own estimate only.
+          (expect (= 5000 (overflow-fold-budget {:cut 0.5} 10000)))
+          (expect (= 5000 (overflow-fold-budget {:provider-limit 999 :cut 0.5} 10000)))
+          (expect (nil? (overflow-fold-budget {} 10000)))))
     (it "escalates: each rescue folds strictly more, then goes terminal"
         (let
           [content
@@ -4890,7 +4920,13 @@
           (expect (every? #(< (count (:scopes %)) (count trailer)) (butlast rescues)))
           (expect (apply < (mapv #(count (:scopes %)) (butlast rescues))))
           (expect (apply > (mapv :after-tokens (butlast rescues))))
-          (expect (every? #(<= (long (:after-tokens %)) (long (:max-input-tokens %)))
+          (expect (every? #(<= (long (:after-tokens %)) (long (:budget-tokens %)))
+                          (butlast rescues)))
+          ;; Every rescue reports the undercount it measured, and its projection priced
+          ;; through that measurement stays under the limit the provider refused.
+          (expect (every? #(some? (:estimator-undercount %)) (butlast rescues)))
+          (expect (every? #(< (* (double (:after-tokens %)) (double (:estimator-undercount %)))
+                              (double (:provider-limit %)))
                           (butlast rescues)))
           (expect (not-any? #(contains? (:scopes %) "t1/i12") (butlast rescues)))))
     (it "preserves existing semantic fold gists"
@@ -4914,7 +4950,7 @@
              {:provider :openai :model "gpt"}
              {}
              "gpt-4o"
-             1000000)
+             (constantly 1000000))
 
            contents
            (mapv (comp str :content) (:messages recovery))]
@@ -4942,7 +4978,7 @@
                                                    {:provider :openai :model "gpt"}
                                                    {}
                                                    "gpt-4o"
-                                                   1000000)))))
+                                                   (constantly 1000000))))))
     (it "refuses a retry whose folded estimate still exceeds the provider budget"
         (let
           [content
@@ -4959,7 +4995,7 @@
                                                    {:provider :openai :model "gpt"}
                                                    {}
                                                    "gpt-4o"
-                                                   1)))))
+                                                   (constantly 1))))))
     (it "distinguishes replay-safe lifecycle chunks from output and side effects"
         (expect (false? (provider-output-chunk? {:phase :provider-call})))
         (expect (false? (provider-output-chunk? {:phase :response-parse})))

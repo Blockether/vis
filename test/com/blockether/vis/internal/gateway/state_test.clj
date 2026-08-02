@@ -2562,3 +2562,148 @@
                           (reset! landed true)))
               (expect (false? (await-flag landed 1200))))
             (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))))
+
+(defdescribe
+  append-event-stamp-test
+  "`append-event!` canonicalizes the payload ONCE, OUTSIDE the `swap!`. There is
+   a single process-wide `registry` atom, so concurrent appends collide and a
+   `swap!` body re-runs from scratch on every CAS retry — with `wire/canonical`
+   inside it, a megabyte-sized tool result was re-walked per retry (measured:
+   15155 walks to append 2400 events, 84% of the work discarded). Hoisting it
+   also makes the documented stamp rule absolute."
+  (it "stamps identity over payload keys that merely CANONICALIZE onto it"
+      (let
+        [sid
+         (java.util.UUID/randomUUID)
+
+         registry
+         @#'state/registry
+
+         saved
+         @registry]
+
+        (try (with-redefs
+               [bus/publish! (fn [& _]
+                               nil)]
+               (let
+                 [event (state/append-event! sid
+                                             "turn.delta"
+                                             {:session-id "SOMEONE-ELSES-SESSION"
+                                              :seq 999999
+                                              :type "spoofed"
+                                              :schema 42
+                                              :text "hi"})]
+                 (expect (= (str sid) (get event "session_id")))
+                 (expect (= 1 (get event "seq")))
+                 (expect (= "turn.delta" (get event "type")))
+                 (expect (= 1 (get event "schema")))
+                 (expect (= "hi" (get event "text")))))
+             (finally (reset! registry saved)))))
+  (it
+    "walks each payload exactly once per append, even under CAS contention"
+    (let
+      [registry
+       @#'state/registry
+
+       saved
+       @registry
+
+       walks
+       (atom 0)
+
+       real
+       wire/canonical
+
+       ;; Only OUR payloads are counted: the canonical event that flows on to
+       ;; fan-out carries string keys, so it can never be mistaken for one.
+       payload
+       {:bug9 true :rows (vec (repeat 200 {:a 1 :b "x" :nested {:c [1 2 3]}}))}]
+
+      (try (with-redefs
+             [bus/publish!
+              (fn [& _]
+                nil)
+
+              wire/canonical
+              (fn [p]
+                (when (and (map? p) (contains? p :bug9)) (swap! walks inc))
+                (real p))]
+
+             (->> (range 8)
+                  (mapv (fn [_]
+                          (future (dotimes [_ 50]
+                                    (state/append-event! (java.util.UUID/randomUUID)
+                                                         "turn.delta"
+                                                         payload)))))
+                  (run! deref))
+             (expect (= 400 @walks)))
+           (finally (reset! registry saved))))))
+
+(defdescribe
+  list-turns-dedup-scale-test
+  "Hydration dedups live gateway rows against persisted engine rows by an exact
+   id match, so the persisted ids belong in a SET. The old `some` rescanned every
+   persisted row for every live row, and its fallback arm deep-compares whole
+   `:content` vectors — 800 live against 800 persisted measured 14.1 ms, versus
+   0.19 ms for the set. A non-blank engine id decides it outright, because the
+   fallback arm REQUIRES a blank one and can never fire."
+  (it
+    "drops the live row a persisted id owns and keeps the one none owns"
+    (let
+      [sid
+       (java.util.UUID/randomUUID)
+
+       dup-engine
+       (str (java.util.UUID/randomUUID))
+
+       own-engine
+       (str (java.util.UUID/randomUUID))
+
+       registry
+       @#'state/registry
+
+       saved
+       @registry
+
+       live
+       (fn [tid engine-id]
+         {:turn_id tid
+          :engine_turn_id engine-id
+          :session_id (str sid)
+          :status "completed"
+          :request "hello"
+          :content [{"id" "b1" "type" "prose" "markdown" "hi"}]
+          :started_at 1000})
+
+       persisted
+       (conj (mapv (fn [i]
+                     {:id (str "row-" i)
+                      :status :success
+                      :user-request (str "q" i)
+                      :content []
+                      :created-at (java.util.Date. (+ 1000 (long i)))})
+                   (range 200))
+             {:id dup-engine
+              :status :success
+              :user-request "hello"
+              :content [{"id" "b1" "type" "prose" "markdown" "hi"}]
+              :created-at (java.util.Date. 1500)})]
+
+      (try (reset! registry {sid {:next-seq 0
+                                  :turn-order ["gateway-dup" "gateway-own"]
+                                  :turns {"gateway-dup" (live "gateway-dup" dup-engine)
+                                          "gateway-own" (live "gateway-own" own-engine)}}})
+           (with-redefs
+             [persistance/db-list-session-turns
+              (fn [_ _]
+                persisted)
+
+              persistance/db-list-turns-attachments
+              (fn [_ _]
+                {})]
+
+             (let [ids (set (map #(get % "turn_id") (state/list-turns sid)))]
+               (expect (contains? ids dup-engine))
+               (expect (not (contains? ids "gateway-dup")))
+               (expect (contains? ids "gateway-own"))))
+           (finally (reset! registry saved))))))

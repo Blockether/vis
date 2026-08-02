@@ -3868,15 +3868,6 @@
                   :model-sync
                   (state/dispatch [:sync-session-model tab-id chunk])
 
-                  ;; Transport dropped/restored underneath this tab. On reconnect,
-                  ;; re-ask the gateway about a turn still painted live here: every
-                  ;; terminal event emitted during the outage was missed, and the
-                  ;; render-loop heartbeat would otherwise need a full grace + probe
-                  ;; interval to notice it.
-                  (:gateway-connected :gateway-disconnected)
-                  (state/dispatch [:sync-gateway-connection
-                                   (= (:phase chunk) :gateway-connected)])
-
                   ;; The server's `subscription.ready` verdict: it names the turn the
                   ;; DAEMON is running for this session right now, before any replay.
                   ;; Disagreement with the turn painted here is proof of a gap.

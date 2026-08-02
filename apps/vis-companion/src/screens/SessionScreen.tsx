@@ -10,7 +10,7 @@ import {
 } from 'react';
 import { AssistantMessage, transcriptEnterClass, UserMessage } from '../components/ChatContent';
 import { ExpandableImage } from '../components/ImageViewer';
-import { Banner } from '../components/ui';
+import { Banner, Spinner } from '../components/ui';
 import { ProviderRouterDialog } from './RouterScreen';
 import {
   attachmentsFromFiles,
@@ -69,6 +69,7 @@ import {
   scrollAnchorFor,
   type ScrollAnchor,
   shellViewportHeight,
+  useSafeBottomStyle,
 } from '../lib/viewport';
 import { answeredTurnCount, markSessionRead } from '../lib/unread';
 import { App } from '@capacitor/app';
@@ -210,6 +211,35 @@ function isSettledRow(turn: TranscriptTurn): boolean {
 
 function rowId(turn: TranscriptTurn): string {
   return String(turn.id ?? turn.turn_id ?? '');
+}
+
+/**
+ * The turn the TRANSCRIPT itself says is still in flight, if any.
+ *
+ * `live` / `current_turn_id` are read from the gateway's in-memory registry, and
+ * that registry can be wrong in the one direction that hurts: the stall watchdog
+ * and the cancel backstop clear `:current-turn` while the engine keeps
+ * iterating, so `/v1/sessions/:sid` answers `idle`, `live: false`,
+ * `current_turn_id: null` about a turn on its 430th iteration. Believing that
+ * flag is how this screen sat on "Vis is waiting for an update" for two hours:
+ * nothing was adopted, so `reduceLiveEvent` dropped every delta that WAS
+ * arriving, while `/transcript` held the whole turn the entire time.
+ *
+ * The persisted row is the second witness and it does not go through the
+ * registry: the row is written `running` when the turn is accepted and only
+ * patched at the terminal frame, so an unsettled row means work. Its id is the
+ * same turn id `/turns/:tid/trace` resumes from, which makes it enough to adopt
+ * from. Only one turn runs per session, so the LAST unsettled row — scanning
+ * back over queued rows, stopping at the first settled one — is that turn.
+ */
+function inFlightRow(turns: readonly TranscriptTurn[] | null): TranscriptTurn | null {
+  if (!turns?.length) return null;
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (isSettledRow(turn)) return null;
+    if (isRunningRow(turn)) return turn;
+  }
+  return null;
 }
 
 /**
@@ -655,32 +685,22 @@ function expandFileMentions(text: string): string {
   });
 }
 
-const LOADING_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
 // Matches the veil's `duration-200`. Kept in JS because the veil has to stay
 // MOUNTED for the length of its own fade-out (see the reveal effect below).
 const VEIL_FADE_MS = 200;
 
-// Mirrors the TUI's `paint-content-loading!`: a centered Braille spinner that
-// advances every 100ms next to "Loading session…" while an existing session
-// hydrates. New-session creation never mounts this — it opens straight to the
-// empty transcript, matching the TUI (which suppresses the spinner for a
-// still-building `:build-id` tab).
+// Mirrors the TUI's `paint-content-loading!`: a centered Braille spinner next
+// to "Loading session…" while an existing session hydrates. New-session creation
+// never mounts this — it opens straight to the empty transcript, matching the
+// TUI (which suppresses the spinner for a still-building `:build-id` tab).
 function LoadingSession() {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 100);
-    return () => window.clearInterval(timer);
-  }, []);
-  const frame = LOADING_SPINNER_FRAMES[Math.floor(now / 100) % LOADING_SPINNER_FRAMES.length];
   return (
     <div
       className="flex min-h-[55vh] items-center justify-center font-mono text-body text-white"
       role="status"
       aria-label="Loading session"
     >
-      <span className="motion-reduce:hidden">{frame}</span>
-      <span className="hidden motion-reduce:inline">●</span>
+      <Spinner />
       <span>&nbsp;&nbsp;Loading session…</span>
     </div>
   );
@@ -858,6 +878,10 @@ function PasteEditor({
   onClose: () => void;
   onSave: () => void;
 }) {
+  // `--safe-bottom` rides in on this element instead of the document root: it
+  // changes with every keyboard movement, and a root-scoped custom property is
+  // a whole-document style recalculation (see `useSafeBottomStyle`).
+  const safeBottomStyle = useSafeBottomStyle();
   // This overlay lives inside SessionScreen's positioned root, so it follows
   // the app shell without creating its own fixed WebKit layer.
   return (
@@ -917,7 +941,10 @@ function PasteEditor({
           aria-label={`Content of pasted block ${editingPaste.id}`}
         />
 
-        <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-dialog-edge bg-panel-2 px-3 py-2 pb-[max(0.5rem,var(--safe-bottom,env(safe-area-inset-bottom)))] font-mono text-meta text-dialog-hint sm:px-4">
+        <footer
+          style={safeBottomStyle}
+          className="flex shrink-0 items-center justify-end gap-2 border-t border-dialog-edge bg-panel-2 px-3 py-2 pb-[max(0.5rem,var(--safe-bottom,env(safe-area-inset-bottom)))] font-mono text-meta text-dialog-hint sm:px-4"
+        >
           <span className="mr-auto hidden truncate sm:block">Esc cancels · ⌘↵ saves</span>
           <button
             type="button"
@@ -985,6 +1012,8 @@ export function SessionScreen({
   // the draft message, because that is what it becomes: unsent words belonging
   // to this gateway's copy of this session.
   const voiceMailboxId = draftMessageId;
+  // The composer footer carries `--safe-bottom` itself; see `useSafeBottomStyle`.
+  const safeBottomStyle = useSafeBottomStyle();
   const [prompt, setPrompt] = useState(() => peekDraftMessage(draftMessageId).text);
   const [draftMessageReady, setDraftMessageReady] = useState(false);
   // Same fact, readable SYNCHRONOUSLY: the effects below run in declaration
@@ -1629,12 +1658,29 @@ export function SessionScreen({
   // TUI resumes from. The bubble comes back with the work done while we were
   // away, and every subsequent delta now has somewhere to land.
   const adoptRunningTurn = useCallback(
-    async (row: Session | null, signal?: AbortSignal) => {
+    async (
+      row: Session | null,
+      signal?: AbortSignal,
+      rows?: readonly TranscriptTurn[] | null,
+    ) => {
       if (!row) return;
       const gatewayLive = row.live !== undefined ? row.live : row.status === 'running';
-      const tid = row.current_turn_id ?? '';
-      if (!gatewayLive || tid === '') return;
-      // The gateway's own answer, and it needs no round trip: a turn IS running.
+      const claimed = row.current_turn_id ?? '';
+      // The registry answers FIRST — exact, free, no round trip. But when it says
+      // nothing is running, that is not taken as "nothing is running": the
+      // transcript is asked instead (see `inFlightRow`). A registry that dropped
+      // `:current-turn` under a live turn is precisely the state where the seed
+      // frame can never arrive, so refusing to adopt there is what pins the
+      // screen to the placeholder, counting minutes, for the rest of the turn.
+      const running = inFlightRow(rows ?? turnsRef.current);
+      // Identity stays the REGISTRY's id whenever it has one: the terminal SSE
+      // frame carries that id and `ownsTerminal` settles this very bubble by
+      // matching it. Only a registry that has LOST the turn hands identity to the
+      // row — there is no other id left, and the reconcile tick's coverage check
+      // retires it when the row finally settles.
+      const tid = gatewayLive && claimed !== '' ? claimed : running ? rowId(running) : '';
+      if (tid === '') return;
+      // Either witness is enough, and neither cost a round trip: a turn IS running.
       // Claiming it here rather than after `turnTrace` matters — until `running`
       // is set, `turnsSettled` treats the persisted `running` placeholder as a
       // finished row, so opening a streaming session painted that row with no
@@ -1645,9 +1691,17 @@ export function SessionScreen({
       // a missing (or already settled) bubble is adopted into.
       const held = liveTurnRef.current;
       if (held && (held.status === 'running' || held.id === tid)) return;
+      // WHICH id the trace is read under is not the same question as which id this
+      // bubble carries. `/turns/:tid/trace` resolves the ENGINE's turn id — the
+      // persisted row's — and answers 200 with ZERO iterations for the gateway
+      // registry's `current_turn_id` (measured against a live daemon: registry id
+      // -> 0, row id -> every iteration so far). Reading by the registry id is why
+      // a resumed session adopted an EMPTY bubble and only filled from the next
+      // delta onwards, losing everything the turn had already done.
+      const traceId = running ? rowId(running) : tid;
       let iterations: TranscriptIteration[];
       try {
-        iterations = await client.turnTrace(sid, tid, signal);
+        iterations = await client.turnTrace(sid, traceId, signal);
       } catch {
         // Older gateway, or a flaky link. The next reconcile tick retries.
         return;
@@ -1662,10 +1716,15 @@ export function SessionScreen({
       const startedAt =
         row.running_started_at != null && row.server_time_ms != null
           ? Date.now() - Math.max(0, row.server_time_ms - row.running_started_at)
-          : Date.now();
+          : // Adopted off the transcript there is no `running_started_at` to rebase
+            // — the row's own stamp is the only start there is, and without it a
+            // turn that began two hours ago would restart its clock at 0s.
+            typeof running?.created_at === 'number' && Number.isFinite(running.created_at)
+            ? running.created_at - (row.server_time_ms != null ? row.server_time_ms - Date.now() : 0)
+            : Date.now();
       const adopted: LiveTurn = {
         id: tid,
-        request: row.running_request ?? '',
+        request: row.running_request ?? running?.user_request ?? running?.request ?? '',
         answer: '',
         iterations,
         startedAt,
@@ -1702,12 +1761,12 @@ export function SessionScreen({
         /* Unreachable gateway: fall through, the transcript read reports it. */
       }
       if (controller.signal.aborted) return;
-      await (body ?? loadTranscript(row));
+      const rows = await (body ?? loadTranscript(row));
       if (controller.signal.aborted) return;
       // AFTER the transcript: the persisted 'running' placeholder must already be
       // on screen when the bubble takes it over, or the two swap places and the
       // turn flickers.
-      await adoptRunningTurn(row, controller.signal);
+      await adoptRunningTurn(row, controller.signal, rows);
     })();
     return () => controller.abort();
   }, [client, sid, loadTranscript, acceptQueueBacklog, adoptRunningTurn]);
@@ -1727,6 +1786,13 @@ export function SessionScreen({
     // bug. Stamp the start instead and treat an older one as lost.
     const STALE_RECONCILE_MS = 20_000;
     let inflightSince: number | null = null;
+    // Trace pulls for a turn the registry has lost (below). The response carries
+    // EVERY iteration of the turn, so it is rate-limited and only ever issued
+    // when nothing is being pushed into the bubble.
+    const TRACE_PULL_MIN_MS = 10_000;
+    let lastTraceId = '';
+    let lastTraceCount = -1;
+    let lastTraceAt = 0;
     const reconcileOnce = async () => {
       if (document.visibilityState === 'hidden') return;
       // Liveness is sampled HERE but only acted on after two more round-trips
@@ -1769,6 +1835,11 @@ export function SessionScreen({
         nextTurns = null;
       }
       if (cancelled) return;
+      // The ENGINE's witness, taken from the rows this tick just read: a persisted
+      // `running` row outlives any registry hiccup (see `inFlightRow`). Every
+      // verdict below that used to trust `gatewayLive` alone now needs both to
+      // agree before it retires work the user is watching.
+      const persistedRunning = inFlightRow(nextTurns ?? turnsRef.current);
       // Decided and applied BEFORE the queue round-trip below: with the clear
       // sitting after another await, the settled transcript row and the live
       // bubble both painted for that window (the same turn twice).
@@ -1789,9 +1860,13 @@ export function SessionScreen({
         // created_at window), and right after a queued row drains, the PREVIOUS
         // turn's freshly persisted row falls inside that window. One tick then
         // retired a live bubble mid-stream. The registry row is not a heuristic.
-        const gatewayRunningThis =
-          gatewayLive && (next.current_turn_id ?? '') === liveId && liveId !== '';
-        if (covered && !gatewayRunningThis && (liveTurnRef.current?.id ?? '') === liveId) {
+        // The persisted row counts too: while it is still `running` the turn is
+        // demonstrably alive, whatever the registry currently believes.
+        const stillRunningThis =
+          liveId !== '' &&
+          ((gatewayLive && (next.current_turn_id ?? '') === liveId) ||
+            (persistedRunning !== null && rowId(persistedRunning) === liveId));
+        if (covered && !stillRunningThis && (liveTurnRef.current?.id ?? '') === liveId) {
           setRunning(false);
           setLiveTurn(null);
           liveTurnRef.current = null;
@@ -1817,7 +1892,10 @@ export function SessionScreen({
       const showsWork =
         (live !== null && liveBefore !== null && (live.id ?? '') === liveIdBefore) ||
         (runningRef.current && runningBefore);
-      if (!covered && !gatewayLive && showsWork) {
+      // `persistedRunning` vetoes this: "idle" from a registry that lost the turn
+      // is not idleness, and freezing the ticker there is the same wrong answer in
+      // a quieter costume.
+      if (!covered && !gatewayLive && !persistedRunning && showsWork) {
         setRunning(false);
         // The gateway is idle but its answer is NOT in the transcript yet (the
         // engine row lags, or the read failed). Stop the ticker — never delete
@@ -1839,7 +1917,55 @@ export function SessionScreen({
       // started, a stream that reconnected past it. Cheap when healthy: it only
       // costs a request when the ids actually disagree.
       if (cancelled) return;
-      await adoptRunningTurn(next);
+      // Gateway idle, engine still writing: nothing will be PUSHED into the bubble
+      // either — the hub's liveness comes from the same registry — so PULL the
+      // trace while the disagreement lasts. Skipped while the bubble is growing on
+      // its own, and rate-limited, because this response carries the whole turn.
+      if (!gatewayLive && persistedRunning) {
+        const tid = rowId(persistedRunning);
+        const painted = liveTurnRef.current;
+        // Two mints, one turn: a bubble seeded by `turn.started` carries the
+        // GATEWAY's id, this row carries the ENGINE's, and the frozen bubble in
+        // the incident is exactly one of those. Letting that mismatch veto the
+        // repair would leave the only case this branch exists for unhandled, so
+        // the submitted text stands as the second witness when the ids differ.
+        const rowRequest = (persistedRunning.user_request ?? persistedRunning.request ?? '').trim();
+        const target =
+          painted?.status === 'running' &&
+          (painted.id === tid || (rowRequest !== '' && painted.request.trim() === rowRequest))
+            ? painted
+            : null;
+        const count = target ? target.iterations.length : -1;
+        const grew = tid === lastTraceId && count > lastTraceCount;
+        lastTraceId = tid;
+        lastTraceCount = count;
+        if (target && !grew && Date.now() - lastTraceAt >= TRACE_PULL_MIN_MS) {
+          lastTraceAt = Date.now();
+          let iterations: TranscriptIteration[] | null = null;
+          try {
+            iterations = await client.turnTrace(sid, tid);
+          } catch {
+            iterations = null;
+          }
+          if (cancelled) return;
+          const current = liveTurnRef.current;
+          // Never shrink: a delta that landed while the trace was in flight is
+          // newer than the trace itself. And never graft onto a bubble that was
+          // swapped underneath us while the request was out.
+          if (
+            iterations &&
+            current?.status === 'running' &&
+            current.id === target.id &&
+            iterations.length > current.iterations.length
+          ) {
+            const grown: LiveTurn = { ...current, iterations };
+            liveTurnRef.current = grown;
+            setLiveTurn(grown);
+            lastTraceCount = iterations.length;
+          }
+        }
+      }
+      await adoptRunningTurn(next, undefined, nextTurns ?? turnsRef.current);
       // Consumed either way: with no new turns the wake's own pin was enough.
       resumePinRef.current = false;
     };
@@ -1889,6 +2015,14 @@ export function SessionScreen({
     //
     // `replay: false`: the buffered backlog is for reopening a screen mid-turn;
     // this listener only ever wants live control frames.
+    // The ready frame is only as rare as the transport is stable: a gateway in a
+    // reconnect-backoff loop emits one per attempt, and this handler drops the
+    // in-flight latch, so with no floor of its own a flapping socket would drive
+    // reconciles as fast as it can reconnect. Throttled on its OWN stamp (the TUI
+    // does the same with `:gateway-resynced-at-ms`) at the poll's own period, so
+    // the worst case degrades to the 5 s tick instead of a request storm.
+    const READY_RECONCILE_MIN_MS = 5000;
+    let lastReadyReconcileAt = 0;
     const stopReady = subscriptions.subscribeSession(
       sid,
       (event) => {
@@ -1899,6 +2033,9 @@ export function SessionScreen({
         // An older daemon omits the state entirely; then the frame degrades to
         // "reconcile on every reconnect", which is merely one extra read.
         if (typeof event.is_live === 'boolean' && running === painted) return;
+        const now = Date.now();
+        if (now - lastReadyReconcileAt < READY_RECONCILE_MIN_MS) return;
+        lastReadyReconcileAt = now;
         // A read issued over the socket that just died cannot answer for the gap,
         // so its silence must not suppress the one reconcile that can.
         inflightSince = null;
@@ -3714,6 +3851,15 @@ export function SessionScreen({
       )}
 
       <div className="relative flex min-h-0 flex-1 flex-col">
+      {/* The scroller is deliberately NOT a live region. role="log" implies
+          aria-live="polite", and WebKit answers that by keeping an AXLiveRegionNode
+          set for the subtree and re-diffing it on every mutation: with a whole
+          transcript inside, a streaming turn pegged the WebContent process at ~100%
+          CPU indefinitely (sampled on device: 3505 of 3609 main-thread samples in
+          -[UIKitWebAccessibilityObjectWrapper _performLiveRegionUpdate] ->
+          -[AXLiveRegionNode isEqual:]). Streaming is announced instead by the small
+          sr-only role="status" node each turn renders, which is what a screen reader
+          actually wants: one short phase message, not the entire log re-scanned. */}
       <div
         ref={scrollRef}
         className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 bg-ink [overflow-anchor:none]"
@@ -3722,7 +3868,8 @@ export function SessionScreen({
         onPointerDown={releasePin}
         onWheel={releasePin}
         onTouchMove={releasePin}
-        role="log"
+        role="region"
+        aria-label="Transcript"
       >
         <div
           ref={transcriptRef}
@@ -3793,7 +3940,10 @@ export function SessionScreen({
           rules, so a shorthand there would drop `--safe-bottom` — and `sm` is
           exactly where a phone lands when it is turned on its side, home
           indicator included. */}
-      <footer className="relative z-10 shrink-0 border-t border-dialog-edge bg-ink pl-[max(0.875rem,env(safe-area-inset-left))] pb-[calc(0.5rem+var(--safe-bottom,env(safe-area-inset-bottom)))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:pt-2">
+      <footer
+        style={safeBottomStyle}
+        className="relative z-10 shrink-0 border-t border-dialog-edge bg-ink pl-[max(0.875rem,env(safe-area-inset-left))] pb-[calc(0.5rem+var(--safe-bottom,env(safe-area-inset-bottom)))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:pt-2"
+      >
         {/* Anchored to the footer's top edge, so it always clears the queue
             tray and composer no matter how tall they grow. Hidden while a
             completion list occupies the same strip. */}

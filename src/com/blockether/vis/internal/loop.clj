@@ -7160,24 +7160,69 @@
                             (str label (when (not= n 1) "s"))))))))
          (str/join ", "))))
 
-(def ^:private CONTEXT_OVERFLOW_FOLD_RATIOS
-  "Fraction of the provider's input limit each successive emergency fold aims for.
+(def ^:private CONTEXT_OVERFLOW_MARGINS
+  "Headroom each successive rescue leaves under the provider's input limit AFTER the
+   estimator's undercount has been measured (`estimator-undercount`).
 
-   The local estimator (`svar-router/count-messages`) is cheap but LOOSER than the
-   provider's exact preflight: the projection Svar priced at 1,437,952 tokens for
-   session `cd24926e` measures 1,044,954 here (~1.4x undercount on dense tool JSON).
-   Aiming at the raw limit would hand back a projection that overflows AGAIN on the
-   retry, so the first rescue targets 70% of the limit and each further rescue inside
-   the same iteration escalates; the last ratio is tight enough to force a near-total
-   fold of settled history."
-  [0.7 0.45 0.2])
+   The undercount itself is never guessed: the overflow carries `:input-tokens`, the
+   provider's own count of the exact message set our estimator priced, so a rescue
+   divides the limit by a measurement taken from the very request that was refused.
+   These margins cover only what that measurement cannot know — the projection swaps
+   dense tool JSON for prose gists, whose own ratio differs from the refused set's,
+   and the reply still needs room. A retry that overflows again re-measures against
+   its own numbers and tightens the margin."
+  [0.9 0.7 0.5])
+
+(def ^:private CONTEXT_OVERFLOW_BLIND_CUTS
+  "Fallback targets for an overflow that carries no usable `:input-tokens` or
+   `:max-input-tokens` (some providers refuse without measuring).
+
+   With nothing to calibrate against, a rescue can only bisect its OWN estimate, so
+   each attempt targets this fraction of the refused request's local size. Still no
+   invented factor: the target is purely relative and escalation does the searching."
+  [0.5 0.25 0.1])
+
+(defn- estimator-undercount
+  "How far the local estimator undercounts the provider ON THIS MESSAGE SET.
+
+   `provider-tokens` (the overflow's `:input-tokens`) and `local-tokens`
+   (`svar-router/count-messages`) price the SAME messages, so their ratio is a
+   measurement of the provider's tokenizer against ours rather than a constant:
+   dense tool JSON ran ~1.49x for session `cd24926e` (1,437,952 provider vs 963,503
+   local), prose runs far closer to 1.0, and another model runs somewhere else.
+
+   nil when either side is missing. Never below 1.0 — an estimator that reads
+   GENEROUS earns no licence to send more than the limit."
+  [provider-tokens local-tokens]
+  (when (and (number? provider-tokens)
+             (number? local-tokens)
+             (pos? (long provider-tokens))
+             (pos? (long local-tokens)))
+    (max 1.0 (/ (double provider-tokens) (double local-tokens)))))
+
+(defn- overflow-fold-budget
+  "Local-estimator budget for the next rescue of a refused request.
+
+   Measured path: `provider-limit` / measured undercount * `margin`, i.e. the budget
+   is expressed in the same currency the projection can actually count. Blind path
+   (no provider numbers to measure): `cut` of the request's own local size. nil only
+   when there is nothing at all to aim at, which leaves the projection with its
+   weakest contract — the result must merely be smaller."
+  [{:keys [provider-tokens provider-limit margin cut]} local-tokens]
+  (let [factor (estimator-undercount provider-tokens local-tokens)]
+    (cond (and factor (number? provider-limit) (pos? (long provider-limit)))
+          (long (* (/ (double provider-limit) (double factor)) (double (or margin 1.0))))
+          (and (number? cut) (number? local-tokens) (pos? (long local-tokens)))
+          (long (* (double local-tokens) (double cut)))
+          :else nil)))
 
 (defn- emergency-fold-projection
   "Build a provider projection with settled trailer iterations collapsed through the
    same `apply-summaries` path as `session_fold`.
 
    Folding is GRADUATED: the foldable universe is walked OLDEST first and the search
-   keeps the SMALLEST prefix whose projection fits `max-input-tokens`, so a rescue
+   keeps the SMALLEST prefix whose projection fits the budget `budget-fn` derives from
+   the local size of the refused request (see `overflow-fold-budget`), so a rescue
    spends the least recent context it can and recent settled work survives verbatim.
    Only when no prefix fits does everything foldable collapse. Canonical trailer
    history and persisted summaries are never mutated. Existing semantic folds remain
@@ -7185,7 +7230,7 @@
    message-token estimator, not serialized characters; the retry itself repeats Svar's
    provider-aware exact preflight before any send."
   [base-messages trailer-iters summaries protected-scopes replay-target replay-policies model
-   max-input-tokens]
+   budget-fn]
   (let
     [universe
      (into []
@@ -7217,6 +7262,11 @@
 
          before-tokens
          (svar-router/count-messages model before-messages)
+
+         ;; Budget is derived from what the provider actually charged for THIS set,
+         ;; so the gate below compares local estimate against local estimate.
+         budget
+         (budget-fn before-tokens)
 
          project
          (fn [n]
@@ -7252,7 +7302,7 @@
          fits?
          (fn [{:keys [after-tokens]}]
            (and (< (long after-tokens) (long before-tokens))
-                (or (nil? max-input-tokens) (<= (long after-tokens) (long max-input-tokens)))))
+                (or (nil? budget) (<= (long after-tokens) (long budget)))))
 
          ;; Folding more can only shrink the projection, so the smallest fitting
          ;; prefix is a binary search — O(log n) estimator passes, not O(n).
@@ -7283,7 +7333,7 @@
            :before-tokens before-tokens
            :after-tokens (:after-tokens chosen)
            :saved-tokens (- (long before-tokens) (long (:after-tokens chosen)))
-           :max-input-tokens max-input-tokens
+           :budget-tokens budget
            :folded-scopes (count (:scopes chosen))
            :foldable-scopes (count foldable)
            :scopes (:scopes chosen)})))))
@@ -7292,12 +7342,18 @@
   "Claim the next overflow rescue of THIS iteration, publish the failed request's
    measured utilization, and return a smaller provider projection. nil means terminal.
 
-   Rescues ESCALATE: `CONTEXT_OVERFLOW_FOLD_RATIOS` tightens the target budget on every
-   attempt, so a cheap fold of the oldest settled work is tried before history collapses
-   wholesale — and a retry that overflows AGAIN gets another, harder rescue instead of
-   ending the turn. Each rescue must be strictly smaller than the previous one; without
-   progress the retry would resend a request the provider already refused, so the
-   iteration goes terminal instead."
+   The budget is MEASURED, not guessed. The refused request carries the provider's own
+   `:input-tokens` for exactly the message set our estimator prices, so the rescue
+   divides `:max-input-tokens` by that observed undercount (`estimator-undercount`)
+   before spending it; only the safety margin is a constant, and only because the
+   post-fold message mix is not the mix that was measured.
+
+   Rescues ESCALATE: `CONTEXT_OVERFLOW_MARGINS` tightens the margin on every attempt,
+   so a cheap fold of the oldest settled work is tried before history collapses
+   wholesale — and a retry that overflows AGAIN re-measures against its own numbers
+   instead of ending the turn. Each rescue must be strictly smaller than the previous
+   one; without progress the retry would resend a request the provider already refused,
+   so the iteration goes terminal instead."
   [{:keys [error output-started? recovery-state ctx-atom turn-input-tokens base-messages
            trailer-iters summaries protected-scopes replay-target replay-policies model]}]
   (let [overflow (ex-data error)]
@@ -7306,7 +7362,7 @@
         [{:keys [attempts last-after-tokens]} (swap! recovery-state update :attempts (fnil inc 0))
          attempt (long attempts)]
 
-        (when (<= attempt (count CONTEXT_OVERFLOW_FOLD_RATIOS))
+        (when (<= attempt (count CONTEXT_OVERFLOW_MARGINS))
           (stamp-utilization! ctx-atom
                               (ctx-engine/utilization (:input-tokens overflow)
                                                       (:max-input-tokens overflow)
@@ -7321,13 +7377,22 @@
                           replay-target
                           replay-policies
                           model
-                          (when-let [limit (:max-input-tokens overflow)]
-                            (long (* (double limit)
-                                     (double (nth CONTEXT_OVERFLOW_FOLD_RATIOS (dec attempt)))))))]
+                          (fn [local-tokens]
+                            (overflow-fold-budget
+                              {:provider-tokens (:input-tokens overflow)
+                               :provider-limit (:max-input-tokens overflow)
+                               :margin (nth CONTEXT_OVERFLOW_MARGINS (dec attempt))
+                               :cut (nth CONTEXT_OVERFLOW_BLIND_CUTS (dec attempt))}
+                              local-tokens)))]
             (when (or (nil? last-after-tokens)
                       (< (long (:after-tokens projection)) (long last-after-tokens)))
               (swap! recovery-state assoc :last-after-tokens (:after-tokens projection))
-              (assoc projection :attempt attempt))))))))
+              (assoc projection
+                :attempt attempt
+                :provider-tokens (:input-tokens overflow)
+                :provider-limit (:max-input-tokens overflow)
+                :estimator-undercount (estimator-undercount (:input-tokens overflow)
+                                                            (:before-tokens projection))))))))))
 
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist

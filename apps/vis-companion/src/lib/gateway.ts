@@ -40,6 +40,7 @@ import type {
   McpServerInput,
   McpServersResponse,
   McpTestResult,
+  WorkspaceDraft,
 } from './types';
 import { PROTOCOL_HEADERS } from './compat';
 import {
@@ -1484,6 +1485,40 @@ export class GatewayClient {
       title: opts.title,
       channel: opts.channel ?? 'web',
       root: opts.root,
+    });
+  }
+
+  /**
+   * Every DRAFT of the repo `sid` lives in, newest first — the same list the TUI's
+   * `/draft list` prints. Repo-scoped, not session-scoped: drafts stashed by other
+   * sessions are in here too, which is what makes a "resume a draft" picker possible.
+   */
+  async drafts(sid: string, signal?: AbortSignal): Promise<WorkspaceDraft[]> {
+    const res = await this.request<{ drafts?: WorkspaceDraft[] }>(
+      'GET',
+      `/v1/sessions/${encodeURIComponent(sid)}/workspace/drafts`,
+      undefined,
+      signal,
+    );
+    return res.drafts ?? [];
+  }
+
+  /**
+   * Fork `sid` into a fresh draft and enter it — the wire twin of `/draft new`
+   * (`blank: false`, a clone of the repo as it stands) and `/draft blank`
+   * (`blank: true`, an empty lineage). The gateway rejects a blank label.
+   */
+  createDraft(sid: string, label: string, blank = false): Promise<unknown> {
+    return this.request('POST', `/v1/sessions/${encodeURIComponent(sid)}/workspace/drafts`, {
+      label,
+      blank,
+    });
+  }
+
+  /** Move `sid` INTO an existing draft — the wire twin of `/draft resume <label>`. */
+  resumeDraft(sid: string, workspaceId: string): Promise<unknown> {
+    return this.request('POST', `/v1/sessions/${encodeURIComponent(sid)}/workspace/resume`, {
+      workspace_id: workspaceId,
     });
   }
 

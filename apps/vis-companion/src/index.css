@@ -268,6 +268,35 @@
   }
 }
 
+/* The Braille spinner. It used to be React state: FOUR copies of
+   `setInterval(() => setNow(Date.now()), 100)` (sessions skeleton, session
+   loading veil, live-progress line, QR scanner) each swapping ONE glyph inside
+   a flex line ten times a second. Sampling the WebKit content process on an
+   IDLE simulator — a "Reading sessions..." screen with no data on it — put a
+   fifth of the main thread in `WebCore::timerFired -> LocalFrameViewLayoutContext::layout`:
+   the glyph swap dirties its line box, and because the app shell is
+   `absolute inset-0`, WebKit answers with `layoutOutOfFlowBox` and re-flexes
+   the whole document. 24% CPU for one spinning character.
+
+   The frames are now stacked in a single grid cell and cross-faded by this
+   keyframe, one negative `animation-delay` per frame (frame i owns the slice
+   starting at i * 100ms). Nothing re-renders, no box ever changes size, and
+   only opacity animates — so the work stays on the compositor. */
+@theme {
+  --animate-spinner-frame: spinner-frame 1000ms linear infinite;
+
+  @keyframes spinner-frame {
+    0%,
+    9.99% {
+      opacity: 1;
+    }
+    10%,
+    100% {
+      opacity: 0;
+    }
+  }
+}
+
 
 @layer base {
   html {

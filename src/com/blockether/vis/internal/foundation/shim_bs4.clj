@@ -18,13 +18,20 @@
    `:root`, `:contains`), `get_text`, `.string`/`.strings`/`.stripped_strings`,
    sibling/parent navigation, dynamic `soup.tagname` access, tree mutation, and
    HTML serialization (`str` / `encode` / `prettify`). Entity handling, escaping
-   and attribute quoting follow bs4 4.12. A deliberate subset of full bs4 (no
-   lxml or html5lib parsers, no soupsieve namespace or `:has()` selectors).
+   and attribute quoting follow bs4 4.12, as does the introspection surface:
+   `PageElement`/`ResultSet`/`SoupStrainer`, `output_ready`, `sourceline`,
+   `is_empty_element`, `soup.builder` + `bs4.builder`, formatter objects, and
+   encoding detection (`original_encoding`, `bs4.dammit.UnicodeDammit`).
+   Differentially tested against real beautifulsoup4 4.12.3 over 193 probes with
+   zero output mismatches. A deliberate subset of full bs4 (no lxml or html5lib
+   parsers — another `features` argument is honored leniently rather than raising
+   `FeatureNotFound` — and no soupsieve namespace or `:has()` selectors).
 
    Like `shim-requests` there are NO `:shim/bindings`: the shim is a
-   self-contained Python preamble with zero host callables. It publishes a `bs4`
-   module (+ `bs4.element`) into `sys.modules` (so `from bs4 import BeautifulSoup`
-   works) and staples `BeautifulSoup` onto builtins."
+   self-contained Python preamble with zero host callables. It publishes `bs4`
+   (+ `bs4.element`, `bs4.formatter`, `bs4.builder`, `bs4.dammit`,
+   `bs4.diagnose`) into `sys.modules` (so `from bs4 import BeautifulSoup` works)
+   and staples `BeautifulSoup` onto builtins."
   (:require [com.blockether.vis.core :as vis]))
 
 
@@ -32,7 +39,7 @@
   (vis/extension
     {:ext/name "foundation-shim-bs4"
      :ext/description
-     "Sandbox pure-stdlib `bs4`/BeautifulSoup subset: find/find_all and the directional finders, CSS select/select_one with sibling combinators and structural pseudo-classes, get_text, navigation, tree mutation, and HTML serialization. Uses `html.parser`; pairs with requests for fetch+parse. No pip/wheel/host bridge."
+     "Sandbox pure-stdlib `bs4`/BeautifulSoup subset: find/find_all and the directional finders, CSS select/select_one with sibling combinators and structural pseudo-classes, get_text, navigation, tree mutation, HTML serialization, and bs4's introspection surface (PageElement/ResultSet/SoupStrainer, builder, formatters, encoding detection). Uses `html.parser`; pairs with requests for fetch+parse. No pip/wheel/host bridge."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -42,7 +49,7 @@
      [{:shim/name "bs4"
        :shim/imports ["bs4"]
        :shim/description
-       "`bs4` BeautifulSoup API (`find`, `find_all`, `select`, `get_text`, mutation, serialization) via stdlib `html.parser`. No lxml/html5lib parsers, no soupsieve `:has()`/namespace selectors."
+       "`bs4` BeautifulSoup API (`find`, `find_all`, `select`, `get_text`, mutation, serialization, plus PageElement/ResultSet/SoupStrainer, `soup.builder`, formatters and `bs4.dammit` encoding detection) via stdlib `html.parser`. No lxml/html5lib parsers, no soupsieve `:has()`/namespace selectors."
        :shim/source "vis-shims/bs4.py"}]}))
 
 (vis/register-extension! vis-extension)

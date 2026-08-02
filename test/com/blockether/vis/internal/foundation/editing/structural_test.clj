@@ -428,3 +428,75 @@
                    (let [s "(defn add \"old\" [a b] (+ a b))\n"]
                      (expect (throws?
                                #(edit "demo.clj" s {:op :add-doc :target "add" :code "\"x\""})))))))
+
+;; =============================================================================
+;; Body docstrings (Python) — lookup cost
+;; =============================================================================
+
+(defn- py-doc-source
+  "`n` documented top-level Python defs — the shape that makes the pack emit a
+   result-level docstrings list instead of a per-item `docComment`."
+  [n]
+  (apply str
+    (for [i (range n)]
+      (str "def fn_"
+           i
+           "(a, b):\n"
+           "    \"\"\"Docstring number " i
+           " explaining the function.\"\"\"\n" "    return a + b\n\n"))))
+
+(defn- min-index-ms
+  "BEST (minimum) wall-clock ms to index `source`, across `batches` runs after a
+   warmup. The MIN reflects the cost when the scheduler gave a clean slice, so a
+   shared runner's noise cannot inflate it (same tactic as the hashline bench)."
+  [source batches]
+  (dotimes [_ 2]
+    (index/file-index "bench.py" source))
+  (reduce min
+          (for [_ (range batches)]
+            (let [t0 (System/nanoTime)]
+              (index/file-index "bench.py" source)
+              (/ (- (System/nanoTime) t0) 1e6)))))
+
+(defdescribe
+  python-body-docstring-test
+  "Python carries its doc INSIDE the body, so the structure tagger leaves
+   `docComment` empty and the pack surfaces docs as a separate result-level list.
+   `doc-snippet` resolves each definition against that list — once per definition,
+   and every definition is rendered twice (skeleton line + machine row) — so
+   scanning the whole list was O(defs x docstrings): 4 -> 14 -> 54 -> 212 ms
+   across 500/1000/2000/4000 documented defs, quadrupling per doubling while the
+   parse only doubled. The list is indexed by the associated NAME now."
+  (it "keeps duplicate method names bound to their own class's docstring"
+      (let
+        [src
+         (str "class Alpha:\n" "    def go(self):\n"
+              "        \"\"\"Alpha go doc.\"\"\"\n" "        return 1\n\n"
+              "class Beta:\n" "    def go(self):\n"
+              "        \"\"\"Beta go doc.\"\"\"\n" "        return 2\n")
+
+         defs
+         (index/definitions src "python")
+
+         docs
+         (->> defs
+              (filter #(= "go" (:name %)))
+              (mapv :doc))]
+
+        ;; Both methods share a name; only the span decides, exactly as the flat
+        ;; scan did — a name-keyed lookup that ignored spans would give both the
+        ;; same doc.
+        (expect (= 2 (count docs)))
+        (expect (= ["Alpha go doc." "Beta go doc."] docs))))
+  (it "indexes 4x the documented defs in far less than 4x-squared the time"
+      (let
+        [small
+         (min-index-ms (py-doc-source 750) 3)
+
+         big
+         (min-index-ms (py-doc-source 3000) 3)]
+
+        ;; 4x the input: linear work lands near 4x, the quadratic lookup landed
+        ;; near 16x. The generous 8x bound never flakes on scheduler noise yet
+        ;; still trips the moment the per-definition scan comes back.
+        (expect (< big (* 8.0 small))))))

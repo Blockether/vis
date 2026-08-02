@@ -42,3 +42,69 @@
                      (expect (= ::doctor/system (:check-id (first msgs))))
                      (expect (= "sample" (:ext (last msgs))))
                      (expect (= ::sample (:check-id (last msgs))))))))
+
+(defdescribe
+  doctor-sandbox-deps-test
+  (it "reports one info line when every sandbox shim's dependencies resolve"
+      (with-redefs
+        [extension/sandbox-shims (constantly [{:shim/name "yaml" :shim/source "vis-shims/yaml.py"}
+                                              {:shim/name "numpy"
+                                               :shim/source "vis-shims/numpy.py"
+                                               :shim/bindings {"probe" (fn []
+                                                                         :ok)}}])]
+        (let [msgs (#'doctor/sandbox-shim-messages {})]
+          (expect (= 1 (count msgs)))
+          (expect (= "vis" (:ext (first msgs))))
+          (expect (= ::doctor/sandbox-deps (:check-id (first msgs))))
+          (expect (= :info (:level (first msgs))))
+          (expect (str/includes? (:message (first msgs)) "2/2 Python sandbox dependencies resolve"))
+          (expect (str/includes? (:message (first msgs)) "1 host bridges")))))
+  (it "errors on a shim whose Python source is not on the classpath"
+      (with-redefs
+        [extension/sandbox-shims (constantly [{:shim/name "ghost"
+                                               :shim/source "vis-shims/nope.py"}])]
+        (let
+          [msgs (#'doctor/sandbox-shim-messages {})
+           err (first (filterv #(= :error (:level %)) msgs))]
+
+          (expect (some? err))
+          (expect (str/includes? (:message err) "Sandbox shim 'ghost' source is unavailable"))
+          (expect (str/includes? (:remediation err) "vis-shims/nope.py"))
+          (expect (= 2 (doctor/exit-code msgs))))))
+  (it "errors on a shim whose host bindings cannot be realized"
+      (with-redefs
+        [extension/sandbox-shims (constantly [{:shim/name "ruffy"
+                                               :shim/source "vis-shims/ruff.py"
+                                               :shim/bindings (fn []
+                                                                (throw (ex-info "ruff unavailable"
+                                                                                {})))}])]
+        (let
+          [msgs (#'doctor/sandbox-shim-messages {})
+           err (first (filterv #(= :error (:level %)) msgs))]
+
+          (expect (some? err))
+          (expect (str/includes? (:message err)
+                                 "host bindings failed to resolve: ruff unavailable")))))
+  (it "warns on duplicate shim names, which shadow each other at install time"
+      (with-redefs
+        [extension/sandbox-shims (constantly [{:shim/name "yaml" :shim/source "vis-shims/yaml.py"}
+                                              {:shim/name "yaml"
+                                               :shim/source "vis-shims/yaml.py"}])]
+        (let
+          [msgs (#'doctor/sandbox-shim-messages {})
+           warn (first (filterv #(= :warn (:level %)) msgs))]
+
+          (expect (some? warn))
+          (expect (str/includes? (:message warn) "Duplicate sandbox shim name(s): yaml")))))
+  (it "warns when nothing registered a shim and never throws on a broken registry"
+      (with-redefs [extension/sandbox-shims (constantly [])]
+        (let [msgs (#'doctor/sandbox-shim-messages {})]
+          (expect (= [:warn] (mapv :level msgs)))
+          (expect (str/includes? (:message (first msgs)) "No Python sandbox shims registered"))))
+      (with-redefs
+        [extension/sandbox-shims (fn []
+                                   (throw (ex-info "registry exploded" {})))]
+        (let [msgs (#'doctor/sandbox-shim-messages {})]
+          (expect (= [:error] (mapv :level msgs)))
+          (expect (str/includes? (:message (first msgs))
+                                 "Sandbox shim registry unavailable: registry exploded"))))))

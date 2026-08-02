@@ -268,8 +268,27 @@
    entry points so `doc-snippet` can fall back to them. For languages whose
    doc lives INSIDE the body (Python triple-quote, …) the structure tagger
    leaves `docComment` empty and the pack surfaces the doc via this separate
-   list instead — keyed to a def by name + span. nil outside an index run."
+   list instead — keyed to a def by name + span.
+
+   Held as the `docstring-index` MAP (associated name → its docstrings in
+   source order), never the raw list. nil outside an index run."
   nil)
+
+(defn- docstring-index
+  "Group a result's docstrings by `associatedItem` — the exact name
+   `docstring-for` matches on — preserving source order inside each group.
+   nil when there are none, so the lookup stays a single `when-let`.
+
+   Built ONCE per index run because the lookup is per DEFINITION and both entry
+   points render every definition twice (skeleton line + machine row): scanning
+   the whole list each time was O(defs x docstrings). Measured on a Python file
+   of documented defs: 4 -> 14 -> 54 -> 212 ms across 500/1000/2000/4000 —
+   quadrupling per doubling, on top of a parse that only doubles."
+  [ds]
+  (when (seq ds)
+    (group-by (fn [^DocstringInfo d]
+                (.associatedItem d))
+              ds)))
 
 (defn- strip-doc-delims
   "Strip the surrounding string delimiters from a raw docstring so the gist
@@ -283,31 +302,127 @@
       (str/replace #"(\"\"\"|'''|\"|')\s*$" "")))
 
 (defn- docstring-for
-  "Docstring text for `it` from the result-level `*docstrings*` list (the doc a
-   language carries inside the body, e.g. Python), matched by name + span
-   containment and de-delimited. nil when nothing matches."
+  "Docstring text for `it` from the `*docstrings*` index (the doc a language
+   carries inside the body, e.g. Python), matched by name + span containment
+   and de-delimited. nil when nothing matches.
+
+   The name match is the MAP lookup; only the handful of docstrings sharing that
+   name (`__init__` across classes) is then scanned for span containment, in the
+   same source order the flat list had — so the first hit is unchanged."
   [^StructureItem it]
   (when-let [ds *docstrings*]
     (let
       [^Span isp (.span it)
        is (.startLine isp)
-       ie (.endLine isp)
-       nm (.name it)]
+       ie (.endLine isp)]
 
-      (some
-        (fn [^DocstringInfo d]
-          (let [^Span dsp (.span d)]
-            (when (and (= nm (.associatedItem d)) (>= (.startLine dsp) is) (<= (.endLine dsp) ie))
-              (strip-doc-delims (.text d)))))
-        ds))))
+      (some (fn [^DocstringInfo d]
+              (let [^Span dsp (.span d)]
+                (when (and (>= (.startLine dsp) is) (<= (.endLine dsp) ie))
+                  (strip-doc-delims (.text d)))))
+            (get ds (.name it))))))
+
+(defn- datum-end
+  "Index just past the datum starting at `i`: a balanced `{…}` / `[…]` / `(…)`
+   form scanned string- and escape-aware, else a bare whitespace-delimited token."
+  ^long [^String s ^long i]
+  (let
+    [n
+     (count s)
+
+     open?
+     #{\{ \[ \(}
+
+     close?
+     #{\} \] \)}]
+
+    (if (>= i n)
+      i
+      (if (open? (.charAt s i))
+        (loop
+          [j
+           i
+
+           depth
+           0
+
+           in-str?
+           false
+
+           esc?
+           false]
+
+          (if (>= j n)
+            j
+            (let [ch (.charAt s j)]
+              (cond esc? (recur (inc j) depth in-str? false)
+                    (and in-str? (= ch \\)) (recur (inc j) depth true true)
+                    in-str? (recur (inc j) depth (not= ch \") false)
+                    (= ch \") (recur (inc j) depth true false)
+                    (open? ch) (recur (inc j) (inc depth) false false)
+                    (close? ch) (if (= 1 depth) (inc j) (recur (inc j) (dec depth) false false))
+                    :else (recur (inc j) depth false false)))))
+        (loop [j i]
+          (if (or (>= j n) (Character/isWhitespace (.charAt s j))) j (recur (inc j))))))))
+
+(defn- clj-meta-head
+  "Concatenated `^…` metadata forms sitting between a Clojure `(def…` head token
+   and the var NAME, or nil. Balanced and string-aware, so neither a `:doc` key
+   inside the VALUE nor a name that also occurs inside the doc TEXT can be
+   mistaken for the var's own metadata."
+  [^String text]
+  (when-let [m (re-find #"^\(def\S*" text)]
+    (let
+      [n (count text)
+       skip-ws (fn ^long [^long k]
+                 (loop [k k]
+                   (if (and (< k n) (Character/isWhitespace (.charAt text k))) (recur (inc k)) k)))]
+
+      (loop
+        [i (long (skip-ws (count m)))
+         acc nil]
+
+        (if (and (< i n) (= \^ (.charAt text i)))
+          (let [e (min n (datum-end text (inc i)))]
+            (recur (long (skip-ws e)) (str acc (subs text i e))))
+          acc)))))
+
+(defn- meta-doc
+  "Docstring carried in a Clojure-family `^{:doc \"…\"}` VAR METADATA map — the one
+   doc shape the pack reports nowhere: for `(def ^{:doc \"…\"} nm v)` /
+   `(defonce ^:private ^{:doc \"…\"} nm v)` it fills neither `docComment` nor the
+   docstrings list, so every metadata-documented var (the sandbox tool vars
+   `session_state`, `sessions`, `git`, `shell`, `mcp_*`, …) indexed blank while
+   its whole contract lives in that map.
+
+   Read from `it`'s OWN source span, and only from its metadata head. nil for
+   every other shape (and for every non-`(def…` language)."
+  [lines ^StructureItem it]
+  (let
+    [^Span span
+     (.span it)
+
+     s
+     (long (.startLine span))
+
+     e
+     (long (span-end-line lines span))]
+
+    (when (< s (count lines))
+      (some-> (str/join "\n" (take (- (inc e) s) (drop s lines)))
+              (clj-meta-head)
+              (->> (re-find #"(?s):doc\s+\"((?:[^\"\\]|\\.)*)\""))
+              (second)))))
 
 (defn- doc-snippet
   "First non-blank line of a definition's doc string, trimmed and clipped to a
    single readable gist (nil when there is none). The pack populates `docComment`
    from the def's own doc string / leading comment — Clojure docstrings, and the
-   `//` / JSDoc block written directly above a JS/TS/TSX def."
-  [^StructureItem it]
-  (when-let [d (or (.docComment it) (docstring-for it))]
+   `//` / JSDoc block written directly above a JS/TS/TSX def; `docstring-for`
+   covers in-body docs (Python); `meta-doc` covers Clojure `^{:doc …}` metadata,
+   which the pack surfaces through neither."
+  [lines ^StructureItem it]
+  (when-let [d (or (.docComment it) (docstring-for it) (meta-doc lines it))]
     (when-let
       [line (->> (str/split-lines d)
                  (map str/trim)
@@ -362,7 +477,7 @@
      (patch/line-anchor end (line-text lines end))
 
      doc
-     (doc-snippet it)]
+     (doc-snippet lines it)]
 
     ;; The anchors already carry the line numbers, so no separate [start-end].
     ;; A doc string, when present, rides on an indented continuation line.
@@ -397,7 +512,7 @@
      :signature (some-> (.signature it)
                         str/trim
                         not-empty)
-     :doc (doc-snippet it)
+     :doc (doc-snippet lines it)
      ;; The def's span as patch-ready `lineno:hash` anchors — the SOLE position
      ;; (the lineno lives in the anchor, so no redundant start-line/end-line). One
      ;; hop `outline` DATA → `patch`; same anchors the skeleton (`@from..to`) + `cat`
@@ -441,7 +556,7 @@
       lines
       (str/split-lines source)]
 
-     (binding [*docstrings* (.docstrings res)]
+     (binding [*docstrings* (docstring-index (.docstrings res))]
        (cond->> (defs-tree lines items)
          (some? name)
          (filterv #(= name (:name %))))))))
@@ -458,7 +573,7 @@
         items (or (.structure res) [])]
 
        (when (seq items)
-         (binding [*docstrings* (.docstrings res)]
+         (binding [*docstrings* (docstring-index (.docstrings res))]
            (let [lines (str/split-lines source)]
              (str/join "\n" (walk-items lines items 0)))))))))
 
@@ -596,7 +711,7 @@
      (patch/line-anchor end (line-text lines end))
 
      doc
-     (doc-snippet it)]
+     (doc-snippet lines it)]
 
     (str indent label "  @" from ".." to (when doc (str "\n" indent "    " (pr-str doc))))))
 
@@ -731,7 +846,7 @@
         lines (str/split-lines source)]
 
        (when (or (seq items) (seq imps) windows)
-         (binding [*docstrings* (.docstrings res)]
+         (binding [*docstrings* (docstring-index (.docstrings res))]
            (let [import-rows (mapv #(import->row lines %) imps)]
              {:language language
               :line-count (count lines)

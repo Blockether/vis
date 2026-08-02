@@ -529,3 +529,88 @@
                                 "and type(d).__name__ == 'BeautifulSoup' and str(d) == str(c) "
                                 "and c.p.replace_with(c.p) is c.p "
                                 "and e.encode('ascii') == '<p>caf&#233;</p>'.encode('ascii')")))))))
+
+(defdescribe bs4-inspection-test
+  (it "exposes PageElement, ResultSet and SoupStrainer the way bs4 does"
+    (with-python-context
+      (expect (true? (ev python-context
+                         (str "from bs4 import BeautifulSoup, SoupStrainer\n"
+                              "from bs4.element import PageElement, NavigableString, Tag\n"
+                              "s = BeautifulSoup('<p class=' + chr(39) + 'x' + chr(39) + '>a</p><p>b</p>', 'html.parser')\n"
+                              "rs = s.find_all('p')\n"
+                              "st = SoupStrainer('p', {'class': 'x'})\n"
+                              "isinstance(s.p, PageElement) and issubclass(NavigableString, PageElement) "
+                              "and hasattr(PageElement, 'find_all_next') and hasattr(PageElement, 'wrap') "
+                              "and type(rs).__name__ == 'ResultSet' and type(rs.source).__name__ == 'SoupStrainer' "
+                              "and str(st) == 'p|' + repr({'class': 'x'}) "
+                              "and st.search_tag('p', {'class': 'x'}) is not None "
+                              "and [str(t) for t in s.find_all(st)] == [str(s.p)] "
+                              "and isinstance(Tag('p'), PageElement)"))))))
+
+  (it "reports the builder, its registry and per-node inspection defaults"
+    (with-python-context
+      (expect (true? (ev python-context
+                         (str "from bs4 import BeautifulSoup\n"
+                              "from bs4.builder import TreeBuilder, HTMLParserTreeBuilder, builder_registry\n"
+                              "s = BeautifulSoup('<p>x</p><br>', 'html.parser', store_line_numbers=True)\n"
+                              "b = s.builder\n"
+                              "isinstance(b, TreeBuilder) and isinstance(b, HTMLParserTreeBuilder) "
+                              "and sorted(b.features)[:3] == ['html', 'html.parser', 'strict'] "
+                              "and b.is_xml is False and b.TRACKS_LINE_NUMBERS is True "
+                              "and b.can_be_empty_element('br') and not b.can_be_empty_element('p') "
+                              "and builder_registry.lookup('html.parser') is HTMLParserTreeBuilder "
+                              "and builder_registry.lookup('lxml') is None "
+                              "and s.br.is_empty_element and not s.p.is_empty_element "
+                              "and s.p.sourceline == 1 and s.hidden == 1 and s.p.hidden is False "
+                              "and s.is_xml is False and s.p.namespace is None"))))))
+
+  (it "decodes bytes through UnicodeDammit and records the encoding on the soup"
+    (with-python-context
+      (expect (true? (ev python-context
+                         (str "from bs4 import BeautifulSoup, UnicodeDammit\n"
+                              "from bs4.dammit import EncodingDetector\n"
+                              "raw = '<meta charset=' + chr(39) + 'utf-8' + chr(39) + '><p>caf' + chr(233) + '</p>'\n"
+                              "s = BeautifulSoup(raw.encode('utf-8'), 'html.parser')\n"
+                              "d = UnicodeDammit(raw.encode('utf-8'))\n"
+                              "s.original_encoding == 'utf-8' and s.declared_html_encoding == 'utf-8' "
+                              "and s.contains_replacement_characters is False "
+                              "and d.unicode_markup == raw and d.original_encoding == 'utf-8' "
+                              "and UnicodeDammit(raw).original_encoding is None "
+                              "and EncodingDetector.find_declared_encoding(raw.encode('utf-8')) is None "
+                              "and EncodingDetector.find_declared_encoding(raw.encode('utf-8'), True) == 'utf-8'"))))))
+
+  (it "renders through the formatter stack: output_ready, decode and prettify"
+    (with-python-context
+      (expect (true? (ev python-context
+                         (str "from bs4 import BeautifulSoup, CData, Comment, Doctype\n"
+                              "from bs4.element import Script, Stylesheet\n"
+                              "s = BeautifulSoup('<p>a &amp; b</p>', 'html.parser')\n"
+                              "t = s.p.string\n"
+                              "h = BeautifulSoup('<script>a<1</script><style>b</style>', 'html.parser')\n"
+                              "t.output_ready() == 'a &amp; b' and t.output_ready(None) == 'a & b' "
+                              "and Comment('c').output_ready() == '<!--c-->' "
+                              "and CData('x').output_ready() == '<![CDATA[x]]>' "
+                              "and Doctype('html').output_ready() == '<!DOCTYPE html>' + chr(10) "
+                              "and s.p.decode(indent_level=1) == ' <p>' + chr(10) + '  a &amp; b' + chr(10) + ' </p>' + chr(10) "
+                              "and s.prettify(formatter=None) == '<p>' + chr(10) + ' a & b' + chr(10) + '</p>' + chr(10) "
+                              "and s.p.decode_contents() == 'a &amp; b' "
+                              "and s.p.renderContents() == b'a &amp; b' "
+                              "and type(h.script.string).__name__ == 'Script' "
+                              "and type(h.style.string).__name__ == 'Stylesheet' "
+                              "and issubclass(Script, str) and issubclass(Stylesheet, str)"))))))
+
+  (it "keeps the legacy generator aliases and the bs4 submodules importable"
+    (with-python-context
+      (expect (true? (ev python-context
+                         (str "import bs4, bs4.builder, bs4.dammit, bs4.diagnose, bs4.element, bs4.formatter\n"
+                              "from bs4 import BeautifulSoup\n"
+                              "from bs4.formatter import Formatter, HTMLFormatter\n"
+                              "s = BeautifulSoup('<div><p>a</p><b>c</b></div>', 'html.parser')\n"
+                              "len(list(s.div.childGenerator())) == 2 "
+                              "and len(list(s.div.recursiveChildGenerator())) == 4 "
+                              "and len(list(s.b.parentGenerator())) == 2 "
+                              "and isinstance(HTMLFormatter(), Formatter) "
+                              "and callable(bs4.diagnose.diagnose) "
+                              "and bs4.__all__ == ['BeautifulSoup'] "
+                              "and hasattr(bs4.element, 'PageElement') "
+                              "and hasattr(bs4.dammit, 'EncodingDetector')")))))))

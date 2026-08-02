@@ -79,6 +79,146 @@
            {:level :info :message (str "Memory: " (format-bytes used) " / " (format-bytes max-mem))}
            {:level :info :message (str "DB path: " db-path)}])))
 
+;; ---------------------------------------------------------------------------
+;; ::sandbox-deps - the Python sandbox's dependency surface actually RESOLVES
+;; ---------------------------------------------------------------------------
+
+(defn- shim-binding-map
+  "A shim's host `:shim/bindings` — either the literal `{py-name -> fn}` map or
+   the result of its 0-arg fn. REALIZING it is the point: that fn is where a
+   shim reaches for the host JVM library it delegates to (ruff, nippy, imaging,
+   sqlite), so a build missing that dependency throws HERE rather than mid-turn."
+  [shim]
+  (let [b (:shim/bindings shim)]
+    (if (fn? b) (b) b)))
+
+(defn- inspect-shim
+  "Resolve ONE sandbox shim's dependencies WITHOUT building a GraalPy context:
+   its `:shim/source` classpath resource (the Python file build.clj embeds via
+   `-H:IncludeResources=vis-shims/.*`) and its host bindings. Never throws."
+  [shim]
+  (let
+    [nm
+     (or (:shim/name shim) "(unnamed)")
+
+     src
+     (try (let [s (extension/shim-src shim)]
+            (if (string/blank? s)
+              {:error "source resource is empty"}
+              {:bytes (count (.getBytes ^String s "UTF-8"))}))
+          (catch Throwable t {:error (or (ex-message t) (str t))}))
+
+     bindings
+     (try {:count (count (shim-binding-map shim))}
+          (catch Throwable t {:error (or (ex-message t) (str t))}))]
+
+    {:name nm
+     :resource (:shim/source shim)
+     :src src
+     :bindings bindings
+     :ok? (and (nil? (:error src)) (nil? (:error bindings)))}))
+
+(defn- sandbox-shim-messages
+  "Sandbox DEPENDENCY check. Every extension-contributed Python shim (numpy,
+   pandas, PIL, ruff, ...) is advertised to the model in the system prompt, yet
+   installation is best-effort: `env-python/install-sandbox-shims!` catches the
+   failure, logs a warning nobody reads, and the sandbox comes up WITHOUT the
+   module. The agent then discovers the hole as a `ModuleNotFoundError` in the
+   middle of a turn. Two things break silently that way — a shim source that
+   never made it onto the classpath / into the native image, and a host binding
+   whose JVM library is absent — and both are what this check surfaces.
+
+   Static on purpose: no GraalPy Context is created, so the check costs
+   milliseconds and cannot itself wedge `vis-agent doctor`."
+  [_environment]
+  (let
+    [shims
+     (try {:shims (extension/sandbox-shims)}
+          (catch Throwable t {:error (or (ex-message t) (str t))}))
+
+     reports
+     (mapv inspect-shim (:shims shims))
+
+     broken
+     (filterv (complement :ok?) reports)
+
+     duplicates
+     (->> reports
+          (map :name)
+          frequencies
+          (filterv (fn [[_ n]]
+                     (> (long n) 1)))
+          (mapv first)
+          sort
+          vec)
+
+     bridges
+     (count (filterv #(pos? (long (or (:count (:bindings %)) 0))) reports))
+
+     total-bytes
+     (long (reduce + 0 (keep #(:bytes (:src %)) reports)))
+
+     msgs
+     (cond
+       (:error shims)
+       [{:level :error
+         :message (str "Sandbox shim registry unavailable: " (:error shims))
+         :remediation
+         "The Python sandbox starts with NO shims — `import numpy` and friends fail inside every turn. Report this build (`vis-agent --version`)."}]
+       (empty? reports)
+       [{:level :warn
+         :message
+         "No Python sandbox shims registered — the sandbox has none of the numpy / pandas / PIL / ruff modules the system prompt advertises."
+         :remediation
+         "Built-in shims register with the foundation extensions; a build without them is incomplete. Report this build (`vis-agent --version`)."}]
+       :else
+       (into
+         [{:level :info
+           :message (str (- (count reports) (count broken))
+                         "/"
+                         (count reports)
+                         " Python sandbox dependencies resolve ("
+                         bridges
+                         " host bridges, "
+                         (format-bytes total-bytes)
+                         " of shim source).")
+           :data
+           {:shims (count reports) :broken (count broken) :bridges bridges :bytes total-bytes}}]
+         (mapv
+           (fn [{:keys [name resource src bindings]}]
+             (if-let [e (:error src)]
+               {:level :error
+                :message (str "Sandbox shim '" name "' source is unavailable: " e)
+                :remediation
+                (str
+                  "`"
+                  resource
+                  "` is not on the classpath — a native build must embed it (build.clj `-H:IncludeResources`). Every module this shim publishes is missing from the sandbox.")
+                :data {:shim name :resource resource}}
+               {:level :error
+                :message (str "Sandbox shim '" name
+                              "' host bindings failed to resolve: " (:error bindings))
+                :remediation
+                "The shim delegates to a host JVM capability this build cannot load, so the shim is skipped entirely and its modules never appear in the sandbox."
+                :data {:shim name :resource resource}}))
+           broken)))
+
+     msgs
+     (cond-> (vec msgs)
+       (seq duplicates)
+       (conj {:level :warn
+              :message (str "Duplicate sandbox shim name(s): "
+                            (string/join ", " duplicates)
+                            " — only one source per name is installed, the rest are shadowed.")
+              :remediation
+              "Rename the colliding `:shim/name` in the extension that publishes the duplicate."
+              :data {:duplicates duplicates}}))]
+
+    (mapv #(assoc %
+             :ext "vis"
+             :check-id ::sandbox-deps)
+          msgs)))
+
 (defn- coerce-message
   "Best-effort sanity check on a doctor fn's returned message. Forces
    `:level` into the allowed set; missing/blank `:message` becomes a
@@ -134,6 +274,7 @@
    order. Activation-fn ignored: every registered extension's fn runs."
   [environment]
   (vec (concat (host-system-messages environment)
+               (sandbox-shim-messages environment)
                (mapcat (fn [ext]
                          (when-let [doctor-fn (:ext/doctor-fn ext)]
                            (run-one-extension (:ext/name ext) doctor-fn environment)))

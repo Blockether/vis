@@ -1,9 +1,9 @@
-import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { Banner, Button, DialogFrame, Input } from '../components/ui';
+import { Banner, Button, DialogFrame, Input, Spinner } from '../components/ui';
 import { GatewayClient, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
-import type { GatewayConn, Session, SessionUsage } from '../lib/types';
+import type { GatewayConn, Session, SessionUsage, WorkspaceDraft } from '../lib/types';
 import { homeifyPath } from '../lib/path';
 import { onWake } from '../lib/wake';
 import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
@@ -32,7 +32,6 @@ const RECENT_WINDOW_MS = 60 * 60 * 1000;
 
 // Same frames as the session transcript's spinner and the TUI's
 // `paint-content-loading!` — one vocabulary for "working" across the product.
-const SKELETON_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 // Two placeholder projects with ragged title widths: an even grid reads as a
 // rendered table, a ragged one reads as text that has not arrived yet.
 const SKELETON_GROUPS = [
@@ -69,6 +68,24 @@ function useNow(intervalMs: number): number {
   return now;
 }
 
+/**
+ * The start-in menu's desktop width in px. The popover is RIGHT-aligned to the
+ * caret, so the anchor math needs the width before the menu has ever been measured;
+ * it must stay equal to the `sm:w-80` the menu paints itself at.
+ */
+const START_MENU_WIDTH = 320;
+
+/**
+ * Where a new session begins. `trunk` is the plain session this screen always made:
+ * the agent edits the project directly. The other two are DRAFTS — isolated clones
+ * parked at `~/.vis/drafts/<repo>/<label>` — either forked fresh (a clone of the repo
+ * as it stands, or an empty one) or an existing draft someone stashed earlier.
+ */
+type StartIn =
+  | { kind: 'trunk' }
+  | { kind: 'fork'; label: string; blank: boolean }
+  | { kind: 'resume'; draft: WorkspaceDraft };
+
 interface Props {
   active: GatewayConn | null;
   client: GatewayClient | null;
@@ -90,6 +107,22 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
   const [transcriptMatches, setTranscriptMatches] = useState<Map<string, SessionMatch> | null>(null);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  // "Creating..." is a lie while a 12k-file repo is being cloned, so the busy word
+  // follows the WORK: fork, enter, or plain create.
+  const [createBusyLabel, setCreateBusyLabel] = useState('Creating...');
+  // New session is a SPLIT control. The caret half opens this menu, which is the only
+  // place in the app that answers "in which workspace?" — the web twin of `/draft new`,
+  // `/draft blank` and `/draft resume`. Portalled and viewport-anchored because the
+  // header panel clips its overflow.
+  const [startMenu, setStartMenu] = useState<{ top: number; left: number } | null>(null);
+  const startAnchorRef = useRef<HTMLButtonElement>(null);
+  // null = never read for this menu opening; [] = read, nothing parked.
+  const [drafts, setDrafts] = useState<WorkspaceDraft[] | null>(null);
+  const [draftsError, setDraftsError] = useState<string | null>(null);
+  // Forking asks for the draft's name first: the gateway rejects a blank label, and
+  // the name is what `/draft list` and every later resume will show.
+  const [namePrompt, setNamePrompt] = useState<{ blank: boolean } | null>(null);
+  const [draftLabel, setDraftLabel] = useState('');
   const pollStartedAt = useRef<number | null>(null);
   // Swipe-revealed row actions. One dialog serves both: renaming asks for the new
   // title, deleting asks for consent — a destructive tap two pixels from a thumb
@@ -273,12 +306,99 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
     // dependency that makes the unread tally recompute.
   }, [sessions, visible, readMarks]);
 
-  async function createSession() {
+  /**
+   * Drafts are REPO-scoped, and the gateway only lists them through a session that
+   * lives in that repo. The picker therefore reads them off the most recent session
+   * that has a workspace, and the menu NAMES that repo — a fleet spanning several
+   * projects must not be told these drafts belong to whatever it creates next.
+   */
+  const draftProbe = useMemo(
+    () => sessions?.find((session) => projectPath(session)) ?? null,
+    [sessions],
+  );
+  const draftRepo = draftProbe ? projectLabel(draftProbe) : '';
+
+  const openStartMenu = useCallback(() => {
+    const rect = startAnchorRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setStartMenu({
+      top: Math.round(rect.bottom + 6),
+      left: Math.round(Math.max(12, rect.right - START_MENU_WIDTH)),
+    });
+  }, []);
+
+  const closeStartMenu = useCallback((restoreFocus = false) => {
+    setStartMenu(null);
+    if (restoreFocus) startAnchorRef.current?.focus();
+  }, []);
+
+  // Read the parked drafts the first time the menu opens, and again after a fork or
+  // resume invalidated the list. A failure is reported IN the menu: the three fixed
+  // choices above it still work without it.
+  useEffect(() => {
+    if (!startMenu || drafts !== null) return;
+    const connection = activeRef.current;
+    if (!draftProbe || !connection) {
+      setDrafts([]);
+      return;
+    }
+    const controller = new AbortController();
+    setDraftsError(null);
+    void (clientRef.current ?? new GatewayClient(connection))
+      .drafts(draftProbe.id, controller.signal)
+      .then((rows) => setDrafts(rows))
+      .catch((cause) => {
+        if (controller.signal.aborted) return;
+        setDrafts([]);
+        setDraftsError((cause as Error).message);
+      });
+    return () => controller.abort();
+  }, [startMenu, drafts, draftProbe]);
+
+  // An anchored popover whose anchor moved is a lie, so a resize closes it. Escape
+  // closes it and hands focus back to the caret it came from.
+  useEffect(() => {
+    if (!startMenu) return;
+    const close = () => setStartMenu(null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeStartMenu(true);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', close);
+    };
+  }, [startMenu, closeStartMenu]);
+
+  /**
+   * Create the session, then put it where the user asked. The workspace move is a
+   * SECOND call by construction (the gateway forks through the session that will own
+   * the draft), so a failed fork must not leave a session sitting on trunk — the one
+   * place the user said not to work. It has no turns yet, so it is taken back out.
+   */
+  async function createSession(startIn: StartIn = { kind: 'trunk' }) {
     if (!active) return;
     setCreateBusy(true);
+    setCreateBusyLabel(
+      startIn.kind === 'fork' ? 'Forking...' : startIn.kind === 'resume' ? 'Entering...' : 'Creating...',
+    );
     setCreateError(null);
+    setStartMenu(null);
     try {
-      const session = await (client ?? new GatewayClient(active)).createSession({});
+      const api = client ?? new GatewayClient(active);
+      const session = await api.createSession({});
+      if (startIn.kind !== 'trunk') {
+        try {
+          if (startIn.kind === 'fork') await api.createDraft(session.id, startIn.label, startIn.blank);
+          else await api.resumeDraft(session.id, startIn.draft.workspace_id);
+        } catch (cause) {
+          await api.deleteSession(session.id).catch(() => {});
+          throw cause;
+        }
+        // The repo's draft list just changed; re-read it next time the menu opens.
+        setDrafts(null);
+      }
       await load();
       if (session.id) await onOpen(active, session.id, true);
     } catch (cause) {
@@ -286,6 +406,20 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
     } finally {
       setCreateBusy(false);
     }
+  }
+
+  function askDraftName(blank: boolean) {
+    setStartMenu(null);
+    setDraftLabel('');
+    setNamePrompt({ blank });
+  }
+
+  function commitDraftName() {
+    const label = draftLabel.trim();
+    if (!namePrompt || !label) return;
+    const blank = namePrompt.blank;
+    setNamePrompt(null);
+    void createSession({ kind: 'fork', label, blank });
   }
 
   const startRename = useCallback((session: Session) => {
@@ -348,7 +482,20 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
   // A dead gateway is not a sessions problem: there is nothing to navigate, so the
   // shell drops us on the Machines screen instead of rendering a session list
   // shaped like an error. Reporting it is this screen's only job here.
+  //
+  // Only TRANSITIONS are reported. A fresh mount starts with `loadError === null`,
+  // and announcing "reachable" before the first request has answered is how this
+  // screen used to un-gate the shell, get itself re-mounted, fail again, and gate
+  // the shell again — a mount/fail/unmount loop that hammered the dead gateway
+  // with thousands of requests per second instead of resting on Machines.
+  const reportedError = useRef<string | null | undefined>(undefined);
   useEffect(() => {
+    if (reportedError.current === undefined && loadError === null) {
+      reportedError.current = null;
+      return;
+    }
+    if (reportedError.current === loadError) return;
+    reportedError.current = loadError;
     onUnreachable?.(loadError);
   }, [loadError, onUnreachable]);
 
@@ -369,7 +516,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
               <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-meta text-dialog-hint">
                 {sessions === null ? (
                   <>
-                    <SessionsPulse />
+                    <Spinner className="text-accent-ink" />
                     <span>Reading sessions...</span>
                   </>
                 ) : (
@@ -410,10 +557,15 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
                 button; the list now revalidates itself on a timer, and a control whose
                 honest label is almost always "already up to date" is noise beside the
                 only thing a user actually comes here to do. */}
-            <div className="flex shrink-0 items-center gap-2">
+            {/* SPLIT control: one button, two jobs. The wide half stays the plain new
+                session it always was — the common path never grows a click — and the
+                caret half is where the workspace question lives, so starting in a draft
+                stops being a TUI-only slash command. The halves share one accent box:
+                the primary drops its right border and the caret draws the divider. */}
+            <div className="flex shrink-0 items-stretch">
               <Button
                 variant="solid"
-                className="min-h-6 px-2 py-0.5 font-mono text-chip sm:min-h-6"
+                className="min-h-6 border-r-0 px-2 py-0.5 font-mono text-chip sm:min-h-6"
                 disabled={createBusy || !active}
                 onClick={() => void createSession()}
               >
@@ -424,7 +576,7 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
                   <span aria-hidden className="invisible col-start-1 row-start-1">Creating...</span>
                   <span aria-live="polite" className="col-start-1 row-start-1">
                     {createBusy ? (
-                      'Creating...'
+                      createBusyLabel
                     ) : (
                       <>
                         New<span className="hidden min-[390px]:inline"> session</span>
@@ -432,6 +584,19 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
                     )}
                   </span>
                 </span>
+              </Button>
+              <Button
+                ref={startAnchorRef}
+                variant="solid"
+                className="min-h-6 border-l-accent-foreground/30 px-2 py-0.5 font-mono text-chip sm:min-h-6"
+                disabled={createBusy || !active}
+                aria-haspopup="menu"
+                aria-expanded={startMenu !== null}
+                aria-label="Choose where the new session starts"
+                title="Start in a draft"
+                onClick={() => (startMenu ? closeStartMenu() : openStartMenu())}
+              >
+                <span aria-hidden>▾</span>
               </Button>
             </div>
           </div>
@@ -552,6 +717,128 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
                       : rowAction.mode === 'rename'
                         ? 'Save'
                         : 'Delete'}
+                  </Button>
+                </div>
+              </div>
+            </DialogFrame>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {startMenu && createPortal(
+        <div
+          className="fixed inset-0 z-50 bg-black/40 sm:bg-transparent"
+          role="presentation"
+          onClick={() => closeStartMenu(true)}
+        >
+          {/* Phones get a bottom sheet (thumb-reachable, full width, safe-area aware);
+              from `sm` up it becomes a popover pinned under the caret it came from. */}
+          <div
+            role="menu"
+            aria-label="Start the new session in"
+            className="absolute inset-x-0 bottom-0 max-h-[70vh] touch-pan-y overflow-y-auto overscroll-contain border-t border-dialog-edge bg-panel pb-[env(safe-area-inset-bottom)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:inset-x-auto sm:bottom-auto sm:left-[var(--menu-left)] sm:top-[var(--menu-top)] sm:w-80 sm:border sm:pb-0 sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
+            style={{ '--menu-top': `${startMenu.top}px`, '--menu-left': `${startMenu.left}px` } as CSSProperties}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <p className="border-b border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+              Start the session in
+            </p>
+            <StartOption
+              title="The project itself"
+              hint="Edits land straight in the repo — no isolated copy."
+              badge="Default"
+              onSelect={() => void createSession()}
+            />
+            <StartOption
+              title="A new draft"
+              hint="Isolated clone of the project as it stands right now."
+              onSelect={() => askDraftName(false)}
+            />
+            <StartOption
+              title="A blank draft"
+              hint="Isolated and EMPTY — no files are carried in."
+              onSelect={() => askDraftName(true)}
+            />
+            <div className="flex items-baseline justify-between gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2">
+              <span className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+                Or a draft you parked
+              </span>
+              {draftRepo && (
+                <span className="truncate font-mono text-chip text-dialog-hint/70">{draftRepo}</span>
+              )}
+            </div>
+            {drafts === null ? (
+              <p className="flex items-center gap-2 px-3 py-3 font-mono text-meta text-dialog-hint">
+                <Spinner className="text-accent-ink" />
+                Reading drafts...
+              </p>
+            ) : drafts.length === 0 ? (
+              <p className="px-3 py-3 font-mono text-meta text-dialog-hint">
+                {draftsError ?? 'No drafts parked in this project yet.'}
+              </p>
+            ) : (
+              drafts.map((draft) => (
+                <StartOption
+                  key={draft.workspace_id}
+                  title={draft.label?.trim() || shortId(draft.workspace_id)}
+                  hint={draftHint(draft)}
+                  badge={draft.is_current ? 'in use' : undefined}
+                  onSelect={() => void createSession({ kind: 'resume', draft })}
+                />
+              ))
+            )}
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {namePrompt && createPortal(
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]"
+          role="presentation"
+          onClick={() => setNamePrompt(null)}
+        >
+          <div
+            className="w-full max-w-md"
+            role="presentation"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <DialogFrame
+              title={namePrompt.blank ? 'New blank draft' : 'New draft'}
+              onClose={() => setNamePrompt(null)}
+            >
+              <div className="space-y-3 p-4">
+                <p className="font-mono text-meta text-dialog-hint">
+                  {namePrompt.blank
+                    ? 'An isolated EMPTY workspace. Nothing from the project is carried in.'
+                    : 'An isolated clone of the project as it stands right now. Applying it later is what moves the work back.'}
+                </p>
+                <label className="block">
+                  <span className="mb-1 block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+                    Draft name
+                  </span>
+                  <Input
+                    autoFocus
+                    value={draftLabel}
+                    maxLength={80}
+                    placeholder="wire-rework"
+                    onChange={(event) => setDraftLabel(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') commitDraftName();
+                    }}
+                  />
+                </label>
+                <div className="flex justify-end gap-2">
+                  <Button variant="ghost" onClick={() => setNamePrompt(null)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="solid"
+                    disabled={!draftLabel.trim()}
+                    onClick={commitDraftName}
+                  >
+                    Create
                   </Button>
                 </div>
               </div>
@@ -1082,23 +1369,6 @@ function SkeletonBar({
   );
 }
 
-// The header's own busy signal. It owns its interval so a 10fps spinner does
-// not re-render the screen (and the list) around it.
-function SessionsPulse() {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 100);
-    return () => window.clearInterval(timer);
-  }, []);
-  const frame = SKELETON_SPINNER_FRAMES[Math.floor(now / 100) % SKELETON_SPINNER_FRAMES.length];
-  return (
-    <>
-      <span aria-hidden className="text-accent-ink motion-reduce:hidden">{frame}</span>
-      <span aria-hidden className="hidden text-accent-ink motion-reduce:inline">●</span>
-    </>
-  );
-}
-
 function NavigatorSkeleton() {
   return (
     <div
@@ -1386,4 +1656,49 @@ function highlightNeedle(text: string, needle: string) {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// One row of the start-in menu. Title carries the choice, hint carries the
+// consequence — a workspace decision is unrecoverable-ish once the agent starts
+// writing, so no row is allowed to be a bare noun. `min-h-11` keeps every row a
+// real thumb target on a phone sheet.
+function StartOption({
+  title,
+  hint,
+  badge,
+  onSelect,
+}: {
+  title: string;
+  hint: string;
+  badge?: string;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      className="flex min-h-11 w-full items-start gap-2 border-b border-dialog-edge px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none"
+      onClick={onSelect}
+    >
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-mono text-ui font-bold text-white">{title}</span>
+        <span className="mt-0.5 block font-mono text-meta text-dialog-hint">{hint}</span>
+      </span>
+      {badge && (
+        <span className="mt-0.5 shrink-0 border border-edge px-1 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+          {badge}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// A parked draft says WHEN it forked, because that — not its name — is what tells
+// you whether it still matches the project. Drafts with no fork time (blank ones)
+// name their clone instead of inventing a date.
+function draftHint(draft: WorkspaceDraft): string {
+  const forked = draft.fork_ms
+    ? relativeTime(new Date(draft.fork_ms).toISOString())
+    : '';
+  return forked ? `forked ${forked}` : homeifyPath(draft.root ?? '') || 'isolated workspace';
 }

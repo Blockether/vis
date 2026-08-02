@@ -90,7 +90,6 @@
     (.put env "JAVA_CMD" old-java)
     (.put env "VIS_TEST_PINNED_HOME" (.getAbsolutePath pinned-home))
     (.put env "VIS_NO_DEV_CHECKOUT" "1")
-    (.put env "VIS_NO_NATIVE_HINT" "1")
     (let
       [process
        (.start pb)
@@ -131,7 +130,7 @@
 (defdescribe
   wrapper-runtime-selection-test
   (it
-    "persists the runtime choice, supports one-shot overrides, and rejects jar mode"
+    "persists the runtime choice and honours one-launch overrides"
     (let
       [root
        (.toFile (Files/createTempDirectory "vis-agent-runtime-test-" (make-array FileAttribute 0)))
@@ -139,14 +138,14 @@
        install-dir
        (doto (io/file root "install") .mkdirs)
 
-       source-dir
-       (doto (io/file root "source") .mkdirs)
-
        home
        (doto (io/file root "home") .mkdirs)
 
        vis-home
        (doto (io/file home ".vis") .mkdirs)
+
+       managed-src
+       (doto (io/file vis-home "install/src") .mkdirs)
 
        tools
        (doto (io/file root "tools") .mkdirs)
@@ -182,8 +181,7 @@
                        (.toPath launcher)
                        (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
            (.setExecutable launcher true)
-           (spit (io/file source-dir "deps.edn") "{}")
-           (spit (io/file vis-home "source-dir") (.getAbsolutePath source-dir))
+           (spit (io/file managed-src "deps.edn") "{}")
            (write-executable! (io/file install-dir "vis-agent-native")
                               "#!/usr/bin/env bash\nprintf 'NATIVE:%s\\n' \"$*\"\n")
            (write-executable! (io/file tools "java") "#!/usr/bin/env bash\nexit 0\n")
@@ -191,7 +189,7 @@
                               "#!/usr/bin/env bash\nprintf 'JVM:%s\\n' \"$*\"\n")
            (let [{:keys [exit output]} (run! ["runtime" "show"])]
              (expect (= 0 exit))
-             (expect (str/includes? output "Effective runtime: native")))
+             (expect (str/includes? output "Runtime:      native (automatic)")))
            (expect (= 0 (:exit (run! ["runtime" "use" "jvm"]))))
            (let [{:keys [exit output]} (run! ["--version"])]
              (expect (= 0 exit))
@@ -200,11 +198,10 @@
              (expect (= 0 exit))
              (expect (str/includes? output "NATIVE:"))
              (expect (str/includes? output "--version")))
-           (let [{:keys [exit output]} (run! ["--jar" "--version"])]
-             (expect (= 2 exit))
-             (expect (str/includes? output "--jar was removed")))
+           ;; The flag names the runtime for one launch; the persisted choice stays.
            (let [{:keys [output]} (run! ["runtime" "show"])]
-             (expect (str/includes? output "Configured default: jvm")))
+             (expect (str/includes? output "Runtime:      jvm"))
+             (expect (str/includes? output (.getAbsolutePath managed-src))))
            (finally (delete-tree! root))))))
 
 (defn- release-json
@@ -464,11 +461,11 @@
              (expect (str/includes? output "JVM:")))
            (let [{:keys [exit output]} (run! ["runtime" "use" "dev"] dev-env)]
              (expect (= 0 exit) output)
-             (expect (str/includes? output "default runtime is now dev")))
+             (expect (str/includes? output "runtime is now dev")))
            (let [{:keys [output]} (run! ["--version"] dev-env)]
              (expect (str/includes? output "JVM:")))
            (let [{:keys [output]} (run! ["runtime" "show"] dev-env)]
-             (expect (str/includes? output "Configured default: dev")))
+             (expect (str/includes? output "Runtime:      dev")))
            (let [{:keys [exit output]} (run! ["runtime" "use" "auto"] dev-env)]
              (expect (= 0 exit) output)
              (expect (str/includes? output "automatic")))
@@ -479,7 +476,7 @@
 (defdescribe
   wrapper-tagged-source-update-test
   (it
-    "moves the managed source checkout onto the newest release tag"
+    "pins the managed source to the newest release tag, or to a named ref"
     (let
       [root
        (.toFile (Files/createTempDirectory "vis-agent-tag-test-" (make-array FileAttribute 0)))
@@ -532,11 +529,25 @@
            (spit (io/file vis-home "runtime") "jvm\n")
            (let [{:keys [exit output]} (run! ["update"])]
              (expect (= 0 exit) output)
-             (expect (str/includes? output "release tag v0.1.10")))
+             (expect (str/includes? output "source pinned at v0.1.10")))
            (expect (= "v0.1.10" (str/trim (slurp (io/file vis-home "install/ref")))))
-           (expect (= "jvm-tag" (str/trim (slurp (io/file vis-home "install/mode")))))
            (expect (= "v0.1.10" (str/trim (:output (git! managed-src "describe" "--tags")))))
            (let [{:keys [output]} (run! ["runtime" "show"])]
-             (expect (str/includes? output "Source pinned at: v0.1.10"))
-             (expect (str/includes? output "Effective runtime: jvm")))
+             (expect (str/includes? output "Pinned at:    v0.1.10"))
+             (expect (str/includes? output "Runtime:      jvm")))
+           ;; A git ref that is not a release tag pins source, whatever is effective.
+           (let
+             [sha
+              (str/trim (:output (git! origin "rev-parse" "HEAD")))
+
+              {:keys [exit output]}
+              (run! ["update" sha])]
+
+             (expect (= 0 exit) output)
+             (expect (str/includes? output (str "source pinned at " sha)))
+             (expect (= sha (str/trim (slurp (io/file vis-home "install/ref"))))))
+           ;; One runtime per update: naming two is a refusal, not a guess.
+           (let [{:keys [exit output]} (run! ["update" "--native" "--dev"])]
+             (expect (= 1 exit) output)
+             (expect (str/includes? output "name one runtime to update")))
            (finally (delete-tree! root))))))

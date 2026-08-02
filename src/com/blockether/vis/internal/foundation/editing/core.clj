@@ -5943,15 +5943,14 @@
      :native-tool? true
      :result
      (str
-       "String-keyed `{results, occurrences?}`. One row/file: `path`, `language`, `line_count`, `imports`, `definitions`, `skeleton`, `note`, `ranges`. "
-       "With `include_occurrences`, each declared-name group has `name`; `symbols` (`path`, `anchor`, `end_anchor`, `kind`, `visibility`, `signature`, `use_count`, `uses` as `{path, anchors}`); `other_uses`; `count`, `definition_count`, `scanned`, `failed`. "
-       "No source: use row `anchor` in `struct_nodes` or `cat`.")
+       "String-keyed `{results, occurrences?}`. Row/file: `path,language,line_count,imports,definitions,skeleton,note,ranges`. "
+       "`include_occurrences` adds a group per declared name: `name`, `symbols` (`path,anchor,end_anchor,kind,visibility,signature,use_count,uses{path,anchors}`), `other_uses`, `count`, `definition_count`, `scanned`, `failed`. "
+       "No source: use row `anchor` in `struct_nodes`/`cat`.")
      :active-fn structural-supported?
      :description
      (str
        "Inspect supported source before bodies: imports, definition skeleton, signatures, doc gists, and "
-       "fresh start/end anchors for `cat`/`struct_patch`. `include_occurrences` traces each definition's "
-       "occurrences across the given files.")
+       "fresh start/end anchors for `cat`/`struct_patch`. `include_occurrences` traces each definition's uses.")
      :render render-index-result
      :color-role :tool-color/read
      :schema
@@ -5972,13 +5971,10 @@
                          :additionalProperties false}]}
         :minItems 1
         :description
-        (str
-          "Exact physical source paths from grep/cat/struct_index; copy unchanged and batch. Shared `ranges` "
-          "apply to all; object entries override one file.")}
-       "include_occurrences"
-       {:type "boolean"
-        :description
-        "True adds each definition's occurrence group; omit/false returns only `results`."}
+        (str "Exact physical source paths from grep/cat/struct_index; batch them. Shared `ranges` "
+             "apply to all; object entries override one file.")}
+       "include_occurrences" {:type "boolean"
+                              :description "Adds each definition's occurrence group; default off."}
        "ranges"
        {:type "array"
         :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
@@ -5999,11 +5995,17 @@
 
 
 (def ^:private cat-file-entry-schema
-  "A per-file object entry in `files`: the path plus a `ranges` override."
+  "A per-file object entry in `files`: the path plus `ranges`, or a DIRECTORY's
+   `depth`/`is_hidden` listing options."
   {:type "object"
-   :properties {"path" {:type "string" :minLength 1}
-                "ranges" (assoc cat-ranges-schema
-                           :description "THIS file; overrides shared `ranges`.")}
+   :properties
+   {"path" {:type "string" :minLength 1}
+    "ranges" (assoc cat-ranges-schema :description "THIS file; overrides shared `ranges`.")
+    "depth" {:type "integer"
+             :minimum 1
+             :description "Directory levels (default 1); deeper rows nest in `children`."}
+    "is_hidden" {:type "boolean"
+                 :description "Directory listing adds dotfiles; gitignored stay hidden."}}
    :required ["path"]
    :additionalProperties false})
 
@@ -6033,13 +6035,13 @@
      :native-tool? true
      :result
      (str
-       "String-keyed `{results}` rows. Files: `{op,path,size,mtime,eof,truncated,next_offset,ranges,anchors}`. "
+       "String-keyed `{results}` rows. File: `{op,path,size,mtime,eof,truncated,next_offset,ranges,anchors}`; "
        "`anchors[\"line:hash\"]={\"text\":line}` is the ONLY content field (no `content`/`lines`) and holds every window; "
        "`ranges` carry metadata only (`{range,eof,next_offset,truncated}`) and never repeat the text. "
-       "Directories: `{op,path,type,depth,entries}`.")
+       "Directory (ls): `{op,path,type,depth,entries}`; each entry `{name,path,type,size}` (+`children` when nested).")
      :description
      (str
-       "Read every needed region from all paths as patch-ready `lineno:hash` lines; directories list. "
+       "Read every needed region from all paths as patch-ready `lineno:hash` lines; a DIRECTORY path lists (ls) it. "
        "Run `struct_index` first on code. Writes invalidate pre-write anchors for that file, not other files.")
      :render render-cat-result
      :color-role :tool-color/read
@@ -6055,10 +6057,10 @@
      :native-tool? true
      :result
      (str
-       "Fields: `op`, `query`, `needles`, `searched_paths`, `missing_paths`, `paths`, `matches`, `file_counts`, "
-       "`first_hit`, `hint`, `hit_count`, `file_count`, `total_file_count`, `total_file_count_is_exact`, `limit`, "
-       "`truncated_by`, `hits_truncated_by`. `matches={path:{\"line:hash\":{\"text\":string,\"before\"?:"
-       "[{\"line\",\"text\"}],\"after\"?:[…]}}}` is a mapping of mappings, never a list; empty `before`/`after` omitted.")
+       "Fields `op,query,needles,searched_paths,missing_paths,paths,matches,file_counts,first_hit,hint,hit_count,"
+       "file_count,total_file_count,total_file_count_is_exact,limit,truncated_by,hits_truncated_by`. "
+       "`matches={path:{\"line:hash\":{\"text\":string,\"before\"?:[{\"line\",\"text\"}],\"after\"?:[…]}}}` "
+       "is a mapping of mappings, never a list; empty `before`/`after` omitted.")
      :description
      (str "Literal smart-case content plus fuzzy filenames; use first when location is unknown. "
           "`query: \"\"` lists files; null `hits_truncated_by` means complete content.")
@@ -6095,7 +6097,7 @@
     {:symbol 'patch
      :native-tool? true
      :result
-     "One row/edit: `path`, `op`, `changed`, `diff`; optional small-region `anchors` (`{\"lineno:hash\":{\"text\":line}}`) reusable on the next edit without rereading; auto-balanced files add `repaired` true and `note`."
+     "One row/edit: `path`, `op`, `changed`, `diff`; optional small-region `anchors` (`{\"lineno:hash\":{\"text\":line}}`) reusable as the next `from_anchor`; auto-balanced files add `repaired` true and `note`."
      :call (fn [input]
              {:args [(get input "edits")]})
      :description
@@ -6774,8 +6776,8 @@
      :result
      (str
        "String-keyed `{results}`; one ordered row/node: `path`, `at` (named-child path for `struct_patch`), "
-       "`kind`, `line`, `end_line`, verbatim `source`, `sexp`, `named_child_count`, `children`, `can`, `has_error`. "
-       "Misses add `error`/`reason`; other fields are nil.")
+       "`kind,line,end_line,source` (verbatim), `sexp,named_child_count,children,can,has_error`. "
+       "Misses add `error`/`reason`; other fields nil.")
      :active-fn structural-supported?
      :description
      "Read nested tree-sitter node SOURCE and navigate when a named definition is too coarse."
@@ -7466,9 +7468,9 @@
      :native-tool? true
      :result
      (str
-       "String-keyed and `action`-discriminated: copy/move `{action,src,dest}`, delete "
-       "`{action,path,is_deleted}`, create_dirs `{action,path,is_created}`, exists `{action,path,is_existing}`; "
-       "batch `paths` gives `{action,paths}` with one ordered row/target. Top level adds `op`.")
+       "String-keyed, `action`-discriminated: copy/move `{action,src,dest}`, delete `{action,path,is_deleted}`, "
+       "create_dirs `{action,path,is_created}`, exists `{action,path,is_existing}`; batch `paths` gives "
+       "`{action,paths}`, one ordered row/target. Top level adds `op`.")
      :description
      "Confined filesystem tool; `op` selects verb/params. delete is destructive and needs explicit intent; absent is a no-op (`is_deleted` false). create_dirs makes parents; exists never reads."
      :render render-fs-result

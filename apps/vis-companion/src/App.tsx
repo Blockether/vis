@@ -52,6 +52,14 @@ const NO_SUBSCRIBED_IDS = new Set<string>();
 // until the user force-quits.
 const BOOT_REVEAL_MS = 3_000;
 
+// Losing the gateway must cost a bounded amount of work. Every recovery sweep
+// re-reads capabilities and pings each known address, and each failed ping
+// reports "unreachable" again: unthrottled, that feeds itself. Measured on the
+// simulator against a dead gateway it produced ~300 fetches per second, which
+// pinned the WebKit process and left the session list stuck on its skeleton
+// forever. Sweep on the leading edge, then at most once per window.
+const RECOVERY_SWEEP_MIN_GAP_MS = 5_000;
+
 export function App() {
   const [conns, setConns] = useState<GatewayConn[]>([]);
   const [active, setActive] = useState<GatewayConn | null>(null);
@@ -121,9 +129,17 @@ export function App() {
   }, []);
 
   const [recoveryNonce, setRecoveryNonce] = useState(0);
+  const lastRecoverySweepAt = useRef(0);
   const handleUnreachable = useCallback((message: string | null) => {
     setOffline(message);
-    if (message) setRecoveryNonce((nonce) => nonce + 1);
+    // Deliberately NOT reset when the app reports "reachable" again: screens
+    // report both edges, so resetting here let a failing screen alternate
+    // null/message and sweep on every single failed request.
+    if (!message) return;
+    const now = Date.now();
+    if (now - lastRecoverySweepAt.current < RECOVERY_SWEEP_MIN_GAP_MS) return;
+    lastRecoverySweepAt.current = now;
+    setRecoveryNonce((nonce) => nonce + 1);
   }, []);
 
   const addConnection = useCallback(

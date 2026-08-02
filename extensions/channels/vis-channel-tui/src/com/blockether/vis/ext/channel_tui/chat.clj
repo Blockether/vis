@@ -1106,18 +1106,11 @@
       "session.model_updated"
       {:phase :model-sync :provider (event-get event :provider) :model (event-get event :model)}
 
-      ;; Mux transport lost / restored. These are NOT session events: the gateway
-      ;; client broadcasts them to EVERY sink so a channel can tell "the session is
-      ;; quiet" apart from "this process went deaf". The transport edge alone is NOT
-      ;; evidence of a gap: the mux resubscribes at this client's cursor, so the
-      ;; ordinary reconnect replays what it owes. `subscription.ready` below is what
-      ;; actually reports the daemon's turn state.
-      "gateway.disconnected"
-      {:phase :gateway-disconnected}
-
-      "gateway.connected"
-      {:phase :gateway-connected}
-
+      ;; The mux's synthetic `gateway.connected` / `gateway.disconnected` transport
+      ;; edges are deliberately NOT projected: the edge alone is no evidence of a
+      ;; gap (the mux resubscribes at this client's cursor, so the ordinary
+      ;; reconnect replays what it owes), and acting on it was a guess. The frame
+      ;; below carries the daemon's actual turn state, which is what the UI acts on.
       "subscription.ready"
       {:phase :gateway-ready
        :gateway-turn-id (event-get event :current-turn-id)

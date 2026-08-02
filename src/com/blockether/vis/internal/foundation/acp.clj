@@ -39,8 +39,8 @@
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [taoensso.telemere :as tel])
-  (:import [java.io BufferedReader InputStream InputStreamReader OutputStream
-            OutputStreamWriter Writer]
+  (:import [java.io BufferedReader InputStream InputStreamReader OutputStream OutputStreamWriter
+            Writer]
            [java.nio.charset StandardCharsets]
            [java.util Map]
            [java.util.concurrent ExecutorService Executors TimeUnit]))
@@ -87,29 +87,54 @@
 ;; Encoding — total, single-line, never throws mid-frame
 ;; =============================================================================
 
+(def ^:private max-json-depth
+  "Nesting past this is truncated instead of overflowing the stack. ACP is one
+   message per LINE: a value that cannot be encoded must degrade, never throw."
+  64)
+
+(def ^:private max-json-items
+  "Elements of ONE sequence that get encoded. Depth is not the only way to hang a
+   writer: a LAZY sequence can be unbounded, and realizing it would spin until the
+   daemon dies. Past this the tail becomes a marker."
+  10000)
+
 (defn json-safe
   "Total JSON projection of `x`: keywords/symbols become strings, map keys become
-   strings, NaN/±Infinity become nil, anything unknown becomes its `str`. ACP is
-   one message per LINE, so a value that cannot be encoded must not be able to
-   throw halfway through a write and desynchronize the framing."
-  [x]
-  (cond (nil? x) nil
-        (string? x) x
-        (boolean? x) x
-        (keyword? x) (subs (str x) 1)
-        (symbol? x) (str x)
-        (and (double? x) (or (Double/isNaN ^double x) (Double/isInfinite ^double x))) nil
-        (number? x) x
-        (map? x) (persistent! (reduce-kv
-                                (fn [m k v]
-                                  (let [k' (json-safe k)]
-                                    (assoc! m (if (string? k') k' (str k')) (json-safe v))))
-                                (transient {})
-                                x))
-        (instance? Map x) (json-safe (into {} ^Map x))
-        (or (sequential? x) (set? x)) (mapv json-safe x)
-        (instance? (Class/forName "[B") x) (str "<" (alength ^bytes x) " bytes>")
-        :else (str x)))
+   strings, NaN/±Infinity become nil, anything unknown becomes its `str`, and
+   anything nested past [[max-json-depth]] or longer than [[max-json-items]]
+   becomes a marker string. ACP is one
+   message per LINE, so a value that cannot be encoded must not be able to throw
+   halfway through a write and desynchronize the framing."
+  ([x] (json-safe x 0))
+  ([x depth]
+   (let [d (long depth)]
+     (cond (nil? x) nil
+           (string? x) x
+           (boolean? x) x
+           (keyword? x) (subs (str x) 1)
+           (symbol? x) (str x)
+           (and (double? x) (or (Double/isNaN ^double x) (Double/isInfinite ^double x))) nil
+           (number? x) x
+           ;; Depth guard sits AFTER the scalars so a leaf at the limit still
+           ;; encodes exactly, and only containers are truncated.
+           (>= d (long max-json-depth)) (str "<nesting deeper than " max-json-depth " truncated>")
+           (map? x) (persistent! (reduce-kv (fn [m k v]
+                                              (let [k' (json-safe k (inc d))]
+                                                (assoc! m
+                                                        (if (string? k') k' (str k'))
+                                                        (json-safe v (inc d)))))
+                                            (transient {})
+                                            x))
+           (instance? Map x) (json-safe (into {} ^Map x) d)
+           (or (sequential? x) (set? x))
+           ;; `take` one past the cap so an INFINITE lazy seq is never realized.
+           (let [head (into [] (take (inc (long max-json-items))) x)]
+             (if (> (count head) (long max-json-items))
+               (conj (mapv #(json-safe % (inc d)) (subvec head 0 (long max-json-items)))
+                     (str "<more than " max-json-items " items truncated>"))
+               (mapv #(json-safe % (inc d)) head)))
+           (instance? (Class/forName "[B") x) (str "<" (alength ^bytes x) " bytes>")
+           :else (str x)))))
 
 (defn encode
   "One newline-free JSON line for `msg`."
@@ -348,7 +373,7 @@
 (defn tool-kind
   "Map a vis tool name onto an ACP tool-call kind."
   [tool]
-  (case (str tool)
+  (case (if (keyword? tool) (name tool) (str tool))
     ("cat" "struct_index" "struct_nodes")
     "read"
 
@@ -452,9 +477,8 @@
     (let [negotiated (if (contains? supported-protocol-versions v) (long v) protocol-version)]
       (swap! conn assoc :initialized? true :protocol-version negotiated :client-caps (or caps {}))
       {"protocolVersion" negotiated
-       "agentCapabilities" {"loadSession" true
-                            "promptCapabilities"
-                            {"image" true "audio" false "embeddedContext" true}}
+       "agentCapabilities"
+       {"loadSession" true "promptCapabilities" {"image" true "audio" false "embeddedContext" true}}
        "authMethods" []})))
 
 (defn- handle-authenticate
@@ -500,7 +524,7 @@
 
        :let [text
              (str (:text t))]
-       :when (seq text)]
+       :when (not (str/blank? text))]
 
       (notify! conn
                "session/update"
@@ -805,8 +829,13 @@
      ^Writer w
      (if (instance? Writer out)
        out
-       (let [^OutputStream os (or out System/out)
-             ^java.nio.charset.Charset cs StandardCharsets/UTF_8]
+       (let
+         [^OutputStream os
+          (or out System/out)
+
+          ^java.nio.charset.Charset cs
+          StandardCharsets/UTF_8]
+
          (OutputStreamWriter. os cs)))
 
      lock
@@ -844,23 +873,75 @@
 ;; HTTP transport — ACP on the REGULAR gateway daemon
 ;; =============================================================================
 
-(def ^:private http-connections (atom {}))
+(def ^:private max-http-connections
+  "Distinct `?client=` ids kept alive. Beyond this the least recently used is
+   evicted, so an unbounded stream of client ids cannot grow the table forever."
+  64)
+
+(def ^:private max-http-backlog
+  "Out-of-band lines parked for a client that has no request in flight. A client
+   that stops polling must cost a bounded amount of heap, so the oldest are
+   dropped rather than kept forever."
+  256)
+
+(def ^:private ^:dynamic *outbox*
+  "Per-REQUEST sink for the half-duplex HTTP transport, bound by [[acp-handler]].
+   Two concurrent requests sharing ONE client id must not be able to steal or
+   erase each other's replies, so the reply buffer belongs to the request and
+   not to the connection."
+  nil)
+
+(def ^:private http-connections
+  "client id → `{:conn <connection> :used <nanos>}`, LRU-capped."
+  (atom {}))
 
 (defn- http-connection
-  "The half-duplex connection for one HTTP client id, created on first use."
+  "The half-duplex connection for one HTTP client id, created on first use and
+   kept only while it stays among the [[max-http-connections]] most recent."
   [client-id]
-  (or (get @http-connections client-id)
-      (let
-        [box
-         (atom [])
+  (let
+    [fresh
+     (delay
+       (let
+         [box
+          (atom [])
 
-         conn
-         (connection {:half-duplex? true
-                      :out-fn (fn [line]
-                                (swap! box conj line))})]
+          c
+          (connection {:half-duplex? true
+                       :out-fn (fn [line]
+                                 (if-let [ob *outbox*]
+                                   (swap! ob conj line)
+                                   ;; Nothing in flight: park it
+                                   ;; for the next poll, bounded.
+                                   (swap! box (fn [v]
+                                                (let
+                                                  [v' (conj v line)
+                                                   n (count v')]
 
-        (swap! conn assoc :outbox box)
-        (get (swap! http-connections update client-id #(or % conn)) client-id))))
+                                                  (if (> n (long max-http-backlog))
+                                                    (subvec v' (- n (long max-http-backlog)))
+                                                    v'))))))})]
+
+         (swap! c assoc :outbox box)
+         c))
+
+     m
+     (swap! http-connections (fn [m]
+                               (let
+                                 [c
+                                  (or (:conn (get m client-id)) @fresh)
+
+                                  m'
+                                  (assoc m client-id {:conn c :used (System/nanoTime)})]
+
+                                 (if (<= (count m') (long max-http-connections))
+                                   m'
+                                   (dissoc m'
+                                     (->> m'
+                                          (sort-by #(:used (val %)))
+                                          ffirst))))))]
+
+    (:conn (get m client-id))))
 
 (defn- json-response
   [status body]
@@ -882,12 +963,20 @@
      conn
      (http-connection (str client-id))
 
+     ;; This request's OWN buffer: concurrent requests on one client id each get
+     ;; exactly the messages their own line produced.
      box
-     (:outbox @conn)]
+     (atom [])]
 
-    (reset! box [])
-    (handle-line! conn body)
-    (json-response 200 {"client" (str client-id) "messages" (mapv #(json/read-json %) @box)})))
+    (binding [*outbox* box]
+      (handle-line! conn body))
+    ;; Backlog FIRST: notifications the engine emitted between polls are older
+    ;; than this request's own replies, and draining them here is what keeps the
+    ;; parked buffer from growing forever.
+    (let [parked (first (reset-vals! (:outbox @conn) []))]
+      (json-response 200
+                     {"client" (str client-id)
+                      "messages" (mapv #(json/read-json %) (into parked @box))}))))
 
 (defn routes-contribution
   []

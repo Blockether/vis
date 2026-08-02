@@ -26,6 +26,20 @@ export type ViewportMetrics = {
   visualHeight: number;
   /** What the OS says the device is doing; null when it will not say. */
   isLandscape: boolean | null;
+  /**
+   * True only in a native shell, where the webview IS the device screen.
+   *
+   * `screen` only rules the layout viewport when the two describe the same
+   * box. In a browser window they do not: `screen` is the display (or, under
+   * an automation driver, whatever the driver decided to report) while the
+   * window is an arbitrary rectangle inside it, and `screen.orientation` is
+   * the DISPLAY's orientation, which says nothing about the window's shape. A
+   * 393x852 window on a landscape display therefore measured its own limit as
+   * the screen's SHORT edge and pinned the whole shell to 393px tall, with the
+   * tab bar and the transcript clipped at a third of the window. Only the
+   * native shell gets the hardware ruler; a browser is measured by its window.
+   */
+  isDeviceShell: boolean;
 };
 
 /**
@@ -65,9 +79,13 @@ export function readViewportMetrics(): ViewportMetrics {
       screenHeight: 0,
       visualHeight: 0,
       isLandscape: null,
+      isDeviceShell: false,
     };
   }
   const screen = window.screen;
+  // Read off the injected global rather than importing `@capacitor/core`, so
+  // this module stays loadable with no plugins and no DOM.
+  const capacitor = (window as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
   return {
     innerWidth: window.innerWidth,
     innerHeight: window.innerHeight,
@@ -75,6 +93,7 @@ export function readViewportMetrics(): ViewportMetrics {
     screenHeight: screen?.height ?? 0,
     visualHeight: window.visualViewport?.height ?? window.innerHeight,
     isLandscape: readScreenOrientation(),
+    isDeviceShell: capacitor?.isNativePlatform?.() === true,
   };
 }
 
@@ -96,6 +115,7 @@ export function readViewportMetrics(): ViewportMetrics {
  * shape only when the OS will not say (see `readScreenOrientation`).
  */
 export function deviceHeightLimit(m: ViewportMetrics): number {
+  if (!m.isDeviceShell) return Number.POSITIVE_INFINITY;
   const short = Math.min(m.screenWidth, m.screenHeight);
   const long = Math.max(m.screenWidth, m.screenHeight);
   if (!(short > 0)) return Number.POSITIVE_INFINITY;
@@ -110,6 +130,7 @@ export function isViewportOversized(m: ViewportMetrics): boolean {
 
 /** The widest box the device can show in its current orientation. */
 export function deviceWidthLimit(m: ViewportMetrics): number {
+  if (!m.isDeviceShell) return Number.POSITIVE_INFINITY;
   const short = Math.min(m.screenWidth, m.screenHeight);
   const long = Math.max(m.screenWidth, m.screenHeight);
   if (!(short > 0)) return Number.POSITIVE_INFINITY;

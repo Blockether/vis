@@ -33,7 +33,10 @@
    file created inside it since is pruned.
 
    This layer owns FILES ONLY. Conversation truncation is the channel's job —
-   `points` exposes the turn ids to truncate to."
+   `points` exposes the turn ids to truncate to. Because that boundary is
+   invisible to a user typing `/rewind`, the slash READS the session store for
+   each turn's context size and says out loud, in every branch, that the
+   conversation stays."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -97,25 +100,6 @@
 
 (defn- default-store-root ^File [] (io/file (System/getProperty "user.home") ".vis" "rewind"))
 
-(defn- safe-seg
-  "One filesystem-safe path segment for a session id."
-  ^String [id]
-  (let [t (str/replace (str id) #"[^A-Za-z0-9._-]" "_")]
-    (if (str/blank? t) "default" (subs t 0 (min 128 (count t))))))
-
-(defn store-dir
-  "Per-session store directory: `<root>/<session>`."
-  ^File [session-id]
-  (io/file (if *store-root* (io/file *store-root*) (default-store-root)) (safe-seg session-id)))
-
-(defn- journal-file ^File [^File dir] (io/file dir "journal.ndjson"))
-
-(defn- blob-file ^File [^File dir ^String hex] (io/file dir "objects" (subs hex 0 2) hex))
-
-;; =============================================================================
-;; Content-addressed pool
-;; =============================================================================
-
 (defn- sha256-hex
   ^String [^bytes b]
   (let
@@ -130,6 +114,39 @@
         (when (< v 16) (.append sb \0))
         (.append sb (Integer/toHexString v))))
     (.toString sb)))
+
+(defn- safe-seg
+  "One filesystem-safe path segment for a session id. Sanitizing is LOSSY, so an
+   id that had to be rewritten or truncated also carries a digest of the RAW id:
+   `proj/main` and `proj:main` (or two ids sharing a 128-char prefix) must never
+   land in the same store and rewind each other's files."
+  ^String [id]
+  (let
+    [raw
+     (str id)
+
+     t
+     (str/replace raw #"[^A-Za-z0-9._-]" "_")]
+
+    (cond (str/blank? raw) "default"
+          (and (= t raw) (<= (count t) 128)) t
+          :else (str ;; 119 + "-" + 8 hex = 128, the segment budget the test pins.
+                  (subs t 0 (min 119 (count t)))
+                  "-"
+                  (subs (sha256-hex (.getBytes raw "UTF-8")) 0 8)))))
+
+(defn store-dir
+  "Per-session store directory: `<root>/<session>`."
+  ^File [session-id]
+  (io/file (if *store-root* (io/file *store-root*) (default-store-root)) (safe-seg session-id)))
+
+(defn- journal-file ^File [^File dir] (io/file dir "journal.ndjson"))
+
+(defn- blob-file ^File [^File dir ^String hex] (io/file dir "objects" (subs hex 0 2) hex))
+
+;; =============================================================================
+;; Content-addressed pool
+;; =============================================================================
 
 (defn- put-blob!
   "Store `b` in the pool; return its sha256. Idempotent — identical bytes from
@@ -191,10 +208,21 @@
                  (finally (.release lk))))))))
   entries)
 
+(defn- as-long
+  "Best-effort long from a journal value: numbers coerce, numeric strings parse,
+   anything else is 0. The journal is DURABLE and outlives the code that wrote
+   it, so one hand-edited or older-format entry must never make a session
+   permanently un-rewindable."
+  ^long [v]
+  (cond (number? v) (long v)
+        (string? v) (or (parse-long (str/trim ^String v)) 0)
+        :else 0))
+
 (defn journal
   "Every journal entry for `session-id`, in append order. A truncated or corrupt
    line (crash mid-append) is skipped — a damaged tail can never make the whole
-   history unreadable."
+   history unreadable. `turn` is normalized to a long on the way out, so a line
+   that is valid JSON but carries the wrong TYPE cannot poison every reader."
   [session-id]
   (let [f (journal-file (store-dir session-id))]
     (if (.isFile f)
@@ -202,7 +230,7 @@
         (vec (keep (fn [line]
                      (when-not (str/blank? line)
                        (try (let [m (json/read-json line)]
-                              (when (map? m) m))
+                              (when (map? m) (assoc m "turn" (as-long (get m "turn")))))
                             (catch Throwable _ nil))))
                    (line-seq r))))
       [])))
@@ -265,16 +293,48 @@
 ;; Pre-image capture
 ;; =============================================================================
 
+(defn- missing-ancestors
+  "Ancestor directories of `f` that do not exist YET, deepest first. Writing
+   `a/b/c/new.txt` also creates `a`, `a/b` and `a/b/c`; restoring only the file
+   would leave the directories the turn invented standing."
+  [^File f]
+  (loop
+    [p
+     (.getParentFile f)
+
+     acc
+     []]
+
+    (if (and p (not (exists? p)) (< (count acc) 64))
+      (recur (.getParentFile p) (conj acc (abs-path p)))
+      (filterv some? acc))))
+
 (defn- file-entry
   "Journal entry(s) describing `f`'s CURRENT state, pooling content when needed."
   [^File dir ^File f base]
   (cond (not (exists? f)) [(assoc base
                              "kind" "pre"
-                             "state" "absent")]
-        (symlink? f) [(assoc base
-                        "kind" "pre"
-                        "state" "symlink"
-                        "target" (str (Files/readSymbolicLink (.toPath f))))]
+                             "state" "absent"
+                             ;; Directories the op is about to invent on the way
+                             ;; to this path, so a rewind can take them out too.
+                             "missing_ancestors" (missing-ancestors f))]
+        (symlink? f) (let
+                       [link
+                        (assoc base
+                          "kind" "pre"
+                          "state" "symlink"
+                          "target" (str (Files/readSymbolicLink (.toPath f))))
+
+                        ;; Every write tool writes THROUGH a link, so the bytes the op is about
+                        ;; to destroy live in the RESOLVED file, not in the link. Pre-image it
+                        ;; too, or a rewind restores the link and silently loses the content.
+                        ^java.io.File real
+                        (try (.toFile (.toRealPath (.toPath f) (make-array LinkOption 0)))
+                             (catch Throwable _ nil))]
+
+                       (if (and real (.isFile real) (not= (abs-path real) (get base "path")))
+                         (into [link] (file-entry dir real (assoc base "path" (abs-path real))))
+                         [link]))
         (.isDirectory f) [(assoc base
                             "kind" "pre"
                             "state" "dir")]
@@ -368,12 +428,12 @@
   [root]
   (when root
     (let [{:keys [exit out]} (run-git root ["rev-parse" "--show-toplevel"])]
-      (when (zero? exit) (not-empty (str/trim out))))))
+      (when (zero? (long exit)) (not-empty (str/trim out))))))
 
 (defn- git-head
   [repo]
   (let [{:keys [exit out]} (run-git repo ["rev-parse" "HEAD"])]
-    (when (zero? exit) (not-empty (str/trim out)))))
+    (when (zero? (long exit)) (not-empty (str/trim out)))))
 
 (defn- parse-porcelain-z
   "`git status --porcelain=v1 -z -uall` → {abs-path status-code}. Rename/copy
@@ -403,7 +463,7 @@
 (defn- git-dirty
   [repo]
   (let [{:keys [exit out]} (run-git repo ["status" "--porcelain=v1" "-z" "--untracked-files=all"])]
-    (when (zero? exit) (parse-porcelain-z repo out))))
+    (when (zero? (long exit)) (parse-porcelain-z repo out))))
 
 (defn- capture-baseline!
   "Once per turn: HEAD + dirty set, and a pre-image of every dirty file. Anything
@@ -456,7 +516,7 @@
   "Snapshot the pre-mutation state of `paths` for this session/turn. The FIRST
    capture of a path in a turn wins; repeat calls are cheap no-ops. Returns the
    entries actually appended."
-  [{:keys [session turn turn-id op user-request] :as ctx} paths & [{:keys [recurse?]}]]
+  [{:keys [session turn turn-id op user-request]} paths & [{:keys [recurse?]}]]
   (let
     [dir
      (store-dir session)
@@ -553,10 +613,10 @@
      (reduce (fn [acc e]
                (if (#{"pre" "uncovered"} (get e "kind"))
                  (update acc
-                         (long (or (get e "turn") 0))
+                         (as-long (get e "turn"))
                          (fn [m]
                            (-> (or m
-                                   {"turn" (long (or (get e "turn") 0))
+                                   {"turn" (as-long (get e "turn"))
                                     "turn_id" (get e "turn_id")
                                     "ts" (get e "ts")
                                     "user_request" (get e "user_request")
@@ -588,13 +648,13 @@
   [session-id turn]
   (let
     [t
-     (long (or turn 0))
+     (as-long turn)
 
      es
      (journal session-id)
 
      in-range
-     (filter #(>= (long (or (get % "turn") 0)) t) es)
+     (filter #(>= (as-long (get % "turn")) t) es)
 
      restore
      (->> in-range
@@ -606,12 +666,19 @@
           (sort-by #(get % "path"))
           vec)
 
+     restored-paths
+     ;; A SET, not a linear `some` over `restore` for every uncovered entry:
+     ;; both lists hold one entry per FILE, so the old scan was
+     ;; O(uncovered x restore) and a `shell` turn that sweeps a big tree fills
+     ;; both at once. Measured on a 1600+1600 journal: 124 ms, quadrupling
+     ;; every time the turn's file count doubled. `map` (not `keep`) so a nil
+     ;; path still matches a nil path exactly as `=` did.
+     (into #{} (map #(get % "path")) restore)
+
      unc
      (->> in-range
           (filter #(= "uncovered" (get % "kind")))
-          (remove #(some (fn [r]
-                           (= (get r "path") (get % "path")))
-                         restore))
+          (remove #(contains? restored-paths (get % "path")))
           (sort-by #(get % "path"))
           vec)]
 
@@ -641,6 +708,28 @@
                 (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))
     (when (some? exec) (.setExecutable f (boolean exec)))))
 
+(defn- prune-invented-dirs!
+  "Delete the directories an op invented under a path that did not exist before
+   the turn, deepest first, stopping at the first one that is not an EMPTY real
+   directory. Never touches a directory that already held something."
+  [entry]
+  (loop
+    [ds
+     (filter string? (get entry "missing_ancestors"))
+
+     acc
+     []]
+
+    (if-let [d (first ds)]
+      (let
+        [df (io/file d)
+         kids (when (real-dir? df) (.list df))]
+
+        (if (and (= (abs-path d) d) kids (zero? (alength ^objects kids)) (.delete df))
+          (recur (rest ds) (conj acc d))
+          acc))
+      acc)))
+
 (defn- apply-entry!
   [^File dir entry]
   (let
@@ -659,7 +748,13 @@
         ;; a hand-edited or corrupted journal cannot steer a write elsewhere.
         (or (str/blank? (str p)) (not= (abs-path p) p))
         {"path" p "action" "skipped" "error" "non-canonical path"}
-        (= "absent" state) (do (delete-tree! f) {"path" p "action" "deleted"})
+        (= "absent" state) ;; Delete FIRST: the invented directories only become empty
+        ;; once the file the turn created is gone.
+        (do (delete-tree! f)
+            (let [pruned (prune-invented-dirs! entry)]
+              (cond-> {"path" p "action" "deleted"}
+                (seq pruned)
+                (assoc "pruned_dirs" pruned))))
         (= "dir" state) (do (when-not (real-dir? f) (delete-tree! f) (.mkdirs f))
                             (let
                               [keep-set
@@ -821,27 +916,251 @@
 
 (defn- err [msg & {:as extras}] (merge {:slash/status :error :slash/title msg} extras))
 
-(defn- render-points
+(defn- display-path
+  "Shortest honest label for `p`: relative to a session root when it lives
+   under one, `~/…` under the home directory, else the absolute path. Slash
+   output is read by a human in a narrow TUI bubble and on a phone, so a
+   40-character temp/absolute prefix repeated on every row is noise."
+  [roots p]
+  (let
+    [s
+     (str p)
+
+     under
+     (some (fn [root]
+             (let
+               [r
+                (str root)
+
+                r
+                (if (str/ends-with? r "/") r (str r "/"))]
+
+               (when (and (> (count r) 1) (str/starts-with? s r) (> (count s) (count r)))
+                 (subs s (count r)))))
+           roots)
+
+     home
+     (str (System/getProperty "user.home"))]
+
+    (cond under under
+          (and (seq home) (str/starts-with? s (str home "/"))) (str "~" (subs s (count home)))
+          :else s)))
+
+(defn- cell
+  "One-line, pipe-safe Markdown table cell elided to `n` characters. A raw `|`
+   or newline from a user prompt would otherwise tear the table apart."
+  [v ^long n]
+  (let
+    [s (-> (str v)
+           (str/replace #"\s+" " ")
+           str/trim
+           (str/replace "|" "\\|"))]
+    (if (> (count s) n) (str (str/trimr (subs s 0 (dec n))) "…") s)))
+
+(defn- fmt-tokens
+  "Token counts sized for a narrow table cell: `840` stays `840`, `12480`
+   becomes `12.5k`, `1205000` becomes `1.2M`. A phone-width bubble cannot
+   afford seven raw digits in a column.
+
+   Rounded by hand rather than with `format`: `%.1f` is LOCALE-dependent and
+   rendered `12,5k` on a Polish JVM, while `Double/toString` is not."
+  [n]
+  (let
+    [v
+     (long (or n 0))
+
+     tenth
+     (fn [^double d]
+       (str (/ (double (Math/round (* d 10.0))) 10.0)))]
+
+    (cond (>= v 999950) (str (tenth (/ (double v) 1000000.0)) "M")
+          (>= v 1000) (str (tenth (/ (double v) 1000.0)) "k")
+          :else (str v))))
+
+(defn- turn-context
+  "Per-turn CONTEXT reading, keyed by turn position:
+   `{pos {:tokens n :output n :iterations n}}`.
+
+   `:tokens` is the turn's INPUT size — how heavy the conversation was when
+   that turn ran. Input already carries the whole prior conversation, so these
+   readings must never be summed across turns; the series is a growth curve,
+   and the newest value is the live context size.
+
+   The rewind journal knows FILES only; this lives in the session store, so the
+   two are joined on `position` — the same number `points` reports as `turn`.
+   Best-effort by design: no `:db-info`, no session, or an unreadable store
+   yields `{}` and the context column simply disappears instead of failing the
+   slash."
+  [ctx session-id]
+  (let [db (:db-info ctx)]
+    (if (and db session-id)
+      (try (into {}
+                 (keep (fn [t]
+                         ;; `as-long` never returns nil (0 on junk), so the
+                         ;; presence check has to be on the raw value.
+                         (when (some? (:position t))
+                           [(as-long (:position t))
+                            {:tokens (long (or (:input-tokens t) 0))
+                             :output (long (or (:output-tokens t) 0))
+                             :iterations (long (or (:iteration-count t) 0))}])))
+                 (vis/db-list-session-turns db session-id))
+           (catch Throwable t
+             (tel/log! {:level :debug
+                        :id ::turn-context-failed
+                        :data {:session-id session-id :error (ex-message t)}})
+             {}))
+      {})))
+
+(defn- with-context
+  "Attach each point's conversation cost as `ctx_tokens` / `ctx_iterations` so
+   the rendered table and `:slash/data` carry the SAME numbers. A turn the
+   store does not know keeps its file data and simply has no context figures."
+  [ps by-turn]
+  (mapv (fn [p]
+          (if-let [c (get by-turn (as-long (get p "turn")))]
+            (assoc p
+              "ctx_tokens" (:tokens c)
+              "ctx_iterations" (:iterations c))
+            p))
+        ps))
+
+(defn- context-summary
+  "The conversation from `turn` onward: `{:turns n :tokens n}`, where `:tokens`
+   is the LARGEST (newest) context reading in that span — the live size of the
+   conversation, never a sum, because each turn's input already contains the
+   previous ones. These turns are exactly what rewind does NOT remove, which is
+   the part users assume is undone along with the files."
+  [by-turn turn]
+  (let
+    [rows (keep (fn [[pos c]]
+                  (when (>= (long pos) (long turn)) c))
+                by-turn)]
+    {:turns (count rows)
+     :tokens (long (reduce (fn [acc c]
+                             (max (long acc) (long (:tokens c))))
+                           0
+                           rows))}))
+
+(defn- ctx-legend
+  "One sentence under the table. A rewind list reads as “undo everything”, so
+   the scope must be explicit: the numbers are how big the conversation was on
+   each turn, and rewinding moves FILES only — nothing leaves the context."
   [ps]
-  (if (empty? ps)
-    "No file changes recorded yet in this session."
+  (if (some #(get % "ctx_tokens") ps)
+    (str "**Ctx** is how heavy the conversation was on that turn. "
+         "Rewinding restores files only — the conversation itself stays.")
+    "Rewinding restores files only — the conversation itself stays."))
+
+(defn- render-points
+  "Rewind points as a GFM table. Both channels render this: the TUI draws a
+   boxed table and the companion a real `<table>`. The previous fixed-width
+   columns were collapsed into one paragraph by every Markdown renderer.
+
+   The `Ctx` column appears only when the session store answered, so a rewind
+   list is never a table of empty cells."
+  [ps]
+  (let
+    [ctx?
+     (boolean (some #(get % "ctx_tokens") ps))
+
+     row
+     (fn [cells]
+       (str "| " (str/join " | " cells) " |"))]
+
     (str/join "\n"
-              (cons "turn  files  ops                        prompt"
-                    (map (fn [p]
-                           (format "%-5s %-6s %-26s %s"
-                                   (str (get p "turn"))
-                                   (str (get p "files"))
-                                   (str/join "," (get p "ops"))
-                                   (or (get p "user_request") "")))
-                         ps)))))
+              (concat [(row (conj (cond-> ["Turn" "Files" "Ops"]
+                                    ctx?
+                                    (conj "Ctx"))
+                                  "What you asked"))
+                       (row (conj (cond-> ["---:" "---:" "---"]
+                                    ctx?
+                                    (conj "---:"))
+                                  "---"))]
+                      (map (fn [p]
+                             (row (conj (cond->
+                                          [(cell (get p "turn") 8) (cell (get p "files") 8)
+                                           (cell (str/join ", " (get p "ops")) 28)]
+                                          ctx?
+                                          (conj (if-let [tks (get p "ctx_tokens")]
+                                                  (fmt-tokens tks)
+                                                  "—")))
+                                        (cell (get p "user_request") 80))))
+                           ps)))))
+
+(defn- plan-verb
+  "What restoring this journal entry will DO to the path. `absent` means the
+   path did not exist before the turn, so putting the tree back deletes it."
+  [entry]
+  (case (str (get entry "state"))
+    "absent"
+    "delete"
+
+    "dir"
+    "restore dir"
+
+    "symlink"
+    "restore link"
+
+    "restore"))
+
+(defn- applied-verb
+  "Human phrasing for what `apply-entry!` actually DID. The raw action words
+   are wire tokens (`dir`, `restored-from-git`); a bubble should read as prose."
+  [entry]
+  (case (str (get entry "action"))
+    "restored"
+    "restored"
+
+    "restored-from-git"
+    "restored from git"
+
+    "dir"
+    "restored dir"
+
+    "symlink"
+    "restored link"
+
+    "deleted"
+    "deleted"
+
+    "skipped"
+    "skipped"
+
+    "failed"
+    "failed"
+
+    (str (get entry "action"))))
+
+(defn- render-file-lines
+  "One Markdown bullet per file: verb, code-spanned display path, and the
+   reason when an entry was skipped or failed — a silent skip is a lie."
+  [roots entries verb-fn]
+  (map (fn [e]
+         (str "- " (verb-fn e)
+              " `" (display-path roots (get e "path"))
+              "`" (when-let [why (get e "error")]
+                    (str " — " why))))
+       entries))
 
 (defn- handle-rewind
   "`/rewind` lists rewind points; `/rewind <turn>` puts the tree back to that
-   turn's start; `/rewind <turn> --dry-run` shows the plan only."
+   turn's start; `/rewind <turn> --dry-run` shows the plan only.
+
+   Every channel renders the SAME Markdown, so the body is written for the
+   narrowest one: a table for the list, bullets for a plan, and a closing line
+   that names the exact next command.
+
+   Files are only half of what a turn changed, so every branch also reports
+   CONTEXT — per-turn tokens in the list, and the turns that stay in the
+   conversation on a restore — and says plainly that rewind moves files only
+   and never truncates the conversation."
   [ctx]
   (let
     [sid
      (or (:session/id ctx) (:session-id ctx))
+
+     roots
+     (keep identity [(:workspace/root ctx) (:root ctx) (System/getProperty "user.dir")])
 
      argv
      (vec (remove str/blank? (map str (:command/argv ctx))))
@@ -850,33 +1169,105 @@
      (boolean (some #{"--dry-run" "-n"} argv))
 
      target
-     (first (remove #(str/starts-with? % "-") argv))]
+     (first (remove #(str/starts-with? % "-") argv))
+
+     by-turn
+     (turn-context ctx sid)]
 
     (cond (nil? sid) (err "Send a message first, then /rewind (session not ready yet)")
           (nil? target)
-          {:slash/status :ok :slash/title "Rewind points" :slash/body (render-points (points sid))}
-          (not (re-matches #"\d+" target)) (err "Usage: /rewind [<turn>] [--dry-run]")
-          :else (let [r (restore! sid (parse-long target) {:is-dry-run dry?})]
-                  {:slash/status (if (seq (get r "failed")) :error :ok)
-                   :slash/title (str (if dry? "Rewind plan for turn " "Rewound to turn ")
-                                     target
-                                     " — " (count (get r "restore"))
-                                     " file(s), coverage " (get r "coverage"))
-                   :slash/body
-                   (str/join "\n"
-                             (concat
-                               (map #(str "  " (get % "action") "  " (get % "path"))
-                                    (if dry? (get r "restore") (get r "applied")))
-                               (when (seq (get r "uncovered"))
-                                 (cons "  -- uncovered (NOT restored):"
-                                       (map #(str "     " (get % "path") "  (" (get % "reason") ")")
-                                            (get r "uncovered"))))))}))))
+          (let [ps (with-context (points sid) by-turn)]
+            (if (empty? ps)
+              {:slash/status :ok
+               :slash/title "Nothing to rewind yet"
+               :slash/body (str "Vis snapshots every file a tool is about to change. "
+                                "As soon as a turn edits something, that turn shows up here.")
+               :slash/data {:points [] :context {}}}
+              {:slash/status :ok
+               :slash/title (str (count ps) " rewind point" (when (not= 1 (count ps)) "s"))
+               :slash/body (str (render-points ps)
+                                "\n\n`/rewind " (get (last ps) "turn")
+                                "` puts every file back to how it was before that turn · "
+                                "add `--dry-run` to see the plan first."
+                                "\n\n" (ctx-legend ps))
+               :slash/data {:points ps :context by-turn}}))
+          (not (re-matches #"\d+" target)) (err
+                                             "Usage: /rewind [<turn>] [--dry-run]"
+                                             :slash/body
+                                             "`/rewind` alone lists every turn you can go back to.")
+          :else
+          (let
+            [r
+             (restore! sid (parse-long target) {:is-dry-run dry?})
+
+             entries
+             (if dry? (get r "restore") (get r "applied"))
+
+             failed
+             (get r "failed")
+
+             uncovered
+             (get r "uncovered")
+
+             n
+             (count entries)
+
+             kept
+             (context-summary by-turn (parse-long target))
+
+             lines
+             (if dry?
+               (render-file-lines roots entries plan-verb)
+               (render-file-lines roots entries applied-verb))]
+
+            {:slash/status (if (seq failed) :error :ok)
+             :slash/title (str (if dry? "Rewind plan for turn " "Rewound to turn ")
+                               target
+                               " — " n
+                               " file" (when (not= 1 n) "s")
+                               ", coverage " (get r "coverage"))
+             :slash/body
+             (str/join
+               "\n"
+               (concat (if (seq lines) lines ["Nothing to put back for that turn."])
+                       (when (seq uncovered)
+                         (cons "\n**Not covered — left exactly as they are:**"
+                               (map #(str "- `" (display-path roots (get % "path"))
+                                          "` — " (or (get % "reason") "no pre-image"))
+                                    uncovered)))
+                       (when (pos? (long (:turns kept)))
+                         [(str "\n**Context is untouched** — "
+                               (:turns kept)
+                               " turn"
+                               (when (not= 1 (:turns kept)) "s")
+                               " from turn "
+                               target
+                               (if (= 1 (:turns kept))
+                                 " on is still in the conversation ("
+                                 " on are still in the conversation (")
+                               (fmt-tokens (:tokens kept))
+                               " tokens at the last one); "
+                               (if dry? "rewinding moves" "rewinding moved")
+                               " files only.")])
+                       [(str "\n"
+                             (if dry?
+                               (str "Nothing has changed yet — `/rewind " target "` applies this.")
+                               (str "Your files are back to their state before turn "
+                                    target
+                                    " · `/rewind` lists the other points.")))]))
+             :slash/data {:turn (parse-long target)
+                          :is-dry-run dry?
+                          :files n
+                          :coverage (get r "coverage")
+                          :context kept}}))))
 
 (def slash-specs
+  ;; NO `:slash/prompt-arg`: the turn is OPTIONAL, and a prompt-arg makes the
+  ;; TUI pop a text-input dialog for bare `/rewind`, which made the list — the
+  ;; command's main entry point — unreachable (Esc/empty simply cancelled).
   [{:slash/name "rewind"
     :slash/doc "List rewind points, or put the working tree back to a turn's start."
     :slash/usage "/rewind [<turn>] [--dry-run]"
-    :slash/prompt-arg "Turn number (optional)"
     :slash/requires #{:session}
     :slash/run-fn handle-rewind}])
 

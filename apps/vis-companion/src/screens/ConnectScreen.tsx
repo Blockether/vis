@@ -53,7 +53,15 @@ async function probeOnce(conn: GatewayConn): Promise<{ state: GwState; why?: str
     return { state: 'online' };
   } catch (e) {
     if (e instanceof GatewayError) {
-      return e.status === 401 ? { state: 'auth' } : { state: 'online', why: e.message };
+      // `status === 0` is this client's marker for "no HTTP answer at all" — a
+      // transport failure or the deadline above — and it is NOT evidence that
+      // the address routes here. Reading it as online painted a dead gateway
+      // green with a latency, and, worse, told the shell the gateway had
+      // recovered: that un-gated the session list, which failed, which gated it
+      // again, mounting and failing thousands of times per second.
+      if (e.status === 401) return { state: 'auth' };
+      if (e.status > 0) return { state: 'online', why: e.message };
+      return { state: 'offline', why: e.message };
     }
     if (ctrl.signal.aborted) return { state: 'offline', why: `no answer in ${PROBE_TIMEOUT_MS / 1000}s` };
     return { state: 'offline', why: (e as Error).message || 'network error' };
@@ -122,15 +130,23 @@ export function ConnectScreen({
   // Live reachability: probe every saved gateway on mount, then every 6s, so the
   // list shows which gateways are actually online, offline, or unauthorized —
   // not just which one is selected.
+  // `conns` is a fresh array on every parent refresh, and the parent refreshes
+  // whenever a gateway answers or fails, so keying this effect on the array
+  // identity restarted the interval AND fired an extra sweep per refresh — a
+  // dead gateway turned that into a probe storm. Key on the addresses instead
+  // and read the live list from a ref.
+  const connsRef = useRef(conns);
+  connsRef.current = conns;
+  const connsKey = conns.map((conn) => conn.url).join('\n');
   useEffect(() => {
-    if (conns.length === 0) return;
-    void probe(conns);
+    if (connsKey === '') return;
+    void probe(connsRef.current);
     const id = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
-      void probe(conns);
+      void probe(connsRef.current);
     }, 6000);
     return () => window.clearInterval(id);
-  }, [conns, probe]);
+  }, [connsKey, probe]);
 
   // Handshake first: never save a gateway we cannot reach. `ping()` returns true
   // on a 2xx /healthz, throws GatewayError(401) when reachable-but-unauthorized, and

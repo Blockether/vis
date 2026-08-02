@@ -4455,21 +4455,6 @@
                       (>= (- (long now-ms) (long resynced-ms))
                           (long turn-liveness-probe-interval-ms)))))))
 
-(reg-event-fx :sync-gateway-connection
-              ;; The gateway mux lost or re-established its SSE stream
-              ;; (`gateway.disconnected` / `gateway.connected`). This records the flag
-              ;; ONLY — it never probes.
-              ;;
-              ;; The reconnect itself says nothing about whether anything was missed:
-              ;; the resubscribe replays from this client's cursor, so the usual
-              ;; reconnect delivers the `turn.completed` it owes. The authority on
-              ;; whether a gap remains is the server's `subscription.ready` frame, which
-              ;; carries the daemon's CURRENT turn for the session — see
-              ;; `:sync-gateway-ready`. A disconnect tears nothing down: that would race
-              ;; the mux's own reconnect.
-              (fn [db [_ connected? _now-ms]]
-                {:db (assoc db :gateway-connected? (boolean connected?))}))
-
 (reg-event-fx
   :sync-gateway-ready
   ;; Inversion of control for the reconnect gap. The server emits

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button } from './ui';
+import { Button, Spinner } from './ui';
 import {
   decodeFrame,
   liveScanSupported,
@@ -16,28 +16,10 @@ interface Props {
 
 type Phase = 'starting' | 'live' | 'busy' | 'error';
 
-/** Same Braille cadence the TUI and SessionScreen use, so waiting looks the same everywhere. */
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
 /** Permission prompts and the first camera frame take a beat; past this, say so. */
 const SLOW_START_MS = 2500;
 /** How long a live preview may find nothing before it offers the photo fallback. */
 const NO_HIT_HINT_MS = 9000;
-
-function Spinner() {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 100);
-    return () => window.clearInterval(timer);
-  }, []);
-  const frame = SPINNER_FRAMES[Math.floor(now / 100) % SPINNER_FRAMES.length];
-  return (
-    <span aria-hidden="true">
-      <span className="motion-reduce:hidden">{frame}</span>
-      <span className="hidden motion-reduce:inline">●</span>
-    </span>
-  );
-}
 
 /**
  * Full-screen live QR scanner drawn in the webview.

@@ -5,13 +5,15 @@ import {
   type ReactNode,
 } from 'react';
 
-export function Button({
-  variant = 'solid',
-  className = '',
-  ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: 'solid' | 'ghost' | 'quiet' | 'danger';
-}) {
+// Ref-forwarding: a button that ANCHORS something (a popover, a focus return) has
+// to be measurable by its owner, and cloning the element's classes at the call site
+// to get a bare <button> is how a design system drifts.
+export const Button = forwardRef<
+  HTMLButtonElement,
+  ButtonHTMLAttributes<HTMLButtonElement> & {
+    variant?: 'solid' | 'ghost' | 'quiet' | 'danger';
+  }
+>(function Button({ variant = 'solid', className = '', ...props }, ref) {
   // Disabled colours live PER VARIANT, not in the base class: `quiet` has to stay
   // frameless while it is busy, and a shared `disabled:border-edge` would fight it
   // on equal specificity (whoever Tailwind emits last wins).
@@ -29,11 +31,12 @@ export function Button({
 
   return (
     <button
+      ref={ref}
       className={`min-h-7 rounded-none border px-2.5 py-0.5 text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${styles} ${className}`}
       {...props}
     />
   );
-}
+});
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   function Input({ className = '', ...props }, ref) {
@@ -118,5 +121,50 @@ export function DialogFrame({
         </footer>
       )}
     </section>
+  );
+}
+
+/** Same Braille cadence the TUI uses, so waiting looks the same everywhere. */
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+// One LITERAL class per frame: Tailwind scans source text, so a computed
+// `[animation-delay:-${i}00ms]` would never be emitted. The delay is negative
+// so every frame is already mid-cycle on the first paint — a positive delay
+// would show all ten glyphs stacked until their turn came round.
+const SPINNER_DELAYS = [
+  '[animation-delay:-1000ms]',
+  '[animation-delay:-900ms]',
+  '[animation-delay:-800ms]',
+  '[animation-delay:-700ms]',
+  '[animation-delay:-600ms]',
+  '[animation-delay:-500ms]',
+  '[animation-delay:-400ms]',
+  '[animation-delay:-300ms]',
+  '[animation-delay:-200ms]',
+  '[animation-delay:-100ms]',
+];
+
+/**
+ * The waiting spinner: ten frames stacked in one grid cell, cross-faded by the
+ * `spinner-frame` keyframe (see `index.css`).
+ *
+ * It carries NO timer. The JS version this replaces re-rendered ten times a
+ * second and, through the `absolute inset-0` shell, forced a whole-document
+ * relayout on every frame — about a fifth of the WebKit main thread on an
+ * otherwise idle iOS screen. Here the box is fixed and only `opacity` moves.
+ */
+export function Spinner({ className = '' }: { className?: string }) {
+  return (
+    <span aria-hidden="true" className={`inline-grid ${className}`}>
+      {SPINNER_FRAMES.map((frame, index) => (
+        <span
+          key={frame}
+          className={`col-start-1 row-start-1 animate-spinner-frame opacity-0 motion-reduce:hidden ${SPINNER_DELAYS[index]}`}
+        >
+          {frame}
+        </span>
+      ))}
+      <span className="col-start-1 row-start-1 hidden motion-reduce:block">●</span>
+    </span>
   );
 }

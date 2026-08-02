@@ -76,6 +76,22 @@ export interface Session {
 }
 
 /**
+ * One DRAFT of a repo — a per-session clone parked at `~/.vis/drafts/<repo>/<label>`.
+ * Straight off `GET /v1/sessions/:sid/workspace/drafts`, which lists every draft of
+ * THAT session's repo (active or stashed), newest first. `is_current` marks the one
+ * the queried session itself is sitting in.
+ */
+export interface WorkspaceDraft {
+  workspace_id: string;
+  label?: string | null;
+  root?: string | null;
+  repo_root?: string | null;
+  /** When the clone was forked off trunk. `0` for a blank draft — never a date. */
+  fork_ms?: number | null;
+  is_current?: boolean;
+}
+
+/**
  * GET /v1/sessions/:sid/usage — the whole-life rollup for one session. Fetched
  * on demand only and deliberately absent from the session list; the gateway
  * memoizes each decoded iteration's tool-call tally.

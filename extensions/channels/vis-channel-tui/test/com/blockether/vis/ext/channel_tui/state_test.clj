@@ -3691,35 +3691,6 @@
   [turn-id]
   {:phase :gateway-ready :gateway-turn-id turn-id :is-state-known true})
 
-(defdescribe sync-gateway-connection-test
-             ;; The transport edge alone is NOT evidence of a gap: the mux resubscribes with
-             ;; this client's cursor, so an ordinary reconnect replays the `turn.completed`
-             ;; it owes. Probing on every edge would be a guess; the server's ready frame
-             ;; that follows it is a verdict. So this event only records the flag.
-             (it "records a reconnect without probing the registry"
-                 (reset! state/app-db (terminal-test-db {:turn-start-ms 10}))
-                 (let [calls (atom 0)]
-                   (with-redefs-fn {#'vis/gateway-list-turns (fn [_sid]
-                                                               (swap! calls inc)
-                                                               [])}
-                     #(state/dispatch [:sync-gateway-connection true 100]))
-                   (expect (zero? @calls)))
-                 (expect (true? (:gateway-connected? @state/app-db)))
-                 (expect (true? (:loading? @state/app-db))))
-             (it "records a disconnect without probing or tearing the turn down"
-                 ;; Nothing is knowable while the socket is down, and the mux owns its own
-                 ;; reconnect — touching the in-flight turn here would only race it.
-                 (reset! state/app-db (terminal-test-db {:turn-start-ms 10}))
-                 (let [calls (atom 0)]
-                   (with-redefs-fn {#'vis/gateway-list-turns (fn [_sid]
-                                                               (swap! calls inc)
-                                                               [])}
-                     #(state/dispatch [:sync-gateway-connection false 100]))
-                   (expect (zero? @calls)))
-                 (expect (false? (:gateway-connected? @state/app-db)))
-                 (expect (true? (:loading? @state/app-db)))
-                 (expect (= "t1" (:gateway-turn-id @state/app-db)))))
-
 (defdescribe sync-gateway-ready-test
              ;; The socket dropped, the daemon finished the turn anyway, and its
              ;; `turn.completed` died with the stream. On resubscribe the server states what

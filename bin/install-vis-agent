@@ -2,32 +2,38 @@
 # Install the `vis-agent` command.
 #
 # Step 1 installs the public Bash wrapper — the only command a user ever runs.
-# Step 2 hands off to it: `vis-agent update --native` resolves the release for
-# this platform and puts the private `vis-agent-native` runtime beside the
-# wrapper. Runtime acquisition therefore always belongs to vis-agent itself, so
-# the launcher and its runtime can never drift apart.
+# Step 2 hands off to it: `vis-agent update` acquires the runtime for the chosen
+# channel (`native` downloads the release sidecar, `jvm` checks out source at the
+# newest release tag) and `vis-agent runtime use` persists that choice.
+#
+# Runtime acquisition therefore always belongs to vis-agent itself, so the
+# command and its runtime can never drift apart.
 
 set -euo pipefail
 
 repo_slug="${VIS_REPO_SLUG:-Blockether/vis}"
-install_dir="${VIS_INSTALL_DIR:-${VIS_LOCAL_BIN_DIR:-$HOME/.local/bin}}"
+install_dir="${VIS_INSTALL_DIR:-$HOME/.local/bin}"
 version="${VIS_VERSION:-latest}"
 vis_home="${VIS_HOME:-$HOME/.vis}"
+runtime="${VIS_RUNTIME:-native}"
 
 usage() {
   cat <<EOF
-Usage: install-vis-agent [--version TAG|latest] [--install-dir PATH]
+Usage: install-vis-agent [--runtime native|jvm] [--version TAG|latest]
+                         [--install-dir PATH]
 
 Installs the public command first:
   $install_dir/vis-agent          the command you run
 
-then lets it download its own private runtime:
-  $install_dir/vis-agent-native   fetched by 'vis-agent update --native'
+then lets it acquire its own runtime:
+  native   $install_dir/vis-agent-native   downloaded by 'vis-agent update'
+  jvm      $vis_home/install/src           source at the newest release tag
+                                           (needs Java 25+, the Clojure CLI, git)
 
 Environment overrides:
-  VIS_VERSION        release tag (default: latest)
+  VIS_RUNTIME        runtime channel (default: native)
+  VIS_VERSION        release tag to install (default: latest)
   VIS_INSTALL_DIR    command directory (default: ~/.local/bin)
-  VIS_LOCAL_BIN_DIR  deprecated alias for VIS_INSTALL_DIR
   VIS_HOME           state directory (default: ~/.vis)
   VIS_REPO_SLUG      GitHub OWNER/REPO (default: Blockether/vis)
 EOF
@@ -35,6 +41,11 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --runtime)
+      [[ $# -ge 2 ]] || { echo "vis-agent install: --runtime requires native or jvm" >&2; exit 2; }
+      runtime="$2"
+      shift 2
+      ;;
     --version)
       [[ $# -ge 2 ]] || { echo "vis-agent install: --version requires a tag" >&2; exit 2; }
       version="$2"
@@ -57,14 +68,50 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# curl fetches the wrapper here; curl and tar are what the wrapper itself needs
-# in step 2. Fail before writing anything rather than half-way through.
-for cmd in curl tar; do
-  command -v "$cmd" >/dev/null 2>&1 || {
-    echo "vis-agent install: missing required command: $cmd" >&2
+case "$runtime" in
+  native|jvm) ;;
+  *)
+    echo "vis-agent install: unknown runtime '$runtime' (choose native or jvm)" >&2
+    exit 2
+    ;;
+esac
+
+# Fail before writing anything rather than half-way through. curl fetches the
+# wrapper here; the rest is what step 2 needs for the chosen channel.
+required=(curl)
+[[ "$runtime" != native ]] || required+=(tar)
+[[ "$runtime" != jvm ]] || required+=(git java clojure)
+missing=()
+for cmd in "${required[@]}"; do
+  command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+done
+if (( ${#missing[@]} > 0 )); then
+  echo "vis-agent install: missing required command(s): ${missing[*]}" >&2
+  if [[ "$runtime" == jvm ]]; then
+    echo "  The jvm runtime needs Java 25+, the Clojure CLI, and git." >&2
+    echo "  macOS/Homebrew: brew install openjdk@25 clojure/tools/clojure git" >&2
+  fi
+  exit 1
+fi
+
+if [[ "$runtime" == jvm ]]; then
+  java_version_output="$(java -version 2>&1)" || {
+    echo "vis-agent install: java exists but failed to run: java -version" >&2
     exit 1
   }
-done
+  java_version="$(printf '%s\n' "$java_version_output" | sed -n '1s/.*version "\([^"]*\)".*/\1/p')"
+  java_major="${java_version%%.*}"
+  [[ "$java_major" != "1" ]] || java_major="$(printf '%s' "$java_version" | cut -d. -f2)"
+  if [[ ! "$java_major" =~ ^[0-9]+$ || "$java_major" -lt 25 ]]; then
+    echo "vis-agent install: Java 25 or newer is required (found: ${java_version:-unknown})." >&2
+    exit 1
+  fi
+  clojure -Sdescribe >/dev/null 2>&1 || {
+    echo "vis-agent install: clojure exists but failed to run: clojure -Sdescribe" >&2
+    echo "vis-agent install: install the official Clojure CLI, not only a standalone clojure.jar." >&2
+    exit 1
+  }
+fi
 
 if ! mkdir -p "$install_dir" 2>/dev/null || [[ ! -w "$install_dir" ]]; then
   echo "vis-agent install: cannot write to $install_dir" >&2
@@ -82,7 +129,6 @@ fi
 # wrapper next to this script is used directly. The sibling deps.edn proves it is
 # a real checkout rather than an unrelated file in the current directory.
 wrapper=""
-cleanup() { :; }
 here="$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
 if [[ "$version" == latest && -n "$here" && -f "$here/vis-agent" && -f "$here/../deps.edn" ]]; then
   wrapper="$here/vis-agent"
@@ -94,8 +140,7 @@ else
   ref=main
   [[ "$version" == latest ]] || ref="$version"
   wrapper="$(mktemp "${TMPDIR:-/tmp}/vis-agent.XXXXXX")"
-  cleanup() { rm -f "$wrapper"; }
-  trap cleanup EXIT
+  trap 'rm -f "$wrapper"' EXIT
   fetch_wrapper() {
     local from="$1"
     curl -fsSL "https://raw.githubusercontent.com/$repo_slug/$from/bin/vis-agent" -o "$wrapper" 2>/dev/null &&
@@ -147,21 +192,29 @@ if (( ! path_configured )); then
   echo "vis-agent install: added $install_dir to PATH in $profile"
 fi
 
-# ── 2. vis-agent downloads its own native runtime ───────────────────────────
+# ── 2. vis-agent acquires its own runtime ───────────────────────────────────
 # VIS_NO_DEV_CHECKOUT keeps a developer's ~/vis checkout from hijacking the
 # freshly installed wrapper: this run must install into $install_dir.
-native=(update --native)
-[[ "$version" == latest ]] || native+=("$version")
+update=(update)
+if [[ "$runtime" == native ]]; then
+  update+=(--native)
+else
+  update+=(--jvm)
+fi
+if [[ "$version" != latest ]]; then update+=("$version"); fi
 
-if ! VIS_NO_DEV_CHECKOUT=1 VIS_HOME="$vis_home" "$install_dir/vis-agent" "${native[@]}"; then
-  cat >&2 <<EOF
+if ! VIS_NO_DEV_CHECKOUT=1 VIS_HOME="$vis_home" VIS_RUNTIME="$runtime" \
+     "$install_dir/vis-agent" "${update[@]}"; then
+  if [[ "$runtime" == native ]]; then
+    cat >&2 <<EOF
 
-vis-agent is installed at $install_dir/vis-agent, but no native runtime is
-published for this platform yet. Give it the source runtime instead
-(needs Java 25+ and the Clojure CLI):
+vis-agent is installed at $install_dir/vis-agent, but its native runtime could
+not be installed — releases currently carry Linux x64 and arm64 only. Run the
+JVM source runtime instead (needs Java 25+, the Clojure CLI, and git):
 
-  curl -fsSL https://raw.githubusercontent.com/$repo_slug/main/bin/install-source | bash
+  curl -fsSL https://raw.githubusercontent.com/$repo_slug/main/bin/install-vis-agent | bash -s -- --runtime jvm
 EOF
+  fi
   if (( ! path_configured )); then
     cat >&2 <<EOF
 
@@ -171,16 +224,28 @@ EOF
   exit 1
 fi
 
-VIS_HOME="$vis_home" "$install_dir/vis-agent" runtime use native >/dev/null
+VIS_HOME="$vis_home" "$install_dir/vis-agent" runtime use "$runtime" >/dev/null
 
-cat <<EOF
+if [[ "$runtime" == native ]]; then
+  cat <<EOF
 
 Vis Agent is installed for this user:
   $install_dir/vis-agent          the command
   $install_dir/vis-agent-native   private runtime, owned by vis-agent
+EOF
+else
+  cat <<EOF
+
+Vis Agent is installed for this user:
+  $install_dir/vis-agent          the command
+  $vis_home/install/src           source runtime, pinned to the newest release tag
+EOF
+fi
+
+cat <<EOF
 
   vis-agent help
-  vis-agent runtime show
+  vis-agent runtime show          what is installed and selected
   vis-agent update                updates vis-agent and its runtime
 EOF
 

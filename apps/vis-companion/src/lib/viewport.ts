@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import type { RefObject } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import type { CSSProperties, RefObject } from 'react';
 import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import type { PluginListenerHandle } from '@capacitor/core';
@@ -396,9 +396,9 @@ export function useIsViewportRotating(): boolean {
  * the status bar, tab bar pushed off the bottom, nothing tappable. So every
  * wake signal re-measures, and a hidden document never records a box at all.
  *
- * It also publishes `--safe-bottom`: the real bottom inset normally, `0px`
- * while the keyboard covers the home indicator, so a footer does not reserve a
- * dead band above the keyboard.
+ * It also publishes `--safe-bottom` through `useSafeBottomStyle`: the real
+ * bottom inset normally, `0px` while the keyboard covers the home indicator, so
+ * a footer does not reserve a dead band above the keyboard.
  */
 // The height the shell is currently pinned to, or null when it fills the page
 // root normally. With the native keyboard driver the webview is NOT resized
@@ -406,6 +406,49 @@ export function useIsViewportRotating(): boolean {
 // keyboard: anything that needs to know "did the shell just change size?" has
 // to ask here instead of measuring the visual viewport.
 let pinnedShellHeight: number | null = null;
+
+// `--safe-bottom` is deliberately NOT written on `document.documentElement`. A
+// custom property set on the ROOT invalidates the computed style of every
+// element that could inherit it, and the keyboard drivers below rewrite it on
+// every focus, blur, pin, rotation and wake. Measured inside the app on a real
+// transcript screen (~39k nodes) ONE root write cost 157 ms of style resolution
+// and 256 ms once layout was forced — that was the freeze felt when the
+// composer opened or closed. The value has two consumers, both footers, so it
+// is published through this subscription and applied as an inline custom
+// property on those elements: the same measurement put a leaf-scoped write at
+// 0 ms.
+const SAFE_BOTTOM_DEFAULT = 'env(safe-area-inset-bottom)';
+const SAFE_BOTTOM_KEYBOARD = '0px';
+let safeBottom: string = SAFE_BOTTOM_DEFAULT;
+const safeBottomListeners = new Set<() => void>();
+
+const setSafeBottom = (value: string): void => {
+  if (safeBottom === value) return;
+  safeBottom = value;
+  for (const listener of safeBottomListeners) listener();
+};
+
+const subscribeSafeBottom = (listener: () => void): (() => void) => {
+  safeBottomListeners.add(listener);
+  return () => {
+    safeBottomListeners.delete(listener);
+  };
+};
+
+/**
+ * Inline style carrying `--safe-bottom` for a footer that sits against the
+ * bottom edge. Read it here instead of inheriting it from the document root:
+ * the variable changes on every keyboard movement, and a root-scoped change is
+ * a whole-document style recalculation.
+ */
+export function useSafeBottomStyle(): CSSProperties {
+  const value = useSyncExternalStore(
+    subscribeSafeBottom,
+    () => safeBottom,
+    () => SAFE_BOTTOM_DEFAULT,
+  );
+  return useMemo(() => ({ '--safe-bottom': value }) as CSSProperties, [value]);
+}
 
 /** The shell's current height in CSS pixels, keyboard pin included. */
 export function shellViewportHeight(): number {
@@ -502,10 +545,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       keyboardPinned = false;
       keyboardPinOrientation = null;
       pinnedShellHeight = null;
-      document.documentElement.style.setProperty(
-        '--safe-bottom',
-        'env(safe-area-inset-bottom)',
-      );
+      setSafeBottom(SAFE_BOTTOM_DEFAULT);
       resetLayoutScroll();
       setBox(null);
     };
@@ -542,10 +582,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
             return;
           keyboardPinned = false;
           resetLayoutScroll();
-          document.documentElement.style.setProperty(
-            '--safe-bottom',
-            'env(safe-area-inset-bottom)',
-          );
+          setSafeBottom(SAFE_BOTTOM_DEFAULT);
           // The absolute shell follows the physical edge while WebKit's JS viewport
           // catches up. As soon as CSS and JS agree on the new orientation, restore
           // a still-open keyboard from the learned height (or a one-frame estimate)
@@ -587,10 +624,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
             : null;
         pinnedShellHeight = next ? next.height : null;
         setBox(next);
-        document.documentElement.style.setProperty(
-          '--safe-bottom',
-          covered ? '0px' : 'env(safe-area-inset-bottom)',
-        );
+        setSafeBottom(covered ? SAFE_BOTTOM_KEYBOARD : SAFE_BOTTOM_DEFAULT);
       });
     };
 
@@ -736,7 +770,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
           return false;
         keyboardExpectedAfterRotation = true;
         keyboardPinned = true;
-        document.documentElement.style.setProperty('--safe-bottom', '0px');
+        setSafeBottom(SAFE_BOTTOM_KEYBOARD);
         pin(
           rootHeight - keyboardHeightForPrepin(rootHeight, rootLandscape ? 'landscape' : 'portrait'),
           rootHeight,
@@ -754,7 +788,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         const fullHeight = layoutHeight(metrics);
         const predictedHeight = keyboardHeightForPrepin(fullHeight);
         keyboardPinned = true;
-        document.documentElement.style.setProperty('--safe-bottom', '0px');
+        setSafeBottom(SAFE_BOTTOM_KEYBOARD);
         pin(fullHeight - predictedHeight);
         if (duringRotation) return true;
         // A hardware keyboard can focus the field without ever raising the
@@ -786,7 +820,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         if (isPlausibleKeyboardHeight(keyboardHeight, fullHeight))
           rememberKeyboardHeight(keyboardHeight);
         keyboardPinned = true;
-        document.documentElement.style.setProperty('--safe-bottom', '0px');
+        setSafeBottom(SAFE_BOTTOM_KEYBOARD);
         pin(fullHeight - keyboardHeight);
       };
       const finishKeyboardHide = () => {
@@ -812,20 +846,14 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
             if (prepinKeyboardFromPhysicalRoot()) return;
             if (isViewportRotating() || keyboardExpectedAfterRotation) return;
             keyboardUp = false;
-            document.documentElement.style.setProperty(
-              '--safe-bottom',
-              'env(safe-area-inset-bottom)',
-            );
+            setSafeBottom(SAFE_BOTTOM_DEFAULT);
             finishKeyboardHide();
           }, 250);
           return;
         }
         if (isViewportRotating() || keyboardExpectedAfterRotation) return;
         keyboardUp = false;
-        document.documentElement.style.setProperty(
-          '--safe-bottom',
-          'env(safe-area-inset-bottom)',
-        );
+        setSafeBottom(SAFE_BOTTOM_DEFAULT);
         pin(layoutHeight(readViewportMetrics()));
       };
       // Rebuild the keyboard pin from post-rotation numbers. Snaps rather than
@@ -842,7 +870,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
           : null;
         if (measuredHeight !== null) rememberKeyboardHeight(measuredHeight);
         keyboardPinned = true;
-        document.documentElement.style.setProperty('--safe-bottom', '0px');
+        setSafeBottom(SAFE_BOTTOM_KEYBOARD);
         pin(fullHeight - (measuredHeight ?? keyboardHeightForPrepin(fullHeight)));
         return true;
       };
