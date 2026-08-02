@@ -405,6 +405,40 @@
    Printing a home on stdout means success; every diagnostic goes to stderr."
   "bin/require-graalvm")
 
+(defn- custom-truststore
+  "The keystore this build must trust, or nil — `bin/require-graalvm
+   --truststore` decides, we only forward the answer.
+
+   A freshly installed JDK trusts the public roots and NOTHING else, so behind
+   a TLS-intercepting corporate proxy dependency resolution and native-image
+   both die with `SunCertPathBuilderException: unable to find valid
+   certification path`, while the system JDK (whose cacerts the corporate
+   installer patched) works. Set VIS_CA_CERT=/path/ca.pem or
+   VIS_TRUSTSTORE=/path/store.p12; the script imports a PEM into a cached COPY
+   of that JDK's cacerts and never modifies the JDK itself."
+  [home]
+  (let [script (io/file graalvm-script)]
+    (when (and (.isFile script)
+               (or (System/getenv "VIS_CA_CERT") (System/getenv "VIS_TRUSTSTORE")))
+      (let [{:keys [exit out]}
+            (b/process (cond-> {:command-args ["bash" (.getPath script) "--truststore"]
+                                :out :capture}
+                         home (assoc :env {"JAVA_HOME" home})))]
+        (when (zero? exit) (not-empty (str/trim (or out ""))))))))
+
+(defn- truststore-properties
+  "`-Djavax.net.ssl.trustStore*` for the resolved keystore, or nil. A store the
+   user supplied keeps the user's type/password; one generated from a PEM is
+   always a PKCS12 copy of cacerts under the JDK default password."
+  [home]
+  (when-let [store (custom-truststore home)]
+    (let [supplied? (some? (System/getenv "VIS_TRUSTSTORE"))]
+      [(str "-Djavax.net.ssl.trustStore=" store)
+       (str "-Djavax.net.ssl.trustStoreType="
+            (or (when supplied? (System/getenv "VIS_TRUSTSTORE_TYPE")) "PKCS12"))
+       (str "-Djavax.net.ssl.trustStorePassword="
+            (or (when supplied? (System/getenv "VIS_TRUSTSTORE_PASSWORD")) "changeit"))])))
+
 (defn- resolve-pinned-graalvm
   "Where the pinned GraalVM CE home is, according to `bin/require-graalvm`.
    With `install?` false the script only SEARCHES what is already on this
@@ -453,18 +487,31 @@
                      [(str k) (pr-str v)]))
            (dissoc opts :auto-install-graalvm))
 
+     trust (truststore-properties home)
+
      {:keys [exit]}
      (b/process {:command-args args
-                 :env {"JAVA_HOME" home
-                       "GRAALVM_HOME" home
-                       ;; The clojure CLI prefers JAVA_CMD over JAVA_HOME, and
-                       ;; `bin/vis-agent` exports it — without pinning it here the child
-                       ;; silently starts on the INHERITED JDK and dies on the
-                       ;; hard refusal below (VIS_GRAALVM_SWITCHED already set).
-                       "JAVA_CMD" (str home "/bin/java")
-                       "PATH"
-                       (str home "/bin" java.io.File/pathSeparator (or (System/getenv "PATH") ""))
-                       "VIS_GRAALVM_SWITCHED" "1"}})]
+                 :env (cond->
+                        {"JAVA_HOME" home
+                         "GRAALVM_HOME" home
+                         ;; The clojure CLI prefers JAVA_CMD over JAVA_HOME, and
+                         ;; `bin/vis-agent` exports it — without pinning it here the child
+                         ;; silently starts on the INHERITED JDK and dies on the
+                         ;; hard refusal below (VIS_GRAALVM_SWITCHED already set).
+                         "JAVA_CMD" (str home "/bin/java")
+                         "PATH"
+                         (str home "/bin" java.io.File/pathSeparator (or (System/getenv "PATH") ""))
+                         "VIS_GRAALVM_SWITCHED" "1"}
+                        ;; Corporate CA: the child resolves dependencies over TLS under a
+                        ;; JDK that trusts only the public roots. JAVA_TOOL_OPTIONS (not
+                        ;; JDK_JAVA_OPTIONS) because every JVM the child forks — clojure,
+                        ;; native-image, its builder — must inherit the same trust.
+                        (seq trust)
+                        (assoc "JAVA_TOOL_OPTIONS"
+                          (str/join " "
+                                    (remove nil?
+                                            (cons (not-empty (System/getenv "JAVA_TOOL_OPTIONS"))
+                                                  trust)))))})]
 
     (System/exit (or exit 1))))
 
@@ -1063,7 +1110,13 @@
      (some-> (System/getenv "VIS_NATIVE_EXTRA_ARGS")
              str/trim
              not-empty
-             (str/split #"\s+"))]
+             (str/split #"\s+"))
+
+     ;; Corporate CA (VIS_CA_CERT / VIS_TRUSTSTORE): the builder JVM and every
+     ;; JVM it forks must trust the same roots as the rest of the build, or a
+     ;; TLS-intercepting proxy turns a 20-minute image build into a
+     ;; SunCertPathBuilderException. `-J` passes them to the builder JVM.
+     trust (mapv #(str "-J" %) (truststore-properties nil))]
 
     (cond->
       ["-cp" (native-classpath basis) "-o" native-bin
@@ -1194,6 +1247,9 @@
       ;; spliced right after, can still override both -J flags.
       :always
       (conj (str "-J-Xmx" heap-gib "g") (str "-J-Xms" init-gib "g"))
+
+      (seq trust)
+      (into trust)
 
       (seq extra)
       (into extra)

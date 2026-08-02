@@ -19,7 +19,14 @@
 #   bin/require-graalvm --check-pins # verify deps.edn/.sdkmanrc against the pin only
 #   bin/require-graalvm --install    # download + checksum + install, then print home
 #   bin/require-graalvm --native-image   # additionally require bin/native-image
+#   bin/require-graalvm --truststore # print the truststore to use (see VIS_CA_CERT)
 #   eval "$(bin/require-graalvm --export)"   # export JAVA_HOME/GRAALVM_HOME/PATH
+#                                            # (+ JAVA_TOOL_OPTIONS behind a proxy)
+#
+# Corporate CA / TLS interception: VIS_CA_CERT=/path/ca.pem (PEM, imported into
+# a cached COPY of the JDK's cacerts) or VIS_TRUSTSTORE=/path/store.p12 with
+# VIS_TRUSTSTORE_PASSWORD / VIS_TRUSTSTORE_TYPE. The installed JDK is never
+# modified. See the "Corporate CAs" section below.
 #
 # Exit 0 = stdout is a usable home. Every diagnostic goes to stderr, so the
 # stdout capture is always safe to interpolate.
@@ -30,7 +37,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 . "${repo_root}/.graalvm-version"
 
-want_install=0 want_export=0 want_ni=0 check_only=0 pins_only=0
+want_install=0 want_export=0 want_ni=0 check_only=0 pins_only=0 trust_only=0
 for arg in "$@"; do
   case "$arg" in
     --install) want_install=1 ;;
@@ -38,12 +45,105 @@ for arg in "$@"; do
     --native-image) want_ni=1 ;;
     --check) check_only=1 ;;
     --check-pins) pins_only=1 ;;
-    -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    --truststore) trust_only=1 ;;
+    -h|--help) sed -n '2,33p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "require-graalvm: unknown flag $arg" >&2; exit 2 ;;
   esac
 done
 
 say() { echo "$*" >&2; }
+
+# ── Corporate CAs: trust extra roots WITHOUT touching the JDK's cacerts ──────
+# A freshly downloaded JDK trusts the public roots and nothing else. Behind a
+# TLS-intercepting proxy every network step under it — this very download,
+# dependency resolution, `native-image` — then dies with
+#   SunCertPathBuilderException: unable to find valid certification path …
+# while the system JDK keeps working, because the corporate installer patched
+# THAT one's cacerts. Two supported inputs, neither of which mutates the
+# installed JDK (a patched cacerts is silently lost on the next reinstall):
+#   VIS_CA_CERT=/path/ca.pem      extra root(s), PEM. curl gets --cacert, and
+#                                 the bundle is imported into a COPY of the
+#                                 JDK's own cacerts, cached under
+#                                 ${XDG_CACHE_HOME:-~/.cache}/vis — so the
+#                                 public roots keep working too.
+#   VIS_TRUSTSTORE=/path/ts.p12   a ready keystore, used verbatim, plus
+#                                 VIS_TRUSTSTORE_PASSWORD (default changeit)
+#                                 and VIS_TRUSTSTORE_TYPE (default PKCS12).
+# `--truststore` prints the resolved store; `--export` adds it to
+# JAVA_TOOL_OPTIONS, which every JVM this shell starts (clojure, native-image,
+# the build's own children) reads by itself.
+ca_cert="${VIS_CA_CERT:-}"
+trust_store="${VIS_TRUSTSTORE:-}"
+trust_store_type="${VIS_TRUSTSTORE_TYPE:-PKCS12}"
+trust_store_password="${VIS_TRUSTSTORE_PASSWORD:-changeit}"
+trust_cache="${XDG_CACHE_HOME:-$HOME/.cache}/vis"
+
+if [ -n "$ca_cert" ] && [ ! -r "$ca_cert" ]; then
+  say "require-graalvm: VIS_CA_CERT=${ca_cert} is not a readable file"; exit 1
+fi
+if [ -n "$trust_store" ] && [ ! -r "$trust_store" ]; then
+  say "require-graalvm: VIS_TRUSTSTORE=${trust_store} is not a readable file"; exit 1
+fi
+
+# bash 3.2 (macOS) + `set -u` treats an empty array expansion as unbound, hence
+# the `${a[@]+…}` guard at every use site.
+curl_ca_args=()
+[ -z "$ca_cert" ] || curl_ca_args=(--cacert "$ca_cert")
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
+# keytool imports exactly ONE certificate per invocation, so a bundle is split
+# first; the destination starts as a copy of the JDK's cacerts so nothing that
+# already worked stops working.
+build_truststore() {
+  local home="$1" out="$2" src="$1/lib/security/cacerts" tmp cert n=0
+  [ -x "${home}/bin/keytool" ] || { say "require-graalvm: no keytool in ${home}"; return 1; }
+  [ -f "$src" ] || { say "require-graalvm: no cacerts in ${home}"; return 1; }
+  tmp="$(mktemp -d)"
+  cp "$src" "${tmp}/store"
+  awk -v dir="$tmp" '/BEGIN CERTIFICATE/ { n++ } n > 0 { print > (dir "/cert-" n ".pem") }' "$ca_cert"
+  for cert in "${tmp}"/cert-*.pem; do
+    [ -f "$cert" ] || continue
+    n=$((n + 1))
+    if ! "${home}/bin/keytool" -importcert -noprompt -trustcacerts \
+           -alias "vis-custom-ca-${n}" -file "$cert" \
+           -keystore "${tmp}/store" -storepass changeit >&2; then
+      rm -rf "$tmp"; say "require-graalvm: could not import ${ca_cert} (certificate ${n})"; return 1
+    fi
+  done
+  if [ "$n" = 0 ]; then
+    rm -rf "$tmp"; say "require-graalvm: no PEM certificate found in ${ca_cert}"; return 1
+  fi
+  mkdir -p "$(dirname "$out")"
+  mv "${tmp}/store" "$out"
+  rm -rf "$tmp"
+  say "· imported ${n} certificate(s) from ${ca_cert} into ${out}"
+}
+
+# Sets trust_store/-type/-password to what this run should actually use. A
+# user-supplied keystore always wins; a PEM is converted once per (bundle, JDK)
+# pair and reused, because keytool costs a JVM start.
+resolve_truststore() {
+  local home="$1" out
+  [ -z "$trust_store" ] || return 0
+  [ -n "$ca_cert" ] || return 0
+  out="${trust_cache}/truststore-${GRAAL_VERSION}-$(sha256_of "$ca_cert").p12"
+  [ -f "$out" ] || build_truststore "$home" "$out" || return 1
+  trust_store="$out"
+  trust_store_type="PKCS12"
+  trust_store_password="changeit"
+}
+
+trust_java_options() {
+  [ -n "$trust_store" ] || return 0
+  printf '%s' "-Djavax.net.ssl.trustStore=${trust_store}"
+  printf '%s' " -Djavax.net.ssl.trustStoreType=${trust_store_type}"
+  printf '%s' " -Djavax.net.ssl.trustStorePassword=${trust_store_password}"
+}
+
 
 # ── The OTHER half of the pin ────────────────────────────────────────────────
 # A correct JDK is only half the contract. deps.edn's org.graalvm.* jars and
@@ -159,7 +259,12 @@ install_graalvm() {
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
   say "· downloading ${file}"
-  curl -fL --retry 3 --retry-delay 5 -o "${tmp}/jdk.tar.gz" "$url" >&2
+  if ! curl -fL --retry 3 --retry-delay 5 ${curl_ca_args[@]+"${curl_ca_args[@]}"} \
+            -o "${tmp}/jdk.tar.gz" "$url" >&2; then
+    say "require-graalvm: download failed — ${url}"
+    [ -n "$ca_cert" ] || say "    TLS error behind a corporate proxy? Point VIS_CA_CERT at the proxy's CA PEM (or VIS_TRUSTSTORE at a keystore) and retry."
+    return 1
+  fi
   say "· verifying sha256"
   if command -v sha256sum >/dev/null 2>&1; then
     echo "${sha}  ${tmp}/jdk.tar.gz" | sha256sum -c - >&2
@@ -212,10 +317,30 @@ else
   fail "$(vendor_version "${JAVA_HOME:-}" || echo "${JAVA_HOME:-unset}")"
 fi
 
+# The home is known, so a PEM can now be converted with ITS keytool, against
+# ITS cacerts.
+resolve_truststore "$home" || exit 1
+
+if [ "$trust_only" = 1 ]; then
+  [ -z "$trust_store" ] || echo "$trust_store"
+  exit 0
+fi
+
 if [ "$want_export" = 1 ]; then
   echo "export JAVA_HOME=${home}"
   echo "export GRAALVM_HOME=${home}"
   echo "export PATH=${home}/bin:\$PATH"
+  if [ -n "$trust_store" ]; then
+    # JAVA_TOOL_OPTIONS, not JDK_JAVA_OPTIONS: the latter is honoured only by
+    # the `java` launcher, so native-image and every forked builder JVM would
+    # miss it. Existing content is preserved, ours wins by coming last.
+    echo "export JAVA_TOOL_OPTIONS=\"\${JAVA_TOOL_OPTIONS:+\$JAVA_TOOL_OPTIONS }$(trust_java_options)\""
+    echo "export VIS_TRUSTSTORE=${trust_store}"
+    if [ -n "$ca_cert" ]; then
+      echo "export CURL_CA_BUNDLE=${ca_cert}"
+      echo "export SSL_CERT_FILE=${ca_cert}"
+    fi
+  fi
 else
   echo "$home"
 fi

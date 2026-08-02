@@ -51,9 +51,6 @@ import {
 
 type Tab = 'sessions' | 'connect';
 
-/** Stable empty watch list for when no gateway stream is subscribed. */
-const NO_SUBSCRIBED_IDS = new Set<string>();
-
 /** How long a parked share still steers navigation on the next launch. */
 const RESUMABLE_SHARE_MS = 5 * 60 * 1000;
 
@@ -151,7 +148,6 @@ export function App() {
     setSettingsKey(conn.id ?? conn.url);
     setSettingsTarget(conn);
   }, []);
-  const [subscribedIds, setSubscribedIds] = useState<Set<string>>(new Set());
   const [ready, setReady] = useState(false);
   // Set when the sessions screen finds the active gateway unreachable. While it
   // holds a message there is nothing to navigate, so the shell shows Machines
@@ -235,14 +231,11 @@ export function App() {
   // round trips — and awaiting them BEFORE the state flip is exactly the lag
   // between tapping a row and seeing the transcript. Nothing on this path reads
   // them back, so they are persisted underneath the navigation, not in front of
-  // it; the watch list is applied optimistically and reconciled when it lands.
+  // it.
   const openGatewaySession = useCallback((conn: GatewayConn, sid: string, fresh = false) => {
     setActive(conn);
     setOpenTarget({ conn, sid, fresh });
-    setSubscribedIds((ids) => (ids.has(sid) ? ids : new Set([sid, ...ids])));
-    void rememberSubscribedSession(conn.url, sid)
-      .then((ids) => setSubscribedIds(new Set(ids)))
-      .catch(() => undefined);
+    void rememberSubscribedSession(conn.url, sid).catch(() => undefined);
   }, []);
 
   // A share sheet drop, an Android `ACTION_SEND`, or a Shortcuts run carries a
@@ -685,8 +678,7 @@ export function App() {
   // keeps every visited session live even while another view is open.
   useEffect(() => {
     let cancelled = false;
-    // Nothing to restore without a stream; `watchedIds` below derives the empty
-    // list rather than writing state from this effect.
+    // Nothing to restore without a stream to carry the watch list.
     if (!subscriptions || !sessionConn) return;
     void loadSubscribedSessions(sessionConn.url).then((ids) => {
       if (cancelled) return;
@@ -694,14 +686,11 @@ export function App() {
         ? [openTarget.sid, ...ids]
         : ids;
       subscriptions.watchSessions(next);
-      setSubscribedIds(new Set(next));
     });
     return () => {
       cancelled = true;
     };
   }, [openTarget?.sid, sessionConn, subscriptions]);
-
-  const watchedIds = subscriptions && sessionConn ? subscribedIds : NO_SUBSCRIBED_IDS;
 
   useEffect(() => () => subscriptions?.dispose(), [subscriptions]);
 
@@ -766,7 +755,6 @@ export function App() {
             active={active}
             client={client}
             subscriptions={subscriptions}
-            subscribedIds={watchedIds}
             onUnreachable={handleUnreachable}
             onOpen={openGatewaySession}
           />

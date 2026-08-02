@@ -4112,8 +4112,10 @@
    uniformly; there is NO top-level \"lines\"/\"content\" key (c[\"lines\"] KeyErrors).
    Each key IS the `patch` from_anchor — copy it straight into an edit.
    Not \"eof\"/\"truncated\" → paginate from \"next_offset\".
-   A DIRECTORY path lists its entries instead: {\"path\", \"entries\" [{\"name\" \"path\" \"type\" \"size\"}…], \"depth\"};
-   opts {\"depth\": N} recurses (default 1), {\"is_hidden\": true} adds dotfiles; gitignored paths are ALWAYS skipped."
+   A DIRECTORY path is a routing mistake, not a read: it throws and names the
+   replacement call, because `ls` owns listings — `ls({\"paths\": [dir]})`, with
+   `depth` / `is_hidden` there. A nil/blank path throws too; the batch form
+   `cat({\"files\": [...]})` rejects blank entries before any read."
   ([path]
    (if (map? path)
      ;; All-kwargs form: `cat(path="p", ranges=rs)` collapses at the Python

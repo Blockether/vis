@@ -1302,6 +1302,25 @@
         (expect (= :ext.foundation.editing/cat-on-directory (:type (ex-data err))))
         (expect (= :ext.foundation.editing/cat-on-directory (:type (ex-data err-opts))))
         (expect (string/includes? (ex-message err) "ls"))))
+  (it "cat rejects a nil/blank path before any read, and blank batch entries earlier still"
+      (let
+        [cat-tool
+         (private-fn "cat-tool")
+
+         err-type
+         (fn [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+
+        ;; The single-path sandbox form takes whatever expression the caller
+        ;; computed, so `safe-path` is the only place nil/"" can be caught.
+        (expect (= :ext.foundation.editing/blank-path (err-type #(cat-tool nil))))
+        (expect (= :ext.foundation.editing/blank-path (err-type #(cat-tool ""))))
+        ;; A grep result handed straight to `cat`: no single matched file, so the
+        ;; inferred path is nil rather than a silent wrong read.
+        (expect (= :ext.foundation.editing/blank-path (err-type #(cat-tool {"matches" {}}))))
+        ;; The batch form never reaches `safe-path`: `files` entries are validated.
+        (expect (= :ext.foundation.editing/invalid-cat-args (err-type #(cat-tool {"files" [""]}))))
+        (expect (= :ext.foundation.editing/invalid-cat-args (err-type #(cat-tool {"files" [nil]}))))
+        (expect (= :ext.foundation.editing/invalid-cat-args (err-type #(cat-tool {"files" []}))))))
   (it "ls refuses a FILE and names `cat` as the replacement call"
       (let
         [_

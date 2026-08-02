@@ -91,13 +91,12 @@ interface Props {
   active: GatewayConn | null;
   client: GatewayClient | null;
   subscriptions: SessionSubscriptionHub | null;
-  subscribedIds: ReadonlySet<string>;
   /** The gateway stopped answering — the shell decides what to show instead. */
   onUnreachable?: (message: string | null) => void;
   onOpen: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
 }
 
-export function SessionsScreen({ active, client, subscriptions, subscribedIds, onUnreachable, onOpen }: Props) {
+export function SessionsScreen({ active, client, subscriptions, onUnreachable, onOpen }: Props) {
   // Seed from the gateway's last known list so returning to this tab repaints the
   // previous frame instantly; the effect below revalidates and reconciles on top.
   const [sessions, setSessions] = useState<Session[] | null>(() => client?.cachedSessions() ?? null);
@@ -647,7 +646,6 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
               project={project}
               sessions={projectSessions}
               conn={active!}
-              subscribedIds={subscribedIds}
               matches={matches}
               needle={deferredQuery.trim()}
               onOpen={onOpen}
@@ -866,7 +864,6 @@ const ProjectGroup = memo(function ProjectGroup({
   project,
   sessions,
   conn,
-  subscribedIds,
   matches,
   needle,
   onOpen,
@@ -880,7 +877,6 @@ const ProjectGroup = memo(function ProjectGroup({
   project: string;
   sessions: Session[];
   conn: GatewayConn;
-  subscribedIds: ReadonlySet<string>;
   matches: Map<string, SessionMatch> | null;
   needle: string;
   onOpen: Props['onOpen'];
@@ -955,7 +951,6 @@ const ProjectGroup = memo(function ProjectGroup({
               key={session.id}
               session={session}
               conn={conn}
-              subscribed={subscribedIds.has(session.id)}
               match={matches?.get(session.id) ?? null}
               needle={needle}
               onOpen={onOpen}
@@ -986,7 +981,6 @@ const STATS_MOTION_MS = 200;
 const SessionRow = memo(function SessionRow({
   session,
   conn,
-  subscribed,
   match,
   needle,
   onOpen,
@@ -995,7 +989,6 @@ const SessionRow = memo(function SessionRow({
 }: {
   session: Session;
   conn: GatewayConn;
-  subscribed: boolean;
   match: SessionMatch | null;
   needle: string;
   onOpen: Props['onOpen'];
@@ -1116,14 +1109,6 @@ const SessionRow = memo(function SessionRow({
                   title={session.workspace?.root}
                 >
                   draft {draftName || ''}
-                </span>
-              </>
-            )}
-            {subscribed && (
-              <>
-                <span className="opacity-40" aria-hidden="true">·</span>
-                <span className="inline-flex items-center gap-1 font-bold text-accent-ink">
-                  <span className="size-1 bg-accent-ink" /> OPEN
                 </span>
               </>
             )}
