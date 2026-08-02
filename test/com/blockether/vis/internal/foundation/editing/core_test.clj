@@ -3873,6 +3873,26 @@
           (let [stringy (index {"paths" [{"path" f "ranges" "2, 2"}]})]
             (expect (= ["b"] (names stringy)))
             (expect (= [[2 2]] (get-in stringy [:result "results" 0 "ranges"]))))
+          ;; `ranges` stays OPTIONAL: absent or empty indexes the WHOLE file, the
+          ;; same as a bare path entry
+          (doseq [spec [{"path" f} {"path" f "ranges" []}]]
+            (let [r (index {"paths" [spec]})]
+              (expect (= ["a" "b" "c"] (names r)))
+              (expect (nil? (get-in r [:result "results" 0 "ranges"])))))
+          ;; a malformed scalar raises cat's OWN guidance, never a raw
+          ;; "Don't know how to create ISeq from: java.lang.Long"
+          (let
+            [msg
+             (fn [thunk]
+               (try (thunk) nil (catch Throwable t (ex-message t))))
+
+             bad
+             {"path" f "ranges" 3}]
+
+            (expect (= (msg #((private-fn "cat-tool") {"files" [bad]}))
+                       (msg #(index {"paths" [bad]}))))
+            (expect (clojure.string/includes? (str (msg #(index {"paths" [bad]})))
+                                              "[[start, end], ...]")))
           (expect (throws? clojure.lang.ExceptionInfo #(index {})))
           (expect (throws? clojure.lang.ExceptionInfo
                            #(index {"paths" [{"path" f "range" [2 2]}]}))))))
