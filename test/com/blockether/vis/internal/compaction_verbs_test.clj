@@ -1217,11 +1217,11 @@
       ;; line instead of one unwrappable run-on.
       (let
         [card (session-fold-card
-                (str "folded t1/i1 · recover ntr[\"toolu_A\"] shell: $ bash -n ~/vis/bin/vis; "
+                (str "folded t1/i1 · recover ntr[\"toolu_A\"] shell: $ bash -n ~/vis/bin/vis-agent; "
                      "ntr[\"toolu_B\"] cat"
                      " · IMPORTANT 3 more folded results stay recoverable"))]
         (expect (str/includes? (:body card)
-                               "\n  - `ntr[\"toolu_A\"]` `shell: $ bash -n ~/vis/bin/vis`"))
+                               "\n  - `ntr[\"toolu_A\"]` `shell: $ bash -n ~/vis/bin/vis-agent`"))
         (expect (str/includes? (:body card) "\n  - `ntr[\"toolu_B\"]`"))
         (expect (str/includes? (:body card)
                                "- **IMPORTANT** 3 more folded results stay recoverable"))))
