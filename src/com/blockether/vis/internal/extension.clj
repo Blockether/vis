@@ -1296,7 +1296,7 @@
   "Max model-facing prose chars a single native tool may spend (see
    `native-prose-chars`). Shared by the registration guard and its test so the
    number lives in exactly one place."
-  2000)
+  1250)
 
 (defn- schema-prose-chars
   "Total characters of every `:description` (or `\"description\"`) nested anywhere
@@ -3617,9 +3617,7 @@
     com.blockether.vis.internal.foundation.shim-pptx
     com.blockether.vis.internal.foundation.shim-attach
     com.blockether.vis.internal.foundation.shim-fonttools
-    com.blockether.vis.internal.foundation.shim-fonttools
-    com.blockether.vis.internal.foundation.rewind
-    com.blockether.vis.internal.foundation.acp
+    com.blockether.vis.internal.foundation.rewind com.blockether.vis.internal.foundation.acp
     com.blockether.vis.internal.foundation.mcp.core
     com.blockether.vis.internal.foundation.harness.core])
 
