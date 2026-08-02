@@ -176,12 +176,16 @@ const sharePlist = join(shareDir, 'Info.plist');
 const shortcutsSwift = join(appDir, 'VisShortcuts.swift');
 const pbxprojPath = join(root, 'ios', 'App', 'App.xcodeproj', 'project.pbxproj');
 
-// Only `openURL:` is reachable from an extension: `UIApplication.shared` is
-// unavailable there by design, and `extensionContext.open` is documented for
-// widgets. Try the documented call first, walk the responder chain when it
-// declines — losing the share because a system API changed its mind is worse
-// than a deprecated selector.
+// `UIApplication.shared` is unavailable to an extension by design, and
+// `extensionContext.open` is documented for widgets — it answers false here.
+// So the app is opened through the responder chain, which has two traps, both
+// reproduced in the iOS 26 Simulator: `openURL:` is dead (UIKit force-returns NO
+// and logs "BUG IN CLIENT OF UIKIT", so the share vanished into a white sheet),
+// and `UIScene` answers the modern selector earlier in the chain but aborts the
+// extension when called. Only `UIApplication`, only
+// `openURL:options:completionHandler:`, invoked through its IMP.
 const shareControllerSource = `import UIKit
+import ObjectiveC
 import UniformTypeIdentifiers
 
 /// The whole extension: pull the link (or the text) out of the share, hand it to
@@ -262,11 +266,24 @@ final class ShareViewController: UIViewController {
             context.open(url) { success in continuation.resume(returning: success) }
         }
         guard !opened else { return }
-        let selector = NSSelectorFromString("openURL:")
+        openViaResponderChain(url)
+    }
+
+    /// Reaches UIApplication through the responder chain. openURL: is dead since
+    /// iOS 18 (UIKit force-returns NO) and UIScene answers the modern selector
+    /// earlier in the chain but aborts the extension, so this matches the
+    /// application class exactly and calls the modern selector through its IMP.
+    @MainActor
+    private func openViaResponderChain(_ url: URL) {
+        let modern = NSSelectorFromString("openURL:options:completionHandler:")
+        guard let application = NSClassFromString("UIApplication") else { return }
         var responder: UIResponder? = self
         while let current = responder {
-            if current.responds(to: selector) {
-                _ = current.perform(selector, with: url)
+            if current.isKind(of: application),
+               let method = class_getInstanceMethod(type(of: current), modern) {
+                typealias Open = @convention(c) (AnyObject, Selector, NSURL, NSDictionary, AnyObject?) -> Void
+                let call = unsafeBitCast(method_getImplementation(method), to: Open.self)
+                call(current, modern, url as NSURL, NSDictionary(), nil)
                 return
             }
             responder = current.next
