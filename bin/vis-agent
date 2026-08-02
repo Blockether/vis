@@ -315,7 +315,12 @@ vis_runtime() {
   esac
 }
 
-vis_platform_asset() {
+# Release assets come in two shapes and BOTH must install, because whatever the
+# latest release happens to be is what the documented one-liner downloads:
+#   vis-agent-<os>-<arch>-community.tar.gz  bundle: launcher + native runtime
+#   vis-<os>-<arch>-community               bare native runtime (releases up to
+#                                           v0.1.22, which predate the bundle)
+vis_platform_slug() {
   local os arch
   case "$(uname -s)" in
     Darwin) os=macos ;;
@@ -327,7 +332,27 @@ vis_platform_asset() {
     x86_64|amd64) arch=x64 ;;
     *) echo "vis-agent update: unsupported arch $(uname -m)" >&2; return 1 ;;
   esac
-  printf 'vis-agent-%s-%s-community.tar.gz' "$os" "$arch"
+  printf '%s-%s' "$os" "$arch"
+}
+
+vis_platform_asset() {
+  local slug
+  slug="$(vis_platform_slug)" || return 1
+  printf 'vis-agent-%s-community.tar.gz' "$slug"
+}
+
+vis_legacy_asset() {
+  local slug
+  slug="$(vis_platform_slug)" || return 1
+  printf 'vis-%s-community' "$slug"
+}
+
+# Exact-name match: the trailing quote keeps 'vis-linux-x64-community' from
+# matching 'vis-linux-x64-community.tar.gz' (or any longer sibling asset).
+vis_asset_url() {
+  local json="$1" name="$2" url
+  url="$(printf '%s' "$json" | grep -o "https://[^\"]*/${name}\"" | head -1)" || url=""
+  printf '%s' "${url%\"}"
 }
 
 vis_do_update() {
@@ -409,11 +434,14 @@ vis_do_update() {
     fi
   fi
 
-  # A release always ships the launcher and native runtime together as one bundle.
+  # Current releases ship launcher + runtime as one bundle; releases up to
+  # v0.1.22 publish only the bare runtime. Install whichever this release has,
+  # so the documented one-liner works against the latest release as it is today.
   command -v curl >/dev/null || { echo "vis-agent update needs curl on PATH" >&2; exit 1; }
   command -v tar >/dev/null  || { echo "vis-agent update needs tar on PATH" >&2; exit 1; }
-  local asset api dl json archive unpack
+  local asset legacy api dl legacy_dl json archive unpack native_dir
   asset="$(vis_platform_asset)" || exit 1
+  legacy="$(vis_legacy_asset)" || exit 1
   if [[ -z "$target" || "$target" == latest ]]; then
     api="https://api.github.com/repos/$vis_repo_slug/releases/latest"
   else
@@ -423,14 +451,47 @@ vis_do_update() {
   json="$(curl -fsSL "$api")" || true
   # `set -o pipefail` + `set -e` would kill this function on a no-match grep,
   # swallowing the actionable message below. Keep the failure local.
-  dl="$(printf '%s' "$json" | grep -o "https://[^\"]*/${asset}\"" | head -1)" || dl=""
-  dl="${dl%\"}"
-  if [[ -z "$dl" ]]; then
-    echo "vis-agent update: no native runtime published for '$asset'." >&2
+  dl="$(vis_asset_url "$json" "$asset")"
+  legacy_dl=""
+  [[ -n "$dl" ]] || legacy_dl="$(vis_asset_url "$json" "$legacy")"
+  if [[ -z "$dl" && -z "$legacy_dl" ]]; then
+    echo "vis-agent update: no native runtime published for '$asset' or '$legacy'." >&2
+    echo "  Checked $api" >&2
     echo "  Releases currently carry Linux x64 and arm64 only." >&2
     echo "  Elsewhere: install the source runtime (bin/install-source), or build" >&2
     echo "  the runtime from a checkout with 'vis-agent native'." >&2
     exit 1
+  fi
+
+  # Where the private runtime belongs: beside an installed launcher, or in Vis
+  # state when the launcher is a tracked checkout file we must never overwrite.
+  if (( launcher_is_checkout )); then
+    mkdir -p "$vis_install_dir"
+    native_dir="$vis_install_dir"
+  else
+    [[ -w "$bin_dir" && -w "$src" ]] || {
+      echo "vis-agent update: cannot replace installation in $bin_dir (permission denied)" >&2
+      echo "  Re-run the installer with the permissions used for that directory." >&2
+      exit 1
+    }
+    native_dir="$bin_dir"
+  fi
+
+  # Pre-bundle release: the runtime is published alone, so keep THIS launcher
+  # (it is the one that knows how to drive both asset layouts).
+  if [[ -z "$dl" ]]; then
+    local bare
+    bare="$(mktemp "${TMPDIR:-/tmp}/vis-agent-native.XXXXXX")"
+    trap 'rm -f "$bare"' RETURN
+    echo "vis-agent: this release predates the launcher bundle; installing runtime '$legacy'"
+    echo "vis-agent: downloading $legacy_dl"
+    curl -fSL "$legacy_dl" -o "$bare" || exit 1
+    chmod 0755 "$bare"
+    mv -f "$bare" "$native_dir/vis-agent-native"
+    trap - RETURN
+    echo "vis-agent: installed native runtime from $legacy into $native_dir"
+    echo "vis-agent: choose it with 'vis-agent runtime use native'."
+    exit 0
   fi
 
   archive="$(mktemp "${TMPDIR:-/tmp}/vis-agent-bundle.XXXXXX.tar.gz")"
@@ -444,22 +505,15 @@ vis_do_update() {
     exit 1
   }
 
+  mv -f "$unpack/vis-agent-native" "$native_dir/vis-agent-native"
   if (( launcher_is_checkout )); then
-    # Never overwrite a tracked development launcher. Keep the downloaded
-    # runtime in Vis state; source remains the checkout's responsibility.
-    mkdir -p "$vis_install_dir"
+    # Never overwrite a tracked development launcher: the released one lives in
+    # Vis state; source stays the checkout's responsibility.
     mv -f "$unpack/vis-agent" "$vis_install_dir/vis-agent"
-    mv -f "$unpack/vis-agent-native" "$vis_install_dir/vis-agent-native"
     [[ ! -f "$unpack/install-vis-agent" ]] || mv -f "$unpack/install-vis-agent" "$vis_install_dir/install-vis-agent"
   else
-    # Installed bundles are co-located: update the public wrapper and its private
-    # native sidecar together. The current Bash process has already read itself.
-    [[ -w "$bin_dir" && -w "$src" ]] || {
-      echo "vis-agent update: cannot replace installation in $bin_dir (permission denied)" >&2
-      echo "  Re-run the installer with the permissions used for that directory." >&2
-      exit 1
-    }
-    mv -f "$unpack/vis-agent-native" "$bin_dir/vis-agent-native"
+    # Installed bundles are co-located: the public wrapper and its private
+    # native sidecar update together. This Bash process has already read itself.
     mv -f "$unpack/vis-agent" "$src"
     [[ ! -f "$unpack/install-vis-agent" ]] || mv -f "$unpack/install-vis-agent" "$bin_dir/install-vis-agent"
   fi

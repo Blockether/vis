@@ -88,21 +88,31 @@ if [[ "$version" == latest && -n "$here" && -f "$here/vis-agent" && -f "$here/..
   wrapper="$here/vis-agent"
   echo "vis-agent install: using the vis-agent command from this checkout"
 else
+  # A pinned --version pins the RUNTIME release. Older tags predate this wrapper,
+  # so fall back to main rather than failing on a 404: the wrapper is
+  # version-agnostic and step 2 still asks for the pinned runtime.
   ref=main
   [[ "$version" == latest ]] || ref="$version"
-  wrapper_url="https://raw.githubusercontent.com/$repo_slug/$ref/bin/vis-agent"
   wrapper="$(mktemp "${TMPDIR:-/tmp}/vis-agent.XXXXXX")"
   cleanup() { rm -f "$wrapper"; }
   trap cleanup EXIT
+  fetch_wrapper() {
+    local from="$1"
+    curl -fsSL "https://raw.githubusercontent.com/$repo_slug/$from/bin/vis-agent" -o "$wrapper" 2>/dev/null &&
+      head -1 "$wrapper" | grep -q '^#!'
+  }
   echo "vis-agent install: downloading the vis-agent command ($ref)"
-  curl -fsSL "$wrapper_url" -o "$wrapper" || {
-    echo "vis-agent install: could not download $wrapper_url" >&2
-    exit 1
-  }
-  head -1 "$wrapper" | grep -q '^#!' || {
-    echo "vis-agent install: downloaded wrapper is not a script: $wrapper_url" >&2
-    exit 1
-  }
+  if ! fetch_wrapper "$ref"; then
+    if [[ "$ref" == main ]]; then
+      echo "vis-agent install: could not download the vis-agent command from main" >&2
+      exit 1
+    fi
+    echo "vis-agent install: $ref ships no bin/vis-agent; using the command from main and pinning the runtime to $version" >&2
+    fetch_wrapper main || {
+      echo "vis-agent install: could not download the vis-agent command from main" >&2
+      exit 1
+    }
+  fi
 fi
 
 install -m 0755 "$wrapper" "$install_dir/vis-agent.tmp"
@@ -152,6 +162,12 @@ published for this platform yet. Give it the source runtime instead
 
   curl -fsSL https://raw.githubusercontent.com/$repo_slug/main/bin/install-source | bash
 EOF
+  if (( ! path_configured )); then
+    cat >&2 <<EOF
+
+Start a new shell (or run: source "$profile") before using vis-agent by name.
+EOF
+  fi
   exit 1
 fi
 

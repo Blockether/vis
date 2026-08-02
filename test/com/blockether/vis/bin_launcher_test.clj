@@ -206,3 +206,160 @@
            (let [{:keys [output]} (run! ["runtime" "show"])]
              (expect (str/includes? output "Configured default: jvm")))
            (finally (delete-tree! root))))))
+
+(defn- release-json
+  "Minimal GitHub release payload carrying exactly `asset-names`."
+  [& asset-names]
+  (str "{\"tag_name\":\"v9.9.9\",\"assets\":["
+       (str/join ","
+                 (map #(str "{\"name\":\""
+                            %
+                            "\",\"browser_download_url\":\"https://example.invalid/download/"
+                            %
+                            "\"}")
+                      asset-names))
+       "]}"))
+
+(defn- tar-gz!
+  [dir out]
+  (let
+    [pb (ProcessBuilder. ^java.util.List
+                         ["tar" "-C" (.getAbsolutePath ^java.io.File dir) "-czf"
+                          (.getAbsolutePath ^java.io.File out) "."])]
+    (.redirectErrorStream pb true)
+    (let [process (.start pb)]
+      (slurp (.getInputStream process))
+      (.waitFor process))
+    out))
+
+(defdescribe
+  wrapper-release-asset-test
+  (it
+    "installs either release layout: the launcher bundle or a bare legacy runtime"
+    (let
+      [root
+       (.toFile (Files/createTempDirectory "vis-agent-asset-test-" (make-array FileAttribute 0)))
+
+       install-dir
+       (doto (io/file root "install") .mkdirs)
+
+       home
+       (doto (io/file root "home") .mkdirs)
+
+       vis-home
+       (doto (io/file home ".vis") .mkdirs)
+
+       tools
+       (doto (io/file root "tools") .mkdirs)
+
+       fixtures
+       (doto (io/file root "fixtures") .mkdirs)
+
+       launcher
+       (io/file install-dir "vis-agent")
+
+       native
+       (io/file install-dir "vis-agent-native")
+
+       run-update!
+       (fn [json asset-file]
+         (let
+           [pb
+            (ProcessBuilder. ^java.util.List
+                             ["bash" (.getAbsolutePath launcher) "update" "--native"])
+
+            env
+            (.environment pb)]
+
+           (.directory pb root)
+           (.redirectErrorStream pb true)
+           (.put env "HOME" (.getAbsolutePath home))
+           (.put env "VIS_HOME" (.getAbsolutePath vis-home))
+           (.put env "VIS_NO_DEV_CHECKOUT" "1")
+           (.put env "PATH" (str (.getAbsolutePath tools) ":/usr/bin:/bin"))
+           (.put env "VIS_TEST_RELEASE_JSON" (.getAbsolutePath ^java.io.File json))
+           (.put env
+                 "VIS_TEST_ASSET_FILE"
+                 (str (some-> ^java.io.File asset-file
+                              .getAbsolutePath)))
+           (let
+             [process
+              (.start pb)
+
+              output
+              (slurp (.getInputStream process))]
+
+             {:exit (.waitFor process) :output output})))]
+
+      (try (Files/copy (.toPath (io/file "bin/vis-agent"))
+                       (.toPath launcher)
+                       (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+           (.setExecutable launcher true)
+           ;; The release API and every download are served from local fixtures, so
+           ;; the resolution/install logic is covered without touching the network.
+           (write-executable! (io/file tools "uname")
+                              (str "#!/usr/bin/env bash\n"
+                                   "case \"${1:-}\" in\n" "  -m) echo x86_64 ;;\n"
+                                   "  *) echo Linux ;;\n" "esac\n"))
+           (write-executable! (io/file tools "curl")
+                              (str "#!/usr/bin/env bash\n"
+                                   "out=\"\"; url=\"\"\n" "while [[ $# -gt 0 ]]; do\n"
+                                   "  case \"$1\" in\n" "    -o) out=\"$2\"; shift 2 ;;\n"
+                                   "    -*) shift ;;\n" "    *) url=\"$1\"; shift ;;\n"
+                                   "  esac\n" "done\n"
+                                   "case \"$url\" in\n"
+                                   "  *api.github.com*) cat \"$VIS_TEST_RELEASE_JSON\" ;;\n"
+                                   "  *) cp \"$VIS_TEST_ASSET_FILE\" \"$out\" ;;\n" "esac\n"))
+           (let
+             [json
+              (io/file fixtures "legacy.json")
+
+              bare
+              (write-executable! (io/file fixtures "vis-linux-x64-community")
+                                 "#!/usr/bin/env bash\necho BARE-RUNTIME\n")
+
+              launcher-before
+              (slurp launcher)]
+
+             (spit json (release-json "vis-linux-x64-community"))
+             (let [{:keys [exit output]} (run-update! json bare)]
+               (expect (= 0 exit) output)
+               (expect (str/includes? output "predates the launcher bundle"))
+               (expect (str/includes? (slurp native) "BARE-RUNTIME"))
+               (expect (.canExecute native))
+               ;; A bare-runtime release must never disturb the launcher in use.
+               (expect (= launcher-before (slurp launcher)))))
+           (let [json (io/file fixtures "empty.json")]
+             (spit json (release-json))
+             (let [{:keys [exit output]} (run-update! json nil)]
+               (expect (= 1 exit) output)
+               (expect (str/includes? output "vis-agent-linux-x64-community.tar.gz"))
+               (expect (str/includes? output "vis-linux-x64-community"))))
+           (let
+             [json
+              (io/file fixtures "bundle.json")
+
+              staged
+              (doto (io/file fixtures "bundle") .mkdirs)]
+
+             (spit json (release-json "vis-agent-linux-x64-community.tar.gz"))
+             (write-executable! (io/file staged "vis-agent")
+                                "#!/usr/bin/env bash\necho BUNDLED-LAUNCHER\n")
+             (write-executable! (io/file staged "vis-agent-native")
+                                "#!/usr/bin/env bash\necho BUNDLED-NATIVE\n")
+             (write-executable! (io/file staged "install-vis-agent")
+                                "#!/usr/bin/env bash\necho BUNDLED-INSTALLER\n")
+             (let
+               [tarball
+                (tar-gz! staged (io/file fixtures "bundle.tar.gz"))
+
+                {:keys [exit output]}
+                (run-update! json tarball)]
+
+               (expect (= 0 exit) output)
+               (expect (str/includes? output "installed launcher + native runtime"))
+               (expect (str/includes? (slurp native) "BUNDLED-NATIVE"))
+               (expect (str/includes? (slurp launcher) "BUNDLED-LAUNCHER"))
+               (expect (str/includes? (slurp (io/file install-dir "install-vis-agent"))
+                                      "BUNDLED-INSTALLER"))))
+           (finally (delete-tree! root))))))

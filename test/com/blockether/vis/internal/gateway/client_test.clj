@@ -458,6 +458,30 @@
                    (catch clojure.lang.ExceptionInfo e (ex-data e)))]
           (is (true? (:kaboom ex))))))))
 
+(deftest mux-advance-cursor!-honours-the-subscription-ready-echo
+  (let [advance! (rv 'mux-advance-cursor!)]
+    (testing "an ordinary frame advances the cursor monotonically"
+      (let [cursor (atom 10)]
+        (advance! cursor {"type" "turn.delta" "seq" 12})
+        (is (= 12 @cursor))
+        (advance! cursor {"type" "turn.delta" "seq" 11})
+        (is (= 12 @cursor) "a late lower seq never rewinds a live cursor")))
+    (testing "subscription.ready OVERRIDES the max, so a renumbered daemon heals"
+      ;; A restarted gateway numbers from its journal high-water, far below the
+      ;; cursor this client carried across the outage. Keeping the max would ask
+      ;; for a cursor above the session's high-water on EVERY reconnect, the
+      ;; server would clamp it, and this session would never replay again.
+      (let [cursor (atom 4200)]
+        (advance! cursor {"type" "subscription.ready" "cursor" 7})
+        (is (= 7 @cursor) "the echoed resume point wins outright")
+        (advance! cursor {"type" "turn.completed" "seq" 8})
+        (is (= 8 @cursor) "and the renumbered stream is delivered and tracked from there")))
+    (testing "a ready frame with no usable cursor leaves the cursor alone"
+      (let [cursor (atom 5)]
+        (advance! cursor {"type" "subscription.ready"})
+        (advance! cursor {"type" "subscription.ready" "cursor" nil})
+        (is (= 5 @cursor))))))
+
 (deftest mux-subscribe!-shares-one-remote-session-subscription
   (testing "multiple local listeners for one sid do not reconnect/open one SSE per tab"
     (let

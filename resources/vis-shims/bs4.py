@@ -10,6 +10,7 @@
 
 def __vis_install_bs4__():
     import sys, types
+    import html as _html
     import html.parser as _hp
     import builtins as _bi
 
@@ -38,7 +39,21 @@ def __vis_install_bs4__():
             "wbr",
         ]
     )
-    _MULTI_ATTR = set(["class", "rel", "rev", "accept-charset", "headers", "dropzone"])
+    _MULTI_ATTR = set(["class", "accesskey", "dropzone"])
+    # HTML only makes these attributes space-separated lists on specific elements,
+    # so <p rel="x y"> keeps a plain string the way bs4 does.
+    _MULTI_ATTR_BY_TAG = {
+        "a": ("rel", "rev"),
+        "link": ("rel", "rev"),
+        "td": ("headers",),
+        "th": ("headers",),
+        "form": ("accept-charset",),
+        "object": ("archive",),
+        "area": ("rel",),
+        "icon": ("sizes",),
+        "iframe": ("sandbox",),
+        "output": ("for",),
+    }
 
     class NavigableString(str):
         def __new__(cls, value):
@@ -96,7 +111,9 @@ def __vis_install_bs4__():
         def _norm_attr(self, k, v):
             if v is None:
                 v = ""
-            if k in _MULTI_ATTR and isinstance(v, str):
+            if isinstance(v, str) and (
+                k in _MULTI_ATTR or k in _MULTI_ATTR_BY_TAG.get(self.name, ())
+            ):
                 return v.split()
             return v
 
@@ -285,6 +302,14 @@ def __vis_install_bs4__():
                     return kids[0].string
             return None
 
+        @string.setter
+        def string(self, value):
+            # Assigning .string replaces every child with that single string.
+            self.clear()
+            self.append(
+                value if isinstance(value, NavigableString) else NavigableString(value)
+            )
+
         @property
         def strings(self):
             for d in self.descendants:
@@ -400,13 +425,34 @@ def __vis_install_bs4__():
             return _render(self)
 
         def prettify(self):
-            return _render(self, pretty=True, depth=0)
+            out = _render(self, pretty=True, depth=0)
+            return out if out.endswith(_NL) else out + _NL
 
         def __repr__(self):
             return _render(self)
 
         def __str__(self):
             return _render(self)
+
+        def __len__(self):
+            return len(self.contents)
+
+        def __bool__(self):
+            # Every Tag is truthy in bs4: an empty <div> must not read as falsey
+            # merely because it has no children.
+            return True
+
+        def __call__(self, *args, **kwargs):
+            return self.find_all(*args, **kwargs)
+
+        def __copy__(self):
+            return _clone(self)
+
+        def __deepcopy__(self, memo=None):
+            return _clone(self)
+
+        def encode(self, encoding="utf-8", *args, **kwargs):
+            return _render(self).encode(encoding)
 
     def _index_of(seq, node):
         for i, c in enumerate(seq):
@@ -502,7 +548,7 @@ def __vis_install_bs4__():
                         have if isinstance(have, list) else ([have] if have else [])
                     )
                     if isinstance(want, str):
-                        if want not in classes:
+                        if want not in classes and want != " ".join(classes):
                             return False
                     elif callable(want):
                         if not want(" ".join(classes)):
@@ -533,6 +579,9 @@ def __vis_install_bs4__():
         def _string_ok(node):
             if string is None:
                 return True
+            if string is True:
+                # `string=True` means "has any string at all".
+                return node.string is not None if isinstance(node, Tag) else True
             txt = node.get_text() if isinstance(node, Tag) else str(node)
             if hasattr(string, "search"):
                 return string.search(txt) is not None
@@ -557,17 +606,175 @@ def __vis_install_bs4__():
 
         return matcher
 
+    # -- shared navigation ---------------------------------------------------------
+    # bs4 exposes the same walk API on Tags and NavigableStrings. Building the
+    # finders once from a generator factory and stapling them onto both classes
+    # keeps the two kinds of node in lockstep instead of drifting apart.
+    def _previous_element(node):
+        prev = _sibling(node, -1)
+        if prev is None:
+            return getattr(node, "parent", None)
+        while isinstance(prev, Tag) and prev.contents:
+            prev = prev.contents[-1]
+        return prev
+
+    def _walk(step):
+        def gen(node):
+            cur = step(node)
+            while cur is not None:
+                yield cur
+                cur = step(cur)
+
+        return gen
+
+    _iter_next_elements = _walk(_next_element)
+    _iter_previous_elements = _walk(_previous_element)
+    _iter_parents = _walk(lambda n: getattr(n, "parent", None))
+    _iter_next_siblings = _walk(lambda n: _sibling(n, 1))
+    _iter_previous_siblings = _walk(lambda n: _sibling(n, -1))
+
+    def _find_in(nodes, name, attrs, string, limit, kwargs):
+        if string is None:
+            string = kwargs.pop("string", kwargs.pop("text", None))
+        matcher = _make_matcher(name, attrs, string, kwargs)
+        out = []
+        for candidate in nodes:
+            if matcher(candidate):
+                out.append(candidate)
+                if limit and len(out) >= limit:
+                    break
+        return out
+
+    def _mk_finder(gen, first):
+        def finder(self, name=None, attrs=None, string=None, limit=None, **kwargs):
+            hits = _find_in(
+                gen(self), name, attrs, string, 1 if first else limit, kwargs
+            )
+            if first:
+                return hits[0] if hits else None
+            return hits
+
+        return finder
+
+    def _camel(snake):
+        head, _sep, tail = snake.partition("_")
+        return head + "".join(w[:1].upper() + w[1:] for w in tail.split("_"))
+
+    def _install_navigation():
+        specs = (
+            ("find_next", "find_all_next", _iter_next_elements),
+            ("find_previous", "find_all_previous", _iter_previous_elements),
+            ("find_parent", "find_parents", _iter_parents),
+            ("find_next_sibling", "find_next_siblings", _iter_next_siblings),
+            (
+                "find_previous_sibling",
+                "find_previous_siblings",
+                _iter_previous_siblings,
+            ),
+        )
+        props = (
+            ("next_elements", _iter_next_elements),
+            ("previous_elements", _iter_previous_elements),
+            ("parents", _iter_parents),
+            ("next_siblings", _iter_next_siblings),
+            ("previous_siblings", _iter_previous_siblings),
+        )
+        for cls in (Tag, NavigableString):
+            for one, many, gen in specs:
+                for attr, fn in (
+                    (one, _mk_finder(gen, True)),
+                    (many, _mk_finder(gen, False)),
+                ):
+                    setattr(cls, attr, fn)
+                    setattr(cls, _camel(attr), fn)
+            for attr, gen in props:
+                setattr(cls, attr, property(lambda self, g=gen: g(self)))
+            cls.previous_element = property(_previous_element)
+            cls.fetchNextSiblings = cls.find_next_siblings
+            cls.fetchPrevious = cls.find_all_previous
+            cls.fetchParents = cls.find_parents
+
+    def _clone(node):
+        # copy.copy(tag) in bs4 hands back a *deep*, parentless copy; the walk is
+        # explicit so cloning deep markup cannot blow the interpreter stack.
+        def shallow(src):
+            if isinstance(src, NavigableString):
+                return type(src)(str(src))
+            dup = Tag(src.name)
+            dup.attrs = dict(
+                (k, list(v) if isinstance(v, list) else v) for k, v in src.attrs.items()
+            )
+            return dup
+
+        root = shallow(node)
+        if isinstance(node, NavigableString):
+            return root
+        stack = [(node, root)]
+        while stack:
+            src, dst = stack.pop()
+            for child in src.contents:
+                dup = shallow(child)
+                dup.parent = dst
+                dst.contents.append(dup)
+                if isinstance(child, Tag):
+                    stack.append((child, dup))
+        return root
+
+    _install_navigation()
+
     # -- CSS select --------------------------------------------------------------
+    def _parse_nth(arg):
+        # An+B microsyntax, including the `odd`/`even`/plain-integer spellings.
+        s = arg.replace(" ", "").lower()
+        if s == "odd":
+            return (2, 1)
+        if s == "even":
+            return (2, 0)
+        if "n" not in s:
+            try:
+                return (0, int(s))
+            except ValueError:
+                return None
+        head, _sep, tail = s.partition("n")
+        if head in ("", "+"):
+            a = 1
+        elif head == "-":
+            a = -1
+        else:
+            try:
+                a = int(head)
+            except ValueError:
+                return None
+        if tail == "":
+            b = 0
+        else:
+            try:
+                b = int(tail)
+            except ValueError:
+                return None
+        return (a, b)
+
+    def _nth_ok(spec, index):
+        if spec is None:
+            return False
+        a, b = spec
+        if a == 0:
+            return index == b
+        rest = index - b
+        return rest % a == 0 and rest // a >= 0
+
     def _parse_simple(tok):
         tag = None
         idv = None
         classes = []
         attrs = []
+        pseudos = []
         i = 0
         n = len(tok)
+        stop = (".", "#", "[", ":")
         # leading type selector
         j = i
-        while j < n and tok[j] not in (".", "#", "["):
+        while j < n and tok[j] not in stop:
             j = j + 1
         t = tok[i:j]
         if t and t != "*":
@@ -575,18 +782,15 @@ def __vis_install_bs4__():
         i = j
         while i < n:
             c = tok[i]
-            if c == ".":
+            if c == "." or c == "#":
                 i = i + 1
                 s = i
-                while i < n and tok[i] not in (".", "#", "["):
+                while i < n and tok[i] not in stop:
                     i = i + 1
-                classes.append(tok[s:i])
-            elif c == "#":
-                i = i + 1
-                s = i
-                while i < n and tok[i] not in (".", "#", "["):
-                    i = i + 1
-                idv = tok[s:i]
+                if c == ".":
+                    classes.append(tok[s:i])
+                else:
+                    idv = tok[s:i]
             elif c == "[":
                 i = i + 1
                 s = i
@@ -595,7 +799,7 @@ def __vis_install_bs4__():
                 body = tok[s:i]
                 i = i + 1
                 op = None
-                for cand in ("~=", "^=", "$=", "*=", "="):
+                for cand in ("~=", "|=", "^=", "$=", "*=", "="):
                     if cand in body:
                         an, av = body.split(cand, 1)
                         op = cand
@@ -608,14 +812,91 @@ def __vis_install_bs4__():
                         break
                 if op is None:
                     attrs.append((body.strip(), None, None))
+            elif c == ":":
+                i = i + 1
+                if i < n and tok[i] == ":":
+                    # ::pseudo-elements select no element in this engine.
+                    i = i + 1
+                s = i
+                while i < n and tok[i] not in stop and tok[i] != "(":
+                    i = i + 1
+                pname = tok[s:i].lower()
+                parg = None
+                if i < n and tok[i] == "(":
+                    depth = 0
+                    s = i + 1
+                    while i < n:
+                        if tok[i] == "(":
+                            depth = depth + 1
+                        elif tok[i] == ")":
+                            depth = depth - 1
+                            if depth == 0:
+                                break
+                        i = i + 1
+                    parg = tok[s:i]
+                    i = i + 1
+                pseudos.append((pname, parg))
             else:
                 i = i + 1
-        return (tag, idv, classes, attrs)
+        return (tag, idv, classes, attrs, pseudos)
+
+    def _element_siblings(node):
+        parent = getattr(node, "parent", None)
+        if parent is None:
+            return []
+        return [c for c in parent.contents if isinstance(c, Tag)]
+
+    def _pseudo_ok(node, pname, parg):
+        if pname == "not":
+            for part in (parg or "").split(","):
+                if part.strip() and _simple_match(node, _parse_simple(part.strip())):
+                    return False
+            return True
+        if pname in ("is", "where", "matches"):
+            for part in (parg or "").split(","):
+                if part.strip() and _simple_match(node, _parse_simple(part.strip())):
+                    return True
+            return False
+        if pname == "empty":
+            return not node.contents
+        if pname == "root":
+            parent = getattr(node, "parent", None)
+            return parent is None or getattr(parent, "name", None) == "[document]"
+        if pname == "contains":
+            want = (parg or "").strip()
+            if len(want) >= 2 and want[0] in (_Q, chr(39)) and want[-1] == want[0]:
+                want = want[1:-1]
+            return want in node.get_text()
+        sibs = _element_siblings(node)
+        if not sibs:
+            return False
+        same = [c for c in sibs if c.name == node.name]
+        if pname == "first-child":
+            return sibs[0] is node
+        if pname == "last-child":
+            return sibs[-1] is node
+        if pname == "only-child":
+            return len(sibs) == 1
+        if pname == "first-of-type":
+            return bool(same) and same[0] is node
+        if pname == "last-of-type":
+            return bool(same) and same[-1] is node
+        if pname == "only-of-type":
+            return len(same) == 1
+        if pname in ("nth-child", "nth-last-child", "nth-of-type", "nth-last-of-type"):
+            seq = same if pname.endswith("of-type") else sibs
+            idx = _index_of(seq, node) + 1
+            if idx == 0:
+                return False
+            if "last" in pname:
+                idx = len(seq) - idx + 1
+            return _nth_ok(_parse_nth(parg or ""), idx)
+        return False
 
     def _simple_match(node, simple):
         if not isinstance(node, Tag):
             return False
-        tag, idv, classes, attrs = simple
+        tag, idv, classes, attrs, pseudos = simple
         if tag is not None and node.name != tag:
             return False
         if idv is not None and node.attrs.get("id") != idv:
@@ -639,31 +920,76 @@ def __vis_install_bs4__():
                 return False
             if op == "~=" and av not in hvs.split():
                 return False
+            if op == "|=" and not (hvs == av or hvs.startswith(av + "-")):
+                return False
             if op == "^=" and not hvs.startswith(av):
                 return False
             if op == "$=" and not hvs.endswith(av):
                 return False
             if op == "*=" and av not in hvs:
                 return False
+        for pname, parg in pseudos:
+            if not _pseudo_ok(node, pname, parg):
+                return False
         return True
 
     def _tokenize_group(group):
-        # returns list of (combinator, token); combinator in ('desc','child')
+        # Returns [(combinator, token)] with combinator in
+        # ('desc', 'child', 'next', 'sibs'). Brackets and parentheses are tracked
+        # so `[rel~="x"]` and `:not(a > b)` never split on their own operators.
         steps = []
-        parts = group.replace(_GT, " " + _GT + " ").split()
         combinator = "desc"
-        for p in parts:
-            if p == _GT:
-                combinator = "child"
-                continue
-            steps.append((combinator, p))
-            combinator = "desc"
+        buf = []
+        square = 0
+        paren = 0
+        for ch in group:
+            if ch == "[":
+                square = square + 1
+                buf.append(ch)
+            elif ch == "]":
+                square = square - 1
+                buf.append(ch)
+            elif ch == "(":
+                paren = paren + 1
+                buf.append(ch)
+            elif ch == ")":
+                paren = paren - 1
+                buf.append(ch)
+            elif square == 0 and paren == 0 and (ch.isspace() or ch in (_GT, "+", "~")):
+                tok = "".join(buf).strip()
+                buf = []
+                if tok:
+                    steps.append((combinator, tok))
+                    combinator = "desc"
+                if ch == _GT:
+                    combinator = "child"
+                elif ch == "+":
+                    combinator = "next"
+                elif ch == "~":
+                    combinator = "sibs"
+            else:
+                buf.append(ch)
+        tok = "".join(buf).strip()
+        if tok:
+            steps.append((combinator, tok))
         return steps
+
+    def _following_siblings(node, first_only):
+        sib = _sibling(node, 1)
+        out = []
+        while sib is not None:
+            if isinstance(sib, Tag):
+                out.append(sib)
+                if first_only:
+                    break
+            sib = _sibling(sib, 1)
+        return out
 
     def _select(root, selector, limit=None):
         groups = [g for g in (g.strip() for g in selector.split(",")) if g]
         results = []
         seen = set()
+        sibling_step = False
         for group in groups:
             steps = _tokenize_group(group)
             current = [root]
@@ -673,6 +999,16 @@ def __vis_install_bs4__():
                 if combinator == "child":
                     for node in current:
                         for c in node.contents if isinstance(node, Tag) else []:
+                            if _simple_match(c, simple):
+                                nxt.append(c)
+                elif combinator in ("next", "sibs"):
+                    sibling_step = True
+                    taken = set()
+                    for node in current:
+                        for c in _following_siblings(node, combinator == "next"):
+                            if id(c) in taken:
+                                continue
+                            taken.add(id(c))
                             if _simple_match(c, simple):
                                 nxt.append(c)
                 else:
@@ -700,13 +1036,20 @@ def __vis_install_bs4__():
                 if id(node) not in seen:
                     seen.add(id(node))
                     results.append(node)
-                    # A single group already yields document order, so a limited
-                    # search can stop as soon as it is satisfied.
-                    if limit and len(groups) == 1 and len(results) >= limit:
+                    # A plain descendant/child group already yields document
+                    # order, so a limited search can stop as soon as it is
+                    # satisfied.
+                    if (
+                        limit
+                        and len(groups) == 1
+                        and not sibling_step
+                        and len(results) >= limit
+                    ):
                         return results
-        if len(groups) > 1 and len(results) > 1:
-            # Comma groups are matched one at a time; re-order the union so the
-            # caller sees document order, the way a real CSS engine reports it.
+        if len(results) > 1 and (len(groups) > 1 or sibling_step):
+            # Groups and sibling combinators are matched candidate by candidate;
+            # re-order the union so the caller sees document order, the way a real
+            # CSS engine reports it.
             order = {}
             for i, d in enumerate(root.descendants):
                 order[id(d)] = i
@@ -724,11 +1067,22 @@ def __vis_install_bs4__():
     def _esc_attr(s):
         return _esc_text(str(s)).replace(_Q, _AMP + "quot;")
 
+    def _quote_attr(value):
+        # bs4's quoting rule: double quotes normally, single quotes when the value
+        # itself holds a double quote, and &quot; only when it holds both.
+        v = _esc_text(str(value))
+        if _Q in v:
+            if chr(39) in v:
+                return _Q + v.replace(_Q, _AMP + "quot;") + _Q
+            return chr(39) + v + chr(39)
+        return _Q + v + _Q
+
     def _open_tag(node, pad=""):
         parts = [pad + _LT + node.name]
-        for k, v in node.attrs.items():
+        for k in sorted(node.attrs):
+            v = node.attrs[k]
             vs = " ".join(v) if isinstance(v, list) else (v if v is not None else "")
-            parts.append(" " + k + "=" + _Q + _esc_attr(vs) + _Q)
+            parts.append(" " + k + "=" + _quote_attr(vs))
         if node.name in _VOID and not node.contents:
             parts.append("/" + _GT)
             return "".join(parts), True
@@ -753,7 +1107,7 @@ def __vis_install_bs4__():
                 out.append("<![CDATA[" + str(cur) + "]]>")
                 continue
             if isinstance(cur, Doctype):
-                out.append("<!DOCTYPE " + str(cur) + _GT)
+                out.append(_LT + "!DOCTYPE " + str(cur) + _GT + _NL)
                 continue
             if isinstance(cur, ProcessingInstruction):
                 out.append("<?" + str(cur) + _GT)
@@ -774,7 +1128,7 @@ def __vis_install_bs4__():
         return "".join(out)
 
     def _pretty_string(node, depth):
-        pad = "  " * depth
+        pad = " " * depth
         if isinstance(node, Comment):
             return pad + _LT + "!--" + str(node) + "--" + _GT
         if isinstance(node, CData):
@@ -797,7 +1151,7 @@ def __vis_install_bs4__():
         kids = [k for k in kids if k != ""]
         if node.name == "[document]":
             return _NL.join(kids)
-        pad = "  " * depth
+        pad = " " * depth
         open_tag, is_void = _open_tag(node, pad)
         if is_void:
             return open_tag
@@ -835,50 +1189,92 @@ def __vis_install_bs4__():
         return _render_pretty(node, depth) if pretty else _render_flat(node)
 
     # -- parser ------------------------------------------------------------------
+    def _entity_text(name):
+        # A known entity becomes its character; an unknown one stays literal text
+        # with the terminating semicolon consumed, the way BeautifulSoup reports
+        # `&foo;` as `&foo`.
+        ref = _AMP + name + ";"
+        text = _html.unescape(ref)
+        return text if text != ref else _AMP + name
+
+    def _charref_text(name):
+        try:
+            code = int(name[1:], 16) if name[:1] in ("x", "X") else int(name)
+            return chr(code)
+        except (ValueError, OverflowError):
+            return chr(65533)
+
     class _Builder(_hp.HTMLParser):
         def __init__(self):
-            _hp.HTMLParser.__init__(self, convert_charrefs=True)
+            # convert_charrefs stays off (as in bs4's own html.parser builder) so
+            # entity handling lives here rather than in html.parser, which would
+            # silently keep an unknown `&foo;` verbatim. Character data therefore
+            # arrives split around every reference, and _flush() re-joins each run
+            # into the single NavigableString bs4 produces.
+            _hp.HTMLParser.__init__(self, convert_charrefs=False)
             self.root = Tag("[document]")
             self.stack = [self.root]
+            self._data = []
 
         def _cur(self):
             return self.stack[-1]
 
+        def _flush(self):
+            if self._data:
+                text = "".join(self._data)
+                self._data = []
+                if text:
+                    self._cur().append(NavigableString(text))
+
         def handle_starttag(self, tag, attrs):
+            self._flush()
             t = Tag(tag, attrs)
             self._cur().append(t)
             if tag not in _VOID:
                 self.stack.append(t)
 
         def handle_startendtag(self, tag, attrs):
+            self._flush()
             t = Tag(tag, attrs)
             self._cur().append(t)
 
         def handle_endtag(self, tag):
+            self._flush()
             for i in range(len(self.stack) - 1, 0, -1):
                 if self.stack[i].name == tag:
                     del self.stack[i:]
                     return
 
         def handle_data(self, data):
-            self._cur().append(NavigableString(data))
+            self._data.append(data)
+
+        def handle_entityref(self, name):
+            self._data.append(_entity_text(name))
+
+        def handle_charref(self, name):
+            self._data.append(_charref_text(name))
 
         def handle_comment(self, data):
+            self._flush()
             self._cur().append(Comment(data))
 
         def handle_decl(self, decl):
+            self._flush()
             if decl.lower().startswith("doctype"):
                 self._cur().append(Doctype(decl[7:].strip()))
 
         def handle_pi(self, data):
+            self._flush()
             self._cur().append(ProcessingInstruction(data))
 
         def unknown_decl(self, data):
+            self._flush()
             if data.startswith("CDATA[") and data.endswith("]"):
                 self._cur().append(CData(data[6:-1]))
 
-        def handle_entityref(self, name):
-            self._cur().append(NavigableString(_AMP + name + ";"))
+        def close(self):
+            _hp.HTMLParser.close(self)
+            self._flush()
 
     def _strain(root, strainer):
         # parse_only pruning: keep the outermost nodes the strainer accepts and

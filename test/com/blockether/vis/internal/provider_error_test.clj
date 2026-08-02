@@ -336,6 +336,24 @@
             (expect (str/includes? next-step "fold older settled history"))
             (expect (str/includes? next-step "larger-context model"))
             (expect (not (re-find #"(?i)next step: retry" next-step))))))
+    (it "recognizes the ask-code! PREFLIGHT guard type, not only the tokens variant"
+        ;; svar throws `:svar.core/context-overflow` from the `ask-code!` preflight
+        ;; guard (llm.clj) and `:svar.tokens/context-overflow` from the token-budget
+        ;; checker. VIS took the preflight path, so matching only the tokens variant
+        ;; presented a 1.44M-of-1M-token session as `Provider unavailable`.
+        (let
+          [err (ex-info "Context overflow: 1437952 tokens exceed limit of 1000000"
+                        {:type :svar.core/context-overflow
+                         :source :preflight
+                         :model "claude-opus-5"
+                         :input-tokens 1437952
+                         :max-input-tokens 1000000
+                         :overflow 437952})]
+          (expect (true? (perr/context-overflow-error? err)))
+          (expect (= :context-overflow (perr/provider-error-kind err)))
+          (expect (= "Context window exceeded" (perr/provider-error-title err)))
+          (expect (str/includes? (perr/provider-error-next-step err)
+                                 "fold older settled history"))))
     (it "supports provider-confirmed overflow without local token counts"
         (let
           [err {:message "failed"

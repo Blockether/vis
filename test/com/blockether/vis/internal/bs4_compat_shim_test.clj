@@ -264,7 +264,7 @@
 (defdescribe
   bs4-serialization-test
   (it
-    "escapes text and attribute values on the way out"
+    "escapes text and switches attribute quotes the way bs4 does"
     (with-python-context
       (expect
         (true?
@@ -273,7 +273,14 @@
             (str
               "from bs4 import BeautifulSoup\n"
               "s = BeautifulSoup('<a title=' + chr(39) + 'q&quot;t' + chr(39) + '>a &amp; b</a>', 'html.parser')\n"
-              "out = str(s)\n" "'a &amp; b' in out and '&quot;' in out"))))))
+              "out = str(s)\n"
+              ;; bs4 quotes with " normally, with ' when the value holds a ",
+              ;; and only escapes to &quot; when the value holds BOTH quotes.
+              "t = BeautifulSoup('<a></a>', 'html.parser').a\n"
+              "t['title'] = 'a' + chr(34) + 'b' + chr(39) + 'c'\n"
+              "both = str(t)\n" "'a &amp; b' in out "
+              "and 'title=' + chr(39) + 'q' + chr(34) + 't' + chr(39) in out "
+              "and 'title=' + chr(34) + 'a&quot;b' + chr(39) + 'c' + chr(34) in both"))))))
   (it
     "renders void elements self-closed and keeps multi-valued attributes joined"
     (with-python-context
@@ -287,7 +294,7 @@
               "and str(BeautifulSoup('<br><img src=' + chr(39) + 'x' + chr(39) + '>', 'html.parser')) == '<br/><img src=' + chr(34) + 'x' + chr(34) + '/>' "
               "and 'class=' + chr(34) + 'box wide' + chr(34) in s"))))))
   (it
-    "prettify indents nested tags and drops whitespace-only strings"
+    "prettify indents nested tags one space deep and ends with a newline"
     (with-python-context
       (expect
         (true?
@@ -296,7 +303,8 @@
             (str
               "from bs4 import BeautifulSoup\n"
               "p = BeautifulSoup('<div><p>hi</p></div>', 'html.parser').prettify()\n"
-              "p == '<div>' + chr(10) + '  <p>' + chr(10) + '    hi' + chr(10) + '  </p>' + chr(10) + '</div>'"))))))
+              ;; Real bs4 indents ONE space per level and terminates the output.
+              "p == '<div>' + chr(10) + ' <p>' + chr(10) + '  hi' + chr(10) + ' </p>' + chr(10) + '</div>' + chr(10)"))))))
   (it
     "round-trips a bare string and a multi-root document"
     (with-python-context
@@ -402,3 +410,74 @@
               "and len(wide.find_all('p')) == 2000 "
               "and wide.select('div.c section p')[-1].get_text() == '1999' "
               "and elapsed < 3.0")))))))
+
+(defdescribe
+  bs4-parity-test
+  (it
+    "decodes known entity references and keeps an unknown one literal"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from bs4 import BeautifulSoup\n"
+              "s = BeautifulSoup('<p>a &foo; b &amp; c &#39;q&#39; &#x41;</p>', 'html.parser')\n"
+              ;; bs4 parses references itself instead of letting html.parser fold
+              ;; them: an unknown reference survives as literal text minus its
+              ;; semicolon, and the whole run stays ONE NavigableString.
+              "s.p.get_text() == 'a &foo b & c ' + chr(39) + 'q' + chr(39) + ' A' "
+              "and len(s.p.contents) == 1 "
+              "and str(s) == '<p>a &amp;foo b &amp; c ' + chr(39) + 'q' + chr(39) + ' A</p>'"))))))
+  (it "walks the document with the plural finders and their camelCase aliases"
+      (with-python-context
+        (expect
+          (true?
+            (ev python-context
+                (str
+                  "from bs4 import BeautifulSoup\n"
+                  "s = BeautifulSoup('<div><p>1</p><p>2</p><span>3</span></div>', 'html.parser')\n"
+                  "s.span.previous_element.get_text() == '2' "
+                  "and [t.name for t in s.p.find_next_siblings()] == ['p', 'span'] "
+                  "and [t.name for t in s.span.find_all_previous('p')] == ['p', 'p'] "
+                  "and [t.name for t in s.span.find_parents()] == ['div', '[document]'] "
+                  "and [t.name for t in s.span.fetchParents()] == ['div', '[document]']"))))))
+  (it
+    "selects with sibling combinators and structural pseudo-classes"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from bs4 import BeautifulSoup\n"
+              "markup = '<div><p class=' + chr(39) + 'a' + chr(39) + '>1</p><p>2</p><span>3</span><p>4</p></div>'\n"
+              "s = BeautifulSoup(markup, 'html.parser')\n"
+              "[t.get_text() for t in s.select('div > p:nth-of-type(2)')] == ['2'] "
+              "and [t.get_text() for t in s.select('p + p')] == ['2'] "
+              "and [t.get_text() for t in s.select('p ~ span')] == ['3'] "
+              "and [t.get_text() for t in s.select('div :first-child')] == ['1'] "
+              "and [t.get_text() for t in s.select('p:not(.a)')] == ['2', '4']"))))))
+  (it "implements the Tag protocol: len, truthiness, call syntax, copy and encode"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "import copy\n" "from bs4 import BeautifulSoup\n"
+                                "s = BeautifulSoup('<div><p>a</p><br/></div>', 'html.parser')\n"
+                                "d = s.div\n"
+                                "c = copy.copy(d)\n" "d.p.string = 'z'\n"
+                                ;; An empty tag is still truthy, and a copy is a detached deep clone
+                                ;; that later mutation of the original cannot reach.
+                                "len(d) == 2 and bool(s.br) is True and len(s('p')) == 1 "
+                                "and str(c) == '<div><p>a</p><br/></div>' "
+                                "and str(d) == '<div><p>z</p><br/></div>' "
+                                "and d.encode() == str(d).encode()"))))))
+  (it "keeps a doctype as its own node and renders it on its own line"
+      (with-python-context
+        (expect
+          (true?
+            (ev python-context
+                (str
+                  "from bs4 import BeautifulSoup\n"
+                  "s = BeautifulSoup('<!DOCTYPE html><html><body>x</body></html>', 'html.parser')\n"
+                  "str(s) == '<!DOCTYPE html>' + chr(10) + '<html><body>x</body></html>' "
+                  "and type(s.contents[0]).__name__ == 'Doctype'")))))))

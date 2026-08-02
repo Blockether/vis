@@ -602,16 +602,45 @@
 
               (recur (into results (map #(nth % 2)) steps) skipped (- budget (count steps))))))))
 
+(defn- teardown-sessions!
+  "Stop every stoppable resource of each registered session `select?` accepts,
+   INCLUDING sessions that first appear while an earlier stop callback is still
+   blocked — teardown of one session can start another (a restart handler, a
+   re-registering owner), and a single `(keys @registry)` snapshot would leave
+   that child running past the process that owns its stop-fn. Each session is
+   torn down once (`stop-all!` already chases replacements within a session), so
+   non-stoppable and failed generations that stay registered cannot spin this
+   loop. Returns `{session-id [stop! results]}`."
+  [select?]
+  (loop
+    [acc
+     {}
+
+     visited
+     #{}
+
+     budget
+     1024]
+
+    (let [pending (into [] (comp (remove visited) (filter select?)) (keys @registry))]
+      (cond (empty? pending) acc
+            (<= budget 0)
+            (assoc acc
+              "*" [{:result :error :id "*" :message "Process teardown exceeded 1024 sessions."}])
+            :else (recur (reduce (fn [m sid]
+                                   (assoc m sid (stop-all! sid)))
+                                 acc
+                                 pending)
+                         (into visited pending)
+                         (- budget (count pending)))))))
+
 (defn shutdown!
   "Process-wide teardown spout (daemon/engine shutdown): stop EVERY registered
-   resource across ALL sessions, so no background child (a background `shell` server, a
-   REPL) outlives the process that owns its stop-fn. Best-effort; returns
-   `{session-id [stop! results]}`."
+   resource across ALL sessions, so no background child (a background `shell`, a
+   REPL) outlives the process that owns its stop-fn. Sessions registered during
+   teardown are chased too. Best-effort; returns `{session-id [stop! results]}`."
   []
-  (into {}
-        (map (fn [sid]
-               [sid (stop-all! sid)]))
-        (keys @registry)))
+  (teardown-sessions! (constantly true)))
 
 ;; ---------------------------------------------------------------------------
 ;; Agent surface — B-dispatch. The sandbox gets two engine-builtin tools, each

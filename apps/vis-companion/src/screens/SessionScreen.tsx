@@ -1874,10 +1874,32 @@ export function SessionScreen({
       }
       void reconcile();
     });
+    // The stream going away and coming back is itself proof of a gap: every
+    // frame the gateway emitted while the socket was down — the `turn.completed`
+    // that ends this bubble included — was delivered to nobody, and a resume
+    // past the gateway's ring buffer never replays it. Waiting for the next 5 s
+    // tick (or up to STALE_RECONCILE_MS, when a request that died with the old
+    // socket still holds the latch) leaves the bubble breathing on a turn that
+    // finished during the outage — the TUI's `:sync-gateway-connection`, from
+    // the other side. So reconcile the moment the hub reports itself live
+    // again, exactly as a wake does. `subscribeConnection` replays the current
+    // value on subscribe, so the first sample only seeds the edge detector: a
+    // false -> true TRANSITION is the signal, never "is connected".
+    let wasConnected: boolean | null = null;
+    const stopConnection = subscriptions.subscribeConnection((live) => {
+      const reconnected = wasConnected === false && live;
+      wasConnected = live;
+      if (!reconnected) return;
+      // A read issued over the socket that just died cannot answer for the gap,
+      // so its silence must not suppress the one reconcile that can.
+      inflightSince = null;
+      void reconcile();
+    });
     return () => {
       cancelled = true;
       window.clearInterval(timer);
       stopWake();
+      stopConnection();
     };
   }, [
     client,
@@ -3784,7 +3806,7 @@ export function SessionScreen({
                 type="button"
                 role="option"
                 aria-selected={index === fileIndex}
-                className={`grid w-full grid-cols-[1fr_auto] items-center gap-3 border-t border-dialog-edge px-3 py-2 text-left transition-colors ${
+                className={`grid min-h-9 w-full grid-cols-[1fr_auto] items-center gap-3 border-t border-dialog-edge px-3 py-1.5 text-left transition-colors ${
                   index === fileIndex
                     ? 'bg-accent text-accent-foreground'
                     : 'text-dialog-foreground hover:bg-hover'
@@ -3792,10 +3814,10 @@ export function SessionScreen({
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={() => completeFile(file.name)}
               >
-                <code className="truncate font-mono text-body font-semibold text-accent-ink">
+                <code className="truncate font-mono text-ui font-semibold text-accent-ink">
                   {file.name}
                 </code>
-                <span className="shrink-0 font-mono text-meta text-dialog-hint">
+                <span className="shrink-0 font-mono text-chip text-dialog-hint">
                   {[file.size, file.age, file.status && file.status !== 'clean' ? file.status : '']
                     .filter(Boolean)
                     .join(' · ')}
@@ -3821,7 +3843,7 @@ export function SessionScreen({
                 type="button"
                 role="option"
                 aria-selected={index === slashIndex}
-                className={`grid w-full grid-cols-[8.5rem_1fr] items-start gap-3 border-t border-dialog-edge px-3 py-2.5 text-left transition-colors sm:grid-cols-[11rem_1fr] ${
+                className={`grid min-h-9 w-full grid-cols-[7.5rem_1fr] items-start gap-3 border-t border-dialog-edge px-3 py-1.5 text-left transition-colors sm:grid-cols-[10rem_1fr] ${
                   index === slashIndex
                     ? 'bg-accent text-accent-foreground'
                     : 'text-dialog-foreground hover:bg-hover'
@@ -3829,10 +3851,10 @@ export function SessionScreen({
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={() => completeSlash(command)}
               >
-                <code className="break-words font-mono text-body font-semibold text-accent-ink">
+                <code className="break-words font-mono text-ui font-semibold text-accent-ink">
                   {command.name}
                 </code>
-                <span className="line-clamp-2 text-body text-dialog-hint">{command.doc}</span>
+                <span className="line-clamp-2 text-meta text-dialog-hint">{command.doc}</span>
               </button>
             ))}
           </div>

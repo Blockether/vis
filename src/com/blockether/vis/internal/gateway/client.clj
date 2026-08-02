@@ -1607,6 +1607,31 @@
               (str sid ":" (long @cursor-atom))))
        (str/join ",")))
 
+(defn- mux-advance-cursor!
+  "Move one session's replay cursor after a frame was delivered.
+
+   An ordinary event advances it to the highest `\"seq\"` seen, so a reconnect
+   resumes exactly where this client stopped. `subscription.ready` is different:
+   it echoes the cursor the daemon ACTUALLY resumed from (server.clj's
+   `resolve-sse-cursor` / `sse-ready!`), and it OVERRIDES the running max rather
+   than joining it.
+
+   Without that override a RESTARTED daemon is unrecoverable for this client.
+   The gateway's counter is per-process, so a restart renumbers BELOW what we
+   already saw; every reconnect then asks for a cursor above that session's
+   high-water, the server clamps it to the running turn (or to live-only), and
+   the session replays nothing but a tail — for good, since a monotonic max
+   never comes back down. The symptom is a connected, heartbeating stream that
+   silently never delivers the `turn.completed` the TUI is waiting for. The echo
+   is the documented heal; the companion client already honours it (gateway.ts)."
+  [cursor-atom event]
+  (if (= "subscription.ready" (get event "type"))
+    (let [cursor (get event "cursor")]
+      (when (number? cursor) (reset! cursor-atom (long cursor))))
+    (when-let [s (get event "seq")]
+      (swap! cursor-atom max (long s))))
+  nil)
+
 (defn- mux-broadcast!
   "Deliver a synthetic connection event to EVERY live sink (shared stream =
    shared connection state), so each tab still paints a live/lost indicator."
@@ -1676,8 +1701,7 @@
                                 {:keys [sinks cursor-atom]} (get (:subs @mux) esid)]
 
                                (when (seq sinks)
-                                 (when-let [s (get event "seq")]
-                                   (swap! cursor-atom max (long s)))
+                                 (mux-advance-cursor! cursor-atom event)
                                  (doseq [[_ sink] sinks]
                                    (try (sink event) (catch Throwable _ nil))))))
                            (recur []))

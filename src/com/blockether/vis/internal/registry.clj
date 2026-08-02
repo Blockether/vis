@@ -92,7 +92,7 @@
 ;; One-line description shown in `vis help`.
 (s/def :channel/doc non-blank-string?)
 
-;; Optional usage line shown in `vis help` (defaults to "vis <cmd>").
+;; Optional usage line shown in `vis-agent help` (defaults to "vis-agent channels <cmd>").
 (s/def :channel/usage non-blank-string?)
 
 ;; When true, the channel takes over the controlling terminal

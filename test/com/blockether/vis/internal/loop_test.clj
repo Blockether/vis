@@ -3354,25 +3354,37 @@
   "Typed context overflow must never be fed back into an unreachable next model call."
   (let
     [overflow-ex
-     (fn [input max-input source]
-       (ex-info "Context overflow"
-                {:type :svar.tokens/context-overflow
-                 :source source
-                 :model "claude-fable-5"
-                 :input-tokens input
-                 :max-input-tokens max-input
-                 :overflow (when (and input max-input) (- input max-input))}))
+     (fn overflow-ex
+       ([input max-input source]
+        (overflow-ex :svar.tokens/context-overflow input max-input source))
+       ([type input max-input source]
+        (ex-info "Context overflow"
+                 {:type type
+                  :source source
+                  :model "claude-fable-5"
+                  :input-tokens input
+                  :max-input-tokens max-input
+                  :overflow (when (and input max-input) (- input max-input))})))
 
      ctx
      {:iteration 1 :messages [] :routing {} :reasoning-level nil}]
 
     (doseq
-      [[label input max-input source]
-       [["extreme preflight" 81325 8192 :preflight] ["exact limit edge" 8193 8192 :preflight]
-        ["marginal preflight" 9000 8192 :preflight] ["provider-confirmed" 200001 200000 :provider]
-        ["unmeasured provider overflow" nil nil :provider]]]
+      [[label type input max-input source]
+       [["extreme preflight" :svar.tokens/context-overflow 81325 8192 :preflight]
+        ["exact limit edge" :svar.tokens/context-overflow 8193 8192 :preflight]
+        ["marginal preflight" :svar.tokens/context-overflow 9000 8192 :preflight]
+        ["provider-confirmed" :svar.tokens/context-overflow 200001 200000 :provider]
+        ["unmeasured provider overflow" :svar.tokens/context-overflow nil nil :provider]
+        ;; The type svar's `ask-code!` PREFLIGHT guard actually throws. VIS matched
+        ;; only the `tokens` variant, so this one skipped every overflow handler:
+        ;; a 1.44M-of-1M-token session fed the overflow back for three iterations
+        ;; (each retry ~180 tokens BIGGER) and died with a bogus provider card.
+        ["ask-code! preflight guard" :svar.core/context-overflow 1437952 1000000 :preflight]
+        ["ask-code! guard, marginal" :svar.core/context-overflow 9000 8192 :preflight]]]
       (it (str label " is terminal")
-          (let [result (lp/handle-iteration-exception! (overflow-ex input max-input source) ctx)]
+          (let [result (lp/handle-iteration-exception! (overflow-ex type input max-input source)
+                                                      ctx)]
             (expect (contains? result :com.blockether.vis.internal.loop/iteration-error))
             (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error result))))))
     (it "preserves typed details for the error card and diagnostics"

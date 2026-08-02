@@ -269,10 +269,23 @@
   (contains? #{:svar.core/stream-semantic-timeout :svar.core/stream-idle-timeout}
              (or (:type (:data err)) (:type err) (:type (ex-data err)))))
 
+(def CONTEXT_OVERFLOW_TYPES
+  "Every typed context-window failure svar can raise.
+
+   `:svar.tokens/context-overflow` comes from the token-budget checker
+   (`router/check-context`) and from the streamed `context_length_exceeded`
+   family. `:svar.core/context-overflow` is what the `ask-code!` PREFLIGHT
+   guard throws — and that is the path VIS actually takes, so it must be
+   recognized too. Matching only the `tokens` variant made a preflight
+   overflow miss EVERY overflow handler (emergency fold, terminal breaker,
+   error card) and surface as a bogus `Provider unavailable`, with the error
+   fed back into a request that could never reach the model."
+  #{:svar.tokens/context-overflow :svar.core/context-overflow})
+
 (defn context-overflow-error?
-  "True only for the canonical typed context-window failure."
+  "True only for a canonical typed context-window failure."
   [err]
-  (= :svar.tokens/context-overflow (or (:type (:data err)) (:type err) (:type (ex-data err)))))
+  (contains? CONTEXT_OVERFLOW_TYPES (or (:type (:data err)) (:type err) (:type (ex-data err)))))
 
 (defn- provider-id-of [data] (or (:provider-id data) (:provider data) (:provider/id data)))
 

@@ -1255,9 +1255,10 @@
 
 (def ^:private INFRASTRUCTURE_ERROR_TYPES
   ;; Provider/runtime failures cannot be repaired by feeding them to the model.
-  #{:svar.core/http-error :svar.core/stream-cancelled :svar.core/stream-idle-timeout
-    :svar.core/stream-semantic-timeout :svar.llm/all-providers-exhausted :svar.llm/circuit-open
-    :svar.llm/provider-exhausted :svar.llm/provider-unavailable :svar.tokens/context-overflow})
+  (into #{:svar.core/http-error :svar.core/stream-cancelled :svar.core/stream-idle-timeout
+          :svar.core/stream-semantic-timeout :svar.llm/all-providers-exhausted
+          :svar.llm/circuit-open :svar.llm/provider-exhausted :svar.llm/provider-unavailable}
+        perr/CONTEXT_OVERFLOW_TYPES))
 
 (defn- infrastructure-error?
   [ex-data-map]
@@ -7156,13 +7157,30 @@
                             (str label (when (not= n 1) "s"))))))))
          (str/join ", "))))
 
+(def ^:private CONTEXT_OVERFLOW_FOLD_RATIOS
+  "Fraction of the provider's input limit each successive emergency fold aims for.
+
+   The local estimator (`svar-router/count-messages`) is cheap but LOOSER than the
+   provider's exact preflight: the projection Svar priced at 1,437,952 tokens for
+   session `cd24926e` measures 1,044,954 here (~1.4x undercount on dense tool JSON).
+   Aiming at the raw limit would hand back a projection that overflows AGAIN on the
+   retry, so the first rescue targets 70% of the limit and each further rescue inside
+   the same iteration escalates; the last ratio is tight enough to force a near-total
+   fold of settled history."
+  [0.7 0.45 0.2])
+
 (defn- emergency-fold-projection
-  "Build a one-shot provider projection with every foldable settled iteration
-   collapsed through the same `apply-summaries` path as `session_fold`.
-   Canonical trailer history and persisted summaries are never mutated. Existing
-   semantic folds remain authoritative and are not replaced by the mechanical gist.
-   The retry gate uses Svar's message-token estimator, not serialized characters;
-   the retry itself repeats Svar's provider-aware exact preflight before any send."
+  "Build a provider projection with settled trailer iterations collapsed through the
+   same `apply-summaries` path as `session_fold`.
+
+   Folding is GRADUATED: the foldable universe is walked OLDEST first and the search
+   keeps the SMALLEST prefix whose projection fits `max-input-tokens`, so a rescue
+   spends the least recent context it can and recent settled work survives verbatim.
+   Only when no prefix fits does everything foldable collapse. Canonical trailer
+   history and persisted summaries are never mutated. Existing semantic folds remain
+   authoritative and are not replaced by the mechanical gist. The gate uses Svar's
+   message-token estimator, not serialized characters; the retry itself repeats Svar's
+   provider-aware exact preflight before any send."
   [base-messages trailer-iters summaries protected-scopes replay-target replay-policies model
    max-input-tokens]
   (let
@@ -7178,8 +7196,9 @@
      already-folded
      (into #{} (mapcat #(get % "scopes")) (ctx-engine/expand-through summaries universe))
 
-     scopes
-     (into #{} (remove (into protected already-folded)) universe)
+     ;; Chronological (the trailer is ordered), so a prefix is always the OLDEST work.
+     foldable
+     (into [] (comp (distinct) (remove (into protected already-folded))) universe)
 
      live-turn
      (some->> universe
@@ -7187,70 +7206,113 @@
               seq
               (apply max))]
 
-    (when (seq scopes)
+    (when (seq foldable)
       (let
-        [activity
-         (emergency-fold-activity trailer-iters scopes)
-
-         intent
-         (cond->
-           {"scopes" scopes
-            "gist" (str "Emergency transport fold omitted "
-                        (count scopes)
-                        " settled iteration(s)"
-                        (when (seq activity) (str " (" activity ")"))
-                        " after context overflow; canonical session history remains intact.")}
-           live-turn
-           (assoc "at_turn" live-turn))
-
-         folded-trailer
-         (apply-summaries trailer-iters (conj (vec summaries) intent) protected)
-
-         before-messages
+        [before-messages
          (into (vec base-messages)
                (conversation-suffix trailer-iters replay-target replay-policies))
-
-         messages
-         (into (vec base-messages)
-               (conversation-suffix folded-trailer replay-target replay-policies))
 
          before-tokens
          (svar-router/count-messages model before-messages)
 
-         after-tokens
-         (svar-router/count-messages model messages)]
+         project
+         (fn [n]
+           (let
+             [scopes
+              (into #{} (take n) foldable)
 
-        (when (and (< after-tokens before-tokens)
-                   (or (nil? max-input-tokens) (<= after-tokens (long max-input-tokens))))
-          {:messages messages
+              activity
+              (emergency-fold-activity trailer-iters scopes)
+
+              intent
+              (cond->
+                {"scopes" scopes
+                 "gist" (str "Emergency transport fold omitted "
+                             (count scopes)
+                             " settled iteration(s)"
+                             (when (seq activity) (str " (" activity ")"))
+                             " after context overflow; canonical session history remains intact.")}
+                live-turn
+                (assoc "at_turn" live-turn))
+
+              folded-trailer
+              (apply-summaries trailer-iters (conj (vec summaries) intent) protected)
+
+              messages
+              (into (vec base-messages)
+                    (conversation-suffix folded-trailer replay-target replay-policies))]
+
+             {:messages messages
+              :scopes scopes
+              :after-tokens (svar-router/count-messages model messages)}))
+
+         fits?
+         (fn [{:keys [after-tokens]}]
+           (and (< (long after-tokens) (long before-tokens))
+                (or (nil? max-input-tokens) (<= (long after-tokens) (long max-input-tokens)))))
+
+         ;; Folding more can only shrink the projection, so the smallest fitting
+         ;; prefix is a binary search — O(log n) estimator passes, not O(n).
+         chosen
+         (loop [lo 1 hi (count foldable) best nil]
+           (if (> (long lo) (long hi))
+             (or best (project (count foldable)))
+             (let [mid (quot (+ (long lo) (long hi)) 2)
+                   candidate (project mid)]
+               (if (fits? candidate)
+                 (recur lo (dec mid) candidate)
+                 (recur (inc mid) hi best)))))]
+
+        (when (fits? chosen)
+          {:messages (:messages chosen)
            :before-tokens before-tokens
-           :after-tokens after-tokens
-           :saved-tokens (- before-tokens after-tokens)
+           :after-tokens (:after-tokens chosen)
+           :saved-tokens (- (long before-tokens) (long (:after-tokens chosen)))
            :max-input-tokens max-input-tokens
-           :scopes scopes})))))
+           :folded-scopes (count (:scopes chosen))
+           :foldable-scopes (count foldable)
+           :scopes (:scopes chosen)})))))
 
 (defn- context-overflow-recovery!
-  "Claim the one-shot overflow retry, publish the failed request's measured
-   utilization, and return a smaller provider projection. nil means terminal."
-  [{:keys [error output-started? recovery-attempted? ctx-atom turn-input-tokens base-messages
+  "Claim the next overflow rescue of THIS iteration, publish the failed request's
+   measured utilization, and return a smaller provider projection. nil means terminal.
+
+   Rescues ESCALATE: `CONTEXT_OVERFLOW_FOLD_RATIOS` tightens the target budget on every
+   attempt, so a cheap fold of the oldest settled work is tried before history collapses
+   wholesale — and a retry that overflows AGAIN gets another, harder rescue instead of
+   ending the turn. Each rescue must be strictly smaller than the previous one; without
+   progress the retry would resend a request the provider already refused, so the
+   iteration goes terminal instead."
+  [{:keys [error output-started? recovery-state ctx-atom turn-input-tokens base-messages
            trailer-iters summaries protected-scopes replay-target replay-policies model]}]
   (let [overflow (ex-data error)]
-    (when (and (= :svar.tokens/context-overflow (:type overflow))
-               (not @output-started?)
-               (compare-and-set! recovery-attempted? false true))
-      (stamp-utilization! ctx-atom
-                          (ctx-engine/utilization (:input-tokens overflow)
-                                                  (:max-input-tokens overflow)
-                                                  turn-input-tokens
-                                                  ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))
-      (emergency-fold-projection base-messages
-                                 trailer-iters
-                                 summaries
-                                 protected-scopes
-                                 replay-target
-                                 replay-policies
-                                 model
-                                 (:max-input-tokens overflow)))))
+    (when (and (contains? perr/CONTEXT_OVERFLOW_TYPES (:type overflow))
+               (not @output-started?))
+      (let [{:keys [attempts last-after-tokens]} (swap! recovery-state update :attempts (fnil inc 0))
+            attempt (long attempts)]
+        (when (<= attempt (count CONTEXT_OVERFLOW_FOLD_RATIOS))
+          (stamp-utilization! ctx-atom
+                              (ctx-engine/utilization (:input-tokens overflow)
+                                                      (:max-input-tokens overflow)
+                                                      turn-input-tokens
+                                                      ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))
+          (when-let [projection (emergency-fold-projection
+                                  base-messages
+                                  trailer-iters
+                                  summaries
+                                  protected-scopes
+                                  replay-target
+                                  replay-policies
+                                  model
+                                  (some-> (:max-input-tokens overflow)
+                                          long
+                                          (* (double (nth CONTEXT_OVERFLOW_FOLD_RATIOS
+                                                          (dec attempt))))
+                                          long))]
+            (when (or (nil? last-after-tokens)
+                      (< (long (:after-tokens projection)) (long last-after-tokens)))
+              (swap! recovery-state assoc :last-after-tokens (:after-tokens projection))
+              (assoc projection :attempt attempt))))))))
 
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
@@ -7926,7 +7988,8 @@
                  (conversation-suffix summarized-trailer-iters replay-target replay-policies)
                  provider-messages (into (vec messages) conversation-suffix-msgs)
                  effective-messages-atom (atom provider-messages)
-                 context-recovery-attempted? (atom false)
+                 ;; Per-ITERATION rescue counter: escalating context-overflow folds.
+                 context-recovery-state (atom {:attempts 0})
                  provider-output-started? (atom false)
                  effective-messages provider-messages
                  resolved-model pre-resolved-model
@@ -8131,7 +8194,7 @@
                                (context-overflow-recovery!
                                  {:error e
                                   :output-started? provider-output-started?
-                                  :recovery-attempted? context-recovery-attempted?
+                                  :recovery-state context-recovery-state
                                   :ctx-atom (:ctx-atom environment)
                                   :turn-input-tokens (:input-tokens @usage-atom)
                                   :base-messages messages

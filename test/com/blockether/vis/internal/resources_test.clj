@@ -392,4 +392,51 @@
                (expect (= :error (:result (first results))))
                (expect (= 1 @calls))
                (expect (some? (resources/get-resource sid "broken"))))
-             (finally (resources/unregister! sid "broken"))))))
+             (finally (resources/unregister! sid "broken")))))
+  (it
+    "tears down a session that first appears while an earlier stop callback is blocked"
+    (let
+      [teardown
+       (var-get (ns-resolve 'com.blockether.vis.internal.resources 'teardown-sessions!))
+
+       sid-a
+       (fresh-sid)
+
+       sid-b
+       (fresh-sid)
+
+       entered
+       (promise)
+
+       release
+       (promise)
+
+       a-stops
+       (atom 0)
+
+       b-stops
+       (atom 0)]
+
+      (try
+        (resources/register! sid-a
+                             {:id "a" :kind :process :status :running}
+                             {:stop-fn (fn []
+                                         (swap! a-stops inc)
+                                         (deliver entered true)
+                                         @release)})
+        (let [tearing (future (teardown #{sid-a sid-b}))]
+          @entered
+          ;; A teardown callback (or any concurrent owner) can put a brand new
+          ;; SESSION into the registry; a one-shot key snapshot would leave it running.
+          (resources/register! sid-b
+                               {:id "b" :kind :process :status :running}
+                               {:stop-fn #(swap! b-stops inc)})
+          (deliver release true)
+          (let [result (deref tearing 5000 ::timed-out)]
+            (expect (not= ::timed-out result))
+            (expect (= #{sid-a sid-b} (set (keys result))))
+            (expect (= 1 @a-stops))
+            (expect (= 1 @b-stops))
+            (expect (nil? (resources/get-resource sid-a "a")))
+            (expect (nil? (resources/get-resource sid-b "b")))))
+        (finally (deliver release true) (resources/stop-all! sid-a) (resources/stop-all! sid-b))))))
