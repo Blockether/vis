@@ -11,9 +11,16 @@ import {
 export const Button = forwardRef<
   HTMLButtonElement,
   ButtonHTMLAttributes<HTMLButtonElement> & {
-    variant?: 'solid' | 'ghost' | 'quiet' | 'danger';
+    variant?: 'solid' | 'ghost' | 'quiet' | 'danger' | 'contrast';
+    /**
+     * Press feedback. `scale` is the default nudge; `none` is for a button that
+     * ANCHORS something (a popover) or sits in a segmented group — a transform
+     * moves the box the menu was measured against and makes the group breathe
+     * under the finger.
+     */
+    pressEffect?: 'scale' | 'none';
   }
->(function Button({ variant = 'solid', className = '', ...props }, ref) {
+>(function Button({ variant = 'solid', pressEffect = 'scale', className = '', ...props }, ref) {
   // Disabled colours live PER VARIANT, not in the base class: `quiet` has to stay
   // frameless while it is busy, and a shared `disabled:border-edge` would fight it
   // on equal specificity (whoever Tailwind emits last wins).
@@ -27,12 +34,21 @@ export const Button = forwardRef<
     quiet:
       'border-transparent bg-transparent text-dialog-hint hover:border-edge-strong hover:bg-hover hover:text-accent-ink disabled:border-transparent disabled:bg-transparent disabled:text-muted',
     danger: `border-err/40 bg-err/10 text-err hover:border-err hover:bg-err hover:text-white ${dimmed}`,
+    // Dark chrome for a segment that must NOT read as a second accent block (the
+    // caret half of a split button). The dialog-title pair is the palette's own
+    // title-bar ink + its guaranteed-legible foreground, so it tracks the theme
+    // instead of hardcoding black.
+    contrast: `border-dialog-title bg-dialog-title text-dialog-title-foreground hover:border-dialog-title hover:bg-dialog-title/85 ${dimmed}`,
   }[variant];
+  // The transform utilities are OMITTED rather than overridden: `active:scale-100`
+  // and `active:scale-[0.98]` have equal specificity, so a call-site override would
+  // be decided by Tailwind's emission order, not by the call site.
+  const press = pressEffect === 'scale' ? 'active:scale-[0.98] disabled:active:scale-100' : '';
 
   return (
     <button
       ref={ref}
-      className={`min-h-7 rounded-none border px-2.5 py-0.5 text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 disabled:shadow-none disabled:active:scale-100 motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${styles} ${className}`}
+      className={`min-h-7 rounded-none border px-2.5 py-0.5 text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 ${press} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 disabled:shadow-none motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${styles} ${className}`}
       {...props}
     />
   );

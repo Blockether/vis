@@ -1296,7 +1296,7 @@
   "Max model-facing prose chars a single native tool may spend (see
    `native-prose-chars`). Shared by the registration guard and its test so the
    number lives in exactly one place."
-  1250)
+  1200)
 
 (defn- schema-prose-chars
   "Total characters of every `:description` (or `\"description\"`) nested anywhere

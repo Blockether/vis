@@ -1,133 +1,148 @@
 # Runtime distributions
 
-Vis Agent has one public distribution shape: a **Bash wrapper** named
-`vis-agent`, plus whichever runtime that installation provides. Users never
-install or invoke the native image as `vis`.
+`vis-agent` is the whole product surface: one Bash command on PATH that does
+three things and nothing else.
 
-## The wrapper is the product boundary
+1. run Vis on the selected runtime,
+2. show or persist that selection — `vis-agent runtime`,
+3. update that same runtime — `vis-agent update`.
 
-The wrapper keeps one collision-free command on PATH, selects the runtime,
-preserves the invocation working directory, and produces a clear error when the
-selected runtime is unavailable — it never silently substitutes another.
+There is no second command to learn. The native image is a private sidecar
+called `vis-agent-native` that lives beside the wrapper; it is never installed
+as `vis` (Linux already has an unrelated `vis`) and never invoked directly.
+`target/vis.jar` is a build artifact, not a runtime you can select.
 
-It **follows releases** by default: the published native runtime when one is
-installed, otherwise JVM source pinned to the newest `vX.Y.Z` tag. A live,
-moving checkout is **dev mode** — opt-in, and the only mode that tracks a branch
-or hands off to the developer checkout at `$VIS_DEV_CHECKOUT` (default `~/vis`).
-Being *inside* a Vis checkout does not change the runtime by itself.
+## Three runtimes, one word each
 
-There is no jar runtime and no `--jar` selector. The AOT jar produced during a
-native build is an implementation artifact only.
+| Runtime | Runs | Moves when |
+|---|---|---|
+| `native` | the private `vis-agent-native` sidecar | `vis-agent update` |
+| `jvm` | `clojure -M:vis` from the checkout Vis owns, pinned to the newest `vX.Y.Z` tag | `vis-agent update` |
+| `dev` | `clojure -M:vis` from your live checkout | you pull or commit |
 
-## Selecting a runtime
+`auto` is not a fourth runtime; it is the *absence* of a choice: native when a
+sidecar is installed, otherwise tagged source. So Vis follows releases by
+default, `dev` is the only runtime that follows a moving branch, and `dev` is
+never selected for you — not even when you run Vis from inside a Vis checkout.
 
-| Runtime | Runs |
-|---|---|
-| `native` | the private `vis-agent-native` sidecar installed by `vis-agent update` |
-| `jvm` | `clojure -M:vis` from source pinned to the newest release tag |
-| `dev` | `clojure -M:vis` from a live checkout, tracking its branch |
-| `auto` | no persisted choice: native if installed, else `jvm` |
+Running a checkout's own `bin/vis-agent` does run that checkout: invoking it
+*is* the choice.
 
-Precedence, highest first:
-
-1. a one-launch flag — `--native`, `--jvm` (`--source` is an alias), `--dev`;
-2. `VIS_RUNTIME=native|jvm|dev` (any other value is ignored with a warning;
-   there is no `VIS_RUNTIME=auto` — unset the variable instead);
-3. the persisted default in `~/.vis/runtime`, written by `vis-agent runtime use`;
-4. automatic: the installed native runtime, else release-tagged source.
+## Choosing a runtime
 
 ```bash
 vis-agent runtime show
 vis-agent runtime use native|jvm|dev|auto   # persisted default (auto = forget it)
-vis-agent --dev help                        # this launch only
-VIS_RUNTIME=jvm vis-agent help              # this process only
+vis-agent --native|--jvm|--dev help         # this launch only
+VIS_RUNTIME=dev vis-agent help              # this process only
 ```
 
-`runtime show` reports the configured default, the effective runtime, the native
-and JVM source paths it discovered, `Source pinned at: <tag|sha>`, and the dev
-checkout.
+Precedence, highest first:
 
-## Updating follows the same channel
+1. a one-launch flag: `--native`, `--jvm`, `--dev`;
+2. `VIS_RUNTIME=native|jvm|dev` — any other value warns and is ignored, and
+   there is no `VIS_RUNTIME=auto`: unset the variable instead;
+3. `~/.vis/runtime`, written by `vis-agent runtime use`;
+4. automatic — follow the releases.
 
-`vis-agent update` updates the channel that is effective; the flags say *what*
-to update.
+`runtime show` names the winner and who chose it:
 
-| Command | Effect |
+```text
+Runtime:      native (--native)          # or VIS_RUNTIME, ~/.vis/runtime, automatic
+Native:       ~/.vis/install/vis-agent-native
+Source:       ~/.vis/install/src
+Pinned at:    v0.1.22
+Dev checkout: ~/vis
+```
+
+A selected runtime that is not installed is an error with the command that
+fixes it. The wrapper never silently substitutes another runtime.
+
+## Updating
+
+`vis-agent update` updates the runtime that is in effect; a flag updates a
+different one.
+
+| Command | Updates |
 |---|---|
-| `vis-agent update` | native channel: install the newest release bundle. JVM channel: move the managed checkout onto the newest `vX.Y.Z` tag |
-| `vis-agent update --native` | (re)download the release bundle — wrapper and sidecar together |
-| `vis-agent update --jvm` | fetch tags and check the managed checkout out at the newest release tag (`--source` is an alias) |
-| `vis-agent update --dev` | the only form that fast-forwards a live checkout (`git pull --ff-only`); implied when dev mode is the default |
-| `vis-agent update --rebuild` | after the source update, build the native runtime locally (`clojure -T:build native`) |
-| `vis-agent update <sha>` | pin the managed checkout to an exact commit and select the JVM runtime |
-| `vis-agent update vX.Y.Z` | install that release's bundle instead of the newest |
+| `vis-agent update` | whichever runtime is in effect |
+| `vis-agent update --native` | downloads the newest release bundle — wrapper and sidecar together |
+| `vis-agent update --jvm` | fetches tags and checks the owned checkout out at the newest `vX.Y.Z` |
+| `vis-agent update --dev` | `git fetch` + `git pull --ff-only` in the dev checkout — the only update that follows a branch |
+| `vis-agent update vX.Y.Z` | that release instead of the newest: bundle for `native`, tag for `jvm` |
+| `vis-agent update <sha\|branch>` | any target that is not `vX.Y.Z` is a git ref, so it pins the owned checkout and implies `--jvm` |
+| `vis-agent update --rebuild` | after a source update, builds the sidecar locally (`clojure -T:build native`); pairs with `--jvm` or `--dev` |
 
-A blocked `--dev` fast-forward says whether the tree is dirty or the branch has
-diverged, with the counts and the exact recovery command.
+Name at most one runtime and at most one target per invocation; a conflict is
+an error rather than a guess. Your own checkout is never moved unless you say
+`--dev`, and a blocked fast-forward reports what blocked it — dirty tree or
+diverged history, with the counts and the exact recovery command.
 
-## Where the state lives
+## Installing
 
-| Path | Meaning |
+```bash
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-vis-agent | bash
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-vis-agent | bash -s -- --runtime jvm
+```
+
+`bin/install-vis-agent` takes `--runtime native|jvm` (default `native`),
+`--version vX.Y.Z|latest`, and `--install-dir PATH` (default `~/.local/bin`,
+added to your shell profile when PATH lacks it). It installs the wrapper and
+then hands off: `vis-agent update` acquires the runtime and `vis-agent runtime
+use` persists the choice. Runtime acquisition therefore always belongs to
+`vis-agent`, so wrapper and runtime cannot drift apart. `--runtime jvm`
+additionally requires Java 25+, the Clojure CLI, and git.
+
+Corporate proxies often block `raw.githubusercontent.com`. Clone from
+`github.com` and run `bin/install-vis-agent` out of the checkout: it installs
+that checkout's own wrapper without touching the raw host.
+
+## Everything Vis owns
+
+| Path | Holds |
 |---|---|
-| `~/.vis/runtime` | persisted runtime choice: `native`, `jvm`, or `dev` |
-| `~/.vis/install/src` | the checkout Vis owns and moves between refs |
-| `~/.vis/install/mode` | `jvm-tag` or `jvm-sha` — how that checkout is pinned |
-| `~/.vis/install/ref`, `~/.vis/install/sha` | the tag or commit it is pinned to |
-| `~/.vis/source-dir` → `~/.vis/sourcecode` | checkout recorded by `bin/install-source` |
-| `$VIS_DEV_CHECKOUT` (default `~/vis`) | the live checkout dev mode runs |
+| `~/.vis/runtime` | the persisted selection: `native`, `jvm`, or `dev`; absent means automatic |
+| `~/.vis/install/vis-agent-native` | the private native runtime |
+| `~/.vis/install/src` | the checkout Vis owns |
+| `~/.vis/install/ref` | the tag or commit that checkout sits at |
+| `$VIS_DEV_CHECKOUT` (default `~/vis`) | the live checkout `dev` runs |
 
-Your own working checkout is never moved by `vis-agent update`; that is what dev
-mode is for.
+That is the entire runtime state. Deleting `~/.vis/runtime` returns to
+automatic; deleting `~/.vis/install` is a full reset.
 
-## Native release bundle
+| Variable | Effect |
+|---|---|
+| `VIS_RUNTIME` | runtime for this process: `native`, `jvm`, or `dev` |
+| `VIS_DEV_CHECKOUT` | where the `dev` runtime lives (default `~/vis`) |
+| `VIS_HOME` | where Vis keeps its state (default `~/.vis`) |
 
-Native-image output is platform-specific, but it is a **private runtime
-sidecar**, not a standalone Vis distribution. Each release archive is named:
+The wrapper owns two diagnostics flags on any launch: `--measure` prints shell
+and startup timings, `--jfr` records Java Flight Recorder profiles into
+`$VIS_HOME`. Everything else is passed straight to Vis.
+
+## The native release bundle
+
+Native-image output is platform-specific, so each release publishes exactly one
+archive per platform:
 
 ```text
 vis-agent-<os>-<arch>-community.tar.gz
+├── vis-agent          # public Bash wrapper
+├── vis-agent-native   # private GraalVM native-image runtime
+└── install-vis-agent  # installer for the same bundle shape
 ```
 
-and contains:
+The two executables travel together — `vis-agent update --native` replaces both
+— so the launcher and runtime contract can never drift across versions.
 
-```text
-vis-agent          # public Bash wrapper
-vis-agent-native   # private GraalVM native-image runtime
-install-vis-agent  # installer for the same bundle shape
-```
-
-The two executables stay next to each other. `bin/install-vis-agent` installs the
-wrapper first and then has it download the runtime (`vis-agent update --native`),
-and `vis-agent update` replaces both together. This prevents the launcher and
-runtime contract from drifting across versions.
-
-Release CI currently builds and smoke-tests:
+Release CI builds and smoke-tests:
 
 | Platform | Bundle |
 |---|---|
 | Linux x86-64 | `vis-agent-linux-x64-community.tar.gz` |
 | Linux ARM64 | `vis-agent-linux-arm64-community.tar.gz` |
 
-macOS users use the JVM source distribution unless a maintainer provides a
-matching locally built sidecar. Native builds require GraalVM Community Edition
-25.1.3 exactly; the repository pin is authoritative.
-
-## JVM source distribution
-
-`bin/install-source` clones or updates `~/.vis/sourcecode` (override with
-`VIS_SOURCE_DIR`), copies the same wrapper onto PATH, records the checkout in
-`~/.vis/source-dir`, and persists `jvm` as the default runtime. The runtime is
-`clojure -M:vis` from that checkout; no jar is copied or selected.
-
-A source installation and a native sidecar can coexist, and switching the
-persisted runtime reinstalls nothing:
-
-```bash
-vis-agent runtime use jvm      # source at the newest release tag
-vis-agent runtime use native
-vis-agent runtime use dev      # live checkout, tracking its branch
-vis-agent runtime use auto     # no persisted choice
-```
-
-`vis-agent update` keeps that checkout — like `~/.vis/install/src` — on the
-newest release tag and records it in `~/.vis/install/ref`.
+Elsewhere — macOS today — use `jvm`, or build a sidecar locally with
+`vis-agent update --jvm --rebuild`. Native builds require GraalVM Community
+Edition 25.1.3 exactly (the repository pin is authoritative) and at least
+16 GB of RAM.

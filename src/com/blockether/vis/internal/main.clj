@@ -4245,7 +4245,7 @@
   ;; `bin/vis-agent` normally consumes these before invoking Clojure, but keep
   ;; the JVM entry point tolerant too (e.g. `clojure -M:vis-agent channels --jvm --help`).
   ;; There is intentionally no --jar runtime: jars are build artifacts only.
-  #{"--source" "--jvm" "--native" "--jfr"})
+  #{"--native" "--jvm" "--dev" "--jfr"})
 
 (defn- global-arg? [arg] (or (measure-arg? arg) (contains? launcher-selector-args arg)))
 

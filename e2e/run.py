@@ -23,7 +23,7 @@ owns the scenarios that exercise its surface, beside its `test/` dir):
 scenarios); `want_tools` are tools that MUST have fired (e.g. repl_eval).
 
 Each scenario runs in its own throwaway git repo with the live working-tree source
-(`--source`). Runs are parallel. Usage:
+(`--dev`). Runs are parallel. Usage:
 
     VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.2 python3 run.py [scenario-id ...]
 """
@@ -31,7 +31,7 @@ import json, os, subprocess, sys, tempfile, shutil, concurrent.futures, time
 
 HERE     = os.path.dirname(os.path.abspath(__file__))   # <repo>/e2e
 REPO     = os.path.dirname(HERE)
-VIS      = os.path.join(REPO, "bin", "vis")
+VIS      = os.path.join(REPO, "bin", "vis-agent")
 PROVIDER = os.environ.get("VIS_PROVIDER", "zai-coding-plan")
 MODEL    = os.environ.get("VIS_MODEL", "glm-5.2")
 # Cross-validation gate: a scenario passes only if EVERY model passes it.
@@ -85,7 +85,7 @@ def run_one(job):
         t0 = time.time()
         try:
             p = subprocess.run(
-                [VIS,"--source","--full-trace-json-stream",
+                [VIS,"--dev","--full-trace-json-stream",
                  "--provider",PROVIDER,"--model",model, sc["prompt"]],
                 cwd=work, capture_output=True, text=True, timeout=TIMEOUT)
             out = p.stdout

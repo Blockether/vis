@@ -49,6 +49,7 @@ def __vis_install_bs4__():
     import html.parser as _hp
     import builtins as _bi
     import collections as _collections
+    import warnings as _warnings
 
     _Q = chr(34)
     _LT = chr(60)
@@ -95,6 +96,30 @@ def __vis_install_bs4__():
     # unless it sits inside a whitespace-preserving element.
     _ASCII_SPACES = " " + chr(10) + chr(9) + chr(12) + chr(13)
     _PRESERVE_WS = set(["pre", "textarea"])
+
+    # bs4.element publishes these two, and its builders split attribute values
+    # with nonwhitespace_re.
+    whitespace_re = _re.compile(r"\s+")
+    nonwhitespace_re = _re.compile(r"\S+")
+
+    class NamespacedAttribute(str):
+        """A namespaced attribute name ('xml:lang') that remembers its parts."""
+
+        def __new__(cls, prefix, name=None, namespace=None):
+            if not name:
+                # This is the default namespace, whose name "has no value".
+                name = None
+            if not name:
+                obj = str.__new__(cls, prefix)
+            elif not prefix:
+                # Not really namespaced.
+                obj = str.__new__(cls, name)
+            else:
+                obj = str.__new__(cls, prefix + ":" + name)
+            obj.prefix = prefix
+            obj.name = name
+            obj.namespace = namespace
+            return obj
     _MULTI_ATTR = set(["class", "accesskey", "dropzone"])
     # HTML only makes these attributes space-separated lists on specific elements,
     # so <p rel="x y"> keeps a plain string the way bs4 does.
@@ -2074,7 +2099,65 @@ def __vis_install_bs4__():
         except (ValueError, OverflowError):
             return chr(65533)
 
-    class _Builder(_hp.HTMLParser):
+    class DetectsXMLParsedAsHTML:
+        """bs4's mixin that warns when an XML document is parsed as HTML."""
+
+        # Regular expression for seeing if markup has an <html> tag.
+        LOOKS_LIKE_HTML = _re.compile("<[^ +]html", _re.I)
+        LOOKS_LIKE_HTML_B = _re.compile(b"<[^ +]html", _re.I)
+
+        XML_PREFIX = "<?xml"
+        XML_PREFIX_B = b"<?xml"
+
+        @classmethod
+        def warn_if_markup_looks_like_xml(cls, markup, stacklevel=3):
+            if isinstance(markup, bytes):
+                prefix = cls.XML_PREFIX_B
+                looks_like_html = cls.LOOKS_LIKE_HTML_B
+            else:
+                prefix = cls.XML_PREFIX
+                looks_like_html = cls.LOOKS_LIKE_HTML
+            if (
+                markup is not None
+                and markup.startswith(prefix)
+                and not looks_like_html.search(markup[:500])
+            ):
+                cls._warn(stacklevel=stacklevel + 2)
+                return True
+            return False
+
+        @classmethod
+        def _warn(cls, stacklevel=5):
+            _warnings.warn(
+                XMLParsedAsHTMLWarning.MESSAGE,
+                XMLParsedAsHTMLWarning,
+                stacklevel=stacklevel,
+            )
+
+        def _initialize_xml_detector(self):
+            self._first_processing_instruction = None
+            self._root_tag = None
+
+        def _document_might_be_xml(self, processing_instruction):
+            if self._first_processing_instruction is not None or self._root_tag is not None:
+                # The document has already started; stop checking.
+                return
+            self._first_processing_instruction = processing_instruction
+
+        def _root_tag_encountered(self, name):
+            if self._root_tag is not None:
+                return
+            self._root_tag = name
+            if (
+                name != "html"
+                and self._first_processing_instruction is not None
+                and self._first_processing_instruction.lower().startswith("xml ")
+            ):
+                # An XML declaration followed by a non-<html> root: this really
+                # is XML being run through an HTML parser.
+                self._warn()
+
+    class _Builder(_hp.HTMLParser, DetectsXMLParsedAsHTML):
         # html.parser only knows <script>/<style> as raw-text elements before
         # CPython 3.13, but HTML5 -- and so bs4 on a newer stdlib -- also
         # swallows markup inside <xmp>/<iframe>/<noembed>/<noframes> and treats
@@ -2112,6 +2195,7 @@ def __vis_install_bs4__():
             # Names of empty elements bs4 has already closed on its own; one
             # later `</br>`-style end tag per entry is ignored.
             self.already_closed_empty_element = []
+            self._initialize_xml_detector()
 
         def _pos(self):
             return self.getpos() if self._store_line_numbers else (None, None)
@@ -2135,6 +2219,8 @@ def __vis_install_bs4__():
                 self._cur().append(cls(text))
 
         def handle_starttag(self, tag, attrs, handle_empty_element=True):
+            if self._root_tag is None:
+                self._root_tag_encountered(tag)
             self._flush()
             line, pos = self._pos()
             t = Tag(tag, attrs, line, pos)
@@ -2184,6 +2270,7 @@ def __vis_install_bs4__():
 
         def handle_pi(self, data):
             self._flush()
+            self._document_might_be_xml(data)
             self._cur().append(ProcessingInstruction(data))
 
         def unknown_decl(self, data):
@@ -2668,7 +2755,15 @@ def __vis_install_bs4__():
         pass
 
     class XMLParsedAsHTMLWarning(UserWarning):
-        pass
+        MESSAGE = (
+            "It looks like you're parsing an XML document using an HTML "
+            "parser. If this really is an HTML document (maybe it's XHTML?), "
+            "you can ignore or filter this warning. If it's XML, you should "
+            "know that using an XML parser will be more reliable. To parse "
+            "this document as XML, make sure you have the lxml package "
+            'installed, and pass the keyword argument `features="xml"` into '
+            "the BeautifulSoup constructor."
+        )
 
     class TreeBuilder:
         """Base of bs4's builder hierarchy; this shim ships exactly one subclass."""
@@ -2676,13 +2771,50 @@ def __vis_install_bs4__():
         NAME = "[Unknown tree builder]"
         ALTERNATE_NAMES = []
         features = []
+
         is_xml = False
         picklable = False
         empty_element_tags = None
-        cdata_list_attributes = {}
-        preserve_whitespace_tags = set()
-        string_containers = {}
+
+        # A value for these tag/attribute combinations is a space- or
+        # comma-separated list of CDATA, rather than a single CDATA.
+        DEFAULT_CDATA_LIST_ATTRIBUTES = _collections.defaultdict(list)
+
+        # Whitespace should be preserved inside these tags.
+        DEFAULT_PRESERVE_WHITESPACE_TAGS = set()
+
+        # The textual contents of tags with these names should be
+        # instantiated with some class other than NavigableString.
+        DEFAULT_STRING_CONTAINERS = {}
+
+        USE_DEFAULT = object()
+
+        # Most parsers don't keep track of line numbers.
         TRACKS_LINE_NUMBERS = False
+
+        def __init__(
+            self,
+            multi_valued_attributes=USE_DEFAULT,
+            preserve_whitespace_tags=USE_DEFAULT,
+            store_line_numbers=USE_DEFAULT,
+            string_containers=USE_DEFAULT,
+        ):
+            self.soup = None
+            if multi_valued_attributes is self.USE_DEFAULT:
+                multi_valued_attributes = self.DEFAULT_CDATA_LIST_ATTRIBUTES
+            self.cdata_list_attributes = multi_valued_attributes
+            if preserve_whitespace_tags is self.USE_DEFAULT:
+                preserve_whitespace_tags = self.DEFAULT_PRESERVE_WHITESPACE_TAGS
+            self.preserve_whitespace_tags = preserve_whitespace_tags
+            if store_line_numbers == self.USE_DEFAULT:
+                store_line_numbers = self.TRACKS_LINE_NUMBERS
+            self.store_line_numbers = store_line_numbers
+            if string_containers == self.USE_DEFAULT:
+                string_containers = self.DEFAULT_STRING_CONTAINERS
+            self.string_containers = string_containers
+
+        def initialize_soup(self, soup):
+            self.soup = soup
 
         def can_be_empty_element(self, tag_name):
             if self.empty_element_tags is None:
@@ -2697,6 +2829,74 @@ def __vis_install_bs4__():
 
         def feed(self, markup):
             raise NotImplementedError()
+
+        def test_fragment_to_document(self, fragment):
+            """Wrap a fragment to make it a document. Only tests use this."""
+            return fragment
+
+        def set_up_substitutions(self, tag):
+            """Whether a <meta> charset stand-in was installed. See the subclass."""
+            return False
+
+        def _replace_cdata_list_attribute_values(self, tag_name, attrs):
+            """Turn class="foo bar" into class=["foo", "bar"], in place."""
+            if not attrs:
+                return attrs
+            if self.cdata_list_attributes:
+                universal = self.cdata_list_attributes.get("*", [])
+                tag_specific = self.cdata_list_attributes.get(tag_name.lower(), None)
+                for attr in list(attrs.keys()):
+                    if attr in universal or (tag_specific and attr in tag_specific):
+                        value = attrs[attr]
+                        if isinstance(value, str):
+                            values = nonwhitespace_re.findall(value)
+                        else:
+                            # Already a list: leave it alone rather than
+                            # splitting it a second time.
+                            values = value
+                        attrs[attr] = values
+            return attrs
+
+    class SAXTreeBuilder(TreeBuilder):
+        """bs4 ships this as a demonstration; nothing uses it."""
+
+        def feed(self, markup):
+            raise NotImplementedError()
+
+        def close(self):
+            pass
+
+        def startElement(self, name, attrs):
+            attrs = dict((key[1], value) for key, value in list(attrs.items()))
+            self.soup.handle_starttag(name, attrs)
+
+        def endElement(self, name):
+            self.soup.handle_endtag(name)
+
+        def startElementNS(self, nsTuple, nodeName, attrs):
+            # This is fine for HTML but not for XML.
+            self.startElement(nodeName, attrs)
+
+        def endElementNS(self, nsTuple, nodeName):
+            # This is fine for HTML but not for XML.
+            self.endElement(nodeName)
+
+        def startPrefixMapping(self, prefix, nodeValue):
+            # Ignore the prefix mapping, as bs4 does.
+            pass
+
+        def endPrefixMapping(self, prefix):
+            # Ignore the prefix mapping, as bs4 does.
+            pass
+
+        def characters(self, content):
+            self.soup.handle_data(content)
+
+        def startDocument(self):
+            pass
+
+        def endDocument(self):
+            pass
 
     class TreeBuilderRegistry:
         """Feature -> builder lookup; every HTML feature resolves to the one builder."""
@@ -2747,15 +2947,41 @@ def __vis_install_bs4__():
         picklable = True
         TRACKS_LINE_NUMBERS = True
         empty_element_tags = _VOID
-        preserve_whitespace_tags = _PRESERVE_WS
-        string_containers = _STRING_CONTAINERS
-        cdata_list_attributes = _CDATA_LIST_ATTRIBUTES
 
-        def __init__(self, **kwargs):
-            self.soup = None
+        # bs4 keeps these on HTMLTreeBuilder and copies them onto the instance in
+        # TreeBuilder.__init__, where the BeautifulSoup constructor's
+        # multi_valued_attributes/preserve_whitespace_tags/string_containers
+        # keyword arguments can override them.
+        DEFAULT_PRESERVE_WHITESPACE_TAGS = _PRESERVE_WS
+        DEFAULT_STRING_CONTAINERS = _STRING_CONTAINERS
+        DEFAULT_CDATA_LIST_ATTRIBUTES = _CDATA_LIST_ATTRIBUTES
+
+        # HTML's block-level elements. bs4 does not treat them specially; it
+        # just makes the list available.
+        block_elements = set(
+            [
+                "address", "article", "aside", "blockquote", "canvas", "dd",
+                "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer",
+                "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li",
+                "main", "nav", "noscript", "ol", "output", "p", "pre", "section",
+                "table", "tfoot", "ul", "video",
+            ]
+        )
+
+        def __init__(self, parser_args=None, parser_kwargs=None, **kwargs):
+            parser_args = parser_args or []
+            parser_kwargs = parser_kwargs or {}
+            # bs4 turns entity conversion off and handles references itself.
+            parser_kwargs["convert_charrefs"] = False
+            self.parser_args = (parser_args, parser_kwargs)
+            TreeBuilder.__init__(self, **kwargs)
 
         def can_be_empty_element(self, name):
             return name in _VOID
+
+        def set_up_substitutions(self, tag):
+            """Install the <meta> charset stand-in, as HTMLTreeBuilder does."""
+            return bool(_set_up_substitutions(tag))
 
     def _declared_encoding(data):
         head = data[:2048].decode("ascii", "replace").lower()
@@ -3110,6 +3336,9 @@ def __vis_install_bs4__():
     mod.GuessedAtParserWarning = GuessedAtParserWarning
     mod.MarkupResemblesLocatorWarning = MarkupResemblesLocatorWarning
     mod.XMLParsedAsHTMLWarning = XMLParsedAsHTMLWarning
+    mod.CSS = CSS
+    mod.PYTHON_SPECIFIC_ENCODINGS = PYTHON_SPECIFIC_ENCODINGS
+    mod.NamespacedAttribute = NamespacedAttribute
     mod.DEFAULT_OUTPUT_ENCODING = _DEFAULT_OUTPUT_ENCODING
     # Upstream bs4 exports exactly one name via `from bs4 import *`; every other
     # class is a plain module attribute. Match that, or star-imports diverge.
@@ -3139,6 +3368,11 @@ def __vis_install_bs4__():
     elem.ContentMetaAttributeValue = ContentMetaAttributeValue
     elem.Formatter = Formatter
     elem.HTMLFormatter = HTMLFormatter
+    elem.XMLFormatter = XMLFormatter
+    elem.CSS = CSS
+    elem.NamespacedAttribute = NamespacedAttribute
+    elem.nonwhitespace_re = nonwhitespace_re
+    elem.whitespace_re = whitespace_re
     elem.DEFAULT_OUTPUT_ENCODING = _DEFAULT_OUTPUT_ENCODING
     mod.element = elem
 
@@ -3163,6 +3397,39 @@ def __vis_install_bs4__():
     builder_mod.PERMISSIVE = "permissive"
     builder_mod.builder_registry = TreeBuilderRegistry()
     builder_mod.builder_registry.register(HTMLParserTreeBuilder)
+    builder_mod.SAXTreeBuilder = SAXTreeBuilder
+    builder_mod.DetectsXMLParsedAsHTML = DetectsXMLParsedAsHTML
+    builder_mod.XMLParsedAsHTMLWarning = XMLParsedAsHTMLWarning
+    builder_mod.Script = Script
+    builder_mod.Stylesheet = Stylesheet
+    builder_mod.TemplateString = TemplateString
+    builder_mod.RubyParenthesisString = RubyParenthesisString
+    builder_mod.RubyTextString = RubyTextString
+    builder_mod.CharsetMetaAttributeValue = CharsetMetaAttributeValue
+    builder_mod.ContentMetaAttributeValue = ContentMetaAttributeValue
+    builder_mod.nonwhitespace_re = nonwhitespace_re
+    builder_mod.whitespace_re = whitespace_re
+    # bs4.builder.__all__ after _htmlparser registers itself.
+    builder_mod.__all__ = [
+        "HTMLTreeBuilder",
+        "SAXTreeBuilder",
+        "TreeBuilder",
+        "TreeBuilderRegistry",
+        "HTMLParserTreeBuilder",
+    ]
+
+    def register_treebuilders_from(module):
+        """Copy TreeBuilders from the given module into bs4.builder."""
+        for name in module.__all__:
+            obj = getattr(module, name)
+            if issubclass(obj, TreeBuilder):
+                setattr(builder_mod, name, obj)
+                builder_mod.__all__.append(name)
+                # Register the builder while we're at it.
+                builder_mod.builder_registry.register(obj)
+
+    builder_mod.register_treebuilders_from = register_treebuilders_from
+    mod.builder_registry = builder_mod.builder_registry
     mod.builder = builder_mod
 
     diag = types.ModuleType("bs4.diagnose")

@@ -557,12 +557,19 @@
 
     (when (str/blank? text)
       (fail! :invalid-params "prompt must carry at least one non-empty content block"))
-    (when (= :running (get-in @conn [:sessions sid :state]))
-      (fail! :invalid-request (str "a prompt is already running for session " sid)))
-    (swap! conn (fn [s]
-                  (-> s
-                      (assoc-in [:sessions sid :state] :running)
-                      (update :cancelled disj sid))))
+    ;; Claim the session ATOMICALLY. `serve!` hands every line to its own virtual
+    ;; thread, so a read-then-write guard lets two prompts own one session at
+    ;; once: their `session/update` streams interleave and whichever finishes
+    ;; first marks the session idle while the other is still streaming.
+    (let [[before] (swap-vals! conn
+                               (fn [s]
+                                 (if (= :running (get-in s [:sessions sid :state]))
+                                   s
+                                   (-> s
+                                       (assoc-in [:sessions sid :state] :running)
+                                       (update :cancelled disj sid)))))]
+      (when (= :running (get-in before [:sessions sid :state]))
+        (fail! :invalid-request (str "a prompt is already running for session " sid))))
     (try (let
            [result ((:prompt (:backend @conn))
                      {:session-id sid
@@ -573,14 +580,24 @@
                       :cancelled? (fn []
                                     (contains? (:cancelled @conn) sid))})]
            {"stopReason" (stop-reason result (contains? (:cancelled @conn) sid))})
-         (finally (swap! conn assoc-in [:sessions sid :state] :idle)))))
+         (finally
+           ;; The cancel flag dies with the turn it aborted, so it can never leak
+           ;; into the next prompt for this session.
+           (swap! conn
+                  (fn [s]
+                    (-> s (assoc-in [:sessions sid :state] :idle) (update :cancelled disj sid))))))))
 
 (defn- handle-session-cancel
   [conn params]
   (let [sid (session-id! params)]
-    (swap! conn update :cancelled conj sid)
-    (try ((:cancel (:backend @conn)) {:session-id sid})
-         (catch Throwable t (tel/log! :warn ["acp: cancel failed" (ex-message t)])))
+    ;; `session/cancel` is a NOTIFICATION: any client can send any id at any time
+    ;; and never sees an answer. Remembering ids we never handed out would let a
+    ;; buggy or hostile editor grow `:cancelled` without bound, so an unknown
+    ;; session is ignored instead of recorded.
+    (when (contains? (:sessions @conn) sid)
+      (swap! conn update :cancelled conj sid)
+      (try ((:cancel (:backend @conn)) {:session-id sid})
+           (catch Throwable t (tel/log! :warn ["acp: cancel failed" (ex-message t)]))))
     {}))
 
 (def handlers
@@ -925,22 +942,37 @@
          (swap! c assoc :outbox box)
          c))
 
-     m
-     (swap! http-connections (fn [m]
-                               (let
-                                 [c
-                                  (or (:conn (get m client-id)) @fresh)
+     [old m]
+     (swap-vals! http-connections
+                 (fn [m]
+                   (let
+                     [c
+                      (or (:conn (get m client-id)) @fresh)
 
-                                  m'
-                                  (assoc m client-id {:conn c :used (System/nanoTime)})]
+                      m'
+                      (assoc m client-id {:conn c :used (System/nanoTime)})]
 
-                                 (if (<= (count m') (long max-http-connections))
-                                   m'
-                                   (dissoc m'
-                                     (->> m'
-                                          (sort-by #(:used (val %)))
-                                          ffirst))))))]
+                     (if (<= (count m') (long max-http-connections))
+                       m'
+                       (dissoc m'
+                         (->> m'
+                              (sort-by #(:used (val %)))
+                              ffirst))))))]
 
+    ;; Evicting the connection is not enough: its sessions stay in the GLOBAL
+    ;; registry, so the map grows for the life of the daemon and op-hooks keep
+    ;; resolving vis sessions to a connection nobody can answer on.
+    (doseq
+      [[cid entry]
+       old
+
+       :when (not (contains? m cid))
+
+       :let [c (:conn entry)]
+       :when c]
+
+      (swap! c assoc :closed? true)
+      (doseq [sid (keys (:sessions @c))] (unregister-connection! sid)))
     (:conn (get m client-id))))
 
 (defn- json-response

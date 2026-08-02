@@ -517,7 +517,7 @@ At startup Vis scans every `META-INF/vis-extension/vis.edn` on the classpath and
 Getting on the classpath:
 
 - **JVM / source runs** — add the extension to `deps.edn` like any Clojure dep (the first-party extensions use `:local/root` entries in Vis's own `deps.edn`).
-- **Native binary** — extensions compile into the image. Add the dep, rebuild with `vis-agent native` (see [Runtime distributions](distributions.md)), and mind the [native-image rules](#native-image-rules) below.
+- **Native binary** — extensions compile into the image. Add the dep, rebuild with `vis-agent update --jvm --rebuild` (see [Runtime distributions](distributions.md)), and mind the [native-image rules](#native-image-rules) below.
 
 ### Anatomy
 

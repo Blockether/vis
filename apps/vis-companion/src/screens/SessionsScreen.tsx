@@ -560,11 +560,15 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
             {/* SPLIT control: one button, two jobs. The wide half stays the plain new
                 session it always was — the common path never grows a click — and the
                 caret half is where the workspace question lives, so starting in a draft
-                stops being a TUI-only slash command. The halves share one accent box:
-                the primary drops its right border and the caret draws the divider. */}
+                stops being a TUI-only slash command. The caret is painted in the theme's
+                title-bar ink, not the accent: two amber halves read as one 33px-wider
+                button, while amber + black reads as "there is a second thing here".
+                Neither half animates on press — the caret ANCHORS the popover, and a
+                transform would drag the menu's measured box with it. */}
             <div className="flex shrink-0 items-stretch">
               <Button
                 variant="solid"
+                pressEffect="none"
                 className="min-h-6 border-r-0 px-2 py-0.5 font-mono text-chip sm:min-h-6"
                 disabled={createBusy || !active}
                 onClick={() => void createSession()}
@@ -587,8 +591,9 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
               </Button>
               <Button
                 ref={startAnchorRef}
-                variant="solid"
-                className="min-h-6 border-l-accent-foreground/30 px-2 py-0.5 font-mono text-chip sm:min-h-6"
+                variant="contrast"
+                pressEffect="none"
+                className="min-h-6 px-2 py-0.5 font-mono text-chip sm:min-h-6"
                 disabled={createBusy || !active}
                 aria-haspopup="menu"
                 aria-expanded={startMenu !== null}
@@ -752,12 +757,12 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
             />
             <StartOption
               title="A new draft"
-              hint="Isolated clone of the project as it stands right now."
+              hint="A private copy of this project's files. The real project stays untouched."
               onSelect={() => askDraftName(false)}
             />
             <StartOption
-              title="A blank draft"
-              hint="Isolated and EMPTY — no files are carried in."
+              title="A new empty draft"
+              hint="A private workspace that starts with NO files — nothing is copied from this project."
               onSelect={() => askDraftName(true)}
             />
             <div className="flex items-baseline justify-between gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2">
@@ -805,14 +810,14 @@ export function SessionsScreen({ active, client, subscriptions, subscribedIds, o
             onClick={(event) => event.stopPropagation()}
           >
             <DialogFrame
-              title={namePrompt.blank ? 'New blank draft' : 'New draft'}
+              title={namePrompt.blank ? 'Name the empty draft' : 'Name the draft'}
               onClose={() => setNamePrompt(null)}
             >
               <div className="space-y-3 p-4">
                 <p className="font-mono text-meta text-dialog-hint">
                   {namePrompt.blank
-                    ? 'An isolated EMPTY workspace. Nothing from the project is carried in.'
-                    : 'An isolated clone of the project as it stands right now. Applying it later is what moves the work back.'}
+                    ? 'A private workspace that starts with NO files — nothing is copied from this project.'
+                    : "A private copy of this project's files as they stand right now. Applying it later is what moves the work back."}
                 </p>
                 <label className="block">
                   <span className="mb-1 block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">

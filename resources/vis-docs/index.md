@@ -112,21 +112,20 @@ sudo bash /tmp/install-vis-agent --install-dir /usr/local/bin
 
 A pinned release: `... | bash -s -- --version vX.Y.Z`.
 
-JVM source runtime (needs Java 25+, the Clojure CLI, and git):
+JVM source runtime instead of the native one (needs Java 25+, the Clojure CLI,
+and git):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source | bash
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-vis-agent | bash -s -- --runtime jvm
 ```
 
-`bin/install-source` is idempotent: it clones or fast-forwards
-`~/.vis/sourcecode`, copies the same `vis-agent` command to `~/.local/bin`,
-records the checkout in `~/.vis/source-dir`, and selects the JVM runtime.
-`--dest PATH` and `--install-dir PATH` override those locations, and
-`vis-agent update --native` can add the native runtime later.
+The installer only ever installs the wrapper; `vis-agent update` then acquires
+the runtime for that channel — the release sidecar, or source checked out at the
+newest release tag — so the wrapper and its runtime cannot drift apart.
 
-Release CI publishes Linux x64 and arm64 runtimes. Elsewhere, use the source
-runtime or build the sidecar from a checkout with `vis-agent native` (GraalVM CE
-25.1.3, ≥16 GB RAM).
+Release CI publishes Linux x64 and arm64 native runtimes. Elsewhere, use the
+source runtime or build a sidecar locally with `vis-agent update --jvm
+--rebuild` (GraalVM CE 25.1.3, ≥16 GB RAM).
 
 Corporate proxies commonly block `raw.githubusercontent.com`; cloning from
 `github.com` and running `bin/install-vis-agent` from the checkout avoids that
@@ -147,33 +146,34 @@ host entirely — it installs the checkout's own wrapper.
 
 The wrapper owns runtime selection, and it follows releases unless told
 otherwise: the installed native runtime, else JVM source pinned to the newest
-`vX.Y.Z` tag. Being *inside* a Vis checkout changes nothing — a live checkout is
-**dev mode**, and it has to be selected.
+`vX.Y.Z` tag. A live checkout is **dev mode** — the only runtime that follows a
+moving branch, and it has to be asked for.
 
 ```bash
 vis-agent runtime show
 vis-agent runtime use native|jvm|dev|auto   # persisted default (auto = follow releases)
-vis-agent --native|--jvm|--dev help         # one launch only (--source = --jvm)
+vis-agent --native|--jvm|--dev help         # one launch only
 VIS_RUNTIME=dev vis-agent help              # one process only
 ```
 
 A one-launch flag beats `VIS_RUNTIME`, which beats the persisted default in
 `~/.vis/runtime`. Dev mode also hands off to `$VIS_DEV_CHECKOUT` (default
-`~/vis`) when the command was installed elsewhere. If the selected runtime is
-unavailable, the wrapper stops and explains how to install or switch — it never
+`~/vis`) when the command was installed elsewhere. A selected runtime that is
+not installed stops the wrapper with the command that fixes it — it never
 silently picks another.
 
-`vis-agent update` matches the same channel: it installs the newest release
-bundle, or moves the managed checkout (`~/.vis/install/src`) onto the newest
-`vX.Y.Z` tag. `vis-agent update --dev` is the only form that fast-forwards a live
-checkout's branch, and `vis-agent update <sha>` still pins an exact commit. Full
-matrix: [Runtime distributions](distributions.md).
+`vis-agent update` updates whichever runtime is in effect: the newest release
+bundle, or the checkout Vis owns (`~/.vis/install/src`) moved onto the newest
+`vX.Y.Z` tag. Only `vis-agent update --dev` fast-forwards a live checkout's
+branch, and any target that is not a release tag pins the owned source to that
+git ref. Full matrix: [Runtime distributions](distributions.md).
 
-There is no jar distribution and no `--jar` selector; `target/vis.jar` exists only
-as an intermediate build artifact. The JVM runtime means source plus Java 25 and
-the Clojure CLI; the native runtime remains private behind the wrapper. GraalVM
-builds require Community Edition 25.1.3 exactly and at least 16 GB RAM; 25.2.x is
-unsupported because its native-image analysis does not converge within memory.
+There is no jar runtime and no `--jar` selector; `target/vis.jar` exists only as
+an intermediate build artifact. The JVM runtime means source plus Java 25 and
+the Clojure CLI; the native runtime stays private behind the wrapper. GraalVM
+builds require Community Edition 25.1.3 exactly and at least 16 GB RAM; 25.2.x
+is unsupported because its native-image analysis does not converge within
+memory.
 
 ## Features
 

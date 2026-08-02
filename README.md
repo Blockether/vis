@@ -31,7 +31,7 @@ Native runtimes are published for Linux x64 and arm64.
 |---|---|
 | Install for all users | `curl -fsSL …/bin/install-vis-agent -o /tmp/install-vis-agent`<br>`sudo bash /tmp/install-vis-agent --install-dir /usr/local/bin` |
 | Pin a release | `curl -fsSL …/bin/install-vis-agent \| bash -s -- --version vX.Y.Z` |
-| Run on the JVM source runtime (needs Java 25+ and the Clojure CLI) | `curl -fsSL …/bin/install-source \| bash` |
+| Run on the JVM source runtime (needs Java 25+, the Clojure CLI, and git) | `curl -fsSL …/bin/install-vis-agent \| bash -s -- --runtime jvm` |
 
 Corporate proxies often block `raw.githubusercontent.com`. Clone from `github.com` and run `bin/install-vis-agent` out of the checkout: it then installs that checkout's wrapper without touching the raw host.
 
@@ -60,40 +60,38 @@ The app is useless on its own: it needs a gateway. Start one with `vis-agent gat
 
 ## Choose the runtime
 
-`vis-agent` is always the stable public wrapper, and it **follows the releases**
-by default: the published native runtime, or JVM source pinned to the newest
-release tag. A live, moving checkout is **dev mode** — opt in; it is never
-picked for you, not even inside a Vis checkout.
+`vis-agent` follows the releases by default: the published native runtime, or
+JVM source pinned to the newest `vX.Y.Z` tag. A live checkout is **dev mode** —
+opt in; it is never picked for you, not even from inside a Vis checkout.
 
 | Runtime | Runs |
 |---|---|
 | `native` | the private sidecar downloaded by `vis-agent update` |
 | `jvm` | source pinned to the newest `vX.Y.Z` tag |
 | `dev` | a live checkout (`~/vis`, or `$VIS_DEV_CHECKOUT`), tracking its branch |
-| `auto` | native if installed, else tagged source |
+| `auto` | no choice at all: native if installed, else tagged source |
 
 ```bash
 vis-agent runtime show
 vis-agent runtime use native|jvm|dev|auto   # persisted default
-vis-agent --native|--jvm|--dev help         # one launch only (--source = --jvm)
+vis-agent --native|--jvm|--dev help         # one launch only
 VIS_RUNTIME=dev vis-agent help              # one process only
 ```
 
-A one-launch flag beats `VIS_RUNTIME`, which beats the persisted default.
-`vis-agent update` follows the same channel: the newest release bundle, or the
-managed checkout moved onto the newest tag. Only `update --dev` (or dev mode)
-fast-forwards a live checkout's branch, and `update <sha>` pins an exact commit.
-A selected but unavailable runtime fails with an actionable error rather than
-silently changing runtimes.
-
-There is deliberately no `--jar` distribution: `target/vis.jar` is an
-intermediate build artifact, never shipped or selected. Full flag, update, and
-state-file matrix: [Runtime distributions](resources/vis-docs/distributions.md).
+A one-launch flag beats `VIS_RUNTIME`, which beats the persisted default in
+`~/.vis/runtime`. `vis-agent update` updates whichever runtime is in effect —
+the newest release bundle, or the checkout Vis owns moved onto the newest tag.
+Only `update --dev` follows a moving branch, and any target that is not a
+`vX.Y.Z` release pins the owned source to that git ref. A selected runtime that
+is not installed is an error with the command that fixes it, never a silent
+substitution. There is no jar runtime: `target/vis.jar` is a build artifact.
+Full flag, update, state, and environment matrix:
+[Runtime distributions](resources/vis-docs/distributions.md).
 
 ## Build / develop
 
 ```bash
-vis-agent native                 # builds the private target/vis runtime
+clojure -T:build native          # builds the private native runtime
 clojure -M:format check
 clojure -M:lint src extensions test build.clj
 clojure -M:test
