@@ -426,7 +426,7 @@
 ;; ── Native tool: FLAT on the symbol, the SINGLE source. ───────────────────────
 ;; `:native-tool?` is THE source of "is this a native tool?": true ⇒ advertised as a
 ;; `tool_use` and REQUIRES `:schema`. Orthogonal to `:engine-bound?`: native-only
-;; (skill), verb-only, or both (cat/rg).
+;; (a `:handler` with `:engine-bound? false`), verb-only, or both (cat/rg/skill).
 (s/def :ext.symbol/native-tool? boolean?)
 ;; Model-facing JSON schema for the tool input — REQUIRED when `:native-tool?`.
 (s/def :ext.symbol/schema map?)
@@ -1146,8 +1146,8 @@
 
 (defn symbol-bound?
   "Whether a symbol ENTRY is ENGINE-BOUND (bound into the GraalPy env as a Python
-   verb). Default true; `:engine-bound? false` (native-tool-only verbs, e.g. skill)
-   opts out — they never become a Python name; their `:handler` executes directly."
+   verb). Default true; `:engine-bound? false` (native-tool-only verbs) opts out —
+   they never become a Python name; their `:handler` executes directly."
   [e]
   (not (false? (:ext.symbol/engine-bound? e))))
 

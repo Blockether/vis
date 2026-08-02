@@ -94,13 +94,32 @@
             (skill-payload s))))
     {"error" (str "No skill named " (pr-str (str nm)) ".") "available" (mapv :name (d/skills))}))
 
+(defn- skill-name-arg
+  "The skill NAME across BOTH call surfaces: the native tool's `{\"name\" …}` input
+   map, the SAME shape when Python kwargs (`skill(name=\"x\")`) fold into one
+   trailing dict, or a bare positional `skill(\"x\")` string."
+  [input]
+  (if (map? input) (or (get input "name") (get input :name)) input))
+
 (defn skill-tool
-  "Load a harness SKILL on demand — its full SKILL.md. Names are in the HARNESS
-   SKILLS block. Activation is idempotent while the exact body remains on the
-   live provider tape; repeated calls return a compact receipt. A changed or
-   absent body is activated once."
+  "Native `tool_use` handler: raw input map in, RAW result map out (renderers and
+   the provider tape read that map directly — no envelope here)."
   [env input]
-  (skill-result env (get input "name")))
+  (skill-result env (skill-name-arg input)))
+
+(def ^{:doc (str
+              "await skill(name)\n"
+              "Activate a harness SKILL from `python_execution` — the same verb as the "
+              "native tool. First load on the live provider tape returns the full SKILL.md "
+              "as {\"name\", \"description\", \"body\", \"cwd\", \"resources\"}; a repeat returns "
+              "{\"name\", \"status\", \"scope\", \"note\"}; an unknown name returns "
+              "{\"error\", \"available\": [names]}.")
+       :arglists '([name])}
+     skill
+  ;; The ENGINE-BOUND twin of `skill-tool`: identical semantics, wrapped in the
+  ;; canonical envelope `invoke-symbol-wrapper` asserts on every bound verb.
+  (fn skill-impl [env input]
+    (extension/success {:result (skill-tool env input)})))
 
 (defn- render-skill
   [r]
@@ -111,12 +130,14 @@
 
 (def skill-symbol
   ;; STRONG flat native-tool form: everything on the SYMBOL. `:native-tool? true`
-  ;; (the source of "is a native tool"), `:engine-bound? false` (NOT a Python verb).
+  ;; (the source of "is a native tool") AND engine-bound — `skill` is a bare Python
+  ;; verb in the sandbox too, so a `python_execution` block can activate a skill
+  ;; inside a `gather(...)` batch. `:handler` keeps the raw-map native path.
   ;; Compact semantics live in :description; exact inputs live in :schema.
   (vis/symbol
-    #'skill-tool
+    #'skill
     {:symbol 'skill
-     :engine-bound? false
+     :inject-env? true
      :active-fn (fn [_env]
                   true)
      :tag :observation
@@ -127,7 +148,8 @@
      :name "skill"
      :description
      (str "Activate an advertised skill. First load on a live provider tape returns full SKILL.md; "
-          "repeats return an already-active receipt. Changed/evicted bodies return again.")
+          "repeats return an already-active receipt. Changed/evicted bodies return again. "
+          "In `python_execution`, call `await skill(name)`.")
      :schema {:type "object"
               :properties {"name" {:type "string" :description "Advertised skill name."}}
               :required ["name"]

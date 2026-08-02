@@ -89,14 +89,18 @@
 (defdescribe
   skill-native-tool-test
   (let [exts [core/vis-extension]]
-    (it "skill is a native tool (schema + handler + render), NOT bound into the env"
+    (it "skill is a native tool (schema + handler + render) AND a bound Python verb"
         (expect (some #(= "skill" (:name %)) (extension/native-tool-schemas exts)))
         (expect (fn? (get (extension/native-tool-handlers exts) "skill")))
         (let
           [entry (first (filter #(= 'skill (:ext.symbol/symbol %))
                                 (mapcat extension/ext-symbols exts)))]
-          (expect (= false (:ext.symbol/engine-bound? entry)))
-          (expect (not (extension/symbol-bound? entry)))
+          ;; Engine-bound (the default): `skill` is ALSO a bare Python verb, handed
+          ;; the live env via :inject-env?, so a python_execution block can activate
+          ;; a skill inside a `gather(...)` batch.
+          (expect (nil? (:ext.symbol/engine-bound? entry)))
+          (expect (extension/symbol-bound? entry))
+          (expect (true? (:ext.symbol/inject-env? entry)))
           ;; STRONG flat form: schema/render/colour all on the SYMBOL, no :native-tool map
           (expect (true? (:ext.symbol/native-tool? entry)))
           (expect (map? (:ext.symbol/schema entry)))
@@ -131,6 +135,23 @@
             (expect (= "B" (get r1 "body")))
             (expect (= "already-active" (get r2 "status")))
             (expect (not (contains? r2 "body"))))))
+    (it "the Python verb is wired into the sandbox and takes kwargs or a bare name"
+        ;; `skill(name="x")` folds its kwargs into ONE trailing dict at the GraalPy
+        ;; boundary; `skill("x")` stays positional. Both bind identically, and the
+        ;; bound verb returns the canonical envelope the invoker asserts on.
+        (expect (contains? (extension/builtin-sandbox-bindings (fn []
+                                                                 nil))
+                           'skill))
+        (with-redefs
+          [d/skill-by-name (fn [_]
+                             {:name "demo" :body "B" :description "d" :dir "/x" :resources []})]
+          (let
+            [kw (core/skill (skill-env {}) {"name" "demo"})
+             pos (core/skill (skill-env {}) "demo")]
+
+            (expect (extension/envelope-success? kw))
+            (expect (= "B" (get (:result kw) "body")))
+            (expect (= "B" (get (:result pos) "body"))))))
     (it "skill is unconditionally advertised + dispatchable (no toggle gate)"
         (expect (some #(= "skill" (:name %)) (extension/native-tool-schemas exts nil)))
         (expect (contains? (extension/native-tool-handlers exts nil) "skill")))))
