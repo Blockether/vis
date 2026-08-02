@@ -1333,3 +1333,46 @@
           (is (= 404 (:status response)))
           (is (= "oauth-flow-not-found"
                  (get-in (wire/parse-json (:body response)) ["error" "type"]))))))))
+
+(deftest admin-stop-handler-names-its-requester
+  (testing
+    "POST /v1/admin/stop takes the whole ring request (so the log can name who killed a busy daemon) and still stops"
+    (let [stops (atom 0)]
+      (with-stop-stub! stops
+                       {}
+                       (fn []
+                         (with-server-state!
+                           {:managed? false :clients {} :sse-clients #{}}
+                           (fn []
+                             (let
+                               [res ((rv 'stop-handler)
+                                      {:remote-addr "127.0.0.1"
+                                       :headers {"user-agent" "vis-agent/test"}})]
+                               (is (= 200 (:status res)))
+                               (is (re-find #"stopping" (str (:body res))))
+                               (is (loop [n 0]
+                                     (cond (pos? (long @stops)) true
+                                           (> n 100) false
+                                           :else (do (Thread/sleep 20) (recur (inc n)))))
+                                   "the handler stops the daemon asynchronously")))))))))
+
+(deftest signal-forensics-is-idempotent-and-restorable
+  (testing
+    "the daemon installs signal handlers once (so an unexplained death names its signal) and can restore the JVM defaults"
+    (let
+      [install
+       (rv 'install-signal-forensics!)
+
+       restore
+       (rv 'restore-signal-forensics!)
+
+       installed
+       (install)]
+
+      (try (is (map? installed))
+           (is (contains? installed "TERM"))
+           (is (contains? installed "INT"))
+           (is (nil? (install)) "a second install is a no-op")
+           (finally (restore installed)))
+      (is (nil? @@(rv 'signal-forensics))
+          "restoring clears the installed marker so a later daemon can re-install"))))

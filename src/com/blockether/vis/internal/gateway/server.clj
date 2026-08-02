@@ -869,7 +869,15 @@
 (defn- status-handler [_] (json-response (status-map)))
 
 (defn- stop-handler
-  [_]
+  "POST /v1/admin/stop. Logs WHO asked and what it costs BEFORE stopping: this
+   path and the JVM shutdown hook were previously indistinguishable in the log,
+   which made every unexplained daemon death (`gateway: draining before stop N
+   turn(s) running`) unattributable."
+  [request]
+  (tel/log! :warn
+            ["gateway: /v1/admin/stop requested by" (or (:remote-addr request) "?")
+             (str "ua=" (or (get-in request [:headers "user-agent"]) "?")) "-" (running-turn-count)
+             "turn(s) running"])
   (future (try (Thread/sleep 25)
                (stop!)
                (catch Throwable t
@@ -3324,6 +3332,54 @@
 
 (defn running? [] (some? @server-state))
 
+(defonce ^:private signal-forensics (atom nil))
+
+(defn- install-signal-forensics!
+  "Name the signal that takes a daemon down. A FOREGROUND `vis-agent gateway start`
+   shares its process group and controlling terminal with every synchronous `shell`
+   child (only the pty/background path detaches via POSIX_SPAWN_SETSID), so a
+   group-directed SIGINT/SIGHUP/SIGTERM — Ctrl-C in that tab, the terminal closing,
+   or a child tool signalling its own process group — reaches the JVM and runs the
+   shutdown hook. In the log that death looked exactly like an explicit
+   `/v1/admin/stop`. Log the signal FIRST, then `System/exit` 128+signum so the
+   shutdown hook still drains in-flight turns exactly as before.
+
+   Idempotent: returns a map of signal name -> previously installed handler on the
+   first call (so a caller/test can restore them), nil afterwards."
+  []
+  (when (nil? @signal-forensics)
+    (let
+      [installed (reduce (fn [acc ^String nm]
+                           (try (let
+                                  [prev (sun.misc.Signal/handle
+                                          (sun.misc.Signal. nm)
+                                          (reify
+                                            sun.misc.SignalHandler
+                                              (handle [_ sig]
+                                                (let [^sun.misc.Signal s sig]
+                                                  (try (tel/log! :warn
+                                                                 ["gateway: received SIG"
+                                                                  (.getName s) "- stopping;"
+                                                                  (running-turn-count)
+                                                                  "turn(s) running"])
+                                                       (catch Throwable _ nil))
+                                                  (System/exit (+ 128 (.getNumber s)))))))]
+                                  (assoc acc nm prev))
+                                (catch Throwable _ acc)))
+                         {}
+                         ["INT" "TERM" "HUP"])]
+      (reset! signal-forensics installed)
+      installed)))
+
+#_{:clj-kondo/ignore [:unused-private-var]}
+(defn- restore-signal-forensics!
+  "Undo [[install-signal-forensics!]] by re-installing the captured handlers."
+  [installed]
+  (doseq [[^String nm prev] installed]
+    (when prev (try (sun.misc.Signal/handle (sun.misc.Signal. nm) prev) (catch Throwable _ nil))))
+  (reset! signal-forensics nil)
+  nil)
+
 (defn serve-main!
   "Blocking entry for the `vis-agent gateway start` command: start, print the
    connection line, park forever (Ctrl-C / SIGTERM stops the JVM)."
@@ -3379,6 +3435,17 @@
                                               str/trim)
                                :require-token? require-token?
                                :emit emit!}))
-    (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable stop!))
+    ;; Forensics BEFORE the hook: a signal-driven death and an explicit
+    ;; /v1/admin/stop both surface as "gateway: draining before stop", so name
+    ;; the trigger in the log or an unexplained daemon exit stays unexplainable.
+    (install-signal-forensics!)
+    (.addShutdownHook (Runtime/getRuntime)
+                      (Thread. ^Runnable
+                               (fn []
+                                 (tel/log! :info
+                                           ["gateway: JVM shutdown hook fired"
+                                            "(signal or System/exit) - stopping"])
+                                 (stop!))
+                               "vis-gateway-shutdown"))
     @serve-exit
     (System/exit 0)))
