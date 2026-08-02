@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [v0.1.24] - 2026-08-02
 
+### Changed
+- release: v0.1.24
+- feat(mcp): manage MCP servers and their OAuth from the companion and the TUI
+- fix(release): release notes survive a main that moved, and land v0.1.23's
+- test(ls): pin the warm-index fast path and recursive listing order
+
+### Package changes
+
+#### com.blockether/vis
+- release: v0.1.24 (a56ad6009)
+- feat(mcp): manage MCP servers and their OAuth from the companion and the TUI (139cdc801)
+- fix(release): release notes survive a main that moved, and land v0.1.23's (57693dc17)
+- test(ls): pin the warm-index fast path and recursive listing order (ccbd03009)
+
+#### com.blockether/vis-channel-tui
+- feat(mcp): manage MCP servers and their OAuth from the companion and the TUI (139cdc801)
+- test(ls): pin the warm-index fast path and recursive listing order (ccbd03009)
+
+#### com.blockether/vis-persistance-sqlite
+- test(ls): pin the warm-index fast path and recursive listing order (ccbd03009)
+
+
+
+## [v0.1.24] - 2026-08-02
+
 ### Added
 
 - mcp: the whole MCP server lifecycle is reachable outside a terminal. The
@@ -2459,7 +2484,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.23...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.24...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -2478,3 +2503,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.21]: https://github.com/Blockether/vis/releases/tag/v0.1.21
 [v0.1.22]: https://github.com/Blockether/vis/releases/tag/v0.1.22
 [v0.1.23]: https://github.com/Blockether/vis/releases/tag/v0.1.23
+[v0.1.24]: https://github.com/Blockether/vis/releases/tag/v0.1.24
