@@ -1,4 +1,7 @@
 import ast as __vis_ast__
+import errno as __vis_errno__
+import gc as __vis_gc__
+import os as __vis_os__
 import time as __vis_time__
 import weakref as __vis_weakref__
 
@@ -15,14 +18,150 @@ import weakref as __vis_weakref__
 __vis_open_writes__ = __vis_weakref__.WeakSet()
 __vis_real_open__ = open
 
+# ── DESCRIPTOR RECLAMATION + CEILING: the same non-refcounting fact, with a much
+# harsher failure. A dropped handle also keeps its PROCESS file descriptor: the
+# object is collected but the fd is not closed, and neither `__del__` nor weakref
+# callbacks ever run (measured: 200 dropped `open()`s = +200 live descriptors,
+# two `gc.collect()`s reclaim none of them). A loop over a big tree
+# (`open(p).read()` per file) therefore walks the WHOLE process into EMFILE, and
+# the first casualty is not Python: `ProcessBuilder` can no longer fork, so every
+# later `shell`/`git` call dies with the JDK's misleading "spawn helper / JDK
+# version mismatch" text and the session is wedged for good.
+#
+# So the sandbox reclaims descriptors itself, where the leak is — the way
+# CPython's refcount would. Every handle is registered under its fd with a WEAK
+# ref; once that ref is dead the handle can never be read again, so its fd is
+# closed by hand. GraalPy's weak refs do die on their own under ordinary JVM GC,
+# so the common sweep is a cheap fstat pass with NO `gc.collect()` (a collect
+# here costs ~270ms; it is the fallback, not the rule). Identity (`st_dev`,
+# `st_ino`) is re-checked before every close, so a recycled fd number is never
+# stolen from whoever owns it now. `__vis_fd_max__` is the ceiling that cannot be
+# crossed: reaching it raises a normal Python `OSError(EMFILE)` naming the fix,
+# instead of leaving the session to die later on an unrelated toolchain error.
+__vis_fd_registry__ = {}  # fd -> (weakref(handle), (st_dev, st_ino) | None)
+
+
+def __vis_fd_env_int__(__vis_name__, __vis_default__, __vis_low__):
+    try:
+        __vis_n__ = int(__vis_os__.environ.get(__vis_name__) or 0)
+    except Exception:
+        __vis_n__ = 0
+    return __vis_n__ if __vis_n__ >= __vis_low__ else __vis_default__
+
+
+# Ceiling, and the mark where reclamation starts. The mark is HALF the ceiling so
+# an honest workload (handles opened and closed) never sweeps twice for nothing,
+# while a leaking one is caught long before the process limit.
+__vis_fd_max__ = __vis_fd_env_int__("VIS_PY_MAX_OPEN_FILES", 512, 8)
+__vis_fd_sweep_at__ = max(16, __vis_fd_max__ // 2)
+
+
+def __vis_fd_track__(__vis_h__):
+    # WEAK by construction: tracking must never keep a handle (or its buffer)
+    # alive — that would turn a descriptor leak into a memory leak.
+    try:
+        __vis_fd__ = __vis_h__.fileno()
+    except Exception:
+        return  # StringIO & friends own no descriptor
+    if not isinstance(__vis_fd__, int) or __vis_fd__ < 0:
+        return
+    try:
+        __vis_st__ = __vis_os__.fstat(__vis_fd__)
+        __vis_id__ = (__vis_st__.st_dev, __vis_st__.st_ino)
+    except Exception:
+        __vis_id__ = None
+    try:
+        __vis_fd_registry__[__vis_fd__] = (
+            __vis_weakref__.ref(__vis_h__),
+            __vis_id__,
+        )
+    except Exception:
+        pass  # unweakrefable handle: nothing we can track, hand it back as-is
+
+
+def __vis_fd_drop__(__vis_fd__, __vis_id__):
+    # Close ONE unreachable descriptor, but only while it still is the file we
+    # opened: if the number was recycled, `fstat` either fails (already closed)
+    # or reports another file, and both mean hands off.
+    __vis_fd_registry__.pop(__vis_fd__, None)
+    try:
+        __vis_st__ = __vis_os__.fstat(__vis_fd__)
+    except Exception:
+        return 0  # already closed; nothing to reclaim
+    if __vis_id__ is not None and (__vis_st__.st_dev, __vis_st__.st_ino) != __vis_id__:
+        return 0
+    try:
+        __vis_os__.close(__vis_fd__)
+        return 1
+    except Exception:
+        return 0
+
+
+def __vis_reclaim_fds__(force=False):
+    # Drop entries the block closed itself, close the ones it dropped. Cheap:
+    # one `fstat` per tracked handle, no collect. Returns descriptors closed.
+    # Runs AFTER `__vis_flush_writes__`, and only ever closes a handle whose weak
+    # ref is already dead — such a handle can no longer be flushed by anyone
+    # (its buffer died with it), so closing its descriptor loses nothing that was
+    # not lost the moment the block dropped it.
+    if not __vis_fd_registry__:
+        return 0
+    if not force and len(__vis_fd_registry__) < __vis_fd_sweep_at__:
+        return 0
+    __vis_closed__ = 0
+    for __vis_fd__ in list(__vis_fd_registry__):
+        __vis_e__ = __vis_fd_registry__.get(__vis_fd__)
+        if __vis_e__ is None:
+            continue
+        __vis_h__ = __vis_e__[0]()
+        if __vis_h__ is None:
+            __vis_closed__ += __vis_fd_drop__(__vis_fd__, __vis_e__[1])
+            continue
+        try:
+            if __vis_h__.closed:
+                __vis_fd_registry__.pop(__vis_fd__, None)
+        except Exception:
+            __vis_fd_registry__.pop(__vis_fd__, None)
+    return __vis_closed__
+
+
+def __vis_fd_admit__():
+    # Runs before every sandbox `open`. Under the mark it costs one int compare;
+    # at the mark it reclaims, and only a workload that really holds the ceiling
+    # open at once is refused — with the message that names the actual fix.
+    if len(__vis_fd_registry__) < __vis_fd_sweep_at__:
+        return
+    __vis_reclaim_fds__(True)
+    if len(__vis_fd_registry__) >= __vis_fd_max__:
+        # Last resort: force the collect the cheap pass did not need, in case
+        # this VM has not gotten around to clearing those weak refs yet.
+        __vis_gc__.collect()
+        __vis_reclaim_fds__(True)
+    if len(__vis_fd_registry__) < __vis_fd_max__:
+        return
+    raise OSError(
+        __vis_errno__.EMFILE,
+        "too many open files in this sandbox: "
+        + str(len(__vis_fd_registry__))
+        + " handles are open at once and the ceiling is "
+        + str(__vis_fd_max__)
+        + ". Sandbox Python does NOT close a file when you drop it, so"
+        " `open(p).read()` in a loop leaks one descriptor per iteration until no"
+        " `shell`/`git` process can start at all. Use `with open(p) as f:` (or"
+        " `Path(p).read_text()`), or close the handles you keep open."
+        " VIS_PY_MAX_OPEN_FILES raises the ceiling.",
+    )
+
 
 def __vis_open__(*__vis_a__, **__vis_kw__):
+    __vis_fd_admit__()
     __vis_h__ = __vis_real_open__(*__vis_a__, **__vis_kw__)
     try:
         if __vis_h__.writable():
             __vis_open_writes__.add(__vis_h__)
     except Exception:
         pass  # unweakrefable / no writable(): not ours to track, hand it back as-is
+    __vis_fd_track__(__vis_h__)
     return __vis_h__
 
 
@@ -216,6 +355,10 @@ def __vis_exec_call__(c):
         # that reads a just-written file (`git commit -F /tmp/msg`) must not see
         # GraalPy's unflushed buffer.
         __vis_flush_writes__()
+        # Same boundary, the descriptor half: a tool that spawns a process
+        # (`shell`, `git`) needs free descriptors to fork with, so give back the
+        # ones this block already dropped. Below the mark this is a no-op.
+        __vis_reclaim_fds__()
         c.res = c.fn(*c.a, dict(c.k)) if c.k else c.fn(*c.a)
         return c.res
     except BaseException:
@@ -1566,6 +1709,9 @@ def __vis_run_async__(src):
         # is on disk now, success or failure alike (GraalPy would otherwise leave
         # the buffer unflushed until an arbitrary later GC).
         __vis_flush_writes__()
+        # ... and every descriptor it dropped is handed back, so a block that
+        # leaks handles cannot bleed into the next one (or into the next spawn).
+        __vis_reclaim_fds__(True)
     return assigned
 
 

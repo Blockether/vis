@@ -3830,8 +3830,12 @@
                  "REQUIRED `until` regex"
                  ;; Sandbox Python does NOT close a dropped file handle, so an
                  ;; unclosed `open(...)` leaks a PROCESS descriptor until a GC —
-                 ;; enough of them and no `shell`/`git` child can be spawned at all.
-                 "Close what you open" "with open(...)" "leaked descriptors"]]
+                 ;; enough of them and no `shell`/`git` child can be spawned at
+                 ;; all. The sandbox reclaims and caps them
+                 ;; (`env-python-fd-test`); the description says so, because the
+                 ;; cheapest fix is the block never leaking in the first place.
+                 "Close what you open" "with open(...)" "leaked descriptors"
+                 "VIS_PY_MAX_OPEN_FILES"]]
           (expect (str/includes? python-description fact))))
       (expect (str/includes? (get-in by-name ["session_fold" :description])
                              "finished iterations"))))

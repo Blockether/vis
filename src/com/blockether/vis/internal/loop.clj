@@ -4802,8 +4802,9 @@
      "Only `print` returns; bare expressions drop and errors surface. Native results return inline and stay "
      "at `ntr[tool_id]`; engine-bound natives are bare snake_case, native-only ones absent. Never "
      "`time.sleep`/poll for background shells \u2014 use `shell` op `wait` (a REQUIRED `until` regex ends it "
-     "line), via `gather` when parallel. Close what you open (`with open(...)`): a dropped file handle is "
-     "NOT auto-closed here, and leaked descriptors stop the process spawning `shell`/`git` children."
+      "line), via `gather` when parallel. Close what you open (`with open(...)`): a dropped file handle is "
+      "NOT auto-closed here, so the sandbox reclaims leaked descriptors and refuses more than 512 held at "
+      "once (`VIS_PY_MAX_OPEN_FILES`) — leaked descriptors stop the process spawning `shell`/`git` children."
      (when-let [cap (python-execution-capability-line caps)]
        (str " " cap)))
    :result
