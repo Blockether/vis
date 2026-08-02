@@ -5,8 +5,10 @@
    things that must never happen are: a throw that escapes into the read loop, a
    write that emits an embedded newline and desynchronizes framing, and a
    permission path that fails OPEN. Every test here attacks one of those."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.foundation.acp :as acp]
+            [com.blockether.vis.internal.foundation.mcp.core :as mcp]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.io ByteArrayInputStream ByteArrayOutputStream)))
 
@@ -1367,7 +1369,10 @@
       (expect (= 7 (count (filter #(= (:invalid-request acp/error-codes) (code %)) resps))))
       ;; and the session is idle again, never wedged in :running
       (expect (= :idle (get-in @c [:sessions sid :state])))
-      (expect (empty? (:cancelled @c)))))
+      ;; nobody cancelled anything, so no watermark may appear out of thin air
+      (expect (nil? (get-in @c [:sessions sid :cancel-mark])))
+      ;; and all 8 lines took a turn number of their own, winner and losers alike
+      (expect (= 8 (get-in @c [:sessions sid :turn])))))
   (it
     "still runs two DIFFERENT sessions of one connection at the same time"
     (let
@@ -1453,7 +1458,9 @@
                                        "params" {"sessionId" (str "ghost-" i)}})))
       ;; `session/cancel` is a NOTIFICATION: unknown ids must not accumulate, or a
       ;; chatty editor grows the connection without bound and never sees an error
-      (expect (empty? (:cancelled @c)))
+      ;; a ghost id must not even create the session state a mark could hang on
+      (expect (= #{sid} (set (keys (:sessions @c)))))
+      (expect (nil? (get-in @c [:sessions sid :cancel-mark])))
       (expect (empty? @seen))
       ;; a notification is never answered, whatever it carried
       (expect (= quiet (count @out)))
@@ -1463,39 +1470,50 @@
       (acp/handle-line! c
                         (acp/encode
                           {"jsonrpc" "2.0" "method" "session/cancel" "params" {"sessionId" sid}}))
-      (expect (empty? (:cancelled @c)))
+      (expect (nil? (get-in @c [:sessions sid :cancel-mark])))
       (expect (empty? @seen))
       (expect (= "end_turn" (get (result (send! c (prompt-msg 9 sid))) "stopReason")))))
-  (it "drops the cancel flag with the turn it aborted"
-      (let
-        [cell
-         (atom nil)
+  (it
+    "cancels the turn it names and nothing that comes after it"
+    (let
+      [cell
+       (atom nil)
 
-         backend
-         (assoc (acp/echo-backend)
-           :prompt (fn [{:keys [session-id]}]
-                     ;; the editor cancels WHILE the turn is running
+       turns
+       (atom 0)
+
+       backend
+       (assoc (acp/echo-backend)
+         :prompt (fn [{:keys [session-id]}]
+                   ;; the editor cancels WHILE the first turn is running
+                   (when (= 1 (swap! turns inc))
                      (acp/handle-line! @cell
                                        (acp/encode {"jsonrpc" "2.0"
                                                     "method" "session/cancel"
-                                                    "params" {"sessionId" session-id}}))
-                     {:status "completed"}))
+                                                    "params" {"sessionId" session-id}})))
+                   {:status "completed"}))
 
-         [c _]
-         (conn+out {:backend backend})
+       [c _]
+       (conn+out {:backend backend})
 
-         _
-         (reset! cell c)
+       _
+       (reset! cell c)
 
-         _
-         (init! c)
+       _
+       (init! c)
 
-         sid
-         (new-session! c)]
+       sid
+       (new-session! c)]
 
-        (expect (= "cancelled" (get (result (send! c (prompt-msg 1 sid))) "stopReason")))
-        (expect (empty? (:cancelled @c)))
-        (expect (= :idle (get-in @c [:sessions sid :state]))))))
+      (expect (= "cancelled" (get (result (send! c (prompt-msg 1 sid))) "stopReason")))
+      ;; what a cancel writes is a WATERMARK on the turn that was in flight, not
+      ;; a flag on the session: it names that turn exactly
+      (expect (= (get-in @c [:sessions sid :turn]) (get-in @c [:sessions sid :cancel-mark])))
+      (expect (= :idle (get-in @c [:sessions sid :state])))
+      ;; so the very next turn — a higher number — is untouched by it
+      (expect (= "end_turn" (get (result (send! c (prompt-msg 2 sid))) "stopReason")))
+      (expect (< (long (get-in @c [:sessions sid :cancel-mark]))
+                 (long (get-in @c [:sessions sid :turn])))))))
 
 ;; =============================================================================
 ;; HTTP transport — what the LRU cap actually has to bound
@@ -1857,3 +1875,358 @@
                             (acp/arg-paths {"a" nil "b" [nil {"path" "/x"} nil] "path" "/top"})))
                  (expect (= [] (acp/arg-paths [nil nil])))
                  (expect (= ["/a" "/b"] (acp/arg-paths {"src" "/a" "dest" "/b"})))))
+
+;; =============================================================================
+;; A cancelled turn that aborts by THROWING — spec says `cancelled`, not an error
+;; =============================================================================
+
+(defdescribe
+  cancel-through-exception-test
+  (it
+    "answers `cancelled` when the cancellation itself tears the turn down"
+    (let
+      [cell
+       (atom nil)
+
+       backend
+       (assoc (acp/echo-backend)
+         :prompt (fn [{:keys [session-id]}]
+                   (acp/handle-line! @cell
+                                     (acp/encode {"jsonrpc" "2.0"
+                                                  "method" "session/cancel"
+                                                  "params" {"sessionId" session-id}}))
+                   ;; this is the REAL path, not a hypothetical: cancelling drops
+                   ;; the gateway's SSE stream, so the read loop throws instead of
+                   ;; returning a terminal event
+                   (throw (ex-info "Lost connection to the gateway daemon" {}))))
+
+       [c _]
+       (conn+out {:backend backend})
+
+       _
+       (reset! cell c)
+
+       _
+       (init! c)
+
+       sid
+       (new-session! c)
+
+       resp
+       (send! c (prompt-msg 1 sid))]
+
+      ;; ACP: the response to a cancelled `session/prompt` is `cancelled`. An
+      ;; error here shows the user a hard failure for pressing escape.
+      (expect (= "cancelled" (get (result resp) "stopReason")))
+      (expect (nil? (get resp "error")))
+      (expect (= :idle (get-in @c [:sessions sid :state])))))
+  (it "still reports a turn that failed on its own as an error"
+      (let
+        [backend
+         (assoc (acp/echo-backend)
+           :prompt (fn [_]
+                     (throw (ex-info "boom" {}))))
+
+         [c _]
+         (conn+out {:backend backend})
+
+         _
+         (init! c)
+
+         sid
+         (new-session! c)
+
+         resp
+         (send! c (prompt-msg 1 sid))]
+
+        ;; no cancel was ever sent, so nothing may be dressed up as one
+        (expect (= (:internal-error acp/error-codes) (code resp)))
+        (expect (nil? (result resp)))
+        (expect (= :idle (get-in @c [:sessions sid :state]))))))
+
+;; =============================================================================
+;; A REJECTED prompt must not leave a turn parked for a later cancel to hit
+;; =============================================================================
+
+(defdescribe
+  rejected-prompt-turn-test
+  (it "gives the turn back after every bad prompt shape"
+      (let
+        [[c _]
+         (conn+out)
+
+         _
+         (init! c)
+
+         sid
+         (new-session! c)]
+
+        (doseq
+          [bad [nil [] "hi" 7 {"a" 1} [{}] [nil] [[]] ["x"] [{"type" "text"}]
+                [{"type" "text" "text" "   "}] [{"type" "bogus"}]]]
+          (let
+            [resp (send! c
+                         {"jsonrpc" "2.0"
+                          "id" 1
+                          "method" "session/prompt"
+                          "params" {"sessionId" sid "prompt" bad}})]
+            ;; the shape is refused ...
+            (expect (= (:invalid-params acp/error-codes) (code resp)))
+            ;; ... and the turn it opened is released, or the session stays parked
+            ;; at `:pending` and keeps accepting cancels for a turn that will never
+            ;; run
+            (expect (= :idle (get-in @c [:sessions sid :state])))
+            ;; so a cancel arriving right now has no turn in flight to land on
+            (send! c {"jsonrpc" "2.0" "method" "session/cancel" "params" {"sessionId" sid}})
+            (expect (nil? (get-in @c [:sessions sid :cancel-mark])))))
+        ;; and the good prompt that follows all of them runs to the end
+        (expect (= "end_turn" (get (result (send! c (prompt-msg 1 sid))) "stopReason")))))
+  (it "never lets a rejected prompt's stray cancel abort the next real turn"
+      (let
+        [[c _]
+         (conn+out)
+
+         _
+         (init! c)
+
+         sid
+         (new-session! c)
+
+         reasons
+         (doall (for [_ (range 200)]
+                  (do
+                    ;; rejected prompt, then the escape key that follows it a beat late
+                    (send! c
+                           {"jsonrpc" "2.0"
+                            "id" 1
+                            "method" "session/prompt"
+                            "params" {"sessionId" sid "prompt" []}})
+                    (send! c {"jsonrpc" "2.0" "method" "session/cancel" "params" {"sessionId" sid}})
+                    (get (result (send! c (prompt-msg 2 sid))) "stopReason"))))]
+
+        (expect (= #{"end_turn"} (set reasons)))
+        (expect (= :idle (get-in @c [:sessions sid :state])))))
+  (it
+    "keeps the state machine sound while bad prompts and cancels race a real turn"
+    (let
+      [[c _]
+       (conn+out)
+
+       _
+       (init! c)
+
+       sid
+       (new-session! c)
+
+       noise
+       (future (dotimes [_ 400]
+                 (send! c
+                        {"jsonrpc" "2.0"
+                         "id" 1
+                         "method" "session/prompt"
+                         "params" {"sessionId" sid "prompt" "not-an-array"}})
+                 (send! c {"jsonrpc" "2.0" "method" "session/cancel" "params" {"sessionId" sid}})))
+
+       resps
+       (mapv (fn [i]
+               (send! c (prompt-msg i sid)))
+             (range 100))
+
+       _
+       (deref noise 15000 ::timeout)]
+
+      ;; a cancel that really is in flight may stop a turn — that is the contract.
+      ;; What must never happen is a hard error, a missing answer, or a session
+      ;; wedged in `:running` because a rejected prompt lost its claim.
+      (expect (every? #(contains? #{"end_turn" "cancelled"} (get (result %) "stopReason")) resps))
+      (expect (= 100 (count resps)))
+      (expect (= :idle (get-in @c [:sessions sid :state]))))))
+
+;; =============================================================================
+;; MCP servers — the client's servers, attached to the client's session
+;; =============================================================================
+
+(def ^:private fake-mcp-server "test/resources/mcp/fake_mcp_server.py")
+
+(defn- python3-path
+  "Absolute python3 on PATH, or nil — the fake MCP server is a python script, and
+   a machine without python must skip rather than fail."
+  []
+  (some (fn [d]
+          (let [f (io/file d "python3")]
+            (when (.canExecute f) (.getPath f))))
+        (str/split (or (System/getenv "PATH") "") #":")))
+
+(defn- new-session-with!
+  [c servers]
+  (send! c
+         {"jsonrpc" "2.0"
+          "id" "new"
+          "method" "session/new"
+          "params" (cond-> {"cwd" "/tmp"}
+                     servers
+                     (assoc "mcpServers" servers))}))
+
+(defdescribe
+  acp-mcp-servers-test
+  "`mcpServers` used to be read and DROPPED: the editor declared servers, the
+   session got none, the model never saw one of their tools, and nothing on the
+   wire admitted it. These drive the real MCP pool."
+  (it
+    "session/new attaches the client's stdio server session-scoped, and its tools reach the model"
+    (let
+      [py
+       (python3-path)
+
+       f
+       (io/file fake-mcp-server)]
+
+      (if-not (and py (.exists f))
+        (expect true) ; no python3 — skip, don't fail CI
+        (let [[c _] (conn+out)]
+          (init! c)
+          (let
+            [sid (get (result (new-session-with! c
+                                                 [{"name" "fake"
+                                                   "command" py
+                                                   "args" [(.getAbsolutePath f)]
+                                                   "env" [{"name" "ACP_TEST" "value" "1"}]}]))
+                      "sessionId")]
+            (try (expect (= [{:name "fake" :transport "stdio" :is-connected true}]
+                            (mcp/session-servers sid)))
+                 ;; The tools reach the MODEL through exactly the env the engine
+                 ;; passes a tool call — anything less is a session that only LOOKS
+                 ;; wired up.
+                 (expect (= ["echo"]
+                            (mapv #(get % "name")
+                                  (get-in (mcp/mcp-tools {:session-id sid} "fake")
+                                          [:result "tools"]))))
+                 (expect (= "echo: hi"
+                            (get-in (mcp/mcp-call {:session-id sid} "fake" "echo" {"msg" "hi"})
+                                    [:result "content" 0 "text"])))
+                 (expect (= "session"
+                            (get-in (mcp/mcp-servers {:session-id sid})
+                                    [:result "servers" 0 "scope"])))
+                 ;; …and NOWHERE else: one editor's server is not the machine's.
+                 (expect (empty? (get-in (mcp/mcp-servers {:session-id "someone-else"})
+                                         [:result "servers"])))
+                 (finally (mcp/clear-session-servers! sid)))
+            (expect (empty? (mcp/session-servers sid))))))))
+  (it "a server that cannot be reached FAILS session/new instead of yielding a crippled session"
+      (let [[c _] (conn+out)]
+        (init! c)
+        (let
+          [resp (new-session-with!
+                  c
+                  [{"name" "nope" "command" "/definitely/not/here" "args" [] "env" []}])]
+          (expect (= -32603 (code resp)))
+          (expect (= "nope" (get-in resp ["error" "data" "failedMcpServers" 0 "name"])))
+          (expect (nil? (result resp))))))
+  (it "sse is refused rather than silently downgraded, because we advertise sse false"
+      (let [[c _] (conn+out)]
+        (init! c)
+        (let
+          [resp (new-session-with!
+                  c
+                  [{"type" "sse" "name" "s" "url" "https://example.test/sse" "headers" []}])]
+          (expect (= -32602 (code resp)))
+          (expect (str/includes? (get-in resp ["error" "message"]) "sse")))))
+  (it "malformed server entries are invalid-params, never silently dropped"
+      (let [[c _] (conn+out)]
+        (init! c)
+        (doseq
+          [servers [{"not" "an array"} ["not an object"] [{"command" "echo"}] [{"name" "s"}]
+                    [{"name" "s" "command" "echo" "args" [1 2]}]
+                    [{"name" "s" "command" "echo" "env" {"A" "B"}}]
+                    [{"name" "s" "command" "echo" "env" [{"name" "A" "value" 1}]}]
+                    [{"type" "http" "name" "h"}]
+                    [{"type" "websocket" "name" "s" "url" "https://example.test"}]]]
+          (expect (= -32602 (code (new-session-with! c servers)))))))
+  (it "duplicate server names are refused instead of one silently winning"
+      (let [[c _] (conn+out)]
+        (init! c)
+        (let
+          [resp
+           (new-session-with! c [{"name" "dup" "command" "echo"} {"name" "dup" "command" "echo"}])]
+          (expect (= -32602 (code resp)))
+          (expect (str/includes? (get-in resp ["error" "message"]) "duplicate")))))
+  (it
+    "session/load REPLACES the session's servers, and an absent mcpServers clears them"
+    (let
+      [py
+       (python3-path)
+
+       f
+       (io/file fake-mcp-server)]
+
+      (if-not (and py (.exists f))
+        (expect true)
+        (let
+          [[c _]
+           (conn+out)
+
+           spec
+           (fn [nm]
+             [{"name" nm "command" py "args" [(.getAbsolutePath f)]}])]
+
+          (init! c)
+          (let [sid (get (result (new-session-with! c (spec "first"))) "sessionId")]
+            (try (expect (= ["first"] (mapv :name (mcp/session-servers sid))))
+                 (send! c
+                        {"jsonrpc" "2.0"
+                         "id" "load"
+                         "method" "session/load"
+                         "params" {"sessionId" sid "cwd" "/tmp" "mcpServers" (spec "second")}})
+                 (expect (= ["second"] (mapv :name (mcp/session-servers sid))))
+                 ;; A resumed session must not inherit a previous life's servers.
+                 (send! c
+                        {"jsonrpc" "2.0"
+                         "id" "load2"
+                         "method" "session/load"
+                         "params" {"sessionId" sid "cwd" "/tmp"}})
+                 (expect (empty? (mcp/session-servers sid)))
+                 (finally (mcp/clear-session-servers! sid))))))))
+  (it "initialize advertises exactly the MCP transports the client library implements"
+      (let [[c _] (conn+out)]
+        (expect (= {"http" true "sse" false}
+                   (get-in (result (init! c)) ["agentCapabilities" "mcpCapabilities"]))))))
+
+(defdescribe
+  acp-max-tokens-stop-reason-test
+  "A turn killed by the output budget is a STOP REASON in ACP, not a JSON-RPC
+   error: an editor shows \"the model ran out of room\", not \"the agent crashed\"."
+  (it
+    "an output-budget death reports stopReason max_tokens"
+    (doseq
+      [msg
+       ["Provider truncated the response at max_tokens (8192) after 3 retries"
+        "Provider stopped the response as incomplete because output budget was exhausted (max_output_tokens)."]]
+      (let
+        [[c _] (conn+out {:backend (acp/echo-backend (fn [_]
+                                                       {:status "failed" :error msg}))})]
+        (init! c)
+        (let
+          [sid (new-session! c)
+           resp (send! c
+                       {"jsonrpc" "2.0"
+                        "id" "p"
+                        "method" "session/prompt"
+                        "params" {"sessionId" sid "prompt" [{"type" "text" "text" "hi"}]}})]
+
+          (expect (= "max_tokens" (get (result resp) "stopReason")))))))
+  (it "any other failure is still a real error, not a fake stop reason"
+      (let
+        [[c _] (conn+out {:backend (acp/echo-backend (fn [_]
+                                                       {:status "failed"
+                                                        :error "the database is on fire"}))})]
+        (init! c)
+        (let
+          [sid (new-session! c)
+           resp (send! c
+                       {"jsonrpc" "2.0"
+                        "id" "p"
+                        "method" "session/prompt"
+                        "params" {"sessionId" sid "prompt" [{"type" "text" "text" "hi"}]}})]
+
+          (expect (= -32603 (code resp)))
+          (expect (nil? (result resp)))))))

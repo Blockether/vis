@@ -38,6 +38,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.foundation.mcp.core :as mcp]
             [taoensso.telemere :as tel])
   (:import [java.io BufferedReader InputStream InputStreamReader OutputStream OutputStreamWriter
             Writer]
@@ -298,8 +299,9 @@
          :initialized? false
          :protocol-version nil
          :client-caps {}
+         ;; sid → {:cwd :state :turn :cancel-mark}; a cancel is remembered
+         ;; against the TURN it named, never against the session at large.
          :sessions {}
-         :cancelled #{}
          :decisions {}
          :next-id 0
          :pending {}
@@ -522,7 +524,11 @@
        ;; non-text block to "[image]" and drops the bytes: advertising them only
        ;; makes clients ship payloads the model never sees.
        {"loadSession" true
-        "promptCapabilities" {"image" false "audio" false "embeddedContext" true}}
+        "promptCapabilities" {"image" false "audio" false "embeddedContext" true}
+        ;; stdio and streamable HTTP are what `mcp/client` actually speaks; SSE
+        ;; is not implemented, and advertising it would only earn us servers we
+        ;; cannot reach.
+        "mcpCapabilities" {"http" true "sse" false}}
        "authMethods" []})))
 
 (defn- handle-authenticate
@@ -532,6 +538,118 @@
     ;; user's trust. Naming a method we never advertised is a client bug.
     (when (and (some? m) (not= "" m)) (fail! :invalid-params (str "unknown auth method: " m)))
     {}))
+
+(defn- mcp-kv-pairs
+  "ACP ships env vars and HTTP headers as `[{\"name\" … \"value\" …}]`; the MCP
+   client wants a map. A malformed entry is REFUSED rather than skipped —
+   silently dropping one is how a server ends up unauthenticated for a whole
+   session."
+  [what v]
+  (when-not (or (nil? v) (sequential? v))
+    (fail! :invalid-params (str what " must be an array of {name, value} objects")))
+  (reduce (fn [m e]
+            (let
+              [n
+               (get e "name")
+
+               val
+               (get e "value")]
+
+              (when-not (and (map? e) (string? n) (seq n) (string? val))
+                (fail! :invalid-params
+                       (str what " entries must be objects with a string name and a string value")))
+              (assoc m n val)))
+          {}
+          v))
+
+(defn- mcp-strings
+  [what v]
+  (when-not (or (nil? v) (sequential? v))
+    (fail! :invalid-params (str what " must be an array of strings")))
+  (mapv (fn [s]
+          (when-not (string? s) (fail! :invalid-params (str what " must be an array of strings")))
+          s)
+        v))
+
+(defn- mcp-server->spec
+  "One ACP `McpServer` → `[name raw-spec]`, the raw spec shaped exactly like an
+   `:mcp :servers` config entry, so a CLIENT's server is coerced, interpolated
+   and connected by the same code path as a configured one.
+
+   `sse` is refused instead of quietly downgraded to HTTP: we advertise
+   `mcpCapabilities.sse false`, and a client that ignores that must hear about it
+   rather than watch its server never answer."
+  [srv]
+  (when-not (map? srv) (fail! :invalid-params "each mcpServers entry must be an object"))
+  (let
+    [nm
+     (get srv "name")
+
+     t
+     (get srv "type")]
+
+    (when-not (and (string? nm) (seq nm))
+      (fail! :invalid-params "mcpServers[].name must be a non-empty string"))
+    (cond (= "sse" t) (fail! :invalid-params
+                             (str "MCP server " nm
+                                  ": the sse transport is not supported "
+                                  "(agentCapabilities.mcpCapabilities.sse is false)"))
+          (= "http" t)
+          (let [url (get srv "url")]
+            (when-not (and (string? url) (seq url))
+              (fail! :invalid-params (str "MCP server " nm ": url must be a non-empty string")))
+            [nm
+             {"transport" "streamable_http"
+              "url" url
+              "headers" (mcp-kv-pairs (str "MCP server " nm ": headers") (get srv "headers"))}])
+          (or (nil? t) (= "stdio" t))
+          (let [cmd (get srv "command")]
+            (when-not (and (string? cmd) (seq cmd))
+              (fail! :invalid-params (str "MCP server " nm ": command must be a non-empty string")))
+            [nm
+             {"transport" "stdio"
+              "command" cmd
+              "args" (mcp-strings (str "MCP server " nm ": args") (get srv "args"))
+              "env" (mcp-kv-pairs (str "MCP server " nm ": env") (get srv "env"))}])
+          :else (fail! :invalid-params
+                       (str "MCP server " nm ": unknown transport type " (pr-str t))))))
+
+(defn- attach-mcp-servers!
+  "Attach one request's `mcpServers` to `sid`, session-scoped, connected EAGERLY.
+
+   Ignoring `mcpServers` — which this agent used to do — is the worst failure
+   mode on offer: the editor believes the session can reach its servers, the
+   model never sees a single one of their tools, and nothing anywhere says so. A
+   server that cannot be reached therefore FAILS the `session/new` /
+   `session/load` that asked for it, and leaves nothing half-attached."
+  [sid params]
+  (let [raw (get params "mcpServers")]
+    (when-not (or (nil? raw) (sequential? raw))
+      (fail! :invalid-params "mcpServers must be an array"))
+    (let
+      [specs (reduce (fn [m srv]
+                       (let [[nm spec] (mcp-server->spec srv)]
+                         (when (contains? m nm)
+                           (fail! :invalid-params (str "duplicate MCP server name: " nm)))
+                         (assoc m nm spec)))
+                     {}
+                     raw)]
+      ;; A reused session id must not inherit the servers of its previous life.
+      (if (empty? specs)
+        (mcp/clear-session-servers! sid)
+        (let [{:keys [failed]} (mcp/set-session-servers! sid specs)]
+          (when (seq failed)
+            (mcp/clear-session-servers! sid)
+            (fail! :internal-error
+                   (str "could not connect to MCP server(s): "
+                        (str/join ", "
+                                  (map (fn [{:keys [server error]}]
+                                         (str server ": " error))
+                                       failed)))
+                   (json-safe {"failedMcpServers" (mapv (fn [{:keys [server error]}]
+                                                          {"name" server "error" (str error)})
+                                                        failed)}))))))
+    nil))
 
 (defn- handle-session-new
   [conn params]
@@ -543,6 +661,10 @@
       (fail! :invalid-params "cwd must be an absolute path"))
     (let [sid (str ((:new-session (:backend @conn)) {:cwd cwd}))]
       (when (str/blank? sid) (fail! :internal-error "the agent could not create a session"))
+      ;; MCP BEFORE registration: a session whose declared servers are missing is
+      ;; not the session the client asked for, so it is never handed back as if
+      ;; it were.
+      (attach-mcp-servers! sid params)
       (swap! conn assoc-in [:sessions sid] {:cwd cwd :state :idle})
       (register-connection! sid conn)
       {"sessionId" sid})))
@@ -567,6 +689,7 @@
       ;; empty, every later prompt fails deep inside the turn, and the id lingers
       ;; in the global connection registry.
       (when (nil? turns) (fail! :invalid-params (str "unknown sessionId: " sid)))
+      (attach-mcp-servers! sid params)
       (swap! conn assoc-in [:sessions sid] {:cwd cwd :state :idle})
       (register-connection! sid conn)
       (doseq
@@ -583,33 +706,69 @@
                             "content" {"type" "text" "text" text}}}))
       {})))
 
+(def ^:private max-tokens-error-re
+  "vis' loop reports an output-budget death as a FAILED turn whose message names
+   `max_tokens` / `max_output_tokens`. ACP has a stop reason for exactly that,
+   and an editor renders it as \"the model ran out of room\" — not as \"the agent
+   crashed\", which is what a JSON-RPC error would say."
+  #"(?i)max[_ -]?(output[_ -]?)?tokens|output budget was exhausted")
+
 (defn- stop-reason
   [result cancelled?]
-  (let [status (str (or (:status result) (get result "status")))]
+  (let
+    [status
+     (str (or (:status result) (get result "status")))
+
+     error
+     (str (or (:error result) (get result "error") ""))
+
+     failed?
+     (contains? #{"failed" "error"} status)]
+
     (cond cancelled? "cancelled"
           (= "cancelled" status) "cancelled"
-          (contains? #{"failed" "error"} status)
-          (fail! :internal-error
-                 (or (:error result) (get result "error") "the turn failed")
-                 (json-safe result))
+          (and failed? (re-find max-tokens-error-re error)) "max_tokens"
+          failed? (fail! :internal-error
+                         (or (:error result) (get result "error") "the turn failed")
+                         (json-safe result))
           :else "end_turn")))
 
+(def ^:private ^:dynamic *turn-ticket*
+  "The turn number `serve!` issued for the prompt line running on THIS thread.
+   Bound per worker so a handler can tell its own turn from the next one."
+  nil)
+
 (defn- mark-pending!
-  "Best-effort IN-ORDER claim. `serve!` marks a session pending the moment it
-   READS the prompt line, before handing the turn to a worker: a `session/cancel`
-   that follows on the wire would otherwise be dropped for a session that is not
-   `:running` yet, and the user's escape key would do nothing."
+  "Issue this prompt's TURN NUMBER and, when the session is idle, park it at
+   `:pending`.
+
+   `serve!` calls this the moment it READS a prompt line, before handing the turn
+   to a worker: a `session/cancel` that follows on the wire would otherwise be
+   dropped for a session that is not `:running` yet, and the user's escape key
+   would do nothing.
+
+   The number is what makes a cancel precise. Turn numbers only ever grow, so
+   `session/cancel` can mark everything issued so far as cancelled and still be
+   unable to touch a prompt that arrives after it — even while an earlier,
+   malformed prompt for the same session is still being rejected."
   [conn sid]
   (when (string? sid)
-    (swap! conn (fn [s]
-                  (if (= :idle (get-in s [:sessions sid :state]))
-                    (assoc-in s [:sessions sid :state] :pending)
-                    s))))
-  nil)
+    (let
+      [[_ after] (swap-vals! conn
+                             (fn [s]
+                               (if (contains? (:sessions s) sid)
+                                 (-> s
+                                     (update-in [:sessions sid :turn] (fnil inc 0))
+                                     (update-in [:sessions sid :state]
+                                                #(if (= :idle %) :pending %)))
+                                 s)))]
+      (get-in after [:sessions sid :turn]))))
 
 (defn- release-pending!
   "Undo [[mark-pending!]] for a prompt that never reached its claim. Only touches
-   `:pending`, so it can never free a turn some other thread is running."
+   `:pending`, so it can never free a turn some other thread is running. A cancel
+   already recorded against that dead turn stays recorded against IT: the number
+   never matches a later turn, so nothing has to be cleaned up here."
   [conn sid]
   (swap! conn (fn [s]
                 (if (= :pending (get-in s [:sessions sid :state]))
@@ -624,12 +783,29 @@
     [sid
      (known-session! conn (session-id! params))
 
-     text
-     (prompt->text (get params "prompt"))]
+     ;; `serve!` already issued this line's turn number, in wire order, and parked
+     ;; the session at `:pending`. The HTTP transport calls this handler directly,
+     ;; so there the turn takes its own number here.
+     turn
+     (or *turn-ticket* (mark-pending! conn sid))
 
-    (when (str/blank? text)
-      (release-pending! conn sid)
-      (fail! :invalid-params "prompt must carry at least one non-empty content block"))
+     ;; Cancelled means "a `session/cancel` arrived while THIS turn was in flight".
+     ;; A per-session flag could not tell one turn from the next: a cancel recorded
+     ;; against a prompt that was still being rejected used to abort the innocent
+     ;; prompt that followed it.
+     cancelled?
+     (fn []
+       (<= (long turn) (long (or (get-in @conn [:sessions sid :cancel-mark]) 0))))
+
+     text
+     ;; EVERY exit from validation has to undo the `:pending` park, or the session
+     ;; stays parked and keeps accepting cancels for a turn that will never run.
+     (try (let [t (prompt->text (get params "prompt"))]
+            (when (str/blank? t)
+              (fail! :invalid-params "prompt must carry at least one non-empty content block"))
+            t)
+          (catch Throwable t (release-pending! conn sid) (throw t)))]
+
     ;; Claim the session ATOMICALLY. `serve!` hands prompts to their own virtual
     ;; thread, so a read-then-write guard lets two prompts own one session at
     ;; once: their `session/update` streams interleave and whichever finishes
@@ -649,16 +825,16 @@
                       :on-event (fn [event]
                                   (when-let [u (event->update event)]
                                     (notify! conn "session/update" {"sessionId" sid "update" u})))
-                      :cancelled? (fn []
-                                    (contains? (:cancelled @conn) sid))})]
-           {"stopReason" (stop-reason result (contains? (:cancelled @conn) sid))})
-         (finally
-           ;; The cancel flag dies with the turn it aborted, so it can never leak
-           ;; into the next prompt for this session.
-           (swap! conn (fn [s]
-                         (-> s
-                             (assoc-in [:sessions sid :state] :idle)
-                             (update :cancelled disj sid))))))))
+                      :cancelled? cancelled?})]
+           {"stopReason" (stop-reason result (cancelled?))})
+         (catch Throwable t
+           ;; ACP requires `cancelled` for a turn the client cancelled EVEN IF the
+           ;; cancellation tears the underlying operation down with an exception —
+           ;; and it does: cancelling drops the gateway's SSE stream, so the read
+           ;; loop throws instead of returning a terminal event. Answering
+           ;; `-32603` would show the user a hard failure for pressing escape.
+           (if (cancelled?) {"stopReason" "cancelled"} (throw t)))
+         (finally (swap! conn assoc-in [:sessions sid :state] :idle)))))
 
 (defn- handle-session-cancel
   [conn params]
@@ -666,16 +842,23 @@
     [sid
      (session-id! params)
 
-     state
-     (get-in @conn [:sessions sid :state])]
+     ;; `session/cancel` is a NOTIFICATION: any client can send any id at any time
+     ;; and never sees an answer. Recording ids we never handed out would let a
+     ;; buggy or hostile editor grow this map without bound, and recording a cancel
+     ;; for a session with no turn in flight would abort the NEXT prompt instead —
+     ;; a turn the user never asked to stop. So a cancel only lands on a session
+     ;; with a turn in flight, and what it writes is a WATERMARK: every turn issued
+     ;; so far is cancelled — the spec cancels the session's ongoing operations —
+     ;; and every turn issued after it is untouched.
+     [before]
+     (swap-vals! conn
+                 (fn [s]
+                   (let [{:keys [state turn]} (get-in s [:sessions sid])]
+                     (if (contains? #{:pending :running} state)
+                       (assoc-in s [:sessions sid :cancel-mark] turn)
+                       s))))]
 
-    ;; `session/cancel` is a NOTIFICATION: any client can send any id at any time
-    ;; and never sees an answer. Remembering ids we never handed out would let a
-    ;; buggy or hostile editor grow `:cancelled` without bound, and remembering a
-    ;; cancel for a session with no turn in flight would abort the NEXT prompt
-    ;; instead — a turn the user never asked to stop.
-    (when (contains? #{:pending :running} state)
-      (swap! conn update :cancelled conj sid)
+    (when (contains? #{:pending :running} (get-in before [:sessions sid :state]))
       (try ((:cancel (:backend @conn)) {:session-id sid})
            (catch Throwable t (tel/log! :warn ["acp: cancel failed" (ex-message t)]))))
     {}))
@@ -990,31 +1173,39 @@
      ^BufferedReader rdr
      (BufferedReader. (InputStreamReader. in StandardCharsets/UTF_8))]
 
-    (try (loop []
+    (try
+      (loop []
 
-           (when-let [line (.readLine rdr)]
-             (when-not (str/blank? line)
-               ;; A stream has an ORDER and a client may pipeline: handing every
-               ;; line to its own thread lets `session/new` overtake the
-               ;; `initialize` it depends on, or one `session/prompt` overtake
-               ;; the `session/load` that has to precede it. Only a prompt runs
-               ;; long enough to deserve a thread — and that is exactly what
-               ;; keeps `session/cancel` answerable mid-turn.
-               (let [m (:msg (decode line))]
-                 (if (= "session/prompt" (get m "method"))
-                   (do (mark-pending! conn (get-in m ["params" "sessionId"]))
-                       (.submit pool
-                                ^Runnable
-                                (fn []
-                                  (handle-line! conn line))))
-                   (handle-line! conn line))))
-             (recur)))
-         (finally (.shutdown pool)
-                  (try (.awaitTermination pool 5 TimeUnit/SECONDS)
-                       (catch InterruptedException _ nil))
-                  (swap! conn assoc :closed? true)
-                  (doseq [sid (keys (:sessions @conn))]
-                    (unregister-connection! sid))))
+        (when-let [line (.readLine rdr)]
+          (when-not (str/blank? line)
+            ;; A stream has an ORDER and a client may pipeline: handing every
+            ;; line to its own thread lets `session/new` overtake the
+            ;; `initialize` it depends on, or one `session/prompt` overtake
+            ;; the `session/load` that has to precede it. Only a prompt runs
+            ;; long enough to deserve a thread — and that is exactly what
+            ;; keeps `session/cancel` answerable mid-turn.
+            (let [m (:msg (decode line))]
+              (if (= "session/prompt" (get m "method"))
+                ;; The ticket travels WITH the line: the worker that runs this
+                ;; prompt must know which turn it is, or a cancel meant for the
+                ;; prompt before it lands on this one.
+                (let [ticket (mark-pending! conn (get-in m ["params" "sessionId"]))]
+                  (.submit pool
+                           ^Runnable
+                           (fn []
+                             (binding [*turn-ticket* ticket]
+                               (handle-line! conn line)))))
+                (handle-line! conn line))))
+          (recur)))
+      (finally (.shutdown pool)
+               (try (.awaitTermination pool 5 TimeUnit/SECONDS) (catch InterruptedException _ nil))
+               (swap! conn assoc :closed? true)
+               (doseq [sid (keys (:sessions @conn))]
+                 (unregister-connection! sid)
+                 ;; Session-scoped MCP servers belong to the CLIENT, not to
+                 ;; the machine: a stdio server would otherwise outlive the
+                 ;; editor that asked for it.
+                 (mcp/clear-session-servers! sid))))
     conn))
 
 ;; =============================================================================
