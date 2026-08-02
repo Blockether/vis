@@ -64,10 +64,13 @@
   (it
     "keeps the sectioned core contract explicit and non-contradictory"
     (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-      ;; Context safety is worth a small fixed prompt cost; keep the whole core below 4.5k.
+      ;; Context safety is worth a small fixed prompt cost; keep the whole core below 4.7k.
       ;; The ratchet must never squeeze out §7's teardown rule again: compressing it to a
-      ;; bare "finish clean" is how sessions started leaking REPLs.
-      (expect (< (count text) 4500))
+      ;; bare "finish clean" is how sessions started leaking REPLs. The budget moved 4.5k →
+      ;; 4.7k exactly once, when REPL-first reproduction and the "unverified until a test
+      ;; covers it" rule landed: those rules pay for themselves, and paying for them by
+      ;; shaving other rules' wording is the squeeze this lock exists to stop.
+      (expect (< (count text) 4700))
       (let
         [steps (mapv #(str/index-of text %)
                      ["`grep` locates unknown code" "`struct_index` every known file"
@@ -111,12 +114,17 @@
           "`ntr.describe()`" "labelled candidates" "not `ntr.keys()`/`items()` to discover results"
           "shape before indexing" "inspect keys/types" "then adapt"
           "do not print it or call `repl` status merely to" "reproduce before editing"
-          "rerun the same check after the fix" "reads, `shell`/`git` `commands`" "Batch independent"
-          "plural args" "Write only files the task asked" "Python extensions"
-          "`run_tests(\"python\")`" "native" "CLI: `vis-agent python -m pytest <paths>`"
-          "on your own and report what you did" "Keep secrets out of answers"
-          "Commit, push, publish" "Treat context as a budget" "act before the provider fails"
-          "Fold obsolete settled work" "one broad `through`/range fold"
+          ;; Reproduction is REPL-first and the reproduction SURVIVES as a suite test:
+          ;; a bare "reproduce" was read as an ad-hoc check that vanished with the session,
+          ;; leaving fixed bugs with nothing pinning them.
+          "a failing `repl_eval` snippet first" "keep that reproduction as a test in the suite"
+          "rerun it after the fix" "unverified until a test covers it"
+          "reads, `shell`/`git` `commands`" "Batch independent" "plural args"
+          "Write only files the task asked" "Python extensions" "`run_tests(\"python\")`" "native"
+          "CLI: `vis-agent python -m pytest <paths>`" "on your own and report what you did"
+          "Keep secrets out of answers" "Commit, push, publish" "Treat context as a budget"
+          "act before the provider fails" "Fold obsolete settled work"
+          "one broad `through`/range fold"
           "When edit-ready and headroom permits, patch before folding"
           "Before unavoidable folds, checkpoint"
           "paths/symbols, hypothesis, edit/test, and dirty files"
