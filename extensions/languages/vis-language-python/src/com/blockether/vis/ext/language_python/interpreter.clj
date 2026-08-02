@@ -30,11 +30,74 @@
                 ["bin/python" "bin/python3"]))
         [".venv" "venv"]))
 
+(defn- toml-table-headers
+  "The dotted paths of the TOML TABLE HEADERS `text` declares, in order — `tool.uv`
+   for `[tool.uv]`, `tool.uv.sources` for `[[tool.uv.sources]]`. A header counts
+   only when it is the whole line (comments allowed after it) and outside a
+   multi-line string, so `[tool.uv]` inside a comment, a description or a
+   docstring never registers. Quotes and whitespace are stripped from segments.
+   This answers WHICH tables a file declares; it is not a TOML parser."
+  [^String text]
+  (letfn [(unquote-seg [s]
+            (let [s (str/trim s)]
+              (if (and (>= (count s) 2)
+                       (or (and (str/starts-with? s "\"") (str/ends-with? s "\""))
+                           (and (str/starts-with? s "'") (str/ends-with? s "'"))))
+                (subs s 1 (dec (count s)))
+                s)))]
+    (loop
+      [[line & more]
+       (str/split-lines text)
+
+       open
+       nil
+
+       acc
+       []]
+
+      (if (nil? line)
+        acc
+        (let
+          [delims
+           (if open [open] ["\"\"\"" "'''"])
+
+           toggled
+           (some (fn [d]
+                   (when (odd? (count (re-seq (re-pattern (java.util.regex.Pattern/quote d)) line)))
+                     d))
+                 delims)
+
+           header
+           (when-not open
+             (some-> (re-matches #"\s*\[\[?\s*([^\[\]]+?)\s*\]\]?\s*(?:#.*)?" line)
+                     second))]
+
+          (recur more
+                 (cond (and open toggled) nil
+                       toggled toggled
+                       :else open)
+                 (if header
+                   (conj acc (str/join "." (map unquote-seg (str/split header #"\."))))
+                   acc)))))))
+
+(defn- declares-table?
+  "Does TOML `text` declare table `path`, or any table beneath it? `[tool.uv]` and
+   `[tool.uv.sources]` both answer true for `\"tool.uv\"`; `[tool.uvicorn]` does not."
+  [^String text ^String path]
+  (boolean (some (fn [h]
+                   (or (= h path) (str/starts-with? h (str path "."))))
+                 (toml-table-headers text))))
+
 (defn- uv-project?
+  "Is `root` uv-managed? A `uv.lock`, or a REAL `[tool.uv]` table (or a subtable of
+   it) in `pyproject.toml` — read as TOML table headers, never as substring soup:
+   `[tool.uvicorn]`, a commented-out `[tool.uv]` and a description that merely
+   mentions one are all NOT uv projects, and picking `uv run python` for them
+   launches the wrong interpreter."
   [root]
   (or (exists? root "uv.lock")
       (and (exists? root "pyproject.toml")
-           (try (str/includes? (slurp (io/file root "pyproject.toml")) "[tool.uv")
+           (try (declares-table? (slurp (io/file root "pyproject.toml")) "tool.uv")
                 (catch Throwable _ false)))))
 
 (defn resolve-command

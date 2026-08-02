@@ -56,6 +56,65 @@
                           (expect (#{"python3" "python"} (first cmd))))
                         (finally (cleanup root))))))
 
+;; ── uv detection reads TOML TABLE HEADERS, not substrings ────────────────────
+;; `[tool.uvicorn]` used to satisfy a `str/includes? "[tool.uv"` check, so a
+;; project that merely depends on uvicorn was launched under `uv run python`.
+(def ^:private uv-project? @#'interp/uv-project?)
+
+(defn- with-pyproject
+  "Run `f` on a throwaway root holding `pyproject.toml` with `toml`."
+  [^String toml f]
+  (let [root (tmp-dir)]
+    (try (spit (io/file root "pyproject.toml") toml) (f (.getPath root)) (finally (cleanup root)))))
+
+(defdescribe uv-detection-test
+             (it "does NOT mistake a [tool.uvicorn] table for a uv project"
+                 (with-pyproject "[project]\nname = \"x\"\n\n[tool.uvicorn]\nport = 8000\n"
+                                 (fn [root]
+                                   (expect (false? (uv-project? root))))))
+             (it "does NOT mistake [tool.uv-dynamic-versioning] for a uv project"
+                 (with-pyproject "[tool.uv-dynamic-versioning]\nstyle = \"pep440\"\n"
+                                 (fn [root]
+                                   (expect (false? (uv-project? root))))))
+             (it "ignores a commented-out [tool.uv] header"
+                 (with-pyproject "[project]\nname = \"x\"\n# [tool.uv] we do not use uv\n"
+                                 (fn [root]
+                                   (expect (false? (uv-project? root))))))
+             (it "ignores [tool.uv] inside a string value"
+                 (with-pyproject "[project]\ndescription = \"see [tool.uv] docs\"\n"
+                                 (fn [root]
+                                   (expect (false? (uv-project? root))))))
+             (it "ignores a header-looking line inside a multi-line string"
+                 (with-pyproject "[project]\nreadme-text = \"\"\"\n[tool.uv]\n\"\"\"\n"
+                                 (fn [root]
+                                   (expect (false? (uv-project? root))))))
+             (it "detects a real [tool.uv] table, trailing comment and all"
+                 (with-pyproject "[tool.uv]  # uv config\nmanaged = true\n"
+                                 (fn [root]
+                                   (expect (true? (uv-project? root))))))
+             (it "detects a quoted [tool.\"uv\"] header"
+                 (with-pyproject "[tool.\"uv\"]\nmanaged = true\n"
+                                 (fn [root]
+                                   (expect (true? (uv-project? root))))))
+             (it "detects a [tool.uv.sources] subtable"
+                 (with-pyproject
+                   "[project]\nname = \"x\"\n\n[tool.uv.sources]\npkg = { path = \"x\" }\n"
+                   (fn [root]
+                     (expect (true? (uv-project? root))))))
+             (it "detects an [[tool.uv.index]] array of tables"
+                 (with-pyproject "[[tool.uv.index]]\nname = \"pypi\"\n"
+                                 (fn [root]
+                                   (expect (true? (uv-project? root))))))
+             (it "still trusts a uv.lock next to a uv-free pyproject"
+                 (let [root (tmp-dir)]
+                   (try (spit (io/file root "pyproject.toml") "[project]\nname = \"x\"\n")
+                        (spit (io/file root "uv.lock") "")
+                        (expect (true? (uv-project? (.getPath root))))
+                        (finally (cleanup root)))))
+             (it "reports nothing for a directory with no pyproject at all"
+                 (let [root (tmp-dir)]
+                   (try (expect (false? (uv-project? (.getPath root)))) (finally (cleanup root))))))
+
 ;; ── live REPL subprocess ─────────────────────────────────────────────────────
 (defdescribe repl-lifecycle-test
              (it "starts, evaluates, persists globals across evals, captures output + errors, stops"
