@@ -97,6 +97,33 @@
   (it "does not stamp a broad Z.ai reasoning override in Vis"
       (expect (= {:name "glm-5.2"} (config/->svar-model :zai-coding-plan {:name "glm-5.2"})))))
 
+(defdescribe
+  display-label-casing-test
+  "A `vis.yml` provider entry has NO `label` key (see `config-spec/provider-keys`),
+   so its `id` is the only casing signal its author has — `display-label` must echo
+   that id verbatim. The old `str/capitalize` fallback force-uppercased the first
+   letter AND lowercased the rest, so an authored `openAI` surfaced as `Openai` in
+   the TUI, in the gateway `/v1/providers` label, and in the companion."
+  (it "echoes an unregistered vis.yml id verbatim, whatever its casing"
+      (with-redefs [registry/provider-by-id (constantly nil)]
+        (expect (= "openAI" (config/display-label :openAI)))
+        (expect (= "ACME" (config/display-label :ACME)))
+        (expect (= "GPT4All" (config/display-label :GPT4All)))
+        (expect (= "my-custom-llm" (config/display-label :my-custom-llm)))
+        (expect (= "ollama" (config/display-label :ollama)))))
+  (it "changes no character of the id — never capitalizes, never lowercases"
+      (with-redefs [registry/provider-by-id (constantly nil)]
+        (doseq [id [:openAI :zAI-coding :OpenRouter :lmStudio :ACME :x]]
+          (expect (= (name id) (config/display-label id))))))
+  (it "a registered provider extension still owns its own branding"
+      (with-redefs [registry/provider-by-id (fn [pid]
+                                              (when (= pid :openai)
+                                                {:provider/id pid :provider/label "OpenAI"}))]
+        (expect (= "OpenAI" (config/display-label :openai)))))
+  (it "falls back to `Provider` only when there is no id at all"
+      (with-redefs [registry/provider-by-id (constantly nil)]
+        (expect (= "Provider" (config/display-label nil))))))
+
 (defn- rm-rf! [^java.io.File f] (when (.exists f) (run! rm-rf! (.listFiles f)) (.delete f)))
 
 (defdescribe

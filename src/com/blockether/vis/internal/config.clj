@@ -313,12 +313,24 @@
          vec)))
 
 (defn display-label
-  "Human-readable label for a provider id. Never persisted."
+  "Human-readable label for a provider id. Never persisted.
+
+   A REGISTERED provider extension owns its own branding (`Anthropic (API Key)`,
+   `LM Studio`, `OpenAI`) and wins. For every other id — anything a caller wrote
+   as `providers: - id: …` in `vis.yml` — that id IS the author's chosen
+   spelling, so it is echoed VERBATIM.
+
+   Never `str/capitalize` here: it force-uppercases the first letter AND
+   lowercases the rest, so an authored `openAI` rendered as `Openai`, `ACME` as
+   `Acme`, and `GPT4All` as `Gpt4all`. A provider entry has no `label` key
+   (see `config-spec/provider-keys`), so the id is the only casing signal the
+   author has — mangling it means the TUI, the gateway `/v1/providers` label,
+   and the companion all disagree with the file on disk."
   [pid]
   (or (:label (registered-provider-metadata pid))
       (some-> pid
               name
-              str/capitalize)
+              not-empty)
       "Provider"))
 
 (defn- trim-trailing-slashes [s] (str/replace (or s "") #"/+$" ""))

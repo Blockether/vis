@@ -2459,12 +2459,15 @@
               :base-url)))
 
 (defn- provider-label-for-id
+  "Registered/preset branding first, else the id VERBATIM — a `vis.yml` id keeps
+   the casing its author typed (see `config/display-label`)."
   [provider-id]
   (or (some-> (registry/provider-by-id provider-id)
               :provider/label)
       (some-> (config/provider-template provider-id)
               :label)
-      (str/capitalize (name provider-id))))
+      (some-> provider-id
+              name)))
 
 (defn- status-entry-label
   [k]
