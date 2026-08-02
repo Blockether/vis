@@ -1,6 +1,6 @@
 # Vis — Security & Dependency Audit
 
-> Generated 2026-08-01.
+> Generated 2026-08-02.
 
 Vis is a coding agent that writes Python into a sandboxed GraalPy runtime,
 keeps durable state outside the model context window, and inspects and changes
@@ -44,8 +44,8 @@ vulnerable, and what does it do with data.*
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 70 unique, across 14 `deps.edn` modules (root + extensions).
-- **Declared jar footprint (direct coords):** ~196 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
+- **Direct dependency coordinates:** 69 unique, across 14 `deps.edn` modules (root + extensions).
+- **Declared jar footprint (direct coords):** ~194 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
 
@@ -182,8 +182,8 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `babashka/fs` | `0.5.34` | EPL-1.0 | 35 KB | 3rd-party |
 | `babashka/process` | `0.6.25` | EPL-1.0 | 23 KB | 3rd-party |
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
-| `com.blockether/fff` | `0.12.1` | MIT | 9 KB | Blockether (in-house) |
-| `com.blockether/imaging` | `0.1.4` | MIT | 20 KB | Blockether (in-house) |
+| `com.blockether/fff` | `0.12.2` | MIT | 10 KB | Blockether (in-house) |
+| `com.blockether/imaging` | `0.1.5` | MIT | 21 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.3.3` | MIT | 9 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.95` | Apache-2.0 | 504 KB | Blockether (in-house) |
 | `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.38` | MIT | 171 KB | Blockether (in-house) |
@@ -205,7 +205,6 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `net.mikera/core.matrix` | `0.63.0` | EPL-1.0 | 130 KB | 3rd-party |
 | `net.mikera/vectorz-clj` | `0.48.0` | LGPL-3.0 | 23 KB | 3rd-party |
 | `org.apache.commons/commons-compress` | `1.28.0` | Apache-2.0 | 1.1 MB | 3rd-party |
-| `org.apache.poi/poi-ooxml` | `5.5.1` | Apache-2.0 | 2.0 MB | 3rd-party |
 | `org.apache.sshd/sshd-core` | `2.15.0` | Apache-2.0 | 934 KB | 3rd-party |
 | `org.babashka/http-client` | `0.4.24` | MIT | 16 KB | 3rd-party |
 | `org.bouncycastle/bcpkix-jdk18on` | `1.85` | Bouncy Castle Licence | 1.3 MB | 3rd-party |
@@ -233,7 +232,7 @@ _Terminal UI (Lanterna)._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `com.blockether/lanterna` | `3.1.5-vis.39` | LGPL-3.0 | 536 KB | Blockether (in-house) |
+| `com.blockether/lanterna` | `3.1.5-vis.42` | LGPL-3.0 | 542 KB | Blockether (in-house) |
 | `org.clojure/clojure` | `1.12.5` | EPL-1.0 | 4.0 MB | 3rd-party |
 | `org.jcodec/jcodec` | `0.2.5` | BSD | 2.0 MB | 3rd-party |
 
@@ -301,7 +300,7 @@ _Rift workspace/FFM integration._
 | License | Count |
 |---|---|
 | EPL-1.0 | 20 |
-| Apache-2.0 | 16 |
+| Apache-2.0 | 15 |
 | MIT | 14 |
 | EPL-2.0 | 5 |
 | BSD-2-Clause | 3 |
@@ -322,7 +321,7 @@ under **Apache-2.0** — **with the copyleft exception(s) below that need legal 
 > relinking obligations. Action: confirm distribution terms with legal, or keep
 > the owning extension as an optional (droppable) jar rather than baking it into
 > the distributed binary (see §4.3).
-> **WARNING — `com.blockether/lanterna` (`3.1.5-vis.39`) is LGPL-3.0** (copyleft). LGPL is generally fine for dynamic
+> **WARNING — `com.blockether/lanterna` (`3.1.5-vis.42`) is LGPL-3.0** (copyleft). LGPL is generally fine for dynamic
 > linking, but **static linking into the GraalVM native image** can trigger
 > relinking obligations. Action: confirm distribution terms with legal, or keep
 > the owning extension as an optional (droppable) jar rather than baking it into
@@ -407,7 +406,6 @@ Heaviest direct artifacts (>= 1 MB):
 | `com.litongjava/sherpa-onnx-java-api` | `1.0.1` | 7.7 MB |
 | `org.clojure/clojure` | `1.12.5` | 4.0 MB |
 | `org.jcodec/jcodec` | `0.2.5` | 2.0 MB |
-| `org.apache.poi/poi-ooxml` | `5.5.1` | 2.0 MB |
 | `tools.jackson.core/jackson-databind` | `3.2.1` | 1.9 MB |
 | `org.bouncycastle/bcpkix-jdk18on` | `1.85` | 1.3 MB |
 | `org.apache.commons/commons-compress` | `1.28.0` | 1.1 MB |

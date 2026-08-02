@@ -28,7 +28,7 @@
 ;; Module dir-name -> one-line blurb for its inventory section. Unknown modules
 ;; still render (just without a blurb), so a new extension never breaks the doc.
 (def blurbs
-  {"core"                    "_Shipped binary runtime — the `vis` CLI, agent loop, HTTP gateway, sandbox._"
+  {"core"                    "_Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._"
    "vis-persistance-sqlite"  "_Durable session store (SQLite + Flyway migrations)._"
    "vis-language-clojure"    "_Clojure language pack (format/lint/structural edits)._"
    "vis-language-python"     "_Python language pack._"
@@ -240,20 +240,21 @@
         ;; not churn the document or fail the gate around a timezone boundary.
         today    (subs (str (java.time.LocalDate/now java.time.ZoneOffset/UTC)) 0 10)]
     (str
-     "# vis — Security & Dependency Audit
+     "# Vis — Security & Dependency Audit
 
 > Generated " today ".
 
-`vis` is a coding agent that writes Python into a sandboxed GraalPy runtime,
+Vis is a coding agent that writes Python into a sandboxed GraalPy runtime,
 keeps durable state outside the model context window, and inspects and changes
 the host project through tools. It ships as one Clojure package
 (`com.blockether.vis.core`, Apache-2.0) plus optional classpath extensions
-under `extensions/`, compiled to a single GraalVM native binary.
+under `extensions/`. Users install the `vis-agent` Bash wrapper, which runs
+live JVM source or a private GraalVM native-image sidecar.
 
 This document is the authoritative security, licensing and software
 supply-chain record for that software. It is maintained by **Blockether**
 (§2) and is written to be relied upon by security, procurement and
-vendor-risk reviewers evaluating `vis` inside **regulated environments** —
+vendor-risk reviewers evaluating Vis inside **regulated environments** —
 financial services, public sector, and any setting with formal
 third-party-risk, software-provenance or SBOM obligations (e.g. EU DORA ICT
 third-party risk, NIS2). It answers, without reading the source: *what is it,
@@ -262,20 +263,22 @@ vulnerable, and what does it do with data.*
 
 ---
 
-## 1. The product — what vis is
+## 1. The product — what Vis is
 
-- **What it is.** `vis` is an LLM coding agent that acts by writing code. It
+- **What it is.** Vis is an LLM coding agent that acts by writing code. It
   drives tasks end-to-end — locate → edit → verify — against the host
   repository, executing its own Python inside a **sandboxed GraalPy runtime**
-  embedded in the binary rather than on the host interpreter.
+  embedded in either the JVM process or native-image runtime rather than on the
+  host interpreter.
 - **Durable, out-of-context state.** Session state (plans, prior results,
   durable memory) lives *outside* the model context window, in a local store,
   so long tasks survive context limits. It is model-agnostic: it works with any
   text-producing LLM, with no provider lock-in.
-- **How it ships.** A single self-contained **GraalVM native binary** — no JVM,
-  no Python install, no external services required to run. Optional
-  `extensions/*` add channels (TUI), languages, persistence,
-  voice and search; each is a droppable classpath module.
+- **How it ships.** One public **`vis-agent` Bash wrapper** with two runtime
+  choices: live JVM source, or a private self-contained GraalVM native-image
+  sidecar. The native executable is never installed as the public command.
+  Optional `extensions/*` add channels (TUI), languages, persistence, voice and
+  search; each is a droppable classpath module.
 - **Where it runs.** Locally, on a developer machine or CI runner. It reaches
   an LLM provider only for inference; everything else is on-box (§9).
 
@@ -292,7 +295,7 @@ vulnerable, and what does it do with data.*
 
 ## 2. Blockether — who maintains it
 
-`vis` is built and maintained by **Blockether** (BLOCKETHER SP. Z O.O.),
+Vis is built and maintained by **Blockether** (BLOCKETHER SP. Z O.O.),
 a software consultancy and development company based in Kraków, Poland
 (KRS 0001171097, NIP 675-18-13-221).
 
@@ -316,7 +319,7 @@ property of their respective owners; their use here is descriptive and does
 **not** imply endorsement.
 
 - **GraalVM™**, **Oracle®**, **Java™** and **OpenJDK** are trademarks of Oracle
-  and/or its affiliates. `vis` embeds and builds with the **Community Edition**
+  and/or its affiliates. Vis embeds and builds with the **Community Edition**
   distribution (§4).
 - **Python®** and the Python logo are trademarks of the **Python Software
   Foundation (PSF)**; the bundled CPython standard library is under the PSF
@@ -330,10 +333,12 @@ property of their respective owners; their use here is descriptive and does
 
 ## 4. Technology & distribution
 
-`vis` ships as a **GraalVM native binary**. The two GraalVM layers, the
+The native distribution ships the public **`vis-agent` Bash wrapper** beside a
+private **GraalVM native-image runtime**. The source distribution ships that
+same wrapper and runs the JVM checkout directly. The two GraalVM layers, the
 embedded language runtime and models, and the one copyleft UI dependency are
 each **FOSS and cleared for commercial redistribution**. There is **no Oracle
-license on the distributed binary**.
+license on the distributed native runtime**.
 
 ### 4.1 The two GraalVM layers
 
@@ -539,7 +544,7 @@ Notes:
 
 ## 9. Data governance
 
-`vis` is designed to keep data **on-box**. From a data-governance standpoint:
+Vis is designed to keep data **on-box**. From a data-governance standpoint:
 
 - **No telemetry.** vis ships **no analytics, no usage tracking and no
   phone-home**. It does not emit metrics or events to Blockether or any third
@@ -562,7 +567,7 @@ Notes:
 
 ## 10. Commercial licensing, support & warranty
 
-`vis` and its first-party code are distributed **\"AS IS\", without warranty of
+Vis and its first-party code are distributed **\"AS IS\", without warranty of
 any kind**, express or implied — as stated in the Apache-2.0 `LICENSE` and in
 the license of every third-party dependency in §5. The open-source grant
 carries **no warranty, no guarantee of fitness, and no liability** on the part
@@ -596,7 +601,7 @@ agreement with Blockether** — request one at <contact@blockether.com>
 
 ## 11. Security contact & vulnerability disclosure
 
-Report suspected vulnerabilities in `vis` privately to
+Report suspected vulnerabilities in Vis privately to
 **<security@blockether.com>**. Please include affected version / commit,
 reproduction steps and impact. Do **not** open a public issue for an
 undisclosed vulnerability. Coordinated-disclosure timelines and any remediation
