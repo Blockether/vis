@@ -2,6 +2,15 @@
   <img src="logo.png" alt="vis logo" width="240"/>
 </p>
 
+<div align="center">
+  <h2>
+    <a href="https://clojars.org/com.blockether/vis"><img src="https://img.shields.io/clojars/v/com.blockether/vis?color=%23007ec6&label=clojars" alt="Clojars version"></a>
+    <a href="https://github.com/Blockether/vis/blob/main/LICENSE">
+      <img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License - Apache 2.0">
+    </a>
+  </h2>
+</div>
+
 # Vis
 
 Vis is a coding agent that writes Python into a sandboxed GraalPy runtime, keeps durable state outside the context window, and inspects/changes the host project through tools.
@@ -27,15 +36,14 @@ vis-agent update --native   # (re)download just the native runtime
 
 Native runtimes are published for Linux x64 and arm64.
 
-### Hosts to allowlist
+**Clojure library:**
 
-| Host | Needed for |
-|---|---|
-| `github.com` | git clone, installer and release bytes |
-| `api.github.com` | release resolution for install/update |
-| `release-assets.githubusercontent.com` | release bundle bytes |
-| `repo1.maven.org`, `repo.clojars.org` | JVM/source dependency resolution |
-| your model provider's API | running the agent |
+```clojure
+;; deps.edn
+{:deps {com.blockether/vis {:mvn/version "0.1.24"}}}
+```
+
+Every release deploys the whole monorepo to Clojars at one shared version, and `com.blockether/vis` already depends on every bundled extension, so that single coordinate gives the full agent. Depend on one package (`com.blockether/vis-channel-tui`, `com.blockether/vis-provider-anthropic`, `com.blockether/vis-language-python`, …) only when you embed a part of it. Writing your own extension: [Extending Vis](resources/vis-docs/extending.md).
 
 ## Companion app (iPhone / Android)
 
@@ -78,30 +86,6 @@ substitution. There is no jar runtime: `target/vis.jar` is a build artifact.
 Full flag, update, state, and environment matrix:
 [Runtime distributions](resources/vis-docs/distributions.md).
 
-## Clojars packages
+## License
 
-[![Clojars Project](https://img.shields.io/clojars/v/com.blockether/vis.svg)](https://clojars.org/com.blockether/vis)
-
-Every release deploys the whole monorepo to Clojars at one shared version: the
-agent itself plus each channel, provider, language, foundation, and workspace
-extension.
-
-```clojure
-;; deps.edn
-{:deps {com.blockether/vis {:mvn/version "0.1.24"}}}
-```
-
-`com.blockether/vis` already depends on every bundled extension, so that single
-coordinate gives the full agent. Depend on one package
-(`com.blockether/vis-channel-tui`, `com.blockether/vis-provider-anthropic`,
-`com.blockether/vis-language-python`, …) only when you embed a part of it.
-Writing your own extension: [Extending Vis](resources/vis-docs/extending.md).
-
-## Build / develop
-
-```bash
-clojure -T:build native          # builds the private native runtime
-clojure -M:format check
-clojure -M:lint src extensions test build.clj
-clojure -M:test
-```
+Apache License 2.0 — see [LICENSE](LICENSE).

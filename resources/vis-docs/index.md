@@ -127,16 +127,6 @@ coordinate gives the full agent. Depend on one package
 (`com.blockether/vis-channel-tui`, `com.blockether/vis-provider-anthropic`,
 `com.blockether/vis-language-python`, …) only when you embed a part of it.
 
-### Hosts to allowlist
-
-| Host | Needed for |
-|---|---|
-| `github.com` | git clone, installer and release bytes |
-| `api.github.com` | release resolution for install/update |
-| `release-assets.githubusercontent.com` | release bundle bytes |
-| `repo1.maven.org`, `repo.clojars.org` | JVM/source dependency resolution |
-| your model provider's API | running the agent |
-
 ## Choose native, tagged source, or dev
 
 The wrapper owns runtime selection, and it follows releases unless told
