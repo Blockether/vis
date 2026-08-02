@@ -1,8 +1,8 @@
 {:site {:title "Vis"
-        :tagline "A coding agent that treats context as an environment, not a transcript."
+        :tagline "A coding agent that keeps its state in a running program, not in the chat."
         :repo "https://github.com/Blockether/vis"
         :headline "Context is an environment, not a transcript."
-        :sub "Other agents shovel every message into a growing window and panic-compact when it overflows. Vis keeps state in a real runtime the model talks to through code — vars, a database, query results — so the window holds only what the model needs right now. No emergency compaction. No sliding windows. Works with any text model."
+        :sub "Forty steps into a task, most agents are still paying for step one. Vis holds state in a live runtime the model talks to through code — vars, a database, query results — and pulls the handful of values it actually needs. Works with any text model."
         :cta {:label "Get started" :slug "token-optimization"}}
  :pages [{:file "index.md" :title "Introduction" :section nil :order 0
           :blurb "What Vis is and the context-as-environment idea — start here."}
