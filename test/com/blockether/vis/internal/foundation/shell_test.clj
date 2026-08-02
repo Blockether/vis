@@ -147,24 +147,52 @@
                            (expect (true? (get r "timed_out")))
                            (expect (nil? (get r "exit")))
                            (expect (< dt 15000)))))))
-  (it "keeps BOTH the head and the tail of huge output, dropping only the middle"
-      (with-shell-on (fn []
-                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         ;; ~72k chars of stdout — far over the head+tail budget.
-                         (let
-                           [r (shell-run* {}
-                                          (str "echo HEAD_MARKER; " "for i in $(seq 1 2000); do "
-                                               "echo 'filler-filler-filler-filler'; done; "
-                                               "echo TAIL_MARKER"))
-                            out (get r "stdout")]
+  (it "captures a machine-readable payload WHOLE so the caller can parse it"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            ;; ~45k chars of JSON — the size of one ordinary `gh … --json` reply. The
+            ;; old 4k+12k capture spliced its omitted-marker at char 4000, so every
+            ;; `json.loads(r["commands"][0]["stdout"])` died with "Invalid control
+            ;; character" on output a caller could trivially hold.
+            (let
+              [r (shell-run*
+                   {}
+                   (str "printf '['; for i in $(seq 1 1000); do "
+                        "printf '{\"n\":%s,\"pad\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}' \"$i\"; "
+                        "[ \"$i\" -lt 1000 ] && printf ','; done; printf ']'"))
+               out (get r "stdout")]
 
-                           (expect (pos? (get r "stdout_omitted_chars")))
-                           ;; the opening line is NO LONGER swallowed (the old tail-only cap ate it)
-                           (expect (str/includes? out "HEAD_MARKER"))
-                           ;; the closing summary still survives
-                           (expect (str/includes? out "TAIL_MARKER"))
-                           ;; and the drop is made visible, not silent
-                           (expect (str/includes? out "chars omitted")))))))
+              (expect (= 0 (get r "stdout_omitted_chars")))
+              (expect (nil? (get r "note")))
+              (expect (> (count out) 40000))
+              ;; whole and well-formed: both ends present and every element survived
+              (expect (str/starts-with? out "["))
+              (expect (str/ends-with? (str/trimr out) "]"))
+              (expect (= 1000 (count (re-seq #"\"n\":" out))))
+              (expect (not (str/includes? out "chars omitted"))))))))
+  (it "keeps BOTH the head and the tail of huge output, dropping only the middle"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            ;; ~700k chars of stdout — far over the head+tail capture budget.
+            (let
+              [r (shell-run* {}
+                             (str "echo HEAD_MARKER; " "for i in $(seq 1 12000); do "
+                                  "echo 'filler-filler-filler-filler-filler-filler'; done; "
+                                  "echo TAIL_MARKER"))
+               out (get r "stdout")]
+
+              (expect (pos? (get r "stdout_omitted_chars")))
+              ;; the opening line is NO LONGER swallowed (the old tail-only cap ate it)
+              (expect (str/includes? out "HEAD_MARKER"))
+              ;; the closing summary still survives
+              (expect (str/includes? out "TAIL_MARKER"))
+              ;; and the drop is made visible, not silent
+              (expect (str/includes? out "chars omitted"))
+              ;; …including WHY a parser will now choke on it
+              (expect (str/includes? (get r "note") "stdout truncated"))
+              (expect (str/includes? (get r "note") "no longer parses")))))))
   (it "honors a timeout above the 120s default (up to the 600s cap)"
       ;; `timeout_secs` is group scope on the envelope now, so the clamp is
       ;; asserted on the helper directly instead of burning wall-clock.

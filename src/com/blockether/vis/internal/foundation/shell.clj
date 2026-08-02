@@ -71,15 +71,23 @@
 (def ^:private max-timeout-secs 600)
 
 (def ^:private max-sync-head-chars
-  "Prefix of a SYNC stream always kept: the command's OPENING context —
+  "Prefix of a SYNC stream always CAPTURED: the command's OPENING context —
    compile errors, the first failing assertion, the banner that says WHAT ran."
-  4000)
+  100000)
 
 (def ^:private max-sync-tail-chars
-  "Suffix of a SYNC stream always kept: build / test failures and the final
+  "Suffix of a SYNC stream always CAPTURED: build / test failures and the final
    summary live at the END. Only the MIDDLE is dropped when a stream is huge —
-   never the head, never the tail — so nothing important silently disappears."
-  12000)
+   never the head, never the tail — so nothing important silently disappears.
+
+   head+tail is the CAPTURE budget, NOT the display budget. The old 4k+12k pair
+   mangled every ordinary machine-readable payload above 16k chars: a plain
+   `gh issue list --json …` (21k chars) came back with the omitted-marker spliced
+   at char 4000, so `json.loads(r[\"commands\"][0][\"stdout\"])` died on
+   \"Invalid control character\" EVERY time. Cards clip separately
+   ([[clip-stream]]) and the loop clips the wire, so capturing a parseable
+   stream costs context nothing."
+  300000)
 
 (def ^:private max-bg-lines
   "Ring-buffer cap per background shell; older lines are dropped (counted)."
@@ -150,6 +158,26 @@
      ;; Exact dropped-char count: the text now carries an inline marker, so a
      ;; caller can SEE both that it is no longer parseable and how much is gone.
      :omitted (if @trunc (- (long @total) cap) 0)}))
+
+(defn- truncation-note
+  "Note for a command whose capture lost a middle. Truncation splices a marker
+   into the text, so the stream is no longer valid JSON/CSV — say so, and say
+   what to do, instead of leaving a caller to decode a parser's
+   \"Invalid control character\" on its own. nil when nothing was dropped."
+  [out err]
+  (let
+    [dropped
+     (fn [label m]
+       (let [n (long (or (:omitted m) 0))]
+         (when (pos? n) (str label " truncated · " n " chars dropped from the middle"))))
+
+     parts
+     (keep identity [(dropped "stdout" out) (dropped "stderr" err)])]
+
+    (when (seq parts)
+      (str (str/join " · " parts)
+           " — the text carries an inline marker and no longer parses; narrow the output"
+           " (`--jq`, `--limit`, `head -c`) or redirect it to a file and read that."))))
 
 (defn- ->pos-long
   "Coerce a GraalPy-crossed numeric option to a long (floats round), or throw a
@@ -488,7 +516,8 @@
    ;; how much is gone, and 0 means nothing was.
    "stdout_omitted_chars" 0
    "stderr_omitted_chars" 0
-   ;; Why a command produced no process at all (its dir refused, unspawnable).
+   ;; Why a command produced no process at all (its dir refused, unspawnable), or
+   ;; that a captured stream lost its middle and no longer parses.
    "status" nil
    "note" nil})
 
@@ -591,7 +620,10 @@
                        ;; 0 exactly when nothing was dropped, so no truncation flag is owed
                        ;; beside it.
                        "stdout_omitted_chars" (long (or (:omitted out) 0))
-                       "stderr_omitted_chars" (long (or (:omitted err) 0))})
+                       "stderr_omitted_chars" (long (or (:omitted err) 0))
+                       ;; A dropped middle makes the stream unparseable: name it here rather
+                       ;; than let a caller's parser fail with an opaque message.
+                       "note" (truncation-note out err)})
            ;; Request scope, IDENTICAL for every entry of a batch: carried as metadata
            ;; so the group summarises one `cwd`/`timeout_secs` instead of every entry
            ;; repeating them, and nothing extra crosses to Python. A relative dir is
@@ -1725,6 +1757,37 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
 
     (if (> (count s) n) (str (subs s 0 (max 0 (dec n))) "…") s)))
 
+(def ^:private card-head-chars
+  "Head of a stream kept in a CARD. Display-only: capture stays whole."
+  4000)
+
+(def ^:private card-tail-chars
+  "Tail of a stream kept in a CARD — failures and summaries live at the END."
+  12000)
+
+(defn- clip-stream
+  "DISPLAY clip for a captured stream: keep the head and the tail, splice a
+   visible omitted-count marker into the middle. The RESULT keeps the whole
+   capture (up to [[max-sync-head-chars]]+[[max-sync-tail-chars]]) so
+   `json.loads(r[\"commands\"][0][\"stdout\"])` works; only the card is clipped."
+  [s]
+  (let
+    [head
+     (long card-head-chars)
+
+     tail
+     (long card-tail-chars)
+
+     cap
+     (+ head tail)
+
+     n
+     (long (count (str s)))]
+
+    (if-not (and (string? s) (> n cap))
+      s
+      (str (subs s 0 head) "\n\n…[" (- n cap) " chars omitted]…\n\n" (subs s (- n tail))))))
+
 (defn- duration-label
   "Human duration for shell card chips/status sections."
   [ms]
@@ -1895,8 +1958,9 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
 
      body
      (->> [(shell-section "COMMAND" (format-shell-command (get r "command")) "bash")
-           (shell-section "STATUS" status) (shell-section "STDOUT" (get r "stdout") "bash")
-           (shell-section "STDERR" (get r "stderr"))]
+           (shell-section "STATUS" status)
+           (shell-section "STDOUT" (clip-stream (get r "stdout")) "bash")
+           (shell-section "STDERR" (clip-stream (get r "stderr")))]
           (remove nil?)
           (str/join "\n\n"))]
 
@@ -2123,7 +2187,8 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
      (str
        "Always `stage`, `id`, `cwd`, `commands`, timing/exit fields, `note`; run adds `timeout_secs`; "
        "lifecycle adds `pid`, `status`, stage fields. Each command carries its text, timing/exit, "
-       "stdout/stderr with truncation counts, status, note. `logs`/`wait` put output in `lines`; "
+       "stdout/stderr captured whole (truncation counts say what a huge stream lost), status, note. "
+       "`logs`/`wait` put output in `lines`; "
        "a `wait` adds `until`, the total `is_matched`, and the `matched` line.")
      :name "shell"
      :description
