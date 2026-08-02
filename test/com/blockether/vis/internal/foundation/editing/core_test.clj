@@ -924,7 +924,7 @@
          (read-file path)]
 
         (expect (= [[1 "   indented"] [2 "plain"]] (:lines out)))))
-  (it "(cat path n) reads first n lines and sets :next-offset when more remain"
+  (it "(read-file path n) reads first n lines and sets :next-offset when more remain"
       (let
         [body
          (string/join "\n" (map #(str "line-" %) (range 1 11)))
@@ -1321,6 +1321,35 @@
         (expect (= :ext.foundation.editing/invalid-cat-args (err-type #(cat-tool {"files" [""]}))))
         (expect (= :ext.foundation.editing/invalid-cat-args (err-type #(cat-tool {"files" [nil]}))))
         (expect (= :ext.foundation.editing/invalid-cat-args (err-type #(cat-tool {"files" []}))))))
+  (it "a batch rejection quotes the tool's OWN array key, never the other tool's"
+      (let
+        [cat-tool
+         (private-fn "cat-tool")
+
+         ls-tool
+         (private-fn "ls-tool")
+
+         msg
+         (fn [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-message e))))
+
+         cat-msg
+         (msg #(cat-tool {"files" [""]}))
+
+         ls-msg
+         (msg #(ls-tool {"paths" [""]}))]
+
+        ;; `cat` batches `files`; `ls`/`struct_index` batch `paths`. A shared
+        ;; normalizer must not tell a caller to fix a key that tool never takes.
+        (expect (string/includes? cat-msg "`files`"))
+        (expect (not (string/includes? cat-msg "`paths`")))
+        (expect (string/includes? ls-msg "`paths`"))
+        (expect (not (string/includes? ls-msg "`files`")))
+        ;; The positional form takes an options DICT: there is no `(cat path n)`
+        ;; line-count arity, so a bare number is a rejection, not a short read.
+        (expect (= :ext.foundation.editing/invalid-cat-args
+                   (try (cat-tool "deps.edn" 5)
+                        nil
+                        (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
   (it "ls refuses a FILE and names `cat` as the replacement call"
       (let
         [_

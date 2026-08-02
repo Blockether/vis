@@ -6,13 +6,15 @@
    1. Structured helpers for read / tree / search:
 
         (cat path)            ; -> {:path :anchors {<N:hash> text…} :next-offset N? :truncated? B}
-        (cat path n)          ; first n lines from line 1
-        (cat path offset n)   ; n lines starting at line `offset` (1-based)
+        (cat path opts)       ; opts DICT only: ranges [[s e]…] / anchor A|[A1 A2] / tail N
         (cat path :tail)      ; last 400 lines (tail)
         (cat path :tail n)    ; last n lines
         (ls dir)              ; a DIRECTORY -> shallow listing {path, entries [{name path type size}], depth}
-        (ls dir opts)         ; opts keys: depth (recurse) / is_hidden. `cat` on a
-                              ; directory refuses and points at `ls`, and vice versa.
+        (ls dir opts)         ; opts keys: depth (recurse) / is_hidden
+                              ; Batch arg keys are NOT interchangeable: cat takes `files`,
+                              ; ls and struct_index take `paths`. `cat` on a directory
+                              ; refuses and points at `ls`, and vice versa; a nil/blank
+                              ; path throws before any I/O.
         (grep query)         ; -> content hits (anchored) + ranked file-NAME matches;
                               ; query = a term or list of terms (OR), smart-case
                               ; substring. Opts: paths/include/limit/is_hidden
@@ -4060,15 +4062,17 @@
       [(long (first nums)) (long (last nums))])))
 
 (defn- batch-path-specs
-  "Normalize a `paths` BATCH into ONE option map per read, in request order. An
-   entry is either a plain path string — the call's shared options apply to it —
+  "Normalize a BATCH argument — `cat`'s `files`, `ls`/`struct_index`'s `paths` —
+   into ONE option map per read, in request order. An entry is either a plain path
+   string — the call's shared options apply to it —
    or an object `{\"path\" \"…\", …}` whose OWN selectors (`ranges`, `anchor`,
    `tail`, …) override the shared ones, so a single call can read a DIFFERENT
-   region of every file. A malformed entry fails the whole call instead of
-   silently dropping a path."
-  [tool err-type shared entries]
+   region of every file. `arg-key` is the CALLER's own array key, so a rejection
+   quotes the key that tool actually accepts instead of another tool's. A
+   malformed entry fails the whole call instead of silently dropping a path."
+  [tool arg-key err-type shared entries]
   (when-not (and (sequential? entries) (seq entries))
-    (throw (ex-info (str tool " `paths` must be a non-empty array of paths")
+    (throw (ex-info (str tool " `" arg-key "` must be a non-empty array of paths")
                     {:type err-type :got entries})))
   (mapv (fn [e]
           (let
@@ -4077,7 +4081,7 @@
                      :else nil)]
             (when-not (and (string? p) (seq (str/trim p)))
               (throw (ex-info
-                       (str tool " `paths` entries must be a path string or a {\"path\": …} object")
+                       (str tool " `" arg-key "` entries must be a path string or a {\"path\": …} object")
                        {:type err-type :got e})))
             (assoc (merge shared (when (map? e) (dissoc e "path"))) "path" p)))
         entries))
@@ -4276,6 +4280,7 @@
     (if (and (= 1 (count args)) (map? a) (contains? a "files"))
       (let
         [specs (batch-path-specs "cat"
+                                 "files"
                                  :ext.foundation.editing/invalid-cat-args
                                  (dissoc a "files")
                                  (get a "files"))]
@@ -4337,6 +4342,7 @@
 
      specs
      (batch-path-specs "ls"
+                       "paths"
                        :ext.foundation.editing/invalid-ls-args
                        (dissoc m "paths" "path")
                        entries)
@@ -5239,6 +5245,7 @@
 
        specs
        (batch-path-specs "struct_index"
+                         "paths"
                          :ext.foundation.editing/invalid-index-args
                          (dissoc args "paths" "include_occurrences")
                          entries)

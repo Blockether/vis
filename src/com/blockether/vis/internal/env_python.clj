@@ -2476,7 +2476,8 @@
          "Sandbox policy denied "
          sandbox-denial-operation
          ": the resource is outside approved filesystem roots. "
-         "Use cat(path) to read, patch(path) to edit, repl_eval(language, code) for project code, "
+         "Use cat(path) to read, patch([{\"path\": p, \"from_anchor\": a, \"replace\": s}]) to edit, "
+         "repl_eval(language, code) for project code, "
          "or ask the USER to add the path to workspace.filesystem in vis.yml and run /reload. Original error: ")
        sandbox-denied?
        (str "Your sandbox has NO real filesystem / native / process access — "
