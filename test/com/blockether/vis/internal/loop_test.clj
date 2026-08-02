@@ -4507,7 +4507,7 @@
 
         (expect (nil?
                   (fallback error {:on-auth-error :fallback-provider} {:provider :openai-codex})))
-        (expect (nil? (fallback error {} {})))))
+        (expect (= nil (fallback error {} {})))))
   (it "threads the auth-fallback retry without consuming another retry budget"
       (let
         [next-counters
@@ -4518,6 +4518,107 @@
 
         (expect (= [2 1 1] (next-counters {::lp/retry-auth-fallback {}} base))))))
 
+(defdescribe
+  auth-cooldown-routing-test
+  "A 401 fallback must OUTLIVE its iteration. The rescue route lives in a
+   per-iteration atom, so before the cooldown every next iteration re-sent to the
+   dead provider: 20 401s and 19 fallbacks in a quarter of an hour (issue #82)."
+  (it "keeps a released provider excluded on the NEXT iteration and re-admits it on success"
+      (let
+        [cooldown @#'lp/provider-auth-cooldown
+
+         note! @#'lp/note-provider-auth-cooldown!
+
+         request-ok! @#'lp/note-provider-request-ok!
+
+         apply-cooldown @#'lp/apply-auth-cooldown-routing
+
+         base {:on-transient-error :fallback-model-in-the-same-provider}]
+
+        (try (reset! cooldown {})
+             ;; Iteration 1 exhausts auth recovery and falls back: FIRST trip, warns.
+             (expect (= true (note! :rbi-genai)))
+             ;; A repeat inside the window is not a first trip (logged at :debug).
+             (expect (= false (note! :rbi-genai)))
+             ;; Iteration 2 therefore STARTS with the dead provider released.
+             (expect (= {:on-transient-error :hybrid
+                         :on-auth-error :fallback-provider
+                         :exclude-providers #{:rbi-genai}}
+                        (apply-cooldown base)))
+             ;; An accepted request (re-login, rotated key) re-admits it immediately.
+             (request-ok! {:provider :rbi-genai})
+             (expect (= base (apply-cooldown base)))
+             (finally (reset! cooldown {})))))
+  (it "expires with the window and never excludes an explicitly pinned provider"
+      (let
+        [cooldown @#'lp/provider-auth-cooldown
+
+         apply-cooldown @#'lp/apply-auth-cooldown-routing
+
+         now (System/currentTimeMillis)]
+
+        (try
+          ;; Expired entries are pruned, and routing passes through untouched.
+          (reset! cooldown {:rbi-genai {:until (- now 1) :since (- now 60000) :hits 3}})
+          (expect (= {} (apply-cooldown {})))
+          (expect (= {} @cooldown))
+          ;; An EXPLICIT pin outranks the cooldown: the caller asked for that
+          ;; provider, so it is called (and its own 401 re-arms the window).
+          (reset! cooldown {:rbi-genai {:until (+ now 60000) :since now :hits 1}})
+          (expect (= {:provider :rbi-genai :model "m"}
+                     (apply-cooldown {:provider :rbi-genai :model "m"})))
+          (expect (= {:force-provider :rbi-genai} (apply-cooldown {:force-provider :rbi-genai})))
+          (finally (reset! cooldown {})))))
+  (it "reports the cooldown for observability"
+      (let [cooldown @#'lp/provider-auth-cooldown]
+        (try (reset! cooldown {})
+             (@#'lp/note-provider-auth-cooldown! :rbi-genai)
+             (let [metrics (lp/auth-cooldown-metrics)]
+               (expect (= #{:rbi-genai} (:cooled-providers metrics)))
+               (expect (= 300000 (:cooldown-ms metrics)))
+               (expect (= 1 (:hits (get (:cooldowns metrics) :rbi-genai)))))
+             (finally (reset! cooldown {}))))))
+
+(defdescribe
+  router-with-pinned-model-test
+  "A session pick naming a model only the provider's LIVE catalog lists must still
+   BIND. It used to validate away to `{}` and the turn silently ran the default
+   model while the picker showed the pick as applied (issue #81)."
+  (let
+    [router
+     {:providers [{:id :openai-codex :models [{:name "gpt-5.4"}]}
+                  {:id :zai-coding-plan :models [{:name "glm-4.7"}]}]}
+
+     materialise @#'lp/router-with-pinned-model
+
+     forced @#'lp/forced-routing-for-pref]
+
+    (it "a config-unknown model alone forces NOTHING — the regression"
+        (expect (= {} (forced router :zai-coding-plan "glm-4.8"))))
+    (it "materialising the pin makes the pick force routing and own the display root"
+        (let
+          [pinned (materialise router :zai-coding-plan "glm-4.8")]
+
+          (expect (= [{:name "glm-4.7"} {:name "glm-4.8"}]
+                     (:models (second (:providers pinned)))))
+          (expect (= {:provider :zai-coding-plan :model "glm-4.8"}
+                     (forced pinned :zai-coding-plan "glm-4.8")))
+          ;; …and display/cost attribution follows the same router.
+          (expect (= :zai-coding-plan
+                     (:provider (lp/resolve-effective-model (lp/router-for-model pinned
+                                                                                "glm-4.8")))))))
+    (it "accepts the id as a string, exactly as the session pref stores it"
+        (expect (= {:provider :zai-coding-plan :model "glm-4.8"}
+                   (forced (materialise router "zai-coding-plan" "glm-4.8")
+                           "zai-coding-plan"
+                           "glm-4.8"))))
+    (it "leaves the router untouched without a real pin"
+        ;; Already listed, unknown provider, no provider, blank model.
+        (expect (= router (materialise router :zai-coding-plan "glm-4.7")))
+        (expect (= router (materialise router :nope "glm-4.8")))
+        (expect (= router (materialise router nil "glm-4.8")))
+        (expect (= router (materialise router :zai-coding-plan "   ")))
+        (expect (= router (materialise router :zai-coding-plan nil))))))
 (defdescribe
   post-refresh-propagation-backoff-test
   (describe

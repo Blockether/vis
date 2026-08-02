@@ -6376,7 +6376,8 @@
              not-empty)
 
      provider-by-id
-     (fn [id] (some #(when (= id (:id %)) %) (:providers config)))
+     (fn [id]
+       (some #(when (= id (:id %)) %) (:providers config)))
 
      tagged-value
      (or (get config provider-key) implicit-provider)
@@ -6386,16 +6387,16 @@
            (string? tagged-value) (keyword tagged-value))
 
      whole-model?
-     (boolean (some #(= requested-model (config/model-name %))
-                    (:models (provider-by-id tagged))))
+     (boolean (some #(= requested-model (config/model-name %)) (:models (provider-by-id tagged))))
 
      slash
      (when (and requested-model (not whole-model?))
        (when-let [idx (str/index-of requested-model "/")]
-         (let [idx (long idx)
-               prefix (keyword (subs requested-model 0 (long idx)))]
-           (when (provider-by-id prefix)
-             [prefix (not-empty (subs requested-model (inc idx)))]))))
+         (let
+           [idx (long idx)
+            prefix (keyword (subs requested-model 0 (long idx)))]
+
+           (when (provider-by-id prefix) [prefix (not-empty (subs requested-model (inc idx)))]))))
 
      provider
      (or (first slash) tagged)
@@ -6651,15 +6652,18 @@
          (System/currentTimeMillis)
 
          after
-         (swap! provider-auth-cooldown
-                (fn [m]
-                  (let [prev (get m pid)
-                        live? (and prev (> (long (:until prev)) now))]
-                    (assoc m
-                           pid
-                           {:until (+ now (long AUTH_COOLDOWN_MS))
-                            :since (if live? (:since prev) now)
-                            :hits (if live? (inc (long (:hits prev))) 1)}))))]
+         (swap! provider-auth-cooldown (fn [m]
+                                         (let
+                                           [prev
+                                            (get m pid)
+
+                                            live?
+                                            (and prev (> (long (:until prev)) now))]
+
+                                           (assoc m
+                                             pid {:until (+ now (long AUTH_COOLDOWN_MS))
+                                                  :since (if live? (:since prev) now)
+                                                  :hits (if live? (inc (long (:hits prev))) 1)}))))]
 
         (= 1 (long (:hits (get after pid))))))))
 
@@ -6667,21 +6671,20 @@
   "Close the auth cooldown for `pid`; called once the provider accepts a request.
    Returns true when a cooldown was actually cleared."
   [pid]
-  (boolean
-    (when (and pid (contains? @provider-auth-cooldown pid))
-      (swap! provider-auth-cooldown dissoc pid)
-      true)))
+  (boolean (when (and pid (contains? @provider-auth-cooldown pid))
+             (swap! provider-auth-cooldown dissoc pid)
+             true)))
 
 (defn- auth-cooled-providers
   "Set of providers whose credentials are still inside their auth cooldown. Prunes
    expired entries on the way so the map cannot grow without bound."
   []
   (let [now (System/currentTimeMillis)]
-    (set (keys (swap! provider-auth-cooldown
-                      (fn [m]
-                        (into {}
-                              (filter (fn [[_ v]] (> (long (:until v)) now)))
-                              m)))))))
+    (set (keys (swap! provider-auth-cooldown (fn [m]
+                                               (into {}
+                                                     (filter (fn [[_ v]]
+                                                               (> (long (:until v)) now)))
+                                                     m)))))))
 
 (defn auth-cooldown-metrics
   "Observability snapshot of the per-provider auth cooldown: the window length and
@@ -6711,9 +6714,10 @@
 
     (if (empty? cooled)
       current
-      (cond-> (-> current
-                  (assoc :on-auth-error :fallback-provider)
-                  (update :exclude-providers (fnil into #{}) cooled))
+      (cond->
+        (-> current
+            (assoc :on-auth-error :fallback-provider)
+            (update :exclude-providers (fnil into #{}) cooled))
         (or (nil? (:on-transient-error current))
             (= :fallback-model-in-the-same-provider (:on-transient-error current)))
         (assoc :on-transient-error :hybrid)))))
@@ -6753,8 +6757,7 @@
                        (< (long (count kept)) (long AUTH_REFRESH_WINDOW_MAX))
                        (conj now)))))]
 
-    (> (long (count (get after pid)))
-       (long (count (live (get before pid)))))))
+    (> (long (count (get after pid))) (long (count (live (get before pid)))))))
 
 (defn auth-refresh-metrics
   "Observability snapshot of the OAuth-refresh circuit breaker. Returns the
@@ -6892,27 +6895,33 @@
   (update router
           :providers
           (fn [provider-entries]
-            (mapv
-              (fn [{:keys [id] :as provider-entry}]
-                (if-let [get-token-fn
-                         (some-> (registry/provider-by-id id)
-                                 :provider/get-token-fn)]
-                  (try
-                    (let [{:keys [token api-url llm-headers responses-path]} (get-token-fn)]
-                      (cond-> provider-entry
-                        (some? token) (assoc :api-key token)
-                        (some? api-url) (assoc :base-url api-url)
-                        (some? llm-headers) (assoc :llm-headers llm-headers)
-                        (some? responses-path) (assoc :responses-path responses-path)))
-                    (catch Throwable t
-                      (tel/log! {:level :warn
-                                 :id ::provider-credential-hydration-failed
-                                 :data {:provider id :error (ex-message t)}}
-                                (str "Could not hydrate current credential for " id
-                                     "; retaining the previous request snapshot"))
+            (mapv (fn [{:keys [id] :as provider-entry}]
+                    (if-let
+                      [get-token-fn (some-> (registry/provider-by-id id)
+                                            :provider/get-token-fn)]
+                      (try (let [{:keys [token api-url llm-headers responses-path]} (get-token-fn)]
+                             (cond-> provider-entry
+                               (some? token)
+                               (assoc :api-key token)
+
+                               (some? api-url)
+                               (assoc :base-url api-url)
+
+                               (some? llm-headers)
+                               (assoc :llm-headers llm-headers)
+
+                               (some? responses-path)
+                               (assoc :responses-path responses-path)))
+                           (catch Throwable t
+                             (tel/log! {:level :warn
+                                        :id ::provider-credential-hydration-failed
+                                        :data {:provider id :error (ex-message t)}}
+                                       (str "Could not hydrate current credential for "
+                                            id
+                                            "; retaining the previous request snapshot"))
+                             provider-entry))
                       provider-entry))
-                  provider-entry))
-              provider-entries))))
+                  provider-entries))))
 
 (defn- hydrate-environment-router
   "Hydrate only the router snapshot used by this provider attempt."
@@ -6962,13 +6971,11 @@
             ;; touch either the breaker or token endpoint; retry hydration will
             ;; pick this value up at the request boundary.
             (and (some? current) (not= current rejected))
-            (do (tel/log! {:level :warn
-                           :id ::auth-peer-token-adopted
-                           :data {:provider pid}}
-                          (str "Auth 401 for " pid
+            (do (tel/log! {:level :warn :id ::auth-peer-token-adopted :data {:provider pid}}
+                          (str "Auth 401 for "
+                               pid
                                " used a stale request credential; adopting the peer token"))
                 true)
-
             (not (auth-refresh-allowed? pid))
             (do (tel/log! {:level :error
                            :id ::auth-refresh-circuit-open
@@ -6981,24 +6988,24 @@
                                "s); NOT refreshing — surfacing provider error,"
                                " re-authenticate this provider"))
                 false)
-
-            :else
-            (try
-              ;; Pass exactly what this attempt sent. Older/third-party hooks
-              ;; may still expose only a zero-arity implementation.
-              (try (f rejected) (catch clojure.lang.ArityException _ (f)))
-              (swap! auth-last-refreshed assoc pid {:at (System/currentTimeMillis)})
-              (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
-                        (str "Auth 401 — force-refreshed OAuth token for " pid
-                             "; retrying with request-bound credential hydration"))
-              true
-              (catch Throwable t
-                (tel/log! {:level :error
-                           :id ::auth-token-refresh-failed
-                           :data {:provider pid :error (ex-message t)}}
-                          (str "Auth 401 — OAuth token refresh FAILED for " pid
-                               "; surfacing provider error"))
-                false))))))
+            :else (try
+                    ;; Pass exactly what this attempt sent. Older/third-party hooks
+                    ;; may still expose only a zero-arity implementation.
+                    (try (f rejected) (catch clojure.lang.ArityException _ (f)))
+                    (swap! auth-last-refreshed assoc pid {:at (System/currentTimeMillis)})
+                    (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
+                              (str "Auth 401 — force-refreshed OAuth token for "
+                                   pid
+                                   "; retrying with request-bound credential hydration"))
+                    true
+                    (catch Throwable t
+                      (tel/log! {:level :error
+                                 :id ::auth-token-refresh-failed
+                                 :data {:provider pid :error (ex-message t)}}
+                                (str "Auth 401 — OAuth token refresh FAILED for "
+                                     pid
+                                     "; surfacing provider error"))
+                      false))))))
 
 (defn ask-code!
   "One-shot routed `svar/ask-code!` against the global router.
@@ -8250,9 +8257,7 @@
                     env environment]
 
                    (let
-                     [attempt-env
-                      (hydrate-environment-router env)
-
+                     [attempt-env (hydrate-environment-router env)
                       result
                       (try
                         (reset! provider-output-started? false)
@@ -8354,8 +8359,7 @@
                             ;; the new value without rebuilding shared routers.
                             (and (< (long attempt) (long MAX_AUTH_REFRESH_RETRIES))
                                  (auth-refreshable-error? e resolved-model)
-                                 (try-refresh-provider-token! (:router attempt-env)
-                                                              resolved-model))
+                                 (try-refresh-provider-token! (:router attempt-env) resolved-model))
                             ::retry-auth-refresh
                             ;; Refresh/backoff failed or credentials were revoked.
                             ;; Release the dead provider, then let svar walk the fleet.
@@ -8366,8 +8370,7 @@
                                ;; Persist the release ACROSS iterations. Without the
                                ;; cooldown the next iteration rebuilds routing from
                                ;; scratch and re-sends to the dead provider.
-                               first-trip?
-                               (note-provider-auth-cooldown! (:provider resolved-model))
+                               first-trip? (note-provider-auth-cooldown! (:provider resolved-model))
                                chunk (provider-retry-progress-chunk
                                        (inc (long iteration))
                                        e
@@ -8459,6 +8462,7 @@
                                                             :messages @effective-messages-atom
                                                             :routing @iteration-routing
                                                             :reasoning-level reasoning-level})))))]
+
                      (if-let
                        [[attempt* max-tokens-attempt* pu-attempt*]
                         (next-retry-counters result
@@ -8488,11 +8492,7 @@
                            ;; Storage changed (or a peer already changed it). The
                            ;; next loop pass hydrates this same persistent router
                            ;; immediately before dispatch.
-                           (recur attempt*
-                                  max-tokens-attempt*
-                                  pu-attempt*
-                                  current-extra-body
-                                  env)
+                           (recur attempt* max-tokens-attempt* pu-attempt* current-extra-body env)
                            (= result ::retry-auth-backoff)
                            ;; Retry the same fresh token; propagation may still be settling.
                            (do (Thread/sleep (long (auth-propagation-backoff-ms attempt)))
@@ -9728,15 +9728,15 @@
 
      idx
      (when (and model pid)
-       (first (keep-indexed (fn [i p] (when (= (:id p) pid) i)) ps)))
+       (first (keep-indexed (fn [i p]
+                              (when (= (:id p) pid) i))
+                            ps)))
 
      p
      (when idx (nth ps idx))]
 
     (if (and p (not (some #(= (:name %) model) (:models p))))
-      (assoc router
-             :providers
-             (assoc ps idx (update p :models (fnil conj []) {:name model})))
+      (assoc router :providers (assoc ps idx (update p :models (fnil conj []) {:name model})))
       router)))
 
 (defn- router-for-pinned-provider
