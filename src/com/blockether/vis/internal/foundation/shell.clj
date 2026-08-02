@@ -436,13 +436,20 @@
    Totality is owed WITHIN the stage the caller selected: lifecycle stages expose
    only their own fields while the shared identity/summary fields stay in
    [[result-core]]. `wait` intentionally owns the same log-tail fields as `logs`
-   plus its bounded timeout."
+   plus its bounded timeout and the `until` predicate that may have ended it."
   {"run" {"timeout_secs" nil}
    "background"
    {"pid" nil "status" nil "uptime_ms" nil "attach" nil "socket" nil "already_running" false}
    "logs" {"pid" nil "status" nil "uptime_ms" nil "lines" [] "line_count" 0 "dropped" 0}
-   "wait"
-   {"pid" nil "status" nil "uptime_ms" nil "lines" [] "line_count" 0 "dropped" 0 "timeout_secs" nil}
+   "wait" {"pid" nil
+           "status" nil
+           "uptime_ms" nil
+           "lines" []
+           "line_count" 0
+           "dropped" 0
+           "timeout_secs" nil
+           "until" nil
+           "matched" nil}
    "send" {"pid" nil "status" nil "sent" 0 "text" nil "keys" nil}
    "stop" {"pid" nil "status" nil "uptime_ms" nil "stopped" false}})
 
@@ -1100,14 +1107,46 @@
           :op :shell
           :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))))
 
+(def ^:private terminal-escape-re
+  ;; ANSI/VT sequences a PTY-attached tool emits. Stripped both when MATCHING a
+  ;; `wait` predicate and when rendering captured output, so the two agree.
+  #"(?s)(?:\u001B\].*?(?:\u0007|\u001B\\)|(?:\u001B\[|\u009B)[0-?]*[ -/]*[@-~]|\u001B[ -/]*[@-~])")
+
+(defn- until-pattern
+  "Compile `wait`'s optional `until` predicate — a regex matched against each log
+   line the background shell produces. This is the whole point of the option: a
+   long job usually ANNOUNCES readiness (`Local: http://…`, `Compiled ok`) long
+   before it exits, and a condition beats a guessed clock."
+  [until]
+  (when-some
+    [s (some-> until
+               str
+               not-empty)]
+    (try (re-pattern s)
+         (catch java.util.regex.PatternSyntaxException e
+           (throw (ex-info (str "shell `until` is not a valid regex: " (.getMessage e))
+                           {:type ::bad-until :until s}))))))
+
 (defn- shell-wait-impl
-  "Wait on the HOST for one background shell to exit, then return its final log
-   tail. This is the completion primitive for long jobs: unlike sleeping inside
-   `python_execution`, it occupies only the shell worker and composes safely with
-   `await gather(...)` across independent ids. A timeout is observational — it
-   leaves the process and retained resource running."
-  ([env id] (shell-wait-impl env id nil default-log-tail))
-  ([env id timeout-secs n]
+  "Wait on the HOST for one background shell to finish — or, with `until`, for it
+   to SAY it is ready. This is the completion primitive for long jobs: unlike
+   sleeping inside `python_execution`, it occupies only the shell worker and
+   composes safely with `await gather(...)` across independent ids.
+
+   Three ways out, all returning the final bounded log tail:
+
+   - the process exits — `exit` set, `status` \"exited\";
+   - a log line matches `until` — `matched` holds THAT line and the process is
+     left running, so a server/watcher can be waited on by condition;
+   - `timeout_secs` elapses — purely observational, `timed_out` true, process and
+     retained resource untouched.
+
+   The scan starts at the ring buffer's oldest retained line, so waiting on a
+   pattern a job already printed returns immediately instead of hanging on an
+   event that will never repeat."
+  ([env id] (shell-wait-impl env id nil default-log-tail nil))
+  ([env id timeout-secs n] (shell-wait-impl env id timeout-secs n nil))
+  ([env id timeout-secs n until]
    (let
      [session
       (:session-id env)
@@ -1136,35 +1175,76 @@
             long
             (min (long max-bg-lines)))
 
+        pattern
+        (until-pattern until)
+
+        scan
+        ;; Match only lines NEWER than `cursor` and carry the cursor forward, so a
+        ;; ring-buffer eviction between polls can never smuggle an unscanned line
+        ;; past the predicate and each line is tested exactly once.
+        (fn [cursor]
+          (if-not pattern
+            {:cursor cursor :matched nil}
+            (let
+              [lines
+               (:lines @(:buffer entry))
+
+               fresh
+               (filterv (fn [[s _]]
+                          (> (long s) (long cursor)))
+                 lines)]
+
+              {:cursor (if (seq fresh) (long (first (peek fresh))) (long cursor))
+               :matched (some (fn [[_ text]]
+                                ;; Match the line as a HUMAN reads it: a PTY makes tools
+                                ;; colorize, and `\u001b[1mLocal\u001b[22m:` would defeat an
+                                ;; anchored pattern like `^Local:.*http`. The raw line is
+                                ;; what `matched` reports, so it still equals its `lines` entry.
+                                (let [text (str text)]
+                                  (when (re-find pattern (str/replace text terminal-escape-re ""))
+                                    text)))
+                              fresh)})))
+
         started
         (now-ms)
 
         deadline
         (+ started (* 1000 timeout-secs))
 
+        outcome
+        (loop [cursor 0]
+          (let [{:keys [cursor matched]} (scan cursor)]
+            (cond matched {:exit @(:exit entry) :matched matched}
+                  (some? @(:exit entry)) {:exit @(:exit entry) :matched nil}
+                  :else (let
+                          [now (now-ms)
+                           proc (:proc entry)
+                           alive? (try ((:alive? proc)) (catch Throwable _ true))]
+
+                          (cond (not alive?)
+                                (let [code (try ((:wait proc)) (catch Throwable _ nil))]
+                                  ;; The pump normally records this after draining the PTY. If
+                                  ;; this waiter wins the reap race, publish the same code and
+                                  ;; briefly let the pump consume the final bytes.
+                                  (when (some? code) (compare-and-set! (:exit entry) nil code))
+                                  (when-let [^Thread pump (:pump entry)]
+                                    (let [remaining (- deadline (now-ms))]
+                                      (when (pos? remaining)
+                                        (try (.join pump (long remaining))
+                                             (catch InterruptedException e (throw e))))))
+                                  ;; Those final bytes can carry the match — scan once more
+                                  ;; before reporting, or a fast job would beat its own signal.
+                                  {:exit (or @(:exit entry) code)
+                                   :matched (:matched (scan cursor))})
+                                (>= now deadline) {:exit nil :matched nil}
+                                :else (do (Thread/sleep (long (min 50 (max 1 (- deadline now)))))
+                                          (recur cursor)))))))
+
         exit-code
-        (loop []
+        (:exit outcome)
 
-          (if-some [code @(:exit entry)]
-            code
-            (let
-              [now (now-ms)
-               proc (:proc entry)
-               alive? (try ((:alive? proc)) (catch Throwable _ true))]
-
-              (cond (not alive?) (let [code (try ((:wait proc)) (catch Throwable _ nil))]
-                                   ;; The pump normally records this after draining the PTY. If
-                                   ;; this waiter wins the reap race, publish the same code and
-                                   ;; briefly let the pump consume the final bytes.
-                                   (when (some? code) (compare-and-set! (:exit entry) nil code))
-                                   (when-let [^Thread pump (:pump entry)]
-                                     (let [remaining (- deadline (now-ms))]
-                                       (when (pos? remaining)
-                                         (try (.join pump (long remaining))
-                                              (catch InterruptedException e (throw e))))))
-                                   (or @(:exit entry) code))
-                    (>= now deadline) nil
-                    :else (do (Thread/sleep (long (min 50 (max 1 (- deadline now))))) (recur))))))
+        matched
+        (:matched outcome)
 
         {:keys [lines dropped next-seq]}
         @(:buffer entry)
@@ -1178,25 +1258,33 @@
         finished
         (now-ms)
 
+        ;; Only a wait that got NEITHER an exit NOR its condition ran out of clock.
         timed-out?
-        (nil? exit-code)]
+        (and (nil? exit-code) (nil? matched))]
 
        (extension/success
          {:result (assoc (bg-core "wait" id entry)
-                    "status" (if timed-out? "running" "exited")
+                    "status" (if (some? exit-code) "exited" "running")
                     "exit" exit-code
                     "duration_ms" (- finished started)
                     "timed_out" timed-out?
                     "timeout_secs" timeout-secs
+                    "until" (some-> pattern
+                                    str)
+                    "matched" matched
                     "lines" (mapv second shown)
                     "line_count" total
                     "dropped" (long (or dropped 0))
-                    "note" (when timed-out?
-                             (str "Background shell '"
-                                  id
-                                  "' is still running after "
-                                  timeout-secs
-                                  "s; wait again, inspect logs, or stop it.")))
+                    "note" (cond
+                             timed-out? (str "Background shell '"
+                                             id
+                                             "' is still running after "
+                                             timeout-secs
+                                             "s; wait again, inspect logs, or stop it.")
+                             (and matched (nil? exit-code))
+                             (str "Background shell '" id
+                                  "' matched `until` and is STILL RUNNING — the matching line is in"
+                                  " `matched`. Keep working, wait again, or stop it.")))
           :op :shell
           :metadata {:id id
                      :started-at-ms started
@@ -1372,6 +1460,9 @@
        (throw (ex-info "shell has no `cmd` option — put bash lines in {\"commands\": [...]}."
                        {:type ::legacy-command-carrier})))
 
+     until
+     (opt opts :until)
+
      id
      (some-> (opt opts :id)
              str
@@ -1385,6 +1476,16 @@
                  str/lower-case
                  not-empty)
          (if id "background" "run"))
+
+     _
+     ;; `until` is the WAIT predicate, not a global filter: accepting it silently on
+     ;; `run`/`logs` would promise a condition nothing evaluates.
+     (when (some? until)
+       (when-not (= op "wait")
+         (throw (ex-info (str "shell op \"" op
+                              "\" takes no `until` — it is the wait predicate:"
+                              " {\"op\": \"wait\", \"id\": \"…\", \"until\": \"…\"}.")
+                         {:type ::unexpected-until :op op}))))
 
      checked-commands
      (fn []
@@ -1439,7 +1540,7 @@
       "wait"
       (do (reject-commands)
           (reject-text)
-          (shell-wait-impl env (need-id) (opt opts :timeout_secs) (opt opts :n)))
+          (shell-wait-impl env (need-id) (opt opts :timeout_secs) (opt opts :n) until))
 
       "send"
       (do (reject-commands) (shell-send-impl env (need-id) (need-text) opts))
@@ -1531,6 +1632,7 @@ Examples:
 await shell({\"commands\": [\"git status\"]})
 await shell({\"commands\": [\"npm test\"], \"op\": \"background\", \"id\": \"tests\"})
 await shell({\"op\": \"wait\", \"id\": \"tests\", \"timeout_secs\": 300})
+await shell({\"op\": \"wait\", \"id\": \"dev\", \"until\": \"Local:.*http\"})
 await shell({\"op\": \"logs\", \"id\": \"tests\"})
 await shell({\"op\": \"send\", \"id\": \"tests\", \"text\": \"y\"})
 await shell({\"op\": \"stop\", \"id\": \"tests\"})
@@ -1538,7 +1640,7 @@ await shell({\"op\": \"stop\", \"id\": \"tests\"})
 `commands` is a non-empty string array. `op` defaults to `run`, or `background` when `id` is supplied:
 - `run`: blocking `bash -lc`; `cwd` defaults to workspace root; `timeout_secs` defaults to 120 (max 600); nonzero exit is data.
 - `background`: returns immediately without a timeout and owns a session resource; use for long or interactive work.
-- `wait`: host-side bounded wait for completion; returns the final `lines` tail and does not stop a timed-out process. Use concurrent waits with `await gather(...)` instead of sleeping or polling in Python.
+- `wait`: host-side bounded wait; returns the final `lines` tail and never stops a timed-out process. `until` is a regex over the log lines — the wait returns the moment one matches, so a real condition ends it instead of a guessed clock, and `timeout_secs` is only the backstop. Use concurrent waits with `await gather(...)` instead of sleeping or polling in Python.
 - `logs`: immediate snapshot of the last 200 `lines` by default; `n` max 2000.
 - `send`: writes `text` verbatim; `is_enter` defaults true.
 - `stop`: kills the process tree and drops its logs/resource.
@@ -1667,9 +1769,6 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
                                                         (recur (+ i 2) sq dq depth))
             (and (zero? depth) (= c \;)) (do (.append sb ";\n") (recur (inc i) sq dq depth))
             :else (do (.append sb c) (recur (inc i) sq dq depth))))))))
-
-(def ^:private terminal-escape-re
-  #"(?s)(?:\u001B\].*?(?:\u0007|\u001B\\)|(?:\u001B\[|\u009B)[0-?]*[ -/]*[@-~]|\u001B[ -/]*[@-~])")
 
 (def ^:private non-printing-control-re #"[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]")
 
@@ -1848,6 +1947,8 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
           status
           (when-let [exit (get r "exit")]
             (str " · exit " exit))
+          ;; A `wait` that a predicate ended is NOT a timeout and NOT an exit — say so.
+          (when (get r "matched") " · matched")
           " · "
           (count lines)
           " lines"
@@ -1862,7 +1963,11 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
      details
      (kv-lines [["id" (get r "id")] ["status" status] ["exit" (get r "exit")]
                 ["shown" (str (count lines) " lines")] ["total" (get r "line_count")]
-                ["dropped" (get r "dropped")] ["uptime" duration] ["pid" (get r "pid")]])
+                ["dropped" (get r "dropped")] ["uptime" duration] ["pid" (get r "pid")]
+                ;; `wait` only: the predicate it was given and the line that satisfied it,
+                ;; escape-stripped so a colored readiness banner reads as text.
+                ["until" (get r "until")]
+                ["matched" (normalize-terminal-output (get r "matched"))]])
 
      body
      (->> [(shell-section "STATUS" details) (shell-section "LOGS" text "bash")]
@@ -1994,12 +2099,14 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
      (str
        "Always `stage`, `id`, `cwd`, `commands`, timing/exit fields, `note`; run adds `timeout_secs`; "
        "lifecycle adds `pid`, `status`, stage fields. Each command carries its text, timing/exit, "
-       "stdout/stderr with truncation counts, status, note. `logs`/`wait` put output in `lines`.")
+       "stdout/stderr with truncation counts, status, note. `logs`/`wait` put output in `lines`; "
+       "a `wait` its predicate ended adds `matched`.")
      :name "shell"
      :description
      (str
        "Run bounded commands or manage background shells; ONE options map, never a positional string or array. "
-       "Long or interactive: `background`, then `wait`; `logs` snapshots; `send` writes `text`; `stop` kills. "
+       "Long or interactive: `background`, then `wait` (`until` regex ends it on a log line); "
+       "`logs` snapshots; `send` writes `text`; `stop` kills. "
        "Live ids: `session[\"resources\"]`. Output: `r[\"commands\"][0][\"stdout\"]` for run, `r[\"lines\"]` for "
        "`logs`/`wait`; `*_omitted_chars` marks truncation.")
      :render render-shell-result
@@ -2017,6 +2124,10 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
        "id" {:type "string" :minLength 1 :description "Background id for lifecycle ops."}
        "timeout_secs"
        {:type "integer" :minimum 1 :maximum 600 :description "run/wait timeout; default 120s."}
+       "until" {:type "string"
+                :minLength 1
+                :description
+                "wait: end early on a log line matching this regex; ANSI color is ignored."}
        "cwd" {:type "string"
               :description "Working directory under allowed root; relative uses workspace."}
        "n"

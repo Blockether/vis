@@ -226,7 +226,7 @@
     "  work via plural args (e.g. `paths`); `await gather(...)` only for independent calls in `python_execution`.\n"
     "- `python_execution`: default for most Python/data work, incl. YAML/JSON/TOML/CSV; prefer it over shell.\n"
     "- For background shell completion use `shell` op `wait`; `logs` is only an immediate snapshot.\n"
-    "  Never use `time.sleep`, `asyncio.sleep`, or Python polling to wait for shell jobs.\n"
+    "  Never use `time.sleep`, `asyncio.sleep`, or Python polling; `until` (regex) ends a `wait` early.\n"
     "- Prefer small higher-order Python helpers (functions that accept or return callables) over\n"
     "  copy-pasted loops.\n"
     "- Native results are raw data, not rendered text. Use documented keys via `ntr[tool_id]`: stored,\n"

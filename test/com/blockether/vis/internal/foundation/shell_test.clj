@@ -562,6 +562,102 @@
                                   (expect (= 1 (get r "timeout_secs")))
                                   (expect (str/includes? (get r "note") "still running"))
                                   (expect (some? (first (resources/list-resources sid)))))
+                                (finally (resources/stop-all! sid))))))))
+  (it "returns the moment a log line matches `until`, leaving the process running"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid (str "shell-wait-until-" (System/nanoTime))
+               env {:session-id sid}]
+
+              (try (shell-bg* env "job" "echo booting; sleep 0.2; echo READY on 5273; sleep 60")
+                   ;; Through DISPATCH, so the wire key `until` is proven to reach the impl.
+                   (let
+                     [r (:result
+                          (shell*
+                            env
+                            {"op" "wait" "id" "job" "until" "READY on \\d+" "timeout_secs" 30}))]
+                     (expect (= "wait" (get r "stage")))
+                     ;; A condition ended this wait, not the clock: still running, not timed
+                     ;; out, and back long before the 30s backstop.
+                     (expect (= "running" (get r "status")))
+                     (expect (nil? (get r "exit")))
+                     (expect (false? (get r "timed_out")))
+                     (expect (= "READY on \\d+" (get r "until")))
+                     (expect (= "READY on 5273" (get r "matched")))
+                     (expect (str/includes? (get r "note") "STILL RUNNING"))
+                     (expect (> 30000 (long (get r "duration_ms"))))
+                     (expect (some? (first (resources/list-resources sid)))))
+                   (finally (resources/stop-all! sid))))))))
+  (it
+    "matches an `until` pattern through the ANSI color a PTY makes tools emit"
+    (with-shell-on
+      (fn []
+        (binding [workspace/*workspace-root* (workspace/trunk-root)]
+          (let
+            [sid (str "shell-wait-until-ansi-" (System/nanoTime))
+             env {:session-id sid}]
+
+            (try
+              ;; A dev server announces readiness IN COLOR, and the escapes sit between
+              ;; the words: `^Local:\\s+http` only works if matching strips them first.
+              (shell-bg*
+                env
+                "job"
+                "printf '\\033[1mLocal\\033[22m:   \\033[36mhttp://127.0.0.1:5273/\\033[39m\\n'; sleep 60")
+              (let [r (:result (shell-wait* env "job" 30 10 "^Local:\\s+http"))]
+                (expect (= "running" (get r "status")))
+                (expect (false? (get r "timed_out")))
+                (expect (str/includes? (str (get r "matched")) "http://127.0.0.1:5273/"))
+                ;; `matched` stays the RAW line, so it is still one of `lines`.
+                (expect (contains? (set (get r "lines")) (get r "matched"))))
+              (finally (resources/stop-all! sid))))))))
+  (it "reports the exit and no match when the job finishes without ever printing the pattern"
+      (with-shell-on (fn []
+                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                         (let
+                           [sid (str "shell-wait-until-exit-" (System/nanoTime))
+                            env {:session-id sid}]
+
+                           (try (shell-bg* env "job" "echo working; sleep 0.2; exit 3")
+                                (let [r (:result (shell-wait* env "job" 30 10 "NEVER-MATCHES"))]
+                                  (expect (= "exited" (get r "status")))
+                                  (expect (= 3 (get r "exit")))
+                                  (expect (nil? (get r "matched")))
+                                  (expect (= "NEVER-MATCHES" (get r "until")))
+                                  (expect (false? (get r "timed_out")))
+                                  (expect (nil? (get r "note"))))
+                                (finally (resources/stop-all! sid))))))))
+  (it "still times out observationally when neither the pattern nor the exit arrives"
+      (with-shell-on (fn []
+                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                         (let
+                           [sid (str "shell-wait-until-timeout-" (System/nanoTime))
+                            env {:session-id sid}]
+
+                           (try (shell-bg* env "job" "echo working; sleep 30")
+                                (let [r (:result (shell-wait* env "job" 1 10 "NEVER-MATCHES"))]
+                                  (expect (true? (get r "timed_out")))
+                                  (expect (nil? (get r "matched")))
+                                  (expect (= "NEVER-MATCHES" (get r "until")))
+                                  (expect (= "running" (get r "status")))
+                                  (expect (str/includes? (get r "note") "still running"))
+                                  (expect (some? (first (resources/list-resources sid)))))
+                                (finally (resources/stop-all! sid))))))))
+  (it "refuses a broken `until` regex and refuses `until` on any op but wait"
+      (with-shell-on (fn []
+                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                         (let
+                           [sid (str "shell-wait-until-bad-" (System/nanoTime))
+                            env {:session-id sid}]
+
+                           (try (shell-bg* env "job" "sleep 30")
+                                (expect (threw? #(shell-wait* env "job" 1 10 "READY(")))
+                                ;; `until` on `run` would promise a condition nothing evaluates — and it
+                                ;; must be refused BEFORE the command runs.
+                                (expect (threw? #(shell* env {"commands" ["true"] "until" "x"})))
+                                (expect (threw? #(shell* env {"op" "logs" "id" "job" "until" "x"})))
                                 (finally (resources/stop-all! sid)))))))))
 
 (defdescribe shell-send-test
@@ -750,33 +846,32 @@
         (expect (= "↵ `ops` sent 0 chars"
                    (:summary (render-shell-send-result {"id" "ops" "sent" 0})))))))
 
-(defdescribe shell-batch-test
-             (it "runs the commands array in order and returns one entry per line"
-                 (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                   (let [r (:result (shell* {} {"commands" ["printf first" "printf second"]}))]
-                     (expect (= ["first" "second"]
-                                (mapv #(str/trim (get % "stdout")) (get r "commands")))))))
-             (it "rejects missing, blank, and non-map process requests"
-                 (expect (threw? #(shell* {} {})))
-                 (expect (threw? #(shell* {} {"commands" []})))
-                 (expect (threw? #(shell* {} {"commands" [""]})))
-                 (expect (threw? #(shell* {} ["printf first"])))))
-             (it "coerces a bare command string into the batch of one"
-                 ;; `commands` is an array, but a lone command line has exactly one
-                 ;; reading — it is wrapped instead of failing the call, and the
-                 ;; result still carries it as the batch it always was.
-                 (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                   (let [r (:result (shell* {} {"commands" "printf lone"}))]
-                     (expect (= ["printf lone"] (mapv #(get % "command") (get r "commands"))))
-                     (expect (= "lone" (str/trim (get-in r ["commands" 0 "stdout"])))))))
-             (it "coerces an argv array entry into one quoted bash line"
-                 ;; The habitual `git`-shaped spelling: tokens instead of a line.
-                 ;; Each token stays ONE argument, so spaces survive quoting.
-                 (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                   (let [r (:result (shell* {} {"commands" [["printf" "%s" "two words"]]}))]
-                     (expect (= ["printf %s 'two words'"]
-                                (mapv #(get % "command") (get r "commands"))))
-                     (expect (= "two words" (str/trim (get-in r ["commands" 0 "stdout"])))))))
+(defdescribe
+  shell-batch-test
+  (it "runs the commands array in order and returns one entry per line"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [r (:result (shell* {} {"commands" ["printf first" "printf second"]}))]
+          (expect (= ["first" "second"] (mapv #(str/trim (get % "stdout")) (get r "commands")))))))
+  (it "rejects missing, blank, and non-map process requests"
+      (expect (threw? #(shell* {} {})))
+      (expect (threw? #(shell* {} {"commands" []})))
+      (expect (threw? #(shell* {} {"commands" [""]})))
+      (expect (threw? #(shell* {} ["printf first"]))))
+  (it "coerces a bare command string into the batch of one"
+      ;; `commands` is an array, but a lone command line has exactly one
+      ;; reading — it is wrapped instead of failing the call, and the
+      ;; result still carries it as the batch it always was.
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [r (:result (shell* {} {"commands" "printf lone"}))]
+          (expect (= ["printf lone"] (mapv #(get % "command") (get r "commands"))))
+          (expect (= "lone" (str/trim (get-in r ["commands" 0 "stdout"])))))))
+  (it "coerces an argv array entry into one quoted bash line"
+      ;; The habitual `git`-shaped spelling: tokens instead of a line.
+      ;; Each token stays ONE argument, so spaces survive quoting.
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let [r (:result (shell* {} {"commands" [["printf" "%s" "two words"]]}))]
+          (expect (= ["printf %s 'two words'"] (mapv #(get % "command") (get r "commands"))))
+          (expect (= "two words" (str/trim (get-in r ["commands" 0 "stdout"]))))))))
 
 (defdescribe
   shell-native-contract-test
@@ -798,6 +893,9 @@
         (expect (contains? props "text"))
         (expect (not (contains? props "cmd")))
         (expect (= ["run" "background" "logs" "wait" "send" "stop"] (get-in props ["op" :enum])))
+        ;; The wait predicate is part of the ADVERTISED contract, not a hidden option.
+        (expect (= "string" (get-in props ["until" :type])))
+        (expect (str/includes? (get-in props ["until" :description]) "regex"))
         (expect (= "array" (get-in props ["commands" :type])))))
   (it "closes every native shell input schema"
       (doseq [s shell/shell-symbols]

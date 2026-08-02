@@ -124,8 +124,13 @@ shell analogue of `/slash`, and works the same way in the **TUI** and the
   `await shell({"op": "logs", "id": id})`. To wait for completion and receive
   the final tail in `result["lines"]`, use
   `await shell({"op": "wait", "id": id, "timeout_secs": 300})`. A wait timeout
-  leaves the process running. Wait for independent jobs concurrently with
-  `await gather(*(shell(op="wait", id=i, timeout_secs=300) for i in ids))` — do
+  leaves the process running. Prefer a condition to a guessed clock: `until` is a
+  regex over the log lines, and
+  `await shell({"op": "wait", "id": id, "until": "Local:.*http"})` returns the
+  moment a line matches — with that line in `result["matched"]` and the process
+  still running — so servers and watchers that never exit are waited on properly.
+  `timeout_secs` is then only the backstop. Wait for independent jobs concurrently
+  with `await gather(*(shell(op="wait", id=i, timeout_secs=300) for i in ids))` — do
   not sleep or poll in `python_execution`. Stop a job with
   `await shell({"op": "stop", "id": id})`.
 - A bare `!` (or `!&`) with no command is ordinary prose and runs as a normal
