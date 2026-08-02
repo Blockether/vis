@@ -1241,7 +1241,9 @@
 
    The scan starts at the ring buffer's oldest retained line, so waiting on a
    pattern a job already printed returns immediately instead of hanging on an
-   event that will never repeat."
+   event that will never repeat. `n` only sizes the tail returned afterwards:
+   the predicate reads every RETAINED line, and only ring-buffer eviction
+   (`dropped`) can hide one from it."
   ([env id timeout-secs n until]
    (let
      [;; A wait with no condition is a malformed REQUEST — refuse it before touching
@@ -1277,9 +1279,11 @@
             (min (long max-bg-lines)))
 
         scan
-        ;; Match only lines NEWER than `cursor` and carry the cursor forward, so a
-        ;; ring-buffer eviction between polls can never smuggle an unscanned line
-        ;; past the predicate and each line is tested exactly once.
+        ;; Sequence numbers, not indices: match only lines NEWER than `cursor` and carry
+        ;; it forward, so an eviction that shifts the vector between polls can neither
+        ;; re-match nor skip a RETAINED line — each is tested exactly once. A line the
+        ;; ring buffer already EVICTED is gone either way; `dropped` is that bound, and
+        ;; `n` never enters this scan.
         (fn [cursor]
           (let
             [lines

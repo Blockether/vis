@@ -624,6 +624,32 @@
                      (expect (> 30000 (long (get r "duration_ms"))))
                      (expect (some? (first (resources/list-resources sid)))))
                    (finally (resources/stop-all! sid))))))))
+  (it "sizes the returned tail with `n` without narrowing what `until` scans"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid (str "shell-wait-until-tail-" (System/nanoTime))
+               env {:session-id sid}]
+
+              (try (shell-bg*
+                     env
+                     "job"
+                     "echo XV-TAIL-MARKER; for i in $(seq 1 300); do echo \"line $i\"; done; sleep 60")
+                   ;; Land every line FIRST, so the match is provably 300 lines above the
+                   ;; returned tail instead of racing it.
+                   (poll #(:result (shell-logs* env "job" 1))
+                         #(= 301 (long (get % "line_count"))))
+                   (let [r (:result (shell-wait* env "job" 30 3 "XV-TAIL-MARKER"))]
+                     (expect (true? (get r "is_matched")))
+                     (expect (= "XV-TAIL-MARKER" (get r "matched")))
+                     (expect (false? (get r "timed_out")))
+                     ;; `n` is a CONTEXT BUDGET on the reply, not the window the predicate
+                     ;; saw: 3 lines back, the match 300 lines older, nothing evicted.
+                     (expect (= ["line 298" "line 299" "line 300"] (get r "lines")))
+                     (expect (= 301 (long (get r "line_count"))))
+                     (expect (zero? (long (get r "dropped")))))
+                   (finally (resources/stop-all! sid))))))))
   (it
     "matches an `until` pattern through the ANSI color a PTY makes tools emit"
     (with-shell-on
