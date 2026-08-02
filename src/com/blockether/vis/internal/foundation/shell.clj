@@ -362,7 +362,6 @@
                (try (spawn)
                     (catch Throwable t2
                       (throw (ex-info fd-exhausted-message {:type ::fd-exhausted} t2)))))))))
-
 (defn- spawn!
   ^Process [cmd ^File dir merge-err? policy]
   (let
@@ -370,9 +369,13 @@
      ;; A STRING is ONE `bash -lc` line. A SEQUENTIAL is a literal argv run with no
      ;; shell at all — nothing to quote, nothing to interpret — which is how `git`
      ;; rides this same spawn/jail/capture machinery.
-     (process-jail/wrap-argv
-       (if (sequential? cmd) (mapv str cmd) [(bash-command) "--noprofile" "--norc" "-lc" (str cmd)])
-       policy)
+     ;; The detach prefix (when the platform has one) goes OUTSIDE the jail wrapper:
+     ;; it only setpgid()s and execs, so everything that actually RUNS is still jailed.
+     (process-jail/detached-argv (process-jail/wrap-argv (if (sequential? cmd)
+                                                           (mapv str cmd)
+                                                           [(bash-command) "--noprofile" "--norc"
+                                                            "-lc" (str cmd)])
+                                                         policy))
 
      pb
      (ProcessBuilder. args)]

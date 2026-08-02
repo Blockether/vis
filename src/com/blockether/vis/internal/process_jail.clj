@@ -50,7 +50,8 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.paths :as paths])
   (:import (java.io File)
-           (java.nio.file LinkOption Paths)))
+           (java.nio.file LinkOption Paths)
+           (java.util.concurrent TimeUnit)))
 
 (def ^:private link-opts (make-array LinkOption 0))
 
@@ -488,7 +489,11 @@
            :else ["--unshare-net"])
 
      bwrap-args
-     (vec (concat ["bwrap" "--die-with-parent" "--proc" "/proc" "--dev" "/dev"]
+     ;; ABSOLUTE enforcer path — the very binary `supported?` validated. A bare name
+     ;; would be resolved by PATH at exec time (and, under the detach prefix, by the
+     ;; CHILD's scrubbed PATH), so a shadowing shim earlier on PATH could replace the
+     ;; jail with an arbitrary program, and a PATH without it would fail the launch.
+     (vec (concat [(or linux-bwrap "bwrap") "--die-with-parent" "--proc" "/proc" "--dev" "/dev"]
                   ro-flags
                   rw-flags
                   dw-flags
@@ -503,7 +508,7 @@
       ;; child's loopback port so vis can attach to a managed nREPL bound inside the
       ;; ns (else `-t none`); `-u none -U none` disable UDP. So the ONLY reachable
       ;; destination is the gateway proxy, and the only inbound is the nREPL port.
-      (into (vec (concat ["pasta" "-T" (str proxy-port)]
+      (into (vec (concat [(or linux-pasta "pasta") "-T" (str proxy-port)]
                          (if loopback-port ["-t" (str loopback-port)] ["-t" "none"])
                          ["-u" "none" "-U" "none" "--"]))
             bwrap-args)
@@ -549,7 +554,8 @@
     (if (and wanted? (supported?) (not (inherited-jail?)))
       (case (os-kind)
         :macos
-        (into ["sandbox-exec" "-p" (macos-profile (compile-policy policy))] argv)
+        ;; Absolute path (see `bwrap-args`): never a PATH lookup for the enforcer.
+        (into [macos-sandbox-exec "-p" (macos-profile (compile-policy policy))] argv)
 
         :linux
         (let [pol (compile-policy policy)]
@@ -561,6 +567,67 @@
             (when-let [reason (unenforceable-reason)]
               (warn-unenforceable! reason)))
           argv))))
+
+(defn- path-executable
+  "Absolute path of `exe` on THIS process' PATH, or nil. Resolved from the daemon's
+   own environment because a jailed child's env is REPLACED by the allowlist, so a
+   bare program name may no longer resolve at exec time."
+  ^String [^String exe]
+  (some (fn [dir]
+          (let [f (File. ^String dir ^String exe)]
+            (when (and (.isFile f) (.canExecute f)) (.getPath f))))
+        (remove str/blank? (str/split (str (System/getenv "PATH")) #":"))))
+
+(defn- execs-in-place?
+  "Probe a detacher: run `prefix … /bin/sh -c 'exit 77'` and demand 77 back.
+   A detacher is only usable when it `exec`s the command IN PLACE — util-linux
+   `setsid` forks when it cannot become a session leader and the parent exits 0,
+   which would silently replace every command's exit status with a lie. False on
+   a platform without `/bin/sh` (Windows), which just leaves the prefix off."
+  [prefix]
+  (try (let
+         [p (.start (doto (ProcessBuilder. ^java.util.List
+                                           (into (vec prefix) ["/bin/sh" "-c" "exit 77"]))
+                      (.redirectOutput java.lang.ProcessBuilder$Redirect/DISCARD)
+                      (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD)))]
+         (try (and (.waitFor p 5 TimeUnit/SECONDS) (= 77 (.exitValue p)))
+              (finally (try (.close (.getOutputStream p)) (catch Throwable _ nil))
+                       (when (.isAlive p) (.destroyForcibly p)))))
+       (catch Throwable _ false)))
+
+(def ^:private detach-argv
+  "argv PREFIX that runs a child in its OWN process group, or `[]`.
+
+   The daemon is its own process-group leader and a plain `ProcessBuilder` child
+   inherits that group plus the controlling terminal (measured: child pgid ==
+   gateway pid). So a tool that signals its OWN group — `kill 0`, `kill -- -$$`,
+   a harness or build script tearing down its children, Ctrl-C in the tab a
+   foreground daemon was started from — delivered that SIGINT/SIGTERM to the
+   GATEWAY as well: the shutdown hook drained and cancelled every other session's
+   live turn, and the log made it look like a deliberate stop.
+
+   Each candidate `exec`s in place (verified once by [[execs-in-place?]]), so the
+   pid `ProcessBuilder` hands back is still the real command: exit status, stdio
+   pipes and every `ProcessHandle` kill path are unchanged. Empty when no
+   candidate exists — the child then shares the group exactly as before."
+  (delay (or (some (fn [prefix]
+                     (when (and prefix (execs-in-place? prefix)) prefix))
+                   [(when-let [perl (path-executable "perl")]
+                      [perl "-e" "setpgrp(0,0); exec { $ARGV[0] } @ARGV or die $!" "--"])
+                    (when-let [setsid (path-executable "setsid")]
+                      [setsid])])
+             [])))
+
+(defn detached-argv
+  "`argv` prefixed so the spawned child LEADS ITS OWN process group instead of
+   inheriting the daemon's — the containment that keeps a child's group-directed
+   signal (or the terminal's) away from the gateway JVM. Unchanged argv on a
+   platform with no in-place detacher.
+
+   Applies OUTSIDE [[wrap-argv]]: the detacher only `setpgid`s and `exec`s, so
+   everything that actually RUNS is still inside the jail."
+  [argv]
+  (into (vec @detach-argv) argv))
 
 (defn- java-proxy-options
   [{:keys [proxy-port java-trust-store java-trust-store-password java-proxy? loopback-port]}]
@@ -773,8 +840,14 @@
    `:loopback-port` is reserved for a managed nREPL's preselected local listener.
    Unknown, nil, disposed, or failing sessions are denied before spawn; the
    contract never silently returns a naked argv. On an OS without a supported
-   enforcer, `:argv` remains unchanged (the platform capability gap is explicit),
-   while the policy lookup still must succeed."
+   enforcer, `:argv` keeps its jail shape unchanged (the platform capability gap is
+   explicit), while the policy lookup still must succeed.
+
+   `:argv` is additionally [[detached-argv]]-prefixed: a managed REPL/interpreter
+   is long-lived, third-party and often runs test harnesses that signal their own
+   process group, and it used to inherit the DAEMON's group (measured: managed
+   nREPL pgid == gateway pid). One `kill 0` inside it took the gateway down with
+   it, cancelling every other session's live turn."
   ([session-id argv] (session-process-launch session-id argv nil))
   ([session-id argv {:keys [loopback-port]}]
    (let
@@ -787,5 +860,7 @@
      ;; Confined child ⇒ FULL scrubbed env replaces the operator's (secrets dropped);
      ;; unenforced platform ⇒ additions merged onto the inherited env (unchanged).
      (if full
-       {:argv (wrap-argv argv policy) :env full :replace-env? true}
-       {:argv (wrap-argv argv policy) :env (proxy-env policy) :replace-env? false}))))
+       {:argv (detached-argv (wrap-argv argv policy)) :env full :replace-env? true}
+       {:argv (detached-argv (wrap-argv argv policy))
+        :env (proxy-env policy)
+        :replace-env? false}))))

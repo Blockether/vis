@@ -3334,42 +3334,131 @@
 
 (defonce ^:private signal-forensics (atom nil))
 
+(defn- interactive-terminal?
+  "True when this JVM really is attached to a terminal a human can Ctrl-C. JDK 22+
+   ALWAYS hands back a `Console` (JLine-backed), so `isTerminal` is the only honest
+   test; false for a managed/background daemon whose stdio is a log file or a pipe."
+  []
+  (try (if-let [c (System/console)]
+         (.isTerminal ^java.io.Console c)
+         false)
+       (catch Throwable _ false)))
+
+(defn- signal-disposition
+  "PURE policy: what a delivered signal DOES to this daemon — `:exit` or `:ignore`.
+
+   SIGTERM is the deliberate stop (`kill`, a supervisor, system shutdown) and always
+   exits, draining in-flight turns. SIGINT/SIGHUP only MEAN 'the operator stopped me'
+   when this process owns the terminal they came from. A managed/background gateway
+   that receives one is collateral — a child tool signalling its own process group, a
+   `kill 0`, a terminal closing on some other member of the group — and a daemon that
+   is serving other sessions' live turns must not die of someone else's Ctrl-C. It
+   logs loudly and keeps serving; `/v1/admin/stop` and SIGTERM still stop it."
+  [{:keys [signal managed? interactive?]}]
+  (if (and (contains? #{"INT" "HUP"} signal) (or managed? (not interactive?))) :ignore :exit))
+
+(def ^:private exit-frame-re
+  ;; A rendered frame carries its MODULE ("java.base/java.lang.Shutdown.exit(…)"), so
+  ;; this must not anchor at the start of the line.
+  #"java\.lang\.(?:Shutdown\.exit|Runtime\.(?:exit|halt)|System\.exit)\(")
+
+(defn- exit-culprit
+  "Given `traces` (thread NAME -> stack frames, top frame first), name the thread that
+   is INSIDE `System/exit` and the first frames of whatever called it.
+
+   A `System/exit` anywhere in the daemon kills every live turn in every session, and
+   it needs no signal to happen: an extension, a library that thinks it owns the
+   process, or a script the linter compiled can all reach it. The shutdown hook is the
+   LAST place that can still see the caller — by then the thread is parked in
+   `Shutdown.runHooks` with its own frames still on the stack. Nil when no thread is
+   exiting (a signal handled by the JVM default, or a normal end of `-main`)."
+  [traces]
+  (some (fn [[nm frames]]
+          (let
+            [fv
+             (mapv str frames)
+
+             i
+             (first (keep-indexed (fn [idx f]
+                                    (when (re-find exit-frame-re f) idx))
+                                  fv))]
+
+            (when i
+              {"thread" (str nm)
+               "frames"
+               (into []
+                     (comp (remove #(re-find exit-frame-re %))
+                           ;; reflection/method-handle plumbing names nobody
+                           (remove #(re-find #"(?:^|/)(?:jdk\.internal|java\.lang\.reflect)\." %))
+                           (take 6))
+                     (subvec fv i))})))
+        traces))
+
+(defn- thread-stacks
+  "Every live thread as NAME -> frame strings, top frame first."
+  []
+  (persistent! (reduce (fn [acc [^Thread t frames]]
+                         (assoc! acc (.getName t) (mapv str frames)))
+                       (transient {})
+                       (Thread/getAllStackTraces))))
+
 (defn- install-signal-forensics!
-  "Name the signal that takes a daemon down. A FOREGROUND `vis-agent gateway start`
-   shares its process group and controlling terminal with every synchronous `shell`
-   child (only the pty/background path detaches via POSIX_SPAWN_SETSID), so a
-   group-directed SIGINT/SIGHUP/SIGTERM — Ctrl-C in that tab, the terminal closing,
-   or a child tool signalling its own process group — reaches the JVM and runs the
-   shutdown hook. In the log that death looked exactly like an explicit
-   `/v1/admin/stop`. Log the signal FIRST, then `System/exit` 128+signum so the
-   shutdown hook still drains in-flight turns exactly as before.
+  "Name — and, when it is collateral, SURVIVE — the signal that reaches a daemon.
+
+   A FOREGROUND `vis-agent gateway start` shares its process group and controlling
+   terminal with anything that was spawned before children were detached, so a
+   group-directed SIGINT/SIGHUP — Ctrl-C in that tab, the terminal closing, or a child
+   tool signalling its own process group — reached the JVM and ran the shutdown hook.
+   In the log that death looked exactly like an explicit `/v1/admin/stop`.
+
+   [[signal-disposition]] decides: a stray INT/HUP on a detached daemon is LOGGED and
+   IGNORED (the daemon keeps serving every other session), everything else logs first
+   and then `System/exit`s 128+signum so the shutdown hook still drains in-flight turns
+   exactly as before.
 
    Idempotent: returns a map of signal name -> previously installed handler on the
    first call (so a caller/test can restore them), nil afterwards."
-  []
-  (when (nil? @signal-forensics)
-    (let
-      [installed (reduce (fn [acc ^String nm]
-                           (try (let
-                                  [prev (sun.misc.Signal/handle
-                                          (sun.misc.Signal. nm)
-                                          (reify
-                                            sun.misc.SignalHandler
-                                              (handle [_ sig]
-                                                (let [^sun.misc.Signal s sig]
-                                                  (try (tel/log! :warn
-                                                                 ["gateway: received SIG"
-                                                                  (.getName s) "- stopping;"
-                                                                  (running-turn-count)
-                                                                  "turn(s) running"])
-                                                       (catch Throwable _ nil))
-                                                  (System/exit (+ 128 (.getNumber s)))))))]
-                                  (assoc acc nm prev))
-                                (catch Throwable _ acc)))
-                         {}
-                         ["INT" "TERM" "HUP"])]
-      (reset! signal-forensics installed)
-      installed)))
+  ([] (install-signal-forensics! nil))
+  ([{:keys [managed?]}]
+   (when (nil? @signal-forensics)
+     (let
+       [interactive?
+        (interactive-terminal?)
+
+        installed
+        (reduce
+          (fn [acc ^String nm]
+            (try (let
+                   [prev (sun.misc.Signal/handle
+                           (sun.misc.Signal. nm)
+                           (reify
+                             sun.misc.SignalHandler
+                               (handle [_ sig]
+                                 (let
+                                   [^sun.misc.Signal s sig
+                                    action (signal-disposition {:signal (.getName s)
+                                                                :managed? (boolean managed?)
+                                                                :interactive? interactive?})]
+
+                                   (try
+                                     (if (= :ignore action)
+                                       (tel/log! :warn
+                                                 ["gateway: ignoring SIG" (.getName s)
+                                                  "- a detached daemon is not stopped by a stray"
+                                                  "group signal;" (running-turn-count)
+                                                  "turn(s) running; use /v1/admin/stop or SIGTERM"])
+                                       (tel/log! :warn
+                                                 ["gateway: received SIG" (.getName s) "- stopping;"
+                                                  (running-turn-count) "turn(s) running"]))
+                                     (catch Throwable _ nil))
+                                   (when (= :exit action) (System/exit (+ 128 (.getNumber s))))))))]
+                   (assoc acc nm prev))
+                 (catch Throwable _ acc)))
+          {}
+          ["INT" "TERM" "HUP"])]
+
+       (reset! signal-forensics installed)
+       installed))))
 
 #_{:clj-kondo/ignore [:unused-private-var]}
 (defn- restore-signal-forensics!
@@ -3438,14 +3527,24 @@
     ;; Forensics BEFORE the hook: a signal-driven death and an explicit
     ;; /v1/admin/stop both surface as "gateway: draining before stop", so name
     ;; the trigger in the log or an unexplained daemon exit stays unexplainable.
-    (install-signal-forensics!)
-    (.addShutdownHook (Runtime/getRuntime)
-                      (Thread. ^Runnable
-                               (fn []
-                                 (tel/log! :info
-                                           ["gateway: JVM shutdown hook fired"
-                                            "(signal or System/exit) - stopping"])
-                                 (stop!))
-                               "vis-gateway-shutdown"))
+    ;; `managed?` also decides POLICY: a detached daemon survives a stray INT/HUP.
+    (install-signal-forensics! {:managed? managed?})
+    (.addShutdownHook
+      (Runtime/getRuntime)
+      (Thread. ^Runnable
+               (fn []
+                 ;; Name the caller while the stack still exists: an
+                 ;; in-process `System/exit` (extension, library,
+                 ;; compiled script) leaves no other trace at all.
+                 (let [culprit (try (exit-culprit (thread-stacks)) (catch Throwable _ nil))]
+                   (tel/log! :info
+                             (into ["gateway: JVM shutdown hook fired"
+                                    "(signal or System/exit) - stopping;" (running-turn-count)
+                                    "turn(s) running"]
+                                   (when culprit
+                                     ["- exit called on thread" (get culprit "thread")
+                                      (str/join " <- " (get culprit "frames"))]))))
+                 (stop!))
+               "vis-gateway-shutdown"))
     @serve-exit
     (System/exit 0)))

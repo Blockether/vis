@@ -26,6 +26,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
+            [com.blockether.vis.internal.process-jail :as process-jail]
             [taoensso.telemere :as tel])
   (:import
     (java.io BufferedReader)
@@ -122,7 +123,12 @@
   [name {:keys [command args env cwd]}]
   (let
     [pb
-     (ProcessBuilder. ^java.util.List (vec (cons command (map str (or args [])))))
+     ;; DETACHED: a stdio MCP server is third-party code that outlives the call and
+     ;; used to inherit the daemon's process group, so its own `kill 0`/teardown (or
+     ;; a Ctrl-C in the terminal) reached the gateway JVM. The detacher execs in
+     ;; place, so `:pid`, the stdio pipes and `destroy` are unchanged.
+     (ProcessBuilder. ^java.util.List
+                      (process-jail/detached-argv (vec (cons command (map str (or args []))))))
 
      _
      (when (seq env)

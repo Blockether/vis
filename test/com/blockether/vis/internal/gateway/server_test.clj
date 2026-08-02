@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.gateway.server-test
   (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+            [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp-core]
             [com.blockether.vis.internal.gateway.client :as client]
@@ -1376,3 +1377,92 @@
            (finally (restore installed)))
       (is (nil? @@(rv 'signal-forensics))
           "restoring clears the installed marker so a later daemon can re-install"))))
+
+(deftest a-stray-signal-never-stops-a-detached-daemon
+  (testing "policy: only a terminal this daemon OWNS may Ctrl-C it; SIGTERM always stops"
+    (let [disposition (rv 'signal-disposition)]
+      (is (= :exit (disposition {:signal "TERM" :managed? true :interactive? false}))
+          "SIGTERM is the deliberate stop and must keep draining")
+      (is (= :exit (disposition {:signal "TERM" :managed? false :interactive? true})))
+      (is (= :exit (disposition {:signal "INT" :managed? false :interactive? true}))
+          "Ctrl-C in the tab a FOREGROUND gateway runs in still stops it")
+      (is (= :exit (disposition {:signal "HUP" :managed? false :interactive? true})))
+      (is (= :ignore (disposition {:signal "INT" :managed? true :interactive? true}))
+          "a managed daemon is nobody's foreground job, whatever stdio it inherited")
+      (is (= :ignore (disposition {:signal "INT" :managed? false :interactive? false}))
+          "no controlling terminal => the INT came from someone else's process group")
+      (is (= :ignore (disposition {:signal "HUP" :managed? true :interactive? false})))))
+  (testing "a REAL SIGINT delivered to a managed daemon is logged and survived"
+    (let
+      [install
+       (rv 'install-signal-forensics!)
+
+       restore
+       (rv 'restore-signal-forensics!)
+
+       disposition
+       (rv 'signal-disposition)
+
+       installed
+       (install {:managed? true})]
+
+      ;; GUARD: fire an actual signal only once the pure policy proves this JVM's
+      ;; handler cannot exit — `:managed? true` is what we installed with, so the
+      ;; `:interactive?` the handler captured cannot change the verdict. A regression
+      ;; fails on this assertion instead of killing the test runner. `installed` is nil
+      ;; when another test already owns the handlers; then there is nothing to prove.
+      (is (= :ignore (disposition {:signal "INT" :managed? true :interactive? true})))
+      (is (= :ignore (disposition {:signal "INT" :managed? true :interactive? false})))
+      (try (when (and (seq installed)
+                      (= :ignore (disposition {:signal "INT" :managed? true :interactive? true}))
+                      (= :ignore (disposition {:signal "INT" :managed? true :interactive? false})))
+             (let
+               [pid
+                (.pid (java.lang.ProcessHandle/current))
+
+                p
+                (.start (ProcessBuilder. ^java.util.List ["/bin/sh" "-c" (str "kill -INT " pid)]))]
+
+               (.waitFor p)
+               (Thread/sleep 300)
+               (is (.isAlive (java.lang.ProcessHandle/current))
+                   "a stray SIGINT must leave the daemon serving every other session")
+               ;; Non-vacuous: the SAME `kill` shape against a process with the DEFAULT
+               ;; disposition really does kill it, so surviving above is the handler.
+               (let
+                 [ctl
+                  (.start (ProcessBuilder. ^java.util.List
+                                           ["/bin/sh" "-c" "kill -INT $$; sleep 2; echo survived"]))
+
+                  out
+                  (slurp (.getInputStream ctl))]
+
+                 (.waitFor ctl)
+                 (is (not (str/includes? out "survived"))
+                     "the control process must die of the very same signal"))))
+           (finally (restore installed))))))
+
+(deftest the-shutdown-hook-names-who-called-system-exit
+  (let [culprit (rv 'exit-culprit)]
+    (testing "the thread parked in System/exit is named; JDK plumbing is dropped"
+      (let
+        [r (culprit {"main" ["java.base/java.lang.Object.wait0(Native Method)"
+                             "java.base/java.lang.Thread.join(Thread.java:1327)"
+                             "java.base/java.lang.Shutdown.runHooks(Shutdown.java:130)"]
+                     "vis-turn-3"
+                     ["java.base/java.lang.Shutdown.exit(Shutdown.java:176)"
+                      "java.base/java.lang.Runtime.exit(Runtime.java:112)"
+                      "java.base/java.lang.System.exit(System.java:1901)"
+                      "java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(x:1)"
+                      "com.blockether.vis.ext.language_clojure.reflection$c.invoke(refl.clj:120)"
+                      "clojure.lang.AFn.run(AFn.java:22)"]})]
+        (is (= "vis-turn-3" (get r "thread"))
+            "the thread that called exit, not the one running the hooks")
+        (is (= "com.blockether.vis.ext.language_clojure.reflection$c.invoke(refl.clj:120)"
+               (first (get r "frames")))
+            "the first frame must be the CALLER, module prefixes and all")
+        (is (= 2 (count (get r "frames"))))))
+    (testing "a thread merely running the hooks is not accused, and nothing exiting is nil"
+      (is (nil? (culprit {"main" ["java.base/java.lang.Shutdown.runHooks(Shutdown.java:130)"
+                                  "clojure.main$main.invoke(main.clj:1)"]})))
+      (is (nil? (culprit {}))))))

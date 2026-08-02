@@ -144,6 +144,12 @@
 
 (defn- linux? [] (str/includes? (str/lower-case (str (System/getProperty "os.name"))) "linux"))
 
+(defn- basename
+  "Last path segment of an argv head. The jail emits the ABSOLUTE enforcer binary,
+   so shape assertions compare the program NAME, never a PATH-resolved bare word."
+  [^String s]
+  (.getName (io/file s)))
+
 (def ^:private linux-sandbox-applicable?
   ;; Hosted Linux runners can expose bwrap but deny the namespace syscalls it
   ;; needs (for example, by blocking loopback setup or uid-map writes). Cache an
@@ -364,33 +370,51 @@
                                             :repl-ca-file "/tmp/repl-ca.pem"
                                             :java-trust-store "/tmp/repl-ca.p12"
                                             :java-trust-store-password "secret"}))
-    (try (let
-           [{:keys [argv env]}
-            (pj/session-process-launch "t-sid" ["clojure" "-M:x"] {:loopback-port 54321})]
-           (is (= "http://127.0.0.1:999" (get env "HTTPS_PROXY")))
-           (is (= "/tmp/repl-ca.pem" (get env "SSL_CERT_FILE")))
-           (is (re-find #"-Dhttps\.proxyPort=999" (get env "JAVA_TOOL_OPTIONS")))
-           (is (re-find #"-Djava\.net\.preferIPv4Stack=true" (get env "JAVA_TOOL_OPTIONS")))
-           (is (re-find #"-Djavax\.net\.ssl\.trustStore=/tmp/repl-ca\.p12"
-                        (get env "JAVA_TOOL_OPTIONS")))
-           (cond (and (linux?) (pj/supported?))
-                 ;; Linux: proxy-port present => pasta lane wraps bwrap; the managed
-                 ;; nREPL's loopback port is forwarded INBOUND (`-t <port>`) so vis attaches.
-                 (do (is (= "pasta" (first argv)) "linux repl jail must wrap with pasta")
-                     (let
-                       [av (vec argv)
-                        ti (.indexOf ^java.util.List av "-t")]
+    (try
+      (let
+        [{:keys [argv env]}
+         (pj/session-process-launch "t-sid" ["clojure" "-M:x"] {:loopback-port 54321})
 
-                       (is (and (pos? ti) (= "54321" (nth av (inc ti))))
-                           "the nREPL loopback port must be pasta -t forwarded inbound")))
-                 (sandbox-applicable?)
-                 (do (is (= "sandbox-exec" (first argv)))
-                     (is (not (re-find #"\(allow network\*\)" (nth argv 2))))
-                     (is (re-find #"network-bind \(local ip\)" (nth argv 2)))
-                     (is (str/includes? (nth argv 2) "network-inbound (local ip \"*:54321\")"))
-                     (is (re-find #"localhost:999" (nth argv 2))))
-                 :else (is (= ["clojure" "-M:x"] argv))))
-         (finally (pj/unregister-session-jail! "t-sid")))))
+         ;; Every managed process is spawned into its OWN process group, so the jail
+         ;; wrapper starts AFTER that prefix. A managed REPL used to sit in the
+         ;; DAEMON's group, and one `kill 0` from a test harness inside it stopped
+         ;; the gateway, cancelling every other session's live turn.
+         detach
+         (vec @@#'pj/detach-argv)
+
+         jailed
+         (vec (drop (count detach) argv))]
+
+        (is (= detach (vec (take (count detach) argv)))
+            "the launch contract must hand back a process-group-detached argv")
+        (is (= "http://127.0.0.1:999" (get env "HTTPS_PROXY")))
+        (is (= "/tmp/repl-ca.pem" (get env "SSL_CERT_FILE")))
+        (is (re-find #"-Dhttps\.proxyPort=999" (get env "JAVA_TOOL_OPTIONS")))
+        (is (re-find #"-Djava\.net\.preferIPv4Stack=true" (get env "JAVA_TOOL_OPTIONS")))
+        (is (re-find #"-Djavax\.net\.ssl\.trustStore=/tmp/repl-ca\.p12"
+                     (get env "JAVA_TOOL_OPTIONS")))
+        (cond (and (linux?) (pj/supported?))
+              ;; Linux: proxy-port present => pasta lane wraps bwrap; the managed
+              ;; nREPL's loopback port is forwarded INBOUND (`-t <port>`) so vis attaches.
+              (do (is (= "pasta" (basename (first jailed))) "linux repl jail must wrap with pasta")
+                  (let
+                    [av
+                     jailed
+
+                     ti
+                     (.indexOf ^java.util.List av "-t")]
+
+                    (is (and (pos? ti) (= "54321" (nth av (inc ti))))
+                        "the nREPL loopback port must be pasta -t forwarded inbound")))
+              (sandbox-applicable?)
+              (do (is (= "/usr/bin/sandbox-exec" (first jailed))
+                      "the macOS enforcer is the absolute system binary, never a PATH lookup")
+                  (is (not (re-find #"\(allow network\*\)" (nth jailed 2))))
+                  (is (re-find #"network-bind \(local ip\)" (nth jailed 2)))
+                  (is (str/includes? (nth jailed 2) "network-inbound (local ip \"*:54321\")"))
+                  (is (re-find #"localhost:999" (nth jailed 2))))
+              :else (is (= ["clojure" "-M:x"] jailed))))
+      (finally (pj/unregister-session-jail! "t-sid")))))
 
 (deftest env-scrub-allowlist
   (testing
@@ -509,7 +533,7 @@
      (partition 2 1 off)]
 
     (try (testing "argv shape: starts with bwrap, ends with the -- separator"
-           (is (= "bwrap" (first off)))
+           (is (= "bwrap" (basename (first off))))
            (is (= "--" (last off))))
          (testing "session root is bind-mounted read-write"
            (is (some #(= % ["--bind-try" rp]) pairs)))
@@ -544,10 +568,11 @@
 
              (is (some #{"--unshare-net"} no-pasta)
                  "no pasta => filtered egress degrades to the no-egress wall (safe)")
-             (is (not= "pasta" (first no-pasta)))
-             (is (= ["pasta" "-T" "51000" "-t" "none" "-u" "none" "-U" "none" "--" "bwrap"]
-                    (take 11 pasta))
-                 "pasta wraps bwrap, forwarding ONLY the proxy port to the host loopback")
+             (is (not= "pasta" (basename (first no-pasta))))
+             (is (= ["/usr/bin/pasta" "-T" "51000" "-t" "none" "-u" "none" "-U" "none" "--"]
+                    (take 10 pasta))
+                 "pasta wraps bwrap by ABSOLUTE path, forwarding ONLY the proxy port")
+             (is (= "bwrap" (basename (nth pasta 10))) "pasta hands off to bwrap")
              (is (nil? (some #{"--unshare-net"} pasta))
                  "pasta provides the restricted ns; bwrap shares it (no --unshare-net)")
              (is (some #(= % ["--bind-try" rp]) (partition 2 1 pasta))
@@ -638,7 +663,7 @@
                            "; echo ===; ls / >/dev/null 2>&1 && echo LS-RAN || echo LS-BLOCKED")]
                      policy)]
 
-      (try (is (= "bwrap" (first argv)) "linux jail must bwrap-wrap the child")
+      (try (is (= "bwrap" (basename (first argv))) "linux jail must bwrap-wrap the child")
            (let [{:keys [out]} (run-jailed argv)]
              (is (str/includes? out "WORKSPACE-OK")
                  "workspace file must be readable inside the jail")
@@ -714,7 +739,7 @@
        argv
        (pj/wrap-argv ["bash" "-lc" probe] policy)]
 
-      (try (is (= "pasta" (first argv)) "filtered egress must wrap the child with pasta")
+      (try (is (= "pasta" (basename (first argv))) "filtered egress must wrap the child with pasta")
            (let [{:keys [out]} (run-jailed argv)]
              (is (str/includes? out "PROXY-OK")
                  "the child must reach the gateway proxy port through pasta's -T forward")
@@ -723,3 +748,160 @@
              (is (str/includes? out "NET-BLOCKED")
                  "the public internet must be unreachable (proxy-only egress)"))
            (finally (.close proxy-srv) (.close ctrl-srv) (io/delete-file ws true))))))
+
+(deftest detached-argv-gives-a-child-its-own-process-group
+  (testing "the prefix leaves the command intact"
+    (let [detach (vec @@#'pj/detach-argv)]
+      (is (= ["python3" "-i"] (vec (drop (count detach) (pj/detached-argv ["python3" "-i"])))))
+      (is (= detach (vec (take (count detach) (pj/detached-argv ["python3" "-i"])))))))
+  (testing "a spawned child LEADS its own group, and the detacher exec's in place"
+    ;; Non-vacuous: the same command spawned WITHOUT the prefix inherits this JVM's
+    ;; group — which is exactly how a child's `kill 0` used to reach the gateway.
+    (let
+      [pgid-of
+       (fn [argv]
+         (let
+           [p
+            (.start (ProcessBuilder. ^java.util.List
+                                     (into
+                                       (vec argv)
+                                       ["/bin/sh" "-c"
+                                        "echo \"$$ $(ps -o pgid= -p $$ | tr -d ' ')\"; exit 7"])))
+
+            out
+            (slurp (.getInputStream p))
+
+            code
+            (.waitFor p)]
+
+           (into (vec (str/split (str/trim out) #"\s+")) [code])))
+
+       detach
+       (vec @@#'pj/detach-argv)]
+
+      (let [[pid pgid] (pgid-of [])]
+        (is (not= pid pgid) "a plain spawn inherits our group"))
+      (when (seq detach)
+        (let [[pid pgid code] (pgid-of (pj/detached-argv []))]
+          (is (= pid pgid) "a detached child must lead its own process group")
+          (is (= 7 code) "an exec'ing detacher preserves the command's own exit status"))))))
+
+(defn- run-with-env
+  "Spawn `argv` exactly as the launch contract does: merged stdio, and — when the
+   policy is enforcing — the scrubbed environment REPLACING the operator's."
+  [argv env]
+  (let [pb (doto (ProcessBuilder. ^java.util.List (vec argv)) (.redirectErrorStream true))]
+    (when env
+      (let [^java.util.Map e (.environment pb)]
+        (.clear e)
+        (.putAll e ^java.util.Map env)))
+    (let [^Process p (.start pb)
+          out (slurp (.getInputStream p))]
+      {:exit (.waitFor p) :out out})))
+
+(defn- host-pgid
+  "Process-group id of `pid`, read from THIS (unconfined) JVM — a jailed child
+   cannot exec `ps` itself."
+  [pid]
+  (let [^Process p (.start (doto (ProcessBuilder. ^java.util.List
+                                                  ["/bin/sh" "-c" (str "ps -o pgid= -p " pid)])
+                             (.redirectErrorStream true)))
+        out (str/trim (slurp (.getInputStream p)))]
+    (.waitFor p)
+    out))
+
+(deftest enforcer-is-an-absolute-validated-binary
+  ;; The jail wrapper is exec'd THROUGH the process-group detach prefix, so a bare
+  ;; program name would be resolved by PATH at exec time — the CHILD's scrubbed
+  ;; PATH. A shim earlier on PATH could then stand in for the enforcer, and a PATH
+  ;; without it would break every launch. Emit the exact binary `supported?`
+  ;; validated, by absolute path, so no lookup happens at all.
+  (testing "linux bwrap/pasta are the discovered install locations"
+    (with-redefs [pj/linux-bwrap "/usr/local/bin/bwrap" pj/linux-pasta "/usr/bin/pasta"]
+      (let [av (pj/linux-bwrap-args {:rw [] :net-enabled? true :proxy-port 51000})]
+        (is (= "/usr/bin/pasta" (first av)))
+        (is (= "/usr/local/bin/bwrap" (nth av 10))))))
+  (when (and (not (linux?)) (sandbox-applicable?))
+    (testing "macOS wraps with /usr/bin/sandbox-exec itself"
+      (let [av (pj/wrap-argv ["bash" "-lc" "true"] {:roots-fn (constantly []) :net-enabled? false})]
+        (is (= "/usr/bin/sandbox-exec" (first av)))
+        (is (.canExecute (io/file ^String (first av))))))))
+
+(deftest a-detached-child-is-still-fully-jailed
+  ;; Containment and detachment are applied TOGETHER by the launch contract:
+  ;; `detached-argv(wrap-argv(argv))` plus the scrubbed env. The prefix only
+  ;; setpgid()s and exec's the enforcer, so everything that actually runs must
+  ;; still be confined — asserted here on the composed argv, not on either half.
+  (when (sandbox-applicable?)
+    (let
+      [ws
+       (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-jail-det-" (System/nanoTime)))
+         (.mkdirs))
+
+       wsc
+       (.getCanonicalPath ws)
+
+       secret
+       (io/file (System/getProperty "user.home") (str ".vis-jail-det-secret-" (System/nanoTime)))
+
+       escape
+       (io/file (System/getProperty "user.home") (str ".vis-jail-det-escape-" (System/nanoTime)))
+
+       policy
+       {:roots-fn (constantly [wsc]) :net-enabled? false}
+
+       env
+       (pj/jailed-child-env policy)
+
+       script
+       (str "echo in > " wsc "/inside.txt && echo WROTE-INSIDE; "
+            "(echo out > " (.getCanonicalPath escape) ") 2>/dev/null && echo ESCAPED || echo WRITE-DENIED; "
+            "cat " (.getCanonicalPath secret) " 2>/dev/null || echo READ-DENIED; "
+            "curl -sS --max-time 4 https://example.com -o /dev/null 2>/dev/null && echo GOTNET || echo NET-DENIED; "
+            "exit 9")
+
+       argv
+       (pj/detached-argv (pj/wrap-argv ["bash" "--noprofile" "--norc" "-lc" script] policy))]
+
+      (spit secret "TOP-SECRET-DATA")
+      (try (testing "the jail still confines a detached child"
+             (let [{:keys [exit out]} (run-with-env argv env)]
+               (is (str/includes? out "WROTE-INSIDE") "the session root stays writable")
+               (is (str/includes? out "WRITE-DENIED") "a write outside the roots is refused")
+               (is (not (.exists escape)) "and it must not land on disk either")
+               (is (not (str/includes? out "TOP-SECRET-DATA")) "a file outside the roots stays unreadable")
+               (is (str/includes? out "NET-DENIED") "net-off is enforced")
+               (is (= 9 exit) "the detacher exec's in place: the command's own exit status survives")))
+           (testing "and that same jailed child leads its OWN process group"
+             ;; Non-vacuous: the identical jailed argv spawned WITHOUT the prefix
+             ;; sits in this JVM's group — how a child's `kill 0` reached the daemon.
+             (when (seq @@#'pj/detach-argv)
+               (let
+                 [sleeper
+                  (pj/wrap-argv ["bash" "--noprofile" "--norc" "-lc" "sleep 5"] policy)
+
+                  start
+                  (fn [av]
+                    (let [pb (doto (ProcessBuilder. ^java.util.List (vec av)) (.redirectErrorStream true))
+                          ^java.util.Map e (.environment pb)]
+                      (.clear e)
+                      (.putAll e ^java.util.Map env)
+                      (.start pb)))
+
+                  ^Process detached
+                  (start (pj/detached-argv sleeper))
+
+                  ^Process plain
+                  (start sleeper)]
+
+                 (try (Thread/sleep 400)
+                      (is (= (str (.pid detached)) (host-pgid (.pid detached)))
+                          "a detached+jailed child must lead its own process group")
+                      (is (= (host-pgid (.pid (java.lang.ProcessHandle/current)))
+                             (host-pgid (.pid plain)))
+                          "without the prefix the same jailed child sits in OUR group")
+                      (finally (.destroyForcibly detached) (.destroyForcibly plain))))))
+           (finally (io/delete-file (io/file ws "inside.txt") true)
+                    (io/delete-file ws true)
+                    (io/delete-file secret true)
+                    (io/delete-file escape true))))))

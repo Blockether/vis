@@ -632,24 +632,24 @@
               [sid (str "shell-wait-until-tail-" (System/nanoTime))
                env {:session-id sid}]
 
-              (try (shell-bg*
-                     env
-                     "job"
-                     "echo XV-TAIL-MARKER; for i in $(seq 1 300); do echo \"line $i\"; done; sleep 60")
-                   ;; Land every line FIRST, so the match is provably 300 lines above the
-                   ;; returned tail instead of racing it.
-                   (poll #(:result (shell-logs* env "job" 1))
-                         #(= 301 (long (get % "line_count"))))
-                   (let [r (:result (shell-wait* env "job" 30 3 "XV-TAIL-MARKER"))]
-                     (expect (true? (get r "is_matched")))
-                     (expect (= "XV-TAIL-MARKER" (get r "matched")))
-                     (expect (false? (get r "timed_out")))
-                     ;; `n` is a CONTEXT BUDGET on the reply, not the window the predicate
-                     ;; saw: 3 lines back, the match 300 lines older, nothing evicted.
-                     (expect (= ["line 298" "line 299" "line 300"] (get r "lines")))
-                     (expect (= 301 (long (get r "line_count"))))
-                     (expect (zero? (long (get r "dropped")))))
-                   (finally (resources/stop-all! sid))))))))
+              (try
+                (shell-bg*
+                  env
+                  "job"
+                  "echo XV-TAIL-MARKER; for i in $(seq 1 300); do echo \"line $i\"; done; sleep 60")
+                ;; Land every line FIRST, so the match is provably 300 lines above the
+                ;; returned tail instead of racing it.
+                (poll #(:result (shell-logs* env "job" 1)) #(= 301 (long (get % "line_count"))))
+                (let [r (:result (shell-wait* env "job" 30 3 "XV-TAIL-MARKER"))]
+                  (expect (true? (get r "is_matched")))
+                  (expect (= "XV-TAIL-MARKER" (get r "matched")))
+                  (expect (false? (get r "timed_out")))
+                  ;; `n` is a CONTEXT BUDGET on the reply, not the window the predicate
+                  ;; saw: 3 lines back, the match 300 lines older, nothing evicted.
+                  (expect (= ["line 298" "line 299" "line 300"] (get r "lines")))
+                  (expect (= 301 (long (get r "line_count"))))
+                  (expect (zero? (long (get r "dropped")))))
+                (finally (resources/stop-all! sid))))))))
   (it
     "matches an `until` pattern through the ANSI color a PTY makes tools emit"
     (with-shell-on
@@ -1257,3 +1257,104 @@
         (expect (str/includes? (ex-message e) "Out of file descriptors"))
         (expect (str/includes? (ex-message e) "with open(...)"))
         (expect (fd-exhaustion? (ex-cause e))))))
+
+;; The process-group detacher lives in `process-jail` (every spawner shares it:
+;; shell/git children AND managed language processes), reached by var here.
+(def ^:private path-executable @#'process-jail/path-executable)
+
+(def ^:private execs-in-place? @#'process-jail/execs-in-place?)
+
+(def ^:private detach-argv @#'process-jail/detach-argv)
+
+(defn- pid+pgid
+  "Run `argv` and read back the child's own `pid pgid` pair as strings. A process
+   whose pgid EQUALS its pid leads its own group; anything else inherited the
+   spawning JVM's group."
+  [argv]
+  (let
+    [p
+     (.start (ProcessBuilder.
+               ^java.util.List
+               (into (vec argv) ["/bin/sh" "-c" "echo \"$$ $(ps -o pgid= -p $$ | tr -d ' ')\""])))
+
+     out
+     (slurp (.getInputStream p))]
+
+    (.waitFor p)
+    (str/split (str/trim out) #"\s+")))
+
+(defdescribe
+  spawn-process-group-test
+  (it "resolves a helper to an ABSOLUTE executable path, or nil when it does not exist"
+      (let [sh (path-executable "sh")]
+        (expect (some? sh))
+        (expect (str/starts-with? sh "/"))
+        (expect (.canExecute (io/file sh))))
+      (expect (nil? (path-executable "vis-definitely-not-a-real-binary-xyz"))))
+  (it "accepts only a detacher that EXECS — a forking wrapper would swallow the exit status"
+      ;; `exec "$@"` keeps the command's own status; the second wrapper runs the
+      ;; command and reports its own 0, exactly how a forking `setsid` lies.
+      (expect (execs-in-place? ["/bin/sh" "-c" "exec \"$@\"" "sh"]))
+      (expect (not (execs-in-place? ["/bin/sh" "-c" "\"$@\" >/dev/null 2>&1; exit 0" "sh"])))
+      (expect (not (execs-in-place? ["/vis/no/such/detacher"]))))
+  (it "puts every synchronous child in its OWN process group"
+      ;; A plain spawn inherits the gateway's group, so a child that signals its
+      ;; own group (`kill 0`, `kill -- -$$`, a harness cleaning up) killed the
+      ;; DAEMON. Non-vacuous: the undetached spawn below still inherits.
+      (let [[bare-pid bare-pgid] (pid+pgid [])]
+        (expect (not= bare-pid bare-pgid)))
+      (when (seq @detach-argv)
+        (let [[pid pgid] (pid+pgid @detach-argv)]
+          (expect (= pid pgid)))
+        (with-shell-on (fn []
+                         (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                           (let
+                             [r (shell-run* {}
+                                            "echo \"$$ $(ps -o pgid= -p $$ | tr -d ' ')\"; exit 5")
+                              [pid pgid] (str/split (str/trim (get r "stdout")) #"\s+")]
+
+                             (expect (= pid pgid))
+                             ;; the detacher execs, so the command's own status survives
+                             (expect (= 5 (get r "exit"))))))))))
+
+(defn- own-pgid
+  "This JVM's process group, read the only way the JVM can — by asking `ps`."
+  []
+  (let
+    [^java.util.List argv
+     ["/bin/sh" "-c"
+      (str "ps -o pgid= -p " (.pid (java.lang.ProcessHandle/current)) " | tr -d ' '")]
+
+     p
+     (.start (ProcessBuilder. argv))
+
+     out
+     (slurp (.getInputStream p))]
+
+    (.waitFor p)
+    (str/trim out)))
+
+(defdescribe child-group-signal-test
+             (it "a child that signals its OWN group can no longer take this JVM down with it"
+                 ;; THE gateway death: a tool doing `kill 0` / `kill -- -$$` used to deliver
+                 ;; SIGTERM to the daemon, which drained and cancelled every other session's
+                 ;; live turn (managed language REPLs sit in that same group too). The signal
+                 ;; is sent ONLY after both guards prove the child leads a group that is not
+                 ;; ours, so a regression fails on the guards instead of killing the runner.
+                 (when (seq @detach-argv)
+                   (with-shell-on
+                     (fn []
+                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                         (let
+                           [probe (shell-run* {} "echo \"$$ $(ps -o pgid= -p $$ | tr -d ' ')\"")
+                            [pid pgid] (str/split (str/trim (get probe "stdout")) #"\s+")
+                            mine (own-pgid)]
+
+                           (expect (= pid pgid))
+                           (expect (not= pgid mine))
+                           (when (and (= pid pgid) (some? pgid) (not= pgid mine))
+                             (let [r (shell-run* {} "kill -TERM 0; sleep 5; echo survived")]
+                               (expect (not (str/includes? (str (get r "stdout")) "survived")))
+                               (expect (not= 0 (get r "exit")))))
+                           ;; Still running after the group signal — the whole point.
+                           (expect (= "alive\n" (get (shell-run* {} "echo alive") "stdout"))))))))))
