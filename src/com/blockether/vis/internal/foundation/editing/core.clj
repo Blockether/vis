@@ -1134,15 +1134,18 @@
                  (pos? (long start))
                  (pos? (long end))
                  (<= (long start) (long end)))
-    (throw (ex-info "cat \"range\"/\"ranges\" start/end must be positive ints with start <= end"
+    (throw (ex-info (str
+                      "cat \"range\"/\"ranges\" start/end must be positive ints with start <= end"
+                      " — pass [-1, -1] (any non-positive pair) to read the WHOLE file")
                     {:type :ext.foundation.editing/invalid-cat-args :start start :end end}))))
 
 (defn- cat-range-scalar
-  "Coerce a range component to a 1-based long. Accepts an int or a numeric string
-   like \"1096\" (models routinely pass line numbers as strings); nil otherwise."
+  "Coerce a range component to a long. Accepts an int or a numeric string like
+   \"1096\" (models routinely pass line numbers as strings), NEGATIVE included
+   (\"-1\") so the whole-file sentinel survives stringification; nil otherwise."
   [x]
   (cond (integer? x) (long x)
-        (and (string? x) (re-matches #"\s*\d+\s*" x)) (parse-long (str/trim x))
+        (and (string? x) (re-matches #"\s*-?\d+\s*" x)) (parse-long (str/trim x))
         :else nil))
 
 (defn- cat-pair-items
@@ -1216,7 +1219,7 @@
    Pulls every run of digits in order; when there is an even count (>= 2)
    returns them partitioned into `[start end]` long pairs, else nil."
   [s]
-  (let [nums (mapv parse-long (re-seq #"\d+" s))]
+  (let [nums (mapv parse-long (re-seq #"-?\d+" s))]
     (when (and (seq nums) (even? (count nums))) (mapv vec (partition 2 nums)))))
 
 (defn- cat-entry->pair
@@ -1229,6 +1232,26 @@
       (when (string? entry)
         (let [pairs (cat-ranges-from-string entry)]
           (when (= 1 (count pairs)) (first pairs))))))
+
+(defn- cat-whole-file-pair?
+  "True when ONE `ranges` entry is the WHOLE-FILE sentinel: a pair whose start AND
+   end are both non-positive (`[-1, -1]`, `[0, 0]`, `\"-1, -1\"`). No file has a
+   line 0 or -1, so the shape is unambiguous — it is how a batched read opts ONE
+   file out of the call's shared `ranges` and takes all of it."
+  [entry]
+  (boolean (when-let [pair (cat-entry->pair entry)]
+             (and (not (pos? (long (first pair)))) (not (pos? (long (second pair))))))))
+
+(defn- cat-whole-file-ranges?
+  "True when `ranges` EXPLICITLY asks for the whole file through a sentinel entry
+   (`[[-1, -1]]`, the flat `[-1, -1]`, or their stringified forms). A sentinel is a
+   superset of every sibling window, so mixing it with real ranges still reads
+   everything. Absent/empty `ranges` are NOT handled here: they stay the caller's
+   own default-vs-reject decision."
+  [ranges]
+  (boolean (or (cat-whole-file-pair? ranges)
+               (and (sequential? ranges) (seq ranges) (some cat-whole-file-pair? ranges))
+               (and (string? ranges) (some cat-whole-file-pair? (cat-ranges-from-string ranges))))))
 
 (defn- normalize-cat-ranges
   [ranges]
@@ -4005,6 +4028,7 @@
    — slice only for bigger files or a middle/tail section. Options = a dict,
    snake_case keys:
      await cat(path, {\"ranges\": [[start, end], ...]})  # inclusive 1-based line window(s)
+     await cat(path, {\"ranges\": [[-1, -1]]})           # the WHOLE file (opts out of shared ranges)
      await cat(path, {\"anchor\": \"325:0e3\"})      # one line by its lineno:hash anchor
      await cat(path, {\"anchor\": [\"H1\", \"H2\"]})   # inclusive anchor range H1..H2
      await cat(path, {\"tail\": 200})              # last N lines (omit N → 2000)
@@ -4105,13 +4129,17 @@
                       {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}}))
 
      :ranges
-     (let [out (read-file-ranges path n)]
-       (tool-success {:op :cat
-                      :path path
-                      :kind :file
-                      :result (cat-result->model out)
-                      :metadata {:truncated? (:truncated? out)
-                                 :ranges (mapv :range (:ranges out))}}))
+     ;; `[-1, -1]` is the explicit WHOLE-FILE sentinel — the way a batched read
+     ;; keeps one file unsliced while its siblings share narrow windows.
+     (if (cat-whole-file-ranges? n)
+       (cat-one path)
+       (let [out (read-file-ranges path n)]
+         (tool-success {:op :cat
+                        :path path
+                        :kind :file
+                        :result (cat-result->model out)
+                        :metadata {:truncated? (:truncated? out)
+                                   :ranges (mapv :range (:ranges out))}})))
 
      :anchor
      ;; (cat path :anchor A) — the single line carrying the `lineno:hash`
@@ -5053,28 +5081,40 @@
    still sees the original `ex-info`; the remaining workers are always awaited,
    so no task outlives the call."
   [f items]
-  (let [items (vec items)
-        n (count items)]
+  (let
+    [items
+     (vec items)
+
+     n
+     (count items)]
+
     (if (or (< n 2) (< (long scan-parallelism) 2))
       (mapv f items)
       (let
-        [out (object-array n)
-         cursor (java.util.concurrent.atomic.AtomicInteger. 0)
-         worker (fn []
-                  (loop []
-                    (let [i (.getAndIncrement cursor)]
-                      (when (< i n)
-                        (aset out i (f (nth items i)))
-                        (recur)))))
-         futures (vec (repeatedly (min (long scan-parallelism) n) #(future (worker))))
-         failure (reduce (fn [acc fut]
-                           (try @fut
-                                acc
-                                (catch java.util.concurrent.ExecutionException e
-                                  (or acc (.getCause e) e))
-                                (catch Throwable t (or acc t))))
-                         nil
-                         futures)]
+        [out
+         (object-array n)
+
+         cursor
+         (java.util.concurrent.atomic.AtomicInteger. 0)
+
+         worker
+         (fn []
+           (loop []
+
+             (let [i (.getAndIncrement cursor)]
+               (when (< i n) (aset out i (f (nth items i))) (recur)))))
+
+         futures
+         (vec (repeatedly (min (long scan-parallelism) n) #(future (worker))))
+
+         failure
+         (reduce (fn [acc fut]
+                   (try @fut
+                        acc
+                        (catch java.util.concurrent.ExecutionException e (or acc (.getCause e) e))
+                        (catch Throwable t (or acc t))))
+                 nil
+                 futures)]
 
         (when failure (throw failure))
         (vec out)))))
@@ -5090,11 +5130,19 @@
      ranges
      (get spec "ranges")
 
+     ;; cat's whole-file sentinel means "index the WHOLE file" here too, so one
+     ;; batched path can opt out of the call's shared `ranges`.
+     whole-file?
+     (cat-whole-file-ranges? ranges)
+
+     ;; Coerced by cat's own normalizer so `struct_index` accepts every `ranges`
+     ;; shape `cat` does and REJECTS the same bad ones — a HALF sentinel like
+     ;; `[[-1, 60]]` must not slip through as a real window. Only nil/empty means
+     ;; "no windows"; a non-collection scalar (`3`) is FORWARDED so cat's guidance
+     ;; is thrown instead of a raw `Don't know how to create ISeq from Long`.
      windows
-     (when (seq ranges)
-       (mapv (fn [[start end]]
-               [(long start) (long end)])
-             ranges))
+     (when (and (some? ranges) (not whole-file?) (not (and (coll? ranges) (empty? ranges))))
+       (normalize-cat-ranges ranges))
 
      ;; Resolve through safe-path (workspace-cwd confinement) like every other
      ;; file tool — file-index's internal slurp must not receive a raw relative
@@ -5124,7 +5172,7 @@
                         "language" nil
                         "line_count" nil
                         "path" path
-                        "ranges" ranges
+                        "ranges" windows
                         "note" nil}]
                  (cond idx (assoc base
                              "skeleton" (:skeleton idx)
@@ -6287,11 +6335,12 @@
                         {:type "object"
                          :properties
                          {"path" {:type "string" :minLength 1}
-                          "ranges" {:type "array"
-                                    :items
-                                    {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
-                                    :minItems 1
-                                    :description "THIS path's windows; override shared `ranges`."}}
+                          "ranges"
+                          {:type "array"
+                           :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
+                           :minItems 1
+                           :description (str "THIS path's windows; override shared `ranges`. "
+                                             "`[[-1, -1]]` = the whole file.")}}
                          :required ["path"]
                          :additionalProperties false}]}
         :minItems 1
@@ -6314,9 +6363,10 @@
      :on-error-fn (tool-failure-on-error :struct_index :file nil)}))
 
 (def ^:private cat-ranges-schema
-  "Shape of a `ranges` value: a non-empty list of 1-based inclusive [start end] pairs."
+  "Shape of a `ranges` value: a non-empty list of inclusive 1-based [start end]
+   pairs, or the whole-file sentinel [-1, -1]."
   {:type "array"
-   :items {:type "array" :items {:type "integer" :minimum 1} :minItems 2 :maxItems 2}
+   :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
    :minItems 1})
 
 
@@ -6325,7 +6375,8 @@
   {:type "object"
    :properties {"path" {:type "string" :minLength 1}
                 "ranges" (assoc cat-ranges-schema
-                           :description "THIS file; overrides shared `ranges`.")}
+                           :description (str "THIS file; overrides shared `ranges`. "
+                                             "`[[-1, -1]]` = the whole file."))}
    :required ["path"]
    :additionalProperties false})
 
@@ -6343,7 +6394,9 @@
    :properties {"files" cat-files-schema
                 "ranges" (assoc cat-ranges-schema
                            :description
-                           "Shared inclusive 1-based `[[start,end],…]` windows for bare entries.")}
+                           (str
+                             "Shared inclusive 1-based `[[start,end],…]` windows for bare entries; "
+                             "omit for whole files, `[[-1, -1]]` to unslice ONE entry."))}
    :required ["files"]
    :additionalProperties false
    :maxProperties 2})

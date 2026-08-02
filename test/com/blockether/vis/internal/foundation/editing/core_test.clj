@@ -1466,6 +1466,43 @@
                                     :result)
                                 "ranges")))))))
   (it
+    "`ranges` [[-1, -1]] is the WHOLE-file sentinel, per entry and in a batch"
+    (let
+      [body
+       (string/join "\n" (map #(str "L" %) (range 1 21)))
+
+       path
+       (write-temp! "range/whole-file.txt" (str body "\n"))
+
+       other
+       (write-temp! "range/whole-file-b.txt" (str body "\n"))
+
+       cat-tool
+       (private-fn "cat-tool")
+
+       whole
+       (:result (cat-tool path))]
+
+      ;; every sentinel shape reads exactly what a bare `cat` reads
+      (expect (= whole (:result (cat-tool path {"ranges" [[-1 -1]]}))))
+      (expect (= whole (:result (cat-tool path {"ranges" [[0 0]]}))))
+      (expect (= whole (:result (cat-tool path {"ranges" [["-1" "-1"]]}))))
+      (expect (= whole (:result (cat-tool path {"ranges" "-1, -1"}))))
+      (expect (= whole (:result (cat-tool path :ranges [[-1 -1]]))))
+      ;; a sentinel is a superset of any sibling window
+      (expect (= whole (:result (cat-tool path {"ranges" [[2 4] [-1 -1]]}))))
+      ;; a batched entry opts out of the call's SHARED ranges
+      (let
+        [rows (get-in (cat-tool {"files" [other {"path" path "ranges" [[-1 -1]]}] "ranges" [[2 2]]})
+                      [:result "results"])]
+        (expect (= [[2 "L2"]] (patch/anchor-map->tuples (get (first rows) "anchors"))))
+        (expect (= whole (second rows))))
+      ;; a real window still narrows, and a HALF sentinel is still an error
+      (expect (= [[2 4]]
+                 (mapv #(get % "range")
+                       (get (:result (cat-tool path {"ranges" [[2 4]]})) "ranges"))))
+      (expect (throws? clojure.lang.ExceptionInfo #(cat-tool path {"ranges" [[-1 5]]})))))
+  (it
     "cat coerces stringy/flat `ranges` shapes models mis-pass"
     (let
       [body
@@ -3795,37 +3832,50 @@
      (fn [r]
        (mapv #(get % "name") (get-in r [:result "results" 0 "definitions"])))]
 
-    (it "ranges handles one or several windows and is echoed consistently"
+    (it
+      "ranges handles one or several windows and is echoed consistently"
+      (let
+        [_
+         (temp-dir-path "idxrange")
+
+         f
+         (str (temp-root) "/idxrange/m.clj")]
+
+        (spit (fs/file f) "(defn a [] 1)\n(defn b [] 2)\n(defn c [] 3)\n")
         (let
-          [_
-           (temp-dir-path "idxrange")
+          [whole
+           (index {"paths" [f]})
 
-           f
-           (str (temp-root) "/idxrange/m.clj")]
+           one
+           (index {"paths" [{"path" f "ranges" [[2 2]]}]})
 
-          (spit (fs/file f) "(defn a [] 1)\n(defn b [] 2)\n(defn c [] 3)\n")
-          (let
-            [whole
-             (index {"paths" [f]})
+           multi
+           (index {"paths" [{"path" f "ranges" [[1 1] [3 3]]}]})]
 
-             one
-             (index {"paths" [{"path" f "ranges" [[2 2]]}]})
-
-             multi
-             (index {"paths" [{"path" f "ranges" [[1 1] [3 3]]}]})]
-
-            (expect (= ["a" "b" "c"] (names whole)))
-            (expect (= ["b"] (names one)))
-            (expect (= [[2 2]] (get-in one [:result "results" 0 "ranges"])))
-            (expect (not (contains? (get-in one [:result "results" 0]) "range")))
-            (expect (= ["a" "c"] (names multi)))
-            (expect (= [[1 1] [3 3]] (get-in multi [:result "results" 0 "ranges"])))
-            (expect (not (contains? (get-in multi [:result "results" 0]) "range")))
-            (expect (= 3 (get-in whole [:result "results" 0 "line_count"])))
-            (expect (= 3 (get-in multi [:result "results" 0 "line_count"])))
-            (expect (throws? clojure.lang.ExceptionInfo #(index {})))
-            (expect (throws? clojure.lang.ExceptionInfo
-                             #(index {"paths" [{"path" f "range" [2 2]}]}))))))
+          (expect (= ["a" "b" "c"] (names whole)))
+          (expect (= ["b"] (names one)))
+          (expect (= [[2 2]] (get-in one [:result "results" 0 "ranges"])))
+          (expect (not (contains? (get-in one [:result "results" 0]) "range")))
+          (expect (= ["a" "c"] (names multi)))
+          (expect (= [[1 1] [3 3]] (get-in multi [:result "results" 0 "ranges"])))
+          (expect (not (contains? (get-in multi [:result "results" 0]) "range")))
+          (expect (= 3 (get-in whole [:result "results" 0 "line_count"])))
+          (expect (= 3 (get-in multi [:result "results" 0 "line_count"])))
+          ;; cat's whole-file sentinel unslices ONE batched path here too
+          (let [unsliced (index {"paths" [{"path" f "ranges" [[-1 -1]]}]})]
+            (expect (= ["a" "b" "c"] (names unsliced)))
+            (expect (nil? (get-in unsliced [:result "results" 0 "ranges"]))))
+          ;; a HALF sentinel is NOT the sentinel: struct_index rejects it exactly
+          ;; like cat instead of indexing a nonsense window
+          (expect (throws? clojure.lang.ExceptionInfo
+                           #(index {"paths" [{"path" f "ranges" [[-1 3]]}]})))
+          ;; every other cat `ranges` shape coerces here too, echoed normalized
+          (let [stringy (index {"paths" [{"path" f "ranges" "2, 2"}]})]
+            (expect (= ["b"] (names stringy)))
+            (expect (= [[2 2]] (get-in stringy [:result "results" 0 "ranges"]))))
+          (expect (throws? clojure.lang.ExceptionInfo #(index {})))
+          (expect (throws? clojure.lang.ExceptionInfo
+                           #(index {"paths" [{"path" f "range" [2 2]}]}))))))
     (it "the render summary surfaces the narrowing window(s)"
         (let
           [render
