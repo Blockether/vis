@@ -35,15 +35,61 @@
   120)
 
 (defn- now-ms ^long [] (System/currentTimeMillis))
+(def ^:private no-quote
+  "Sentinel for \"outside any quote\" in [[split-argv]] — a char, not nil, so the
+   scan compares char to char and stays reflection-free."
+  \u0000)
+
+(defn- split-argv
+  "Split ONE bare command line into literal git tokens the way a shell would:
+   whitespace separates, single quotes are literal, double quotes and backslashes
+   escape. Only reached through coercion, so `\"commit -m 'wip: with spaces'\"`
+   still keeps the message as ONE token instead of three."
+  [^String line]
+  (let [n (.length line)]
+    (loop [i 0
+           buf (StringBuilder.)
+           started? false
+           q no-quote
+           tokens []]
+      (if (>= i n)
+        (cond-> tokens started? (conj (.toString buf)))
+        (let [c (.charAt line i)]
+          (cond
+            (and (= q no-quote) (Character/isWhitespace c))
+            (if started?
+              (recur (inc i) (StringBuilder.) false no-quote (conj tokens (.toString buf)))
+              (recur (inc i) buf false no-quote tokens))
+
+            (and (= q no-quote) (or (= c \') (= c \")))
+            (recur (inc i) buf true c tokens)
+
+            (= c q)
+            (recur (inc i) buf true no-quote tokens)
+
+            (and (= c \\) (not= q \') (< (inc i) n))
+            (recur (+ i 2) (.append buf (.charAt line (inc i))) true q tokens)
+
+            :else
+            (recur (inc i) (.append buf c) true q tokens)))))))
+
 (defn- normalize-args
   "Coerce ONE element of the `commands` batch into a vector of literal git
-   tokens. `git-impl` admits the schema's ONLY item shape — a sequential of
-   literal args, spaces and all — at the door, so there is no union wider than
-   the tool's own grammar. An empty result is the caller's signal to ask for at
-   least one argument."
+   tokens. The schema's item shape is a sequential of literal args, spaces and
+   all, and it passes through untouched. A bare STRING element is not refused any
+   more: it is the one-line spelling of that same argv, so it is split by
+   [[split-argv]] instead of wasting the call. Anything else has no reading as an
+   argv and throws. An empty result is the caller's signal to ask for at least
+   one argument."
   [args]
-  (if (sequential? args)
+  (cond
+    (sequential? args)
     (into [] (comp (map str) (remove str/blank?)) args)
+
+    (string? args)
+    (into [] (remove str/blank?) (split-argv args))
+
+    :else
     (throw (ex-info (str "git commands must be lists of literal tokens \u2014 "
                          "one command is a batch of ONE, so pass each as an array, "
                          "e.g. [[\"status\", \"--short\"]] or [[\"commit\", \"-m\", \"wip\"]]. "
@@ -51,6 +97,19 @@
                          (pr-str (type args))
                          ".")
                     {:type ::bad-commands :tool "git"}))))
+
+(defn- normalize-batch
+  "The ordered batch with its ONE genuinely ambiguous spelling resolved. A FLAT
+   array of strings reads either as several one-line commands
+   (`[\"status --short\", \"diff --stat\"]`) or as a single argv whose tokens were
+   spread (`[\"commit\", \"-m\", \"wip\"]`). A git command never BEGINS with a flag,
+   so a flag element can only be the argv reading: take the whole array as one
+   command then. Otherwise every element stays its own command, and
+   [[normalize-args]] gives each its tokens."
+  [commands]
+  (if (and (every? string? commands) (some #(str/starts-with? % "-") commands))
+    [(vec commands)]
+    commands))
 
 (defn- verbose-add-tokens
   "`git add` is silent by design, so a bare `add` gives no feedback on WHAT it
@@ -100,7 +159,8 @@
                     {:type ::bad-options :tool "git"})))
   (let
     [commands
-     (batch/ordered "git" (or (get opts "commands") (get opts :commands)))
+     (normalize-batch
+       (batch/ordered "git" (or (get opts "commands") (get opts :commands))))
 
      t0
      (now-ms)
@@ -340,6 +400,7 @@ Run host Git serially from the workspace root. Pass ONE map whose non-empty `com
                  {:items {:type "array" :minItems 1 :items {:type "string"}}
                   :description
                   (str "Serial argv lists with `git` omitted, e.g. `[[\"status\", \"--short\"]]`; "
+                       "a bare line is split into tokens; "
                        "pass ONE options map, never a positional array.")})}
               :required ["commands"]
               :additionalProperties false}}))

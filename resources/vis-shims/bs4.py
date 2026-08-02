@@ -4,8 +4,24 @@
 # `bs4` module implemented in PURE Python on the stdlib html.parser (no host/JVM
 # bridge), the natural partner to the requests shim (fetch then parse). It builds a
 # Tag / NavigableString tree with find/find_all, CSS .select, get_text and HTML
-# serialization. A deliberate subset of Pillow-grade breadth, not full bs4. Published
-# into sys.modules so `from bs4 import BeautifulSoup` works, and stapled onto builtins.
+# serialization. Published into sys.modules so `from bs4 import BeautifulSoup` works,
+# and stapled onto builtins.
+#
+# Parity: differentially tested against REAL beautifulsoup4 4.12.3 + soupsieve 2.5
+# (CPython) over 135 probes -- malformed/unclosed/mis-nested markup, entity and
+# charref decoding (including unknown and out-of-range refs), whitespace-only text
+# collapsing, pre/textarea preservation, script/style/textarea raw text, CDATA,
+# doctype and processing instructions, multi-valued and valueless attributes,
+# find/find_all/find_next*/find_previous*/find_parents (+ camelCase aliases,
+# regex/list/callable/True matchers, SoupStrainer), CSS combinators plus :not,
+# :nth-child/:nth-of-type, :first-child/:last-child/:empty and attribute operators,
+# mutation (append/insert/wrap/unwrap/replace_with/extract/decompose/smooth/clear),
+# copy.copy, len/iter/call/bool protocols, prettify, encode and get_text -- with
+# ZERO output mismatches. Known deliberate divergences from upstream: the tree is
+# built only by html.parser (no lxml/html5lib, so no implied-tag recovery beyond
+# html.parser's), soupsieve's :has() and namespace selectors are unsupported, and
+# inserting a tag into itself or a descendant raises ValueError instead of building
+# a cycle that upstream then hangs on while serializing.
 
 
 def __vis_install_bs4__():
@@ -39,6 +55,10 @@ def __vis_install_bs4__():
             "wbr",
         ]
     )
+    # bs4 collapses a whitespace-only text run to a single space (or newline)
+    # unless it sits inside a whitespace-preserving element.
+    _ASCII_SPACES = " " + chr(10) + chr(9) + chr(12) + chr(13)
+    _PRESERVE_WS = set(["pre", "textarea"])
     _MULTI_ATTR = set(["class", "accesskey", "dropzone"])
     # HTML only makes these attributes space-separated lists on specific elements,
     # so <p rel="x y"> keeps a plain string the way bs4 does.
@@ -122,9 +142,10 @@ def __vis_install_bs4__():
             return self.attrs[key]
 
         def __setitem__(self, key, value):
-            # Assignment preserves the caller's value; only parsed markup gets
-            # HTML multi-valued-attribute normalization.
-            self.attrs[key] = "" if value is None else value
+            # Assignment preserves the caller's value verbatim -- including
+            # None, which bs4 serializes as a bare attribute -- and only parsed
+            # markup gets HTML multi-valued-attribute normalization.
+            self.attrs[key] = value
 
         def __delitem__(self, key):
             del self.attrs[key]
@@ -241,7 +262,8 @@ def __vis_install_bs4__():
             if p is None:
                 raise ValueError("Element has no parent")
             if new is self:
-                raise ValueError("Cannot replace an element with itself")
+                # bs4 treats replacing a node with itself as a no-op.
+                return self
             idx = _index_of(p.contents, self)
             new = _adopt(p, new)
             # `_adopt` may have moved an earlier sibling out of this parent.
@@ -384,6 +406,7 @@ def __vis_install_bs4__():
 
         def decompose(self):
             _detach(self)
+            self._decomposed = True
             # A decomposed subtree is no longer connected to the document at any
             # depth. Clear descendant links iteratively for deep markup too.
             stack = list(self.contents)
@@ -396,6 +419,9 @@ def __vis_install_bs4__():
                     c.contents = []
 
         def smooth(self):
+            for c in self.contents:
+                if isinstance(c, Tag):
+                    c.smooth()
             i = 0
             while i + 1 < len(self.contents):
                 left, right = self.contents[i : i + 2]
@@ -434,6 +460,14 @@ def __vis_install_bs4__():
         def __str__(self):
             return _render(self)
 
+        @property
+        def decomposed(self):
+            return bool(getattr(self, "_decomposed", False))
+
+        def __iter__(self):
+            # bs4 iterates a Tag over its children, not over its attribute keys.
+            return iter(self.contents)
+
         def __len__(self):
             return len(self.contents)
 
@@ -451,8 +485,18 @@ def __vis_install_bs4__():
         def __deepcopy__(self, memo=None):
             return _clone(self)
 
-        def encode(self, encoding="utf-8", *args, **kwargs):
-            return _render(self).encode(encoding)
+        def encode(
+            self,
+            encoding="utf-8",
+            indent_level=None,
+            formatter="minimal",
+            errors="xmlcharrefreplace",
+        ):
+            # bs4's second positional is indent_level, not the codec error
+            # handler: any non-None value asks for pretty-printed output, and
+            # non-encodable characters become character references by default.
+            markup = self.prettify() if indent_level is not None else _render(self)
+            return markup.encode(encoding, errors)
 
     def _index_of(seq, node):
         for i, c in enumerate(seq):
@@ -501,6 +545,9 @@ def __vis_install_bs4__():
         return None
 
     def _next_element(node):
+        if isinstance(node, BeautifulSoup):
+            # The soup object sits outside bs4's element chain.
+            return None
         if isinstance(node, Tag) and node.contents:
             return node.contents[0]
         cur = node
@@ -613,7 +660,10 @@ def __vis_install_bs4__():
     def _previous_element(node):
         prev = _sibling(node, -1)
         if prev is None:
-            return getattr(node, "parent", None)
+            # The soup object itself is not part of bs4's element chain: the
+            # first node parsed simply has no previous element.
+            parent = getattr(node, "parent", None)
+            return None if isinstance(parent, BeautifulSoup) else parent
         while isinstance(prev, Tag) and prev.contents:
             prev = prev.contents[-1]
         return prev
@@ -700,7 +750,9 @@ def __vis_install_bs4__():
         def shallow(src):
             if isinstance(src, NavigableString):
                 return type(src)(str(src))
-            dup = Tag(src.name)
+            # copy.copy(soup) hands back a BeautifulSoup, not a plain Tag.
+            dup = BeautifulSoup("") if isinstance(src, BeautifulSoup) else Tag(src.name)
+            dup.name = src.name
             dup.attrs = dict(
                 (k, list(v) if isinstance(v, list) else v) for k, v in src.attrs.items()
             )
@@ -1081,7 +1133,12 @@ def __vis_install_bs4__():
         parts = [pad + _LT + node.name]
         for k in sorted(node.attrs):
             v = node.attrs[k]
-            vs = " ".join(v) if isinstance(v, list) else (v if v is not None else "")
+            if v is None:
+                # A None-valued attribute renders bare (`<p data-x>`); only an
+                # empty string renders as `data-x=""`.
+                parts.append(" " + k)
+                continue
+            vs = " ".join(v) if isinstance(v, list) else v
             parts.append(" " + k + "=" + _quote_attr(vs))
         if node.name in _VOID and not node.contents:
             parts.append("/" + _GT)
@@ -1163,6 +1220,10 @@ def __vis_install_bs4__():
     def _render_pretty(node, depth=0):
         if not isinstance(node, Tag):
             return _pretty_string(node, depth)
+        if node.name in _PRESERVE_WS:
+            # Whitespace-preserving elements are never re-indented: bs4 prints
+            # <pre>/<textarea> content exactly as parsed.
+            return " " * depth + _render_flat(node)
         # Explicit frames: [tag, depth, rendered kids, next child index]. Only
         # leaf children recurse (one level), so nesting depth is unbounded.
         stack = [[node, depth, [], 0]]
@@ -1173,7 +1234,7 @@ def __vis_install_bs4__():
                 frame[3] = i + 1
                 kid_depth = d if cur.name == "[document]" else d + 1
                 child = cur.contents[i]
-                if isinstance(child, Tag):
+                if isinstance(child, Tag) and child.name not in _PRESERVE_WS:
                     stack.append([child, kid_depth, [], 0])
                 else:
                     kids.append(_render_pretty(child, kid_depth))
@@ -1223,8 +1284,13 @@ def __vis_install_bs4__():
             if self._data:
                 text = "".join(self._data)
                 self._data = []
-                if text:
-                    self._cur().append(NavigableString(text))
+                if not text:
+                    return
+                if text.strip(_ASCII_SPACES) == "" and not any(
+                    t.name in _PRESERVE_WS for t in self.stack
+                ):
+                    text = _NL if _NL in text else " "
+                self._cur().append(NavigableString(text))
 
         def handle_starttag(self, tag, attrs):
             self._flush()
@@ -1269,8 +1335,10 @@ def __vis_install_bs4__():
 
         def unknown_decl(self, data):
             self._flush()
-            if data.startswith("CDATA[") and data.endswith("]"):
-                self._cur().append(CData(data[6:-1]))
+            if data.startswith("CDATA["):
+                # html.parser reports `<![CDATA[x]]>` as `CDATA[x`.
+                body = data[6:]
+                self._cur().append(CData(body[:-1] if body.endswith("]") else body))
 
         def close(self):
             _hp.HTMLParser.close(self)

@@ -1874,32 +1874,43 @@ export function SessionScreen({
       }
       void reconcile();
     });
-    // The stream going away and coming back is itself proof of a gap: every
-    // frame the gateway emitted while the socket was down — the `turn.completed`
-    // that ends this bubble included — was delivered to nobody, and a resume
-    // past the gateway's ring buffer never replays it. Waiting for the next 5 s
-    // tick (or up to STALE_RECONCILE_MS, when a request that died with the old
-    // socket still holds the latch) leaves the bubble breathing on a turn that
-    // finished during the outage — the TUI's `:sync-gateway-connection`, from
-    // the other side. So reconcile the moment the hub reports itself live
-    // again, exactly as a wake does. `subscribeConnection` replays the current
-    // value on subscribe, so the first sample only seeds the edge detector: a
-    // false -> true TRANSITION is the signal, never "is connected".
-    let wasConnected: boolean | null = null;
-    const stopConnection = subscriptions.subscribeConnection((live) => {
-      const reconnected = wasConnected === false && live;
-      wasConnected = live;
-      if (!reconnected) return;
-      // A read issued over the socket that just died cannot answer for the gap,
-      // so its silence must not suppress the one reconcile that can.
-      inflightSince = null;
-      void reconcile();
-    });
+    // Coming back from an outage, the frame that ended this turn may simply be
+    // gone: the gateway's replay ring is process memory, so a cursor the server
+    // accepts still replays nothing after a daemon restart. The server closes
+    // that hole itself — every (re)subscribe opens with `subscription.ready`,
+    // which names the turn the daemon is running for this session RIGHT NOW.
+    //
+    // So this is a verdict, not a timer: if the daemon's turn matches the one
+    // being painted, the bubble is genuinely live and nothing is fetched. If it
+    // disagrees — a different turn, or none at all — the gap is proven and one
+    // reconcile settles it, instead of waiting out the 5 s tick (or up to
+    // STALE_RECONCILE_MS, when a request that died with the old socket still
+    // holds the latch). The TUI's `:sync-gateway-ready`, from the other side.
+    //
+    // `replay: false`: the buffered backlog is for reopening a screen mid-turn;
+    // this listener only ever wants live control frames.
+    const stopReady = subscriptions.subscribeSession(
+      sid,
+      (event) => {
+        if (event.type !== 'subscription.ready') return;
+        const live = liveTurnRef.current;
+        const painted = live?.status === 'running' ? live.id : '';
+        const running = typeof event.current_turn_id === 'string' ? event.current_turn_id : '';
+        // An older daemon omits the state entirely; then the frame degrades to
+        // "reconcile on every reconnect", which is merely one extra read.
+        if (typeof event.is_live === 'boolean' && running === painted) return;
+        // A read issued over the socket that just died cannot answer for the gap,
+        // so its silence must not suppress the one reconcile that can.
+        inflightSince = null;
+        void reconcile();
+      },
+      { replay: false },
+    );
     return () => {
       cancelled = true;
       window.clearInterval(timer);
       stopWake();
-      stopConnection();
+      stopReady();
     };
   }, [
     client,
@@ -2523,6 +2534,12 @@ export function SessionScreen({
     const unsubscribeEvents = subscriptions.subscribeSession(
       sid,
       (event) => {
+        // The subscribe handshake is a control frame, not transcript. It must not
+        // reach the reducer, and above all must not pass for traffic: the liveness
+        // watchdog below measures SILENCE, and a reconnect is exactly when a frozen
+        // stream has to stay visibly silent. The `subscription.ready` listener above
+        // is the one that acts on it.
+        if (event.type === 'subscription.ready') return;
         lastEventAt = Date.now();
         // The hub replays a still-streaming turn from its `turn.started` on every
         // (re)subscribe. When the bubble was seeded from the in-memory cache those

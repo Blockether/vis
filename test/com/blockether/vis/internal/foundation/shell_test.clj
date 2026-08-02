@@ -761,6 +761,22 @@
                  (expect (threw? #(shell* {} {"commands" []})))
                  (expect (threw? #(shell* {} {"commands" [""]})))
                  (expect (threw? #(shell* {} ["printf first"])))))
+             (it "coerces a bare command string into the batch of one"
+                 ;; `commands` is an array, but a lone command line has exactly one
+                 ;; reading — it is wrapped instead of failing the call, and the
+                 ;; result still carries it as the batch it always was.
+                 (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                   (let [r (:result (shell* {} {"commands" "printf lone"}))]
+                     (expect (= ["printf lone"] (mapv #(get % "command") (get r "commands"))))
+                     (expect (= "lone" (str/trim (get-in r ["commands" 0 "stdout"])))))))
+             (it "coerces an argv array entry into one quoted bash line"
+                 ;; The habitual `git`-shaped spelling: tokens instead of a line.
+                 ;; Each token stays ONE argument, so spaces survive quoting.
+                 (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                   (let [r (:result (shell* {} {"commands" [["printf" "%s" "two words"]]}))]
+                     (expect (= ["printf %s 'two words'"]
+                                (mapv #(get % "command") (get r "commands"))))
+                     (expect (= "two words" (str/trim (get-in r ["commands" 0 "stdout"])))))))
 
 (defdescribe
   shell-native-contract-test

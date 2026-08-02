@@ -1108,14 +1108,20 @@
 
       ;; Mux transport lost / restored. These are NOT session events: the gateway
       ;; client broadcasts them to EVERY sink so a channel can tell "the session is
-      ;; quiet" apart from "this process went deaf". Everything the daemon emitted
-      ;; while the stream was down was missed by definition, so the reconnect is the
-      ;; cue to re-ask the gateway for turn state instead of trusting the stream.
+      ;; quiet" apart from "this process went deaf". The transport edge alone is NOT
+      ;; evidence of a gap: the mux resubscribes at this client's cursor, so the
+      ;; ordinary reconnect replays what it owes. `subscription.ready` below is what
+      ;; actually reports the daemon's turn state.
       "gateway.disconnected"
       {:phase :gateway-disconnected}
 
       "gateway.connected"
       {:phase :gateway-connected}
+
+      "subscription.ready"
+      {:phase :gateway-ready
+       :gateway-turn-id (event-get event :current-turn-id)
+       :is-state-known (some? (event-get event :is-live))}
 
       nil)))
 

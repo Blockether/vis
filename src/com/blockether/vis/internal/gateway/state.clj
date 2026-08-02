@@ -485,6 +485,19 @@
 
     (when (pos-int? start-seq) (dec (long start-seq)))))
 
+(defn current-turn-id
+  "Turn id this process is running for `sid` right now, or nil when the session
+   is idle. The registry's `:current-turn` mirror: set on `turn.started`, cleared
+   by that turn's terminal event, and maintained for FOREIGN turns too (a sibling
+   process's turn is hydrated into this registry on subscribe).
+
+   This is the one fact a reconnecting client needs and cannot infer from its own
+   stream: whether the turn it is still painting is the turn the daemon is still
+   running. `sse-ready!` ships it with every subscription so the answer costs no
+   round trip."
+  [sid]
+  (:current-turn (get @registry sid)))
+
 (defn events-since
   "Read-only peek at the replay ring: stored canonical (string-keyed) events
    with `\"seq\"` > cursor, oldest first. Lets a page renderer locate the

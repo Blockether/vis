@@ -216,7 +216,16 @@ export class SessionSubscriptionHub {
   private ingest(event: SseEvent): void {
     const sid = event.session_id ?? event.sid;
     if (!sid) return;
-    if (event.type === 'subscription.ready') return;
+    // `subscription.ready` is the server's verdict about THIS subscribe, not a
+    // transcript frame: it names the turn the daemon is running for the session
+    // right now, before any replay. It is therefore handed to the session's
+    // listeners directly and never buffered, never counted as lifecycle — a
+    // screen uses it to decide whether the turn it paints is still the daemon's,
+    // which is the one thing a reconnect cannot infer from its own cursor.
+    if (event.type === 'subscription.ready') {
+      for (const listener of this.sessionListeners.get(sid) ?? []) listener(event);
+      return;
+    }
 
     // The buffer replays the turn that is STILL STREAMING to a screen that was
     // reopened mid-flight. A FINISHED turn must never be replayed: its

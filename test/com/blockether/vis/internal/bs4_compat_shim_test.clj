@@ -480,4 +480,52 @@
                   "from bs4 import BeautifulSoup\n"
                   "s = BeautifulSoup('<!DOCTYPE html><html><body>x</body></html>', 'html.parser')\n"
                   "str(s) == '<!DOCTYPE html>' + chr(10) + '<html><body>x</body></html>' "
-                  "and type(s.contents[0]).__name__ == 'Doctype'")))))))
+                  "and type(s.contents[0]).__name__ == 'Doctype'"))))))
+  (it
+    "collapses whitespace-only text the way bs4 does, but preserves <pre>"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from bs4 import BeautifulSoup\n"
+              "s = BeautifulSoup('<div> a <b> b </b><!-- c --> <i>  </i>d </div>', 'html.parser')\n"
+              "p = BeautifulSoup('<div><pre>a' + chr(10) + 'b</pre></div>', 'html.parser')\n"
+              "s.div.get_text('|') == ' a | b | | |d ' "
+              "and p.prettify() == '<div>' + chr(10) + ' <pre>a' + chr(10) "
+              "+ 'b</pre>' + chr(10) + '</div>' + chr(10)"))))))
+  (it "keeps the soup out of the element chain and models bare attributes"
+      (with-python-context
+        (expect
+          (true?
+            (ev
+              python-context
+              (str
+                "from bs4 import BeautifulSoup\n"
+                "s = BeautifulSoup('<div><p>1</p><b>2</b></div>', 'html.parser')\n"
+                "t = BeautifulSoup('<div><p>x</p></div>', 'html.parser')\n" "gone = t.p\n"
+                "gone.decompose()\n" "q = BeautifulSoup('<p>x</p>', 'html.parser')\n"
+                "q.p['data-x'] = None\n"
+                "[x.name for x in s.b.find_all_previous(True)] == ['p', 'div'] "
+                "and s.next_element is None and s.div.previous_element is None "
+                "and gone.decomposed and not t.div.decomposed "
+                "and str(q.p) == '<p data-x>x</p>' "
+                "and [str(c) for c in s.div] == ['<p>1</p>', '<b>2</b>'] and len(s.div) == 2"))))))
+  (it "handles CDATA, recursive smooth, copy of a soup and ascii encode"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "import copy\n"
+                                "from bs4 import BeautifulSoup\n"
+                                "s = BeautifulSoup('<p><![CDATA[x<y]]></p>', 'html.parser')\n"
+                                "c = BeautifulSoup('<div><p>a</p></div>', 'html.parser')\n"
+                                "c.p.append('b')\n"
+                                "c.p.append('c')\n" "c.smooth()\n"
+                                "d = copy.copy(c)\n"
+                                "e = BeautifulSoup('<p>caf' + chr(233) + '</p>', 'html.parser')\n"
+                                "str(s) == '<p><![CDATA[x<y]]></p>' "
+                                "and type(s.p.contents[0]).__name__ == 'CData' "
+                                "and len(c.p.contents) == 1 and c.p.get_text() == 'abc' "
+                                "and type(d).__name__ == 'BeautifulSoup' and str(d) == str(c) "
+                                "and c.p.replace_with(c.p) is c.p "
+                                "and e.encode('ascii') == '<p>caf&#233;</p>'.encode('ascii')")))))))

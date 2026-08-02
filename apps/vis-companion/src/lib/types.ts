@@ -633,5 +633,15 @@ export interface SseEvent {
   seq?: number;
   /** Gateway epoch sampled when this event was emitted. */
   ts?: number;
+  /**
+   * `subscription.ready` only: the turn the daemon is running for this session at
+   * the moment it accepted the (re)subscribe, and an explicit liveness flag so an
+   * idle session is distinguishable from an older daemon that omits both. Lets a
+   * reconnecting screen decide whether the turn it paints is still real without a
+   * round trip — its own cursor cannot answer that (the replay ring is process
+   * memory and dies with the daemon).
+   */
+  current_turn_id?: string | null;
+  is_live?: boolean;
   [k: string]: unknown;
 }

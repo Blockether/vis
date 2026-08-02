@@ -663,6 +663,85 @@
                   (is (= 3 (count (re-seq (re-pattern sid-a) s))))
                   (is (= 2 (count (re-seq (re-pattern sid-b) s)))))))))))))
 
+;; ── `subscription.ready` states the daemon's OWN turn, so a reconnect needs no probe ──
+;; A client that went dark cannot tell "nothing happened" from "I missed the
+;; terminal event": its cursor is accepted either way and the replay ring is
+;; process memory. The ready frame therefore carries the one fact only the daemon
+;; knows — the turn it is running for this session RIGHT NOW — before any replay.
+;; Agreement with what the client paints is a positive verdict for zero round
+;; trips; disagreement is proof of a gap and the client reconciles once.
+
+(deftest subscription-ready-carries-the-daemons-current-turn
+  (testing "the ready frame names the running turn, and says so for an idle session"
+    (with-redefs-fn {#'server/stop! (fn []
+                                      nil)}
+      (fn []
+        (with-server-state!
+          {}
+          (fn []
+            (let
+              [multi-sse-body
+               (rv 'multi-sse-body)
+
+               write-body
+               (requiring-resolve 'ring.core.protocols/write-body-to-stream)
+
+               sid-live
+               (str (java.util.UUID/randomUUID))
+
+               sid-idle
+               (str (java.util.UUID/randomUUID))
+
+               baos
+               (java.io.ByteArrayOutputStream.)]
+
+              ;; A turn running in a SIBLING process is exactly the case a
+              ;; reconnecting client cannot resolve from its own stream; the registry
+              ;; mirrors it (`ingest-mirrored-event!`), so the ready frame can state it.
+              (state/append-event! sid-live "test.seed" {:n 1})
+              (state/ingest-mirrored-event!
+                sid-live
+                true
+                {"type" "turn.started" "turn_id" "t-live" "session_id" sid-live})
+              (let
+                [body
+                 (multi-sse-body [[sid-live 0] [sid-idle 0]] false)
+
+                 fut
+                 (future (try (write-body body {} baos) (catch Throwable _ nil)))]
+
+                (is (wait-until #(= 2
+                                    (count (re-seq #"\"type\":\"subscription\.ready\""
+                                                   (String. (.toByteArray baos) "UTF-8"))))))
+                (future-cancel fut)
+                (let
+                  [s
+                   (String. (.toByteArray baos) "UTF-8")
+
+                   ;; Keyed by the session each frame is ABOUT. Matching the whole
+                   ;; body would pass even with the two verdicts swapped, since one
+                   ;; `true` and one `false` are on the wire either way.
+                   ready
+                   (into {}
+                         (keep (fn [line]
+                                 (when (re-find #"subscription\.ready" line)
+                                   (when-let
+                                     [sid (second (re-find #"\"session_id\"\s*:\s*\"([^\"]+)\""
+                                                           line))]
+                                     [sid line]))))
+                         (re-seq #"data:.*" s))]
+
+                  (is (= #{sid-live sid-idle} (set (keys ready))))
+                  (testing "the live session's frame names the turn the daemon holds"
+                    (is (re-find #"\"current_turn_id\"\s*:\s*\"t-live\"" (get ready sid-live)))
+                    (is (re-find #"\"is_live\"\s*:\s*true" (get ready sid-live))))
+                  (testing "the idle session's frame is an explicit negative, not a silence"
+                    ;; Without this a client cannot distinguish "no turn" from "old
+                    ;; daemon that never shipped the field" — and must probe blindly.
+                    (is (re-find #"\"is_live\"\s*:\s*false" (get ready sid-idle)))
+                    (is (nil? (re-find #"\"current_turn_id\"\s*:\s*\""
+                                       (get ready sid-idle))))))))))))))
+
 ;; ── Resource rid rides the QUERY STRING, not a path segment (issue #14) ──
 ;; A resource id can embed an absolute path — an nREPL id is `nrepl:/Users/…/ws`.
 ;; Percent-encoded into a PATH SEGMENT its `/` becomes `%2F`, which Jetty rejects

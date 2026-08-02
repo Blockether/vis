@@ -3877,6 +3877,12 @@
                   (state/dispatch [:sync-gateway-connection
                                    (= (:phase chunk) :gateway-connected)])
 
+                  ;; The server's `subscription.ready` verdict: it names the turn the
+                  ;; DAEMON is running for this session right now, before any replay.
+                  ;; Disagreement with the turn painted here is proof of a gap.
+                  :gateway-ready
+                  (state/dispatch [:sync-gateway-ready tab-id chunk])
+
                   nil))))
           (catch Throwable _
             (fn [])))

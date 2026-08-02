@@ -605,6 +605,42 @@
        "; each command's own command, stdout, stderr and exit is its entry in"
        " \"commands\"."))
 
+(defn- shell-quote
+  "One argv token as a literal `bash -lc` word: plain words stay bare, anything
+   else is single-quoted (with embedded quotes escaped), so a coerced argv keeps
+   exactly the arguments it named."
+  [^String token]
+  (if (re-matches #"[A-Za-z0-9_@%+=:,./-]+" token)
+    token
+    (str "'" (str/replace token "'" "'\\''") "'")))
+
+(defn- command-line
+  "ONE bash line from a caller's entry. A string IS the line. A nested array of
+   tokens — the argv spelling `git` takes, and the shape a caller reaches for out
+   of habit — is coerced by quoting each token and joining, instead of failing
+   the call. Anything else has no reading as a command line and throws."
+  [command]
+  (cond
+    (string? command)
+    command
+
+    (sequential? command)
+    (str/join " " (map (comp shell-quote str) command))
+
+    :else
+    (throw (ex-info "shell commands must be strings \u2014 one bash -lc command line each."
+                    {:type ::bad-commands}))))
+
+(defn- ordered-lines
+  "`commands` as the ordered batch of bash lines: `serial-batch/ordered` (so a
+   bare string is the batch of ONE) plus [[command-line]] per entry. Only a blank
+   line is refused — there is nothing to run."
+  [commands]
+  (let [lines (mapv command-line (batch/ordered "shell" commands))]
+    (when (some str/blank? lines)
+      (throw (ex-info "shell commands must not contain blank commands." {:type ::blank-command})))
+    lines))
+
 (defn- shell-batch-impl
   "Run `commands` strictly in input order: each bounded foreground shell call
    finishes before the next begins. Same ordered-batch machinery
@@ -621,16 +657,7 @@
   [env commands opts]
   (let
     [commands
-     (batch/ordered "shell" commands)
-
-     _
-     (when-not (every? string? commands)
-       (throw (ex-info "shell commands must be strings \u2014 one bash -lc command line each."
-                       {:type ::bad-commands})))
-
-     _
-     (when (some str/blank? commands)
-       (throw (ex-info "shell commands must not contain blank commands." {:type ::blank-command})))
+     (ordered-lines commands)
 
      results
      (batch/run-serial commands
@@ -1360,15 +1387,7 @@
          (if id "background" "run"))
 
      checked-commands
-     (fn []
-       (let [lines (batch/ordered "shell" commands)]
-         (when-not (every? string? lines)
-           (throw (ex-info "shell commands must be strings — one bash -lc command line each."
-                           {:type ::bad-commands})))
-         (when (some str/blank? lines)
-           (throw (ex-info "shell commands must not contain blank commands."
-                           {:type ::blank-command})))
-         lines))
+     (fn [] (ordered-lines commands))
 
      valid-commands
      (when (some? commands) (checked-commands))
@@ -1991,7 +2010,9 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
       :properties
       {"commands" (batch/commands-property {:items {:type "string"}
                                             :description
-                                            "Required for run/new background: `bash -lc` lines."})
+                                            (str "Required for run/new background: `bash -lc` "
+                                                 "lines; a lone string is taken as the batch of "
+                                                 "one.")})
        "op" {:type "string"
              :enum ["run" "background" "logs" "wait" "send" "stop"]
              :description "Stage; default run, or background with `id`."}

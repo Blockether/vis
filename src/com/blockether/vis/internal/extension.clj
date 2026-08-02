@@ -3618,6 +3618,8 @@
     com.blockether.vis.internal.foundation.shim-attach
     com.blockether.vis.internal.foundation.shim-fonttools
     com.blockether.vis.internal.foundation.shim-fonttools
+    com.blockether.vis.internal.foundation.rewind
+    com.blockether.vis.internal.foundation.acp
     com.blockether.vis.internal.foundation.mcp.core
     com.blockether.vis.internal.foundation.harness.core])
 

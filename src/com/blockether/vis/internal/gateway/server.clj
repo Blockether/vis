@@ -480,17 +480,34 @@
    for the live-only sentinel learns its concrete resume point and can reconnect
    losslessly after its first connection.
 
+   It also carries the daemon's OWN turn state — `current_turn_id` and `is_live`,
+   read from the registry AFTER `state/subscribe!` so it describes the same
+   instant the replay was captured at. That inverts the control: a reconnecting
+   client no longer has to poll to find out whether the bubble it is painting is
+   still real. Agreement costs zero round trips; disagreement is a definitive
+   verdict that the socket missed a terminal frame, so the client reconciles at
+   once instead of waiting out a grace + probe interval.
+
+   `is_live` is what keeps 'the session is idle' distinguishable from 'this
+   daemon is too old to say': a client that sees no `is_live` must treat the
+   frame as no verdict at all and fall back to asking.
+
    EVERY SSE endpoint emits it for EVERY session it serves — single-session and
    multiplexed alike — so no client has to special-case which endpoint it is
    attached to. Like every other frame it rides `wire/sse-frame`, i.e. it is an
    ordinary `id:`/`event:`/`data:` frame, not a bespoke encoding."
   [^OutputStream out sid ^long cursor]
-  (.write out
-          (.getBytes (wire/sse-frame (wire/canonical {:type "subscription.ready"
-                                                      :session_id (str sid)
-                                                      :cursor cursor
-                                                      :server_time_ms (System/currentTimeMillis)}))
-                     StandardCharsets/UTF_8))
+  (let [tid (state/current-turn-id sid)]
+    (.write out
+            (.getBytes (wire/sse-frame (wire/canonical {:type "subscription.ready"
+                                                        :session_id (str sid)
+                                                        :cursor cursor
+                                                        :current_turn_id (some-> tid
+                                                                                 str)
+                                                        :is_live (some? tid)
+                                                        :server_time_ms
+                                                        (System/currentTimeMillis)}))
+                       StandardCharsets/UTF_8)))
   (.flush out))
 
 (defn- sse-body

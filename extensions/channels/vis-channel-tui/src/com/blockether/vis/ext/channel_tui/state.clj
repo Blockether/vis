@@ -4435,16 +4435,17 @@
                                due)}))))
 
 (defn- gateway-resync-probe-due?
-  "True when a RECONNECT should immediately re-ask the gateway about a tab's
-   in-flight turn. Same shape as `turn-liveness-probe-due?` minus the start-up
-   grace: a reconnect is itself proof the stream had a gap, so a turn that went
-   quiet one second ago earns the probe as much as an old one.
+  "True when a tab's in-flight turn must be re-asked of the gateway RIGHT NOW,
+   off the render heartbeat. Same shape as `turn-liveness-probe-due?` minus the
+   start-up grace: the caller (`:sync-gateway-ready`) already holds the server's
+   own verdict that the turn painted here is not the turn the daemon is running,
+   so a turn that went quiet one second ago earns the probe as much as an old one.
 
    Throttled on its OWN stamp, never the heartbeat's. A probe issued while the
    socket was down asked over a connection that was failing, so its silence
    proves nothing and must not suppress the one probe that can finally answer.
    The stamp still collapses the N copies of a single broadcast (the mux delivers
-   one per open session tab) into one round."
+   one ready frame per open session tab) into one round."
   [tab now-ms]
   (boolean (and (:loading? tab)
                 (:gateway-turn-id tab)
@@ -4456,49 +4457,68 @@
 
 (reg-event-fx :sync-gateway-connection
               ;; The gateway mux lost or re-established its SSE stream
-              ;; (`gateway.disconnected` / `gateway.connected`). While the socket was
-              ;; down this process missed every event the daemon emitted, including the
-              ;; `turn.completed` that settles a live bubble into its stored message —
-              ;; so a turn that finished during the outage keeps breathing here until
-              ;; something else poked the client (typing the next message).
+              ;; (`gateway.disconnected` / `gateway.connected`). This records the flag
+              ;; ONLY — it never probes.
               ;;
-              ;; Reconnect therefore re-asks the turn registry AT ONCE rather than
-              ;; waiting out `turn-liveness-grace-ms` + `turn-liveness-probe-interval-ms`
-              ;; on the render heartbeat. It reuses `:probe-turn-liveness`, so settling
-              ;; stays byte-identical to the live path (canonical content, trace, prose
-              ;; fallback). A disconnect only records the flag: tearing anything down
-              ;; would race the mux's own reconnect.
-              (fn [db [_ connected? now-ms]]
-                (let
-                  [now
-                   (or now-ms (System/currentTimeMillis))
+              ;; The reconnect itself says nothing about whether anything was missed:
+              ;; the resubscribe replays from this client's cursor, so the usual
+              ;; reconnect delivers the `turn.completed` it owes. The authority on
+              ;; whether a gap remains is the server's `subscription.ready` frame, which
+              ;; carries the daemon's CURRENT turn for the session — see
+              ;; `:sync-gateway-ready`. A disconnect tears nothing down: that would race
+              ;; the mux's own reconnect.
+              (fn [db [_ connected? _now-ms]]
+                {:db (assoc db :gateway-connected? (boolean connected?))}))
 
-                   db'
-                   (assoc db :gateway-connected? (boolean connected?))]
+(reg-event-fx
+  :sync-gateway-ready
+  ;; Inversion of control for the reconnect gap. The server emits
+  ;; `subscription.ready` for every session on every (re)subscribe, BEFORE
+  ;; the replay, and it now carries the daemon's own view: `current_turn_id`
+  ;; plus `is_live`. So the client is TOLD "the turn you are painting is not
+  ;; the one I am running" instead of discovering it on a timer.
+  ;;
+  ;; A probe fires only on DISAGREEMENT — the tab paints a live turn and the
+  ;; daemon reports a different one, or none. Agreement is a positive verdict
+  ;; from the source of truth and costs zero round-trips, which is what lets
+  ;; the render heartbeat stay a slow last resort.
+  ;;
+  ;; An OLD daemon omits the state (`:is-state-known` false); then the frame
+  ;; degrades to the previous behaviour — reconnect probes unconditionally,
+  ;; which is merely one extra read.
+  ;;
+  ;; Throttled on its own `:gateway-resynced-at-ms` stamp, never the
+  ;; heartbeat's: a probe issued while the socket was down asked over a
+  ;; failing connection, so its silence proves nothing and must not suppress
+  ;; the one probe that can finally answer. The stamp still collapses the N
+  ;; copies of one broadcast (the mux delivers a ready frame per open session
+  ;; tab) into a single round.
+  (fn [db [_ tab-id chunk now-ms]]
+    (let
+      [now
+       (or now-ms (System/currentTimeMillis))
 
-                  (if-not connected?
-                    {:db db'}
-                    (let
-                      [due (filterv (fn [tab-id]
-                                      (let [tab (db-for-tab db tab-id)]
-                                        (and (gateway-resync-probe-due? tab now)
-                                             (some? (get-in tab [:session :id])))))
-                             (loading-tab-ids db))]
-                      (if (empty? due)
-                        {:db db'}
-                        {:db (reduce (fn [acc tab-id]
-                                       (update-tab acc
-                                                   tab-id
-                                                   #(assoc %
-                                                      :gateway-resynced-at-ms now
-                                                      :liveness-probed-at-ms now)))
-                                     db'
-                                     due)
-                         :fx (mapv (fn [tab-id]
-                                     (let [tab (db-for-tab db tab-id)]
-                                       [:probe-turn-liveness tab-id (get-in tab [:session :id])
-                                        (:gateway-turn-id tab) (:live-turn-client-id tab)]))
-                                   due)}))))))
+       tab-id
+       (or tab-id (current-tab-id db))
+
+       tab
+       (db-for-tab db tab-id)
+
+       painted
+       (:gateway-turn-id tab)
+
+       agrees?
+       (boolean (and (:is-state-known chunk) painted (= painted (:gateway-turn-id chunk))))]
+
+      (if (or agrees? (not (gateway-resync-probe-due? tab now)) (nil? (get-in tab [:session :id])))
+        {:db db}
+        {:db (update-tab db
+                         tab-id
+                         #(assoc %
+                            :gateway-resynced-at-ms now
+                            :liveness-probed-at-ms now))
+         :fx [[:probe-turn-liveness tab-id (get-in tab [:session :id]) painted
+               (:live-turn-client-id tab)]]}))))
 
 (defn background-loading-tokens
   "Cancel tokens of every BACKGROUND tab (in `:tab-locals`, excluding the active

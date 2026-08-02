@@ -10,8 +10,9 @@
 
    - [[commands-property]] — the `commands` JSON-Schema property; the ITEM shape
      stays with the tool (a shell line is a string, a git command is argv).
-   - [[ordered]] — the caller's value as a vector, refusing a non-collection, an
-     empty batch and (deliberately) a SET: an unordered collection cannot
+   - [[ordered]] — the caller's value as a vector: a bare string is coerced into
+     the batch of one it means, while a non-collection, an empty batch and
+     (deliberately) a SET are refused — an unordered collection cannot
      describe a strictly ordered batch.
    - [[run-serial]] — run in input order, every result at its input position.
    - [[result]] — the `{\"commands\" [...]}` key both tools answer with: `git`
@@ -34,25 +35,30 @@
   {:type "array" :minItems 1 :items items :description description})
 
 (defn ordered
-  "`commands` as a vector, in input order. `commands` is ALWAYS an ARRAY: one
-   command is a batch of ONE (`[\"ls\"]`), never a bare string — a string is
-   refused BY TYPE so there is a single shape to write, to read back and to
-   render. Throws for `tool` when the value is a string, when it is not an
-   ordered collection (a set or a map has no input order and must never be
-   silently sequenced), or when the batch is empty."
+  "`commands` as a vector, in input order. A batch is an ARRAY — one command is a
+   batch of ONE (`[\"ls\"]`) — but a bare string is COERCED into exactly that
+   batch of one rather than failing the call: the shape written, read back and
+   rendered stays the array, while the obvious one-command spelling never costs a
+   turn. Throws for `tool` only when there is no ordered batch to be had: an
+   unordered collection (a set or a map has no input order and must never be
+   silently sequenced), a value that is neither, or an empty batch."
   [tool commands]
-  (when (string? commands)
-    (throw (ex-info (str tool
-                         " commands is ALWAYS an ARRAY, never a bare string:"
-                         " wrap one command as a batch of one, [\""
-                         commands
-                         "\"].")
-                    {:type ::bad-commands :tool tool})))
-  (when-not (or (sequential? commands) (instance? java.util.List commands))
-    (throw (ex-info (str tool
-                         " commands must be an ORDERED array; a set or a map has no input order.")
-                    {:type ::bad-commands :tool tool})))
-  (let [v (vec commands)]
+  (let
+    [v
+     (cond
+       ;; The one coercion: a lone command line IS a batch of one.
+       (string? commands)
+       [commands]
+
+       (or (sequential? commands) (instance? java.util.List commands))
+       (vec commands)
+
+       :else
+       (throw (ex-info (str tool
+                            " commands must be an ORDERED array (a bare string is taken as the"
+                            " batch of one); a set or a map has no input order.")
+                       {:type ::bad-commands :tool tool})))]
+
     (when (empty? v)
       (throw (ex-info (str tool " needs at least one command.") {:type ::no-commands :tool tool})))
     v))

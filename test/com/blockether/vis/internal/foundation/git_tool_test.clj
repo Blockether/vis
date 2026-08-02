@@ -111,14 +111,39 @@
 
 (defdescribe
   git-one-command-spelling-test
-  (it "refuses a bare string: `commands` is ALWAYS an array, never a union"
-      ;; `commands` is git's only input carrier and — exactly as in `shell` — it
-      ;; is the first positional too, and it is ALWAYS an array. A bare string is
-      ;; the one-command spelling of the past; it is refused BY SHAPE now, with a
-      ;; message that spells out the one-command batch `[...]`.
-      (let [thrown (try (git-impl {} {"commands" "status --short"}) nil (catch Throwable e e))]
-        (expect (some? thrown))
-        (expect (str/includes? (ex-message thrown) "ALWAYS an ARRAY, never a bare string"))))
+  (it "coerces a bare string into the batch of one it obviously means"
+      ;; `commands` is git's only input carrier and it is an ARRAY — but the
+      ;; one-command spelling `"status --short"` has exactly one reading, so it
+      ;; is COERCED into `[["status" "--short"]]` instead of burning the call on
+      ;; a shape complaint. Quoting still decides the tokens.
+      (let [seen (atom [])]
+        (with-redefs
+          [shell/run-argv
+           (fn [_ argv _]
+             (swap! seen conj (vec (rest argv)))
+             {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
+          (git-impl {} {"commands" "status --short"})
+          (git-impl {} {"commands" ["commit -m 'wip: with spaces'"]})
+          (expect (= [["status" "--short"] ["commit" "-m" "wip: with spaces"]] @seen)))))
+  (it "reads a FLAT token array as the one argv it can only be"
+      ;; `["status", "--short"]` is the other habitual mis-spelling: a git command
+      ;; never begins with a flag, so a flag element makes the whole array one
+      ;; argv rather than two commands. Flagless strings stay one command each.
+      (let [seen (atom [])]
+        (with-redefs
+          [shell/run-argv
+           (fn [_ argv _]
+             (swap! seen conj (vec (rest argv)))
+             {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
+          (git-impl {} {"commands" ["commit" "-m" "wip"]})
+          (expect (= [["commit" "-m" "wip"]] @seen))
+          (reset! seen [])
+          (git-impl {} {"commands" ["status" "diff"]})
+          (expect (= [["status"] ["diff"]] @seen)))))
+  (it "still refuses a batch with no command and a command that is no argv"
+      (expect (some? (try (git-impl {} {"commands" []}) nil (catch Throwable e e))))
+      (expect (some? (try (git-impl {} {"commands" #{["status"]}}) nil (catch Throwable e e))))
+      (expect (some? (try (git-impl {} {"commands" [42]}) nil (catch Throwable e e)))))
   (it "takes a one-element array as the ONE-COMMAND spelling of that same batch"
       ;; `commands` is ALWAYS an array, so a single command is a batch of ONE,
       ;; spelled `[["status" "--short"]]`, and it yields exactly one entry.
