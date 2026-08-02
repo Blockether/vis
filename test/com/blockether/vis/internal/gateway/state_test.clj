@@ -1827,6 +1827,39 @@
         (expect (false? (#'state/failure-transient?
                          {:result {:status :error :trace [{:error auth}]}})))
         (expect (false? (#'state/failure-transient? {:result {:status :error}})))))
+  (it
+    "auto-retries a provider TIMEOUT — the wedge of issue #65"
+    (let
+      [litellm
+       (str "litellm.Timeout: BedrockException: Timeout Error - litellm.Timeout: Connection timed "
+            "out. Timeout passed=Timeout(connect=5.0, read=600.0, write=600.0, pool=600.0), time "
+            "taken=0.001 seconds. Received Model Group=claude-opus-4-8 Available Model Group "
+            "Fallbacks=None")]
+      ;; The gateway kept its own three-kind transient list, so this card was
+      ;; TERMINAL: the queue paused with `provider_error` and no auto-resume,
+      ;; and the follow-up queued behind it never drained.
+      (expect (true? (#'state/failure-transient?
+                      {:throwable (ex-info litellm {:status 408 :body litellm})})))
+      ;; Same failure once svar's router has wrapped it.
+      (expect (true? (#'state/failure-transient?
+                      {:throwable (ex-info "Provider unavailable"
+                                           {:type :svar.llm/provider-unavailable
+                                            :attempts [{:provider :bedrock
+                                                        :model "claude-opus-4-8"
+                                                        :status 408
+                                                        :reason :transient-error
+                                                        :error litellm}]})})))
+      ;; And through the loop trace shape the worker actually stores.
+      (expect (true? (#'state/failure-transient?
+                      {:result {:status :error
+                                :trace [{:error {:message litellm
+                                                 :data {:status 408 :body litellm}}}]}})))
+      ;; An overloaded upstream is an outage too, never a dead request.
+      (expect (true? (#'state/failure-transient?
+                      {:throwable (ex-info "Overloaded"
+                                           {:status 529
+                                            :body
+                                            "{\"error\":{\"type\":\"overloaded_error\"}}"})})))))
   (it "reads Retry-After data from the failing trace entry"
       (expect (= 2500
                  (#'state/failure-retry-after-ms

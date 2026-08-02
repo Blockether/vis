@@ -2726,19 +2726,24 @@
   (or throwable (:error result) (some :error (reverse (:trace result)))))
 
 (defn- failure-transient?
-  "Classify a terminal FAILURE as transient (rate-limit / transport / stream
-   stall) vs terminal (auth, bad-request, tool-schema, empty-content). A
-   transient failure earns a backoff auto-retry of the head; a terminal one is
-   held for an explicit resume. Accepts `{:stalled? :throwable :result}` — one
-   of the three, whichever the failing path carries."
+  "Classify a terminal FAILURE as transient (worth an automatic retry of the head)
+   vs terminal (held for an explicit resume). Accepts `{:stalled? :throwable
+   :result}` — one of the three, whichever the failing path carries.
+
+   The verdict comes from [[provider-error/provider-error-retryable?]], i.e. from
+   svar's classification plus the kinds vis types itself. The gateway used to keep
+   its OWN three-kind list (`:rate-limit`/`:transport`/`:stream-timeout`), which
+   drifted: a provider timeout (`:upstream-timeout` — the Bedrock/LiteLLM connect
+   timeout of issue #65) and an overloaded upstream both read as DEAD, so the card
+   was followed by a `provider_error` pause with no auto-resume and a message
+   queued behind the failure never drained — the session looked wedged."
   [{:keys [stalled?] :as failure}]
   (let [err (terminal-failure-error failure)]
     (boolean (cond stalled? true
                    (nil? err) false
                    :else (or (and (instance? Throwable err)
                                   (provider-error/transport-throwable? err))
-                             (contains? #{:rate-limit :transport :stream-timeout}
-                                        (provider-error/provider-error-kind err)))))))
+                             (provider-error/provider-error-retryable? err))))))
 
 (defn- count-queued [entry] (count (filter #(= "queued" (:status %)) (vals (:turns entry)))))
 
