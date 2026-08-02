@@ -451,3 +451,32 @@
         (reset! saved nil)
         (is (= false (providers/clear-provider-api-key! :unknown-provider :test)))
         (is (nil? @saved))))))
+
+(deftest reprioritize-providers-renumbers-from-vector-position
+  (let
+    [renumbered (providers/reprioritize-providers [{:id :a :priority 7} {:id :b :priority 0}
+                                                   {:id :c}])]
+    (is (= [:a :b :c] (mapv :id renumbered)))
+    (is (= [0 1 2] (mapv :priority renumbered)))
+    (is (vector? renumbered))
+    (is (= [] (providers/reprioritize-providers nil)))))
+
+(deftest demote-unreachable-providers-renumbers-the-demoted-provider
+  ;; svar sorts candidates by `:priority`, never by vector position, so a dead
+  ;; local endpoint that keeps `:priority 0` is still its FIRST pick — the health
+  ;; gate sank it in name only and the turn burned minutes against a dead port.
+  (with-redefs
+    [providers/provider-reachable? (fn [provider]
+                                     (not= :lmstudio (:id provider)))]
+    (let
+      [{:keys [router demoted]} (providers/demote-unreachable-providers
+                                  {:providers [{:id :lmstudio :priority 0}
+                                               {:id :zai-coding-plan :priority 1}]})]
+      (is (= [:lmstudio] demoted))
+      (is (= [:zai-coding-plan :lmstudio] (mapv :id (:providers router))))
+      (is (= [0 1] (mapv :priority (:providers router)))))))
+
+(deftest demote-unreachable-providers-leaves-a-healthy-fleet-untouched
+  (with-redefs [providers/provider-reachable? (constantly true)]
+    (let [router {:providers [{:id :lmstudio :priority 0} {:id :zai-coding-plan :priority 1}]}]
+      (is (= {:router router :demoted []} (providers/demote-unreachable-providers router))))))

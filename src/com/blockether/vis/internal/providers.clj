@@ -297,10 +297,9 @@
        ;; the same class of un-authenticatable provider and answers here too.
        (config/provider-credential-gap provider)
        (let [{:keys [reason env-vars]} (config/provider-credential-gap provider)]
-         (cond-> {:is-authenticated false
-                  :source (if env-vars :env :command)
-                  :error reason}
-           env-vars (assoc :needs-env (str/join ", " env-vars))))
+         (cond-> {:is-authenticated false :source (if env-vars :env :command) :error reason}
+           env-vars
+           (assoc :needs-env (str/join ", " env-vars))))
        ;; Local no-auth providers (Ollama / LM Studio) have no key and
        ;; their registered status-fn is a hardcoded stub — probe the
        ;; endpoint for real.
@@ -308,8 +307,7 @@
        (some? (:api-key provider))
        {:is-authenticated true :source :config :config-path config/state-path}
        ;; No gap above means the helper DID produce a token just now.
-       (some? (:api-key-command provider))
-       {:is-authenticated true :source :command}
+       (some? (:api-key-command provider)) {:is-authenticated true :source :command}
        registered (or (safe-provider-status registered) {:is-authenticated false})
        :else {:is-authenticated false})]
 
@@ -337,6 +335,21 @@
     (boolean (:is-authenticated (probe-local-reachable provider)))
     true))
 
+(defn reprioritize-providers
+  "Renumber `:priority` from vector position; returns a vector.
+
+   svar bakes `:priority` at `make-router` time from the DECLARED index, and every
+   candidate sort reads that NUMBER rather than vector order (see
+   `svar…router/candidate-sort-key`). Reordering a router's `:providers` vector
+   alone therefore promotes a provider in NAME only: the health gate below, a
+   session pin and a coordinator's `models` preference each looked applied while
+   svar kept routing to the original head. Every Vis reorder ends here."
+  [provider-entries]
+  (into []
+        (map-indexed (fn [idx provider]
+                       (assoc provider :priority (long idx))))
+        provider-entries))
+
 (defn demote-unreachable-providers
   "Health-order a ROUTER (svar shape, `{:providers [...]}`) for one
    turn: LOCAL providers that fail the liveness probe sink to the END
@@ -353,7 +366,8 @@
            {:router router :demoted []}
            (let [{ok true bad false} (group-by provider-reachable? providers)]
              (if (seq bad)
-               {:router (assoc router :providers (vec (concat ok bad))) :demoted (mapv :id bad)}
+               {:router (assoc router :providers (reprioritize-providers (concat ok bad)))
+                :demoted (mapv :id bad)}
                {:router router :demoted []}))))
        (catch Throwable _ {:router router :demoted []})))
 
@@ -375,19 +389,15 @@
    plus at most one cached credential-command probe — so the card never flashes
    an authenticated verdict it is about to retract."
   [provider]
-  (wire/canonical (if-let [{:keys [reason env-vars]} (config/provider-credential-gap-cached
-                                                       provider)]
-                    (cond-> {:is-authenticated false
-                             :source (if env-vars :env :command)
-                             :error reason}
-                      env-vars (assoc :needs-env (str/join ", " env-vars)))
-                    (cond (some? (:api-key provider))
-                          {:is-authenticated true :source :config :config-path config/state-path}
-
-                          (some? (:api-key-command provider))
-                          {:is-authenticated true :source :command}
-
-                          :else {:is-authenticated nil :loading? true}))))
+  (wire/canonical
+    (if-let [{:keys [reason env-vars]} (config/provider-credential-gap-cached provider)]
+      (cond-> {:is-authenticated false :source (if env-vars :env :command) :error reason}
+        env-vars
+        (assoc :needs-env (str/join ", " env-vars)))
+      (cond (some? (:api-key provider))
+            {:is-authenticated true :source :config :config-path config/state-path}
+            (some? (:api-key-command provider)) {:is-authenticated true :source :command}
+            :else {:is-authenticated nil :loading? true}))))
 
 (defn initial-provider-limits
   "Placeholder limits report while the real fetch runs."

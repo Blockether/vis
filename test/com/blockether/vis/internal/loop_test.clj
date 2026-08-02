@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.loop-test
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
+            [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.extension :as extension]
@@ -2988,6 +2989,57 @@
           (expect (= #{:anthropic-coding-plan :anthropic}
                      (set (map :id
                                (:providers (lp/router-for-model router "claude-haiku-4-5"))))))))))
+
+(defdescribe
+  router-order-binds-svar-selection-test
+  "Reordering `:providers` is DECORATION unless `:priority` and `:root` move with
+   it: svar sorts candidates by `:priority`, and `:strategy :root` reads the
+   provider's `:root` NAME rather than the `:models` head. A coordinator's
+   `models` preference (sub_loop) carries no forced `:routing`, so the child turn
+   kept running the default provider's root model while the turn card and the
+   cost row named the cheap model that never ran."
+  (let
+    [router (svar/make-router
+              [{:id :prov-a
+                :api-key "k"
+                :base-url "https://a.example.com"
+                :models [{:name "a-big"} {:name "a-small"}]}
+               {:id :prov-b
+                :api-key "k"
+                :base-url "https://b.example.com"
+                :models [{:name "b-cheap"}]}])
+
+     ;; What svar ACTUALLY calls, not what Vis displays.
+     selected (fn [r prefs]
+                (let [[p m] (svar-router/select-provider r prefs)]
+                  [(:id p) (:name m)]))
+
+     seats (fn [r]
+             (mapv (juxt :id :priority :root) (:providers r)))]
+
+    (it "svar itself picks the coordinator's model across providers"
+        (expect (= [:prov-a "a-big"] (selected router {:strategy :root})))
+        (expect (= [:prov-b "b-cheap"]
+                   (selected (lp/router-for-model router "b-cheap") {:strategy :root}))))
+    (it "…and WITHIN one provider, where only `:root` decides"
+        (expect (= [:prov-a "a-small"]
+                   (selected (lp/router-for-model router "a-small") {:strategy :root}))))
+    (it "the preferred provider is renumbered to priority 0 and roots the pick"
+        (expect (= [[:prov-b 0 "b-cheap"] [:prov-a 1 "a-big"]]
+                   (seats (lp/router-for-model router "b-cheap")))))
+    (it "every provider named in the list gets its own preferred root"
+        (expect (= [[:prov-b 0 "b-cheap"] [:prov-a 1 "a-small"]]
+                   (seats (lp/router-for-model router ["b-cheap" "a-small"])))))
+    (it "an unknown model changes nothing — no accidental renumbering or reroot"
+        (expect (= router (lp/router-for-model router "gpt-nope")))
+        (expect (= [:prov-a "a-big"]
+                   (selected (lp/router-for-model router "gpt-nope") {:strategy :root}))))
+    (it "a pinned PROVIDER leads svar's priority sort too"
+        ;; svar drops `:force-provider` on an auth fallback and re-sorts by
+        ;; priority alone, so the pin must own the number, not just the slot.
+        (let [pinned (@#'lp/router-for-pinned-provider router :prov-b)]
+          (expect (= [[:prov-b 0 "b-cheap"] [:prov-a 1 "a-big"]] (seats pinned)))
+          (expect (= [:prov-b "b-cheap"] (selected pinned {:strategy :root})))))))
 
 (defdescribe
   router-for-pinned-provider-test

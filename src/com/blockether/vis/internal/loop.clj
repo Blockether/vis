@@ -4802,9 +4802,9 @@
      "Only `print` returns; bare expressions drop and errors surface. Native results return inline and stay "
      "at `ntr[tool_id]`; engine-bound natives are bare snake_case, native-only ones absent. Never "
      "`time.sleep`/poll for background shells \u2014 use `shell` op `wait` (a REQUIRED `until` regex ends it "
-      "line), via `gather` when parallel. Close what you open (`with open(...)`): a dropped file handle is "
-      "NOT auto-closed here, so the sandbox reclaims leaked descriptors and refuses more than 512 held at "
-      "once (`VIS_PY_MAX_OPEN_FILES`) — leaked descriptors stop the process spawning `shell`/`git` children."
+     "line), via `gather` when parallel. Close what you open (`with open(...)`): a dropped file handle is "
+     "NOT auto-closed here, so the sandbox reclaims leaked descriptors and refuses more than 512 held at "
+     "once (`VIS_PY_MAX_OPEN_FILES`) — leaked descriptors stop the process spawning `shell`/`git` children."
      (when-let [cap (python-execution-capability-line caps)]
        (str " " cap)))
    :result
@@ -6291,16 +6291,16 @@
      (perr/provider-body-message (some-> (:body d)
                                          str))]
 
-    (boolean
-      (when (and (:api-key-command p)
-                 (perr/auth-provider-error? (:status d) provider-message (ex-message t))
-                 (auth-refresh-allowed? pid))
-        (config/invalidate-credential-command! pid)
-        (tel/log! {:level :warn :id ::boot-credential-command-refreshed :data {:provider pid}}
-                  (str "Provider build hit auth error — re-running credential command for "
-                       pid
-                       "; retrying build"))
-        true))))
+    (boolean (when (and (:api-key-command p)
+                        (perr/auth-provider-error? (:status d) provider-message (ex-message t))
+                        (auth-refresh-allowed? pid))
+               (config/invalidate-credential-command! pid)
+               (tel/log!
+                 {:level :warn :id ::boot-credential-command-refreshed :data {:provider pid}}
+                 (str "Provider build hit auth error — re-running credential command for "
+                      pid
+                      "; retrying build"))
+               true))))
 
 (defn- runtime-router-providers
   "Resolve durable provider config into the svar runtime shape.
@@ -6455,19 +6455,6 @@
             (remove #(= provider-id (:id %)))
             provider-entries))))
 
-(defn- reprioritize-providers
-  "Renumber `:priority` from vector position.
-
-   svar bakes `:priority` at `make-router` time from the DECLARED index, and every
-   candidate sort reads that number rather than vector order (see
-   `svar…router/candidate-sort-key`). Reordering the vector alone therefore
-   promotes a provider in name only — unaffordable for the fallback tag, whose
-   whole contract is to be the provider svar picks FIRST once the primary is out."
-  [provider-entries]
-  (into []
-        (map-indexed (fn [idx provider]
-                       (assoc provider :priority (long idx))))
-        provider-entries))
 
 (defn- honor-config-roots!
   "Make the explicit provider/model tags the router's effective roots: the
@@ -6505,7 +6492,7 @@
                             (as-> entries (or (apply seat-root entries primary) entries)))]
                   (if (identical? seated provider-entries)
                     provider-entries
-                    (reprioritize-providers seated)))))
+                    (providers/reprioritize-providers seated)))))
       router)))
 
 (defn- no-providers-cause?
@@ -7123,7 +7110,14 @@
    (within each provider AND across providers), and the rest of the router follows
    UNCHANGED as fallback. Blank/unknown prefs → the router as-is (child inherits the
    parent's order). Coordinator: `sub_loop(prompt, subctx, {\"models\": [\"haiku\",
-   \"sonnet\"]})` (or a single `\"model\"`) — try the cheap one first, fall back."
+   \"sonnet\"]})` (or a single `\"model\"`) — try the cheap one first, fall back.
+
+   Vector order alone is DECORATION to svar, which selects by provider `:priority`
+   and then by the provider's `:root` model name. So the hoist is also written into
+   both fields: a matched provider's `:root` becomes its preferred model and the
+   whole fleet is renumbered from its new position. Without that, a coordinator's
+   `models` list changed the turn card and the cost row while every child turn
+   still ran the default provider's root model."
   [router prefs]
   (let
     [names (->> (if (coll? prefs) prefs [prefs])
@@ -7143,13 +7137,22 @@
          p-rank (fn [p]
                   (reduce min Long/MAX_VALUE (map m-rank (:models p))))
          reorder (fn [p]
-                   (update p :models #(vec (sort-by m-rank %))))]
+                   (let
+                     [models (vec (sort-by m-rank (:models p)))
+                      head (first models)]
+
+                     (cond-> (assoc p :models models)
+                       ;; Only a provider that actually offers a PREFERRED model
+                       ;; gets a new root; the rest keep their configured one so
+                       ;; fallback still lands on what the config chose.
+                       (contains? rank (m-name head))
+                       (assoc :root (m-name head)))))]
 
         (assoc router
           :providers (->> (:providers router)
                           (map reorder)
                           (sort-by p-rank)
-                          vec))))))
+                          providers/reprioritize-providers))))))
 
 (defn- provider-root-model
   "Root model NAME for a provider id in `router`, or nil. Prefers the provider's
@@ -9768,7 +9771,7 @@
       router)))
 
 (defn- router-for-pinned-provider
-  "Hoist `provider-id`'s entry to the router HEAD.
+  "Hoist `provider-id`'s entry to the router HEAD and renumber the fleet.
 
    `router-for-model` alone cannot do this: when two providers expose the SAME
    model name they tie on rank and the stable sort keeps config order. A session
@@ -9777,7 +9780,9 @@
    openai-codex — so the turn card, the cost row and every provider-error card
    named (and PRICED) the wrong provider. Hoisting the pinned provider makes
    display/cost attribution agree with the call, and puts the pinned provider
-   first in the fallback order."
+   first in the fallback order — which needs the `:priority` renumbering too,
+   since svar drops `:force-provider` on an auth fallback and re-sorts by
+   priority alone."
   [router provider-id]
   (let
     [pid
@@ -9789,7 +9794,8 @@
      (:providers router)]
 
     (if-let [p (and pid (first (filter #(= (:id %) pid) ps)))]
-      (assoc router :providers (into [p] (remove #(= (:id %) pid)) ps))
+      (assoc router
+        :providers (providers/reprioritize-providers (into [p] (remove #(= (:id %) pid)) ps)))
       router)))
 
 (defn- prepare-turn-context
