@@ -6808,13 +6808,21 @@
 
 (defn- auth-error-shaped?
   "True when `e` looks like a provider auth rejection (401/403 or an auth-shaped
-   message), regardless of whether the provider can refresh."
+   message), regardless of whether the provider can refresh.
+
+   Reads the WRAPPER and, failing that, the ATTEMPTS: once svar's router has
+   walked the fleet it throws `Provider unavailable` with no status and no auth
+   prose of its own, and the 401s survive only on `:attempts`. Without the
+   second look every wrapped credential failure skipped both the rescue route
+   and [[note-provider-auth-cooldown!]], so the dead provider was re-probed on
+   the very next iteration — the storm #82 reports."
   [^Throwable e]
   (let [d (ex-data e)]
-    (perr/auth-provider-error? (:status d)
-                               (perr/provider-body-message (some-> (:body d)
-                                                                   str))
-                               (ex-message e))))
+    (or (perr/auth-provider-error? (:status d)
+                                  (perr/provider-body-message (some-> (:body d)
+                                                                     str))
+                                  (ex-message e))
+        (perr/auth-exhausted-attempts? e))))
 
 (defn- auth-fallback-routing
   "Build one cross-provider rescue route after OAuth refresh/backoff is exhausted.
@@ -6894,7 +6902,11 @@
      pid
      (:provider resolved-model)]
 
-    (boolean (and (perr/auth-provider-error? status provider-message (ex-message e))
+    (boolean (and (or (perr/auth-provider-error? status provider-message (ex-message e))
+                      ;; A wrapped fleet failure hides its 401s on `:attempts`;
+                      ;; an expired OAuth token deserves its refresh before the
+                      ;; provider is cooled down.
+                      (perr/auth-exhausted-attempts? e))
                   (some-> (registry/provider-by-id pid)
                           :provider/refresh-token-fn)))))
 
