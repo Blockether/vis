@@ -11,11 +11,8 @@
             [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
             ;; Side-effecting require: selects + loads the platform native lib.
             [com.blockether.tree-sitter-language-pack])
-  (:import [dev.kreuzberg.treesitterlanguagepack
-            StructuralApi
-            StructuralApi$FileReferences
-            StructuralApi$FileSource
-            StructuralApi$Op]))
+  (:import [dev.kreuzberg.treesitterlanguagepack StructuralApi StructuralApi$FileReferences
+            StructuralApi$FileSource StructuralApi$Op]))
 
 (def ^:private ops
   {:replace StructuralApi$Op/REPLACE
@@ -271,20 +268,25 @@
    the whole map."
   [^String source ^String language refs]
   (let
-    [lines (vec (str/split-lines source))
-     line-anchor #(patch/line-anchor % (nth lines (dec (long %)) ""))
-     defs-by-name (group-by :name (index/definitions source language))]
+    [lines
+     (vec (str/split-lines source))
 
-    (persistent!
-      (reduce (fn [acc e]
-                (let [hits (vec (val e))]
-                  (if (seq hits)
-                    (assoc! acc
-                            (key e)
-                            (occurrence-entries line-anchor (get defs-by-name (key e)) hits))
-                    acc)))
-              (transient {})
-              refs))))
+     line-anchor
+     #(patch/line-anchor % (nth lines (dec (long %)) ""))
+
+     defs-by-name
+     (group-by :name (index/definitions source language))]
+
+    (persistent! (reduce (fn [acc e]
+                           (let [hits (vec (val e))]
+                             (if (seq hits)
+                               (assoc!
+                                 acc
+                                 (key e)
+                                 (occurrence-entries line-anchor (get defs-by-name (key e)) hits))
+                               acc)))
+                         (transient {})
+                         refs))))
 
 (defn occurrences-in
   "The BATCH form of `occurrences`: every occurrence of EACH identifier in
@@ -301,11 +303,10 @@
   [path source names]
   (let [wanted (into [] (comp (map str) (distinct)) names)]
     (if-let [language (when (seq wanted) (index/detect-language path))]
-      (reference-entries source
-                         language
-                         (StructuralApi/findReferences ^String source
-                                                       ^String language
-                                                       ^java.util.Collection wanted))
+      (reference-entries
+        source
+        language
+        (StructuralApi/findReferences ^String source ^String language ^java.util.Collection wanted))
       {})))
 
 (defn occurrences
@@ -352,10 +353,10 @@
    `ExecutionException`) so a tool's `:on-error-fn` still sees the original
    `ex-info`; every worker is awaited, so no task outlives the call."
   [f items]
-  (vec (StructuralApi/mapParallel
-         ^java.util.List (vec items)
-         (reify java.util.function.Function
-           (apply [_ item] (f item))))))
+  (vec (StructuralApi/mapParallel ^java.util.List (vec items)
+                                  (reify
+                                    java.util.function.Function
+                                      (apply [_ item] (f item))))))
 
 (defn occurrences-in-files
   "`occurrences-in` over MANY paths at once — one `{:path :occurrences}` map per
@@ -375,38 +376,35 @@
   (let [wanted (into [] (comp (map str) (remove str/blank?) (distinct)) names)]
     (if (seq wanted)
       (let
-        [prepared
-         (scan-mapv (fn [path]
-                      (try
-                        (if-let [language (index/detect-language path)]
-                          {:path path :language language :source (read-fn path)}
-                          {:path path :occurrences {}})
-                        (catch Exception e
-                          {:path path :error (or (ex-message e) (str (class e)))})))
-                    paths)
-
+        [prepared (scan-mapv (fn [path]
+                               (try (if-let [language (index/detect-language path)]
+                                      {:path path :language language :source (read-fn path)}
+                                      {:path path :occurrences {}})
+                                    (catch Exception e
+                                      {:path path :error (or (ex-message e) (str (class e)))})))
+                             paths)
          ;; Only files vis could read AND name a language for reach the pack; the
          ;; rest already carry their own row, so the batch is never asked to fail.
-         scanned
-         (into [] (keep-indexed (fn [i p] (when (:source p) i))) prepared)
+         scanned (into []
+                       (keep-indexed (fn [i p]
+                                       (when (:source p) i)))
+                       prepared)
+         rows (zipmap scanned
+                      (StructuralApi/findReferences
+                        ^java.util.List
+                        (mapv (fn [p]
+                                (StructuralApi$FileSource. (:path p) (:language p) (:source p)))
+                              (filterv :source prepared))
+                        ^java.util.Collection wanted))]
 
-         rows
-         (zipmap scanned
-                 (StructuralApi/findReferences
-                   ^java.util.List (mapv (fn [p]
-                                           (StructuralApi$FileSource. (:path p) (:language p) (:source p)))
-                                         (filterv :source prepared))
-                   ^java.util.Collection wanted))]
-
-        (scan-mapv (fn [[i p]]
-                     (if-let [^StructuralApi$FileReferences row (get rows i)]
-                       (try
-                         (if (.isFailed row)
-                           {:path (:path p) :error (.error row)}
-                           {:path (:path p)
-                            :occurrences (reference-entries (:source p) (:language p) (.references row))})
-                         (catch Exception e
-                           {:path (:path p) :error (or (ex-message e) (str (class e)))}))
-                       p))
-                   (vec (map-indexed vector prepared))))
+        (scan-mapv
+          (fn [[i p]]
+            (if-let [^StructuralApi$FileReferences row (get rows i)]
+              (try (if (.isFailed row)
+                     {:path (:path p) :error (.error row)}
+                     {:path (:path p)
+                      :occurrences (reference-entries (:source p) (:language p) (.references row))})
+                   (catch Exception e {:path (:path p) :error (or (ex-message e) (str (class e)))}))
+              p))
+          (vec (map-indexed vector prepared))))
       [])))
