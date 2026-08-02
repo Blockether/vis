@@ -500,3 +500,41 @@
         ;; near 16x. The generous 8x bound never flakes on scheduler noise yet
         ;; still trips the moment the per-definition scan comes back.
         (expect (< big (* 8.0 small))))))
+
+(defdescribe
+  clojure-meta-docstring-test
+  "A Clojure var can carry its doc in a `^{:doc \"…\"}` METADATA map instead of the
+   docstring position, and the pack reports that shape nowhere: no `docComment`,
+   and no entry in the result-level docstrings list. Every metadata-documented
+   var — the whole sandbox tool surface (`session_state`, `sessions`, `git`,
+   `shell`, `mcp_*`) documents itself this way — indexed with a blank doc until
+   `doc-snippet` learned to read the definition's own metadata head."
+  (it "reads :doc from var metadata on def and defonce"
+      (let
+        [src
+         (str "(ns demo)\n" "(def ^{:doc \"Alpha metadata doc.\"} alpha 1)\n"
+              "(defonce ^:private ^{:doc \"Beta metadata doc.\"} beta 2)\n"
+              "(defn plain-fn \"Fn docstring.\" [] 1)\n")
+
+         by-name
+         (into {} (map (juxt :name identity)) (index/definitions src "clojure"))]
+
+        (expect (= "Alpha metadata doc." (:doc (get by-name "alpha"))))
+        (expect (= "Beta metadata doc." (:doc (get by-name "beta"))))
+        ;; The ordinary docstring path must keep working untouched.
+        (expect (= "Fn docstring." (:doc (get by-name "plain-fn"))))))
+  (it "never mistakes a :doc inside the VALUE for the var's own doc"
+      (let
+        [src
+         (str "(ns demo)\n"
+              ;; Both traps at once: the doc TEXT contains the var's own name,
+              ;; and the VALUE contains a competing :doc key.
+              "(def ^{:doc \"git runs git commands; the :doc below is data.\"}\n" "  git\n"
+              "  {:doc \"value map doc\" :handler nil})\n" "(def plain {:doc \"value only\"})\n")
+
+         by-name
+         (into {} (map (juxt :name identity)) (index/definitions src "clojure"))]
+
+        (expect (= "git runs git commands; the :doc below is data." (:doc (get by-name "git"))))
+        ;; No metadata head at all: a :doc in the value is not documentation.
+        (expect (nil? (:doc (get by-name "plain")))))))

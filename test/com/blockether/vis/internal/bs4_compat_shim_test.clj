@@ -174,7 +174,11 @@
                       (str doc
                            "soup.find('div').get_attribute_list('class') == ['box','wide'] "
                            "and soup.find('div').get_attribute_list('nope') == [None] "
-                           "and soup.find('div').has_attr('id') and 'id' in soup.find('div')")))))))
+                           "and soup.find('div').has_attr('id') and not soup.find('div').has_attr('nope') "
+                           ;; bs4's `x in tag` asks about CHILDREN (Tag.__contains__ reads
+                           ;; contents), never attributes -- attribute membership is `.attrs`.
+                           "and 'id' in soup.find('div').attrs "
+                           "and 'id' not in soup.find('div')")))))))
 
 (defdescribe bs4-selector-engine-test
              (it "supports the attribute operator set"
@@ -527,7 +531,7 @@
                                 "and type(s.p.contents[0]).__name__ == 'CData' "
                                 "and len(c.p.contents) == 1 and c.p.get_text() == 'abc' "
                                 "and type(d).__name__ == 'BeautifulSoup' and str(d) == str(c) "
-                                "and c.p.replace_with(c.p) is c.p "
+                                "and c.p.replace_with(c.p) is None "
                                 "and e.encode('ascii') == '<p>caf&#233;</p>'.encode('ascii')")))))))
 
 (defdescribe bs4-inspection-test
@@ -545,7 +549,7 @@
                               "and str(st) == 'p|' + repr({'class': 'x'}) "
                               "and st.search_tag('p', {'class': 'x'}) is not None "
                               "and [str(t) for t in s.find_all(st)] == [str(s.p)] "
-                              "and isinstance(Tag('p'), PageElement)"))))))
+                              "and isinstance(Tag(name='p'), PageElement)"))))))
 
   (it "reports the builder, its registry and per-node inspection defaults"
     (with-python-context

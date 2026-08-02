@@ -89,7 +89,41 @@
                             (#'main/parse-run-args ["--" "--modle" "is" "a" "typo"]))))
              (it "keeps quoted prose that merely starts with dashes"
                  (expect (= {:prompt "--json output is broken"}
-                            (#'main/parse-run-args ["--json output is broken"])))))
+                            (#'main/parse-run-args ["--json output is broken"]))))
+             (it "refuses a value flag whose value is blank or another flag"
+                 (expect (= ["--model needs a value"]
+                            (:flag-errors (#'main/parse-run-args ["--model" "" "hi"]))))
+                 (expect (= ["--model needs a value (got --json)"]
+                            (:flag-errors (#'main/parse-run-args ["--model" "--json" "task"]))))
+                 (expect (= ["--toggles needs a value"]
+                            (:flag-errors (#'main/parse-run-args ["--toggles" "" "hi"]))))
+                 (expect (= ["--model needs a value"]
+                            (:flag-errors (#'main/parse-run-args ["--model" "--" "hi"]))))))
+
+(defdescribe run-output-mode-conflict-test
+             (it "refuses two output modes instead of silently picking one"
+                 (expect (= ["name one output mode, not --code and --json"]
+                            (:flag-errors (#'main/check-run-conflicts
+                                           (#'main/parse-run-args ["--json" "--code" "hi"])))))
+                 (expect (= ["name one output mode, not --full-trace-stream and --json"]
+                            (:flag-errors (#'main/check-run-conflicts
+                                           (#'main/parse-run-args ["--trace" "--json" "hi"]))))))
+             (it "leaves a single output mode alone"
+                 (expect (nil? (:flag-errors (#'main/check-run-conflicts
+                                              (#'main/parse-run-args ["--json" "hi"])))))
+                 (expect (nil? (:flag-errors (#'main/check-run-conflicts
+                                              (#'main/parse-run-args ["--json" "--raw" "hi"])))))))
+
+(defdescribe run-db-target-test
+             (it "names the unusable --db path instead of failing inside the pool"
+                 (expect (= ["--db /nonexistent-dir-xyz/vis.mdb needs an existing directory; /nonexistent-dir-xyz does not exist"]
+                            (:flag-errors (#'main/check-db-target {:db "/nonexistent-dir-xyz/vis.mdb"}))))
+                 (expect (= ["--db /tmp is a directory, not a database file"]
+                            (:flag-errors (#'main/check-db-target {:db "/tmp"})))))
+             (it "accepts :memory and a writable path"
+                 (expect (nil? (:flag-errors (#'main/check-db-target {:db ":memory"}))))
+                 (expect (nil? (:flag-errors (#'main/check-db-target {:db (str (System/getProperty "java.io.tmpdir") "/vis-check-db-target.mdb")}))))
+                 (expect (nil? (:flag-errors (#'main/check-db-target {}))))))
 
 (defdescribe reasoning-effort-cli-parse-test
              (it "parses exact provider-native reasoning effort separately"

@@ -71,10 +71,16 @@ fi
 flag_runtime=""
 jfr=0
 args=()
+end_of_flags=0
 update_cmd=0
 if [[ "${1:-}" == "update" ]]; then update_cmd=1; fi
 for arg in "$@"; do
+  # `--` ends the WRAPPER's parsing too, not just the app's. Without this,
+  # `vis-agent -- --dev` silently switched runtime and handed the app an empty
+  # prompt — the one escape hatch the help promises would eat its own argument.
+  if (( end_of_flags )); then args+=("$arg"); continue; fi
   case "$arg" in
+    --)        end_of_flags=1; args+=("$arg") ;;
     --measure) export VIS_MEASURE=1 ;;
     --jfr)     jfr=1 ;;
     --native|--jvm|--dev)
@@ -270,6 +276,37 @@ runtime_effective() {
   fi
 }
 
+# Persisting a choice must never be a claim. A ~/.vis that is a file, a runtime
+# path that is a directory, or a read-only home used to leave `runtime is now X`
+# on screen (or a raw bash error) while the next launch saw nothing at all.
+write_runtime_file() {
+  local value="$1"
+  if [[ -e "$vis_home" && ! -d "$vis_home" ]]; then
+    die "cannot persist the runtime: $vis_home is not a directory" \
+        "Move that file aside, or point VIS_HOME at a directory Vis may own"
+  fi
+  mkdir -p "$vis_home" 2>/dev/null \
+    || die "cannot persist the runtime: $vis_home cannot be created" \
+           "Check its permissions, or set VIS_HOME to a writable directory"
+  if [[ -e "$vis_runtime_file" && ! -f "$vis_runtime_file" ]]; then
+    die "cannot persist the runtime: $vis_runtime_file is not a regular file" \
+        "Remove it: rm -rf '$vis_runtime_file'"
+  fi
+  { printf '%s\n' "$value" > "$vis_runtime_file.tmp" 2>/dev/null \
+      && mv -f "$vis_runtime_file.tmp" "$vis_runtime_file" 2>/dev/null; } \
+    || die "cannot persist the runtime: $vis_runtime_file is not writable" \
+           "Check its permissions, or set VIS_HOME to a writable directory"
+  [[ "$(read_state "$vis_runtime_file")" == "$value" ]] \
+    || die "cannot persist the runtime: $vis_runtime_file did not keep '$value'"
+}
+
+forget_runtime_file() {
+  rm -f "$vis_runtime_file" 2>/dev/null || true
+  [[ ! -e "$vis_runtime_file" ]] \
+    || die "cannot forget the runtime: $vis_runtime_file could not be removed" \
+           "Remove it by hand: rm -rf '$vis_runtime_file'"
+}
+
 vis_runtime() {
   case "${1:-show}" in
     show)
@@ -296,16 +333,23 @@ vis_runtime() {
         vis_runtime_usage
         return 2
       fi
+      # A one-launch flag and a persisted default are different questions.
+      # `vis-agent --dev runtime use jvm` used to persist jvm and drop --dev
+      # without a word. Answer one question at a time.
+      if [[ -n "$flag_runtime" ]]; then
+        warn "runtime use sets the persisted runtime; --$flag_runtime only overrides one launch"
+        warn "  persist it:  vis-agent runtime use ${2:-native|jvm|dev|auto}"
+        warn "  or override: vis-agent --$flag_runtime <prompt>"
+        return 2
+      fi
       case "${2:-}" in
         native|jvm|dev)
-          mkdir -p "$vis_home"
-          printf '%s\n' "$2" > "$vis_runtime_file.tmp"
-          mv -f "$vis_runtime_file.tmp" "$vis_runtime_file"
+          write_runtime_file "$2"
           say "runtime is now $2"
           runtime_readiness "$2"
           ;;
         auto)
-          rm -f "$vis_runtime_file"
+          forget_runtime_file
           say "runtime is now automatic: native if installed, else source at the newest release tag"
           ;;
         -h|--help) vis_runtime_usage; return 0 ;;

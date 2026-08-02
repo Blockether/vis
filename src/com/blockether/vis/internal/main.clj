@@ -1547,6 +1547,53 @@
   [arg]
   (boolean (re-matches #"-{1,2}[A-Za-z][A-Za-z0-9-]*" (str arg))))
 
+(def ^:private renderer-flags
+  "Flags that each OWN the run's output. Only one can win, so naming two is a
+   question Vis cannot answer: `--json --code` silently printed JSON and dropped
+   the code the caller actually asked for."
+  {:json? "--json"
+   :code? "--code"
+   :full-trace-stream? "--full-trace-stream"
+   :full-trace-json-stream? "--full-trace-json-stream"})
+
+(defn- check-run-conflicts
+  "Add a `:flag-errors` entry when the parsed run opts name more than one
+   output mode. Aliases (`--trace`, `--full-trace-json-stream-raw`) report
+   under their canonical flag."
+  [opts]
+  (let [named (->> renderer-flags
+                   (keep (fn [[k flag]] (when (get opts k) flag)))
+                   sort
+                   vec)]
+    (cond-> opts
+      (< 1 (count named))
+      (update :flag-errors (fnil conj [])
+              (str "name one output mode, not " (str/join " and " named))))))
+
+(defn- check-db-target
+  "`--db PATH` used to reach SQLite as a raw `[SQLITE_CANTOPEN] Failed to
+   initialize pool` fatal that never named the path or the reason. Refuse a
+   missing directory, a directory given as the file, and an unwritable target."
+  [{:keys [db] :as opts}]
+  (if (or (nil? db) (= ":memory" db))
+    opts
+    (let [^java.io.File f (.getAbsoluteFile (io/file db))
+          ^java.io.File parent (.getParentFile f)
+          err (cond (.isDirectory f)
+                    (str "--db " db " is a directory, not a database file")
+
+                    (and parent (not (.isDirectory parent)))
+                    (str "--db " db " needs an existing directory; " (.getPath parent)
+                         " does not exist")
+
+                    (and (.exists f) (not (.canWrite f)))
+                    (str "--db " db " is not writable")
+
+                    (and (not (.exists f)) parent (not (.canWrite parent)))
+                    (str "--db " db " cannot be created; " (.getPath parent) " is not writable"))]
+      (cond-> opts
+        err (update :flag-errors (fnil conj []) err)))))
+
 (defn- parse-run-args
   "Parse root one-shot run arguments into {:prompt str :json? bool ...}.
 
@@ -1588,14 +1635,21 @@
               (recur more (assoc opts (run-boolean-flags arg) true) prompt-parts)
 
               (contains? run-value-flags arg)
-              (if (nil? (first more))
-                (recur more
-                       (update opts :flag-errors (fnil conj []) (str arg " needs a value"))
-                       prompt-parts)
-                (recur (next more)
-                       (cond-> (assoc opts (run-value-flags arg) (first more))
-                         (= "--session-id" arg) (assoc :persist? true))
-                       prompt-parts))
+              ;; A value flag with no usable value used to vanish: `--model ""`
+              ;; ran the DEFAULT model, and `--model --json "task"` ran a model
+              ;; literally named "--json". Blank, `--`, and flag-shaped tokens
+              ;; are all "you forgot the value".
+              (let [v (first more)]
+                (if (or (str/blank? v) (= "--" v) (option-token? v))
+                  (recur more
+                         (update opts :flag-errors (fnil conj [])
+                                 (str arg " needs a value"
+                                      (when (option-token? v) (str " (got " v ")"))))
+                         prompt-parts)
+                  (recur (next more)
+                         (cond-> (assoc opts (run-value-flags arg) v)
+                           (= "--session-id" arg) (assoc :persist? true))
+                         prompt-parts)))
 
               (option-token? arg)
               (recur more
@@ -1637,10 +1691,10 @@
   (stdout! "  --db PATH|:memory    Override the SQLite path (or :memory).")
   (stdout! "  --session-id ID      Continue an existing persisted session.")
   (stdout! "  --persist            Write this run to ~/.vis/vis.mdb as a")
-  (stdout! "                       no resume, no session row on disk.")
+  (stdout! "                       resumable :cli session. Without it a run is")
+  (stdout! "                       ephemeral: no resume, no session row on disk.")
   (stdout! "  --                   End flag parsing: every later word is prompt")
   (stdout! "                       text, dashes and all.")
-  (stdout! "                       no resume, no session row on disk.")
   (stdout! "")
   (stdout! "Examples:")
   (stdout!
@@ -1755,14 +1809,15 @@
     [{:keys [prompt json? code? raw? full-trace-stream? full-trace-json-stream? help? agent-name db
              toggles]
       :as opts}
-     (parse-run-args residual)]
+     (-> residual parse-run-args check-run-conflicts check-db-target)]
     ;; A flag typo used to be smuggled into the prompt: `vis-agent --modle x "task"`
     ;; ran with the DEFAULT model and never said so. Refuse instead, and name the
     ;; escape hatch for prompts that really do start with dashes.
     (when-let [errors (seq (:flag-errors opts))]
       (doseq [e errors] (stdout! (str "vis-agent: " e)))
       (stdout! "  See the flag list:            vis-agent --help")
-      (stdout! "  Or make it the prompt text:   vis-agent -- <text>")
+      (when (some #(str/starts-with? % "unknown flag") errors)
+        (stdout! "  Or make it the prompt text:   vis-agent -- <text>"))
       (System/exit 2))
     (when (or help? (str/blank? prompt)) (print-run-usage!) (System/exit 0))
     ;; Auto-promote to raw when stdout is NOT a TTY (piped/redirected).

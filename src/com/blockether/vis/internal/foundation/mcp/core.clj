@@ -180,47 +180,93 @@
 
 (defonce ^:private reconciling? (atom false)) ; single-flight guard
 
-(defn- conn-of [server] (get-in @conns [server :conn]))
+;; Session-scoped servers — servers a CLIENT attaches to ONE session (an ACP
+;; editor's `session/new` / `session/load` `mcpServers`). They are NEVER written
+;; to config and never leak into another session: an editor wiring a server for
+;; its own workspace must not mutate the daemon for the TUI, the phone, and every
+;; other session. Their pool is keyed by `[session-id server]`, so a session
+;; server SHADOWS a global one of the same name without disturbing it.
+(defonce ^:private session-specs (atom {})) ; {session-id {server client-spec}}
+
+(defonce ^:private session-conns (atom {})) ; {[session-id server] {:conn :spec}}
+
+(defn- close-in-pool!
+  "Close the conn cached in `pool` at `k` (if any) and drop the entry."
+  [pool k]
+  (when-let [conn (get-in @pool [k :conn])]
+    (try (mcp/close conn) (catch Throwable _ nil))
+    (swap! pool dissoc k))
+  nil)
+
+(defn- ensure-in-pool!
+  "Idempotently connect `server` under `spec`, caching the conn (with the spec it
+   was connected under) in `pool` at `k`. Returns the conn, or nil when the
+   connection failed. A cached-but-dead conn is reaped and respawned."
+  [pool k server spec]
+  (let [existing (get @pool k)]
+    (cond (and existing (mcp/alive? (:conn existing))) (:conn existing)
+          existing (do (close-in-pool! pool k) (recur pool k server spec))
+          :else (try (let [conn (mcp/connect server spec)]
+                       (swap! pool assoc k {:conn conn :spec spec})
+                       conn)
+                     (catch Throwable t
+                       (tel/log! {:level :warn
+                                  :id ::connect-failed
+                                  :data {:server server :error (ex-message t)}}
+                                 "MCP connect failed")
+                       nil)))))
+
+(defn- session-spec-of [session-id server] (get-in @session-specs [session-id server]))
+
+(defn- conn-of
+  "The live conn for `server` as SEEN BY `session-id` (nil = global scope only).
+   A server the session brought itself is answered from the session pool ONLY, so
+   a same-named global server can never be handed to it by accident."
+  ([server] (conn-of nil server))
+  ([session-id server]
+   (if (session-spec-of session-id server)
+     (get-in @session-conns [[session-id server] :conn])
+     (get-in @conns [server :conn]))))
 
 (defn- disconnect!
-  "Close `server`'s connection (if any) and drop it from the daemon-wide pool."
-  [server]
-  (when-let [conn (conn-of server)]
-    (try (mcp/close conn) (catch Throwable _ nil))
-    (swap! conns dissoc server))
-  server)
+  "Close `server` in `session-id`'s scope and drop it from that pool."
+  ([server] (disconnect! nil server))
+  ([session-id server]
+   (if (session-spec-of session-id server)
+     (close-in-pool! session-conns [session-id server])
+     (close-in-pool! conns server))
+   server))
 
 (defn- ensure-connected!
-  "Idempotently connect the configured `server`, caching the conn (with the
-   spec it was connected under) in the daemon-wide pool. Returns the conn or
-   nil (unknown / disabled / failed). A cached-but-dead conn is reaped and
-   respawned on the next call."
-  [server]
-  (let [existing (get @conns server)]
-    (cond (and existing (mcp/alive? (:conn existing))) (:conn existing)
-          existing (do (disconnect! server) (recur server))
-          :else (when-let [spec (get (configured-servers) server)]
-                  (try (let [conn (mcp/connect server spec)]
-                         (swap! conns assoc server {:conn conn :spec spec})
-                         conn)
-                       (catch Throwable t
-                         (tel/log! {:level :warn
-                                    :id ::connect-failed
-                                    :data {:server server :error (ex-message t)}}
-                                   "MCP connect failed")
-                         nil))))))
+  "Idempotently connect `server` as `session-id` sees it, caching the conn in the
+   matching pool. Returns the conn or nil (unknown / disabled / failed)."
+  ([server] (ensure-connected! nil server))
+  ([session-id server]
+   (if-let [spec (session-spec-of session-id server)]
+     (ensure-in-pool! session-conns [session-id server] server spec)
+     (when-let [spec (get (configured-servers) server)]
+       (ensure-in-pool! conns server server spec)))))
+
+(defn- visible-servers
+  "`{server spec}` visible to `session-id`: the configured (daemon-wide) servers
+   plus that session's own, which win on a name clash."
+  [session-id]
+  (merge (configured-servers) (get @session-specs session-id)))
 
 (defn- reconcile!
   "Reconcile the daemon-wide pool to config: connect newly-enabled servers,
    close entries whose server is gone / disabled / spec-changed, and reap dead
    conns (crashed stdio child, closed HTTP session). Runs on every `/reload`
-   and proactively per turn."
+   and proactively per turn. Session-scoped servers have no config to drift
+   from, so they are only reaped when DEAD."
   []
   (let [cfg (configured-servers)]
     (doseq [[server {:keys [conn spec]}] @conns]
       (when (or (not= spec (get cfg server)) (not (mcp/alive? conn))) (disconnect! server)))
     (doseq [server (keys cfg)]
       (ensure-connected! server))
+    (doseq [[k {:keys [conn]}] @session-conns]
+      (when-not (mcp/alive? conn) (close-in-pool! session-conns k)))
     nil))
 
 (defn- reconcile-async!
@@ -229,6 +275,29 @@
   []
   (when (compare-and-set! reconciling? false true)
     (future (try (reconcile!) (finally (reset! reconciling? false))))))
+
+(defn clear-session-servers!
+  "Drop and CLOSE every session-scoped server attached to `session-id`."
+  [session-id]
+  (doseq
+    [k
+     (keys @session-conns)
+
+     :when (= session-id (first k))]
+
+    (close-in-pool! session-conns k))
+  (swap! session-specs dissoc session-id)
+  nil)
+
+(defn session-servers
+  "The session-scoped servers attached to `session-id` as
+   `[{:name :transport :is-connected}]`, in name order."
+  [session-id]
+  (mapv (fn [[nm spec]]
+          {:name nm
+           :transport (name (transport-of spec))
+           :is-connected (boolean (get-in @session-conns [[session-id nm] :conn]))})
+        (sort-by key (get @session-specs session-id))))
 
 ;; ---------------------------------------------------------------------------
 ;; Gateway management — persisted on the gateway, never in a Companion client.
@@ -245,6 +314,42 @@
     (when-not (seq name)
       (throw (ex-info "MCP server name must be a non-blank string" {:type :mcp/invalid-name})))
     name))
+
+(defn set-session-servers!
+  "Attach `servers` — `{name raw-spec}`, each raw spec shaped exactly like a
+   `:mcp :servers` config entry — to `session-id`, REPLACING whatever that
+   session had, and connect each one EAGERLY so the caller learns now whether the
+   client's servers actually work. Nothing is persisted. Returns
+   `{:connected [name…] :failed [{:server … :error …}…]}`."
+  [session-id servers]
+  (when-not (and (string? session-id) (seq session-id))
+    (throw (ex-info "MCP session id must be a non-blank string" {:type :mcp/invalid-session})))
+  (clear-session-servers! session-id)
+  (let
+    [coerced (into {}
+                   (map (fn [[k v]]
+                          (let
+                            [nm (server-name k)
+                             spec (->> (dissoc v "name")
+                                       canonicalize-server-spec
+                                       config/runtime-config
+                                       (->client-spec nm))]
+
+                            [nm spec])))
+                   servers)]
+    (when (seq coerced) (swap! session-specs assoc session-id coerced))
+    (reduce (fn [acc [nm spec]]
+              (try (let [conn (mcp/connect nm spec)]
+                     (swap! session-conns assoc [session-id nm] {:conn conn :spec spec})
+                     (update acc :connected conj nm))
+                   (catch Throwable t
+                     (tel/log! {:level :warn
+                                :id ::session-connect-failed
+                                :data {:server nm :session session-id :error (ex-message t)}}
+                               "MCP session server connect failed")
+                     (update acc :failed conj {:server nm :error (or (ex-message t) (str t))}))))
+            {:connected [] :failed []}
+            coerced)))
 
 (defn- server-summary
   [name raw-spec]
@@ -398,31 +503,36 @@
                       :error (merge {:message message} extra)}))
 
 (defn- mcp-servers-impl
-  [_env]
-  (ok :mcp/servers
-      {"servers" (mapv (fn [[nm spec]]
-                         (let [conn (conn-of nm)]
-                           (cond->
-                             {"name" nm
-                              "transport" (name (transport-of spec))
-                              "connected" (boolean conn)
-                              "enabled" true}
-                             conn
-                             (assoc "tools"
-                               (count (or (some-> (:tools conn)
-                                                  deref)
-                                          [])))
+  [env]
+  (let [sid (:session-id env)]
+    (ok :mcp/servers
+        {"servers" (mapv (fn [[nm spec]]
+                           (let
+                             [session? (some? (session-spec-of sid nm))
+                              conn (conn-of sid nm)]
 
-                             (:command spec)
-                             (assoc "command" (:command spec))
+                             (cond->
+                               {"name" nm
+                                "transport" (name (transport-of spec))
+                                "scope" (if session? "session" "global")
+                                "connected" (boolean conn)
+                                "enabled" true}
+                               conn
+                               (assoc "tools"
+                                 (count (or (some-> (:tools conn)
+                                                    deref)
+                                            [])))
 
-                             (:url spec)
-                             (assoc "url" (:url spec)))))
-                       (configured-servers))}))
+                               (:command spec)
+                               (assoc "command" (:command spec))
+
+                               (:url spec)
+                               (assoc "url" (:url spec)))))
+                         (visible-servers sid))})))
 
 (defn- mcp-tools-impl
-  [_env server]
-  (if-let [conn (ensure-connected! server)]
+  [env server]
+  (if-let [conn (ensure-connected! (:session-id env) server)]
     (ok :mcp/tools
         {"server" server
          "tools" (mapv (fn [t]
@@ -433,12 +543,13 @@
     (err :mcp/tools (str "MCP server '"
                          server
                          "' is not configured or is disabled (see ~/.vis/state.yml :mcp :servers).")
-         :hint (str "Enabled servers: " (pr-str (vec (keys (configured-servers))))))))
+         :hint (str "Enabled servers: "
+                    (pr-str (vec (keys (visible-servers (:session-id env)))))))))
 
 (defn- mcp-call-impl
   ([env server tool] (mcp-call-impl env server tool {}))
-  ([_env server tool args]
-   (if-let [conn (ensure-connected! server)]
+  ([env server tool args]
+   (if-let [conn (ensure-connected! (:session-id env) server)]
      (let [r (mcp/call-tool conn tool (if (map? args) args {}))]
        (ok :mcp/call
            {"server" server
@@ -448,11 +559,12 @@
      (err :mcp/call (str "MCP server '"
                          server
                          "' is not configured or is disabled (see ~/.vis/state.yml :mcp :servers).")
-          :hint (str "Enabled servers: " (pr-str (vec (keys (configured-servers)))))))))
+          :hint (str "Enabled servers: "
+                     (pr-str (vec (keys (visible-servers (:session-id env))))))))))
 
 (defn- mcp-connect-impl
-  [_env server]
-  (if-let [conn (ensure-connected! server)]
+  [env server]
+  (if-let [conn (ensure-connected! (:session-id env) server)]
     (ok :mcp/connect
         {"server" server
          "connected" true
@@ -460,9 +572,15 @@
     (err :mcp/connect (str "Could not connect to MCP server '" server "'."))))
 
 (defn- mcp-disconnect-impl
-  [_env server]
-  (let [connected (some? (conn-of server))]
-    (disconnect! server)
+  [env server]
+  (let
+    [sid
+     (:session-id env)
+
+     connected
+     (some? (conn-of sid server))]
+
+    (disconnect! sid server)
     (ok :mcp/disconnect {"server" server "result" (if connected "disconnected" "not_connected")})))
 
 ;; ---------------------------------------------------------------------------
@@ -682,24 +800,47 @@
 (defn- contribute
   "`:ext/ctx-fn` — proactively reconcile the daemon-wide MCP pool, then surface
    the CONNECTED servers (+ tool counts) so the model sees what's reachable at
-   `session[\"env\"][\"mcp\"][\"servers\"]`. The pool is shared across every
-   session."
-  [_env]
+   `session[\"env\"][\"mcp\"][\"servers\"]`. The daemon-wide pool is shared across
+   every session; servers a client attached to THIS session (ACP `mcpServers`)
+   are listed alongside it, marked `\"scope\": \"session\"`."
+  [env]
   (reconcile-async!)
-  (let [live @conns]
-    (when (seq live)
-      {"session_env" {"mcp" {"servers" (mapv (fn [[nm {:keys [conn]}]]
-                                               {"name" nm
-                                                "transport" (name (:transport conn))
-                                                "tools" (count (or (some-> (:tools conn)
-                                                                           deref)
-                                                                   []))})
-                                             live)}}})))
+  (let
+    [sid
+     (:session-id env)
+
+     row
+     (fn [scope nm conn]
+       {"name" nm
+        "scope" scope
+        "transport" (name (:transport conn))
+        "tools" (count (or (some-> (:tools conn)
+                                   deref)
+                           []))})
+
+     session-rows
+     (keep (fn [[[s nm] {:keys [conn]}]]
+             (when (and (= s sid) conn) (row "session" nm conn)))
+           @session-conns)
+
+     shadowed
+     (set (map #(get % "name") session-rows))
+
+     global-rows
+     (keep (fn [[nm {:keys [conn]}]]
+             (when-not (contains? shadowed nm) (row "global" nm conn)))
+           @conns)
+
+     rows
+     (vec (concat session-rows global-rows))]
+
+    (when (seq rows) {"session_env" {"mcp" {"servers" rows}}})))
 
 (defn- activation-fn
-  "Active when at least one MCP server is configured."
-  [_env]
-  (boolean (seq (configured-servers))))
+  "Active when at least one MCP server is configured, or a client attached one to
+   this session."
+  [env]
+  (boolean (or (seq (configured-servers)) (seq (get @session-specs (:session-id env))))))
 
 (defonce ^:private _mcp-reload-hook (extension/register-reload-hook! ::reconcile reconcile!))
 

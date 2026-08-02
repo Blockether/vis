@@ -9,13 +9,12 @@
 #   docker compose up -d
 #   docker compose exec vis-gateway cat /home/vis/.vis/gateway-token
 #
-# On general the publish address is deliberately the PRIVATE nic:
-#   VIS_BIND_HOST=10.0.1.4
-# because the k3s Ingress for vis.blockether.com routes to a selectorless
-# Service whose Endpoints object hard-codes 10.0.1.4:7890. Publishing there
-# means the container replaces the systemd unit with NO cluster change at all.
-# Binding 0.0.0.0 would additionally expose the gateway on the public NIC,
-# bypassing the ingress (and its TLS) entirely.
+# Publish address: `VIS_BIND_HOST` defaults to loopback. If you front the
+# gateway with a reverse proxy / ingress that terminates TLS, bind the PRIVATE
+# interface that proxy dials (e.g. VIS_BIND_HOST=10.0.0.5) so the container can
+# replace a systemd-run gateway with no change on the proxy side. Binding
+# 0.0.0.0 additionally exposes the gateway on every public NIC, bypassing that
+# proxy (and its TLS) entirely.
 # =============================================================================
 
 services:

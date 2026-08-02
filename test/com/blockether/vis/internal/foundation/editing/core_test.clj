@@ -23,6 +23,7 @@
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.editing.patch :as patch]
             [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as extension]
             [lazytest.core :refer [defdescribe describe expect it throws?]]))
 
@@ -1161,90 +1162,162 @@
                    (expect (= (numbered-tuples 18 ["L18" "L19" "L20"])
                               (patch/anchor-map->tuples (get out "anchors")))))))
 
-(defdescribe vis-cat-on-dir-test
-             ;; cat on a DIRECTORY lists its entries (ls) instead of erroring — the
-             ;; advertised cat-on-directory read. Default hides dotfiles + gitignored
-             ;; paths; opts widen the view; depth nests children.
-             (it "(cat dir) returns a shallow directory listing envelope"
-                 (let
-                   [_
-                    (write-temp! "lsbasic/a.txt" "x")
+(defdescribe
+  vis-ls-test
+  ;; `ls` is its OWN native tool, never a hidden mode of `cat`: `ls` lists
+  ;; directories, `cat` reads files, and each refuses the other's input while
+  ;; naming the replacement call. Default hides dotfiles + gitignored paths;
+  ;; opts widen the view; depth nests children.
+  (it "(ls dir) returns a shallow directory listing envelope"
+      (let
+        [_
+         (write-temp! "lsbasic/a.txt" "x")
 
-                    _
-                    (write-temp! "lsbasic/sub/b.txt" "y")
+         _
+         (write-temp! "lsbasic/sub/b.txt" "y")
 
-                    dir
-                    (temp-dir-path "lsbasic")
+         dir
+         (temp-dir-path "lsbasic")
 
-                    _
-                    (.mkdirs (java.io.File. dir "empty"))
+         _
+         (.mkdirs (java.io.File. dir "empty"))
 
-                    cat-tool
-                    (private-fn "cat-tool")
+         ls-tool
+         (private-fn "ls-tool")
 
-                    out
-                    (:result (cat-tool dir))]
+         out
+         (first (get (:result (ls-tool {"paths" [dir]})) "results"))]
 
-                   (expect (= "dir" (get out "type")))
-                   (expect (= 1 (get out "depth")))
-                   ;; directories sort before files, each alphabetical; native mixed
-                   ;; search retains empty directories.
-                   (expect (= ["empty" "sub" "a.txt"] (mapv #(get % "name") (get out "entries"))))
-                   (expect (every? #(contains? % "size") (get out "entries")))
-                   ;; Preserve the original listing contract: directory size is its
-                   ;; filesystem metadata, not fff's intentionally-zero aggregate.
-                   (let [sub (some #(when (= "sub" (get % "name")) %) (get out "entries"))]
-                     (expect (= (.length (java.io.File. dir "sub")) (get sub "size"))))))
-             (it "(cat dir) hides dotfiles + gitignored entries by default; opts widen"
-                 (let
-                   [_
-                    (write-temp! "lsopts/.gitignore" "ignored.txt\n")
+        (expect (= "dir" (get out "type")))
+        (expect (= 1 (get out "depth")))
+        ;; directories sort before files, each alphabetical; native mixed
+        ;; search retains empty directories.
+        (expect (= ["empty" "sub" "a.txt"] (mapv #(get % "name") (get out "entries"))))
+        (expect (every? #(contains? % "size") (get out "entries")))
+        ;; Preserve the original listing contract: directory size is its
+        ;; filesystem metadata, not fff's intentionally-zero aggregate.
+        (let [sub (some #(when (= "sub" (get % "name")) %) (get out "entries"))]
+          (expect (= (.length (java.io.File. dir "sub")) (get sub "size"))))))
+  (it "ls batches `paths` in request order, shared opts and per-entry overrides"
+      (let
+        [_
+         (write-temp! "lsbatch/one/a.txt" "x")
 
-                    _
-                    (write-temp! "lsopts/a.txt" "x")
+         _
+         (write-temp! "lsbatch/two/sub/b.txt" "y")
 
-                    _
-                    (write-temp! "lsopts/.hidden" "x")
+         one
+         (temp-dir-path "lsbatch/one")
 
-                    _
-                    (write-temp! "lsopts/ignored.txt" "x")
+         two
+         (temp-dir-path "lsbatch/two")
 
-                    dir
-                    (temp-dir-path "lsopts")
+         ls-tool
+         (private-fn "ls-tool")
 
-                    cat-tool
-                    (private-fn "cat-tool")
+         out
+         (get (:result (ls-tool {"paths" [two {"path" one "depth" 1}] "depth" 2})) "results")]
 
-                    names
-                    (fn [arg]
-                      (set (mapv #(get % "name") (get (:result (cat-tool dir arg)) "entries"))))]
+        (expect (= 2 (count out)))
+        ;; shared depth 2 nests `two`'s subdirectory ...
+        (expect (= ["sub"] (mapv #(get % "name") (get (first out) "entries"))))
+        (expect (= ["b.txt"]
+                   (mapv #(get % "name") (get (first (get (first out) "entries")) "children"))))
+        ;; ... while the per-entry override keeps `one` shallow.
+        (expect (= 1 (get (second out) "depth")))
+        (expect (= ["a.txt"] (mapv #(get % "name") (get (second out) "entries"))))))
+  (it
+    "(ls dir) hides dotfiles + gitignored entries by default; opts widen"
+    (let
+      [_
+       (write-temp! "lsopts/.gitignore" "ignored.txt\n")
 
-                   (expect (= #{"a.txt"} (names {})))
-                   (expect (contains? (names {"is_hidden" true}) ".hidden"))
-                   (expect (contains? (names {"is_hidden" true}) ".gitignore"))
-                   ;; hidden and gitignore are independent axes; gitignored entries are
-                   ;; ALWAYS skipped — there is no per-call opt-out any more
-                   (expect (not (contains? (names {"is_hidden" true}) "ignored.txt")))
-                   (expect (not (contains? (names {}) "ignored.txt")))))
-             (it "(cat dir {\"depth\" 2}) nests a children vector under subdirs"
-                 (let
-                   [_
-                    (write-temp! "lsdepth/sub/b.txt" "y")
+       _
+       (write-temp! "lsopts/a.txt" "x")
 
-                    dir
-                    (temp-dir-path "lsdepth")
+       _
+       (write-temp! "lsopts/.hidden" "x")
 
-                    cat-tool
-                    (private-fn "cat-tool")
+       _
+       (write-temp! "lsopts/ignored.txt" "x")
 
-                    out
-                    (:result (cat-tool dir {"depth" 2}))
+       dir
+       (temp-dir-path "lsopts")
 
-                    sub
-                    (some #(when (= "sub" (get % "name")) %) (get out "entries"))]
+       ls-tool
+       (private-fn "ls-tool")
 
-                   (expect (= 2 (get out "depth")))
-                   (expect (= ["b.txt"] (mapv #(get % "name") (get sub "children")))))))
+       names
+       (fn [arg]
+         (->> (get (:result (ls-tool (assoc arg "paths" [dir]))) "results")
+              first
+              (#(get % "entries"))
+              (mapv (fn [e]
+                      (get e "name")))
+              set))]
+
+      (expect (= #{"a.txt"} (names {})))
+      (expect (contains? (names {"is_hidden" true}) ".hidden"))
+      (expect (contains? (names {"is_hidden" true}) ".gitignore"))
+      ;; hidden and gitignore are independent axes; gitignored entries are
+      ;; ALWAYS skipped — there is no per-call opt-out any more
+      (expect (not (contains? (names {"is_hidden" true}) "ignored.txt")))
+      (expect (not (contains? (names {}) "ignored.txt")))))
+  (it "(ls dir {\"depth\" 2}) nests a children vector under subdirs"
+      (let
+        [_
+         (write-temp! "lsdepth/sub/b.txt" "y")
+
+         dir
+         (temp-dir-path "lsdepth")
+
+         ls-tool
+         (private-fn "ls-tool")
+
+         out
+         (first (get (:result (ls-tool {"paths" [dir] "depth" 2})) "results"))
+
+         sub
+         (some #(when (= "sub" (get % "name")) %) (get out "entries"))]
+
+        (expect (= 2 (get out "depth")))
+        (expect (= ["b.txt"] (mapv #(get % "name") (get sub "children"))))))
+  (it "cat refuses a DIRECTORY and names `ls` as the replacement call"
+      (let
+        [_
+         (write-temp! "lsrefuse/a.txt" "x")
+
+         dir
+         (temp-dir-path "lsrefuse")
+
+         cat-tool
+         (private-fn "cat-tool")
+
+         err
+         (try (cat-tool dir) nil (catch clojure.lang.ExceptionInfo e e))
+
+         err-opts
+         (try (cat-tool dir {}) nil (catch clojure.lang.ExceptionInfo e e))]
+
+        (expect (= :ext.foundation.editing/cat-on-directory (:type (ex-data err))))
+        (expect (= :ext.foundation.editing/cat-on-directory (:type (ex-data err-opts))))
+        (expect (string/includes? (ex-message err) "ls"))))
+  (it "ls refuses a FILE and names `cat` as the replacement call"
+      (let
+        [_
+         (write-temp! "lsrefuse/b.txt" "x")
+
+         file
+         (str (temp-dir-path "lsrefuse") "/b.txt")
+
+         ls-tool
+         (private-fn "ls-tool")
+
+         err
+         (try (ls-tool {"paths" [file]}) nil (catch clojure.lang.ExceptionInfo e e))]
+
+        (expect (= :ext.foundation.editing/ls-on-file (:type (ex-data err))))
+        (expect (string/includes? (ex-message err) "cat")))))
 
 (defdescribe
   vis-ensure-existing-file-home-homogenized-test
@@ -3105,27 +3178,40 @@
         (expect (not (contains? (:properties cat-schema) "range")))
         (expect (= 2 (get-in cat-schema [:properties "ranges" :items :minItems])))
         (expect (= 2 (get-in cat-schema [:properties "ranges" :items :maxItems])))))
-  ;; `cat` IS the ls: a directory path lists it, and the listing options must be
-  ;; advertised on the native surface, not just reachable from Clojure/Python.
-  (it "cat advertises directory listing (ls) with `depth` and `is_hidden`"
+  ;; `ls` is a SEPARATE native tool, not a directory mode smuggled into `cat`.
+  ;; Its listing options must be advertised on the native surface, and `cat`'s
+  ;; surface must stay free of directory options.
+  (it "ls is its own native tool advertising `depth` and `is_hidden`"
       (let
-        [entry
-         (->> (get-in editing/cat-symbol [:ext.symbol/schema :properties "files" :items :oneOf])
+        [ls
+         (some #(when (= 'ls (:ext.symbol/symbol %)) %) (editing/available-editing-symbols))
+
+         schema
+         (:ext.symbol/schema ls)
+
+         entry
+         (->> (get-in schema [:properties "paths" :items :oneOf])
               (filter #(= "object" (:type %)))
               first)
 
-         description
-         (:ext.symbol/description editing/cat-symbol)
+         cat-entry
+         (->> (get-in editing/cat-symbol [:ext.symbol/schema :properties "files" :items :oneOf])
+              (filter #(= "object" (:type %)))
+              first)]
 
-         result
-         (:ext.symbol/result editing/cat-symbol)]
-
+        (expect (some? ls))
+        (expect (true? (:ext.symbol/native-tool? ls)))
+        (expect (= ["paths"] (:required schema)))
+        (expect (= "integer" (get-in schema [:properties "depth" :type])))
+        (expect (= 1 (get-in schema [:properties "depth" :minimum])))
+        (expect (= "boolean" (get-in schema [:properties "is_hidden" :type])))
         (expect (= "integer" (get-in entry [:properties "depth" :type])))
-        (expect (= 1 (get-in entry [:properties "depth" :minimum])))
-        (expect (= "boolean" (get-in entry [:properties "is_hidden" :type])))
-        (expect (string/includes? description "(ls)"))
-        (expect (string/includes? result "Directory (ls)"))
-        (expect (string/includes? result "children"))))
+        (expect (string/includes? (:ext.symbol/description ls) "(ls)"))
+        (expect (string/includes? (:ext.symbol/result ls) "children"))
+        ;; cat is a FILE reader again: no directory knobs, no ls prose
+        (expect (not (contains? (:properties cat-entry) "depth")))
+        (expect (not (contains? (:properties cat-entry) "is_hidden")))
+        (expect (not (string/includes? (:ext.symbol/result editing/cat-symbol) "Directory")))))
   (it "uses one portable patch shape with a path on every edit"
       (let [schema (:ext.symbol/schema editing/patch-symbol)]
         (expect (= "object" (:type schema)))
@@ -5696,9 +5782,9 @@
         (expect (= "array" (get-in schema [:properties "paths" :type]))))))
 
 (defdescribe
-  cat-directory-fff-overlay-test
+  ls-directory-fff-overlay-test
   (it
-    "cat directory listing applies the native vis.yml grep overlay"
+    "ls directory listing applies the native vis.yml grep overlay"
     (let
       [dir-name
        "ls-fff-overlay"
@@ -5718,12 +5804,17 @@
        dir
        (temp-dir-path dir-name)
 
-       cat-tool
-       (private-fn "cat-tool")
+       ls-tool
+       (private-fn "ls-tool")
 
        names
        (fn []
-         (set (map #(get % "name") (get (:result (cat-tool dir)) "entries"))))]
+         (->> (get (:result (ls-tool {"paths" [dir]})) "results")
+              first
+              (#(get % "entries"))
+              (map (fn [e]
+                     (get e "name")))
+              set))]
 
       ;; The default FFF index honors .gitignore; the live config overlay opens it.
       (expect (not (contains? (names) "repositories")))
@@ -5731,3 +5822,135 @@
         [config/load-config-raw (fn []
                                   {"grep" {"include_gitignored_paths" [rel-included]}})]
         (expect (contains? (names) "repositories"))))))
+
+(defdescribe
+  ls-fff-index-reuse-test
+  (it
+    "ls serves a workspace subdirectory from the WARM workspace index, building no per-directory index"
+    (let
+      [ls-tool
+       (private-fn "ls-tool")
+
+       lease
+       (fff-index-fn "lease")
+
+       warm?
+       (fff-index-fn "warm?")
+
+       ignore-overlay
+       (private-fn "fff-ignore-overlay")
+
+       ls-overlay
+       (private-fn "fff-ls-overlay")
+
+       sub-rel
+       "src/com/blockether/vis/internal/foundation/editing"
+
+       root
+       (.getCanonicalFile (java.io.File. "."))
+
+       sub
+       (.getCanonicalFile (java.io.File. sub-rel))
+
+       names
+       (fn [path]
+         (->> (get (:result (ls-tool {"paths" [path]})) "results")
+              first
+              (#(get % "entries"))
+              (map (fn [e]
+                     (get e "name")))
+              set))
+
+       _
+       (names ".")
+
+       ;; Pool state is PROCESS-WIDE and other namespaces in the same suite may
+       ;; already hold an index here, so the pin is the DELTA: listing must not
+       ;; warm anything that was cold.
+       sub-cold-before
+       [(warm? (lease sub true (ignore-overlay))) (warm? (lease sub true (ls-overlay sub-rel)))]
+
+       listed
+       (names sub-rel)]
+
+      ;; Listing the workspace root warms the SAME pooled index grep/find use.
+      (expect (warm? (lease root true (ignore-overlay))))
+      (expect (contains? listed "core.clj"))
+      ;; The subdirectory listing came out of that index: no fresh index, no fresh
+      ;; watcher, under either pool key the fallback would have used.
+      (expect (= sub-cold-before
+                 [(warm? (lease sub true (ignore-overlay)))
+                  (warm? (lease sub true (ls-overlay sub-rel)))])))))
+
+;; =============================================================================
+;; `ls` vs the real filesystem, and the PYTHON SANDBOX surface.
+;;
+;; `ls` is served out of the fff index (glob/search pages), never `File.listFiles`,
+;; so the listing has to be cross-validated against the OS: same names, minus the
+;; entries fff legitimately hides (dotfiles, gitignored paths).
+;;
+;; And `python_execution` is the model's main hand: reading a file and listing a
+;; directory must be ORDINARY Python calls. `:engine-bound? false` would keep both
+;; tools working as native tools while silently dropping them from the sandbox.
+;; =============================================================================
+
+(defdescribe
+  ls-matches-filesystem-test
+  "The fff-backed listing agrees with the OS on directories with nothing ignored."
+  (it "returns exactly the non-hidden children `File.listFiles` reports"
+      (doseq
+        [dir ["src/com/blockether/vis/internal/foundation"
+              "src/com/blockether/vis/internal/foundation/editing" "resources/vis-shims"]]
+        (let
+          [listed (set (map #(get % "name") (get ((private-fn "ls-one") {"path" dir}) "entries")))
+           on-disk (set (remove #(string/starts-with? % ".")
+                          (map #(.getName ^java.io.File %)
+                               (.listFiles (java.io.File. ^String dir)))))]
+
+          (expect (seq listed))
+          (expect (= on-disk listed)))))
+  ;; The repo root is the interesting case: fff must still WITHHOLD gitignored
+  ;; children (`target/`) that `listFiles` happily reports.
+  (it "omits gitignored children the OS still lists"
+      (let [listed (set (map #(get % "name") (get ((private-fn "ls-one") {"path" "."}) "entries")))]
+        (expect (contains? listed "src"))
+        (expect (contains? listed "deps.edn"))
+        (expect (not (contains? listed "target")))
+        (expect (not-any? #(string/starts-with? % ".") listed)))))
+
+(defdescribe
+  python-sandbox-read-surface-test
+  "`cat` and `ls` are engine-bound: bound into sandbox globals, documented, and
+   really callable from Python."
+  (it "binds both symbols with docs that route to each other"
+      (let
+        [bind
+         (extension/builtin-sandbox-bindings (constantly nil))
+
+         docs
+         (extension/sandbox-symbol-docs)]
+
+        (expect (ifn? (get bind 'cat)))
+        (expect (ifn? (get bind 'ls)))
+        (expect (string? (get docs 'cat)))
+        (expect (string? (get docs 'ls)))
+        (expect (string/includes? (get docs 'cat) "`ls`"))
+        (expect (string/includes? (get docs 'ls) "`cat`"))))
+  (it "lists a directory and reads a file from real Python"
+      (let
+        [ctx
+         (:python-context (ep/create-python-context (extension/builtin-sandbox-bindings (constantly
+                                                                                          nil))))
+
+         result
+         (ep/run-python-block
+           ctx
+           (str "r = await ls({\"paths\": "
+                "[\"src/com/blockether/vis/internal/foundation/editing\"]})\n"
+                "names = {e[\"name\"] for e in r[\"results\"][0][\"entries\"]}\n"
+                "c = await cat({\"files\": [{\"path\": \"deps.edn\", \"ranges\": [[1, 1]]}]})\n"
+                "print(\"core.clj\" in names, len(c[\"results\"][0][\"anchors\"]))")
+           "t1/i1")]
+
+        (expect (nil? (:error result)))
+        (expect (= "True 1\n" (:stdout result))))))

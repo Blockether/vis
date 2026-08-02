@@ -54,6 +54,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - launcher: `runtime use` and JVM/dev launches report a missing runtime,
   missing `clojure`, or missing `java` with the command that fixes it, instead
   of exiting 127 from `exec`.
+- launcher: `--` ends the wrapper's own flag parsing too. `vis-agent -- --dev`
+  used to switch runtime (and `-- --measure`/`-- --jfr` used to turn on
+  profiling) while handing the app an empty prompt; those tokens are now prompt
+  text. `runtime use <name>` combined with `--native|--jvm|--dev` is refused
+  instead of silently dropping the flag.
+- launcher: persisting a runtime verifies the write, so a `VIS_HOME` that is a
+  file, a `~/.vis/runtime` that is a directory, or an unwritable home reports
+  the path it could not write instead of claiming "runtime is now …".
+- cli: a value flag rejects a blank, `--`, or flag-shaped value. `--model ""`
+  used to run the default model and `--model --json task` used to request a
+  model literally named `--json`.
+- cli: two output modes at once (`--json --code`, `--stream-json --code`, …) are
+  refused instead of silently honouring one and dropping the other, and an
+  unusable `--db` path is named instead of surfacing a raw SQLite pool error.
+- cli: `--help` described `--persist` as the opposite of what it does, twice.
 
 
 ## [v0.1.22] - 2026-08-01

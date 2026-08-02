@@ -1,5 +1,41 @@
 import ast as __vis_ast__
 import time as __vis_time__
+import weakref as __vis_weakref__
+
+
+# ── deterministic flush for handles a block leaves open. GraalPy does NOT
+# refcount, so the CPython idiom `open(p, "w").write(text)` — a handle dropped
+# without `close()` — is never finalized at the end of the statement: the bytes
+# sit in the buffer and the file on disk stays EMPTY until a GC that may never
+# come. That is silent data loss, and the very next tool (`git commit -F <file>`)
+# reads the empty file. Every WRITABLE handle the sandbox opens is tracked
+# WEAKLY (no lifetime is extended, no fd is held) and flushed before each tool
+# call and at the end of the block, so what a block wrote is on disk by the time
+# anything else looks at it.
+__vis_open_writes__ = __vis_weakref__.WeakSet()
+__vis_real_open__ = open
+
+
+def __vis_open__(*__vis_a__, **__vis_kw__):
+    __vis_h__ = __vis_real_open__(*__vis_a__, **__vis_kw__)
+    try:
+        if __vis_h__.writable():
+            __vis_open_writes__.add(__vis_h__)
+    except Exception:
+        pass  # unweakrefable / no writable(): not ours to track, hand it back as-is
+    return __vis_h__
+
+
+def __vis_flush_writes__():
+    for __vis_h__ in list(__vis_open_writes__):
+        try:
+            if not __vis_h__.closed:
+                __vis_h__.flush()
+        except Exception:
+            pass  # best-effort: one broken handle must never break the block
+
+
+open = __vis_open__
 
 
 def __vis_count_forms__(src):
@@ -176,6 +212,10 @@ def __vis_exec_call__(c):
         # vis tools already take a trailing opts dict — `find("x", paths=[...])`,
         # `rg(query="x")`, `struct_patch(op="delete", target="foo")` — so folding
         # kwargs to one dict matches their contract (all-kwargs collapses to a spec map).
+        # Flush what the block wrote through a still-open handle FIRST: a tool
+        # that reads a just-written file (`git commit -F /tmp/msg`) must not see
+        # GraalPy's unflushed buffer.
+        __vis_flush_writes__()
         c.res = c.fn(*c.a, dict(c.k)) if c.k else c.fn(*c.a)
         return c.res
     except BaseException:
@@ -1521,6 +1561,11 @@ def __vis_run_async__(src):
         # `__vis_err_pos_now__`, where that fault is catchable.
         g["__vis_err_obj__"] = __vis_err__
         raise
+    finally:
+        # The block is over: everything it wrote through a handle it never closed
+        # is on disk now, success or failure alike (GraalPy would otherwise leave
+        # the buffer unflushed until an arbitrary later GC).
+        __vis_flush_writes__()
     return assigned
 
 

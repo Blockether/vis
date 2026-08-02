@@ -10,8 +10,9 @@
         (cat path offset n)   ; n lines starting at line `offset` (1-based)
         (cat path :tail)      ; last 400 lines (tail)
         (cat path :tail n)    ; last n lines
-        (cat dir)             ; a DIRECTORY path -> shallow listing {:path :entries [{name path type size}] :depth}
-        (cat dir opts)        ; opts keys: depth (recurse) / is_hidden
+        (ls dir)              ; a DIRECTORY -> shallow listing {path, entries [{name path type size}], depth}
+        (ls dir opts)         ; opts keys: depth (recurse) / is_hidden. `cat` on a
+                              ; directory refuses and points at `ls`, and vice versa.
         (grep query)         ; -> content hits (anchored) + ranked file-NAME matches;
                               ; query = a term or list of terms (OR), smart-case
                               ; substring. Opts: paths/include/limit/is_hidden
@@ -1076,10 +1077,11 @@
 ;; =============================================================================
 
 (def ^:private fff-ls-page-size
-  "Native mixed-search page width for `cat` directory listings. Pages are exhausted
-   so the listing keeps its complete, uncapped contract while each FFM result stays
-   bounded."
-  512)
+  "Native page width for `ls`. Pages are exhausted so the listing keeps its complete,
+   uncapped contract while each FFM result stays bounded. Wide on purpose: every page
+   is a native crossing, and rows are filtered as they arrive (`fff-ls-scan`), so a
+   wide page costs no extra retained memory."
+  4096)
 
 
 (defn- fff-ignore-overlay
@@ -1283,7 +1285,7 @@
 
 (defn- hidden-relative-path?
   "True when `relative-path` has a hidden filesystem segment below `root`. This
-   preserves `cat`'s `is_hidden` contract while fff owns every ignore decision."
+   preserves `ls`'s `is_hidden` contract while fff owns every ignore decision."
   [^File root ^String relative-path]
   (loop
     [^File parent
@@ -1297,38 +1299,120 @@
         (or (.isHidden child) (recur child more)))
       false)))
 
-(defn- fff-ls-items
-  "Exhaust fff's canonical mixed file-and-directory index.
+(defn- path-segments
+  "Segment count of a `/`-joined relative path. Counting separators keeps the depth
+   test allocation-free — it runs on EVERY indexed record."
+  ^long [^String p]
+  (loop
+    [i
+     (.indexOf p "/")
 
-   fff's native `:page-index` is a record offset despite its name, so advance it
-   by page width. This preserves `cat`'s complete, uncapped directory-listing
-   contract without asking FFM for an unbounded result."
+     n
+     1]
+
+    (if (neg? i) n (recur (.indexOf p "/" (unchecked-inc i)) (unchecked-inc n)))))
+
+(def ^:private glob-syntax-chars
+  "Characters fff's glob parser reads as PATTERN syntax. A directory whose path
+   contains one has no literal prefix pattern, so `ls` scans the file index and
+   compares prefixes itself instead of handing fff something it would reinterpret."
+  #{\* \? \[ \] \{ \} \\})
+
+(defn- fff-ls-file-pages
+  "Page fetcher for fff's FILE index, prefix-filtered NATIVELY when it can be.
+
+   `glob` costs the MATCHES rather than the tree: listing `src` asks fff for
+   `src/**` instead of paging every indexed file and dropping most of them here.
+   The workspace root (empty prefix) and a prefix carrying glob syntax have no
+   literal pattern, so those page the whole file index and lean on the keeper."
+  [idx ^String prefix]
+  (if (and (seq prefix) (not-any? glob-syntax-chars prefix))
+    (fn [offset]
+      (fff/glob idx {:pattern (str prefix "**") :page-index offset :page-size fff-ls-page-size}))
+    (fn [offset]
+      (fff/search idx {:query "" :page-index offset :page-size fff-ls-page-size}))))
+
+(defn- fff-ls-dir-pages
+  "Page fetcher for fff's DIRECTORY index. It has no glob surface, so the prefix
+   test stays in `fff-ls-keeper` — cheap, since directories are the small side of
+   the index."
   [idx]
+  (fn [offset]
+    (fff/search-directories idx {:query "" :page-index offset :page-size fff-ls-page-size})))
+
+(defn- fff-ls-scan
+  "Stream one native index through `keep-fn`, page by page.
+
+   fff's native `:page-index` is a record offset despite its name, so advance it by
+   the records actually returned. Each page is FILTERED AS IT ARRIVES and only
+   survivors are retained, so a 200k-record tree costs a few native pages and a
+   handful of rows instead of one 200k-element vector. `directory?` is the index's
+   own kind (the file and directory indexes each answer for one). `keep-fn` answers
+   the row to keep, or nil to drop the record."
+  [fetch directory? keep-fn]
   (loop
     [offset
      0
 
-     items
-     []]
+     acc
+     (transient [])]
 
     (let
       [{page :items total :total-matched}
-       (fff/search-mixed idx {:query "" :page-index offset :page-size fff-ls-page-size})
+       (fetch offset)
 
        page
        (or page [])
 
-       items
-       (into items page)]
+       acc
+       (reduce (fn [a item]
+                 (if-let [row (keep-fn item directory?)]
+                   (conj! a row)
+                   a))
+               acc
+               page)
 
-      (if (or (empty? page) (>= (long (count items)) (long total)))
-        items
-        (recur (unchecked-add (long offset) (long fff-ls-page-size)) items)))))
+       seen
+       (unchecked-add (long offset) (long (count page)))]
+
+      (if (or (empty? page) (>= seen (long total))) (persistent! acc) (recur seen acc)))))
+
+(defn- fff-ls-records
+  "Every indexed record under one listed directory, taken from BOTH native indexes.
+
+   fff keeps files and directories apart, and `search-mixed` returns exactly this
+   union only after merging and re-ranking them. Measured on this repo (1215
+   records): `search-mixed` 3.3 ms, the two direct calls 1.8 ms, and 0.8 ms once
+   the file side is a native `glob` prefix — same rows, no merge tax."
+  [idx prefix keep-fn]
+  (into (fff-ls-scan (fff-ls-file-pages idx prefix) false keep-fn)
+        (fff-ls-scan (fff-ls-dir-pages idx) true keep-fn)))
+
+(defn- fff-ls-keeper
+  "The per-record filter handed to `fff-ls-scan`, rebasing each kept record's
+   `:relative-path` to be LOCAL to the listed directory and stamping the kind its
+   index answers for.
+
+   Ordered by cost: `prefix` (a plain string compare) drops records outside the
+   listed subtree, the depth bound is a separator count, and only survivors reach
+   `hidden-relative-path?` — the single filesystem touch. Cost therefore tracks the
+   rows RETURNED, not the size of the indexed tree."
+  [^File root ^String prefix ^long levels is-hidden?]
+  (let [plen (count prefix)]
+    (fn [{:keys [relative-path] :as item} directory?]
+      (let [^String p (or relative-path "")]
+        (when (and (> (count p) plen) (or (zero? plen) (str/starts-with? p prefix)))
+          (let [local (subs p plen)]
+            (when (and (<= (path-segments local) levels)
+                       (or is-hidden? (not (hidden-relative-path? root local))))
+              (assoc item
+                :relative-path local
+                :directory? directory?))))))))
 
 (defn- fff-ls-overlay
   "Rebase the global `vis.yml` overlay for an explicitly listed directory.
 
-   `cat` may name a directory already ignored by an ancestor (such as `target/`).
+   `ls` may name a directory already ignored by an ancestor (such as `target/`).
    Opening the pooled native index at that directory preserves explicit-read
    semantics, while paths configured beneath it must become local to fff's base."
   [target-rel]
@@ -1350,46 +1434,111 @@
             (update :exclude-globs rebase)
             (update :unignore-globs rebase))))
 
-(defn- list-dir
-  "Directory listing as MODEL data, powered by a canonical pooled fff index.
+(defn- warm-ls-lease
+  "The pooled WORKSPACE-root index — the one `grep` and `find` already keep hot — but
+   ONLY when it is ALREADY built. Reusing it turns `ls` of a subdirectory into a page
+   scan over an existing index instead of a fresh per-directory tree scan plus its
+   own watcher. A cold pool is left alone on purpose: indexing just the subtree is
+   then the cheaper of the two. The root is CANONICAL so the pool key is the very one
+   `grep`/`find`/`ls .` warm."
+  []
+  (let
+    [lease
+     (fff-index/lease (.getCanonicalFile (io/file (workspace/cwd))) true (fff-ignore-overlay))]
+    (when (fff-index/warm? lease) lease)))
 
-   The index is rooted at the explicitly requested directory: a direct `cat` of
-   a gitignored directory remains readable, as it was before. fff owns
-   `.gitignore`, `.ignore`, `.rgignore`, and the rebased live `vis.yml` grep
-   overlay in one native index; this code only rebuilds the documented tree
-   shape. Directory rows, including empty directories, come from fff's mixed
-   index. Results remain directories-first then alphabetical, and are exhaustive
-   through bounded native pages."
+(def ^:private ls-workspace-reuse-limit
+  "Directory ceiling for answering a listing out of the warm workspace index. With the
+   file side natively prefix-filtered (`fff-ls-file-pages`), the directory index is the
+   only part of a reuse still scanned whole — about 1.1 µs a directory — so its size is
+   both the honest cost model and the cheapest gate to read (a 1-record directory probe
+   is ~0.01 ms against ~0.13 ms for a mixed one). Above this ceiling, indexing just the
+   listed subtree is the better trade and `ls` leases at the directory."
+  20000)
+
+(defn- fff-ls-workspace-items
+  "Listing rows for `target-rel` served from the ALREADY-WARM workspace index, or nil
+   when that index cannot or should not answer: nothing warm, an index too big to
+   scan (`ls-workspace-reuse-limit`), a directory outside the workspace, or one fff
+   ignores (`target/`, `node_modules/` …). The directory's OWN record proves
+   coverage, so an empty-but-indexed directory answers here instead of paying for a
+   fallback index."
+  [^File root target-rel ^long levels is-hidden?]
+  (when (and (seq target-rel) (not (str/starts-with? (str target-rel) "/")))
+    (when-let [lease (warm-ls-lease)]
+      (let
+        [prefix (str target-rel "/")
+         keep-fn (fff-ls-keeper root prefix levels is-hidden?)
+         covered? (volatile! false)
+         rows (fff-index/with-index
+                [idx lease]
+                (when (<= (long (or (:total-matched
+                                      (fff/search-directories idx {:query "" :page-size 1}))
+                                    0))
+                          (long ls-workspace-reuse-limit))
+                  (fff-ls-records idx
+                                  prefix
+                                  (fn [{:keys [relative-path] :as item} directory?]
+                                    (if (= target-rel relative-path)
+                                      (do (vreset! covered? true) nil)
+                                      (keep-fn item directory?))))))]
+
+        (when (and (some? rows) (or @covered? (seq rows))) rows)))))
+
+(defn- fff-ls-target-items
+  "Listing rows from an index rooted AT the listed directory: the fallback that keeps
+   an explicitly named ignored directory readable, and the only source for a
+   directory outside the workspace."
+  [^File root target-rel ^long levels is-hidden?]
+  (fff-index/with-index [idx (fff-index/lease root true (fff-ls-overlay target-rel))]
+                        (fff-ls-records idx "" (fff-ls-keeper root "" levels is-hidden?))))
+
+(defn- list-dir
+  "Directory listing as MODEL data, powered by fff — never a filesystem walk.
+
+   fff owns `.gitignore`, `.ignore`, `.rgignore`, and the live `vis.yml` grep overlay
+   in one native index; this code only rebuilds the documented tree shape. Two
+   sources, cheapest first:
+
+   1. the WARM workspace index `grep`/`find` already maintain, prefix-filtered — no
+      new index and no new watcher;
+   2. otherwise an index rooted at the directory itself, which is also what keeps a
+      directly listed ignored directory readable, as it was before.
+
+   Records are depth-filtered inside the paging loop (`fff-ls-scan`), so cost tracks
+   the rows RETURNED rather than the size of the tree, and rendered paths are joined
+   from the directory's own rendered path instead of canonicalizing per row. Results
+   remain directories-first then alphabetical, and are exhaustive."
   [^File d {:keys [depth is_hidden] :or {depth 1 is_hidden false}}]
   (let
     [^File root
      (.getCanonicalFile d)
 
+     base
+     (rel-path root)
+
      target-rel
-     (let [p (rel-path root)]
-       (if (= "." p) "" p))
+     (if (= "." base) "" base)
 
      levels
      (long depth)
 
+     is-hidden?
+     (boolean is_hidden)
+
      items
-     (fff-index/with-index [idx (fff-index/lease root true (fff-ls-overlay target-rel))]
-                           (fff-ls-items idx))
+     (or (fff-ls-workspace-items root target-rel levels is-hidden?)
+         (fff-ls-target-items root target-rel levels is-hidden?))
+
+     render-prefix
+     (if (= "." base) "" (str base "/"))
 
      rows
      (->> items
-          (filter (fn [{:keys [relative-path]}]
-                    (let [^String path (or relative-path "")]
-                      (and (seq path)
-                           (<= (count (str/split path #"/")) levels)
-                           (or is_hidden (not (hidden-relative-path? root path)))))))
           (map (fn [{:keys [relative-path directory? size]}]
                  (let
                    [^String path
                     (or relative-path "")
-
-                    ^File f
-                    (io/file root path)
 
                     slash
                     (.lastIndexOf path "/")]
@@ -1397,9 +1546,10 @@
                    {:local path
                     :parent (if (neg? slash) "" (subs path 0 slash))
                     :entry {"name" (if (neg? slash) path (subs path (inc slash)))
-                            "path" (rel-path f)
+                            "path" (str render-prefix path)
                             "type" (if directory? "dir" "file")
-                            "size" (if directory? (.length f) (long (or size 0)))}})))
+                            "size"
+                            (if directory? (.length (io/file root path)) (long (or size 0)))}})))
           (group-by :parent))]
 
     (letfn [(children [parent ^long level]
@@ -1410,16 +1560,7 @@
                            (if (and (= "dir" (get entry "type")) (< level levels))
                              (assoc entry "children" (children local (unchecked-inc level)))
                              entry)))))]
-      {"path" (rel-path d) "type" "dir" "entries" (children "" 1) "depth" levels})))
-
-(defn- dir-listing-success
-  "Wrap a `list-dir` result in the cat tool envelope (`:kind :dir`)."
-  [path listing]
-  (tool-success {:op :cat
-                 :path path
-                 :kind :dir
-                 :result listing
-                 :metadata {:entry-count (count (get listing "entries")) :dir? true}}))
+      {"path" base "type" "dir" "entries" (children "" 1) "depth" levels})))
 
 (defn- read-file
   "Read a window of a text file as pure structured data.
@@ -3846,6 +3987,19 @@
 
 (declare cat-tool)
 
+(defn- cat-directory-error!
+  "`cat` reads FILES. A directory path is a routing mistake, not a read: `ls`
+   owns listings, so fail loudly with the exact replacement call instead of
+   quietly doing another tool's job under this tool's name."
+  [path]
+  (throw (ex-info (str "`cat` reads files — `"
+                       path
+                       "` is a directory. Use `ls`: "
+                       "ls({\"paths\": [\""
+                       path
+                       "\"]})")
+                  {:type :ext.foundation.editing/cat-on-directory :path path})))
+
 (defn- cat-one
   "Read a text-file window. `await cat(path)` reads the whole file (≤2000 lines)
    — slice only for bigger files or a middle/tail section. Options = a dict,
@@ -3885,7 +4039,7 @@
        (cat-tool (or direct-path inferred-path) (dissoc spec "path")))
      (let [f (safe-path path)]
        (if (.isDirectory f)
-         (dir-listing-success path (list-dir f nil))
+         (cat-directory-error! path)
          (let [out (read-file path 1 default-cat-limit)]
            (tool-success {:op :cat
                           :path path
@@ -3904,10 +4058,7 @@
      (map? arg)
      (let [f (safe-path path)]
        (if (.isDirectory f)
-         (dir-listing-success path
-                              (list-dir f
-                                        {:depth (or (get arg "depth") 1)
-                                         :is_hidden (boolean (get arg "is_hidden"))}))
+         (cat-directory-error! path)
          (let
            [raw-ranges (get arg "ranges")
             ;; Empty JSON arrays are a common optional-argument serialization
@@ -4031,6 +4182,70 @@
                                                                     (dissoc spec "path"))))
                                                 specs)}}))
       (apply cat-one args))))
+
+(defn- ls-one
+  "List ONE normalized `ls` spec. `ls` is the DIRECTORY tool, so a file path is a
+   routing mistake and says so instead of returning a degenerate one-row tree."
+  [spec]
+  (let
+    [path
+     (get spec "path")
+
+     ^File f
+     (safe-path path)]
+
+    (when-not (.exists f)
+      (throw (ex-info (str "`ls`: no such path `" path "`")
+                      {:type :ext.foundation.editing/invalid-ls-args :path path})))
+    (when-not (.isDirectory f)
+      (throw (ex-info (str "`ls` lists directories \u2014 `"
+                           path
+                           "` is a file. Use `cat`: "
+                           "cat({\"files\": [\""
+                           path
+                           "\"]})")
+                      {:type :ext.foundation.editing/ls-on-file :path path})))
+    (list-dir f {:depth (or (get spec "depth") 1) :is_hidden (boolean (get spec "is_hidden"))})))
+
+(defn- ls-tool
+  "List directories: `{\"paths\": [dir, ...]}` answers `{\"results\": [...]}` in request
+   order. Shared `depth`/`is_hidden` apply to every entry; a
+   `{\"path\": \"...\", \"depth\": 2}` entry overrides them for that one directory."
+  [& args]
+  (let
+    [a
+     (first args)
+
+     m
+     (cond (map? a) a
+           (string? a) (assoc (if (map? (second args)) (second args) {}) "paths" [a])
+           :else nil)
+
+     _
+     (when-not (map? m)
+       (throw (ex-info "`ls` takes {\"paths\": [dir, ...]} or a single path string"
+                       {:type :ext.foundation.editing/invalid-ls-args :got a})))
+
+     entries
+     (or (get m "paths")
+         (when-let [p (get m "path")]
+           [p]))
+
+     specs
+     (batch-path-specs "ls"
+                       :ext.foundation.editing/invalid-ls-args
+                       (dissoc m "paths" "path")
+                       entries)
+
+     rows
+     (mapv ls-one specs)]
+
+    (tool-success {:op :ls
+                   :path (get (first specs) "path")
+                   :kind :dir
+                   :result {"results" rows}
+                   :metadata {:dir? true
+                              :entry-count (reduce + 0 (map #(count (get % "entries")) rows))}})))
 
 
 (def ^:private ^:const patch-diff-context-lines 3)
@@ -4928,9 +5143,14 @@
                    (mapcat #(get % "definitions"))
                    (keep #(get % "name"))
                    distinct
-                   vec)]
+                   vec)
 
-             (mapv #(occurrences-data % paths) names))))]
+              ;; Each file is read ONCE per request, not once per name.
+              read-source
+              (memoize (fn [path]
+                         (slurp (safe-path path))))]
+
+             (mapv #(occurrences-data % paths read-source) names))))]
 
       (tool-success {:op :struct_index :kind :file :result result}))))
 
@@ -5021,7 +5241,7 @@
           :else (str "`" listed "`"))))
 
 (defn- render-ls-result
-  "cat-on-directory → `{:summary :body}`: the summary is the dir path + entry
+  "ONE `ls` listing → `{:summary :body}`: the summary is the dir path + entry
    count; the body lists entries one per row, `name/` for subdirs, two-space
    indent per nested level. `r` is `{\"path\" \"entries\" \"depth\"}`."
   [r]
@@ -5063,90 +5283,103 @@
    contiguous run shows just `L<a>-<b>` — the count is implied; multi-run
    shows the overall extent + run count + line total."
   [r]
-  (if (contains? r "entries")
-    (render-ls-result r)
-    (let
-      [line-no
-       (fn [k]
-         (first (str/split (str k) #":")))
+  (let
+    [line-no
+     (fn [k]
+       (first (str/split (str k) #":")))
 
-       anchors
-       (get r "anchors")
+     anchors
+     (get r "anchors")
 
-       ;; Gutter width = widest line number in THIS slice, not a fixed 5.
-       ;; A hardcoded `%5s` padded 3-digit reads (`380`) with two spurious
-       ;; leading spaces that read as a broken left margin on the cat card.
-       gutter-w
-       (reduce (fn [^long w [k _]]
-                 (max w (count (line-no k))))
-               1
-               anchors)
+     ;; Gutter width = widest line number in THIS slice, not a fixed 5.
+     ;; A hardcoded `%5s` padded 3-digit reads (`380`) with two spurious
+     ;; leading spaces that read as a broken left margin on the cat card.
+     gutter-w
+     (reduce (fn [^long w [k _]]
+               (max w (count (line-no k))))
+             1
+             anchors)
 
-       ;; Gap marker between NON-CONTIGUOUS slices (multi-range / multi-anchor
-       ;; reads) so disjoint areas read as separate regions instead of one run.
-       ;; `⋯` is the project's canonical "content omitted here" glyph (see the
-       ;; `# ⋯ folded`/`# ⋯ clipped` breadcrumbs in loop.clj); right-align it in
-       ;; the line-number gutter so it sits exactly where the skipped lines were.
-       divider
-       (format (str "%" gutter-w "s") "⋯")
+     ;; Gap marker between NON-CONTIGUOUS slices (multi-range / multi-anchor
+     ;; reads) so disjoint areas read as separate regions instead of one run.
+     ;; `⋯` is the project's canonical "content omitted here" glyph (see the
+     ;; `# ⋯ folded`/`# ⋯ clipped` breadcrumbs in loop.clj); right-align it in
+     ;; the line-number gutter so it sits exactly where the skipped lines were.
+     divider
+     (format (str "%" gutter-w "s") "⋯")
 
-       rows
-       (:rows
-         (reduce
-           (fn [{:keys [rows prev]} [k v]]
+     rows
+     (:rows
+       (reduce
+         (fn [{:keys [rows prev]} [k v]]
+           (let
+             [ln
+              (parse-long (line-no k))
+
+              row
+              (str (format (str "%" gutter-w "s") (line-no k)) "  " (patch/anchor-value-text v))]
+
+             {:prev ln
+              :rows (cond-> rows
+                      (and prev ln (> (long ln) (inc (long prev))))
+                      (conj divider)
+
+                      :always
+                      (conj row))}))
+         {:rows [] :prev nil}
+         (sort-by (comp parse-long line-no key) anchors)))
+
+     n
+     (count anchors)
+
+     spans
+     (anchor-line-spans (get r "anchors"))
+
+     span-str
+     (fn [[a b]]
+       (if (= a b) (str "L" a) (str "L" a "-" b)))
+
+     loc
+     (cond (nil? spans) nil
+           (= 1 (count spans)) (span-str (first spans))
+           :else (str "L" (ffirst spans) "-" (second (peek spans)) " (" (count spans) " ranges)"))
+
+     counted
+     (str n " line" (when (not= 1 n) "s"))
+
+     ;; Fence the numbered slice with the file's code language. The TUI strips
+     ;; the line-number gutter before parsing, then restores it uncolored.
+     lang
+     (index/code-language (get r "path"))]
+
+    {:summary (str "`" (disp-path (get r "path"))
+                   "` · " (cond (nil? loc) counted
+                                (= 1 (count spans)) loc
+                                :else (str loc " · " counted)))
+     :body (when (seq rows)
              (let
-               [ln
-                (parse-long (line-no k))
+               [joined
+                (str/join "\n" rows)
 
-                row
-                (str (format (str "%" gutter-w "s") (line-no k)) "  " (patch/anchor-value-text v))]
+                fenced
+                (strutil/fenced joined lang)]
 
-               {:prev ln
-                :rows (cond-> rows
-                        (and prev ln (> (long ln) (inc (long prev))))
-                        (conj divider)
+               (str "\n" fenced)))}))
 
-                        :always
-                        (conj row))}))
-           {:rows [] :prev nil}
-           (sort-by (comp parse-long line-no key) anchors)))
-
-       n
-       (count anchors)
-
-       spans
-       (anchor-line-spans (get r "anchors"))
-
-       span-str
-       (fn [[a b]]
-         (if (= a b) (str "L" a) (str "L" a "-" b)))
-
-       loc
-       (cond (nil? spans) nil
-             (= 1 (count spans)) (span-str (first spans))
-             :else (str "L" (ffirst spans) "-" (second (peek spans)) " (" (count spans) " ranges)"))
-
-       counted
-       (str n " line" (when (not= 1 n) "s"))
-
-       ;; Fence the numbered slice with the file's code language. The TUI strips
-       ;; the line-number gutter before parsing, then restores it uncolored.
-       lang
-       (index/code-language (get r "path"))]
-
-      {:summary (str "`" (disp-path (get r "path"))
-                     "` · " (cond (nil? loc) counted
-                                  (= 1 (count spans)) loc
-                                  :else (str loc " · " counted)))
-       :body (when (seq rows)
-               (let
-                 [joined
-                  (str/join "\n" rows)
-
-                  fenced
-                  (strutil/fenced joined lang)]
-
-                 (str "\n" fenced)))})))
+(defn- render-ls-results
+  "ls → `{:summary :body}`. One listed directory renders its own card; a BATCH
+   renders a shared headline over each directory's own section, in request order."
+  [r]
+  (let [results (vec (get r "results"))]
+    (if (= 1 (count results))
+      (render-ls-result (first results))
+      {:summary
+       (str (batch-paths-summary (map #(get % "path") results)) " · " (count results) " dirs")
+       :body (str/join "\n\n"
+                       (map (fn [x]
+                              (let [{:keys [summary body]} (render-ls-result x)]
+                                (str "### " summary (or body ""))))
+                            results))})))
 
 (defn- render-cat-result
   "cat → `{:summary :body}`. A single path renders its own card; a BATCH renders a
@@ -5995,17 +6228,11 @@
 
 
 (def ^:private cat-file-entry-schema
-  "A per-file object entry in `files`: the path plus `ranges`, or a DIRECTORY's
-   `depth`/`is_hidden` listing options."
+  "A per-file object entry in `files`: the path plus its own `ranges`."
   {:type "object"
-   :properties
-   {"path" {:type "string" :minLength 1}
-    "ranges" (assoc cat-ranges-schema :description "THIS file; overrides shared `ranges`.")
-    "depth" {:type "integer"
-             :minimum 1
-             :description "Directory levels (default 1); deeper rows nest in `children`."}
-    "is_hidden" {:type "boolean"
-                 :description "Directory listing adds dotfiles; gitignored stay hidden."}}
+   :properties {"path" {:type "string" :minLength 1}
+                "ranges" (assoc cat-ranges-schema
+                           :description "THIS file; overrides shared `ranges`.")}
    :required ["path"]
    :additionalProperties false})
 
@@ -6035,13 +6262,12 @@
      :native-tool? true
      :result
      (str
-       "String-keyed `{results}` rows. File: `{op,path,size,mtime,eof,truncated,next_offset,ranges,anchors}`; "
+       "String-keyed `{results}` rows: `{op,path,size,mtime,eof,truncated,next_offset,ranges,anchors}`. "
        "`anchors[\"line:hash\"]={\"text\":line}` is the ONLY content field (no `content`/`lines`) and holds every window; "
-       "`ranges` carry metadata only (`{range,eof,next_offset,truncated}`) and never repeat the text. "
-       "Directory (ls): `{op,path,type,depth,entries}`; each entry `{name,path,type,size}` (+`children` when nested).")
+       "`ranges` carry metadata only (`{range,eof,next_offset,truncated}`) and never repeat the text.")
      :description
      (str
-       "Read every needed region from all paths as patch-ready `lineno:hash` lines; a DIRECTORY path lists (ls) it. "
+       "Read every needed region from all paths as patch-ready `lineno:hash` lines; `ls` lists directories. "
        "Run `struct_index` first on code. Writes invalidate pre-write anchors for that file, not other files.")
      :render render-cat-result
      :color-role :tool-color/read
@@ -6049,6 +6275,51 @@
      :before-fn (path-protected-before-fn :cat :file :read read-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :cat :file nil)}))
+
+(def ^:private ls-entry-schema
+  "A per-directory object entry in `ls` `paths`: the path plus its own options."
+  {:type "object"
+   :properties {"path" {:type "string" :minLength 1}
+                "depth" {:type "integer" :minimum 1}
+                "is_hidden" {:type "boolean"}}
+   :required ["path"]
+   :additionalProperties false})
+
+(def ^:private ls-schema
+  "`ls`'s JSON Schema: plural `paths` plus the shared listing options."
+  {:type "object"
+   :properties
+   {"paths" {:type "array"
+             :items {:oneOf [{:type "string" :minLength 1} ls-entry-schema]}
+             :minItems 1
+             :description "Directories to list; an object entry overrides the shared options."}
+    "depth" {:type "integer"
+             :minimum 1
+             :description "Levels to descend (default 1); nested rows sit in `children`."}
+    "is_hidden" {:type "boolean"
+                 :description "Add dotfiles; gitignored entries stay hidden either way."}}
+   :required ["paths"]
+   :additionalProperties false})
+
+(def ls-symbol
+  (vis/symbol
+    #'ls-tool
+    {:symbol 'ls
+     :native-tool? true
+     :result
+     (str
+       "String-keyed `{results}`, one row per requested path in request order: "
+       "`{path,type,depth,entries}`; each entry is `{name,path,type,size}` plus `children` when `depth` nests.")
+     :description
+     (str
+       "List directory contents (ls), batched over `paths`: directories first, then alphabetical. "
+       "Dotfiles are hidden unless `is_hidden`, gitignored entries always. Read files with `cat`.")
+     :render render-ls-results
+     :color-role :tool-color/read
+     :schema ls-schema
+     :before-fn (path-protected-before-fn :ls :dir :read read-arg-paths)
+     :tag :observation
+     :on-error-fn (tool-failure-on-error :ls :dir nil)}))
 
 (def grep-symbol
   (vis/symbol
@@ -6855,90 +7126,99 @@
   "Every syntactic occurrence of one declared identifier across the exact indexed
    `paths`, grouped per definition. Attribution remains conservative: a sole
    definition owns every use; otherwise only a file-local unique definition owns
-   its uses, and ambiguous uses remain in `other_uses`."
-  [name paths]
-  (let
-    [files
-     (vec paths)
+   its uses, and ambiguous uses remain in `other_uses`.
 
-     {:keys [per failed]}
-     (reduce
-       (fn [acc path]
-         (try
-           (let [occ (structural/occurrences path (slurp (safe-path path)) name)]
-             (cond-> acc
-               (seq occ)
-               (update :per
-                       conj
-                       {"path" path "occurrences" (mapv #(occurrence->wire name %) occ)})))
-           (catch Exception e
-             (update acc :failed conj {"path" path "error" (or (ex-message e) (str (class e)))}))))
-       {:per [] :failed []}
-       files)
+   `read-source` reads one path's content. Tracing runs over the SAME paths for
+   every declared name, so the caller passes a memoised reader and each file is
+   read once per request instead of once per name; the 2-arity reads directly."
+  ([name paths]
+   (occurrences-data name
+                     paths
+                     (fn [path]
+                       (slurp (safe-path path)))))
+  ([name paths read-source]
+   (let
+     [files
+      (vec paths)
 
-     total
-     (reduce + 0 (map #(count (get % "occurrences")) per))
+      {:keys [per failed]}
+      (reduce
+        (fn [acc path]
+          (try
+            (let [occ (structural/occurrences path (read-source path) name)]
+              (cond-> acc
+                (seq occ)
+                (update :per
+                        conj
+                        {"path" path "occurrences" (mapv #(occurrence->wire name %) occ)})))
+            (catch Exception e
+              (update acc :failed conj {"path" path "error" (or (ex-message e) (str (class e)))}))))
+        {:per [] :failed []}
+        files)
 
-     def-rows
-     (vec (for
-            [f
-             per
+      total
+      (reduce + 0 (map #(count (get % "occurrences")) per))
 
-             o
-             (get f "occurrences")
+      def-rows
+      (vec (for
+             [f
+              per
 
-             :when (get o "is_definition")]
+              o
+              (get f "occurrences")
 
-            (assoc (dissoc o "is_definition") "path" (get f "path"))))
+              :when (get o "is_definition")]
 
-     use-rows
-     (vec (for
-            [f
-             per
+             (assoc (dissoc o "is_definition") "path" (get f "path"))))
 
-             :let [us
-                   (remove #(get % "is_definition") (get f "occurrences"))]
-             :when (seq us)]
+      use-rows
+      (vec (for
+             [f
+              per
 
-            {"path" (get f "path") "anchors" (mapv #(get % "anchor") us)}))
+              :let [us
+                    (remove #(get % "is_definition") (get f "occurrences"))]
+              :when (seq us)]
 
-     defs
-     (count def-rows)
+             {"path" (get f "path") "anchors" (mapv #(get % "anchor") us)}))
 
-     defs-per-file
-     (frequencies (map #(get % "path") def-rows))
+      defs
+      (count def-rows)
 
-     owner
-     (fn [use-path]
-       (cond (= 1 defs) (first def-rows)
-             (= 1 (get defs-per-file use-path)) (first (filter #(= use-path (get % "path"))
-                                                               def-rows))
-             :else nil))
+      defs-per-file
+      (frequencies (map #(get % "path") def-rows))
 
-     grouped
-     (group-by #(owner (get % "path")) use-rows)
+      owner
+      (fn [use-path]
+        (cond (= 1 defs) (first def-rows)
+              (= 1 (get defs-per-file use-path)) (first (filter #(= use-path (get % "path"))
+                                                                def-rows))
+              :else nil))
 
-     symbols
-     (mapv (fn [d]
-             (let [us (vec (get grouped d))]
-               (assoc d
-                 "uses" us
-                 "use_count" (reduce + 0 (map #(count (get % "anchors")) us)))))
-           def-rows)
+      grouped
+      (group-by #(owner (get % "path")) use-rows)
 
-     other-uses
-     (vec (get grouped nil))]
+      symbols
+      (mapv (fn [d]
+              (let [us (vec (get grouped d))]
+                (assoc d
+                  "uses" us
+                  "use_count" (reduce + 0 (map #(count (get % "anchors")) us)))))
+            def-rows)
 
-    (cond->
-      {"name" name
-       "symbols" symbols
-       "count" total
-       "definition_count" defs
-       "scanned" (count files)
-       "paths" files
-       "failed" failed}
-      (seq other-uses)
-      (assoc "other_uses" other-uses))))
+      other-uses
+      (vec (get grouped nil))]
+
+     (cond->
+       {"name" name
+        "symbols" symbols
+        "count" total
+        "definition_count" defs
+        "scanned" (count files)
+        "paths" files
+        "failed" failed}
+       (seq other-uses)
+       (assoc "other_uses" other-uses)))))
 
 (defn- symbol-rename-tool
   "Rename identifier `name` → `new_name` across the WHOLE project via tree-sitter
@@ -7497,9 +7777,9 @@
 
 (defn available-editing-symbols
   []
-  [index-symbol cat-symbol grep-symbol patch-symbol write-symbol struct-patch-symbol nodes-symbol
-   symbol-rename-symbol fs-symbol create-dirs-symbol copy-symbol move-symbol delete-symbol
-   file-exists-symbol])
+  [index-symbol cat-symbol ls-symbol grep-symbol patch-symbol write-symbol struct-patch-symbol
+   nodes-symbol symbol-rename-symbol fs-symbol create-dirs-symbol copy-symbol move-symbol
+   delete-symbol file-exists-symbol])
 
 (defn available-editing-prompt
   "No separate editing prompt: active native descriptions own routing and their

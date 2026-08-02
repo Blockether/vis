@@ -183,6 +183,15 @@
                  ;; --dry-run / -n already self-reports, so leave it be.
                  (expect (= ["add" "-n" "-A"] (verbose-add ["add" "-n" "-A"])))
                  (expect (= ["add" "--dry-run" "."] (verbose-add ["add" "--dry-run" "."]))))
+             (it "puts --verbose BEFORE a -- pathspec separator"
+                 ;; Everything after `--` is a PATH: appending at the end made git
+                 ;; die with `fatal: pathspec '--verbose' did not match any files`
+                 ;; and stage nothing.
+                 (expect (= ["add" "--verbose" "--" "a.clj" "b.clj"]
+                            (verbose-add ["add" "--" "a.clj" "b.clj"])))
+                 (expect (= ["add" "-A" "--verbose" "--"] (verbose-add ["add" "-A" "--"])))
+                 ;; A reporting flag AFTER `--` is a filename, not a flag.
+                 (expect (= ["add" "--verbose" "--" "-v"] (verbose-add ["add" "--" "-v"]))))
              (it "leaves every other subcommand untouched"
                  (expect (= ["commit" "-m" "x"] (verbose-add ["commit" "-m" "x"])))
                  (expect (= ["push"] (verbose-add ["push"])))

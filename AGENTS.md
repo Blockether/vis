@@ -2,6 +2,12 @@
 
 Read only the section relevant to the change. Keep this file for durable, repo-wide contracts; put local implementation detail beside the code and inspect source/tests before changing a contract.
 
+## This repo is public: never document Blockether's own deployment
+
+- Blockether's hosted gateway is **private infrastructure**. Its public hostname, private bind address, ingress/Endpoints chain, server names, systemd units, and playbooks belong **only** in the private `infrastructure` repo — never in `README.md`, `AGENTS.md`, `resources/vis-docs/**`, `docker-compose.yml`, `Dockerfile`, code comments, tests, or commit messages.
+- Docs and examples use neutral placeholders only: `127.0.0.1`, `10.0.0.5`, `gateway.example.com`, `visgw`.
+- `com.blockether.vis.private-deployment-hygiene-test` scans the whole tree and fails on such a reference. Delete the reference; never add an exception for it.
+
 ## Toolchain: GraalVM CE 25.1.3 is locked
 
 - `.graalvm-version` is the sole source of truth. `GRAAL_PIN_LOCKED`, `GRAAL_MAX_VERSION`, and `GRAAL_VERSION` must remain equal at **25.1.3**. `bin/require-graalvm`, `build.clj`, the setup action, and the pin test enforce this.

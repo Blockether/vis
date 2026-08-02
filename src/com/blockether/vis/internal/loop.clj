@@ -7145,6 +7145,7 @@
      [["search" (+ (long (get counts "grep" 0)) (long (get counts "search" 0)))]
       ["read"
        (+ (long (get counts "cat" 0))
+          (long (get counts "ls" 0))
           (long (get counts "struct_index" 0))
           (long (get counts "struct_nodes" 0)))] ["test" (long (get counts "run_tests" 0))]
       ["tool call" (long (count names))]]]

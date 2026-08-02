@@ -96,9 +96,54 @@
       (recur c)
       t)))
 
-(defn- process-source
-  "`ProcessResult` for `source` parsed as `language`, with STRUCTURE and IMPORTS
-   populated in a SINGLE pass (both default on; requested explicitly).
+(def ^:private parse-cache-size
+  "How many parsed files `parse-cache` keeps before evicting the oldest.
+
+   Entries retain roughly 38KB each on this repo's files, so the bound costs a
+   few MB at most while covering a whole multi-file request."
+  64)
+
+(def ^:private parse-cache
+  "CONTENT-ADDRESSED cache of `process-source` results: `[language source]` →
+   `ProcessResult`, as `{:m {k res} :order [k …]}` (FIFO, bounded by
+   `parse-cache-size`).
+
+   The native parse DOMINATES indexing — measured over 140 repo files / 99k lines:
+   498 ms for `file-index`, of which 436 ms is the pack call and 277 ms is a parse
+   that extracts NOTHING. Every real flow then re-parses the same bytes several
+   times: `struct_index` → `struct_patch` on that file, `resolve-edit-kind` before
+   the pack's own edit, `definitions` per name — and above all
+   `include_occurrences`, which walks every declared name × every path (47 names ×
+   2 files = 94 parses of 2 files).
+
+   Keyed by the CONTENT, so it can never serve a stale tree: an edited file is a
+   different key, and a failed parse throws instead of being remembered."
+  (atom {:m {} :order []}))
+
+(defn- cache-parse!
+  "Remember `res` under `k`, evicting the oldest entry past `parse-cache-size`.
+   Returns `res`."
+  [k res]
+  (swap! parse-cache (fn [{:keys [m order] :as c}]
+                       (cond (contains? m k) c
+                             (>= (count order) (long parse-cache-size))
+                             {:m (-> m
+                                     (dissoc (nth order 0))
+                                     (assoc k res))
+                              :order (conj (subvec order 1) k)}
+                             :else {:m (assoc m k res) :order (conj order k)})))
+  res)
+
+(defn clear-parse-cache!
+  "Drop every cached parse. Only needed to reclaim memory or to measure a cold
+   parse — correctness never needs it, since the cache is keyed by content."
+  []
+  (reset! parse-cache {:m {} :order []})
+  nil)
+
+(defn- parse-source
+  "Uncached `ProcessResult` for `source` parsed as `language`, with STRUCTURE,
+   IMPORTS and DOCSTRINGS populated in a SINGLE pass (all requested explicitly).
 
    The pack surfaces every native/decode failure as one opaque
    `TreeSitterLanguagePackRsException: FFI call failed`, burying the real
@@ -122,6 +167,16 @@
                                   ": " (.getMessage cause))
                              {:language language :cause-type (.getName (class cause))}
                              t)))))))
+
+(defn- process-source
+  "`ProcessResult` for `source` parsed as `language` — the SINGLE entry point every
+   index/edit path goes through, served from the content-addressed `parse-cache`
+   when the exact same bytes were parsed recently."
+  ^ProcessResult [^String source ^String language]
+  (let [k [language source]]
+    (if-let [hit (get (:m @parse-cache) k)]
+      hit
+      (cache-parse! k (parse-source source language)))))
 
 (defn- structure-items
   "List<StructureItem> for `source` parsed as `language` (empty when none)."
@@ -387,6 +442,18 @@
             (recur (long (skip-ws e)) (str acc (subs text i e))))
           acc)))))
 
+(def ^:private def-with-meta-re
+  "A `(def…` head whose var COULD carry metadata: either a `^` follows on the same
+   line, or the head token ends the line (the rare `(def\n  ^{:doc …} nm` shape).
+   Anything else has the var NAME right after the head token, so there is no
+   metadata to read.
+
+   This is the cheap reject that keeps `meta-doc` from materialising a definition's
+   whole source text: without it the `^{:doc …}` scan cost 31 ms of the 55 ms the
+   Clojure layer spends on 140 files — paid by every UNDOCUMENTED def, in every
+   language, twice per definition."
+  #"^\(def\S*(?:\s*$|\s+\^)")
+
 (defn- meta-doc
   "Docstring carried in a Clojure-family `^{:doc \"…\"}` VAR METADATA map — the one
    doc shape the pack reports nowhere: for `(def ^{:doc \"…\"} nm v)` /
@@ -395,8 +462,10 @@
    `session_state`, `sessions`, `git`, `shell`, `mcp_*`, …) indexed blank while
    its whole contract lives in that map.
 
-   Read from `it`'s OWN source span, and only from its metadata head. nil for
-   every other shape (and for every non-`(def…` language)."
+   Read from `it`'s OWN source span, and only from its metadata head — and only
+   once `def-with-meta-re` says the head can have one, so the span text is built
+   for the handful of candidates instead of for every def. nil for every other
+   shape (and for every non-`(def…` language)."
   [lines ^StructureItem it]
   (let
     [^Span span
@@ -405,14 +474,55 @@
      s
      (long (.startLine span))
 
-     e
-     (long (span-end-line lines span))]
+     n
+     (count lines)]
 
-    (when (< s (count lines))
-      (some-> (str/join "\n" (take (- (inc e) s) (drop s lines)))
-              (clj-meta-head)
-              (->> (re-find #"(?s):doc\s+\"((?:[^\"\\]|\\.)*)\""))
-              (second)))))
+    (when (and (< s n) (re-find def-with-meta-re (nth lines s "")))
+      (let
+        [e
+         (long (span-end-line lines span))
+
+         text
+         (if (vector? lines)
+           (str/join "\n" (subvec lines s (min n (inc e))))
+           (str/join "\n" (take (- (inc e) s) (drop s lines))))]
+
+        (some-> text
+                (clj-meta-head)
+                (->> (re-find #"(?s):doc\s+\"((?:[^\"\\]|\\.)*)\""))
+                (second))))))
+
+(def ^:private ^:dynamic *doc-memo*
+  "Per-run `IdentityHashMap` memo for `doc-snippet`, bound by `file-index` because
+   that entry point renders every definition TWICE — once as a skeleton line, once
+   as a machine row — and the doc gist is the expensive half (docstrings lookup +
+   `^{:doc …}` span scan). Keyed by StructureItem IDENTITY, so it is valid only for
+   the one `lines`/result pair it was bound around. nil elsewhere: the other entry
+   points render each definition once."
+  nil)
+
+(defn- first-gist-line
+  "First non-blank line of `s`, trimmed — scanned in place. A doc comment is often
+   dozens of lines and only ONE of them is ever shown, so splitting the whole text
+   (and trimming every line) to keep the head was the largest remaining cost of the
+   gist."
+  ^String [^String s]
+  (let [n (.length s)]
+    (loop [i 0]
+      (when (< i n)
+        (let
+          [nl (.indexOf s "\n" i)
+           e (if (neg? nl) n nl)
+           line (.trim (.substring s i e))]
+
+          (if (.isEmpty line) (when (< e n) (recur (inc e))) line))))))
+
+(defn- doc-gist
+  "Uncached `doc-snippet`."
+  [lines ^StructureItem it]
+  (when-let [d (or (.docComment it) (docstring-for it) (meta-doc lines it))]
+    (when-let [line (first-gist-line d)]
+      (if (> (count line) 72) (str (subs line 0 71) "…") line))))
 
 (defn- doc-snippet
   "First non-blank line of a definition's doc string, trimmed and clipped to a
@@ -420,15 +530,18 @@
    from the def's own doc string / leading comment — Clojure docstrings, and the
    `//` / JSDoc block written directly above a JS/TS/TSX def; `docstring-for`
    covers in-body docs (Python); `meta-doc` covers Clojure `^{:doc …}` metadata,
-   which the pack surfaces through neither."
+   which the pack surfaces through neither.
+
+   Memoised per item through `*doc-memo*` when one is bound (nil results included,
+   so a doc-less def is computed once too)."
   [lines ^StructureItem it]
-  (when-let [d (or (.docComment it) (docstring-for it) (meta-doc lines it))]
-    (when-let
-      [line (->> (str/split-lines d)
-                 (map str/trim)
-                 (remove str/blank?)
-                 first)]
-      (if (> (count line) 72) (str (subs line 0 71) "…") line))))
+  (if-let [^java.util.IdentityHashMap memo *doc-memo*]
+    (if (.containsKey memo it)
+      (.get memo it)
+      (let [v (doc-gist lines it)]
+        (.put memo it v)
+        v))
+    (doc-gist lines it)))
 
 (defn- fmt-item
   [lines ^StructureItem it depth]
@@ -727,18 +840,25 @@
   "Render sibling `items` grouped by kind: a `<section>:` header per kind (in
    first-appearance order), each def under it as an anchored, kind-less
    `item-line`; a def's own children recurse one level deeper, themselves
-   grouped. Returns a seq of skeleton lines — no kind word repeated per row."
+   grouped. Returns a seq of skeleton lines — no kind word repeated per row.
+
+   Each item's kind is resolved ONCE (the grouping and the header order share the
+   one pass), never once per grouping and again per header."
   [lines items ^long depth]
   (let
     [indent
      (apply str (repeat depth "  "))
 
-     kind-of
-     (fn [^StructureItem it]
-       (or (item-kind it) "other"))
+     pairs
+     (mapv (fn [^StructureItem it]
+             [(or (item-kind it) "other") it])
+           items)
 
      by-kind
-     (group-by kind-of items)]
+     (reduce (fn [m [k it]]
+               (update m k (fnil conj []) it))
+             {}
+             pairs)]
 
     (mapcat (fn [k]
               (cons (str indent (section-label k) ":")
@@ -748,7 +868,7 @@
                                       (when (seq children)
                                         (grouped-items lines children (+ depth 2))))))
                             (get by-kind k))))
-            (distinct (map kind-of items)))))
+            (distinct (map first pairs)))))
 
 (defn- index-skeleton
   "Maki-style skeleton string: a `<file> · <language> · <N> lines` header, an
@@ -846,7 +966,10 @@
         lines (str/split-lines source)]
 
        (when (or (seq items) (seq imps) windows)
-         (binding [*docstrings* (docstring-index (.docstrings res))]
+         (binding
+           [*docstrings* (docstring-index (.docstrings res))
+            *doc-memo* (java.util.IdentityHashMap.)]
+
            (let [import-rows (mapv #(import->row lines %) imps)]
              {:language language
               :line-count (count lines)

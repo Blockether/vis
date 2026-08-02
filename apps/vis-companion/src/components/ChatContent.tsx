@@ -868,6 +868,15 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
     !failed && !hasOutcome && (!form.result_summary || placeholderSummary);
   const summary = compactToolSummary(form.tool_name, rawSummary);
   const duration = formatDuration(form.duration_ms);
+  // A COLLAPSED result body is not in the DOM at all. Measured on device on a
+  // real transcript: those bodies were 52k of the screen's 72k elements, and
+  // WebKit computes style for them even though a closed <details> paints
+  // nothing — 307ms of style recalc and 653ms to first paint when the session
+  // opens, against 100ms/145ms once they are unmounted. `content-visibility`
+  // cannot help here: it defers layout and paint, never style. The flag is
+  // one-way, so re-collapsing keeps the parsed body for the next open, and
+  // "Copy result" copies `body` (the string), never the DOM.
+  const [wasOpened, setWasOpened] = useState(false);
   // The running placeholder stays readable: the tool role colour is low-contrast
   // on the light surface, so a running summary uses the neutral result colour.
   const summaryClass = failed ? 'text-err' : running ? 'text-code-result' : role.text;
@@ -897,7 +906,12 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
   }
 
   return (
-    <details className={`group min-w-0 border-l-2 ${failed ? 'border-err' : role.border} bg-result`}>
+    <details
+      className={`group min-w-0 border-l-2 ${failed ? 'border-err' : role.border} bg-result`}
+      onToggle={(event) => {
+        if (event.currentTarget.open) setWasOpened(true);
+      }}
+    >
       <summary className="flex min-h-6 list-none cursor-pointer select-none items-center gap-1.5 px-2 py-1 text-code-result hover:bg-hover [&::-webkit-details-marker]:hidden">
         <span className={`${disclosureClass} ${failed ? 'text-err' : role.text}`} aria-hidden="true">›</span>
         {headline}
@@ -908,9 +922,11 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
       {/* A tool result is SUBORDINATE to the answer it feeds: its body is `text-meta`
           (10px), the step its compact code blocks and diffs already render at, so the
           card is internally uniform and steps down from the answer's `text-ui`. */}
-      <div className={`min-w-0 overflow-hidden border-t border-code-edge bg-result px-2.5 py-1.5 text-meta text-code-result ${failed ? 'text-code-error-result' : ''}`}>
-        {failed ? <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-words font-mono text-meta ">{body}</pre> : <Markdown compact nested>{body}</Markdown>}
-      </div>
+      {wasOpened && (
+        <div className={`min-w-0 overflow-hidden border-t border-code-edge bg-result px-2.5 py-1.5 text-meta text-code-result ${failed ? 'text-code-error-result' : ''}`}>
+          {failed ? <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-words font-mono text-meta ">{body}</pre> : <Markdown compact nested>{body}</Markdown>}
+        </div>
+      )}
     </details>
   );
 });

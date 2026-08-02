@@ -567,3 +567,57 @@
              (expect (= 1 exit) output)
              (expect (str/includes? output "name one runtime, not --native and --dev")))
            (finally (delete-tree! root))))))
+
+(defn- run-wrapper
+  "Run the real `bin/vis-agent` from a copy, with HOME/VIS_HOME under `root` and
+   a fake native runtime that echoes the argv the app would receive."
+  [args & {:keys [vis-home] :as _opts}]
+  (let [root (.toFile (Files/createTempDirectory "vis-agent-argv-test-" (make-array FileAttribute 0)))
+        bin (doto (io/file root "bin") .mkdirs)
+        home (doto (io/file root "home") .mkdirs)
+        launcher (io/file bin "vis-agent")
+        native (io/file bin "vis-agent-native")]
+    (Files/copy (.toPath (io/file "bin/vis-agent"))
+                (.toPath launcher)
+                (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+    (.setExecutable launcher true)
+    (write-executable! native "#!/usr/bin/env bash\nprintf 'ARGV[%s]\\n' \"$@\"\n")
+    (let [pb (ProcessBuilder. ^java.util.List
+                              (into ["bash" (.getAbsolutePath launcher)] args))
+          env (.environment pb)]
+      (.directory pb root)
+      (.redirectErrorStream pb true)
+      (.put env "HOME" (.getAbsolutePath home))
+      (.put env "VIS_HOME" (or vis-home (.getAbsolutePath (io/file home ".vis"))))
+      (.put env "PATH" "/usr/bin:/bin")
+      (.remove env "VIS_RUNTIME")
+      (let [process (.start pb)
+            output (slurp (.getInputStream process))
+            exit (.waitFor process)]
+        {:exit exit :output output :root root}))))
+
+(defdescribe
+  wrapper-argument-boundaries-test
+  (it "lets -- end the WRAPPER's flag parsing, not just the app's"
+      (let [{:keys [exit output]} (run-wrapper ["--" "--dev" "--measure"])]
+        (expect (zero? exit) output)
+        ;; every word after -- reaches the app verbatim, and none of them
+        ;; silently switched runtime or turned measurement on.
+        (expect (str/includes? output "ARGV[--]") output)
+        (expect (str/includes? output "ARGV[--dev]") output)
+        (expect (str/includes? output "ARGV[--measure]") output)
+        (expect (not (str/includes? output "[vis measure]")) output)))
+  (it "refuses `runtime use` combined with a one-launch runtime flag"
+      (let [{:keys [exit output]} (run-wrapper ["--dev" "runtime" "use" "jvm"])]
+        (expect (= 2 exit) output)
+        (expect (str/includes? output "runtime use sets the persisted runtime") output)
+        (expect (not (str/includes? output "runtime is now")) output)))
+  (it "never claims a runtime it could not persist"
+      (let [root (.toFile (Files/createTempDirectory "vis-agent-home-test-" (make-array FileAttribute 0)))
+            vis-home (doto (io/file root "vishome") .mkdirs)
+            _ (.mkdirs (io/file vis-home "runtime"))
+            {:keys [exit output]} (run-wrapper ["runtime" "use" "jvm"]
+                                               :vis-home (.getAbsolutePath vis-home))]
+        (expect (= 1 exit) output)
+        (expect (str/includes? output "is not a regular file") output)
+        (expect (not (str/includes? output "runtime is now")) output))))

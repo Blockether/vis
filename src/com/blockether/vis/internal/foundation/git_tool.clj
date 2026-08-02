@@ -115,14 +115,25 @@
   "`git add` is silent by design, so a bare `add` gives no feedback on WHAT it
    staged — the op-card / GIT band paints an empty `$ add`. When the tokens are
    an `add` with no reporting flag already present (`-v`/`--verbose`, or the
-   self-reporting `-n`/`--dry-run`), append `--verbose` so git itself lists each
+   self-reporting `-n`/`--dry-run`), insert `--verbose` so git itself lists each
    staged path (`add 'file'` / `remove 'file'`) on stdout. Only the SUBPROCESS
    runs verbose; the echoed `command`/`args` stay the caller's original tokens,
-   since `--verbose` only adds reporting, not a different index mutation."
+   since `--verbose` only adds reporting, not a different index mutation.
+
+   The flag goes in BEFORE a `--` separator, never after it: git reads every
+   token after `--` as a PATHSPEC, so appending at the end turned an explicit
+   `git add -- <paths>` into `fatal: pathspec '--verbose' did not match any
+   files` and staged NOTHING. The reporting-flag scan is likewise limited to the
+   option side, so a file literally named `-v` cannot suppress the flag."
   [tokens]
-  (if (and (= "add" (first tokens)) (not (some #{"-v" "--verbose" "-n" "--dry-run"} tokens)))
-    (conj (vec tokens) "--verbose")
-    (vec tokens)))
+  (let [tokens (vec tokens)
+        cut (or (first (keep-indexed (fn [i t] (when (= "--" t) i)) tokens))
+                (count tokens))
+        opts (subvec tokens 0 cut)]
+    (if (and (= "add" (first tokens))
+             (not (some #{"-v" "--verbose" "-n" "--dry-run"} opts)))
+      (into (conj opts "--verbose") (subvec tokens cut))
+      tokens)))
 
 (defn- git-command-result
   "Run one literal Git argv through the SHELL tool's own runner

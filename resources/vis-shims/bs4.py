@@ -120,6 +120,7 @@ def __vis_install_bs4__():
             obj.name = name
             obj.namespace = namespace
             return obj
+
     _MULTI_ATTR = set(["class", "accesskey", "dropzone"])
     # HTML only makes these attributes space-separated lists on specific elements,
     # so <p rel="x y"> keeps a plain string the way bs4 does.
@@ -267,6 +268,11 @@ def __vis_install_bs4__():
         def name(self):
             return None
 
+        @name.setter
+        def name(self, name):
+            # bs4 refuses to name a string node, even though .name reads as None.
+            raise AttributeError("A NavigableString cannot be given a name.")
+
         @property
         def string(self):
             return self
@@ -327,8 +333,8 @@ def __vis_install_bs4__():
         def strip_str(self):
             return str.strip(self)
 
-        def extract(self):
-            _detach(self)
+        def extract(self, _self_index=None):
+            _detach(self, _self_index)
             return self
 
         def __copy__(self):
@@ -354,50 +360,81 @@ def __vis_install_bs4__():
         SUFFIX = "--" + _GT
 
     class Tag(PageElement):
-        def __init__(self, name, attrs=None, sourceline=None, sourcepos=None):
+        def __init__(
+            self,
+            parser=None,
+            builder=None,
+            name=None,
+            namespace=None,
+            prefix=None,
+            attrs=None,
+            parent=None,
+            previous=None,
+            is_xml=None,
+            sourceline=None,
+            sourcepos=None,
+            can_be_empty_element=None,
+            cdata_list_attributes=None,
+            preserve_whitespace_tags=None,
+            interesting_string_types=None,
+            namespaces=None,
+        ):
+            # bs4's constructor signature exactly: the parser and the tree
+            # builder come first, so a bare Tag("b") names no tag and raises.
+            # bs4 never stores the parser itself, only its class, so that an
+            # extracted chunk can be garbage-collected.
+            self.parser_class = None if parser is None else parser.__class__
+            if name is None:
+                raise ValueError("No value provided for new tag's name.")
             self.name = name
-            self.attrs = {}
-            if attrs:
-                for k, v in attrs.items() if isinstance(attrs, dict) else attrs:
-                    self.attrs[k] = self._norm_attr(k, v)
-            self.contents = []
-            self.parent = None
-            # Where this tag started in the markup, as bs4 reports it: 1-based line
-            # and 0-based column. bs4 only records a position the parser actually
-            # gave it, so a hand-built tag has neither in its __dict__ and reaches
-            # __getattr__ (which answers None) instead.
-            if sourceline is not None:
-                self.sourceline = sourceline
-            if sourcepos is not None:
-                self.sourcepos = sourcepos
-            self.can_be_empty_element = name in _VOID
-            # bs4 copies these builder-supplied facts onto every tag it makes, and
-            # code that reads vars(tag) or a tag's __dict__ expects them there.
-            self.hidden = False
-            self.known_xml = False
-            self.namespace = None
-            self.prefix = None
-            self._namespaces = {}
-            self.cdata_list_attributes = _CDATA_LIST_ATTRIBUTES
-            self.preserve_whitespace_tags = _PRESERVE_WS
-            # Which string classes .strings/.get_text() find interesting: bs4's
-            # builder gives a few containers their own NavigableString subclass.
-            self.interesting_string_types = _STRING_CONTAINERS.get(
-                name, Tag.DEFAULT_INTERESTING_STRING_TYPES
-            )
-            _set_up_substitutions(self)
-            # bs4 records the BeautifulSoup subclass that built the tag; a tag you
-            # build by hand has none until a soup parses or adopts it.
-            self.parser_class = None
-
-        def _norm_attr(self, k, v):
-            if v is None:
-                v = ""
-            if isinstance(v, str) and (
-                k in _MULTI_ATTR or k in _MULTI_ATTR_BY_TAG.get(self.name, ())
+            self.namespace = namespace
+            self._namespaces = namespaces or {}
+            self.prefix = prefix
+            # Where this tag started in the markup, as bs4 reports it: 1-based
+            # line and 0-based column. bs4 only records a position the parser
+            # actually gave it, so a hand-built tag has neither in its __dict__
+            # and reaches __getattr__ (which answers None) instead.
+            if (not builder or builder.store_line_numbers) and (
+                sourceline is not None or sourcepos is not None
             ):
-                return v.split()
-            return v
+                self.sourceline = sourceline
+                self.sourcepos = sourcepos
+            if attrs is None:
+                attrs = {}
+            elif attrs:
+                if builder is not None and builder.cdata_list_attributes:
+                    attrs = builder._replace_cdata_list_attribute_values(
+                        self.name, attrs
+                    )
+                else:
+                    attrs = dict(attrs)
+            else:
+                attrs = dict(attrs)
+            self.known_xml = builder.is_xml if builder else is_xml
+            self.attrs = attrs
+            self.contents = []
+            self.parent = parent
+            self.hidden = False
+            if builder is None:
+                # With no TreeBuilder these are whatever the caller passed in --
+                # usually None, unless this is a copy of some other tag.
+                self.can_be_empty_element = can_be_empty_element
+                self.cdata_list_attributes = cdata_list_attributes
+                self.preserve_whitespace_tags = preserve_whitespace_tags
+                self.interesting_string_types = interesting_string_types
+            else:
+                # Set up any substitutions for this tag, such as the charset in
+                # a META tag, and ask the builder about the rest.
+                builder.set_up_substitutions(self)
+                self.can_be_empty_element = builder.can_be_empty_element(name)
+                self.cdata_list_attributes = builder.cdata_list_attributes
+                self.preserve_whitespace_tags = builder.preserve_whitespace_tags
+                if self.name in builder.string_containers:
+                    self.interesting_string_types = builder.string_containers[self.name]
+                else:
+                    self.interesting_string_types = (
+                        self.DEFAULT_INTERESTING_STRING_TYPES
+                    )
 
         # -- attribute access ---------------------------------------------------
         def __getitem__(self, key):
@@ -412,8 +449,9 @@ def __vis_install_bs4__():
         def __delitem__(self, key):
             del self.attrs[key]
 
-        def __contains__(self, key):
-            return key in self.attrs
+        def __contains__(self, x):
+            # bs4: `x in tag` asks about children, not attributes.
+            return x in self.contents
 
         def get(self, key, default=None):
             return self.attrs.get(key, default)
@@ -436,22 +474,29 @@ def __vis_install_bs4__():
         # -- tree ---------------------------------------------------------------
         @property
         def children(self):
-            return iter(list(self.contents))
+            return iter(self.contents)
 
         @property
         def descendants(self):
             # Iterative pre-order walk: no recursion frame per nesting level
             # (deep markup would otherwise exhaust the interpreter stack) and no
-            # per-level copy of the child list.
+            # per-level copy of the child list. Each stacked node remembers the
+            # parent it was reached through, because bs4 walks .next_element
+            # links: a node cut out of the tree mid-iteration is never reached,
+            # so the walk stops there instead of yielding a detached node.
             stack = list(self.contents)
             stack.reverse()
+            parents = [self] * len(stack)
             while stack:
                 node = stack.pop()
+                if node.parent is not parents.pop():
+                    return
                 yield node
                 kids = node.contents if isinstance(node, Tag) else None
                 if kids:
                     for c in reversed(kids):
                         stack.append(c)
+                        parents.append(node)
 
         @property
         def contents_tags(self):
@@ -491,7 +536,7 @@ def __vis_install_bs4__():
         def index(self, element):
             i = _index_of(self.contents, element)
             if i < 0:
-                raise ValueError("%r is not in list" % (element,))
+                raise ValueError("Tag.index: element not in tag")
             return i
 
         def insert(self, position, node):
@@ -680,8 +725,8 @@ def __vis_install_bs4__():
             return r[0] if r else None
 
         # -- mutation -----------------------------------------------------------
-        def extract(self):
-            _detach(self)
+        def extract(self, _self_index=None):
+            _detach(self, _self_index)
             return self
 
         def decompose(self):
@@ -717,13 +762,23 @@ def __vis_install_bs4__():
                 c.parent = None
             self.contents = []
 
-        def __getattr__(self, key):
-            if key.startswith("__") and key.endswith("__"):
-                raise AttributeError(key)
-            found = self.find(key)
-            if found is not None:
-                return found
-            return None
+        def __getattr__(self, tag):
+            if len(tag) > 3 and tag.endswith("Tag"):
+                # BS3 spelling: soup.aTag meant soup.find("a").
+                tag_name = tag[:-3]
+                _warnings.warn(
+                    '.%(name)sTag is deprecated, use .find("%(name)s") instead.'
+                    " If you really were looking for a tag called %(name)sTag,"
+                    ' use .find("%(name)sTag")' % dict(name=tag_name),
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                return self.find(tag_name)
+            elif not tag.startswith("__") and not tag == "contents":
+                return self.find(tag)
+            raise AttributeError(
+                "'%s' object has no attribute '%s'" % (self.__class__, tag)
+            )
 
         # -- serialization ------------------------------------------------------
         def decode(
@@ -734,6 +789,9 @@ def __vis_install_bs4__():
         ):
             # bs4's first positional is an indentation level, not a flag: any
             # non-None value pretty-prints this subtree starting at that depth.
+            if indent_level is True:
+                # bs4 treats a bare True as "pretty-print from depth 0".
+                indent_level = 0
             if indent_level is None:
                 return _render(self, formatter=formatter, encoding=eventual_encoding)
             out = _render(
@@ -872,9 +930,6 @@ def __vis_install_bs4__():
         EMPTY_ELEMENT_EVENT = object()
         STRING_ELEMENT_EVENT = object()
 
-        # Whitespace inside these tags survives prettify(), as in bs4's builder.
-        preserve_whitespace_tags = _PRESERVE_WS
-
         def has_key(self, key):
             """BS3's spelling of has_attr(), which bs4 still ships."""
             return key in self.attrs
@@ -894,13 +949,31 @@ def __vis_install_bs4__():
 
         def _clone(self):
             """A copy of this tag: same name and attributes, no children at all."""
-            dup = BeautifulSoup("") if isinstance(self, BeautifulSoup) else Tag(self.name)
-            dup.name = self.name
-            # Shallow, like bs4: a multi-valued attribute's list is shared with
-            # the original tag rather than copied.
-            dup.attrs = dict(self.attrs)
-            dup.can_be_empty_element = self.can_be_empty_element
-            dup.hidden = self.hidden
+            if isinstance(self, BeautifulSoup):
+                # bs4 clones a soup by re-running the constructor on empty
+                # markup with the same builder, keeping the source encoding.
+                dup = BeautifulSoup("", None, self.builder)
+                dup.original_encoding = self.original_encoding
+                return dup
+            dup = type(self)(
+                None,
+                None,
+                self.name,
+                self.namespace,
+                self.prefix,
+                # Shallow, like bs4: a multi-valued attribute's list is shared
+                # with the original tag rather than copied.
+                self.attrs,
+                is_xml=self._is_xml,
+                sourceline=self.sourceline,
+                sourcepos=self.sourcepos,
+                can_be_empty_element=self.can_be_empty_element,
+                cdata_list_attributes=self.cdata_list_attributes,
+                preserve_whitespace_tags=self.preserve_whitespace_tags,
+                interesting_string_types=self.interesting_string_types,
+            )
+            for attr in ("can_be_empty_element", "hidden"):
+                setattr(dup, attr, getattr(self, attr))
             return dup
 
         def _event_stream(self, iterator=None):
@@ -929,7 +1002,9 @@ def __vis_install_bs4__():
                 or self.name not in self.preserve_whitespace_tags
             )
 
-        def _indent_string(self, s, indent_level, formatter, indent_before, indent_after):
+        def _indent_string(
+            self, s, indent_level, formatter, indent_before, indent_after
+        ):
             space_before = ""
             if indent_before and indent_level:
                 space_before = formatter.indent * indent_level
@@ -977,10 +1052,10 @@ def __vis_install_bs4__():
         node.parent = parent
         return node
 
-    def _detach(node):
+    def _detach(node, index=None):
         p = getattr(node, "parent", None)
         if p is not None:
-            i = _index_of(p.contents, node)
+            i = _index_of(p.contents, node) if index is None else index
             if i >= 0:
                 del p.contents[i]
         node.parent = None
@@ -1060,7 +1135,7 @@ def __vis_install_bs4__():
         if want is True:
             return markup is not None
         if callable(want) and not hasattr(want, "match"):
-            return bool(want(markup))
+            return want(markup)
         original = markup
         if isinstance(markup, Tag):
             markup = markup.name
@@ -1079,7 +1154,7 @@ def __vis_install_bs4__():
             return False
         match = isinstance(want, str) and markup == want
         if not match and hasattr(want, "search"):
-            return want.search(markup) is not None
+            return want.search(markup)
         if not match and isinstance(original, Tag) and original.prefix:
             return _value_matches(original.prefix + ":" + original.name, want)
         return match
@@ -1097,7 +1172,8 @@ def __vis_install_bs4__():
         if isinstance(name, str) and markup is not None:
             # Fast rejection for the common "one specific tag name" search.
             if not markup.prefix and name != markup.name:
-                return None
+                # bs4 returns False -- not None -- from this fast path.
+                return False
         call_with_tag_data = (
             callable(name)
             and not hasattr(name, "match")
@@ -1203,8 +1279,7 @@ def __vis_install_bs4__():
                     if not isinstance(node, Tag):
                         return False
                     return node.name == name or (
-                        node.name == local
-                        and (prefix is None or node.prefix == prefix)
+                        node.name == local and (prefix is None or node.prefix == prefix)
                     )
 
                 matcher = by_name
@@ -1326,7 +1401,7 @@ def __vis_install_bs4__():
             if isinstance(src, NavigableString):
                 return type(src)(str(src))
             # copy.copy(soup) hands back a BeautifulSoup, not a plain Tag.
-            dup = BeautifulSoup("") if isinstance(src, BeautifulSoup) else Tag(src.name)
+            dup = BeautifulSoup("") if isinstance(src, BeautifulSoup) else src._clone()
             dup.name = src.name
             dup.attrs = dict(
                 (k, list(v) if isinstance(v, list) else v) for k, v in src.attrs.items()
@@ -1424,45 +1499,252 @@ def __vis_install_bs4__():
     PageElement.previousSibling = property(lambda self: self.previous_sibling)
 
     # -- CSS select --------------------------------------------------------------
-    def _parse_nth(arg):
-        # An+B microsyntax, including the `odd`/`even`/plain-integer spellings.
-        s = arg.replace(" ", "").lower()
-        if s == "odd":
-            return (2, 1)
-        if s == "even":
-            return (2, 0)
-        if "n" not in s:
-            try:
-                return (0, int(s))
-            except ValueError:
-                return None
-        head, _sep, tail = s.partition("n")
-        if head in ("", "+"):
-            a = 1
-        elif head == "-":
-            a = -1
-        else:
-            try:
-                a = int(head)
-            except ValueError:
-                return None
-        if tail == "":
-            b = 0
-        else:
-            try:
-                b = int(tail)
-            except ValueError:
-                return None
-        return (a, b)
+    # An+B, as soupsieve's RE_NTH sees it (`odd`/`even` are handled separately).
+    _NTH_RE = re.compile(r"^([-+]?)(\d*n|\d+)([-+])?(\d+)?$")
 
-    def _nth_ok(spec, index):
-        if spec is None:
+    # The element `:scope` refers to: whatever select() was called on.
+    _CSS_SCOPE = [None]
+
+    def _parse_nth_spec(arg):
+        # soupsieve's An+B parse: returns (a, b, var, of_parts) where `var` says
+        # an `n` was present (the branch upstream bounds-checks) and `of_parts`
+        # carries `:nth-child(An+B of S)`.
+        content = (arg or "").strip()
+        of_parts = None
+        low = content.lower()
+        cut = low.find(" of ")
+        if cut >= 0:
+            of_parts = _css_arg_parts(content[cut + 4 :])
+            content = content[:cut]
+        content = content.replace(" ", "").lower()
+        if content == "even":
+            return (2, 0, True, of_parts)
+        if content == "odd":
+            return (2, 1, True, of_parts)
+        m = _NTH_RE.match(content)
+        if m is None:
+            _css_bad(arg or "")
+        s1, a, s2, b = m.group(1), m.group(2), m.group(3), m.group(4)
+        var = a.endswith("n")
+        if a.startswith("n"):
+            head = "1"
+        elif var:
+            head = a[:-1] or "1"
+        else:
+            head = a
+        s1 = "-" if s1 == "-" else ""
+        s2 = "-" if s2 == "-" else ""
+        return (int(s1 + head, 10), int(s2 + (b or "0"), 10), var, of_parts)
+
+    def _css_of_match(node, of_parts):
+        if of_parts is None:
+            return True
+        for part in of_parts:
+            if _complex_match(node, part):
+                return True
+        return False
+
+    def _css_match_nth(node, a, b, var, last, of_type, of_parts):
+        # A faithful port of soupsieve's CSSMatch.match_nth, quirks included: it
+        # bounds every candidate index against the parent's *raw* child count
+        # (strings and comments included), so an `An+B` selector can miss an
+        # element that plain CSS index arithmetic would match.
+        if not _css_of_match(node, of_parts):
             return False
-        a, b = spec
-        if a == 0:
-            return index == b
-        rest = index - b
-        return rest % a == 0 and rest // a >= 0
+        parent = getattr(node, "parent", None)
+        children = parent.contents if isinstance(parent, Tag) else [node]
+        last_index = len(children) - 1
+        index = last_index if last else 0
+        relative_index = 0
+        count = 0
+        count_incr = 1
+        factor = -1 if last else 1
+        idx = last_idx = (a * count + b) if var else a
+        if var:
+            # Only a variable index can be nudged into range.
+            adjust = None
+            while idx < 1 or idx > last_index:
+                if idx < 0:
+                    diff_low = 0 - idx
+                    if adjust is not None and adjust == 1:
+                        break
+                    adjust = -1
+                    count = count + count_incr
+                    idx = last_idx = a * count + b
+                    diff = 0 - idx
+                    if diff >= diff_low:
+                        break
+                else:
+                    diff_high = idx - last_index
+                    if adjust is not None and adjust == -1:
+                        break
+                    adjust = 1
+                    count = count + count_incr
+                    idx = last_idx = a * count + b
+                    diff = idx - last_index
+                    if diff >= diff_high:
+                        break
+                    diff_high = diff
+            lowest = count
+            if a < 0:
+                while idx >= 1:
+                    lowest = count
+                    count = count + count_incr
+                    idx = last_idx = a * count + b
+                count_incr = -1
+            count = lowest
+            idx = last_idx = (a * count + b) if var else a
+        matched = False
+        while 1 <= idx <= last_index + 1:
+            child = None
+            while 0 <= index <= last_index:
+                child = children[index]
+                index = index + factor
+                if not isinstance(child, Tag):
+                    continue
+                if not _css_of_match(child, of_parts):
+                    continue
+                if of_type and child.name != node.name:
+                    continue
+                relative_index = relative_index + 1
+                if relative_index == idx:
+                    if child is node:
+                        matched = True
+                    else:
+                        break
+                if child is node:
+                    break
+            if child is node:
+                break
+            last_idx = idx
+            count = count + count_incr
+            if count < 0:
+                break
+            idx = (a * count + b) if var else a
+            if last_idx == idx:
+                break
+        return matched
+
+    class SelectorSyntaxError(Exception):
+        """What soupsieve raises for a malformed selector; bs4 lets it through."""
+
+    # Every pseudo-class soupsieve accepts. Anything outside this set -- and
+    # every pseudo-element -- makes soupsieve raise NotImplementedError, so
+    # this engine raises it too instead of quietly matching nothing.
+    _CSS_PSEUDO_CLASSES = frozenset(
+        [
+            "active",
+            "any-link",
+            "checked",
+            "current",
+            "default",
+            "defined",
+            "dir",
+            "disabled",
+            "empty",
+            "enabled",
+            "first-child",
+            "first-of-type",
+            "focus",
+            "focus-visible",
+            "focus-within",
+            "future",
+            "has",
+            "host",
+            "host-context",
+            "hover",
+            "in-range",
+            "indeterminate",
+            "is",
+            "lang",
+            "last-child",
+            "last-of-type",
+            "link",
+            "local-link",
+            "matches",
+            "not",
+            "nth-child",
+            "nth-last-child",
+            "nth-last-of-type",
+            "nth-of-type",
+            "only-child",
+            "only-of-type",
+            "optional",
+            "out-of-range",
+            "past",
+            "paused",
+            "placeholder-shown",
+            "playing",
+            "read-only",
+            "read-write",
+            "required",
+            "root",
+            "scope",
+            "target",
+            "target-within",
+            "user-invalid",
+            "visited",
+            "where",
+            "contains",
+            "-soup-contains",
+            "-soup-contains-own",
+        ]
+    )
+
+    # A tag name no markup can produce: how an unresolvable namespace prefix
+    # ("ns|p" with no namespace map) is spelled so it matches nothing.
+    _CSS_NEVER = chr(0) + "never"
+
+    def _css_ident_ok(name):
+        if not name:
+            return False
+        if name[0].isdigit():
+            return False
+        for ch in name:
+            if ch.isalnum() or ch in ("-", "_", chr(92)) or ord(ch) > 127:
+                continue
+            return False
+        return True
+
+    def _css_bad(selector):
+        raise SelectorSyntaxError("Invalid CSS selector: %r" % (selector,))
+
+    def _split_commas(text):
+        # Comma-splits a selector without cutting inside [attr], :not(...) or a
+        # quoted value.
+        parts = []
+        buf = []
+        square = 0
+        paren = 0
+        quote = None
+        for ch in text:
+            if quote is not None:
+                buf.append(ch)
+                if ch == quote:
+                    quote = None
+                continue
+            if ch == _Q or ch == chr(39):
+                quote = ch
+                buf.append(ch)
+            elif ch == "[":
+                square = square + 1
+                buf.append(ch)
+            elif ch == "]":
+                square = square - 1
+                buf.append(ch)
+            elif ch == "(":
+                paren = paren + 1
+                buf.append(ch)
+            elif ch == ")":
+                paren = paren - 1
+                buf.append(ch)
+            elif ch == "," and square == 0 and paren == 0:
+                parts.append("".join(buf))
+                buf = []
+            else:
+                buf.append(ch)
+        parts.append("".join(buf))
+        return parts
 
     def _parse_simple(tok):
         tag = None
@@ -1478,8 +1760,21 @@ def __vis_install_bs4__():
         while j < n and tok[j] not in stop:
             j = j + 1
         t = tok[i:j]
-        if t and t != "*":
-            tag = t
+        if t:
+            local = t
+            prefix = None
+            if "|" in t:
+                prefix, _sep, local = t.rpartition("|")
+            if local != "*" and not _css_ident_ok(local):
+                _css_bad(tok)
+            if prefix is not None and prefix not in ("", "*"):
+                if not _css_ident_ok(prefix):
+                    _css_bad(tok)
+                # No namespace map is ever passed here, so a real prefix can
+                # never resolve -- soupsieve matches nothing in that case.
+                tag = _CSS_NEVER
+            elif local != "*":
+                tag = local
         i = j
         while i < n:
             c = tok[i]
@@ -1488,15 +1783,20 @@ def __vis_install_bs4__():
                 s = i
                 while i < n and tok[i] not in stop:
                     i = i + 1
+                name = tok[s:i]
+                if not _css_ident_ok(name):
+                    _css_bad(tok)
                 if c == ".":
-                    classes.append(tok[s:i])
+                    classes.append(name)
                 else:
-                    idv = tok[s:i]
+                    idv = name
             elif c == "[":
                 i = i + 1
                 s = i
                 while i < n and tok[i] != "]":
                     i = i + 1
+                if i >= n:
+                    _css_bad(tok)
                 body = tok[s:i]
                 i = i + 1
                 op = None
@@ -1505,18 +1805,28 @@ def __vis_install_bs4__():
                         an, av = body.split(cand, 1)
                         op = cand
                         av = av.strip()
-                        if len(av) >= 2 and av[0] == _Q and av[-1] == _Q:
+                        quoted = (
+                            len(av) >= 2 and av[0] == av[-1] and av[0] in (_Q, chr(39))
+                        )
+                        if quoted:
                             av = av[1:-1]
-                        if len(av) >= 2 and av[0] == chr(39) and av[-1] == chr(39):
-                            av = av[1:-1]
-                        attrs.append((an.strip(), op, av))
+                        elif not av:
+                            _css_bad(tok)
+                        an = an.strip()
+                        if not an:
+                            _css_bad(tok)
+                        attrs.append((an, op, av))
                         break
                 if op is None:
-                    attrs.append((body.strip(), None, None))
+                    an = body.strip()
+                    if not an:
+                        _css_bad(tok)
+                    attrs.append((an, None, None))
             elif c == ":":
                 i = i + 1
+                element = False
                 if i < n and tok[i] == ":":
-                    # ::pseudo-elements select no element in this engine.
+                    element = True
                     i = i + 1
                 s = i
                 while i < n and tok[i] not in stop and tok[i] != "(":
@@ -1526,16 +1836,31 @@ def __vis_install_bs4__():
                 if i < n and tok[i] == "(":
                     depth = 0
                     s = i + 1
+                    closed = False
                     while i < n:
                         if tok[i] == "(":
                             depth = depth + 1
                         elif tok[i] == ")":
                             depth = depth - 1
                             if depth == 0:
+                                closed = True
                                 break
                         i = i + 1
+                    if not closed:
+                        _css_bad(tok)
                     parg = tok[s:i]
                     i = i + 1
+                if not pname:
+                    _css_bad(tok)
+                if element:
+                    raise NotImplementedError(
+                        "'::%s' pseudo-element is not implemented at this time."
+                        % (pname,)
+                    )
+                if pname not in _CSS_PSEUDO_CLASSES:
+                    raise NotImplementedError(
+                        "':%s' pseudo-class is not implemented at this time." % (pname,)
+                    )
                 pseudos.append((pname, parg))
             else:
                 i = i + 1
@@ -1547,51 +1872,266 @@ def __vis_install_bs4__():
             return []
         return [c for c in parent.contents if isinstance(c, Tag)]
 
+    _CSS_FORM_TAGS = (
+        "button",
+        "input",
+        "select",
+        "textarea",
+        "optgroup",
+        "option",
+        "fieldset",
+    )
+
+    def _css_attr(node, name):
+        v = node.attrs.get(name)
+        if isinstance(v, list):
+            return " ".join(v)
+        return v
+
+    def _css_unquote(text):
+        text = (text or "").strip()
+        if len(text) >= 2 and text[0] == text[-1] and text[0] in (_Q, chr(39)):
+            return text[1:-1]
+        return text
+
+    def _css_prev_element_siblings(node):
+        sibs = _element_siblings(node)
+        i = _index_of(sibs, node)
+        return sibs[:i] if i >= 0 else []
+
+    def _complex_steps_match(node, steps):
+        # Right-to-left match of a full selector chain against one node: what
+        # :not()/:is() need, since their arguments may contain combinators.
+        combinator, tok = steps[-1]
+        if not _simple_match(node, _parse_simple(tok)):
+            return False
+        rest = steps[:-1]
+        if not rest:
+            return True
+        if combinator == "child":
+            cands = [getattr(node, "parent", None)]
+        elif combinator == "next":
+            cands = _css_prev_element_siblings(node)[-1:]
+        elif combinator == "sibs":
+            cands = _css_prev_element_siblings(node)
+        else:
+            cands = []
+            cur = getattr(node, "parent", None)
+            while cur is not None:
+                cands.append(cur)
+                cur = getattr(cur, "parent", None)
+        for c in cands:
+            if isinstance(c, Tag) and _complex_steps_match(c, rest):
+                return True
+        return False
+
+    def _complex_match(node, part):
+        return _complex_steps_match(node, _tokenize_group(part))
+
+    def _css_arg_parts(parg):
+        parts = []
+        for part in _split_commas(parg or ""):
+            part = part.strip()
+            if not part:
+                _css_bad(parg or "")
+            parts.append(part)
+        if not parts:
+            _css_bad(parg or "")
+        return parts
+
+    def _css_has(node, parg):
+        for part in _css_arg_parts(parg):
+            combinator = "desc"
+            if part[0] == _GT:
+                combinator = "child"
+            elif part[0] == "+":
+                combinator = "next"
+            elif part[0] == "~":
+                combinator = "sibs"
+            if combinator != "desc":
+                part = part[1:].strip()
+                if not part:
+                    _css_bad(parg or "")
+            steps = _tokenize_group(part)
+            steps = [(combinator, steps[0][1])] + steps[1:]
+            found, _sibs = _run_steps([node], steps)
+            if found:
+                return True
+        return False
+
+    def _css_own_text(node):
+        return "".join(
+            str(c)
+            for c in node.contents
+            if isinstance(c, NavigableString) and not isinstance(c, PreformattedString)
+        )
+
+    def _css_disabled(node):
+        if node.name not in _CSS_FORM_TAGS:
+            return False
+        if "disabled" in node.attrs:
+            return True
+        cur = getattr(node, "parent", None)
+        while isinstance(cur, Tag):
+            if cur.name in ("fieldset", "optgroup") and "disabled" in cur.attrs:
+                return True
+            cur = getattr(cur, "parent", None)
+        return False
+
+    def _css_lang_ok(node, parg):
+        wants = [_css_unquote(p).lower() for p in _css_arg_parts(parg)]
+        have = None
+        cur = node
+        while isinstance(cur, Tag):
+            have = _css_attr(cur, "lang")
+            if have is None:
+                have = _css_attr(cur, "xml:lang")
+            if have:
+                break
+            cur = getattr(cur, "parent", None)
+        if not have:
+            return False
+        have = have.lower()
+        for want in wants:
+            if want == "*":
+                return True
+            if have == want or have.startswith(want + "-"):
+                return True
+        return False
+
+    def _css_dir_ok(node, parg):
+        want = _css_unquote(parg).lower()
+        cur = node
+        while isinstance(cur, Tag):
+            have = (_css_attr(cur, "dir") or "").lower()
+            if have in ("ltr", "rtl"):
+                return have == want
+            if have == "auto":
+                return False
+            cur = getattr(cur, "parent", None)
+        return want == "ltr"
+
     def _pseudo_ok(node, pname, parg):
         if pname == "not":
-            for part in (parg or "").split(","):
-                if part.strip() and _simple_match(node, _parse_simple(part.strip())):
+            for part in _css_arg_parts(parg):
+                if _complex_match(node, part):
                     return False
             return True
         if pname in ("is", "where", "matches"):
-            for part in (parg or "").split(","):
-                if part.strip() and _simple_match(node, _parse_simple(part.strip())):
+            for part in _css_arg_parts(parg):
+                if _complex_match(node, part):
                     return True
             return False
+        if pname == "has":
+            return _css_has(node, parg)
         if pname == "empty":
-            return not node.contents
+            for c in node.contents:
+                if isinstance(c, Tag):
+                    return False
+                if isinstance(c, NavigableString) and not isinstance(
+                    c, PreformattedString
+                ):
+                    if str(c):
+                        return False
+            return True
         if pname == "root":
             parent = getattr(node, "parent", None)
             return parent is None or getattr(parent, "name", None) == "[document]"
-        if pname == "contains":
-            want = (parg or "").strip()
-            if len(want) >= 2 and want[0] in (_Q, chr(39)) and want[-1] == want[0]:
-                want = want[1:-1]
-            return want in node.get_text()
-        sibs = _element_siblings(node)
-        if not sibs:
+        if pname == "scope":
+            return node is _CSS_SCOPE[0]
+        if pname in ("contains", "-soup-contains"):
+            for want in _css_arg_parts(parg):
+                if _css_unquote(want) in node.get_text():
+                    return True
             return False
-        same = [c for c in sibs if c.name == node.name]
-        if pname == "first-child":
-            return sibs[0] is node
-        if pname == "last-child":
-            return sibs[-1] is node
-        if pname == "only-child":
-            return len(sibs) == 1
-        if pname == "first-of-type":
-            return bool(same) and same[0] is node
-        if pname == "last-of-type":
-            return bool(same) and same[-1] is node
-        if pname == "only-of-type":
-            return len(same) == 1
-        if pname in ("nth-child", "nth-last-child", "nth-of-type", "nth-last-of-type"):
-            seq = same if pname.endswith("of-type") else sibs
-            idx = _index_of(seq, node) + 1
-            if idx == 0:
+        if pname == "-soup-contains-own":
+            own = _css_own_text(node)
+            for want in _css_arg_parts(parg):
+                if _css_unquote(want) in own:
+                    return True
+            return False
+        if pname == "defined":
+            return "-" not in node.name
+        if pname in ("any-link", "link"):
+            return node.name in ("a", "area", "link") and "href" in node.attrs
+        if pname == "disabled":
+            return _css_disabled(node)
+        if pname == "enabled":
+            return node.name in _CSS_FORM_TAGS and not _css_disabled(node)
+        if pname == "required":
+            return (
+                node.name in ("input", "select", "textarea")
+                and "required" in node.attrs
+            )
+        if pname == "optional":
+            return (
+                node.name in ("input", "select", "textarea")
+                and "required" not in node.attrs
+            )
+        if pname == "checked":
+            if node.name == "option":
+                return "selected" in node.attrs
+            return (
+                node.name == "input"
+                and (_css_attr(node, "type") or "").lower() in ("checkbox", "radio")
+                and "checked" in node.attrs
+            )
+        if pname == "placeholder-shown":
+            if node.name == "input":
+                kind = (_css_attr(node, "type") or "text").lower()
+                if kind in (
+                    "text",
+                    "search",
+                    "url",
+                    "tel",
+                    "email",
+                    "password",
+                    "number",
+                ):
+                    return "placeholder" in node.attrs and not _css_attr(node, "value")
                 return False
-            if "last" in pname:
-                idx = len(seq) - idx + 1
-            return _nth_ok(_parse_nth(parg or ""), idx)
+            if node.name == "textarea":
+                return "placeholder" in node.attrs and not node.get_text()
+            return False
+        if pname == "read-write":
+            if node.name in ("input", "textarea"):
+                return "readonly" not in node.attrs and not _css_disabled(node)
+            return (_css_attr(node, "contenteditable") or "").lower() in ("", "true")
+        if pname == "read-only":
+            return not _pseudo_ok(node, "read-write", None)
+        if pname == "lang":
+            return _css_lang_ok(node, parg)
+        if pname == "dir":
+            return _css_dir_ok(node, parg)
+        if pname in (
+            "nth-child",
+            "nth-last-child",
+            "nth-of-type",
+            "nth-last-of-type",
+            "first-child",
+            "last-child",
+            "only-child",
+            "first-of-type",
+            "last-of-type",
+            "only-of-type",
+        ):
+            # soupsieve rewrites the positional pseudo-classes into nth-child /
+            # nth-of-type selectors, so one code path answers all of them.
+            of_type = "of-type" in pname
+            if pname.startswith("nth-"):
+                a, b, var, of_parts = _parse_nth_spec(parg or "")
+                return _css_match_nth(
+                    node, a, b, var, "last" in pname, of_type, of_parts
+                )
+            if pname.startswith("only-"):
+                return _css_match_nth(
+                    node, 1, 0, False, False, of_type, None
+                ) and _css_match_nth(node, 1, 0, False, True, of_type, None)
+            return _css_match_nth(
+                node, 1, 0, False, pname.startswith("last-"), of_type, None
+            )
+        # Everything else soupsieve accepts describes live UI state (:hover,
+        # :focus, :target, :visited, ...) that a parsed document never has.
         return False
 
     def _simple_match(node, simple):
@@ -1636,25 +2176,41 @@ def __vis_install_bs4__():
 
     def _tokenize_group(group):
         # Returns [(combinator, token)] with combinator in
-        # ('desc', 'child', 'next', 'sibs'). Brackets and parentheses are tracked
-        # so `[rel~="x"]` and `:not(a > b)` never split on their own operators.
+        # ('desc', 'child', 'next', 'sibs'). Brackets, parentheses and quotes are
+        # tracked so `[rel~="x"]` and `:not(a > b)` never split on their own
+        # operators; anything unbalanced or a dangling combinator is a syntax
+        # error, exactly as soupsieve reports it.
         steps = []
         combinator = "desc"
+        pending = False
         buf = []
         square = 0
         paren = 0
+        quote = None
         for ch in group:
-            if ch == "[":
+            if quote is not None:
+                buf.append(ch)
+                if ch == quote:
+                    quote = None
+                continue
+            if ch == _Q or ch == chr(39):
+                quote = ch
+                buf.append(ch)
+            elif ch == "[":
                 square = square + 1
                 buf.append(ch)
             elif ch == "]":
                 square = square - 1
+                if square < 0:
+                    _css_bad(group)
                 buf.append(ch)
             elif ch == "(":
                 paren = paren + 1
                 buf.append(ch)
             elif ch == ")":
                 paren = paren - 1
+                if paren < 0:
+                    _css_bad(group)
                 buf.append(ch)
             elif square == 0 and paren == 0 and (ch.isspace() or ch in (_GT, "+", "~")):
                 tok = "".join(buf).strip()
@@ -1662,17 +2218,28 @@ def __vis_install_bs4__():
                 if tok:
                     steps.append((combinator, tok))
                     combinator = "desc"
-                if ch == _GT:
-                    combinator = "child"
-                elif ch == "+":
-                    combinator = "next"
-                elif ch == "~":
-                    combinator = "sibs"
+                    pending = False
+                if ch == _GT or ch == "+" or ch == "~":
+                    if not steps or pending:
+                        _css_bad(group)
+                    pending = True
+                    if ch == _GT:
+                        combinator = "child"
+                    elif ch == "+":
+                        combinator = "next"
+                    else:
+                        combinator = "sibs"
             else:
                 buf.append(ch)
+        if square != 0 or paren != 0 or quote is not None:
+            _css_bad(group)
         tok = "".join(buf).strip()
         if tok:
             steps.append((combinator, tok))
+        elif pending:
+            _css_bad(group)
+        if not steps:
+            _css_bad(group)
         return steps
 
     def _following_siblings(node, first_only):
@@ -1686,53 +2253,83 @@ def __vis_install_bs4__():
             sib = _sibling(sib, 1)
         return out
 
+    def _run_steps(current, steps):
+        # Walks one parsed selector chain from a candidate list. Returns the
+        # surviving candidates and whether a sibling combinator was used (which
+        # breaks document order, so the caller must re-sort).
+        sibling_step = False
+        for combinator, tok in steps:
+            simple = _parse_simple(tok)
+            nxt = []
+            if combinator == "child":
+                for node in current:
+                    for c in node.contents if isinstance(node, Tag) else []:
+                        if _simple_match(c, simple):
+                            nxt.append(c)
+            elif combinator in ("next", "sibs"):
+                sibling_step = True
+                taken = set()
+                for node in current:
+                    for c in _following_siblings(node, combinator == "next"):
+                        if id(c) in taken:
+                            continue
+                        taken.add(id(c))
+                        if _simple_match(c, simple):
+                            nxt.append(c)
+            else:
+                # One subtree walk per step. `visited` stops a node reachable
+                # from several candidates from being expanded and matched
+                # once per path -- the combinatorial blow-up that made
+                # chained descendant selectors explode on nested markup --
+                # and lets a candidate nested inside an already walked
+                # candidate be skipped outright.
+                visited = set()
+                for node in current:
+                    if not isinstance(node, Tag) or id(node) in visited:
+                        continue
+                    for d in node.descendants:
+                        key = id(d)
+                        if key in visited:
+                            continue
+                        visited.add(key)
+                        if _simple_match(d, simple):
+                            nxt.append(d)
+            current = nxt
+            if not current:
+                break
+        return current, sibling_step
+
     def _select(root, selector, limit=None):
-        groups = [g for g in (g.strip() for g in selector.split(",")) if g]
+        # soupsieve scopes :scope to the element select() was called on -- for a
+        # whole soup that is its root element.
+        scope = root
+        if getattr(root, "name", None) == "[document]":
+            scope = None
+            for c in root.contents:
+                if isinstance(c, Tag):
+                    scope = c
+                    break
+        previous_scope = _CSS_SCOPE[0]
+        _CSS_SCOPE[0] = scope
+        try:
+            return _select_scoped(root, selector, limit)
+        finally:
+            _CSS_SCOPE[0] = previous_scope
+
+    def _select_scoped(root, selector, limit=None):
+        groups = []
+        for part in _split_commas(selector):
+            part = part.strip()
+            if not part:
+                _css_bad(selector)
+            groups.append(part)
         results = []
         seen = set()
         sibling_step = False
         for group in groups:
-            steps = _tokenize_group(group)
-            current = [root]
-            for combinator, tok in steps:
-                simple = _parse_simple(tok)
-                nxt = []
-                if combinator == "child":
-                    for node in current:
-                        for c in node.contents if isinstance(node, Tag) else []:
-                            if _simple_match(c, simple):
-                                nxt.append(c)
-                elif combinator in ("next", "sibs"):
-                    sibling_step = True
-                    taken = set()
-                    for node in current:
-                        for c in _following_siblings(node, combinator == "next"):
-                            if id(c) in taken:
-                                continue
-                            taken.add(id(c))
-                            if _simple_match(c, simple):
-                                nxt.append(c)
-                else:
-                    # One subtree walk per step. `visited` stops a node reachable
-                    # from several candidates from being expanded and matched
-                    # once per path -- the combinatorial blow-up that made
-                    # chained descendant selectors explode on nested markup --
-                    # and lets a candidate nested inside an already walked
-                    # candidate be skipped outright.
-                    visited = set()
-                    for node in current:
-                        if not isinstance(node, Tag) or id(node) in visited:
-                            continue
-                        for d in node.descendants:
-                            key = id(d)
-                            if key in visited:
-                                continue
-                            visited.add(key)
-                            if _simple_match(d, simple):
-                                nxt.append(d)
-                current = nxt
-                if not current:
-                    break
+            current, sibs = _run_steps([root], _tokenize_group(group))
+            if sibs:
+                sibling_step = True
             for node in current:
                 if id(node) not in seen:
                     seen.add(id(node))
@@ -1833,7 +2430,7 @@ def __vis_install_bs4__():
         }
 
         BARE_AMPERSAND_OR_BRACKET = _re.compile(
-            "([<>]|" "&(?!#\\d+;|#x[0-9a-fA-F]+;|\\w+;)" ")"
+            "([<>]|&(?!#\\d+;|#x[0-9a-fA-F]+;|\\w+;))"
         )
 
         AMPERSAND_OR_BRACKET = _re.compile("([<>&])")
@@ -1868,12 +2465,8 @@ def __vis_install_bs4__():
             return value
 
         @classmethod
-        def substitute_xml_containing_entities(
-            cls, value, make_quoted_attribute=False
-        ):
-            value = cls.BARE_AMPERSAND_OR_BRACKET.sub(
-                cls._substitute_xml_entity, value
-            )
+        def substitute_xml_containing_entities(cls, value, make_quoted_attribute=False):
+            value = cls.BARE_AMPERSAND_OR_BRACKET.sub(cls._substitute_xml_entity, value)
             if make_quoted_attribute:
                 value = cls.quoted_attribute_value(value)
             return value
@@ -2041,10 +2634,15 @@ def __vis_install_bs4__():
             return open_tag + close_tag
         return open_tag + _NL + _NL.join(kids) + _NL + pad + close_tag
 
+    def _pws(node):
+        """Whether this tag's builder wants the whitespace inside it preserved."""
+        tags = getattr(node, "preserve_whitespace_tags", None)
+        return bool(tags) and node.name in tags
+
     def _render_pretty(node, depth=0):
         if not isinstance(node, Tag):
             return _pretty_string(node, depth)
-        if node.name in _PRESERVE_WS:
+        if _pws(node):
             # Whitespace-preserving elements are never re-indented: bs4 prints
             # <pre>/<textarea> content exactly as parsed.
             return _CUR_FMT[-1][3] * depth + _render_flat(node)
@@ -2058,7 +2656,7 @@ def __vis_install_bs4__():
                 frame[3] = i + 1
                 kid_depth = d if cur.name == "[document]" else d + 1
                 child = cur.contents[i]
-                if isinstance(child, Tag) and child.name not in _PRESERVE_WS:
+                if isinstance(child, Tag) and not _pws(child):
                     stack.append([child, kid_depth, [], 0])
                 else:
                     kids.append(_render_pretty(child, kid_depth))
@@ -2139,7 +2737,10 @@ def __vis_install_bs4__():
             self._root_tag = None
 
         def _document_might_be_xml(self, processing_instruction):
-            if self._first_processing_instruction is not None or self._root_tag is not None:
+            if (
+                self._first_processing_instruction is not None
+                or self._root_tag is not None
+            ):
                 # The document has already started; stop checking.
                 return
             self._first_processing_instruction = processing_instruction
@@ -2181,17 +2782,19 @@ def __vis_install_bs4__():
                 self.interesting = _re.compile(r"&|</\s*%s" % self.cdata_elem, _re.I)
             else:
                 self.interesting = _re.compile(r"</\s*%s" % self.cdata_elem, _re.I)
-        def __init__(self, store_line_numbers=True):
+
+        def __init__(self, builder=None):
             # convert_charrefs stays off (as in bs4's own html.parser builder) so
             # entity handling lives here rather than in html.parser, which would
             # silently keep an unknown `&foo;` verbatim. Character data therefore
             # arrives split around every reference, and _flush() re-joins each run
             # into the single NavigableString bs4 produces.
             _hp.HTMLParser.__init__(self, convert_charrefs=False)
-            self.root = Tag("[document]")
+            self.builder = builder
+            self.root = Tag(None, builder, "[document]")
             self.stack = [self.root]
             self._data = []
-            self._store_line_numbers = store_line_numbers
+            self._store_line_numbers = bool(builder and builder.store_line_numbers)
             # Names of empty elements bs4 has already closed on its own; one
             # later `</br>`-style end tag per entry is ignored.
             self.already_closed_empty_element = []
@@ -2210,12 +2813,14 @@ def __vis_install_bs4__():
                 if not text:
                     return
                 if text.strip(_ASCII_SPACES) == "" and not any(
-                    t.name in _PRESERVE_WS for t in self.stack
+                    _pws(t) for t in self.stack
                 ):
                     text = _NL if _NL in text else " "
                 # Text inside <script>/<style>/<template>/<rt>/<rp> is wrapped in
                 # bs4's dedicated NavigableString subclass for that container.
-                cls = _STRING_CONTAINERS.get(self._cur().name, NavigableString)
+                cls = self.builder.string_containers.get(
+                    self._cur().name, NavigableString
+                )
                 self._cur().append(cls(text))
 
         def handle_starttag(self, tag, attrs, handle_empty_element=True):
@@ -2223,7 +2828,19 @@ def __vis_install_bs4__():
                 self._root_tag_encountered(tag)
             self._flush()
             line, pos = self._pos()
-            t = Tag(tag, attrs, line, pos)
+            attr_dict = {}
+            for key, value in attrs:
+                # bs4 turns a valueless attribute into '' here, in the builder,
+                # so that a hand-built tag can still carry a None value.
+                attr_dict[key] = "" if value is None else value
+            t = Tag(
+                None,
+                self.builder,
+                tag,
+                attrs=attr_dict,
+                sourceline=line,
+                sourcepos=pos,
+            )
             self._cur().append(t)
             if tag in _VOID and handle_empty_element:
                 # html.parser sends no end event for a bare `<br>`, so bs4 closes
@@ -2301,7 +2918,8 @@ def __vis_install_bs4__():
         while stack:
             node = stack.pop()
             if hasattr(strainer, "search"):
-                ok = strainer.search(node) is not None
+                # bs4's search() can answer False as well as None.
+                ok = bool(strainer.search(node))
             else:
                 ok = bool(strainer(node))
             if ok:
@@ -2448,16 +3066,92 @@ def __vis_install_bs4__():
             element_classes=None,
             **kwargs,
         ):
-            Tag.__init__(self, "[document]")
+            # bs4 accepts a handful of BS3-era arguments, warns, and ignores
+            # them; two more were merely renamed.
+            for _name, _message in (
+                (
+                    "convertEntities",
+                    "BS4 does not respect the convertEntities argument to the"
+                    " BeautifulSoup constructor. Entities are always converted"
+                    " to Unicode characters.",
+                ),
+                (
+                    "markupMassage",
+                    "BS4 does not respect the markupMassage argument to the"
+                    " BeautifulSoup constructor. The tree builder is responsible"
+                    " for any necessary markup massage.",
+                ),
+                (
+                    "smartQuotesTo",
+                    "BS4 does not respect the smartQuotesTo argument to the"
+                    " BeautifulSoup constructor. Smart quotes are always"
+                    " converted to Unicode characters.",
+                ),
+                (
+                    "selfClosingTags",
+                    "BS4 does not respect the selfClosingTags argument to the"
+                    " BeautifulSoup constructor. The tree builder is responsible"
+                    " for understanding self-closing tags.",
+                ),
+                (
+                    "isHTML",
+                    "BS4 does not respect the isHTML argument to the"
+                    " BeautifulSoup constructor. Suggest you use"
+                    " features='lxml' for HTML and features='lxml-xml' for XML.",
+                ),
+            ):
+                if _name in kwargs:
+                    del kwargs[_name]
+                    _warnings.warn(_message)  # noqa: B028
+
+            def deprecated_argument(old_name, new_name):
+                if old_name in kwargs:
+                    _warnings.warn(
+                        'The "%s" argument to the BeautifulSoup constructor '
+                        'has been renamed to "%s."' % (old_name, new_name),
+                        DeprecationWarning,
+                        stacklevel=3,
+                    )
+                    return kwargs.pop(old_name)
+                return None
+
+            parse_only = parse_only or deprecated_argument(
+                "parseOnlyThese", "parse_only"
+            )
+            from_encoding = from_encoding or deprecated_argument(
+                "fromEncoding", "from_encoding"
+            )
+            if from_encoding and isinstance(markup, str):
+                _warnings.warn(  # noqa: B028
+                    "You provided Unicode markup but also provided a value for"
+                    " from_encoding. Your from_encoding will be ignored."
+                )
+                from_encoding = None
+            self.element_classes = element_classes or {}
+            # Resolve the TreeBuilder the way bs4 does: a class is instantiated
+            # with whatever keyword arguments are left over, an instance is used
+            # as-is and makes those arguments a warning instead. Unlike bs4 this
+            # shim has only one builder, so `features` never selects another one.
+            builder_class = HTMLParserTreeBuilder
+            if isinstance(builder, type):
+                builder_class, builder = builder, None
+            if builder is None:
+                builder = builder_class(**kwargs)
+            elif kwargs:
+                _warnings.warn(  # noqa: B028
+                    "Keyword arguments to the BeautifulSoup constructor will be"
+                    " ignored. These would normally be passed into the"
+                    " TreeBuilder constructor, but a TreeBuilder instance was"
+                    " passed in as `builder`."
+                )
+            self.builder = builder
+            Tag.__init__(self, self, builder, "[document]")
             # Document-level inspection surface, all of it read by real bs4 code.
             self.hidden = 1
-            self.is_xml = False
-            self.known_xml = False
+            self.is_xml = builder.is_xml
+            self.known_xml = self.is_xml
             self.parser_class = BeautifulSoup
-            self.element_classes = element_classes or {}
-            self.builder = builder or HTMLParserTreeBuilder()
-            self.builder.soup = self
-            self.parse_only = parse_only or kwargs.get("parse_only")
+            self.parse_only = parse_only
             self.original_encoding = None
             self.declared_html_encoding = None
             self.contains_replacement_characters = False
@@ -2470,7 +3164,8 @@ def __vis_install_bs4__():
                     self.declared_html_encoding,
                     self.contains_replacement_characters,
                 ) = _decode_markup(markup, from_encoding, exclude_encodings)
-            b = _Builder(store_line_numbers=kwargs.get("store_line_numbers", True))
+            self.builder.initialize_soup(self)
+            b = _Builder(builder=self.builder)
             b.feed(markup or "")
             b.close()
             if self.parse_only is not None:
@@ -2494,11 +3189,30 @@ def __vis_install_bs4__():
                 if isinstance(node, Tag):
                     node.parser_class = BeautifulSoup
                     self.open_tag_counter[node.name] = 0
+            self.builder.soup = None
 
-        def new_tag(self, name, namespace=None, nsprefix=None, attrs=None, **kwattrs):
-            a = dict(attrs) if attrs else {}
-            a.update(kwattrs)
-            return Tag(name, a)
+        def new_tag(
+            self,
+            name,
+            namespace=None,
+            nsprefix=None,
+            attrs={},  # noqa: B006
+            sourceline=None,
+            sourcepos=None,
+            **kwattrs,
+        ):
+            """A new Tag, built the way this soup's TreeBuilder would build it."""
+            kwattrs.update(attrs)
+            return self.element_classes.get(Tag, Tag)(
+                None,
+                self.builder,
+                name,
+                namespace,
+                nsprefix,
+                kwattrs,
+                sourceline=sourceline,
+                sourcepos=sourcepos,
+            )
 
         def new_string(self, s, subclass=None):
             return (subclass or NavigableString)(s)
@@ -2564,7 +3278,7 @@ def __vis_install_bs4__():
 
         def reset(self):
             """Empty the soup and put it back in its just-constructed state."""
-            Tag.__init__(self, self.ROOT_TAG_NAME)
+            Tag.__init__(self, self, self.builder, self.ROOT_TAG_NAME)
             self.hidden = 1
             self.known_xml = self.is_xml
             self.parser_class = BeautifulSoup
@@ -2578,6 +3292,174 @@ def __vis_install_bs4__():
             self._most_recent_element = None
             self.tagStack.append(self)
             self.currentTag = self
+
+        # ---- bs4's parse protocol -------------------------------------
+        # A TreeBuilder drives the soup through these methods, so a custom
+        # builder (bs4's documented extension point) works here too. This
+        # shim's own html.parser path builds the tree directly, and linkage
+        # (next_element and friends) is derived rather than hand-wired, so
+        # `_linkage_fixer` has nothing to repair.
+
+        def popTag(self):
+            """Internal method called by _popToTag when a tag is closed."""
+            tag = self.tagStack.pop()
+            if tag.name in self.open_tag_counter:
+                self.open_tag_counter[tag.name] -= 1
+            if (
+                self.preserve_whitespace_tag_stack
+                and tag is self.preserve_whitespace_tag_stack[-1]
+            ):
+                self.preserve_whitespace_tag_stack.pop()
+            if self.string_container_stack and tag is self.string_container_stack[-1]:
+                self.string_container_stack.pop()
+            if self.tagStack:
+                self.currentTag = self.tagStack[-1]
+            return self.currentTag
+
+        def pushTag(self, tag):
+            """Internal method called by handle_starttag when a tag is opened."""
+            if self.currentTag is not None:
+                self.currentTag.contents.append(tag)
+                tag.parent = self.currentTag
+            self.tagStack.append(tag)
+            self.currentTag = self.tagStack[-1]
+            if tag.name != self.ROOT_TAG_NAME:
+                self.open_tag_counter[tag.name] += 1
+            if tag.name in self.builder.preserve_whitespace_tags:
+                self.preserve_whitespace_tag_stack.append(tag)
+            if tag.name in self.builder.string_containers:
+                self.string_container_stack.append(tag)
+
+        def endData(self, containerClass=None):
+            """Called by the tree builder when a data segment ends."""
+            if self.current_data:
+                current_data = "".join(self.current_data)
+                # If whitespace is not preserved, and this string contains
+                # nothing but ASCII spaces, replace it with a single space
+                # or newline.
+                if not self.preserve_whitespace_tag_stack:
+                    strippable = True
+                    for i in current_data:
+                        if i not in self.ASCII_SPACES:
+                            strippable = False
+                            break
+                    if strippable:
+                        if "\n" in current_data:
+                            current_data = "\n"
+                        else:
+                            current_data = " "
+
+                self.current_data = []
+
+                # Should we add this string to the tree at all?
+                if (
+                    self.parse_only
+                    and len(self.tagStack) <= 1
+                    and (
+                        not self.parse_only.text
+                        or not self.parse_only.search(current_data)
+                    )
+                ):
+                    return
+
+                containerClass = self.string_container(containerClass)
+                o = containerClass(current_data)
+                self.object_was_parsed(o)
+
+        def object_was_parsed(self, o, parent=None, most_recent_element=None):
+            """Integrate an object into the parse tree."""
+            if parent is None:
+                parent = self.currentTag
+            o.parent = parent
+            parent.contents.append(o)
+            self._most_recent_element = o
+
+        def _linkage_fixer(self, el):
+            """No-op: this shim derives linkage from the tree, so it is sound."""
+            return None
+
+        def _popToTag(self, name, nsprefix=None, inclusivePop=True):
+            """Pop the tag stack up to and including the most recent `name`."""
+            if name == self.ROOT_TAG_NAME:
+                # The BeautifulSoup object itself can never be popped.
+                return
+
+            most_recently_popped = None
+
+            stack_size = len(self.tagStack)
+            for i in range(stack_size - 1, 0, -1):
+                if not self.open_tag_counter.get(name):
+                    break
+                t = self.tagStack[i]
+                if name == t.name and nsprefix == t.prefix:
+                    if inclusivePop:
+                        most_recently_popped = self.popTag()
+                    break
+                most_recently_popped = self.popTag()
+
+            return most_recently_popped
+
+        def handle_starttag(
+            self,
+            name,
+            namespace,
+            nsprefix,
+            attrs,
+            sourceline=None,
+            sourcepos=None,
+            namespaces=None,
+        ):
+            """Called by the tree builder when a new tag is encountered.
+
+            Returns None when an active SoupStrainer rejected the tag.
+            """
+            self.endData()
+
+            if (
+                self.parse_only
+                and len(self.tagStack) <= 1
+                and (
+                    self.parse_only.text or not self.parse_only.search_tag(name, attrs)
+                )
+            ):
+                return None
+
+            tag = self.element_classes.get(Tag, Tag)(
+                self,
+                self.builder,
+                name,
+                namespace,
+                nsprefix,
+                attrs,
+                self.currentTag,
+                self._most_recent_element,
+                sourceline=sourceline,
+                sourcepos=sourcepos,
+                namespaces=namespaces,
+            )
+            if tag is None:
+                return tag
+            self._most_recent_element = tag
+            self.pushTag(tag)
+            return tag
+
+        def handle_endtag(self, name, nsprefix=None):
+            """Called by the tree builder when an ending tag is encountered."""
+            self.endData()
+            self._popToTag(name, nsprefix)
+
+        def handle_data(self, data):
+            """Called by the tree builder when a chunk of text is encountered."""
+            self.current_data.append(data)
+
+        def _feed(self):
+            """Parse `self.markup`, which the builder must know how to feed."""
+            self.builder.reset()
+            self.builder.feed(self.markup)
+            # Close out any unfinished strings and close all the open tags.
+            self.endData()
+            while self.currentTag.name != self.ROOT_TAG_NAME:
+                self.popTag()
 
         def decode(
             self,
@@ -2933,19 +3815,12 @@ def __vis_install_bs4__():
     class ParserRejectedMarkup(Exception):
         """Raised by bs4 builders that refuse markup; kept for `except` clauses."""
 
-    class HTMLParserTreeBuilder(TreeBuilder):
-        """The one tree builder this shim has: stdlib html.parser.
-
-        `soup.builder` is how bs4 code asks which parser produced a tree and which
-        tags that parser treats as void, whitespace-preserving or list-valued.
+    class HTMLTreeBuilder(TreeBuilder):
+        """bs4's builder for HTML in general: which tags are void, which preserve
+        whitespace, which attributes hold lists, and how a <meta> charset
+        declaration is rewritten. HTMLParserTreeBuilder specializes it.
         """
 
-        NAME = "html.parser"
-        ALTERNATE_NAMES = []
-        features = ["html.parser", "html", "strict"]
-        is_xml = False
-        picklable = True
-        TRACKS_LINE_NUMBERS = True
         empty_element_tags = _VOID
 
         # bs4 keeps these on HTMLTreeBuilder and copies them onto the instance in
@@ -2960,13 +3835,61 @@ def __vis_install_bs4__():
         # just makes the list available.
         block_elements = set(
             [
-                "address", "article", "aside", "blockquote", "canvas", "dd",
-                "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer",
-                "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li",
-                "main", "nav", "noscript", "ol", "output", "p", "pre", "section",
-                "table", "tfoot", "ul", "video",
+                "address",
+                "article",
+                "aside",
+                "blockquote",
+                "canvas",
+                "dd",
+                "div",
+                "dl",
+                "dt",
+                "fieldset",
+                "figcaption",
+                "figure",
+                "footer",
+                "form",
+                "h1",
+                "h2",
+                "h3",
+                "h4",
+                "h5",
+                "h6",
+                "header",
+                "hr",
+                "li",
+                "main",
+                "nav",
+                "noscript",
+                "ol",
+                "output",
+                "p",
+                "pre",
+                "section",
+                "table",
+                "tfoot",
+                "ul",
+                "video",
             ]
         )
+
+        def set_up_substitutions(self, tag):
+            """Install the <meta> charset stand-in, as HTMLTreeBuilder does."""
+            return bool(_set_up_substitutions(tag))
+
+    class HTMLParserTreeBuilder(HTMLTreeBuilder):
+        """The one tree builder this shim has: stdlib html.parser.
+
+        `soup.builder` is how bs4 code asks which parser produced a tree and which
+        tags that parser treats as void, whitespace-preserving or list-valued.
+        """
+
+        NAME = "html.parser"
+        ALTERNATE_NAMES = []
+        features = ["html.parser", "html", "strict"]
+        is_xml = False
+        picklable = True
+        TRACKS_LINE_NUMBERS = True
 
         def __init__(self, parser_args=None, parser_kwargs=None, **kwargs):
             parser_args = parser_args or []
@@ -2976,182 +3899,706 @@ def __vis_install_bs4__():
             self.parser_args = (parser_args, parser_kwargs)
             TreeBuilder.__init__(self, **kwargs)
 
-        def can_be_empty_element(self, name):
-            return name in _VOID
+        def feed(self, markup):
+            """Parse `markup` into the soup this builder is attached to.
 
-        def set_up_substitutions(self, tag):
-            """Install the <meta> charset stand-in, as HTMLTreeBuilder does."""
-            return bool(_set_up_substitutions(tag))
+            bs4 drives BeautifulSoup's handle_* protocol from inside its
+            html.parser subclass. This shim's parser builds the nodes itself,
+            so feeding hands each finished node to `object_was_parsed` --
+            the same entry point a custom builder would use.
+            """
+            parser = _Builder(builder=self)
+            parser.feed(markup)
+            parser.close()
+            # A finished soup detaches its builder (`builder.soup = None`), so
+            # feeding one of those raises AttributeError here, exactly as bs4's
+            # parser does when it reaches for `self.soup.handle_starttag`.
+            soup = self.soup
+            for node in list(parser.root.contents):
+                node.parent = None
+                soup.object_was_parsed(node)
 
-    def _declared_encoding(data):
-        head = data[:2048].decode("ascii", "replace").lower()
-        for pattern in (r"<\?xml[^>]+encoding=(\S+)", r"<meta[^>]+charset=(\S+)"):
-            m = _re.search(pattern, head)
-            if m:
-                # The capture still carries its quoting: keep the leading run of
-                # encoding-name characters and drop the rest.
-                out = []
-                for ch in m.group(1):
-                    if ch.isalnum() or ch in "-_.:":
-                        out.append(ch)
-                    elif out:
-                        break
-                if out:
-                    return "".join(out)
-        return None
-
-    def _decode_markup(data, from_encoding=None, exclude_encodings=None):
-        # bs4's UnicodeDammit in miniature: honor an explicit or declared encoding,
-        # fall back to UTF-8 and then to windows-1252, which can never fail.
-        declared = _declared_encoding(data)
-        exclude = set((e or "").lower() for e in (exclude_encodings or []))
-        if data.startswith(b"\xef\xbb\xbf"):
-            data = data[3:]
-        tries = []
-        for enc in (from_encoding, declared, "utf-8", "windows-1252"):
-            if enc and enc.lower() not in exclude and enc not in tries:
-                tries.append(enc)
-        for enc in tries:
-            try:
-                text = data.decode(enc)
-            except (UnicodeDecodeError, LookupError):
-                continue
-            return text, enc, declared, chr(65533) in text
-        text = data.decode("windows-1252", "replace")
-        return text, "windows-1252", declared, chr(65533) in text
+    xml_encoding = "^\\s*<\\?.*encoding=['\"](.*?)['\"].*\\?>"
+    html_meta = "<\\s*meta[^>]+charset\\s*=\\s*[\"']?([^>]*?)[ /;'\">]"
+    encoding_res = {
+        bytes: {
+            "html": _re.compile(html_meta.encode("ascii"), _re.I),
+            "xml": _re.compile(xml_encoding.encode("ascii"), _re.I),
+        },
+        str: {
+            "html": _re.compile(html_meta, _re.I),
+            "xml": _re.compile(xml_encoding, _re.I),
+        },
+    }
 
     class EncodingDetector:
         """bs4.dammit.EncodingDetector: the candidate encodings, in bs4's order."""
 
         def __init__(
-            self, markup, override_encodings=None, is_html=False, exclude_encodings=None
+            self,
+            markup,
+            known_definite_encodings=None,
+            is_html=False,
+            exclude_encodings=None,
+            user_encodings=None,
+            override_encodings=None,
         ):
-            self.markup = markup
-            self.override_encodings = list(override_encodings or [])
-            self.exclude_encodings = set(
-                (e or "").lower() for e in (exclude_encodings or [])
-            )
+            self.known_definite_encodings = list(known_definite_encodings or [])
+            if override_encodings:
+                self.known_definite_encodings += override_encodings
+            self.user_encodings = user_encodings or []
+            exclude_encodings = exclude_encodings or []
+            self.exclude_encodings = set([x.lower() for x in exclude_encodings])
+            self.chardet_encoding = None
             self.is_html = is_html
-            self.declared_encoding = self.find_declared_encoding(markup, is_html)
+            self.declared_encoding = None
+
+            # First order of business: strip a byte-order mark.
+            self.markup, self.sniffed_encoding = self.strip_byte_order_mark(markup)
+
+        def _usable(self, encoding, tried):
+            """Should we even bother to try this encoding?"""
+            if encoding is not None:
+                encoding = encoding.lower()
+                if encoding in self.exclude_encodings:
+                    return False
+                if encoding not in tried:
+                    tried.add(encoding)
+                    return True
+            return False
 
         @property
         def encodings(self):
-            seen = []
-            for enc in self.override_encodings + [
-                self.declared_encoding,
-                "utf-8",
-                "windows-1252",
-            ]:
-                if (
-                    enc
-                    and enc.lower() not in self.exclude_encodings
-                    and enc not in seen
-                ):
-                    seen.append(enc)
-            return seen
+            """Yield a number of encodings that might work for this markup."""
+            tried = set()
+
+            for e in self.known_definite_encodings:
+                if self._usable(e, tried):
+                    yield e
+
+            if self._usable(self.sniffed_encoding, tried):
+                yield self.sniffed_encoding
+
+            for e in self.user_encodings:
+                if self._usable(e, tried):
+                    yield e
+
+            if self.declared_encoding is None:
+                self.declared_encoding = self.find_declared_encoding(
+                    self.markup, self.is_html
+                )
+            if self._usable(self.declared_encoding, tried):
+                yield self.declared_encoding
+
+            if self.chardet_encoding is None:
+                self.chardet_encoding = chardet_dammit(self.markup)
+            if self._usable(self.chardet_encoding, tried):
+                yield self.chardet_encoding
+
+            for e in ("utf-8", "windows-1252"):
+                if self._usable(e, tried):
+                    yield e
 
         @classmethod
         def strip_byte_order_mark(cls, data):
-            if isinstance(data, bytes) and data.startswith(b"\xef\xbb\xbf"):
-                return data[3:], "utf-8"
-            return data, None
+            """If a byte-order mark is present, strip it and return the encoding it implies."""
+            encoding = None
+            if isinstance(data, str):
+                # Unicode data cannot have a byte-order mark.
+                return data, encoding
+            if (
+                (len(data) >= 4)
+                and (data[:2] == b"\xfe\xff")
+                and (data[2:4] != "\x00\x00")
+            ):
+                encoding = "utf-16be"
+                data = data[2:]
+            elif (
+                (len(data) >= 4)
+                and (data[:2] == b"\xff\xfe")
+                and (data[2:4] != "\x00\x00")
+            ):
+                encoding = "utf-16le"
+                data = data[2:]
+            elif data[:3] == b"\xef\xbb\xbf":
+                encoding = "utf-8"
+                data = data[3:]
+            elif data[:4] == b"\x00\x00\xfe\xff":
+                encoding = "utf-32be"
+                data = data[4:]
+            elif data[:4] == b"\xff\xfe\x00\x00":
+                encoding = "utf-32le"
+                data = data[4:]
+            return data, encoding
 
         @classmethod
         def find_declared_encoding(
             cls, markup, is_html=False, search_entire_document=False
         ):
-            if isinstance(markup, str):
-                return None
-            head = markup if search_entire_document else markup[:1024]
-            xml_decl = re.match(rb"^<\?.*?encoding=['\"](.*?)['\"].*?\?>", head)
-            if xml_decl:
-                return xml_decl.group(1).decode("ascii", "replace")
-            # bs4 only trusts an HTML <meta> declaration when told the markup is HTML.
-            return _declared_encoding(head) if is_html else None
+            """Given a document, tries to find its declared encoding."""
+            if search_entire_document:
+                xml_endpos = html_endpos = len(markup)
+            else:
+                xml_endpos = 1024
+                html_endpos = max(2048, int(len(markup) * 0.05))
+
+            if isinstance(markup, bytes):
+                res = encoding_res[bytes]
+            else:
+                res = encoding_res[str]
+
+            xml_re = res["xml"]
+            html_re = res["html"]
+            declared_encoding = None
+            declared_encoding_match = xml_re.search(markup, endpos=xml_endpos)
+            if not declared_encoding_match and is_html:
+                declared_encoding_match = html_re.search(markup, endpos=html_endpos)
+            if declared_encoding_match is not None:
+                declared_encoding = declared_encoding_match.groups()[0]
+            if declared_encoding:
+                if isinstance(declared_encoding, bytes):
+                    declared_encoding = declared_encoding.decode("ascii", "replace")
+                return declared_encoding.lower()
+            return None
 
     class UnicodeDammit:
         """bs4.dammit.UnicodeDammit: bytes in, str out, plus the encoding it guessed."""
 
-        FIRST_MULTIBYTE_MARKER = 194
-        LAST_MULTIBYTE_MARKER = 244
-        MULTIBYTE_MARKERS_AND_SIZES = [
-            (194, 223, 2),
-            (224, 239, 3),
-            (240, 244, 4),
+        # Maps commonly seen "charset" values to Python codec names.
+        CHARSET_ALIASES = {"macintosh": "mac-roman", "x-sjis": "shift-jis"}
+
+        ENCODINGS_WITH_SMART_QUOTES = [
+            "windows-1252",
+            "iso-8859-1",
+            "iso-8859-2",
         ]
 
         def __init__(
             self,
             markup,
-            override_encodings=None,
+            known_definite_encodings=[],  # noqa: B006 - upstream's signature
             smart_quotes_to=None,
             is_html=False,
-            exclude_encodings=None,
+            exclude_encodings=[],  # noqa: B006 - upstream's signature
+            user_encodings=None,
+            override_encodings=None,
         ):
             self.smart_quotes_to = smart_quotes_to
+            self.tried_encodings = []
+            self.contains_replacement_characters = False
             self.is_html = is_html
-            self.markup = markup
+            self.log = _logging.getLogger(__name__)
             self.detector = EncodingDetector(
-                markup, override_encodings, is_html, exclude_encodings
+                markup,
+                known_definite_encodings,
+                is_html,
+                exclude_encodings,
+                user_encodings,
+                override_encodings,
             )
-            if isinstance(markup, str):
-                self.unicode_markup = markup
+
+            # Short-circuit if the data is in Unicode to begin with.
+            if isinstance(markup, str) or markup == "":
+                self.markup = markup
+                self.unicode_markup = str(markup)
                 self.original_encoding = None
-                self.declared_html_encoding = None
-                self.contains_replacement_characters = False
-                self.tried_encodings = []
+                return
+
+            # The encoding detector may have stripped a byte-order mark.
+            # Use the stripped markup from this point on.
+            self.markup = self.detector.markup
+
+            u = None
+            for encoding in self.detector.encodings:
+                markup = self.detector.markup
+                u = self._convert_from(encoding)
+                if u is not None:
+                    break
+
+            if not u:
+                # None of the encodings worked. As an absolute last resort,
+                # try them again with character replacement.
+                for encoding in self.detector.encodings:
+                    if encoding != "ascii":
+                        u = self._convert_from(encoding, "replace")
+                    if u is not None:
+                        self.log.warning(
+                            "Some characters could not be decoded, and were "
+                            "replaced with REPLACEMENT CHARACTER."
+                        )
+                        self.contains_replacement_characters = True
+                        break
+
+            self.unicode_markup = u
+            if not u:
+                self.original_encoding = None
+
+        def _sub_ms_char(self, match):
+            """Changes a MS smart quote character to an XML or HTML entity, or ASCII."""
+            orig = match.group(1)
+            if self.smart_quotes_to == "ascii":
+                sub = self.MS_CHARS_TO_ASCII.get(orig).encode()
             else:
-                first = (list(override_encodings or []) or [None])[0]
-                text, enc, declared, replaced = _decode_markup(
-                    markup, first, exclude_encodings
-                )
-                self.unicode_markup = text
-                self.original_encoding = enc
-                self.declared_html_encoding = declared
-                self.contains_replacement_characters = replaced
-                self.tried_encodings = [(enc, "strict")]
+                sub = self.MS_CHARS.get(orig)
+                if type(sub) is tuple:
+                    if self.smart_quotes_to == "xml":
+                        sub = "&#x".encode() + sub[1].encode() + ";".encode()
+                    else:
+                        sub = "&".encode() + sub[0].encode() + ";".encode()
+                else:
+                    sub = sub.encode()
+            return sub
+
+        def _convert_from(self, proposed, errors="strict"):
+            """Attempt to convert the markup to the proposed encoding."""
+            proposed = self.find_codec(proposed)
+            if not proposed or (proposed, errors) in self.tried_encodings:
+                return None
+            self.tried_encodings.append((proposed, errors))
+            markup = self.markup
+            # Convert smart quotes to HTML if coming from an encoding
+            # that might have them.
+            if (
+                self.smart_quotes_to is not None
+                and proposed in self.ENCODINGS_WITH_SMART_QUOTES
+            ):
+                smart_quotes_re = b"([\x80-\x9f])"
+                smart_quotes_compiled = _re.compile(smart_quotes_re)
+                markup = smart_quotes_compiled.sub(self._sub_ms_char, markup)
+
+            try:
+                u = self._to_unicode(markup, proposed, errors)
+                self.markup = u
+                self.original_encoding = proposed
+            except Exception:
+                return None
+            return self.markup
+
+        def _to_unicode(self, data, encoding, errors="strict"):
+            """Given a string and its encoding, decodes the string into Unicode."""
+            return str(data, encoding, errors)
 
         @property
-        def unicode(self):
-            return self.unicode_markup
+        def declared_html_encoding(self):
+            """The encoding declared within an HTML document, if any."""
+            if not self.is_html:
+                return None
+            return self.detector.declared_encoding
+
+        def find_codec(self, charset):
+            """Convert the name of a character set to a codec name."""
+            value = (
+                self._codec(self.CHARSET_ALIASES.get(charset, charset))
+                or (charset and self._codec(charset.replace("-", "")))
+                or (charset and self._codec(charset.replace("-", "_")))
+                or (charset and charset.lower())
+                or charset
+            )
+            if value:
+                return value.lower()
+            return None
+
+        def _codec(self, charset):
+            if not charset:
+                return charset
+            codec = None
+            try:
+                _codecs.lookup(charset)
+                codec = charset
+            except (LookupError, ValueError):
+                pass
+            return codec
+
+        MS_CHARS = {
+            b"\x80": ("euro", "20AC"),
+            b"\x81": " ",
+            b"\x82": ("sbquo", "201A"),
+            b"\x83": ("fnof", "192"),
+            b"\x84": ("bdquo", "201E"),
+            b"\x85": ("hellip", "2026"),
+            b"\x86": ("dagger", "2020"),
+            b"\x87": ("Dagger", "2021"),
+            b"\x88": ("circ", "2C6"),
+            b"\x89": ("permil", "2030"),
+            b"\x8a": ("Scaron", "160"),
+            b"\x8b": ("lsaquo", "2039"),
+            b"\x8c": ("OElig", "152"),
+            b"\x8d": "?",
+            b"\x8e": ("#x17D", "17D"),
+            b"\x8f": "?",
+            b"\x90": "?",
+            b"\x91": ("lsquo", "2018"),
+            b"\x92": ("rsquo", "2019"),
+            b"\x93": ("ldquo", "201C"),
+            b"\x94": ("rdquo", "201D"),
+            b"\x95": ("bull", "2022"),
+            b"\x96": ("ndash", "2013"),
+            b"\x97": ("mdash", "2014"),
+            b"\x98": ("tilde", "2DC"),
+            b"\x99": ("trade", "2122"),
+            b"\x9a": ("scaron", "161"),
+            b"\x9b": ("rsaquo", "203A"),
+            b"\x9c": ("oelig", "153"),
+            b"\x9d": "?",
+            b"\x9e": ("#x17E", "17E"),
+            b"\x9f": ("Yuml", ""),
+        }
+
+        MS_CHARS_TO_ASCII = {
+            b"\x80": "EUR",
+            b"\x81": " ",
+            b"\x82": ",",
+            b"\x83": "f",
+            b"\x84": ",,",
+            b"\x85": "...",
+            b"\x86": "+",
+            b"\x87": "++",
+            b"\x88": "^",
+            b"\x89": "%",
+            b"\x8a": "S",
+            b"\x8b": "<",
+            b"\x8c": "OE",
+            b"\x8d": "?",
+            b"\x8e": "Z",
+            b"\x8f": "?",
+            b"\x90": "?",
+            b"\x91": "'",
+            b"\x92": "'",
+            b"\x93": '"',
+            b"\x94": '"',
+            b"\x95": "*",
+            b"\x96": "-",
+            b"\x97": "--",
+            b"\x98": "~",
+            b"\x99": "(TM)",
+            b"\x9a": "s",
+            b"\x9b": ">",
+            b"\x9c": "oe",
+            b"\x9d": "?",
+            b"\x9e": "z",
+            b"\x9f": "Y",
+            b"\xa0": " ",
+            b"\xa1": "!",
+            b"\xa2": "c",
+            b"\xa3": "GBP",
+            b"\xa4": "$",  # This approximation is especially parochial--this is the
+            # generic currency symbol.
+            b"\xa5": "YEN",
+            b"\xa6": "|",
+            b"\xa7": "S",
+            b"\xa8": "..",
+            b"\xa9": "",
+            b"\xaa": "(th)",
+            b"\xab": "<<",
+            b"\xac": "!",
+            b"\xad": " ",
+            b"\xae": "(R)",
+            b"\xaf": "-",
+            b"\xb0": "o",
+            b"\xb1": "+-",
+            b"\xb2": "2",
+            b"\xb3": "3",
+            b"\xb4": ("'", "acute"),
+            b"\xb5": "u",
+            b"\xb6": "P",
+            b"\xb7": "*",
+            b"\xb8": ",",
+            b"\xb9": "1",
+            b"\xba": "(th)",
+            b"\xbb": ">>",
+            b"\xbc": "1/4",
+            b"\xbd": "1/2",
+            b"\xbe": "3/4",
+            b"\xbf": "?",
+            b"\xc0": "A",
+            b"\xc1": "A",
+            b"\xc2": "A",
+            b"\xc3": "A",
+            b"\xc4": "A",
+            b"\xc5": "A",
+            b"\xc6": "AE",
+            b"\xc7": "C",
+            b"\xc8": "E",
+            b"\xc9": "E",
+            b"\xca": "E",
+            b"\xcb": "E",
+            b"\xcc": "I",
+            b"\xcd": "I",
+            b"\xce": "I",
+            b"\xcf": "I",
+            b"\xd0": "D",
+            b"\xd1": "N",
+            b"\xd2": "O",
+            b"\xd3": "O",
+            b"\xd4": "O",
+            b"\xd5": "O",
+            b"\xd6": "O",
+            b"\xd7": "*",
+            b"\xd8": "O",
+            b"\xd9": "U",
+            b"\xda": "U",
+            b"\xdb": "U",
+            b"\xdc": "U",
+            b"\xdd": "Y",
+            b"\xde": "b",
+            b"\xdf": "B",
+            b"\xe0": "a",
+            b"\xe1": "a",
+            b"\xe2": "a",
+            b"\xe3": "a",
+            b"\xe4": "a",
+            b"\xe5": "a",
+            b"\xe6": "ae",
+            b"\xe7": "c",
+            b"\xe8": "e",
+            b"\xe9": "e",
+            b"\xea": "e",
+            b"\xeb": "e",
+            b"\xec": "i",
+            b"\xed": "i",
+            b"\xee": "i",
+            b"\xef": "i",
+            b"\xf0": "o",
+            b"\xf1": "n",
+            b"\xf2": "o",
+            b"\xf3": "o",
+            b"\xf4": "o",
+            b"\xf5": "o",
+            b"\xf6": "o",
+            b"\xf7": "/",
+            b"\xf8": "o",
+            b"\xf9": "u",
+            b"\xfa": "u",
+            b"\xfb": "u",
+            b"\xfc": "u",
+            b"\xfd": "y",
+            b"\xfe": "b",
+            b"\xff": "y",
+        }
+
+        WINDOWS_1252_TO_UTF8 = {
+            0x80: b"\xe2\x82\xac",  # €
+            0x82: b"\xe2\x80\x9a",  # ‚
+            0x83: b"\xc6\x92",  # ƒ
+            0x84: b"\xe2\x80\x9e",  # „
+            0x85: b"\xe2\x80\xa6",  # …
+            0x86: b"\xe2\x80\xa0",  # †
+            0x87: b"\xe2\x80\xa1",  # ‡
+            0x88: b"\xcb\x86",  # ˆ
+            0x89: b"\xe2\x80\xb0",  # ‰
+            0x8A: b"\xc5\xa0",  # Š
+            0x8B: b"\xe2\x80\xb9",  # ‹
+            0x8C: b"\xc5\x92",  # Œ
+            0x8E: b"\xc5\xbd",  # Ž
+            0x91: b"\xe2\x80\x98",  # ‘
+            0x92: b"\xe2\x80\x99",  # ’
+            0x93: b"\xe2\x80\x9c",  # “
+            0x94: b"\xe2\x80\x9d",  # ”
+            0x95: b"\xe2\x80\xa2",  # •
+            0x96: b"\xe2\x80\x93",  # –
+            0x97: b"\xe2\x80\x94",  # —
+            0x98: b"\xcb\x9c",  # ˜
+            0x99: b"\xe2\x84\xa2",  # ™
+            0x9A: b"\xc5\xa1",  # š
+            0x9B: b"\xe2\x80\xba",  # ›
+            0x9C: b"\xc5\x93",  # œ
+            0x9E: b"\xc5\xbe",  # ž
+            0x9F: b"\xc5\xb8",  # Ÿ
+            0xA0: b"\xc2\xa0",  # non-breaking space
+            0xA1: b"\xc2\xa1",  # ¡
+            0xA2: b"\xc2\xa2",  # ¢
+            0xA3: b"\xc2\xa3",  # £
+            0xA4: b"\xc2\xa4",  # ¤
+            0xA5: b"\xc2\xa5",  # ¥
+            0xA6: b"\xc2\xa6",  # ¦
+            0xA7: b"\xc2\xa7",  # §
+            0xA8: b"\xc2\xa8",  # ¨
+            0xA9: b"\xc2\xa9",  # ©
+            0xAA: b"\xc2\xaa",  # ª
+            0xAB: b"\xc2\xab",  # «
+            0xAC: b"\xc2\xac",  # ¬
+            0xAD: b"\xc2\xad",  # ­
+            0xAE: b"\xc2\xae",  # ®
+            0xAF: b"\xc2\xaf",  # ¯
+            0xB0: b"\xc2\xb0",  # °
+            0xB1: b"\xc2\xb1",  # ±
+            0xB2: b"\xc2\xb2",  # ²
+            0xB3: b"\xc2\xb3",  # ³
+            0xB4: b"\xc2\xb4",  # ´
+            0xB5: b"\xc2\xb5",  # µ
+            0xB6: b"\xc2\xb6",  # ¶
+            0xB7: b"\xc2\xb7",  # ·
+            0xB8: b"\xc2\xb8",  # ¸
+            0xB9: b"\xc2\xb9",  # ¹
+            0xBA: b"\xc2\xba",  # º
+            0xBB: b"\xc2\xbb",  # »
+            0xBC: b"\xc2\xbc",  # ¼
+            0xBD: b"\xc2\xbd",  # ½
+            0xBE: b"\xc2\xbe",  # ¾
+            0xBF: b"\xc2\xbf",  # ¿
+            0xC0: b"\xc3\x80",  # À
+            0xC1: b"\xc3\x81",  # Á
+            0xC2: b"\xc3\x82",  # Â
+            0xC3: b"\xc3\x83",  # Ã
+            0xC4: b"\xc3\x84",  # Ä
+            0xC5: b"\xc3\x85",  # Å
+            0xC6: b"\xc3\x86",  # Æ
+            0xC7: b"\xc3\x87",  # Ç
+            0xC8: b"\xc3\x88",  # È
+            0xC9: b"\xc3\x89",  # É
+            0xCA: b"\xc3\x8a",  # Ê
+            0xCB: b"\xc3\x8b",  # Ë
+            0xCC: b"\xc3\x8c",  # Ì
+            0xCD: b"\xc3\x8d",  # Í
+            0xCE: b"\xc3\x8e",  # Î
+            0xCF: b"\xc3\x8f",  # Ï
+            0xD0: b"\xc3\x90",  # Ð
+            0xD1: b"\xc3\x91",  # Ñ
+            0xD2: b"\xc3\x92",  # Ò
+            0xD3: b"\xc3\x93",  # Ó
+            0xD4: b"\xc3\x94",  # Ô
+            0xD5: b"\xc3\x95",  # Õ
+            0xD6: b"\xc3\x96",  # Ö
+            0xD7: b"\xc3\x97",  # ×
+            0xD8: b"\xc3\x98",  # Ø
+            0xD9: b"\xc3\x99",  # Ù
+            0xDA: b"\xc3\x9a",  # Ú
+            0xDB: b"\xc3\x9b",  # Û
+            0xDC: b"\xc3\x9c",  # Ü
+            0xDD: b"\xc3\x9d",  # Ý
+            0xDE: b"\xc3\x9e",  # Þ
+            0xDF: b"\xc3\x9f",  # ß
+            0xE0: b"\xc3\xa0",  # à
+            0xE1: b"\xa1",  # á
+            0xE2: b"\xc3\xa2",  # â
+            0xE3: b"\xc3\xa3",  # ã
+            0xE4: b"\xc3\xa4",  # ä
+            0xE5: b"\xc3\xa5",  # å
+            0xE6: b"\xc3\xa6",  # æ
+            0xE7: b"\xc3\xa7",  # ç
+            0xE8: b"\xc3\xa8",  # è
+            0xE9: b"\xc3\xa9",  # é
+            0xEA: b"\xc3\xaa",  # ê
+            0xEB: b"\xc3\xab",  # ë
+            0xEC: b"\xc3\xac",  # ì
+            0xED: b"\xc3\xad",  # í
+            0xEE: b"\xc3\xae",  # î
+            0xEF: b"\xc3\xaf",  # ï
+            0xF0: b"\xc3\xb0",  # ð
+            0xF1: b"\xc3\xb1",  # ñ
+            0xF2: b"\xc3\xb2",  # ò
+            0xF3: b"\xc3\xb3",  # ó
+            0xF4: b"\xc3\xb4",  # ô
+            0xF5: b"\xc3\xb5",  # õ
+            0xF6: b"\xc3\xb6",  # ö
+            0xF7: b"\xc3\xb7",  # ÷
+            0xF8: b"\xc3\xb8",  # ø
+            0xF9: b"\xc3\xb9",  # ù
+            0xFA: b"\xc3\xba",  # ú
+            0xFB: b"\xc3\xbb",  # û
+            0xFC: b"\xc3\xbc",  # ü
+            0xFD: b"\xc3\xbd",  # ý
+            0xFE: b"\xc3\xbe",  # þ
+        }
+
+        MULTIBYTE_MARKERS_AND_SIZES = [
+            (0xC2, 0xDF, 2),  # 2-byte characters start with a byte C2-DF
+            (0xE0, 0xEF, 3),  # 3-byte characters start with E0-EF
+            (0xF0, 0xF4, 4),  # 4-byte characters start with F0-F4
+        ]
+
+        FIRST_MULTIBYTE_MARKER = MULTIBYTE_MARKERS_AND_SIZES[0][0]
+        LAST_MULTIBYTE_MARKER = MULTIBYTE_MARKERS_AND_SIZES[-1][1]
 
         @classmethod
         def detwingle(
             cls, in_bytes, main_encoding="utf8", embedded_encoding="windows-1252"
         ):
-            """Repair windows-1252 bytes smuggled inside otherwise-UTF-8 data."""
-            if embedded_encoding.replace("_", "-").lower() != "windows-1252":
+            """Fix characters from one encoding embedded in some other encoding.
+
+            Currently the only situation supported is Windows-1252 (or its
+            subset ISO-8859-1), embedded in UTF-8.
+
+            :param in_bytes: A bytestring that you suspect contains
+                characters from multiple encodings. Note that this _must_
+                be a bytestring. If you've already converted the document
+                to Unicode, you're too late.
+            :param main_encoding: The primary encoding of `in_bytes`.
+            :param embedded_encoding: The encoding that was used to embed characters
+                in the main document.
+            :return: A bytestring in which `embedded_encoding`
+              characters have been converted to their `main_encoding`
+              equivalents.
+            """
+            if embedded_encoding.replace("_", "-").lower() not in (
+                "windows-1252",
+                "windows_1252",
+            ):
                 raise NotImplementedError(
-                    "Windows-1252 and ASCII are the only currently supported "
+                    "Windows-1252 and ISO-8859-1 are the only currently supported "
                     "embedded encodings."
                 )
-            if main_encoding.replace("-", "").lower() not in ("utf8",):
+
+            if main_encoding.lower() not in ("utf8", "utf-8"):
                 raise NotImplementedError(
                     "UTF-8 is the only currently supported main encoding."
                 )
-            chunks = []
+
+            byte_chunks = []
+
             chunk_start = 0
             pos = 0
             while pos < len(in_bytes):
                 byte = in_bytes[pos]
-                if cls.FIRST_MULTIBYTE_MARKER <= byte <= cls.LAST_MULTIBYTE_MARKER:
-                    size = 2
-                    for start, end, this_size in cls.MULTIBYTE_MARKERS_AND_SIZES:
-                        if start <= byte <= end:
-                            size = this_size
+                if not isinstance(byte, int):
+                    # Python 2.x
+                    byte = ord(byte)
+                if (
+                    byte >= cls.FIRST_MULTIBYTE_MARKER
+                    and byte <= cls.LAST_MULTIBYTE_MARKER
+                ):
+                    # This is the start of a UTF-8 multibyte character. Skip
+                    # to the end.
+                    for start, end, size in cls.MULTIBYTE_MARKERS_AND_SIZES:
+                        if byte >= start and byte <= end:
+                            pos += size
                             break
-                    pos += size
-                elif byte >= 128:
-                    chunks.append(in_bytes[chunk_start:pos])
-                    chunks.append(
-                        in_bytes[pos : pos + 1].decode("windows-1252").encode("utf-8")
-                    )
+                elif byte >= 0x80 and byte in cls.WINDOWS_1252_TO_UTF8:
+                    # We found a Windows-1252 character!
+                    # Save the string up to this point as a chunk.
+                    byte_chunks.append(in_bytes[chunk_start:pos])
+
+                    # Now translate the Windows-1252 character into UTF-8
+                    # and add it as another, one-byte chunk.
+                    byte_chunks.append(cls.WINDOWS_1252_TO_UTF8[byte])
                     pos += 1
                     chunk_start = pos
                 else:
+                    # Go on to the next character.
                     pos += 1
-            chunks.append(in_bytes[chunk_start:])
-            return b"".join(chunks)
+            if chunk_start == 0:
+                # The string is unchanged.
+                return in_bytes
+            else:
+                # Store the final chunk.
+                byte_chunks.append(in_bytes[chunk_start:])
+            return b"".join(byte_chunks)
+
+    def _decode_markup(data, from_encoding=None, exclude_encodings=None):
+        """The bytes branch of bs4's prepare_markup, run through UnicodeDammit."""
+        dammit = UnicodeDammit(
+            data,
+            known_definite_encodings=[from_encoding],
+            user_encodings=[None],
+            is_html=True,
+            exclude_encodings=exclude_encodings or [],
+        )
+        return (
+            dammit.markup,
+            dammit.original_encoding,
+            dammit.declared_html_encoding,
+            dammit.contains_replacement_characters,
+        )
 
     class Formatter(EntitySubstitution):
         """bs4.formatter.Formatter: the knobs the renderer reads."""
@@ -3300,33 +4747,50 @@ def __vis_install_bs4__():
         def __repr__(self):
             return self.__str__()
 
+        def _normalize_search_value(self, value):
+            return _normalize_search_value(value)
+
+        def _matches(self, markup, match_against, already_tried=None):
+            return _value_matches(markup, match_against, already_tried)
+
         def search(self, markup):
             return _strainer_search(self, markup)
 
-        def search_tag(self, markup_name=None, markup_attrs=None):
+        def search_tag(self, markup_name=None, markup_attrs={}):  # noqa: B006
             """bs4's name/attribute-only probe, used before a tag is built."""
             return _strainer_search_tag(self, markup_name, markup_attrs)
+
+        # For BS3 compatibility.
+        searchTag = search_tag
 
     mod = types.ModuleType("bs4")
     mod.__path__ = []
     mod.__version__ = "4.12-vis-pure"
     mod.BeautifulSoup = BeautifulSoup
-    mod.BeautifulStoneSoup = BeautifulSoup
+
+    class BeautifulStoneSoup(BeautifulSoup):
+        """Deprecated interface to an XML parser."""
+
+        def __init__(self, *args, **kwargs):
+            kwargs["features"] = "xml"
+            _warnings.warn(  # noqa: B028
+                "The BeautifulStoneSoup class is deprecated. Instead of using "
+                'it, pass features="xml" into the BeautifulSoup constructor.'
+            )
+            BeautifulSoup.__init__(self, *args, **kwargs)
+
+    mod.BeautifulStoneSoup = BeautifulStoneSoup
     mod.Tag = Tag
     mod.PageElement = PageElement
     mod.NavigableString = NavigableString
-    mod.PreformattedString = PreformattedString
     mod.Comment = Comment
     mod.CData = CData
     mod.Doctype = Doctype
     mod.Declaration = Declaration
     mod.ProcessingInstruction = ProcessingInstruction
-    mod.XMLProcessingInstruction = XMLProcessingInstruction
     mod.Script = Script
     mod.Stylesheet = Stylesheet
     mod.TemplateString = TemplateString
-    mod.RubyTextString = RubyTextString
-    mod.RubyParenthesisString = RubyParenthesisString
     mod.ResultSet = ResultSet
     mod.SoupStrainer = SoupStrainer
     mod.HTMLParserTreeBuilder = HTMLParserTreeBuilder
@@ -3338,7 +4802,6 @@ def __vis_install_bs4__():
     mod.XMLParsedAsHTMLWarning = XMLParsedAsHTMLWarning
     mod.CSS = CSS
     mod.PYTHON_SPECIFIC_ENCODINGS = PYTHON_SPECIFIC_ENCODINGS
-    mod.NamespacedAttribute = NamespacedAttribute
     mod.DEFAULT_OUTPUT_ENCODING = _DEFAULT_OUTPUT_ENCODING
     # Upstream bs4 exports exactly one name via `from bs4 import *`; every other
     # class is a plain module attribute. Match that, or star-imports diverge.
@@ -3387,7 +4850,7 @@ def __vis_install_bs4__():
     builder_mod.TreeBuilder = TreeBuilder
     builder_mod.TreeBuilderRegistry = TreeBuilderRegistry
     builder_mod.HTMLParserTreeBuilder = HTMLParserTreeBuilder
-    builder_mod.HTMLTreeBuilder = HTMLParserTreeBuilder
+    builder_mod.HTMLTreeBuilder = HTMLTreeBuilder
     builder_mod.ParserRejectedMarkup = ParserRejectedMarkup
     builder_mod.HTML = "html"
     builder_mod.HTML_5 = "html5"
@@ -3408,7 +4871,6 @@ def __vis_install_bs4__():
     builder_mod.CharsetMetaAttributeValue = CharsetMetaAttributeValue
     builder_mod.ContentMetaAttributeValue = ContentMetaAttributeValue
     builder_mod.nonwhitespace_re = nonwhitespace_re
-    builder_mod.whitespace_re = whitespace_re
     # bs4.builder.__all__ after _htmlparser registers itself.
     builder_mod.__all__ = [
         "HTMLTreeBuilder",
@@ -3522,7 +4984,6 @@ def __vis_install_bs4__():
     dammit_mod.EntitySubstitution = EntitySubstitution
     mod.dammit = dammit_mod
     mod.UnicodeDammit = UnicodeDammit
-    elem.UnicodeDammit = UnicodeDammit
 
     css_mod = types.ModuleType("bs4.css")
     css_mod.CSS = CSS
@@ -3543,13 +5004,15 @@ def __vis_install_bs4__():
         ("bs4.dammit", dammit_mod),
         ("bs4.formatter", fmt_mod),
         ("bs4.builder._htmlparser", hp_mod),
-        ("bs4.builder", builder_mod),
         ("bs4.css", css_mod),
         ("bs4.element", elem),
+        ("bs4.builder", builder_mod),
         ("bs4", mod),
     ):
         for _name, _obj in list(vars(_mod_obj).items()):
-            if not callable(_obj) or "<locals>" not in getattr(_obj, "__qualname__", ""):
+            if not callable(_obj) or "<locals>" not in getattr(
+                _obj, "__qualname__", ""
+            ):
                 continue
             _obj.__module__ = _mod_name
             _obj.__qualname__ = _name
@@ -3581,6 +5044,79 @@ def __vis_install_bs4__():
     # soupsieve is not installed, but its object is what css.compile() returns.
     SoupSieve.__module__ = "soupsieve.css_match"
     SoupSieve.__qualname__ = "SoupSieve"
+
+    # Upstream's modules leak the standard-library names they import, and real
+    # code reaches for some of them -- monkeypatching bs4.dammit.chardet_dammit
+    # is the classic. Publish exactly the ones 4.12.3 exposes, after the
+    # stamping pass above so that a re-export cannot claim a class's home.
+    import codecs as _codecs
+    import collections.abc as _abc
+    import itertools as _itertools
+    import logging as _logging
+    import os as _os
+    import string as _string
+    import traceback as _traceback
+
+    mod.Counter = _collections.Counter
+    mod.os = _os
+    mod.re = _re
+    mod.sys = sys
+    mod.traceback = _traceback
+    mod.warnings = _warnings
+    elem.Callable = _abc.Callable
+    elem.re = _re
+    elem.sys = sys
+    elem.warnings = _warnings
+    builder_mod.defaultdict = _collections.defaultdict
+    builder_mod.itertools = _itertools
+    builder_mod.re = _re
+    builder_mod.sys = sys
+    builder_mod.warnings = _warnings
+    css_mod.warnings = _warnings
+    # Upstream this is the soupsieve module; there is none to point at here.
+    css_mod.soupsieve = None
+    dammit_mod.codecs = _codecs
+    dammit_mod.codepoint2name = _hent.codepoint2name
+    dammit_mod.defaultdict = _collections.defaultdict
+    dammit_mod.html5 = _hent.html5
+    dammit_mod.logging = _logging
+    dammit_mod.re = _re
+    dammit_mod.string = _string
+    # No chardet and no charset-normalizer in the sandbox, so this is exactly
+    # upstream's "nothing installed" branch.
+    dammit_mod.chardet_module = None
+
+    def chardet_dammit(s):
+        return None
+
+    chardet_dammit.__module__ = "bs4.dammit"
+    chardet_dammit.__qualname__ = "chardet_dammit"
+    dammit_mod.chardet_dammit = chardet_dammit
+    dammit_mod.xml_encoding = xml_encoding
+    dammit_mod.html_meta = html_meta
+    dammit_mod.encoding_res = encoding_res
+    hp_mod.sys = sys
+    hp_mod.warnings = _warnings
+    hp_mod.HTMLParser = _hp.HTMLParser
+    hp_mod.HTMLPARSER = "html.parser"
+    for _name in (
+        "CData",
+        "Comment",
+        "Declaration",
+        "Doctype",
+        "ProcessingInstruction",
+    ):
+        setattr(hp_mod, _name, getattr(elem, _name))
+    for _name in (
+        "DetectsXMLParsedAsHTML",
+        "HTML",
+        "HTMLTreeBuilder",
+        "ParserRejectedMarkup",
+        "STRICT",
+    ):
+        setattr(hp_mod, _name, getattr(builder_mod, _name))
+    for _name in ("EntitySubstitution", "UnicodeDammit"):
+        setattr(hp_mod, _name, getattr(dammit_mod, _name))
 
     sys.modules["bs4"] = mod
     sys.modules["bs4.css"] = css_mod
