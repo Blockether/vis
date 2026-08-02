@@ -2197,13 +2197,20 @@
   "PATCH /v1/sessions/:sid/model {provider, model} — pin the session to a
    provider+model from THIS gateway's fleet (blank/omitted clears the pin).
 
-   The provider is validated against `configured-providers` because the gateway
-   OWNS the fleet: a client that pins an id this gateway does not serve would
-   silently degrade to the default route on every turn while every picker/footer
-   kept rendering the phantom pick. Unknown id -> 400 `unknown-provider`. The
-   MODEL name is deliberately NOT restricted to the configured names — the live
-   catalog (`/v1/providers/:id/models`, the TUI's \"Show all models\") legitimately
-   offers models that are not pinned in vis.yml."
+   The provider is validated against the PICKER fleet because the gateway OWNS
+   the fleet: a client that pins an id this gateway does not serve would silently
+   degrade to the default route on every turn while every picker/footer kept
+   rendering the phantom pick. Unknown id -> 400 `unknown-provider`.
+
+   `picker-fleet` — not `configured-providers` — is the exact set the TUI picker
+   and the companion's `/v1/router` dialog OFFER: it also carries providers that
+   are AUTHENTICATED but not yet persisted into `:providers`, and the engine
+   routes those too (the router build appends them). Validating against config
+   alone answered 400 for a provider the user had just picked from the list.
+
+   The MODEL name is deliberately NOT restricted to the configured names — the
+   live catalog (`/v1/providers/:id/models`, the TUI's \"Show all models\")
+   legitimately offers models that are not pinned in vis.yml."
   [request]
   (if-let [sid (path-sid request)]
     (let
@@ -2212,7 +2219,7 @@
                    str
                    str/trim
                    not-empty)
-       known (into #{} (map (comp name :id)) (providers/configured-providers-cached))]
+       known (into #{} (map (comp name :id)) (providers/picker-fleet))]
 
       (if (and pid (not (contains? known pid)))
         (error-response 400

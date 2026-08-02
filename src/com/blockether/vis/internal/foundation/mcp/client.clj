@@ -44,7 +44,42 @@
 ;; JSON helpers (charred). JSON-RPC keys stay STRINGS end to end.
 ;; ---------------------------------------------------------------------------
 
-(defn- ->json ^String [m] (json/write-json-str m))
+(defn- json-safe
+  "Total JSON projection of `x`. Keywords/symbols become strings, map keys become
+   strings, NaN/±Infinity become nil, ratios become doubles, and anything charred
+   has no encoder for becomes its `str`.
+
+   The `arguments` of a tool call arrive from a model or from another extension,
+   so exactly one NaN or one non-string key used to throw a raw
+   `CharredException` from INSIDE the JSON-RPC write — after the request id was
+   allocated, with the wire framing half-formed and the caller's turn poisoned.
+   Encoding is total here so a bad argument comes back as an MCP error, not as a
+   broken transport. `depth` caps pathological nesting instead of blowing the
+   stack."
+  ([x] (json-safe x 0))
+  ([x depth]
+   (cond (nil? x) nil
+         (string? x) x
+         (boolean? x) x
+         (> (long depth) 64) (str x)
+         (keyword? x) (subs (str x) 1)
+         (symbol? x) (str x)
+         (ratio? x) (double x)
+         (and (float? x) (not (Double/isFinite (double x)))) nil
+         (number? x) x
+         (map? x) (persistent! (reduce-kv (fn [m k v]
+                                            (let [k' (json-safe k (inc (long depth)))]
+                                              (assoc! m
+                                                      (if (string? k') k' (str k'))
+                                                      (json-safe v (inc (long depth))))))
+                                          (transient {})
+                                          x))
+         (or (sequential? x) (set? x) (instance? java.util.Collection x))
+         (mapv #(json-safe % (inc (long depth))) x)
+         (instance? java.util.Map x) (json-safe (into {} x) depth)
+         :else (str x))))
+
+(defn- ->json ^String [m] (json/write-json-str (json-safe m)))
 
 (defn- json-> [^String s] (json/read-json s))
 
@@ -301,8 +336,9 @@
 
 (defn- start-http!
   "Streamable-HTTP transport against `url` with optional static `headers` and
-   an optional `:bearer-fn` OAuth token provider."
-  [name {:keys [url headers bearer-fn listen?]}]
+   an optional `:bearer-fn` OAuth token provider. `:www-auth-atom`, when given, is
+   the caller's atom to keep pointed at the latest `WWW-Authenticate` challenge."
+  [name {:keys [url headers bearer-fn www-auth-atom listen?]}]
   (let
     [session
      (atom nil)
@@ -311,7 +347,11 @@
      (atom protocol-version)
 
      www-auth
-     (atom nil)
+     ;; The CALLER's atom when it supplied one. A server answering 401 with a
+     ;; Bearer challenge is the only proof it wants OAuth at all: `oauth.clj`
+     ;; discovers from that live header, and the extension tells "sign in" from
+     ;; "it is down" by whether this ever got set.
+     (or www-auth-atom (atom nil))
 
      closed?
      (atom false)

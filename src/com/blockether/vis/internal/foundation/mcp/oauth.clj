@@ -10,22 +10,24 @@
      4. dynamic-client-register (RFC 7591) if the AS supports it, or use
         the caller-supplied `client_id`;
      5. run PKCE S256 authorization-code with a loopback redirect
-        (`http://127.0.0.1:<ephemeral>/mcp-callback`) — spawn a one-shot
-        `com.sun.net.httpserver.HttpServer`, print the URL, best-effort open
-        it in the user's browser, wait for `?code=`;
+        (`http://127.0.0.1:<ephemeral>/mcp-callback`) — HEADLESS: `start-authorization!`
+        binds the one-shot listener and RETURNS the URL for whoever is
+        authorizing (often on a different device than the daemon), and
+        `finish-authorization!` lands the code either from that listener or from
+        a redirect URL pasted back. Nothing blocks waiting for a human;
      6. exchange code → access + refresh tokens; persist to
         `~/.vis/mcp-tokens/<server>.edn`;
      7. on later expiry / 401, refresh the token single-flight through
         `com.blockether.vis.internal.oauth/make-file-refresher`.
 
    The returned `bearer-fn` is a 0/1-arg function: 0-arg yields the current
-   bearer token (running the auth flow on first use); 1-arg (with the token the
-   server just rejected) forces a refresh."
+   bearer token; 1-arg (with the token the server just rejected) forces a
+   refresh. It never opens a browser and never waits — with nothing to refresh
+   it throws `:mcp/oauth-required`, which callers turn into `sign in`."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
-            [com.blockether.vis.internal.external-opener :as external-opener]
             [com.blockether.vis.internal.oauth :as oauth]
             [taoensso.telemere :as tel])
   (:import
@@ -198,21 +200,15 @@
 ;; Loopback callback (PKCE authorization-code)
 ;; ---------------------------------------------------------------------------
 
-(defn- open-browser!
-  "Best-effort hand-off of `url` to the host OS opener (`open` / `xdg-open` /
-   `cmd /c start`). Uses the same spawner as every other external link in vis,
-   so there is no `java.awt.Desktop` and no `java.desktop` module involved."
-  [^String url]
-  (try (= :ok (:status (external-opener/open! url))) (catch Throwable _ false)))
 
 (defn- start-loopback!
   "Bind a one-shot loopback callback listener on 127.0.0.1. Returns
    `{:server :port :redirect-uri :result}`; `result` is a promise delivered with
    the parsed callback query the moment a browser ON THIS HOST reaches it.
 
-   Split out of `await-loopback-code!` because the headless flow needs the same
-   listener WITHOUT blocking and without opening a browser on the daemon's
-   machine — the person authorizing may be on a phone somewhere else."
+   Kept apart from the token exchange because authorization must never block a
+   request path: the listener goes up, the URL goes out, and the person
+   authorizing may be on a phone somewhere else."
   [server-name]
   (let
     [srv
@@ -260,26 +256,6 @@
      :redirect-uri (str "http://127.0.0.1:" port "/mcp-callback")
      :result result}))
 
-(defn- await-loopback-code!
-  "Bind a one-shot HTTP server on 127.0.0.1, print the authorization URL, best-effort
-   open it, and block up to `timeout-ms` for the OAuth `code`. Returns
-   `{:code :state}` or throws `:mcp/oauth-timeout`."
-  [server-name authorize-url-fn timeout-ms]
-  (let [{:keys [^HttpServer server redirect-uri result]} (start-loopback! server-name)]
-    (try (let [url (authorize-url-fn redirect-uri)]
-           (tel/log!
-             {:level :info :id ::authorize :data {:server server-name :redirect_uri redirect-uri}}
-             (str "MCP OAuth: open this URL to authorize `" server-name "`:\n  " url))
-           (open-browser! url)
-           (let [q (deref result timeout-ms ::timeout)]
-             (cond (= q ::timeout)
-                   (throw (ex-info (str "MCP " server-name " OAuth authorization timed out")
-                                   {:type :mcp/oauth-timeout :server server-name}))
-                   (get q "error")
-                   (throw (ex-info (str "MCP " server-name " OAuth error: " (get q "error"))
-                                   {:type :mcp/oauth-error :server server-name :query q}))
-                   :else {:code (get q "code") :state (get q "state") :redirect-uri redirect-uri})))
-         (finally (.stop server 0)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Token store — one EDN file per server under ~/.vis/mcp-tokens/
@@ -448,30 +424,6 @@
                               :authorization-server as-url
                               :resource resource}))))
 
-(defn- authorize-code!
-  "Run the full RFC 9728 → RFC 8414 → PKCE authorization-code dance for `server-name`
-   against `server-url`, driving a browser on THIS host through a loopback redirect.
-   Persists tokens and returns the token map."
-  [server-name server-url www-auth auth-hint]
-  (let
-    [ctx
-     (auth-context server-name server-url www-auth auth-hint)
-
-     client-id
-     (volatile! nil)
-
-     {:keys [code redirect-uri]}
-     (await-loopback-code! server-name
-                           (fn [redirect-uri]
-                             (let [built (authorize-url ctx auth-hint redirect-uri)]
-                               (vreset! client-id (:client-id built))
-                               (:url built)))
-                           (or (:authorization-timeout-ms auth-hint) 300000))]
-
-    (when-not (seq code)
-      (throw (ex-info "MCP OAuth: no code in callback"
-                      {:type :mcp/oauth-error :server server-name})))
-    (exchange-code! ctx @client-id code redirect-uri)))
 
 (defn- refresh-token-exchange!
   "Refresh an access token via the token endpoint. May rotate the refresh token."
@@ -493,33 +445,45 @@
 ;; Public: a 0/1-arg `bearer-fn` for the HTTP transport
 ;; ---------------------------------------------------------------------------
 
+(defn- oauth-required
+  "The one refusal for `server-name` when only a HUMAN can move things forward:
+   nothing is persisted yet, or the refresh token stopped working. Callers turn
+   this into `sign in`, never into `the server is broken` - and never into a
+   five-minute wait."
+  [server-name server-url www-auth cause]
+  (ex-info (str "MCP server '" server-name "' is not authorized - start the OAuth flow to sign in")
+           {:type :mcp/oauth-required
+            :server server-name
+            :server-url server-url
+            :www-authenticate www-auth}
+           cause))
+
 (defn make-bearer-fn
   "Build a 0/1-arg fn returning the current Bearer token string for `server-name`.
-   On first use (no cached tokens) OR when called with the just-rejected token,
-   it runs the OAuth flow / refresh under a single-flight lock and persists the
-   new tokens. `server-url` is the MCP endpoint. `www-auth-atom` is an atom the
-   HTTP transport keeps updated with the latest `WWW-Authenticate` header (so we
-   discover from the LIVE 401). `auth-hint` is user config from `:mcp :servers
-   <name> :auth`."
-  [server-name server-url www-auth-atom auth-hint]
+   0-arg yields the persisted token; 1-arg (the token the server just rejected)
+   forces a single-flight refresh. `server-url` is the MCP endpoint and
+   `www-auth-atom` is the atom the HTTP transport keeps pointed at the latest
+   `WWW-Authenticate` header, so a refusal can carry the LIVE 401 details.
+
+   It never runs an interactive authorization. Every caller sits on a path a
+   human is waiting on - a tool call, a reconcile tick, the health loop - and the
+   browser dance blocked each of them for up to five minutes on a server nobody
+   had signed into yet, which looked exactly like a hung daemon. With nothing to
+   refresh it throws `:mcp/oauth-required` immediately; authorizing is the
+   explicit headless flow below, which hands back a URL instead of waiting for
+   one."
+  [server-name server-url www-auth-atom _auth-hint]
   (oauth/refresher
     (fn [rejected]
       (let [creds (read-tokens server-name)]
         (when (and creds (:token creds) (not (expired? creds)) (not= rejected (:token creds)))
           (:token creds))))
     (fn []
-      (let
-        [creds
-         (read-tokens server-name)
-
-         fresh
-         (cond (and creds (:refresh-token creds))
-               (try (refresh-token-exchange! server-name creds)
-                    (catch Throwable _
-                      (authorize-code! server-name server-url @www-auth-atom auth-hint)))
-               :else (authorize-code! server-name server-url @www-auth-atom auth-hint))]
-
-        (:token fresh)))))
+      (let [creds (read-tokens server-name)]
+        (if (:refresh-token creds)
+          (try (:token (refresh-token-exchange! server-name creds))
+               (catch Throwable t (throw (oauth-required server-name server-url @www-auth-atom t))))
+          (throw (oauth-required server-name server-url @www-auth-atom nil)))))))
 
 (defn forget!
   "Drop persisted tokens for `server-name` (e.g. on a gateway sign-out, or when a
@@ -544,12 +508,12 @@
 ;; ---------------------------------------------------------------------------
 ;; Headless flows — authorizing from a client that is NOT this daemon's terminal
 ;;
-;; `authorize-code!` above assumes the person is sitting at the machine running
-;; the gateway: it opens a browser here and blocks. The Companion app and the TUI
-;; are clients, possibly on another device entirely, so they need the flow taken
-;; apart: START returns the URL to show, the user authorizes in THEIR browser,
-;; and the flow lands either by itself (the browser did reach the loopback
-;; listener on this host) or by POSTing back the redirect URL they were dumped on.
+;; This is the ONLY authorization path. The Companion app and the TUI are
+;; clients, possibly on another device entirely, and the daemon may have no
+;; browser at all, so the flow is taken apart: START returns the URL to show, the
+;; user authorizes in THEIR browser, and the flow lands either by itself (the
+;; browser did reach the loopback listener on this host) or by POSTing back the
+;; redirect URL they were dumped on. Nothing on a request path waits for a human.
 ;; ---------------------------------------------------------------------------
 
 (def ^:private flow-ttl-ms

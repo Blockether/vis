@@ -64,6 +64,18 @@
 
     (if (:url spec) :streamable-http :stdio)))
 
+(defn- wire-transport
+  "The transport as every wire surface spells it: snake_case, matching what a
+   client PUTs back. `transport-of` is the internal kebab keyword; rendering it
+   with `name` leaked `streamable-http` into ctx while `/v1/mcp/servers` said
+   `streamable_http`, so one MCP server appeared to have two transports."
+  [spec]
+  (case (transport-of spec)
+    :streamable-http
+    "streamable_http"
+
+    "stdio"))
+
 (defn- canonicalize-server-spec
   "Persist the standard external spelling while retaining legacy read support."
   [spec]
@@ -561,11 +573,7 @@
 
     (cond->
       {:name name
-       :transport (case (transport-of spec)
-                    :streamable-http
-                    "streamable_http"
-
-                    "stdio")
+       :transport (wire-transport spec)
        :enabled (enabled? spec)
        :is-connected (boolean conn)
        ;; Whether the GATEWAY owns this entry. A server declared in a hand-written
@@ -848,24 +856,48 @@
                       :metadata {:started-at-ms (now-ms) :finished-at-ms (now-ms) :duration-ms 0}
                       :error (merge {:message message} extra)}))
 
+(defn- needs-auth?
+  "True when `server` is an OAuth server nobody has signed into: its spec carries
+   a synthesised `:bearer-fn` (HTTP transport with no static `Authorization`
+   header) and no token is persisted. Kept distinct from `disconnected` on
+   purpose - \"sign in\" and \"it is broken\" are different instructions, and only
+   one of them is the user's to act on."
+  [session-id server]
+  (let [spec (get (visible-servers session-id) server)]
+    (boolean (and (:bearer-fn spec) (not (:is-authorized (mcp-oauth/token-status server)))))))
+
+(defn- authorize-hint
+  "Where a human goes to authorize `server`. The gateway route is headless: it
+   answers with a URL to open, so it works from a phone as well as from the
+   machine running the daemon."
+  [server]
+  (str "Authorize it in Settings -> MCP Servers, or POST /v1/mcp/servers/"
+       server
+       "/auth/start, which answers with the URL to open."))
 
 (defn- unavailable-err
-  "The refusal for a server ctx advertises but the pool cannot reach. A KILLED
-   server is configured and enabled, so telling its user to check `:mcp :servers`
-   would send them editing a file that is already right: name the stop, and where
-   to undo it."
+  "The refusal for a server ctx advertises but the pool cannot reach. Three very
+   different instructions hide behind one failure, so they are told apart: an
+   OAuth server nobody signed into needs a sign-in; a KILLED server is configured
+   and enabled, so pointing at `:mcp :servers` would send its user editing a file
+   that is already right; anything else really is configuration."
   [env server]
-  (if (killed? server)
-    (err :mcp/call
-         (str "MCP server '" server "' was stopped and is held down until it is started again.")
-         :hint (str "Start it from Settings -> MCP Servers, or POST /v1/mcp/servers/"
-                    server
-                    "/actions/start"))
-    (err :mcp/call (str "MCP server '"
+  (cond (needs-auth? (:session-id env) server)
+        (err :mcp/call (str "MCP server '" server "' is not authorized yet - nobody has signed in.")
+             :server server
+             :hint (authorize-hint server))
+        (killed? server)
+        (err :mcp/call
+             (str "MCP server '" server "' was stopped and is held down until it is started again.")
+             :hint (str "Start it from Settings -> MCP Servers, or POST /v1/mcp/servers/"
+                        server
+                        "/actions/start"))
+        :else (err :mcp/call
+                   (str "MCP server '"
                         server
                         "' is not configured or is disabled (see ~/.vis/state.yml :mcp :servers).")
-         :hint (str "Enabled servers: "
-                    (pr-str (vec (keys (visible-servers (:session-id env)))))))))
+                   :hint (str "Enabled servers: "
+                              (pr-str (vec (keys (visible-servers (:session-id env)))))))))
 
 (defn- tool-rows
   "`conn`'s catalog in wire shape. Reads the conn's CACHED listing, so asking for
@@ -877,36 +909,64 @@
            "input_schema" (get t "inputSchema")})
         (conn-tools conn)))
 
+(defn- call-failed-err
+  "Turn anything thrown below this point into a typed refusal. A tool call
+   crosses a process boundary or a network, so it fails in ways no argument check
+   predicts: a token that expired mid-turn, a server that died between the
+   catalog and the call, a payload the peer rejects. None of it may escape as a
+   raw exception - a throwing extension ends the turn, while an error envelope
+   leaves the model free to fix its arguments or the user free to sign in."
+  [env server tool ^Throwable t]
+  (if (= :mcp/oauth-required (:type (ex-data t)))
+    (err :mcp/call
+         (str "MCP server '" server "' is not authorized - its OAuth token is missing or expired.")
+         :server server
+         :hint (authorize-hint server))
+    (err :mcp/call (str "MCP call to '" server
+                        "'" (when (string? tool) (str " tool '" tool "'"))
+                        " failed: " (or (ex-message t) (str t)))
+         :server server
+         :tool (when (string? tool) tool)
+         :hint (str "Call mcp__call with `server` alone to re-read the tool's input schema"
+                    (when-not (needs-auth? (:session-id env) server)
+                      ", or check the server's status in session env.mcp")
+                    "."))))
+
 (defn- mcp-call-impl
   "The whole model-facing surface. `server` alone answers with that server's tools,
    descriptions and input schemas; `server` + `tool` invokes. There is no inventory
    verb because the inventory - every visible server, its status, its tool NAMES -
-   already rides in ctx under `env.mcp`, so a call only has to name the server."
+   already rides in ctx under `env.mcp`, so a call only has to name the server.
+
+   Every failure leaves here as an error envelope, never as a throw: connecting,
+   listing and calling all reach a remote peer."
   ([env server] (mcp-call-impl env server nil nil))
   ([env server tool] (mcp-call-impl env server tool nil))
   ([env server tool args]
-   (if-let [conn (ensure-connected! (:session-id env) server)]
-     (let
-       [rows (tool-rows conn)
-        row (when (string? tool) (first (filter #(= tool (get % "name")) rows)))]
+   (try
+     (if-let [conn (ensure-connected! (:session-id env) server)]
+       (let
+         [rows (tool-rows conn)
+          row (when (string? tool) (first (filter #(= tool (get % "name")) rows)))]
 
-       (cond
-         ;; No tool named - or an args map drifted into its slot. Answer with the
-         ;; catalog rather than guessing at a call: this IS the schema lookup.
-         (or (not (string? tool)) (str/blank? tool)) (ok :mcp/call {"server" server "tools" rows})
-         ;; Unknown name, judged only against a catalog we actually have: a
-         ;; momentarily empty listing must never refuse a real call.
-         (and (seq rows) (nil? row))
-         (err :mcp/call (str "MCP server '" server "' exposes no tool '" tool "'.")
-              :server server
-              :tools (mapv #(get % "name") rows)
-              :hint
-              "Call mcp__call with `server` alone for every tool's description and input schema.")
-         :else (let
-                 [r (mcp/call-tool conn tool (if (map? args) args {}))
-                  is-error (boolean (get r "isError"))]
+         (cond
+           ;; No tool named - or an args map drifted into its slot. Answer with the
+           ;; catalog rather than guessing at a call: this IS the schema lookup.
+           (or (not (string? tool)) (str/blank? tool)) (ok :mcp/call {"server" server "tools" rows})
+           ;; Unknown name, judged only against a catalog we actually have: a
+           ;; momentarily empty listing must never refuse a real call.
+           (and (seq rows) (nil? row))
+           (err :mcp/call (str "MCP server '" server "' exposes no tool '" tool "'.")
+                :server server
+                :tools (mapv #(get % "name") rows)
+                :hint
+                "Call mcp__call with `server` alone for every tool's description and input schema.")
+           :else (let
+                   [r (mcp/call-tool conn tool (if (map? args) args {}))
+                    is-error (boolean (get r "isError"))]
 
-                 (ok :mcp/call
+                   (ok
+                     :mcp/call
                      (cond->
                        {"server" server "tool" tool "content" (get r "content") "is_error" is-error}
                        ;; A refused call is nearly always an argument mismatch, and the
@@ -914,7 +974,8 @@
                        ;; costs no extra round trip.
                        (and is-error row)
                        (assoc "input_schema" (get row "input_schema")))))))
-     (unavailable-err env server))))
+       (unavailable-err env server))
+     (catch Throwable t (call-failed-err env server tool t)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Error envelope
@@ -1025,11 +1086,13 @@
    of re-sending the whole inventory. A list would re-send every server on any
    change.
 
-   Disconnected and killed servers are listed too, with `\"status\"`: the model must
-   be able to tell \"no such server\" from \"stopped - start it again\". The
-   daemon-wide pool is shared across every session; servers a client attached to
-   THIS session (ACP `mcpServers`) are listed alongside it and shadow a global one
-   of the same name, marked `\"scope\": \"session\"`."
+   Servers that are not usable are listed too, with `\"status\"`: the model must be
+   able to tell \"no such server\" from \"stopped - start it again\" from \"signed
+   out\" (`\"needs_auth\"` - an OAuth server with no live token, where asking for
+   tools can only produce a refusal). The daemon-wide pool is shared across every
+   session; servers a client attached to THIS session (ACP `mcpServers`) are
+   listed alongside it and shadow a global one of the same name, marked
+   `\"scope\": \"session\"`."
   [env]
   (reconcile-async!)
   (let
@@ -1051,9 +1114,10 @@
          [nm
           (cond->
             {"scope" (if session? "session" "global")
-             "transport" (name (transport-of spec))
+             "transport" (wire-transport spec)
              "status" (cond conn "connected"
                             (and (not session?) (killed? nm)) "killed"
+                            (needs-auth? sid nm) "needs_auth"
                             :else "disconnected")}
             conn
             (assoc "tools" names)

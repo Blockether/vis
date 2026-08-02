@@ -5132,10 +5132,17 @@
                              "imports" (mapv import->wire (:imports idx))
                              "language" (:language idx)
                              "line_count" (:line-count idx))
+                       ;; A detected language with a nil index is AMBIGUOUS: the pack
+                       ;; may have no structure intel for it, OR the file may simply
+                       ;; hold no top-level definition and no import (a Go file that is
+                       ;; only a `package` clause plus directives indexes to nil). Say
+                       ;; both — blaming the language sends the caller away from
+                       ;; struct_index for a language it fully supports.
                        language (assoc base
                                   "language" language
                                   "note"
-                                  "No structural index for this language yet — use cat(path).")
+                                  (str "No top-level definitions or imports here — the file may hold "
+                                       "none, or the language has no structural index yet. Use cat(path)."))
                        :else (assoc base "note" "Unknown language — use cat(path).")))})))
 
 (declare occurrences-data occurrence->wire symbol-rename-tool)

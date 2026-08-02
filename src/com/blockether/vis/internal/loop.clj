@@ -9796,7 +9796,16 @@
        ;; (svar selects by provider :priority, not vector order).
        session-pref (when (and (nil? model) (:session-id env))
                       (session-model/model-of (:db-info env) (:session-id env)))
-       model (or model (:model session-pref))
+       ;; ONE canonical spelling of the pin from here on. `forced-routing-for-pref`
+       ;; and `router-with-pinned-model` trim; `router-for-model` does NOT — so a
+       ;; pref carrying stray whitespace (a hand-edited DB row, a client that pads
+       ;; the field) BOUND the right model while the display/cost root fell back to
+       ;; the pinned provider's first model: the turn card named a model the turn
+       ;; never ran.
+       model (some-> (or model (:model session-pref))
+                     str
+                     str/trim
+                     not-empty)
        ;; A persisted provider belongs only to the persisted model it was saved
        ;; with. Never combine it with an explicit caller model: that creates a
        ;; synthetic provider/model pair and can silently degrade to config order.
