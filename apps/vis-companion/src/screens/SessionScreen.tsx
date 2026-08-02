@@ -43,10 +43,7 @@ import {
 } from '../lib/draft-messages';
 import { clearPendingVoice, readPendingVoice, savePendingVoice } from '../lib/pending-voice';
 import {
-  captureReaderAnchor,
   readerOwnsScroll,
-  restoreReaderAnchor,
-  type ReaderAnchor,
 } from '../lib/reader-gesture';
 import type {
   ContentBlock,
@@ -1168,11 +1165,6 @@ export function SessionScreen({
   const pasteCounterRef = useRef(peekDraftMessage(draftMessageId).counter);
   const resizeScrollFrameRef = useRef<number | null>(null);
   const disclosureScrollFrameRef = useRef<number | null>(null);
-  // The line the reader is on while rows land ABOVE it. An anchored element,
-  // never a height: two correctors comparing heights each bill the same growth,
-  // and one "↑ Load earlier" then moved the scroller 57 564 px for 40 030 px of
-  // history. Restoring an anchor is idempotent across owners.
-  const prependAnchorRef = useRef<ReaderAnchor | null>(null);
   const scrollMetricsFrameRef = useRef<number | null>(null);
   // A rotation has one terminal scroll write: keep observers and stale scroll
   // events from competing with that write until it has landed.
@@ -1556,11 +1548,25 @@ export function SessionScreen({
   // the turn at the top edge before the flip and put it back after, or simply
   // stay pinned to the bottom when that is where the reader was.
   const scrollAnchorRef = useRef<ScrollAnchor | null>(null);
+  // Where the corrector below last left `scrollTop`.
+  const correctedTopRef = useRef(-1);
 
   const captureScrollAnchor = useCallback(() => {
     const viewport = scrollRef.current;
     const transcript = transcriptRef.current;
     if (!viewport || !transcript) return;
+    // A scroller sitting exactly where the corrector left it means nothing the
+    // reader did moved it: every scroll event since was the echo of a
+    // correction, and re-reading the fold there re-anchors onto history that
+    // landed above the reader in the same frame — React commits the next chunk
+    // from a task, before the frame this would run in, so that push is never
+    // billed. Measured, it leaked 14 477 px of a 33 425 px "↑ Load earlier".
+    if (
+      scrollAnchorRef.current?.el.isConnected &&
+      Math.abs(viewport.scrollTop - correctedTopRef.current) < 1
+    ) {
+      return;
+    }
     // Following the live turn needs no anchor: the bottom IS the anchor.
     scrollAnchorRef.current = followingRef.current
       ? null
@@ -1573,6 +1579,55 @@ export function SessionScreen({
     if (applyScrollAnchor(viewport, scrollAnchorRef.current)) return;
     if (followingRef.current) scrollToEnd('auto');
   }, [scrollToEnd]);
+
+  // THE one owner of "the reader keeps their line". Rows land above the fold from
+  // three directions — history prepends, the backfill that refills the render
+  // window, and traces ramping their segments — and each corrector that
+  // compensated its own growth billed the same frame again: measured, a
+  // 39 730 px "↑ Load earlier" walked the scroller 59 910 px. A content-box
+  // observer sees every one of those mutations in the frame it lands, before
+  // paint, and re-seating an anchored child is idempotent — whoever ran first
+  // fixed the frame and the next entry measures zero.
+  useEffect(() => {
+    const viewport = scrollRef.current;
+    const transcript = transcriptRef.current;
+    if (!viewport || !transcript || typeof ResizeObserver === 'undefined') return;
+    let frame: number | null = null;
+    // `captureScrollAnchor` already ignores the echo of our own corrections.
+    // Rotation is its own transaction and owns the anchor for its duration.
+    const busy = () => isViewportRotating() || rotationRestorePendingRef.current;
+    const recapture = () => {
+      frame = null;
+      if (!busy()) captureScrollAnchor();
+    };
+    const handleViewportScroll = () => {
+      if (frame === null) frame = window.requestAnimationFrame(recapture);
+    };
+    const observer = new ResizeObserver(() => {
+      if (busy()) return;
+      // The end is its own anchor, and a hand on the glass owns the scroller: in
+      // both cases the reader's line is wherever they just put it, so re-read it.
+      if (followingRef.current || readerOwnsScroll()) {
+        captureScrollAnchor();
+        return;
+      }
+      // Otherwise hold the line the reader chose. `captureScrollAnchor` refuses
+      // to re-read the fold while the scroller sits where this left it, so the
+      // anchor survives the whole growth window and every pixel that lands
+      // above it is billed exactly once: measured, a 33 417 px "↑ Load earlier"
+      // moved the scroller 33 416 px and the reader's turn 1 px.
+      if (!applyScrollAnchor(viewport, scrollAnchorRef.current)) captureScrollAnchor();
+      correctedTopRef.current = viewport.scrollTop;
+    });
+    observer.observe(transcript);
+    viewport.addEventListener('scroll', handleViewportScroll, { passive: true });
+    recapture();
+    return () => {
+      observer.disconnect();
+      viewport.removeEventListener('scroll', handleViewportScroll);
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [captureScrollAnchor]);
 
   // Rotation is one transaction: snapshot before intermediate reflows, then wait
   // two paint frames after the final viewport measurement before restoring once.
@@ -2739,13 +2794,6 @@ export function SessionScreen({
   }, [client, loadTranscript, sid, subscriptions, noteQueueDelta, restoreCancelledQueued]);
 
   useLayoutEffect(() => {
-    const viewport = scrollRef.current;
-    const anchored = prependAnchorRef.current;
-    if (viewport && anchored) {
-      restoreReaderAnchor(viewport, anchored);
-      prependAnchorRef.current = null;
-      return;
-    }
     if (initialScrollPendingRef.current && turns.length) {
       initialScrollPendingRef.current = false;
       pinToEnd();
@@ -2764,16 +2812,12 @@ export function SessionScreen({
 
   // Fill the render window back up to `visibleTurnCount`, a chunk per frame,
   // once the first paint is out. Rows land ABOVE the viewport, so a reader at
-  // the bottom sees nothing; a reader who scrolled up in the meantime is held
-  // by the same prepend anchor the "load earlier" button uses.
+  // the bottom sees nothing; a reader who scrolled up is held by the scroller's
+  // one anchor observer.
   useEffect(() => {
     if (hydratedTurnCount >= visibleTurnCount) return;
     let frame: number | null = window.requestAnimationFrame(() => {
       frame = null;
-      const viewport = scrollRef.current;
-      if (viewport && !followingRef.current && prependAnchorRef.current === null) {
-        prependAnchorRef.current = captureReaderAnchor(viewport);
-      }
       setHydratedTurnCount((count) => count + HYDRATE_TURNS_PER_FRAME);
     });
     return () => {
@@ -3828,13 +3872,9 @@ export function SessionScreen({
       session?.workspace?.repo_root,
     ],
   );
-  // Pin the viewport to the content it is already showing, so rows added ABOVE
-  // do not shove it. The layout effect reads this height on the next paint.
+  // Rows are about to land ABOVE the viewport. Stopping the follow is all this
+  // has to do: the anchor observer holds the reader's line for every mutation.
   const anchorPrepend = () => {
-    const viewport = scrollRef.current;
-    if (viewport) {
-      prependAnchorRef.current = captureReaderAnchor(viewport);
-    }
     followingRef.current = false;
   };
 
@@ -3968,7 +4008,10 @@ export function SessionScreen({
           ) : null}
 
           {earlierTotal > 0 && (
-            <div className="mb-5 flex justify-center">
+            // Not anchorable: this row is pinned above the history it loads, so
+            // its own top never moves and anchoring on it would hold nothing
+            // while 40 000 px lands underneath it.
+            <div className="mb-5 flex justify-center" data-anchor="skip">
               <button
                 type="button"
                 className="border border-dialog-edge bg-panel px-3 py-1.5 font-mono text-chip font-bold text-dialog-hint transition-colors hover:border-accent hover:text-dialog-hint-key"

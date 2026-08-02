@@ -29,10 +29,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { parseUserMessage } from '../lib/paste';
 import {
-  captureReaderAnchor,
   readerOwnsScroll,
-  restoreReaderAnchor,
-  type ReaderAnchor,
 } from '../lib/reader-gesture';
 import { formatCost, formatTokens, turnUsage } from '../lib/usage';
 import { isViewportRotating, onViewportRotation } from '../lib/viewport';
@@ -1652,13 +1649,11 @@ export const IterationTrace = memo(function IterationTrace({
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
   // What this trace measured in the frame that asks for more segments: its own
-  // height, how far the reader was from the end, and the element their eye is on
-  // with the exact screen offset it had. `null` means this render was not a ramp
-  // step.
+  // height, and how far the reader was from the end. `null` means this render
+  // was not a ramp step.
   const rampFromRef = useRef<{
     own: number;
     gap: number;
-    anchor: ReaderAnchor | null;
   } | null>(null);
   // Identity in the ramp queue, so only the bottom-most trace backfills at once.
   const [rampId] = useState(() => Symbol('trace-ramp'));
@@ -1672,9 +1667,11 @@ export const IterationTrace = memo(function IterationTrace({
 
   const rampDone = mountedSegments >= segments.length;
 
-  // Before the browser paints the segments the ramp just mounted ABOVE the
-  // reader: a reader at the bottom stays at the bottom, anyone else keeps the
-  // exact line they were reading.
+  // Before the browser paints the segments the ramp just mounted: a reader at
+  // the bottom stays at the bottom. Holding anyone ELSE's line is deliberately
+  // not done here — see `lib/reader-gesture`; `SessionScreen` anchors the whole
+  // scroller once, and a second opinion in this effect double-billed every
+  // frame a "↑ Load earlier" shared with a ramp step.
   useLayoutEffect(() => {
     const from = rampFromRef.current;
     rampFromRef.current = null;
@@ -1696,14 +1693,6 @@ export const IterationTrace = memo(function IterationTrace({
       // scroller: a slow drag travels less than this tolerance in one frame, so
       // the pin would otherwise swallow the drag itself.
       if (from.gap <= 8 && !readerOwnsScroll()) scroller.scrollTop = scroller.scrollHeight;
-      // Everyone else keeps their line, and the only honest way to keep it is to
-      // put the element they were looking at back where it was. Compensating
-      // "how much did something above me grow" instead was a RATCHET: traces
-      // shrink too (a batch re-wraps, a highlight re-lays-out), growth was paid
-      // for and shrinkage was never refunded, so 33k px of new history walked
-      // the scroller 133k px and left the reader 99k px above their own line.
-      // Measuring drift is signed, self-correcting, and costs one rect.
-      else restoreReaderAnchor(scroller, from.anchor);
     }
 
     // Price this batch: everything above is its render and its forced layout.
@@ -1752,7 +1741,6 @@ export const IterationTrace = memo(function IterationTrace({
               // Measured here, before the batch lands, because only now does it
               // mean "the reader is following the end".
               gap: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
-              anchor: captureReaderAnchor(scroller),
             }
           : null;
       step.startedAt = performance.now();

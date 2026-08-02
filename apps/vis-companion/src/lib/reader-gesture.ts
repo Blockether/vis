@@ -112,66 +112,11 @@ if (typeof window !== "undefined") {
   window.addEventListener("scroll", onScroll, { capture: true, passive: true });
 }
 
-/**
- * Where the reader's eye is: the element sitting at the top edge of the
- * scroller, and the exact screen offset it had when we looked.
- */
-export type ReaderAnchor = {
-  element: Element | null;
-  top: number;
-  // The scroller's height at capture time. Only a fallback: the element at the
-  // top edge is sometimes the "↑ Load earlier" row itself, which the load that
-  // follows unmounts — measured, that left 39 722 px of new history entirely
-  // uncompensated and shoved the reader down by all of it.
-  height: number;
-};
-
-/**
- * Capture that element BEFORE a mutation, restore it after, and the reader
- * keeps their line no matter what the content did.
- *
- * Every corrector in the transcript must use this pair rather than "the
- * scroller grew by N, so add N". Height deltas are wrong twice over: they are
- * unsigned in practice (content shrinks too — a batch re-wraps, a highlight
- * re-lays-out — and nobody refunds those pixels), and two correctors watching
- * the same frame each bill it. Measured with height deltas, one "↑ Load
- * earlier" of 40 030 px walked the scroller 57 564 px and left the reader
- * 17 568 px above their own line. Drift is signed, and it self-corrects across
- * owners: whoever runs first fixes the frame, and everyone after measures zero.
- */
-export function captureReaderAnchor(scroller: HTMLElement): ReaderAnchor | null {
-  const box = scroller.getBoundingClientRect();
-  const probe = document.elementFromPoint(
-    box.left + Math.min(24, box.width / 2),
-    box.top + 4,
-  );
-  let element: Element | null =
-    probe && probe !== scroller && scroller.contains(probe) ? probe : null;
-  // Sticky and fixed chrome floats over that edge and never moves with the
-  // content, so anchoring to it would measure nothing and correct nothing.
-  for (let el: Element | null = element; el && el !== scroller; el = el.parentElement) {
-    const position = getComputedStyle(el).position;
-    if (position === 'sticky' || position === 'fixed') {
-      element = null;
-      break;
-    }
-  }
-  return {
-    element,
-    top: element ? element.getBoundingClientRect().top : 0,
-    height: scroller.scrollHeight,
-  };
-}
-
-/** Put the anchored element back where it was. Returns the drift it undid. */
-export function restoreReaderAnchor(
-  scroller: HTMLElement,
-  anchor: ReaderAnchor | null,
-): number {
-  if (!anchor) return 0;
-  const drift = anchor.element?.isConnected
-    ? anchor.element.getBoundingClientRect().top - anchor.top
-    : scroller.scrollHeight - anchor.height;
-  if (drift !== 0) scroller.scrollTop += drift;
-  return drift;
-}
+// Keeping the reader's line while content lands above them is NOT here, and no
+// component may do it locally. Rows arrive from three directions — history
+// prepends, the backfill that refills the render window, and traces ramping
+// their segments — and every corrector that compensates "its own" growth bills
+// the same frame again: measured, a 39 730 px "↑ Load earlier" walked the
+// scroller 59 910 px and left the reader 20 000 px past their line. The screen
+// that owns the scroller anchors it once, in one ResizeObserver, with
+// `scrollAnchorFor`/`applyScrollAnchor` from `lib/viewport`.

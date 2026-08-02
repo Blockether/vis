@@ -281,52 +281,84 @@ function watchRotation() {
 }
 
 /**
- * Scroll anchoring for a rotation.
+ * Scroll anchoring: keeping the reader's line while the page under them moves.
  *
- * A rotation rewraps every line in a scroller, so the pixel `scrollTop` the
- * reader was parked at stops pointing at the content they were reading. The
- * browser's own anchoring is not an option in the transcript (it runs with
- * `overflow-anchor: none` so that prepending earlier turns stays stable), so
- * remember one child and its distance above the fold, and put it back.
+ * Rotation rewraps every line, so the pixel `scrollTop` the reader parked at
+ * stops pointing at what they were reading; "↑ Load earlier", the turn backfill
+ * and a trace ramping its segments all insert content ABOVE them with the same
+ * effect. The browser's own anchoring is not an option here (the transcript runs
+ * `overflow-anchor: none` so prepending stays stable), so remember what is at
+ * the fold and put it back.
  *
- * Structurally typed on purpose: only these few numbers matter, which keeps the
- * arithmetic verifiable without a DOM.
+ * Two things measured on a 74-turn session decide the shape of this:
+ *
+ *   - the anchor must be the DEEPEST element crossing the fold, not a top-level
+ *     child. One turn can be 40 000 px tall; while its segments hydrate, the row
+ *     element's own `offsetTop` never moves, so a child-level anchor reports
+ *     zero drift while the reader is shoved off the screen.
+ *   - it is measured against the scroller's own top edge, in viewport
+ *     coordinates, and applied as a RELATIVE correction. That is idempotent —
+ *     whoever runs first in a frame fixes it, the next caller measures zero —
+ *     which is what lets one observer own the whole job.
  */
-type AnchorChild = { offsetTop: number; offsetHeight: number; isConnected: boolean };
-type AnchorHost = { children: ArrayLike<Element> };
-type AnchorScroller = { scrollTop: number };
-export type ScrollAnchor = { el: AnchorChild; offset: number };
+type AnchorRect = { top: number; bottom: number };
+type AnchorElement = {
+  isConnected: boolean;
+  getBoundingClientRect(): AnchorRect;
+  children: ArrayLike<Element>;
+  // `data-anchor="skip"` marks chrome that sits above the content it mutates —
+  // the "load earlier" row — whose position says nothing about the reader.
+  dataset?: { anchor?: string };
+};
+type AnchorScroller = { scrollTop: number; getBoundingClientRect(): AnchorRect };
+export type ScrollAnchor = { el: AnchorElement; offset: number };
+
+/** Deepest descendants win, but a transcript is deep: bound the walk. */
+const ANCHOR_MAX_DEPTH = 24;
 
 /**
- * The top-most child still on screen, plus its (negative or zero) offset from
- * the fold. Stacked children make `offsetTop` monotonic, so this is a binary
- * search rather than a walk — it runs on every scroll event and a long
- * transcript has hundreds of turns.
+ * First child whose bottom edge is still below the fold. Siblings are stacked,
+ * so this is a binary search — it runs on every scroll event of a scroller with
+ * hundreds of turns in it.
  */
-export function scrollAnchorFor(
-  viewport: AnchorScroller,
-  container: AnchorHost,
-): ScrollAnchor | null {
-  const children = container.children;
-  const target = viewport.scrollTop;
+function crossingChild(host: AnchorElement, target: number): AnchorElement | null {
+  const children = host.children;
   let lo = 0;
   let hi = children.length - 1;
-  let found: AnchorChild | null = null;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    const child = children[mid] as unknown as AnchorChild;
-    if (child.offsetTop + child.offsetHeight > target) {
-      found = child;
-      hi = mid - 1;
-    } else {
-      lo = mid + 1;
-    }
+    const child = children[mid] as unknown as AnchorElement;
+    if (child.getBoundingClientRect().bottom > target) hi = mid - 1;
+    else lo = mid + 1;
   }
-  return found ? { el: found, offset: found.offsetTop - target } : null;
+  for (let index = lo; index < children.length; index += 1) {
+    const child = children[index] as unknown as AnchorElement;
+    // Reading at the very top means the top-most child IS the "load earlier"
+    // row, which is pinned above the history it loads: it measures zero drift
+    // while 40 000 px lands underneath it. Take the first real turn instead.
+    if (child.dataset?.anchor !== 'skip') return child;
+  }
+  return null;
+}
+
+/** What the reader is looking at, as an element plus its offset from the fold. */
+export function scrollAnchorFor(
+  viewport: AnchorScroller,
+  container: AnchorElement,
+): ScrollAnchor | null {
+  const target = viewport.getBoundingClientRect().top;
+  let node = crossingChild(container, target);
+  if (!node) return null;
+  for (let depth = 0; depth < ANCHOR_MAX_DEPTH; depth += 1) {
+    const deeper = crossingChild(node, target);
+    if (!deeper) break;
+    node = deeper;
+  }
+  return { el: node, offset: node.getBoundingClientRect().top - target };
 }
 
 /**
- * Puts the anchored child back where it was. False means there was nothing to
+ * Puts the anchored element back where it was. False means there was nothing to
  * restore (no anchor, or the turn was unmounted meanwhile) and the caller owns
  * the fallback.
  */
@@ -335,8 +367,8 @@ export function applyScrollAnchor(
   anchor: ScrollAnchor | null,
 ): boolean {
   if (!anchor || !anchor.el.isConnected) return false;
-  const next = Math.max(0, anchor.el.offsetTop - anchor.offset);
-  if (Math.abs(next - viewport.scrollTop) > 0.5) viewport.scrollTop = next;
+  const drift = anchor.el.getBoundingClientRect().top - viewport.getBoundingClientRect().top - anchor.offset;
+  if (Math.abs(drift) > 0.5) viewport.scrollTop = Math.max(0, viewport.scrollTop + drift);
   return true;
 }
 
