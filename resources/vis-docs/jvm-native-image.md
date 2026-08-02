@@ -18,3 +18,26 @@ Native libraries are reached through the JDK Foreign Function & Memory API. The 
 ## Reachability metadata is generated, then cleaned
 
 Metadata is captured by the tracing agent (`-agentlib:native-image-agent`) and merged. Because merging accumulates, a deterministic filter removes the agent's Clojure-internal noise so the committed config stays lean and reviewable. See the contributor guide for the exact commands.
+
+## Building behind a corporate TLS proxy
+
+A freshly installed GraalVM trusts the public roots and nothing else, so on a network that intercepts TLS the build fails with `SunCertPathBuilderException: unable to find valid certification path to requested target` — dependency resolution, `native-image`, or the JDK download itself — even though the system JDK works, because its `cacerts` was patched by the corporate installer.
+
+Point vis at the extra root instead of patching the JDK (a patched `cacerts` is silently lost on the next reinstall):
+
+```bash
+export VIS_CA_CERT=/etc/ssl/certs/corporate-ca.pem   # PEM bundle
+eval "$(bin/require-graalvm --export)"               # JAVA_HOME + JAVA_TOOL_OPTIONS
+clojure -T:build native
+```
+
+`bin/require-graalvm` is the single owner of that policy:
+
+- `curl` gets `--cacert`, so the pinned JDK downloads.
+- The PEM is imported into a **copy** of that JDK's `cacerts`, cached under `${XDG_CACHE_HOME:-~/.cache}/vis`, so the public roots keep working and the JDK is never modified. Run `bin/require-graalvm --truststore` to print the path.
+- `--export` adds `-Djavax.net.ssl.trustStore*` to `JAVA_TOOL_OPTIONS` (which every forked JVM reads, unlike `JDK_JAVA_OPTIONS`) plus `CURL_CA_BUNDLE`/`SSL_CERT_FILE`.
+- `build.clj` forwards the same store to the JDK re-exec and to the `native-image` builder, so one setting covers the whole build.
+
+Already have a keystore? Use it verbatim with `VIS_TRUSTSTORE=/path/store.p12`, plus `VIS_TRUSTSTORE_PASSWORD` and `VIS_TRUSTSTORE_TYPE` (defaults: `changeit`, `PKCS12`).
+
+The distribution is not selectable: vis builds on GraalVM **Community Edition** at the exact version in `.graalvm-version`. Oracle GraalVM would relicense the shipped binary under GFTC, and a different version is hard-rejected by the pinned Truffle/SVM jars.
