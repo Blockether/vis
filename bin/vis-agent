@@ -6,8 +6,10 @@
 # The GraalVM executable is an implementation detail and is never installed as
 # the public command.
 #
-# Install from source with `bin/install-source`, or install a release bundle
-# with `bin/install-native`. Both expose `vis-agent` from any working directory.
+# Install it with `bin/install-vis-agent`: that script installs this wrapper
+# first, then calls `vis-agent update --native` so the wrapper downloads its own
+# private runtime. `bin/install-source` is the same wrapper with a JVM source
+# runtime. Both expose `vis-agent` from any working directory.
 
 set -euo pipefail
 
@@ -419,12 +421,15 @@ vis_do_update() {
   fi
   echo "vis-agent: resolving $asset from $api"
   json="$(curl -fsSL "$api")" || true
-  dl="$(printf '%s' "$json" | grep -o "https://[^\"]*/${asset}\"" | head -1)"
+  # `set -o pipefail` + `set -e` would kill this function on a no-match grep,
+  # swallowing the actionable message below. Keep the failure local.
+  dl="$(printf '%s' "$json" | grep -o "https://[^\"]*/${asset}\"" | head -1)" || dl=""
   dl="${dl%\"}"
   if [[ -z "$dl" ]]; then
-    echo "vis-agent update: this release has no bundle for '$asset'." >&2
+    echo "vis-agent update: no native runtime published for '$asset'." >&2
     echo "  Releases currently carry Linux x64 and arm64 only." >&2
-    echo "  On macOS build from source with: vis-agent native" >&2
+    echo "  Elsewhere: install the source runtime (bin/install-source), or build" >&2
+    echo "  the runtime from a checkout with 'vis-agent native'." >&2
     exit 1
   fi
 
@@ -445,7 +450,7 @@ vis_do_update() {
     mkdir -p "$vis_install_dir"
     mv -f "$unpack/vis-agent" "$vis_install_dir/vis-agent"
     mv -f "$unpack/vis-agent-native" "$vis_install_dir/vis-agent-native"
-    [[ ! -f "$unpack/install-native" ]] || mv -f "$unpack/install-native" "$vis_install_dir/install-native"
+    [[ ! -f "$unpack/install-vis-agent" ]] || mv -f "$unpack/install-vis-agent" "$vis_install_dir/install-vis-agent"
   else
     # Installed bundles are co-located: update the public wrapper and its private
     # native sidecar together. The current Bash process has already read itself.
@@ -456,7 +461,7 @@ vis_do_update() {
     }
     mv -f "$unpack/vis-agent-native" "$bin_dir/vis-agent-native"
     mv -f "$unpack/vis-agent" "$src"
-    [[ ! -f "$unpack/install-native" ]] || mv -f "$unpack/install-native" "$bin_dir/install-native"
+    [[ ! -f "$unpack/install-vis-agent" ]] || mv -f "$unpack/install-vis-agent" "$bin_dir/install-vis-agent"
   fi
   rm -rf "$unpack" "$archive"
   trap - RETURN
@@ -499,8 +504,9 @@ case "$dist" in
     nb="$(find_native 2>/dev/null || true)"
     if [[ -z "$nb" ]]; then
       echo "vis-agent: native runtime selected, but none is installed." >&2
-      echo "vis-agent: install a release bundle or build one with 'vis-agent native'." >&2
-      echo "vis-agent: switch to source with 'vis-agent runtime use jvm'." >&2
+      echo "vis-agent: download it with 'vis-agent update --native'," >&2
+      echo "vis-agent: build it from a checkout with 'vis-agent native'," >&2
+      echo "vis-agent: or switch to source with 'vis-agent runtime use jvm'." >&2
       exit 1
     fi
     measure_log "native → $nb"
@@ -513,8 +519,8 @@ case "$dist" in
     jvm_source="$(find_jvm_source 2>/dev/null || true)"
     if [[ -z "$jvm_source" ]]; then
       echo "vis-agent: JVM runtime selected, but no source checkout is installed." >&2
-      echo "vis-agent: run bin/install-source, or choose native with:" >&2
-      echo "vis-agent:   vis-agent runtime use native" >&2
+      echo "vis-agent: install one with bin/install-source, or use the native runtime:" >&2
+      echo "vis-agent:   vis-agent update --native" >&2
       exit 1
     fi
     repo_root="$jvm_source"

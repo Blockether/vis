@@ -332,4 +332,64 @@
                (expect (= 1 @old-stops))
                (expect (= 1 @replacement-stops))
                (expect (nil? (resources/get-resource sid "same")))))
-           (finally (deliver release true) (resources/stop-all! sid))))))
+           (finally (deliver release true) (resources/stop-all! sid)))))
+  (it "restores a failed stop generation so its cleanup can be retried"
+      (let
+        [sid
+         (fresh-sid)
+
+         calls
+         (atom 0)]
+
+        (try (resources/register! sid
+                                  {:id "flaky" :kind :process :status :running :label "retryable"}
+                                  {:stop-fn (fn []
+                                              (when (= 1 (swap! calls inc))
+                                                (throw (ex-info "transient stop failure" {}))))})
+             (let [first-result (resources/stop! sid "flaky")]
+               (expect (= :error (:result first-result)))
+               (expect (= "transient stop failure" (:message first-result)))
+               (expect (= "retryable" (get (resources/get-resource sid "flaky") "label"))))
+             (expect (= :stopped (:result (resources/stop! sid "flaky"))))
+             (expect (= 2 @calls))
+             (expect (nil? (resources/get-resource sid "flaky")))
+             (finally (resources/stop-all! sid)))))
+  (it "never restores a failed old stop over the replacement its callback installed"
+      (let
+        [sid
+         (fresh-sid)
+
+         replacement-stops
+         (atom 0)]
+
+        (try (resources/register!
+               sid
+               {:id "same" :kind :process :status :running :label "old"}
+               {:stop-fn (fn []
+                           (resources/register!
+                             sid
+                             {:id "same" :kind :process :status :running :label "replacement"}
+                             {:stop-fn #(swap! replacement-stops inc)})
+                           (throw (ex-info "old stop failed late" {})))})
+             (expect (= :error (:result (resources/stop! sid "same"))))
+             (expect (= "replacement" (get (resources/get-resource sid "same") "label")))
+             (expect (= 0 @replacement-stops))
+             (finally (resources/stop-all! sid)))))
+  (it "stop-all reports an always-failing generation once instead of hot-looping it"
+      (let
+        [sid
+         (fresh-sid)
+
+         calls
+         (atom 0)]
+
+        (try (resources/register! sid
+                                  {:id "broken" :kind :process :status :running}
+                                  {:stop-fn #(do (swap! calls inc) (throw (ex-info "nope" {})))})
+             (let [results (deref (future (resources/stop-all! sid)) 2000 ::timed-out)]
+               (expect (not= ::timed-out results))
+               (expect (= 1 (count results)))
+               (expect (= :error (:result (first results))))
+               (expect (= 1 @calls))
+               (expect (some? (resources/get-resource sid "broken"))))
+             (finally (resources/unregister! sid "broken"))))))

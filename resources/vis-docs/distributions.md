@@ -33,12 +33,13 @@ and contains:
 ```text
 vis-agent          # public Bash wrapper
 vis-agent-native   # private GraalVM native-image runtime
-install-native     # installer for the same bundle shape
+install-vis-agent  # installer for the same bundle shape
 ```
 
-The two executables stay next to each other. `bin/install-native` installs them
-together, and `vis-agent update` replaces them together. This prevents the
-launcher and runtime contract from drifting across versions.
+The two executables stay next to each other. `bin/install-vis-agent` installs the
+wrapper first and then has it download the runtime (`vis-agent update --native`),
+and `vis-agent update` replaces both together. This prevents the launcher and
+runtime contract from drifting across versions.
 
 Release CI currently builds and smoke-tests:
 

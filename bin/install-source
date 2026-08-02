@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Install or update the Vis Agent JVM source distribution.
-# The public `vis-agent` wrapper is copied onto PATH; the checkout stays private.
+# Install or update vis-agent with the JVM source runtime.
+# The public `vis-agent` command is copied onto PATH; the checkout stays private.
+# `vis-agent update --native` can add the native runtime later.
 
 set -euo pipefail
 
@@ -293,8 +294,9 @@ The installed command is:
   $launcher
 
 New shells can run:
-  vis-agent runtime show
   vis-agent help
+  vis-agent runtime show
+  vis-agent update --native   # add the native runtime, downloaded by vis-agent
 EOF
 
 if (( ! path_configured )); then

@@ -141,7 +141,7 @@ jobs:
           mkdir -p target/release-bundle
           install -m 0755 bin/vis-agent target/release-bundle/vis-agent
           install -m 0755 "${{ matrix.bin }}" target/release-bundle/vis-agent-native
-          install -m 0755 bin/install-native target/release-bundle/install-native
+          install -m 0755 bin/install-vis-agent target/release-bundle/install-vis-agent
           tar -C target/release-bundle -czf "${{ matrix.asset }}" .
       - name: Smoke-test the installed wrapper
         shell: bash

@@ -4434,6 +4434,72 @@
                                     (:gateway-turn-id tab) (:live-turn-client-id tab)]))
                                due)}))))
 
+(defn- gateway-resync-probe-due?
+  "True when a RECONNECT should immediately re-ask the gateway about a tab's
+   in-flight turn. Same shape as `turn-liveness-probe-due?` minus the start-up
+   grace: a reconnect is itself proof the stream had a gap, so a turn that went
+   quiet one second ago earns the probe as much as an old one.
+
+   Throttled on its OWN stamp, never the heartbeat's. A probe issued while the
+   socket was down asked over a connection that was failing, so its silence
+   proves nothing and must not suppress the one probe that can finally answer.
+   The stamp still collapses the N copies of a single broadcast (the mux delivers
+   one per open session tab) into one round."
+  [tab now-ms]
+  (boolean (and (:loading? tab)
+                (:gateway-turn-id tab)
+                (not (:cancelling? tab))
+                (let [resynced-ms (:gateway-resynced-at-ms tab)]
+                  (or (nil? resynced-ms)
+                      (>= (- (long now-ms) (long resynced-ms))
+                          (long turn-liveness-probe-interval-ms)))))))
+
+(reg-event-fx :sync-gateway-connection
+              ;; The gateway mux lost or re-established its SSE stream
+              ;; (`gateway.disconnected` / `gateway.connected`). While the socket was
+              ;; down this process missed every event the daemon emitted, including the
+              ;; `turn.completed` that settles a live bubble into its stored message —
+              ;; so a turn that finished during the outage keeps breathing here until
+              ;; something else poked the client (typing the next message).
+              ;;
+              ;; Reconnect therefore re-asks the turn registry AT ONCE rather than
+              ;; waiting out `turn-liveness-grace-ms` + `turn-liveness-probe-interval-ms`
+              ;; on the render heartbeat. It reuses `:probe-turn-liveness`, so settling
+              ;; stays byte-identical to the live path (canonical content, trace, prose
+              ;; fallback). A disconnect only records the flag: tearing anything down
+              ;; would race the mux's own reconnect.
+              (fn [db [_ connected? now-ms]]
+                (let
+                  [now
+                   (or now-ms (System/currentTimeMillis))
+
+                   db'
+                   (assoc db :gateway-connected? (boolean connected?))]
+
+                  (if-not connected?
+                    {:db db'}
+                    (let
+                      [due (filterv (fn [tab-id]
+                                      (let [tab (db-for-tab db tab-id)]
+                                        (and (gateway-resync-probe-due? tab now)
+                                             (some? (get-in tab [:session :id])))))
+                             (loading-tab-ids db))]
+                      (if (empty? due)
+                        {:db db'}
+                        {:db (reduce (fn [acc tab-id]
+                                       (update-tab acc
+                                                   tab-id
+                                                   #(assoc %
+                                                      :gateway-resynced-at-ms now
+                                                      :liveness-probed-at-ms now)))
+                                     db'
+                                     due)
+                         :fx (mapv (fn [tab-id]
+                                     (let [tab (db-for-tab db tab-id)]
+                                       [:probe-turn-liveness tab-id (get-in tab [:session :id])
+                                        (:gateway-turn-id tab) (:live-turn-client-id tab)]))
+                                   due)}))))))
+
 (defn background-loading-tokens
   "Cancel tokens of every BACKGROUND tab (in `:tab-locals`, excluding the active
    tab held at the db root) whose turn is in flight. Ctrl+C quit consults these so

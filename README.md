@@ -8,43 +8,33 @@ Vis is a coding agent that writes Python into a sandboxed GraalPy runtime, keeps
 
 ## Install
 
-The installed command is **`vis-agent`**. We deliberately do not install `vis`: Linux already ships an unrelated `vis` utility, and taking that name would create a system-command collision.
-
-Every distribution installs the same Bash wrapper. The native image is a private `vis-agent-native` sidecar; it is never presented as a standalone Vis command.
-
-### Native runtime (recommended on supported Linux machines)
+One command installs **`vis-agent`** — the only Vis command there is. (We deliberately do not install `vis`: Linux already ships an unrelated `vis` utility.)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-native | bash
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-vis-agent | bash
 vis-agent help
 ```
 
-The release asset is a bundle named `vis-agent-<os>-<arch>-community.tar.gz` containing both the wrapper and its native runtime. Releases currently carry Linux x64 and arm64. The installer puts them in `~/.local/bin` and, when necessary, adds that directory to your shell profile. The command is therefore available from every directory in new shells—not only from the checkout.
-
-For a system-wide installation shared by all users, download the installer first and run it with the required permission:
+That installs the `vis-agent` command into `~/.local/bin` (adding it to your PATH when needed). `vis-agent` then downloads its own private `vis-agent-native` runtime beside itself — the native image is never a separate command you install. From then on vis-agent owns both:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-native -o /tmp/install-vis-agent
-sudo bash /tmp/install-vis-agent --install-dir /usr/local/bin
+vis-agent runtime show      # what is installed and selected
+vis-agent update            # update the command and its runtime together
+vis-agent update --native   # (re)download just the native runtime
 ```
 
-### JVM source runtime
+Native runtimes are published for Linux x64 and arm64.
 
-```bash
-git clone https://github.com/Blockether/vis.git ~/.vis/sourcecode
-~/.vis/sourcecode/bin/install-source
-vis-agent help
-```
+### Variants
 
-`bin/install-source` checks Java 25+, the Clojure CLI, and git; updates an existing checkout safely; copies the same wrapper to `~/.local/bin/vis-agent`; records the checkout; and configures PATH when needed. Use `--dest PATH` or `--install-dir PATH` to override either location.
+| Goal | Command |
+|---|---|
+| Install for all users | `curl -fsSL …/bin/install-vis-agent -o /tmp/install-vis-agent`<br>`sudo bash /tmp/install-vis-agent --install-dir /usr/local/bin` |
+| Pin a release | `curl -fsSL …/bin/install-vis-agent \| bash -s -- --version vX.Y.Z` |
+| Run on the JVM source runtime (needs Java 25+ and the Clojure CLI) | `curl -fsSL …/bin/install-source \| bash` |
 
-The one-line source equivalent is:
+Corporate proxies often block `raw.githubusercontent.com`. Clone from `github.com` and run `bin/install-vis-agent` out of the checkout: it then installs that checkout's wrapper without touching the raw host.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source | bash
-```
-
-Corporate proxies often block `raw.githubusercontent.com`; cloning from `github.com` and running the checked-out installer avoids that host.
 
 ### Hosts to allowlist
 

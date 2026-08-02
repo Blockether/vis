@@ -3667,6 +3667,84 @@
       (liveness-tick! [{"turn_id" "t1" "status" "completed"}] 100000)
       (expect (true? (:loading? @state/app-db)))))
 
+(defn- gateway-connection!
+  "Deliver a mux transport transition with the gateway registry stubbed to `turns`
+   and both worker lanes made synchronous, so a reconnect's probe lands inline."
+  [connected? turns now-ms]
+  (with-redefs-fn {#'vis/gateway-list-turns (fn [_sid]
+                                              turns)
+                   #'vis/worker-future (fn [_ _]
+                                         (future nil))
+                   #'state/gateway-queue-io! (fn [f]
+                                               (f)
+                                               nil)}
+    #(state/dispatch [:sync-gateway-connection connected? now-ms])))
+
+(defdescribe
+  sync-gateway-connection-test
+  ;; The socket dropped, the daemon finished the turn anyway, and its
+  ;; `turn.completed` died with the stream. Reconnecting is the ONLY moment this
+  ;; process learns it went deaf, so it must re-ask the registry then and there —
+  ;; otherwise the bubble breathes until the user types again to shake it loose.
+  (it "settles a turn finished during the outage, without waiting out the grace"
+      ;; `:turn-start-ms 10` at now=100 is inside `turn-liveness-grace-ms`, where
+      ;; the render heartbeat deliberately does nothing (see the sibling test).
+      ;; A reconnect is itself proof of a gap, so it probes regardless.
+      (reset! state/app-db (terminal-test-db {:turn-start-ms 10}))
+      (gateway-connection! true [{"turn_id" "t1" "status" "completed" "idempotency_key" "c1"}] 100)
+      (let [db @state/app-db]
+        (expect (true? (:gateway-connected? db)))
+        (expect (false? (:loading? db)))
+        (expect (nil? (:gateway-turn-id db)))
+        (expect (= :completed (get-in db [:messages 1 :terminal-pending :status])))))
+  (it "replays canonical content for a turn that failed while disconnected"
+      (let
+        [content [{"type" "error"
+                   "code" "provider_unavailable"
+                   "message" "Provider unavailable."
+                   "is_retryable" true}]]
+        (reset! state/app-db (terminal-test-db {:turn-start-ms 10}))
+        (gateway-connection!
+          true
+          [{"turn_id" "t1" "status" "failed" "idempotency_key" "c1" "content" content}]
+          100)
+        (expect (= content (get-in @state/app-db [:messages 1 :terminal-pending :content])))))
+  (it "keeps a turn the registry still reports as running"
+      (reset! state/app-db (terminal-test-db {:turn-start-ms 10}))
+      (gateway-connection! true [{"turn_id" "t1" "status" "running"}] 100)
+      (expect (true? (:loading? @state/app-db)))
+      (expect (= 100 (:liveness-probed-at-ms @state/app-db))))
+  (it "collapses the copy every open tab's sink receives into one probe"
+      ;; The mux fans one `gateway.connected` out to every subscribed sink, so an
+      ;; N-tab client dispatches this N times for the same transport event.
+      (reset! state/app-db (terminal-test-db {:turn-start-ms 10}))
+      (let [calls (atom 0)]
+        (with-redefs-fn {#'vis/gateway-list-turns (fn [_sid]
+                                                    (swap! calls inc)
+                                                    [])
+                         #'vis/worker-future (fn [_ _]
+                                               (future nil))
+                         #'state/gateway-queue-io! (fn [f]
+                                                     (f)
+                                                     nil)}
+          #(do (state/dispatch [:sync-gateway-connection true 100])
+               (state/dispatch [:sync-gateway-connection true 101])
+               (state/dispatch [:sync-gateway-connection true 6000])))
+        (expect (= 2 @calls))))
+  (it "records a disconnect without probing or tearing the turn down"
+      ;; Nothing is knowable while the socket is down, and the mux owns its own
+      ;; reconnect — touching the in-flight turn here would only race it.
+      (reset! state/app-db (terminal-test-db {:turn-start-ms 10}))
+      (let [calls (atom 0)]
+        (with-redefs-fn {#'vis/gateway-list-turns (fn [_sid]
+                                                    (swap! calls inc)
+                                                    [])}
+          #(state/dispatch [:sync-gateway-connection false 100]))
+        (expect (zero? @calls)))
+      (expect (false? (:gateway-connected? @state/app-db)))
+      (expect (true? (:loading? @state/app-db)))
+      (expect (= "t1" (:gateway-turn-id @state/app-db)))))
+
 (defdescribe restore-pending-ownership-test
              ;; A cancel pulls back ONLY the rows this tab submitted (`:mine?`, from the
              ;; correlation id the gateway echoed back). Sibling rows must survive:

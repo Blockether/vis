@@ -483,11 +483,13 @@
                       (recur)))))))
 
 (defn stop!
-  "Atomically claim a resource, run its `:stop-fn`, and leave it unregistered.
+  "Atomically claim a resource and run its `:stop-fn`.
    THE single stop path — the agent tool and the footer both land here, always
-   scoped to `session` so no session can stop another's resource. A replacement
-   registered while the old stop callback is running is preserved. Returns a
-   result map."
+   scoped to `session` so no session can stop another's resource. A successful
+   stop leaves the claimed generation unregistered. If its callback throws, that
+   generation is restored only when the id is still vacant, preserving both a
+   retry handle and any replacement registered during teardown. Returns a result
+   map."
   [session id]
   (let
     [sid
@@ -511,15 +513,19 @@
       :claimed
       (do
         ;; Persist the claim before invoking arbitrary user lifecycle code. The
-        ;; callback can block or throw; either way the stopped record is already
-        ;; absent. `persist-snapshot!` reads the latest atom value, so a concurrent
-        ;; replacement is included rather than overwritten by a stale snapshot.
+        ;; callback can block, and a concurrent replacement must become visible
+        ;; without waiting for it.
         (persist-snapshot!)
         (let
           [res (try {:ok (do ((:stop-fn record)) true)}
                     (catch Throwable t {:error (ex-message t)}))]
-          (if (:error res)
-            {:result :error :id id :message (:error res)}
+          (if-let [message (:error res)]
+            (do
+              ;; A thrown stop is not proof that the underlying resource died.
+              ;; Restore its exact lifecycle handles for retry, but never overwrite
+              ;; newer state the callback or another thread installed meanwhile.
+              (when (replace-record-if-current! sid id nil (constantly record)) (persist-snapshot!))
+              {:result :error :id id :message message})
             {:result :stopped :id id}))))))
 
 (defn restart!
@@ -548,8 +554,9 @@
   "Teardown spout for one `session` (engine end-of-session): stop every stoppable
    resource generation registered before or during teardown. Unlike one `stop!`,
    teardown also chases replacements installed while an older callback is
-   blocked. Non-stoppable generations are reported once and left registered.
-   Best-effort; returns the vector of stop! results."
+   blocked. Non-stoppable and failed generations are reported once and left
+   registered; a failed stop retains its handle for a later retry. Best-effort;
+   returns the vector of stop! results."
   [session]
   (loop
     [results
@@ -587,7 +594,9 @@
 
                skipped
                (reduce (fn [m [id record result]]
-                         (if (= :not-stoppable (:result result)) (assoc m id record) (dissoc m id)))
+                         (if (contains? #{:not-stoppable :error} (:result result))
+                           (assoc m id record)
+                           (dissoc m id)))
                        skipped
                        steps)]
 

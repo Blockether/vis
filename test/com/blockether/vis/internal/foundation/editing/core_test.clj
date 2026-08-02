@@ -2112,6 +2112,28 @@
         (expect (every? (comp some? :reason) failures))
         ;; All-or-nothing still holds: zero writes when any edit fails.
         (expect (= "alpha\nbeta\nbeta\n" (slurp path)))))
+  (it "the model-facing patch envelope ships each failing edit once"
+      (let
+        [path
+         (write-temp! "bbfs/patch-envelope.txt" "alpha\nbeta\ngamma\n")
+
+         patch-tool
+         (private-fn "patch-tool")
+
+         r
+         (patch-tool [{"path" path "from_anchor" (patch/line-anchor 1 "alpha") "replace" "ALPHA"}
+                      {"path" path "from_anchor" (patch/line-anchor 3 "nope") "replace" "X"}])
+
+         err
+         (:error r)]
+
+        (expect (false? (:success? r)))
+        ;; A failing edit's check IS its failure map — reporting both repeats the
+        ;; whole stale-anchor diagnostic verbatim.
+        (expect (= [1] (mapv :edit-index (:failures err))))
+        (expect (= [0] (mapv :edit-index (:checks err))))
+        ;; A nil loop hint is pure payload noise; omit the key entirely.
+        (expect (not (contains? err :loop-hint)))))
   (it "exists? and delete-if-exists work on cwd-relative paths"
       (let
         [path

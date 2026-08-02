@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+# Install the `vis-agent` command.
+#
+# Step 1 installs the public Bash wrapper — the only command a user ever runs.
+# Step 2 hands off to it: `vis-agent update --native` resolves the release for
+# this platform and puts the private `vis-agent-native` runtime beside the
+# wrapper. Runtime acquisition therefore always belongs to vis-agent itself, so
+# the launcher and its runtime can never drift apart.
+
+set -euo pipefail
+
+repo_slug="${VIS_REPO_SLUG:-Blockether/vis}"
+install_dir="${VIS_INSTALL_DIR:-${VIS_LOCAL_BIN_DIR:-$HOME/.local/bin}}"
+version="${VIS_VERSION:-latest}"
+vis_home="${VIS_HOME:-$HOME/.vis}"
+
+usage() {
+  cat <<EOF
+Usage: install-vis-agent [--version TAG|latest] [--install-dir PATH]
+
+Installs the public command first:
+  $install_dir/vis-agent          the command you run
+
+then lets it download its own private runtime:
+  $install_dir/vis-agent-native   fetched by 'vis-agent update --native'
+
+Environment overrides:
+  VIS_VERSION        release tag (default: latest)
+  VIS_INSTALL_DIR    command directory (default: ~/.local/bin)
+  VIS_LOCAL_BIN_DIR  deprecated alias for VIS_INSTALL_DIR
+  VIS_HOME           state directory (default: ~/.vis)
+  VIS_REPO_SLUG      GitHub OWNER/REPO (default: Blockether/vis)
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version)
+      [[ $# -ge 2 ]] || { echo "vis-agent install: --version requires a tag" >&2; exit 2; }
+      version="$2"
+      shift 2
+      ;;
+    --install-dir)
+      [[ $# -ge 2 ]] || { echo "vis-agent install: --install-dir requires a path" >&2; exit 2; }
+      install_dir="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "vis-agent install: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+# curl fetches the wrapper here; curl and tar are what the wrapper itself needs
+# in step 2. Fail before writing anything rather than half-way through.
+for cmd in curl tar; do
+  command -v "$cmd" >/dev/null 2>&1 || {
+    echo "vis-agent install: missing required command: $cmd" >&2
+    exit 1
+  }
+done
+
+if ! mkdir -p "$install_dir" 2>/dev/null || [[ ! -w "$install_dir" ]]; then
+  echo "vis-agent install: cannot write to $install_dir" >&2
+  echo "  Choose a user-writable location with VIS_INSTALL_DIR, or rerun with" >&2
+  echo "  the permissions required by that directory." >&2
+  exit 1
+fi
+if [[ -d "$install_dir/vis-agent" || -d "$install_dir/vis-agent-native" ]]; then
+  echo "vis-agent install: an install target is a directory; move it aside first" >&2
+  exit 1
+fi
+
+# ── 1. install the vis-agent command ────────────────────────────────────────
+# Run from a checkout (proxies commonly block raw.githubusercontent.com) and the
+# wrapper next to this script is used directly. The sibling deps.edn proves it is
+# a real checkout rather than an unrelated file in the current directory.
+wrapper=""
+cleanup() { :; }
+here="$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
+if [[ "$version" == latest && -n "$here" && -f "$here/vis-agent" && -f "$here/../deps.edn" ]]; then
+  wrapper="$here/vis-agent"
+  echo "vis-agent install: using the vis-agent command from this checkout"
+else
+  ref=main
+  [[ "$version" == latest ]] || ref="$version"
+  wrapper_url="https://raw.githubusercontent.com/$repo_slug/$ref/bin/vis-agent"
+  wrapper="$(mktemp "${TMPDIR:-/tmp}/vis-agent.XXXXXX")"
+  cleanup() { rm -f "$wrapper"; }
+  trap cleanup EXIT
+  echo "vis-agent install: downloading the vis-agent command ($ref)"
+  curl -fsSL "$wrapper_url" -o "$wrapper" || {
+    echo "vis-agent install: could not download $wrapper_url" >&2
+    exit 1
+  }
+  head -1 "$wrapper" | grep -q '^#!' || {
+    echo "vis-agent install: downloaded wrapper is not a script: $wrapper_url" >&2
+    exit 1
+  }
+fi
+
+install -m 0755 "$wrapper" "$install_dir/vis-agent.tmp"
+mv -f "$install_dir/vis-agent.tmp" "$install_dir/vis-agent"
+echo "vis-agent install: installed $install_dir/vis-agent"
+
+path_configured=0
+case ":$PATH:" in
+  *":$install_dir:"*) path_configured=1 ;;
+esac
+
+profile=""
+if (( ! path_configured )); then
+  case "${SHELL:-}" in
+    */zsh) profile="${ZDOTDIR:-$HOME}/.zshrc" ;;
+    */bash)
+      if [[ "$(uname -s)" == Darwin ]]; then profile="$HOME/.bash_profile"; else profile="$HOME/.bashrc"; fi
+      ;;
+    *) profile="$HOME/.profile" ;;
+  esac
+
+  if [[ "$install_dir" == "$HOME/.local/bin" ]]; then
+    path_line="export PATH=\"\$HOME/.local/bin:\$PATH\""
+  else
+    printf -v quoted_install_dir '%q' "$install_dir"
+    path_line="export PATH=$quoted_install_dir:\$PATH"
+  fi
+  touch "$profile"
+  if ! grep -Fqx "$path_line" "$profile"; then
+    printf '\n# Vis Agent command\n%s\n' "$path_line" >> "$profile"
+  fi
+  echo "vis-agent install: added $install_dir to PATH in $profile"
+fi
+
+# ── 2. vis-agent downloads its own native runtime ───────────────────────────
+# VIS_NO_DEV_CHECKOUT keeps a developer's ~/vis checkout from hijacking the
+# freshly installed wrapper: this run must install into $install_dir.
+native=(update --native)
+[[ "$version" == latest ]] || native+=("$version")
+
+if ! VIS_NO_DEV_CHECKOUT=1 VIS_HOME="$vis_home" "$install_dir/vis-agent" "${native[@]}"; then
+  cat >&2 <<EOF
+
+vis-agent is installed at $install_dir/vis-agent, but no native runtime is
+published for this platform yet. Give it the source runtime instead
+(needs Java 25+ and the Clojure CLI):
+
+  curl -fsSL https://raw.githubusercontent.com/$repo_slug/main/bin/install-source | bash
+EOF
+  exit 1
+fi
+
+VIS_HOME="$vis_home" "$install_dir/vis-agent" runtime use native >/dev/null
+
+cat <<EOF
+
+Vis Agent is installed for this user:
+  $install_dir/vis-agent          the command
+  $install_dir/vis-agent-native   private runtime, owned by vis-agent
+
+  vis-agent help
+  vis-agent runtime show
+  vis-agent update                updates vis-agent and its runtime
+EOF
+
+if (( ! path_configured )); then
+  cat <<EOF
+
+Start a new shell (or run: source "$profile") before using vis-agent by name.
+EOF
+fi

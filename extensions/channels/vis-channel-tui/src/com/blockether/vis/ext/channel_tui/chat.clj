@@ -1106,6 +1106,17 @@
       "session.model_updated"
       {:phase :model-sync :provider (event-get event :provider) :model (event-get event :model)}
 
+      ;; Mux transport lost / restored. These are NOT session events: the gateway
+      ;; client broadcasts them to EVERY sink so a channel can tell "the session is
+      ;; quiet" apart from "this process went deaf". Everything the daemon emitted
+      ;; while the stream was down was missed by definition, so the reconnect is the
+      ;; cue to re-ask the gateway for turn state instead of trusting the stream.
+      "gateway.disconnected"
+      {:phase :gateway-disconnected}
+
+      "gateway.connected"
+      {:phase :gateway-connected}
+
       nil)))
 
 (defn subscribe-session-events!

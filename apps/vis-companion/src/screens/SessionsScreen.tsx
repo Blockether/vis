@@ -682,6 +682,11 @@ const ProjectGroup = memo(function ProjectGroup({
   );
 });
 
+// How long the row's disclosure takes to open or close. It is duplicated by the
+// `duration-200` utilities below on purpose: the class drives the paint, this
+// number only decides when the panel may leave the tree.
+const STATS_MOTION_MS = 200;
+
 const SessionRow = memo(function SessionRow({
   session,
   conn,
@@ -713,6 +718,23 @@ const SessionRow = memo(function SessionRow({
   // session's usage rollup in place. It stays a sibling of the open-session
   // button, never nested inside it, so "tell me more" cannot navigate away.
   const [statsOpen, setStatsOpen] = useState(false);
+  // The rollup FETCHES on mount and aborts on unmount, so it cannot simply stay
+  // mounted while closed. Dropping it on the same commit that closes the row
+  // would pull the content out from under the collapse, so it outlives
+  // `statsOpen` by exactly one transition and is only then let go.
+  const [statsMounted, setStatsMounted] = useState(false);
+  useEffect(() => {
+    if (statsOpen || !statsMounted) return;
+    const timer = window.setTimeout(() => setStatsMounted(false), STATS_MOTION_MS);
+    return () => window.clearTimeout(timer);
+  }, [statsOpen, statsMounted]);
+  // Mount and open in ONE commit. The grid wrapper never leaves the tree, so
+  // 0fr -> 1fr is a transition on a persistent element — no `@starting-style`,
+  // which WebKit applies a frame late to freshly inserted nodes.
+  const toggleStats = useCallback(() => {
+    setStatsMounted(true);
+    setStatsOpen((open) => !open);
+  }, []);
   // A draft is a per-session clone of the project; the row says so instead of
   // the list inventing a project for it.
   const draftName = isDraftWorkspace(session) ? session.workspace?.label?.trim() : '';
@@ -742,12 +764,22 @@ const SessionRow = memo(function SessionRow({
           type="button"
           aria-expanded={statsOpen}
           aria-label={`${statsOpen ? 'Hide' : 'Show'} details for ${title}`}
-          onClick={() => setStatsOpen((open) => !open)}
-          className={`flex w-8 shrink-0 items-start justify-center pt-2.5 font-mono text-body text-accent-ink transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:w-9 sm:pt-2 ${
+          onClick={toggleStats}
+          className={`flex w-8 shrink-0 items-start justify-center pt-2.5 font-mono text-body text-accent-ink transition-[background-color,opacity] duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none sm:w-9 sm:pt-2 ${
             statsOpen ? 'bg-hover opacity-100' : 'opacity-40 hover:opacity-100'
           }`}
         >
-          <span aria-hidden="true">{statsOpen ? '\u2304' : '\u203a'}</span>
+          {/* One glyph that TURNS, not two glyphs that swap: the quarter turn is
+              the same gesture as the panel below it, and a swap has no motion to
+              read at all. */}
+          <span
+            aria-hidden="true"
+            className={`inline-block transition-[rotate] duration-200 ease-[cubic-bezier(0.22,0.61,0.36,1)] motion-reduce:transition-none ${
+              statsOpen ? 'rotate-90' : 'rotate-0'
+            }`}
+          >
+            {'\u203a'}
+          </span>
         </button>
         <button
           type="button"
@@ -805,7 +837,26 @@ const SessionRow = memo(function SessionRow({
         </button>
       </div>
       </SwipeActions>
-      {statsOpen && <SessionStats session={session} conn={conn} />}
+      {/* Height eases through a 0fr -> 1fr grid track: the one pure-CSS way to
+          animate to CONTENT height without measuring it, and unlike a mount it
+          plays in BOTH directions. The inner clip keeps the rollup from
+          spilling over the next row while the track is still closing. */}
+      <div
+        aria-hidden={!statsOpen}
+        className={`grid transition-[grid-template-rows] duration-200 ease-[cubic-bezier(0.22,0.61,0.36,1)] motion-reduce:transition-none ${
+          statsOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+        }`}
+      >
+        <div className="overflow-hidden">
+          <div
+            className={`transition-[opacity,translate] duration-200 ease-[cubic-bezier(0.22,0.61,0.36,1)] motion-reduce:transition-none ${
+              statsOpen ? 'opacity-100' : '-translate-y-1 opacity-0'
+            }`}
+          >
+            {statsMounted && <SessionStats session={session} conn={conn} />}
+          </div>
+        </div>
+      </div>
       {match && <MatchPreview match={match} needle={needle} />}
     </div>
   );
