@@ -6058,8 +6058,7 @@
        "Fields: `op`, `query`, `needles`, `searched_paths`, `missing_paths`, `paths`, `matches`, `file_counts`, "
        "`first_hit`, `hint`, `hit_count`, `file_count`, `total_file_count`, `total_file_count_is_exact`, `limit`, "
        "`truncated_by`, `hits_truncated_by`. `matches={path:{\"line:hash\":{\"text\":string,\"before\"?:"
-       "[{\"line\":integer,\"text\":string}],\"after\"?:[...]}}}` is a mapping of mappings, never a list; "
-       "empty `before`/`after` are omitted.")
+       "[{\"line\",\"text\"}],\"after\"?:[…]}}}` is a mapping of mappings, never a list; empty `before`/`after` omitted.")
      :description
      (str "Literal smart-case content plus fuzzy filenames; use first when location is unknown. "
           "`query: \"\"` lists files; null `hits_truncated_by` means complete content.")
@@ -6810,7 +6809,7 @@
        "anchor"
        {:type "string"
         :description
-        "Shared `lineno:hash` from struct_index/cat; enters that line's node instead of `at`, then applies `nav`."}}
+        "Shared `lineno:hash` from struct_index/cat; enters that line's node instead of `at`."}}
       :additionalProperties false}
      :before-fn (path-protected-before-fn :struct_nodes :file :read nodes-arg-paths)
      :tag :observation

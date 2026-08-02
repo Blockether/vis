@@ -620,16 +620,11 @@
    of habit — is coerced by quoting each token and joining, instead of failing
    the call. Anything else has no reading as a command line and throws."
   [command]
-  (cond
-    (string? command)
-    command
-
-    (sequential? command)
-    (str/join " " (map (comp shell-quote str) command))
-
-    :else
-    (throw (ex-info "shell commands must be strings \u2014 one bash -lc command line each."
-                    {:type ::bad-commands}))))
+  (cond (string? command) command
+        (sequential? command) (str/join " " (map (comp shell-quote str) command))
+        :else (throw (ex-info
+                       "shell commands must be strings \u2014 one bash -lc command line each."
+                       {:type ::bad-commands}))))
 
 (defn- ordered-lines
   "`commands` as the ordered batch of bash lines: `serial-batch/ordered` (so a
@@ -1387,7 +1382,8 @@
          (if id "background" "run"))
 
      checked-commands
-     (fn [] (ordered-lines commands))
+     (fn []
+       (ordered-lines commands))
 
      valid-commands
      (when (some? commands) (checked-commands))
@@ -1991,18 +1987,16 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
      :native-tool? true
      :result
      (str
-       "Always includes `stage`, `id`, `cwd`, `commands`, timing/exit fields, and `note`; run adds "
-       "`timeout_secs`, lifecycle adds `pid`, `status`, and stage fields. Commands include command "
-       "text, timing/exit, stdout/stderr with truncation counts, status, and note. `logs` and `wait` "
-       "return background output in `lines`.")
+       "Always `stage`, `id`, `cwd`, `commands`, timing/exit fields, `note`; run adds `timeout_secs`; "
+       "lifecycle adds `pid`, `status`, stage fields. Each command carries its text, timing/exit, "
+       "stdout/stderr plus truncation counts, status, note. `logs`/`wait` return output in `lines`.")
      :name "shell"
      :description
      (str
        "Run bounded commands or manage background shells with ONE options map, never a positional string or array. "
-       "Long/interactive: `background`, then `wait` for completion; `logs` is an immediate snapshot; `send` writes "
-       "`text`; `stop` kills. Live ids: `session[\"resources\"]`. Foreground output: "
-       "`r[\"commands\"][0][\"stdout\"]`; background `logs`/`wait` output: `r[\"lines\"]`. "
-       "`*_omitted_chars` means truncation. Await in `python_execution`.")
+       "Long/interactive: `background`, then `wait`; `logs` is an immediate snapshot; `send` writes `text`; "
+       "`stop` kills. Live ids: `session[\"resources\"]`. Output: `r[\"commands\"][0][\"stdout\"]` for run, "
+       "`r[\"lines\"]` for `logs`/`wait`. `*_omitted_chars` marks truncation.")
      :render render-shell-result
      :color-role :tool-color/shell
      :schema
@@ -2011,8 +2005,7 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
       {"commands" (batch/commands-property {:items {:type "string"}
                                             :description
                                             (str "Required for run/new background: `bash -lc` "
-                                                 "lines; a lone string is taken as the batch of "
-                                                 "one.")})
+                                                 "lines; a lone string is a batch of one.")})
        "op" {:type "string"
              :enum ["run" "background" "logs" "wait" "send" "stop"]
              :description "Stage; default run, or background with `id`."}
