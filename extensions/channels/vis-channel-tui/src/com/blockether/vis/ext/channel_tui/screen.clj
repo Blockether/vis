@@ -4948,7 +4948,7 @@
               ;; tab now and bind the real session once the background build lands
               ;; (chat/make-session-async). Text typed meanwhile queues into the
               ;; tab's `:pending-sends` and drains the moment it is bound.
-              (fn [config seed-text]
+              (fn [config seed-text draft]
                 (let
                   [seed (some-> seed-text
                                 str/trim
@@ -4964,10 +4964,23 @@
                     (fn []
                       (try (let [{:keys [id history]} @fut]
                              (ensure-session-live! id)
+                             ;; `draft` = `{:label … :clean? …}`: the user asked this session to
+                             ;; start in an isolated copy, so fork BEFORE the tab binds. The fork
+                             ;; is a SECOND call by construction (the gateway forks THROUGH the
+                             ;; session that will own the draft); when it throws, the catch below
+                             ;; reports it and no tab binds — nobody is silently dropped into
+                             ;; trunk, the one place they said not to work.
+                             (when draft
+                               (vis/gateway-create-draft! id
+                                                          (:label draft)
+                                                          false
+                                                          (boolean (:clean? draft))))
                              (state/dispatch [:bind-built-session build-id {:id id} history
                                               (session-workspace id)])
                              (persist-tabs!)
-                             (vis/notify! "Opened session"
+                             (vis/notify! (if draft
+                                            (str "Opened session in draft '" (:label draft) "'")
+                                            "Opened session")
                                           :level :success
                                           :ttl-ms copy-success-ttl-ms))
                            (catch Throwable e
@@ -5021,7 +5034,9 @@
                 ;; nothing to wait for. Every action lands on a tab.
                 (cond
                   (= :new (:action choice)) (when-let [config (:config @state/app-db)]
-                                              (start-new-session! config (:seed-text choice)))
+                                              (start-new-session! config
+                                                                  (:seed-text choice)
+                                                                  (:draft choice)))
                   (= :fork (:action choice))
                   (if-let [current-id (or (:id choice) (current-session-id))]
                     (let
@@ -5264,6 +5279,33 @@
                                  repos (magit/workspace-roots (:workspace db) fallback)]
 
                                 (with-dialog-lock #(dlg/magit-dialog! screen repos)))))
+              ;; Companion parity ("Start the session in"): a new session may begin in an
+              ;; isolated COPY of the project instead of the project itself. The dirty copy
+              ;; is the interesting one — the clone carries the uncommitted work with it, so
+              ;; risky work starts from the tree as it actually is, not from HEAD.
+              start-session-in!
+              (fn start-session-in! []
+                (when-not (:dialog-open? @state/app-db)
+                  (state/dispatch [:close-overlays])
+                  (when-let [choice (with-dialog-lock #(dlg/start-in-picker! screen))]
+                    (if (= :trunk (:start-in choice))
+                      (do (state/dispatch [:reset-input])
+                          (switch-session! {:action :new}))
+                      (let
+                        [clean?
+                         (= :clean-draft (:start-in choice))
+
+                         label
+                         (with-dialog-lock
+                           #(dlg/text-input-dialog!
+                              screen
+                              (if clean? "Name the clean draft" "Name the draft")
+                              "Draft name"
+                              :body (dlg/start-in-body clean?)))]
+
+                        (when-let [draft (dlg/start-in-draft-spec choice label)]
+                          (state/dispatch [:reset-input])
+                          (switch-session! {:action :new :draft draft})))))))
               ;; Canonical gateway draft picker (C-x e + palette "Switch Draft…").
               ;; It is intentionally mutation-safe: the current location is selected
               ;; first (Enter is a no-op), trunk stashes, and another draft performs
@@ -6619,6 +6661,12 @@
                                     ;; payload (the `/new-session` paste-loss bug).
                                     (state/dispatch [:reset-input])
                                     (switch-session! {:action :new :seed-text seed}))
+
+                                  ;; Same verb, but it asks WHERE first: the project
+                                  ;; itself, or a fresh draft that (by default) carries
+                                  ;; the uncommitted changes into its own copy.
+                                  :new-session-in
+                                  (start-session-in!)
 
                                   ;; Workspace ops (`:workspace`,
                                   ;; `:apply-workspace-to-trunk`,

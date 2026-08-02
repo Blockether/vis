@@ -6012,6 +6012,53 @@
   [^TerminalScreen screen drafts]
   (run-modal! screen (draft-picker-component drafts)))
 
+;;; ── Where a NEW session starts ──────────────────────────────────────────────
+
+(def start-in-items
+  "Rows for the new-session START picker — the TUI twin of the companion's
+   \"Start the session in\" menu. The real project comes first (what a plain
+   `C-x n` still does), then the two isolated copies. `:start-in` is the pure
+   choice; `start-in-draft-spec` turns it into the fork the screen performs."
+  [{:start-in :trunk :label "The project itself" :hint "default"}
+   {:start-in :draft :label "A new draft — my uncommitted changes come with it"}
+   {:start-in :clean-draft :label "A new draft, without my uncommitted changes"}])
+
+(defn start-in-body
+  "Body text for the draft-name prompt: which tree the copy is seeded from, and
+   what moves the work back. Same promise the companion's start menu makes."
+  [clean?]
+  (if clean?
+    (str "A private copy of this project as of your last commit — your uncommitted changes stay "
+         "here and are not copied in. Applying it later is what moves the work back.")
+    (str "A private copy of this project exactly as it is now, uncommitted changes included. "
+         "Applying it later is what moves the work back.")))
+
+(defn start-in-draft-spec
+  "The draft a `start-in-items` choice + typed `label` asks for, or nil when the
+   session simply starts in the real project (or the name was left empty).
+   `:clean?` is the gateway's seed-from-the-COMMITTED-HEAD flag, so the default
+   `false` is the copy that carries the uncommitted work along."
+  [choice label]
+  (when-let
+    [label (some-> label
+                   str
+                   str/trim
+                   not-empty)]
+    (case (:start-in choice)
+      :draft
+      {:label label :clean? false}
+
+      :clean-draft
+      {:label label :clean? true}
+
+      nil)))
+
+(defn start-in-picker!
+  "Ask WHERE a new session starts. Returns the chosen `start-in-items` row, or
+   nil on Esc."
+  [^TerminalScreen screen]
+  (list-dialog! screen "Start the session in" start-in-items {:height :content}))
+
 (def palette-commands
   "Command palette entries. Each is {:id keyword :label str}. The `:id` is the
    action the screen's `run-command!` executes. Quit is intentionally NOT here
@@ -6029,6 +6076,7 @@
    {:id :show-sessions :label "Switch Session"} {:id :open-drafts :label "Switch Draft…"}
    {:id :open-magit :label "Git Status (Magit)"} {:id :pick-file :label "Attach File"}
    {:id :toggle-voice-recording :label "Voice Recording"} {:id :new-session :label "New Session"}
+   {:id :new-session-in :label "New Session in a Draft…"}
    ;; Both fork verbs are `:has-turns`-gated: a session with no turns has
    ;; nothing to fork, so the palette must not even offer them.
    {:id :fork-session :label "Fork Session" :show-when :has-turns}

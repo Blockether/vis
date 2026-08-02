@@ -1086,6 +1086,23 @@
         (expect (= :trunk (:action (first on-trunk))))
         (expect (:current? (first on-trunk)))
         (expect (str/includes? (:description (first on-trunk)) "working tree"))))
+  (it "the new-session start picker offers trunk plus a dirty and a clean copy"
+      ;; Companion parity ("Start the session in"): the DEFAULT copy carries the
+      ;; uncommitted work (`:clean? false`); the clean copy is the opt-in.
+      (let [items dlg/start-in-items]
+        (expect (= [:trunk :draft :clean-draft] (mapv :start-in items)))
+        (expect (str/includes? (:label (second items)) "uncommitted changes come with it"))
+        ;; Trunk never forks, whatever was typed.
+        (expect (nil? (dlg/start-in-draft-spec (first items) "anything")))
+        (expect (= {:label "wire-rework" :clean? false}
+                   (dlg/start-in-draft-spec (second items) "  wire-rework  ")))
+        (expect (= {:label "wire-rework" :clean? true}
+                   (dlg/start-in-draft-spec (nth items 2) "wire-rework")))
+        ;; An empty name is a cancelled prompt, never an unnamed draft.
+        (expect (nil? (dlg/start-in-draft-spec (second items) "   ")))
+        (expect (nil? (dlg/start-in-draft-spec (second items) nil)))
+        (expect (str/includes? (dlg/start-in-body false) "uncommitted changes included"))
+        (expect (str/includes? (dlg/start-in-body true) "last commit"))))
   (it
     "draft manager uses standard filter keys and modified management actions"
     (let
@@ -1189,7 +1206,7 @@
         ;; don't survive macOS — so the frequent ones must be present + runnable.
         (expect (every? ids
                         [:cycle-model :cycle-reasoning :search-open :show-sessions :open-drafts
-                         :pick-file :new-session :fork-session]))
+                         :pick-file :new-session :new-session-in :fork-session]))
         (expect (not (contains? ids :open-resources)))))
   (it "a turnless session hides BOTH fork verbs from the palette"
       ;; Forking a session with no turns is prohibited, so it must not even be
