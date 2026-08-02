@@ -40,6 +40,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { buildNotes, publishNotes } from './release-notes.mjs';
 import { exportArchiveArgs, exportOptionsPlist, signingPlan } from './ios-export.mjs';
+import { ensureProfiles, hasDistributionIdentity, installProfile, stampManualSigning } from './ios-signing.mjs';
 import { distribute } from './testflight.mjs';
 import { syncPackageVersion } from './version.mjs';
 
@@ -108,22 +109,6 @@ if (needsIosScaffold) {
   run('npm', ['run', 'build']);
   run('npx', ['cap', 'add', 'ios']);
 }
-
-// `ios/` is gitignored and this plist is a pure function of the team and the
-// pinned profiles, so it is rewritten every run instead of trusted once written:
-// a stale one signs a new archive with yesterday's decision.
-const signing = signingPlan({
-  bundleIds: [appBundleId, shareBundleId],
-  profileNames: { [appBundleId]: provisioningProfileName, [shareBundleId]: shareProfileName },
-});
-if (provisioningProfileName && signing.signingStyle !== 'manual') {
-  console.log(
-    `· no pinned profile for ${signing.unnamed.join(', ')} ` +
-      '(VIS_IOS_SHARE_PROVISIONING_PROFILE_NAME) — exporting with automatic signing, as the archive is signed',
-  );
-}
-writeFileSync(exportOptions, exportOptionsPlist({ teamId, ...signing }));
-console.log(`· wrote ${exportOptions} (${signing.signingStyle} signing)`);
 
 const outDir = join(appDir, 'build', 'ios');
 const archivePath = join(outDir, `Vis-${marketingVersion}-${buildNumber}.xcarchive`);
@@ -318,6 +303,60 @@ console.log(
     : "· no App Store Connect key — falling back to the Apple account signed into Xcode",
 );
 
+// Sign the archive BY HAND wherever that is possible.
+//
+// Automatic signing mints a brand new "Apple Development" certificate on every
+// runner whose keychain starts empty, and the account caps them: build 3080 died
+// on `Choose a certificate to revoke. Your account has reached the maximum number
+// of certificates`, a dozen dead CI certificates holding every slot. Signing with
+// the distribution certificate the workflow already imports asks the portal for
+// nothing — but manual signing is all-or-nothing, so every bundle in the archive
+// must be named, the share extension (`<app>.share`) included. Those profiles come
+// from the App Store Connect API this release already authenticates with, and are
+// created there when missing, so no new secret is ever needed.
+//
+// Only where it can actually work: without the distribution certificate's private
+// key in a keychain — a laptop usually has only a development identity — manual
+// signing would fail at codesign, so automatic signing stays.
+let profileNames = { [appBundleId]: provisioningProfileName, [shareBundleId]: shareProfileName };
+let manualArchive = false;
+if (hasApiKey && hasDistributionIdentity()) {
+  try {
+    const profiles = await ensureProfiles({
+      keyId,
+      issuerId,
+      privateKey: readFileSync(keyPath, 'utf8'),
+      bundleIds: [appBundleId, shareBundleId],
+      log: (message) => console.log(message),
+    });
+    for (const [id, profile] of Object.entries(profiles)) {
+      installProfile(profile);
+      console.log(`· ${id} → ${profile.name}`);
+    }
+    profileNames = Object.fromEntries(Object.entries(profiles).map(([id, p]) => [id, p.name]));
+    const stamp = stampManualSigning(readFileSync(pbxproj, 'utf8'), { teamId, profileNames });
+    writeFileSync(pbxproj, stamp.text);
+    manualArchive = stamp.stamped.length > 0;
+    console.log(`· manual distribution signing for ${stamp.stamped.join(', ')}`);
+  } catch (error) {
+    // Never fatal: an expired key or a portal outage falls back to the signing
+    // that has always worked, instead of failing a release outright.
+    console.log(`· ${error.message}\n· signing automatically instead`);
+  }
+}
+
+// `ios/` is gitignored and this plist is a pure function of the team and the
+// resolved profiles, so it is rewritten every run instead of trusted once written:
+// a stale one signs a new archive with yesterday's decision. It is written HERE,
+// after the profiles above are resolved, so export reuses exactly what the archive
+// was signed with.
+const signing = signingPlan({ bundleIds: [appBundleId, shareBundleId], profileNames });
+if (signing.unnamed.length > 0) {
+  console.log(`· no profile for ${signing.unnamed.join(', ')} — exporting with automatic signing`);
+}
+writeFileSync(exportOptions, exportOptionsPlist({ teamId, ...signing }));
+console.log(`· wrote ${exportOptions} (${signing.signingStyle} signing)`);
+
 const archiveArgs = [
   '-project',
   'App.xcodeproj',
@@ -329,7 +368,9 @@ const archiveArgs = [
   'generic/platform=iOS',
   '-archivePath',
   archivePath,
-  '-allowProvisioningUpdates',
+  // Nothing left to resolve once every bundle is signed by hand — and nothing
+  // that could mint another certificate.
+  ...(manualArchive ? [] : ['-allowProvisioningUpdates']),
   `DEVELOPMENT_TEAM=${teamId}`,
   `MARKETING_VERSION=${marketingVersion}`,
   `CURRENT_PROJECT_VERSION=${buildNumber}`,
@@ -345,7 +386,7 @@ const authenticationArgs = hasApiKey
       issuerId,
     ]
   : [];
-if (hasApiKey) {
+if (hasApiKey && archiveArgs.includes('-allowProvisioningUpdates')) {
   archiveArgs.splice(archiveArgs.indexOf('-allowProvisioningUpdates') + 1, 0, ...authenticationArgs);
 }
 run('xcodebuild', archiveArgs, { cwd: projectDir });
