@@ -41,6 +41,12 @@ import {
   watchDraftMessageExits,
   writeDraftMessage,
 } from '../lib/draft-messages';
+import {
+  appendSharedText,
+  hydratePendingShare,
+  onSharedText,
+  takePendingShare,
+} from '../lib/share-intake';
 import { clearPendingVoice, readPendingVoice, savePendingVoice } from '../lib/pending-voice';
 import {
   readerOwnsScroll,
@@ -3024,6 +3030,36 @@ export function SessionScreen({
       counter: pasteCounterRef.current,
     });
   }, [draftMessageReady, draftMessageId, prompt, pastes]);
+
+  // Take what the system share sheet, an Android SEND or a Shortcuts run
+  // dropped on us. AFTER the draft message hydrates: the restore above adopts
+  // stored text only while the composer is untouched, so a share pasted first
+  // would be thrown away by it — and the recorder above only persists once
+  // `draftMessageReady` is set, which is what puts the share on disk too.
+  //
+  // APPENDS, never replaces: dumping five links in a row is the point, and a
+  // half-written prompt must survive the interruption. The store hands the
+  // payload over exactly once, so a re-render or a session switch cannot paste
+  // the same link twice.
+  useEffect(() => {
+    if (!draftMessageReady) return;
+    let cancelled = false;
+    const drain = () => {
+      if (cancelled) return;
+      const share = takePendingShare();
+      if (!share) return;
+      setPrompt((current) => appendSharedText(current, share));
+    };
+    // Warm: already parked, or dropped while this screen is open.
+    drain();
+    const stop = onSharedText(drain);
+    // Cold: the share outlived the webview and is still coming off storage.
+    void hydratePendingShare().then(drain);
+    return () => {
+      cancelled = true;
+      stop();
+    };
+  }, [draftMessageReady, draftMessageId]);
 
   async function addAttachments() {
     const limits = capabilities?.features.attachments;

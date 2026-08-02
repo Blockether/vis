@@ -301,3 +301,172 @@ if (!manifest.includes('android:networkSecurityConfig')) {
 }
 if (manifest !== manifestBefore) writeFileSync(manifestPath, manifest);
 console.log('\u2713 cleartext HTTP  network_security_config.xml + AndroidManifest (LAN + tailnet gateway)');
+
+/**
+ * 6. System share target.
+ *
+ * "Share → Vis" from a browser, a feed reader, or a text selection has to reach
+ * the web layer, and the ONLY channel Capacitor gives us is `appUrlOpen` /
+ * `getLaunchUrl`, both of which read `intent.getData()` on an ACTION_VIEW
+ * intent. An ACTION_SEND intent carries its payload in extras and has no data
+ * URI at all, so the bridge simply never sees it.
+ *
+ * So the activity rewrites the intent into the same `vis://share?…` URL the iOS
+ * share extension and the Shortcuts action produce, BEFORE Capacitor looks at
+ * it: one shape on the wire, one code path in `src/lib/share-intake.ts`.
+ * `onCreate` covers the cold start (app not running — the launch intent IS the
+ * share) and `onNewIntent` the warm one (`launchMode=singleTask`).
+ *
+ * Stamped here, never hand-edited: `android/` is gitignored and CI recreates it
+ * from scratch on every build.
+ */
+const SHARE_MARKER = 'vis:share-target';
+const javaPackageDir = join(androidApp, 'src', 'main', 'java', ...appId.split('.'));
+const mainActivityPath = join(javaPackageDir, 'MainActivity.java');
+const mainActivity = `package ${appId};
+
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Bundle;
+import android.text.TextUtils;
+import com.getcapacitor.BridgeActivity;
+import java.util.ArrayList;
+
+// ${SHARE_MARKER} — stamped by scripts/android-prepare.mjs; edit that, not this file.
+public class MainActivity extends BridgeActivity {
+
+    private static final String PROCESS_TEXT = "android.intent.action.PROCESS_TEXT";
+    private static final String EXTRA_PROCESS_TEXT = "android.intent.extra.PROCESS_TEXT";
+
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        // Before super: the bridge reads the launch intent while it starts up,
+        // and a cold-start share must already look like a vis:// link by then.
+        setIntent(asShareLink(getIntent()));
+        super.onCreate(savedInstanceState);
+    }
+
+    @Override
+    public void onNewIntent(Intent intent) {
+        Intent rewritten = asShareLink(intent);
+        setIntent(rewritten);
+        super.onNewIntent(rewritten);
+    }
+
+    /** ACTION_SEND / ACTION_SEND_MULTIPLE / PROCESS_TEXT → vis://share?… ; anything else untouched. */
+    private static Intent asShareLink(Intent intent) {
+        if (intent == null) {
+            return null;
+        }
+        String action = intent.getAction();
+        if (action == null) {
+            return intent;
+        }
+        String text = null;
+        String title = null;
+        if (Intent.ACTION_SEND.equals(action)) {
+            text = string(intent.getCharSequenceExtra(Intent.EXTRA_TEXT));
+            title = string(intent.getCharSequenceExtra(Intent.EXTRA_SUBJECT));
+            if (text == null) {
+                // An image/file share: the stream URI is all we can honestly
+                // forward, and a link to it still beats dropping the share.
+                android.os.Parcelable stream = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+                text = stream == null ? null : stream.toString();
+            }
+        } else if (Intent.ACTION_SEND_MULTIPLE.equals(action)) {
+            ArrayList<CharSequence> parts = intent.getCharSequenceArrayListExtra(Intent.EXTRA_TEXT);
+            title = string(intent.getCharSequenceExtra(Intent.EXTRA_SUBJECT));
+            if (parts != null && !parts.isEmpty()) {
+                text = TextUtils.join("\\n", parts);
+            } else {
+                ArrayList<android.os.Parcelable> streams = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+                if (streams != null && !streams.isEmpty()) {
+                    StringBuilder joined = new StringBuilder();
+                    for (android.os.Parcelable stream : streams) {
+                        if (joined.length() > 0) {
+                            joined.append('\\n');
+                        }
+                        joined.append(stream.toString());
+                    }
+                    text = joined.toString();
+                }
+            }
+        } else if (PROCESS_TEXT.equals(action)) {
+            text = string(intent.getCharSequenceExtra(EXTRA_PROCESS_TEXT));
+        } else {
+            return intent;
+        }
+        if (text == null && title == null) {
+            return intent;
+        }
+        Uri.Builder share = new Uri.Builder().scheme("vis").authority("share");
+        // A bare link goes in \`url\` so the web layer can treat it as one; prose
+        // stays prose. Sharing from a browser sends the URL as EXTRA_TEXT.
+        if (isLink(text)) {
+            share.appendQueryParameter("url", text);
+        } else if (text != null) {
+            share.appendQueryParameter("text", text);
+        }
+        if (title != null) {
+            share.appendQueryParameter("title", title);
+        }
+        // A nonce: sharing the SAME page twice must produce two DIFFERENT URLs,
+        // or the app's deep-link dedupe (src/lib/deeplink.ts) swallows the second.
+        share.appendQueryParameter("at", Long.toString(System.currentTimeMillis()));
+        Intent out = new Intent(intent);
+        out.setAction(Intent.ACTION_VIEW);
+        out.setData(share.build());
+        return out;
+    }
+
+    private static String string(CharSequence value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.toString().trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private static boolean isLink(String value) {
+        if (value == null || value.contains(" ") || value.contains("\\n")) {
+            return false;
+        }
+        String lower = value.toLowerCase();
+        return lower.startsWith("http://") || lower.startsWith("https://");
+    }
+}
+`;
+mkdirSync(javaPackageDir, { recursive: true });
+if (!existsSync(mainActivityPath) || readFileSync(mainActivityPath, 'utf8') !== mainActivity) {
+  writeFileSync(mainActivityPath, mainActivity);
+}
+
+// The filters that put Vis in the system share sheet. `text/plain` is what a
+// browser, a reader and a text selection all send; `*/*` would also claim every
+// binary share we cannot do anything useful with.
+const shareFilters = `
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+`;
+let shareManifest = readFileSync(manifestPath, 'utf8');
+const shareManifestBefore = shareManifest;
+if (!shareManifest.includes('android.intent.action.SEND')) {
+  const at = shareManifest.indexOf('</activity>');
+  if (at < 0) die('AndroidManifest.xml has no </activity> to attach the share filters to');
+  shareManifest = shareManifest.slice(0, at) + shareFilters.replace(/^\n/, '') + '        ' + shareManifest.slice(at);
+}
+if (shareManifest !== shareManifestBefore) writeFileSync(manifestPath, shareManifest);
+console.log('\u2713 share target   MainActivity SEND/PROCESS_TEXT \u2192 vis://share + AndroidManifest filters');

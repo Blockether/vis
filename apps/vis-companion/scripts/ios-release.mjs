@@ -218,10 +218,13 @@ if (!existsSync(entitlementsPath) || readFileSync(entitlementsPath, 'utf8') !== 
 
 // Point every build configuration of the App target at it. Without this the
 // archive is signed with no `aps-environment` and APNs rejects every token.
+// Only the app target: the VisShare extension has its own bundle id and must
+// never inherit the app's push entitlement.
 let project = readFileSync(pbxproj, 'utf8');
 if (!project.includes('CODE_SIGN_ENTITLEMENTS')) {
+  const idPattern = appBundleId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   project = project.replaceAll(
-    /(\n(\s*)PRODUCT_BUNDLE_IDENTIFIER = [^;]+;)/g,
+    new RegExp(`(\\n(\\s*)PRODUCT_BUNDLE_IDENTIFIER = "?${idPattern}"?;)`, 'g'),
     '$1\n$2CODE_SIGN_ENTITLEMENTS = App/App.entitlements;',
   );
   writeFileSync(pbxproj, project);

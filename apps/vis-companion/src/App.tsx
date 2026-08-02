@@ -28,6 +28,7 @@ import { onWake } from './lib/wake';
 import { SessionSubscriptionHub } from './lib/subscriptions';
 import { parsePairing } from './lib/pairing';
 import { onPairingLink } from './lib/deeplink';
+import { hydratePendingShare, parseShareLink, receiveSharedText } from './lib/share-intake';
 import { applyTheme, resolveLocalTheme } from './lib/theme';
 import { getThemePalette, getThemePref } from './lib/storage';
 import { ConnectScreen } from './screens/ConnectScreen';
@@ -52,6 +53,9 @@ type Tab = 'sessions' | 'connect';
 
 /** Stable empty watch list for when no gateway stream is subscribed. */
 const NO_SUBSCRIBED_IDS = new Set<string>();
+
+/** How long a parked share still steers navigation on the next launch. */
+const RESUMABLE_SHARE_MS = 5 * 60 * 1000;
 
 // The splash is allowed to be a moment, never a state. Reading the stored
 // gateways is a native bridge call, and an iOS bridge can go silent after the
@@ -241,6 +245,45 @@ export function App() {
       .catch(() => undefined);
   }, []);
 
+  // A share sheet drop, an Android `ACTION_SEND`, or a Shortcuts run carries a
+  // payload but no destination. `lib/share-intake` parks it; this decides where
+  // it lands: the most recently opened session of the active gateway, so
+  // "Share → vis" is one tap from a prompt. With nothing to reopen, the list is
+  // the honest destination — the payload stays parked until a composer takes it,
+  // so landing short never loses it.
+  const openSharedSession = useCallback(async () => {
+    const conn = active ?? (await getPrimaryConnection());
+    if (!conn) {
+      setTab('connect');
+      return;
+    }
+    const [sid] = await loadSubscribedSessions(conn.url);
+    if (!sid) {
+      setActive(conn);
+      setTab('sessions');
+      return;
+    }
+    openGatewaySession(conn, sid);
+  }, [active, openGatewaySession]);
+
+  // Bumped by every accepted share. A counter, not a flag: two links dropped
+  // back to back must both re-route, including the one that arrives while the
+  // first is still opening.
+  const [shareNonce, setShareNonce] = useState(0);
+  const handledShareNonce = useRef(0);
+
+  // A share that outlived the webview it was dropped into (cold start, OS
+  // reclaim, crash). Only a RECENT one steers navigation: opening the app days
+  // later must not yank the user into a session, and the payload keeps waiting
+  // for whichever composer mounts next either way.
+  useEffect(() => {
+    void hydratePendingShare().then((share) => {
+      if (share && Date.now() - (share.at ?? 0) < RESUMABLE_SHARE_MS) {
+        setShareNonce((nonce) => nonce + 1);
+      }
+    });
+  }, []);
+
   // Hash routing: a session is a shareable URL (#/s/<sid>?gw=<gateway-url>).
   // Apply the current hash to view state, and follow browser back/forward and
   // pasted links via `hashchange`. Opening still needs the gateway paired
@@ -400,6 +443,9 @@ export function App() {
   // Deep-linked pairing: vis://gateway?url=…&token=…
   // Deep-linked session: vis://s/<sid>?gw=<id> — the shareable form on native,
   // where the WebView origin (capacitor://localhost) is not an openable URL.
+  // Shared drop: vis://share?url=…&text=…&title=… — the single shape the iOS
+  // share extension, the Android SEND filter and the Shortcuts action all
+  // rewrite whatever they were handed into.
   useEffect(() => {
     let dispose = () => {};
     void onPairingLink((url) => {
@@ -410,6 +456,13 @@ export function App() {
         void addConnection(parsed);
         return;
       }
+      const shared = parseShareLink(url);
+      if (shared) {
+        // Park it BEFORE navigating: a link the user handed us must not depend
+        // on this app managing to reach a composer in this launch.
+        if (receiveSharedText(shared)) setShareNonce((nonce) => nonce + 1);
+        return;
+      }
       const hash = parseSessionDeepLink(url);
       // Route through the hash so a cold start and a warm resume take the same
       // path as a pasted web link (and browser back still works).
@@ -417,6 +470,14 @@ export function App() {
     }).then((d) => (dispose = d));
     return () => dispose();
   }, [addConnection]);
+
+  // Steer to a composer once a share is parked AND the initial route has been
+  // applied: routing earlier would be overwritten by the hash we booted with.
+  useEffect(() => {
+    if (!shareNonce || !routeApplied || shareNonce === handledShareNonce.current) return;
+    handledShareNonce.current = shareNonce;
+    void openSharedSession();
+  }, [shareNonce, routeApplied, openSharedSession]);
 
   // Precache the provider/model fleet. `/v1/router` costs the daemon a live
   // auth + limits probe per provider, so warming it at connect time (and once
