@@ -1141,6 +1141,9 @@ export function SessionScreen({
     client.cachedCapabilities(),
   );
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  // Native hides two distinct acts behind one composer control, so the plus has
+  // to ask which one: the OS gallery sheet never opens a shutter.
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [pastes, setPastes] = useState<Map<number, ComposerPaste>>(
     () =>
       new Map(peekDraftMessage(draftMessageId).pastes.map((paste) => [paste.id, paste])),
@@ -4387,39 +4390,103 @@ export function SessionScreen({
               onChange={(event) => void onFilesPicked(event.target.files)}
             />
 
-            <button
-              type="button"
-              onMouseDown={keepKeyboard}
-              className="grid h-8 w-7 shrink-0 place-items-center text-dialog-hint transition-[background-color,color,transform,translate,scale,rotate] duration-150 hover:bg-hover hover:text-dialog-hint-key active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:h-7 sm:w-6"
-              onClick={() => void addAttachments()}
-              disabled={attachments.length >= (capabilities?.features.attachments.max_files ?? 8)}
-              aria-label="Choose photos or videos"
-              title="Choose photos or videos"
+            {/* ONE attachment button. The gallery sheet has no shutter, so "take
+                a photo" still needs its own path — without it the only way to
+                attach what you are LOOKING at is to leave, open the camera app,
+                come back and hunt for the file. It lives in this menu instead of
+                a second icon crowding the composer. Web keeps the direct file
+                dialog: its input already exposes whatever capture the browser
+                has. */}
+            <div
+              className="relative shrink-0"
+              onKeyDown={(event) => {
+                if (event.key === 'Escape' && attachMenuOpen) {
+                  event.stopPropagation();
+                  setAttachMenuOpen(false);
+                }
+              }}
             >
-              <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                <path d="M12 5v14M5 12h14" strokeLinecap="square" />
-              </svg>
-            </button>
+              {attachMenuOpen && (
+                <>
+                  {/* Tapping anywhere else is a dismissal, not a mis-tap. */}
+                  <button
+                    type="button"
+                    aria-label="Close attachment menu"
+                    className="fixed inset-0 z-20 cursor-default"
+                    onMouseDown={keepKeyboard}
+                    onClick={() => setAttachMenuOpen(false)}
+                  />
+                  <div
+                    role="menu"
+                    aria-label="Attach"
+                    className="absolute bottom-full left-0 z-30 mb-1.5 w-max min-w-40 border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex min-h-9 w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-meta text-dialog-foreground transition-colors hover:bg-hover"
+                      onMouseDown={keepKeyboard}
+                      onClick={() => {
+                        setAttachMenuOpen(false);
+                        void takePhoto();
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" className="size-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                        <path d="M3 8h4l1.5-2h7L17 8h4v11H3z" strokeLinecap="square" />
+                        <circle cx="12" cy="13" r="3.2" />
+                      </svg>
+                      Take a photo
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex min-h-9 w-full items-center gap-2 border-t border-dialog-edge px-3 py-1.5 text-left font-mono text-meta text-dialog-foreground transition-colors hover:bg-hover"
+                      onMouseDown={keepKeyboard}
+                      onClick={() => {
+                        setAttachMenuOpen(false);
+                        void addAttachments();
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" className="size-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                        <path d="M4 6h16v12H4z" strokeLinecap="square" />
+                        <path d="M4 15l4.5-4.5 3 3 3.5-3.5L20 15" strokeLinecap="square" />
+                        <circle cx="9" cy="9.5" r="1.2" />
+                      </svg>
+                      Photos or videos
+                    </button>
+                  </div>
+                </>
+              )}
 
-            {/* The gallery sheet has no shutter, so "take a photo" needs its own
-                button — without it the only way to attach what you are LOOKING at
-                is to leave, open the camera app, come back and hunt for the file. */}
-            {Capacitor.isNativePlatform() && (
               <button
                 type="button"
                 onMouseDown={keepKeyboard}
                 className="grid h-8 w-7 shrink-0 place-items-center text-dialog-hint transition-[background-color,color,transform,translate,scale,rotate] duration-150 hover:bg-hover hover:text-dialog-hint-key active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:h-7 sm:w-6"
-                onClick={() => void takePhoto()}
+                onClick={() => {
+                  if (!Capacitor.isNativePlatform()) {
+                    void addAttachments();
+                    return;
+                  }
+                  setAttachMenuOpen((open) => !open);
+                }}
                 disabled={attachments.length >= (capabilities?.features.attachments.max_files ?? 8)}
-                aria-label="Take a photo"
-                title="Take a photo"
+                aria-haspopup={Capacitor.isNativePlatform() ? 'menu' : undefined}
+                aria-expanded={Capacitor.isNativePlatform() ? attachMenuOpen : undefined}
+                aria-label={Capacitor.isNativePlatform() ? 'Attach a photo or video' : 'Choose photos or videos'}
+                title={Capacitor.isNativePlatform() ? 'Attach a photo or video' : 'Choose photos or videos'}
               >
-                <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                  <path d="M3 8h4l1.5-2h7L17 8h4v11H3z" strokeLinecap="square" />
-                  <circle cx="12" cy="13" r="3.2" />
+                <svg
+                  viewBox="0 0 24 24"
+                  className={`size-3.5 transition-transform duration-150 motion-reduce:transition-none ${attachMenuOpen ? 'rotate-45' : ''}`}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  aria-hidden="true"
+                >
+                  <path d="M12 5v14M5 12h14" strokeLinecap="square" />
                 </svg>
               </button>
-            )}
+            </div>
 
             {voiceSupported && (
               <button
