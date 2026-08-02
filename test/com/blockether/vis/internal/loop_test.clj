@@ -2432,11 +2432,22 @@
                  ;; to a text scan. The watchdog started first, so it always won and the
                  ;; turn got a bare `Timeout (120s)` with no stdout instead of shell's
                  ;; structured envelope.
-                 (expect (= 130000 (eval-timeout-ms-for-code 120000 "r = await shell(commands=[\"sleep 300\"])")))
-                 (expect (= 130000
+                 ;;
+                 ;; The floor is shell's CAP (`MAX_SHELL_TIMEOUT_SECS`, ten minutes), not
+                 ;; its default: a `wait` whose budget the scan cannot read may legally own
+                 ;; the full ten minutes, and the watchdog is a BACKSTOP, never a co-deadline.
+                 (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
+                            (eval-timeout-ms-for-code 120000 "r = await shell(commands=[\"sleep 300\"])")))
+                 (expect (= 610000
                             (eval-timeout-ms-for-code
                               120000
-                              "secs = 90\nr = await shell(op=\"wait\", id=\"j\", timeout_secs=secs)")))
+                              "secs = 600\nr = await shell(op=\"wait\", id=\"j\", timeout_secs=secs)")))
+                 ;; The cap is a floor for the UNREADABLE case only: a block that spells a
+                 ;; literal second budget keeps that tight watchdog.
+                 (expect (= 190000
+                            (eval-timeout-ms-for-code
+                              120000
+                              "r = await shell(commands=[\"x\"], timeout_secs=180)")))
                  ;; A test run owns a multi-minute budget and answers timeouts itself.
                  (expect (= 310000
                             (eval-timeout-ms-for-code 120000 "r = await run_tests(\"clojure\", namespaces=[\"a.b-test\"])")))

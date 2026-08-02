@@ -129,6 +129,17 @@
    this budget whenever an eval calls the shell at all."
   120)
 
+(def MAX_SHELL_TIMEOUT_SECS
+  "Hard ceiling `foundation.shell` clamps EVERY `run` / `wait` budget to: ten
+   minutes. Declared here so the widener below can floor the eval watchdog above
+   the LONGEST budget a shell call may legally own, not merely above the default.
+
+   A budget that is a variable or an expression is invisible to a text scan, so
+   flooring at the 120s default let the watchdog preempt a legal ten-minute wait
+   with a bare `Timeout (120s)` instead of shell's own envelope — the same defect
+   `DEFAULT_SHELL_TIMEOUT_SECS` describes, one spelling further out."
+  600)
+
 (def RUN_TESTS_FLOOR_SECS
   "Floor for an eval that calls `run_tests`. A test run carries its OWN multi-
    minute budget (the Clojure pack's 290s nREPL deadline) and answers a timeout
@@ -178,11 +189,18 @@
    none of them names a number. A timeout that is a variable, an expression, or
    simply the tool's default is invisible to a text scan, so without this floor
    the watchdog silently preempts a call that owns a longer budget and answers
-   timeouts itself."
+   timeouts itself.
+
+   A `shell` call the scan cannot read may legally own the FULL cap — a ten-minute
+   `wait` — so that is its floor. When the block DOES spell a second budget out the
+   scan already reads it, and the floor drops back to shell's default so a second,
+   unannotated call in the same block still cannot race the watchdog."
   [code]
   (let [code (str code)]
-    (max-of [(when (re-find run-tests-call-re code) RUN_TESTS_FLOOR_SECS)
-             (when (re-find shell-call-re code) DEFAULT_SHELL_TIMEOUT_SECS)])))
+    (max-of
+      [(when (re-find run-tests-call-re code) RUN_TESTS_FLOOR_SECS)
+       (when (re-find shell-call-re code)
+         (if (re-find timeout-secs-re code) DEFAULT_SHELL_TIMEOUT_SECS MAX_SHELL_TIMEOUT_SECS))])))
 
 (defn eval-timeout-ms-for-code
   "Eval watchdog for ONE Python block: the configured base, raised so it sits a

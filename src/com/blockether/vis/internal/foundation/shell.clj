@@ -68,7 +68,10 @@
   ;; watchdog that started first and can never return its own timeout envelope.
   rt/DEFAULT_SHELL_TIMEOUT_SECS)
 
-(def ^:private max-timeout-secs 600)
+(def ^:private max-timeout-secs
+  ;; Ten minutes, shared with the Python eval watchdog: the watchdog floors itself
+  ;; above THIS, so no legal `run`/`wait` budget can be preempted from outside.
+  rt/MAX_SHELL_TIMEOUT_SECS)
 
 (def ^:private max-sync-head-chars
   "Prefix of a SYNC stream always CAPTURED: the command's OPENING context —
@@ -1750,7 +1753,7 @@ await shell({\"op\": \"send\", \"id\": \"tests\", \"text\": \"y\"})
 await shell({\"op\": \"stop\", \"id\": \"tests\"})
 
 `commands` is a non-empty string array. `op` defaults to `run`, or `background` when `id` is supplied:
-- `run`: blocking `bash -lc`; `cwd` defaults to workspace root; `timeout_secs` defaults to 120 (max 600); nonzero exit is data.
+- `run`: blocking `bash -lc`; `cwd` defaults to workspace root; `timeout_secs` defaults to 120 and is capped at 600 (10 minutes) — the same ceiling `wait` gets; nonzero exit is data.
 - `background`: returns immediately without a timeout and owns a session resource; use for long or interactive work.
 - `wait`: bounded wait for a CONDITION on one background id. `until` is a REQUIRED regex over the log lines: the wait returns the moment one matches, with `is_matched` true and that line in `matched`, leaving the process running. A process that dies also ends the wait, and `timeout_secs` is only the backstop — it never stops anything. A command that merely has to FINISH is `run`. Wait on independent ids concurrently with `await gather(...)` instead of sleeping or polling in Python.
 - `logs`: immediate snapshot of the last 200 `lines` by default; `n` max 2000.
@@ -2275,11 +2278,10 @@ Results share `stage`, `id`, `cwd`, `commands`, `started`, `exit`, `duration_ms`
                 "wait (required): end on a log line matching this regex; ANSI color is ignored."}
        "cwd" {:type "string"
               :description "Working directory under allowed root; relative uses workspace."}
-       "n"
-       {:type "integer"
-        :minimum 1
-        :maximum 2000
-        :description "logs/wait tail lines; default 200. `until` still scans all."}
+       "n" {:type "integer"
+            :minimum 1
+            :maximum 2000
+            :description "logs/wait tail lines; default 200. `until` still scans all."}
        "text" {:type "string" :description "send keystrokes."}
        "is_enter" {:type "boolean" :description "send newline; default true."}}
       :additionalProperties false}
