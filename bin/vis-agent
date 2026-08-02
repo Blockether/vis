@@ -42,15 +42,89 @@ else
 fi
 bundled_native="$bin_dir/vis-agent-native"
 
-# Prefer an active developer checkout over an installed source checkout/bundle.
-# Carry the installed sidecar across that handoff: the checkout wrapper otherwise
-# cannot discover the native runtime beside the original installed wrapper.
+# ── Runtime selection inputs ─────────────────────────────────────────────────
+# Vis follows releases by default: the published native runtime, or JVM source
+# pinned to the newest release tag. `dev` is the opt-in mode — and the only mode
+# that follows a live, moving checkout. A one-launch flag wins over VIS_RUNTIME,
+# which wins over the persisted default in ~/.vis/runtime.
+runtime_file="$vis_home/runtime"
 dev_checkout="${VIS_DEV_CHECKOUT:-$HOME/vis}"
-if [[ -z "${VIS_NO_DEV_CHECKOUT:-}" \
+
+dist=""   # "" = configured/automatic; else "jvm" | "native" | "dev"
+jfr=0
+args=()
+update_cmd=0
+if [[ "${1:-}" == "update" ]]; then
+  update_cmd=1
+fi
+for arg in "$@"; do
+  case "$arg" in
+    --measure)        export VIS_MEASURE=1 ;;
+    --jfr)            jfr=1 ;;
+    # `update` owns these words too — there they say WHAT to update — so they are
+    # kept in the argument list for that subcommand instead of being consumed.
+    --source|--jvm)
+      dist="jvm"
+      if (( update_cmd )); then args+=("$arg"); fi
+      ;;
+    --native)
+      dist="native"
+      if (( update_cmd )); then args+=("$arg"); fi
+      ;;
+    --dev)
+      dist="dev"
+      if (( update_cmd )); then args+=("$arg"); fi
+      ;;
+    --jar)
+      echo "vis-agent: --jar was removed; choose --native, --jvm (source), or --dev." >&2
+      exit 2
+      ;;
+    *)                args+=("$arg") ;;
+  esac
+done
+if (( ${#args[@]} > 0 )); then
+  set -- "${args[@]}"
+else
+  set --
+fi
+
+if [[ -z "$dist" ]]; then
+  case "${VIS_RUNTIME:-}" in
+    native|jvm|dev) dist="$VIS_RUNTIME" ;;
+    "") ;;
+    *) echo "vis-agent: ignoring invalid VIS_RUNTIME '$VIS_RUNTIME'" >&2 ;;
+  esac
+fi
+
+persisted_runtime=""
+if [[ -f "$runtime_file" ]]; then
+  persisted_runtime="$(cat "$runtime_file" 2>/dev/null || true)"
+fi
+dev_mode=0
+case "${dist:-$persisted_runtime}" in
+  dev) dev_mode=1 ;;
+esac
+
+# ── --jfr: Java Flight Recorder profiling ───────────────────────────────────
+# Export VIS_JFR=1 so the client and detached gateway daemon each create their
+# own role-tagged recording. This works for both JVM source and native-image.
+if (( jfr )); then
+  export VIS_JFR=1
+  mkdir -p "$HOME/.vis" 2>/dev/null || true
+  echo "vis-agent: JFR profiling on → ~/.vis/vis-{client,gateway}-<pid>-<ts>.jfr" >&2
+  echo "vis-agent:   snapshot: jcmd <pid> JFR.dump name=vis-<role>" >&2
+fi
+
+# Dev mode — and only dev mode — hands off to a live developer checkout. Carry
+# the installed sidecar across that handoff: the checkout wrapper otherwise
+# cannot discover the native runtime beside the original installed wrapper.
+if (( dev_mode )) \
+      && [[ -z "${VIS_NO_DEV_CHECKOUT:-}" \
       && "$repo_root" != "$dev_checkout" \
       && -x "$dev_checkout/bin/vis-agent" \
       && -f "$dev_checkout/deps.edn" ]]; then
   export VIS_NO_DEV_CHECKOUT=1
+  export VIS_RUNTIME=dev
   if [[ -x "$bundled_native" ]]; then
     export VIS_INSTALLED_NATIVE="$bundled_native"
   fi
@@ -191,45 +265,10 @@ ensure_compatible_jvm_runtime() {
   return 1
 }
 
-# One-launch overrides. Persistent selection lives under `runtime use` below.
-# --source remains a descriptive alias for the JVM/source runtime.
-dist=""   # "" = configured/automatic; else "jvm" | "native"
-jfr=0
-args=()
-for arg in "$@"; do
-  case "$arg" in
-    --measure)        export VIS_MEASURE=1 ;;
-    --source|--jvm)   dist="jvm" ;;
-    --native)         dist="native" ;;
-    --jar)
-      echo "vis-agent: --jar was removed; choose --jvm (source) or --native." >&2
-      exit 2
-      ;;
-    --jfr)            jfr=1 ;;
-    *)                args+=("$arg") ;;
-  esac
-done
-if (( ${#args[@]} > 0 )); then
-  set -- "${args[@]}"
-else
-  set --
-fi
-
-# ── --jfr: Java Flight Recorder profiling ───────────────────────────────────
-# Export VIS_JFR=1 so the client and detached gateway daemon each create their
-# own role-tagged recording. This works for both JVM source and native-image.
-if (( jfr )); then
-  export VIS_JFR=1
-  mkdir -p "$HOME/.vis" 2>/dev/null || true
-  echo "vis-agent: JFR profiling on → ~/.vis/vis-{client,gateway}-<pid>-<ts>.jfr" >&2
-  echo "vis-agent:   snapshot: jcmd <pid> JFR.dump name=vis-<role>" >&2
-fi
-
 # ── Managed runtime and release install ──────────────────────────────────────
 # vis_home is initialized before source discovery so an installed wrapper can
 # find the checkout recorded by bin/install-source.
 vis_install_dir="$vis_home/install"
-runtime_file="$vis_home/runtime"
 vis_repo_slug="Blockether/vis"
 native_bin="$repo_root/target/vis"
 
@@ -246,9 +285,14 @@ find_native() {
 }
 
 find_jvm_source() {
-  if [[ -f "$vis_install_dir/mode" \
-        && "$(cat "$vis_install_dir/mode" 2>/dev/null)" == "jvm-sha" \
-        && -f "$vis_install_dir/src/deps.edn" ]]; then
+  # Dev mode runs the live checkout as-is. Every other mode prefers the managed
+  # checkout that `vis-agent update` keeps pinned to a release tag or SHA.
+  local mode=""
+  [[ ! -f "$vis_install_dir/mode" ]] || mode="$(cat "$vis_install_dir/mode" 2>/dev/null || true)"
+  if (( dev_mode )) && [[ -f "$repo_root/deps.edn" ]]; then
+    printf '%s\n' "$repo_root"
+  elif [[ "$mode" == "jvm-sha" || "$mode" == "jvm-tag" ]] \
+        && [[ -f "$vis_install_dir/src/deps.edn" ]]; then
     printf '%s\n' "$vis_install_dir/src"
   elif [[ -f "$repo_root/deps.edn" ]]; then
     printf '%s\n' "$repo_root"
@@ -257,27 +301,39 @@ find_jvm_source() {
   fi
 }
 
+# The release tag or SHA the managed source is pinned to; empty when unpinned.
+vis_pinned_ref() {
+  local file
+  for file in "$vis_install_dir/ref" "$vis_install_dir/sha"; do
+    if [[ -f "$file" ]]; then
+      cat "$file" 2>/dev/null || true
+      return 0
+    fi
+  done
+  return 0
+}
+
 configured_runtime() {
   local value=""
   [[ -f "$runtime_file" ]] && value="$(cat "$runtime_file" 2>/dev/null)"
   case "$value" in
-    native|jvm) printf '%s\n' "$value" ;;
+    native|jvm|dev) printf '%s\n' "$value" ;;
     "") return 1 ;;
     *) echo "vis-agent: ignoring invalid runtime setting in $runtime_file: $value" >&2; return 1 ;;
   esac
 }
 
 runtime_effective() {
-  local configured="" in_repo=0
+  local configured=""
   configured="$(configured_runtime 2>/dev/null || true)"
   if [[ -n "$configured" ]]; then
     printf '%s\n' "$configured"
     return
   fi
-  case "$invocation_cwd/" in "$repo_root"/*) in_repo=1 ;; esac
-  if (( in_repo )) && [[ -z "${VIS_PREBUILT:-}" ]]; then
-    printf 'jvm\n'
-  elif find_native >/dev/null; then
+  # Automatic means "follow the releases": the published native runtime when it
+  # is installed, otherwise release-tagged JVM source. A live checkout is never
+  # picked implicitly — that is dev mode, and it must be asked for.
+  if find_native >/dev/null; then
     printf 'native\n'
   else
     printf 'jvm\n'
@@ -287,29 +343,44 @@ runtime_effective() {
 vis_runtime() {
   case "${1:-show}" in
     show)
-      local configured="" native="unavailable" source="unavailable"
+      local configured="" native="unavailable" source="unavailable" pinned=""
       configured="$(configured_runtime 2>/dev/null || true)"
       native="$(find_native 2>/dev/null || printf 'unavailable')"
       source="$(find_jvm_source 2>/dev/null || printf 'unavailable')"
-      echo "Configured default: ${configured:-automatic}"
+      pinned="$(vis_pinned_ref)"
+      echo "Configured default: ${configured:-automatic (release: native, else tagged source)}"
       echo "Effective runtime: $(runtime_effective)"
       echo "Native: $native"
       echo "JVM source: $source"
+      echo "Source pinned at: ${pinned:-unpinned}"
+      echo "Dev checkout: $dev_checkout"
       ;;
     use)
       case "${2:-}" in
-        native|jvm)
+        native|jvm|dev)
           mkdir -p "$vis_home"
           printf '%s\n' "$2" > "$runtime_file.tmp"
           mv -f "$runtime_file.tmp" "$runtime_file"
           echo "vis-agent: default runtime is now $2"
+          if [[ "$2" == "dev" ]]; then
+            echo "vis-agent: dev mode follows the live checkout at $dev_checkout"
+            echo "vis-agent: (override with VIS_DEV_CHECKOUT; leave it with 'vis-agent runtime use auto')."
+          fi
           ;;
-        *) echo "Usage: vis-agent runtime use native|jvm" >&2; return 2 ;;
+        auto|default)
+          rm -f "$runtime_file"
+          echo "vis-agent: default runtime is now automatic (native release runtime, else tagged source)"
+          ;;
+        *) echo "Usage: vis-agent runtime use native|jvm|dev|auto" >&2; return 2 ;;
       esac
       ;;
     *)
       echo "Usage: vis-agent runtime [show]" >&2
-      echo "       vis-agent runtime use native|jvm" >&2
+      echo "       vis-agent runtime use native|jvm|dev|auto" >&2
+      echo "         native  release runtime downloaded by 'vis-agent update'" >&2
+      echo "         jvm     source pinned to the newest release tag" >&2
+      echo "         dev     live checkout, tracking its branch" >&2
+      echo "         auto    no persisted choice (native, else tagged source)" >&2
       return 2
       ;;
   esac
@@ -347,15 +418,54 @@ vis_asset_url() {
   printf '%s' "${url%\"}"
 }
 
+# The checkout Vis owns and may move between release tags. A developer's own
+# checkout — the one this launcher is a tracked file of — is never moved.
+vis_managed_source() {
+  if [[ -d "$vis_install_dir/src/.git" ]]; then
+    printf '%s\n' "$vis_install_dir/src"
+  elif (( ! launcher_is_checkout )) && [[ -d "$repo_root/.git" ]]; then
+    printf '%s\n' "$repo_root"
+  else
+    return 1
+  fi
+}
+
+# Follow tagged commits: pin the managed source checkout to the newest release
+# tag. Only dev mode tracks a moving branch.
+vis_update_tagged_source() {
+  local src="" tag=""
+  command -v git >/dev/null || { echo "vis-agent update needs git on PATH to update source" >&2; exit 1; }
+  src="$(vis_managed_source 2>/dev/null || true)"
+  if [[ -z "$src" ]]; then
+    src="$vis_install_dir/src"
+    echo "vis-agent: cloning $vis_repo_slug into $src"
+    git clone --filter=blob:none "https://github.com/$vis_repo_slug.git" "$src" || exit 1
+  fi
+  echo "vis-agent: fetching release tags for $src"
+  git -C "$src" fetch --tags --force --prune origin || exit 1
+  tag="$(git -C "$src" tag --list 'v*' --sort=-v:refname | head -1)"
+  [[ -n "$tag" ]] || { echo "vis-agent update: no release tag (vX.Y.Z) is published yet" >&2; exit 1; }
+  git -C "$src" checkout --force --detach "refs/tags/$tag" || exit 1
+  mkdir -p "$vis_home"
+  if [[ "$src" == "$vis_install_dir/src" ]]; then
+    printf 'jvm-tag\n' > "$vis_install_dir/mode"
+  fi
+  printf '%s\n' "$tag" > "$vis_install_dir/ref"
+  echo "vis-agent: source follows release tag $tag ($src)"
+}
+
 vis_do_update() {
-  local target="" fetch_native=0 rebuild=0 a
+  local target="" fetch_native=0 fetch_source=0 rebuild=0 dev_update=0 a
   for a in "$@"; do
     case "$a" in
-      --native)      fetch_native=1 ;;  # also DOWNLOAD the latest release binary
-      --rebuild)     rebuild=1 ;;        # also BUILD the native from pulled source
-      *)             target="$a" ;;
+      --native)        fetch_native=1 ;;  # DOWNLOAD the published release bundle
+      --source|--jvm)  fetch_source=1 ;;  # move managed source to the newest tag
+      --dev)           dev_update=1 ;;    # fast-forward the live checkout instead
+      --rebuild)       rebuild=1 ;;       # also BUILD the native from that source
+      *)               target="$a" ;;
     esac
   done
+  if (( dev_mode )); then dev_update=1; fi
   mkdir -p "$vis_install_dir"
 
   # A git SHA selects an exact JVM source checkout.
@@ -368,15 +478,17 @@ vis_do_update() {
     git -C "$src" checkout --force "$target" || exit 1
     printf 'jvm-sha\n' > "$vis_install_dir/mode"
     printf '%s\n' "$target" > "$vis_install_dir/sha"
+    printf '%s\n' "$target" > "$vis_install_dir/ref"
     mkdir -p "$vis_home"
     printf 'jvm\n' > "$runtime_file"
     echo "vis-agent: default runtime is now JVM source @ $target ($src)"
     exit 0
   fi
 
-  # Bare update in a source checkout fast-forwards source. --rebuild also builds
-  # native locally; --native additionally downloads the release bundle.
-  if [[ -z "$target" && -d "$repo_root/.git" ]]; then
+  # Dev mode is the only mode that follows a moving branch: fast-forward the live
+  # checkout. --rebuild also builds native locally; --native additionally
+  # downloads the release bundle.
+  if (( dev_update )) && [[ -z "$target" && -d "$repo_root/.git" ]]; then
     command -v git >/dev/null || { echo "vis-agent update needs git on PATH to update source" >&2; exit 1; }
     echo "vis-agent: updating source at $repo_root (git fetch + pull --ff-only)"
     git -C "$repo_root" fetch --tags origin || exit 1
@@ -422,6 +534,25 @@ vis_do_update() {
       echo "vis-agent: source updated; the JVM runtime will use it on the next launch."
       echo "  Build native with 'vis-agent update --rebuild', or install the latest"
       echo "  release runtime with 'vis-agent update --native'."
+      exit 0
+    fi
+  fi
+
+  # Default channel with the source runtime: follow tagged commits. The managed
+  # checkout is moved onto the newest release tag; a developer's own checkout is
+  # left untouched (that is what dev mode is for).
+  if [[ -z "$target" ]] && (( ! fetch_native )); then
+    if (( fetch_source )) || [[ "$(runtime_effective)" == "jvm" ]]; then
+      vis_update_tagged_source
+      if (( rebuild )); then
+        command -v clojure >/dev/null || { echo "vis-agent update --rebuild needs the Clojure CLI" >&2; exit 1; }
+        echo "vis-agent: building native runtime from the tagged source"
+        ( cd "$(vis_managed_source)" && clojure -T:build native ) || exit 1
+      fi
+      if (( launcher_is_checkout )); then
+        echo "vis-agent: developing here? 'vis-agent update --dev' fast-forwards this checkout,"
+        echo "vis-agent: and 'vis-agent runtime use dev' makes it the default runtime."
+      fi
       exit 0
     fi
   fi
@@ -516,9 +647,10 @@ case "${1:-}" in
     ;;
 esac
 
-# Pick exactly one public runtime. A one-launch --native/--jvm override wins;
-# otherwise a persisted choice wins; otherwise use source while developing and
-# native when available elsewhere. The uberjar is deliberately not a runtime.
+# Pick exactly one public runtime. A one-launch --native/--jvm/--dev override
+# wins; otherwise the persisted default wins; otherwise follow the release
+# channel: the installed native runtime, else tagged JVM source. The uberjar is
+# deliberately not a runtime.
 if [[ -z "$dist" ]]; then
   dist="$(runtime_effective)"
 fi
@@ -539,12 +671,18 @@ case "$dist" in
     # the wrapper so release and container builds never retain the builder's home.
     run_measured_or_exec "process native runtime" "$nb" "-Duser.home=${HOME:-$vis_home}" "$@"
     ;;
-  jvm)
+  jvm|dev)
     jvm_source="$(find_jvm_source 2>/dev/null || true)"
     if [[ -z "$jvm_source" ]]; then
-      echo "vis-agent: JVM runtime selected, but no source checkout is installed." >&2
-      echo "vis-agent: install one with bin/install-source, or use the native runtime:" >&2
-      echo "vis-agent:   vis-agent update --native" >&2
+      if (( dev_mode )); then
+        echo "vis-agent: dev mode selected, but no source checkout was found." >&2
+        echo "vis-agent: clone one to $dev_checkout (or point VIS_DEV_CHECKOUT at it)," >&2
+        echo "vis-agent: or leave dev mode with 'vis-agent runtime use auto'." >&2
+      else
+        echo "vis-agent: JVM runtime selected, but no source checkout is installed." >&2
+        echo "vis-agent: install release-tagged source with 'vis-agent update --jvm'," >&2
+        echo "vis-agent: or use the native runtime: 'vis-agent update --native'." >&2
+      fi
       exit 1
     fi
     repo_root="$jvm_source"

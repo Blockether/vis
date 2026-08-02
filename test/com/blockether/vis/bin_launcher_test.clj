@@ -343,3 +343,200 @@
                (expect (str/includes? (slurp (io/file install-dir "install-vis-agent"))
                                       "BUNDLED-INSTALLER"))))
            (finally (delete-tree! root))))))
+
+(defn- copy-launcher!
+  "Copies the repository launcher to `dest` as an executable."
+  [dest]
+  (Files/copy (.toPath (io/file "bin/vis-agent"))
+              (.toPath ^java.io.File dest)
+              (into-array StandardCopyOption [StandardCopyOption/REPLACE_EXISTING]))
+  (.setExecutable ^java.io.File dest true)
+  dest)
+
+(defn- wrapper-runner
+  "Returns `(fn [args] [args env])` running the copied launcher with a sandboxed
+   HOME/VIS_HOME/PATH. `env` adds or overrides single variables."
+  [{:keys [launcher cwd home vis-home tools]}]
+  (fn run! ([args] (run! args {}))
+    ([args env-extra]
+     (let
+       [pb
+        (ProcessBuilder. ^java.util.List
+                         (into ["bash" (.getAbsolutePath ^java.io.File launcher)] args))
+
+        env
+        (.environment pb)]
+
+       (.directory pb ^java.io.File cwd)
+       (.redirectErrorStream pb true)
+       (.put env "HOME" (.getAbsolutePath ^java.io.File home))
+       (.put env "VIS_HOME" (.getAbsolutePath ^java.io.File vis-home))
+       (.put env "VIS_NO_DEV_CHECKOUT" "1")
+       (.put env "PATH" (str (.getAbsolutePath ^java.io.File tools) ":/usr/bin:/bin"))
+       (doseq [[k v] env-extra]
+         (.put env (str k) (str v)))
+       (let
+         [process
+          (.start pb)
+
+          output
+          (slurp (.getInputStream process))]
+
+         {:exit (.waitFor process) :output output})))))
+
+(defn- git!
+  "Runs git in `dir` with a deterministic identity; returns exit + merged output."
+  [dir & args]
+  (let
+    [pb
+     (ProcessBuilder. ^java.util.List (into ["git"] args))
+
+     env
+     (.environment pb)]
+
+    (.directory pb ^java.io.File dir)
+    (.redirectErrorStream pb true)
+    (.put env "GIT_AUTHOR_NAME" "vis-test")
+    (.put env "GIT_AUTHOR_EMAIL" "vis-test@example.invalid")
+    (.put env "GIT_COMMITTER_NAME" "vis-test")
+    (.put env "GIT_COMMITTER_EMAIL" "vis-test@example.invalid")
+    (let
+      [process
+       (.start pb)
+
+       output
+       (slurp (.getInputStream process))]
+
+      {:exit (.waitFor process) :output output})))
+
+(defdescribe
+  wrapper-dev-mode-test
+  (it
+    "follows releases by default and enters the live checkout only in dev mode"
+    (let
+      [root
+       (.toFile (Files/createTempDirectory "vis-agent-dev-test-" (make-array FileAttribute 0)))
+
+       install-dir
+       (doto (io/file root "install") .mkdirs)
+
+       checkout
+       (doto (io/file root "checkout") .mkdirs)
+
+       checkout-bin
+       (doto (io/file checkout "bin") .mkdirs)
+
+       home
+       (doto (io/file root "home") .mkdirs)
+
+       vis-home
+       (doto (io/file home ".vis") .mkdirs)
+
+       tools
+       (doto (io/file root "tools") .mkdirs)
+
+       launcher
+       (io/file install-dir "vis-agent")
+
+       run!
+       (wrapper-runner {:launcher launcher :cwd root :home home :vis-home vis-home :tools tools})
+
+       ;; The handoff is what dev mode is FOR, so it must be allowed here.
+       dev-env
+       {"VIS_DEV_CHECKOUT" (.getAbsolutePath checkout) "VIS_NO_DEV_CHECKOUT" ""}]
+
+      (try (copy-launcher! launcher)
+           (copy-launcher! (io/file checkout-bin "vis-agent"))
+           (spit (io/file checkout "deps.edn") "{}")
+           (write-executable! (io/file install-dir "vis-agent-native")
+                              "#!/usr/bin/env bash\nprintf 'NATIVE:%s\\n' \"$*\"\n")
+           (write-executable! (io/file tools "clojure")
+                              "#!/usr/bin/env bash\nprintf 'JVM:%s\\n' \"$*\"\n")
+           (write-executable! (io/file tools "java") "#!/usr/bin/env bash\nexit 0\n")
+           ;; A live checkout next door never wins on its own any more.
+           (let [{:keys [exit output]} (run! ["--version"] dev-env)]
+             (expect (= 0 exit) output)
+             (expect (str/includes? output "NATIVE:")))
+           (let [{:keys [exit output]} (run! ["--dev" "--version"] dev-env)]
+             (expect (= 0 exit) output)
+             (expect (str/includes? output "JVM:")))
+           (let [{:keys [output]} (run! ["--version"] (assoc dev-env "VIS_RUNTIME" "dev"))]
+             (expect (str/includes? output "JVM:")))
+           (let [{:keys [exit output]} (run! ["runtime" "use" "dev"] dev-env)]
+             (expect (= 0 exit) output)
+             (expect (str/includes? output "default runtime is now dev")))
+           (let [{:keys [output]} (run! ["--version"] dev-env)]
+             (expect (str/includes? output "JVM:")))
+           (let [{:keys [output]} (run! ["runtime" "show"] dev-env)]
+             (expect (str/includes? output "Configured default: dev")))
+           (let [{:keys [exit output]} (run! ["runtime" "use" "auto"] dev-env)]
+             (expect (= 0 exit) output)
+             (expect (str/includes? output "automatic")))
+           (let [{:keys [output]} (run! ["--version"] dev-env)]
+             (expect (str/includes? output "NATIVE:")))
+           (finally (delete-tree! root))))))
+
+(defdescribe
+  wrapper-tagged-source-update-test
+  (it
+    "moves the managed source checkout onto the newest release tag"
+    (let
+      [root
+       (.toFile (Files/createTempDirectory "vis-agent-tag-test-" (make-array FileAttribute 0)))
+
+       origin
+       (doto (io/file root "origin") .mkdirs)
+
+       install-dir
+       (doto (io/file root "install") .mkdirs)
+
+       home
+       (doto (io/file root "home") .mkdirs)
+
+       vis-home
+       (doto (io/file home ".vis") .mkdirs)
+
+       managed-src
+       (io/file vis-home "install/src")
+
+       tools
+       (doto (io/file root "tools") .mkdirs)
+
+       launcher
+       (io/file install-dir "vis-agent")
+
+       run!
+       (wrapper-runner {:launcher launcher :cwd root :home home :vis-home vis-home :tools tools})
+
+       commit!
+       (fn [content tag]
+         (spit (io/file origin "f") content)
+         (git! origin "add" "-A")
+         (git! origin "commit" "-qm" (str "commit " content))
+         (when tag (git! origin "tag" tag)))]
+
+      (try (copy-launcher! launcher)
+           (write-executable! (io/file tools "clojure")
+                              "#!/usr/bin/env bash\nprintf 'JVM:%s\\n' \"$*\"\n")
+           (git! origin "init" "-q" "-b" "main" ".")
+           (spit (io/file origin "deps.edn") "{}")
+           (commit! "one" "v0.1.1")
+           ;; v0.1.10 must beat v0.1.9: the newest tag is a version sort, not a
+           ;; lexicographic one.
+           (commit! "two" "v0.1.9")
+           (commit! "three" "v0.1.10")
+           ;; Untagged work on the branch is exactly what the default must NOT follow.
+           (commit! "unreleased" nil)
+           (.mkdirs (io/file vis-home "install"))
+           (git! root "clone" "-q" (.getAbsolutePath origin) (.getAbsolutePath managed-src))
+           (spit (io/file vis-home "runtime") "jvm\n")
+           (let [{:keys [exit output]} (run! ["update"])]
+             (expect (= 0 exit) output)
+             (expect (str/includes? output "release tag v0.1.10")))
+           (expect (= "v0.1.10" (str/trim (slurp (io/file vis-home "install/ref")))))
+           (expect (= "jvm-tag" (str/trim (slurp (io/file vis-home "install/mode")))))
+           (expect (= "v0.1.10" (str/trim (:output (git! managed-src "describe" "--tags")))))
+           (let [{:keys [output]} (run! ["runtime" "show"])]
+             (expect (str/includes? output "Source pinned at: v0.1.10"))
+             (expect (str/includes? output "Effective runtime: jvm")))
+           (finally (delete-tree! root))))))

@@ -9,15 +9,20 @@ install or invoke the native image as `vis`.
 The wrapper is responsible for:
 
 - keeping one collision-free command on PATH (`vis-agent`);
-- selecting native or live JVM source;
-- persisting the default with `vis-agent runtime use native|jvm`;
-- applying one-launch `--native` / `--jvm` overrides;
+- selecting the native runtime, release-tagged source, or a live dev checkout;
+- persisting the default with `vis-agent runtime use native|jvm|dev|auto`;
+- applying one-launch `--native` / `--jvm` / `--dev` overrides (or `VIS_RUNTIME`);
 - preserving the invocation working directory; and
 - producing a clear error when the selected runtime is unavailable.
 
-`vis-agent runtime show` reports the configured default, effective runtime, and
-the paths it discovered. There is no jar runtime. The AOT jar produced during a
-native build is an implementation artifact only.
+The wrapper follows **releases** by default: the published native runtime when it
+is installed, otherwise JVM source pinned to the newest `vX.Y.Z` tag. Only `dev`
+follows a moving branch, and only `dev` hands off to the developer checkout at
+`$VIS_DEV_CHECKOUT` (default `~/vis`).
+
+`vis-agent runtime show` reports the configured default, effective runtime, the
+pinned release ref, and the paths it discovered. There is no jar runtime. The AOT
+jar produced during a native build is an implementation artifact only.
 
 ## Native release bundle
 
@@ -62,6 +67,14 @@ A source installation and a native sidecar can coexist. Switching the persisted
 runtime does not reinstall anything:
 
 ```bash
-vis-agent runtime use jvm
+vis-agent runtime use jvm      # source at the newest release tag
 vis-agent runtime use native
+vis-agent runtime use dev      # live checkout, tracking its branch
+vis-agent runtime use auto     # no persisted choice
 ```
+
+`vis-agent update` keeps the managed checkout (`~/.vis/install/src`, or the
+checkout recorded by `bin/install-source`) on the newest release tag and records
+it in `~/.vis/install/ref`. Developers opt out with `vis-agent update --dev`,
+which fast-forwards the live checkout's branch instead; `vis-agent update <sha>`
+pins an exact commit.

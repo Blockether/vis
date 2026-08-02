@@ -99,7 +99,8 @@ Afterwards every runtime action belongs to vis-agent:
 vis-agent runtime show      # configured default, effective runtime, paths
 vis-agent update            # command + runtime, updated together
 vis-agent update --native   # (re)download just the native runtime
-vis-agent runtime use jvm   # switch to the source runtime
+vis-agent runtime use jvm   # switch to release-tagged source
+vis-agent runtime use dev   # switch to a live checkout (dev mode)
 ```
 
 ### Variants
@@ -144,23 +145,34 @@ host entirely — it installs the checkout's own wrapper.
 | `raw.githubusercontent.com` | one-line installers only |
 | your model provider's API | running the agent |
 
-## Choose native or JVM source
+## Choose native, tagged source, or dev
 
-The wrapper owns runtime selection:
+The wrapper owns runtime selection, and it follows releases unless told
+otherwise:
 
 ```bash
 vis-agent runtime show
-vis-agent runtime use native
-vis-agent runtime use jvm
+vis-agent runtime use native   # release runtime downloaded by `vis-agent update`
+vis-agent runtime use jvm      # source pinned to the newest release tag
+vis-agent runtime use dev      # live checkout (~/vis, or $VIS_DEV_CHECKOUT)
+vis-agent runtime use auto     # back to automatic
 
-vis-agent --native help       # one-launch override
-vis-agent --jvm help          # one-launch override; --source is an alias
+vis-agent --native help        # one-launch override
+vis-agent --jvm help           # one-launch override; --source is an alias
+vis-agent --dev help           # one-launch override; same as VIS_RUNTIME=dev
 ```
 
-A persisted choice wins. Without one, source wins while developing inside a Vis
-checkout; elsewhere the installed native sidecar wins when present, with JVM
-source as the fallback. If the selected runtime is unavailable, the wrapper
-stops and explains how to install or switch—it never silently picks another.
+A persisted choice wins. Without one, the installed native runtime wins, with
+release-tagged JVM source as the fallback — being inside a Vis checkout does not
+change that, because a live checkout is dev mode and must be selected. Dev mode
+also hands off to `$VIS_DEV_CHECKOUT` (default `~/vis`) when the command was
+installed elsewhere. If the selected runtime is unavailable, the wrapper stops
+and explains how to install or switch—it never silently picks another.
+
+`vis-agent update` matches the same channel: it installs the newest release
+bundle, or fetches tags and checks the managed source out at the newest `vX.Y.Z`
+tag. `vis-agent update --dev` is the only form that fast-forwards a live
+checkout's branch, and `vis-agent update <sha>` still pins an exact commit.
 
 There is no jar distribution and no `--jar` selector. `target/vis.jar` exists only
 as an intermediate build artifact. The JVM runtime means live source plus Java
