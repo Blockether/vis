@@ -4801,7 +4801,7 @@
      "natives, then print only needed output. State persists; project packages need a project REPL. "
      "Only `print` returns; bare expressions drop and errors surface. Native results return inline and stay "
      "at `ntr[tool_id]`; engine-bound natives are bare snake_case, native-only ones absent. Never "
-     "`time.sleep`/poll for background shells \u2014 use `shell` op `wait` (`until` regex ends it on a log "
+     "`time.sleep`/poll for background shells \u2014 use `shell` op `wait` (a REQUIRED `until` regex ends it "
      "line), via `gather` when parallel."
      (when-let [cap (python-execution-capability-line caps)]
        (str " " cap)))

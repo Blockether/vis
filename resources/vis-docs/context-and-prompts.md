@@ -121,17 +121,16 @@ shell analogue of `/slash`, and works the same way in the **TUI** and the
   auto-generated resource id (`background-<hex>`) and returns right away. Prefer it
   for commands that may take a while: builds, test suites, servers, watchers, and
   interactive processes. `logs` is an immediate snapshot of output:
-  `await shell({"op": "logs", "id": id})`. To wait for completion and receive
-  the final tail in `result["lines"]`, use
-  `await shell({"op": "wait", "id": id, "timeout_secs": 300})`. A wait timeout
-  leaves the process running. Prefer a condition to a guessed clock: `until` is a
-  regex over the log lines, and
-  `await shell({"op": "wait", "id": id, "until": "Local:.*http"})` returns the
-  moment a line matches — with that line in `result["matched"]` and the process
+  `await shell({"op": "logs", "id": id})`. To wait, use
+  `await shell({"op": "wait", "id": id, "until": "Local:.*http"})`. `until` is a
+  **required** regex over the log lines: the wait returns the moment one matches
+  — that line in `result["matched"]`, `result["is_matched"]` true, the process
   still running — so servers and watchers that never exit are waited on properly.
-  `timeout_secs` is then only the backstop. Wait for independent jobs concurrently
-  with `await gather(*(shell(op="wait", id=i, timeout_secs=300) for i in ids))` — do
-  not sleep or poll in `python_execution`. Stop a job with
+  A process that dies also ends the wait, and `timeout_secs` is only the backstop;
+  a wait timeout leaves the process running. A command that merely has to *finish*
+  is a plain `run`. Wait for independent jobs concurrently with
+  `await gather(*(shell(op="wait", id=i, until=pattern) for i in ids))` — do not
+  sleep or poll in `python_execution`. Stop a job with
   `await shell({"op": "stop", "id": id})`.
 - A bare `!` (or `!&`) with no command is ordinary prose and runs as a normal
   LLM turn.

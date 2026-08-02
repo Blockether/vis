@@ -529,23 +529,28 @@
 (defdescribe
   shell-wait-test
   (it "waits for completion on the host and returns the final bounded log tail"
-      (with-shell-on (fn []
-                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         (let
-                           [sid (str "shell-wait-exit-" (System/nanoTime))
-                            env {:session-id sid}]
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid (str "shell-wait-exit-" (System/nanoTime))
+               env {:session-id sid}]
 
-                           (try (shell-bg* env "job" "printf 'one\\ntwo\\n'; sleep 0.2; exit 7")
-                                (let [r (:result (shell-wait* env "job" 5 1))]
-                                  (expect (= "wait" (get r "stage")))
-                                  (expect (= "exited" (get r "status")))
-                                  (expect (= 7 (get r "exit")))
-                                  (expect (false? (get r "timed_out")))
-                                  (expect (= 5 (get r "timeout_secs")))
-                                  (expect (= ["two"] (get r "lines")))
-                                  (expect (= 2 (get r "line_count")))
-                                  (expect (number? (get r "duration_ms"))))
-                                (finally (resources/stop-all! sid))))))))
+              (try (shell-bg* env "job" "printf 'one\\ntwo\\n'; sleep 0.2; exit 7")
+                   (let [r (:result (shell-wait* env "job" 5 1 "NEVER-MATCHES"))]
+                     (expect (= "wait" (get r "stage")))
+                     (expect (= "exited" (get r "status")))
+                     (expect (= 7 (get r "exit")))
+                     (expect (false? (get r "timed_out")))
+                     ;; The process ENDED without ever printing the condition, and
+                     ;; `is_matched` says exactly that — no line is reported.
+                     (expect (false? (get r "is_matched")))
+                     (expect (nil? (get r "matched")))
+                     (expect (= 5 (get r "timeout_secs")))
+                     (expect (= ["two"] (get r "lines")))
+                     (expect (= 2 (get r "line_count")))
+                     (expect (number? (get r "duration_ms"))))
+                   (finally (resources/stop-all! sid))))))))
   (it "times out without stopping or unregistering a still-running shell"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -554,7 +559,7 @@
                             env {:session-id sid}]
 
                            (try (shell-bg* env "job" "echo started; sleep 30")
-                                (let [r (:result (shell-wait* env "job" 1 10))]
+                                (let [r (:result (shell-wait* env "job" 1 10 "NEVER-MATCHES"))]
                                   (expect (= "wait" (get r "stage")))
                                   (expect (= "running" (get r "status")))
                                   (expect (nil? (get r "exit")))
@@ -585,6 +590,7 @@
                      (expect (nil? (get r "exit")))
                      (expect (false? (get r "timed_out")))
                      (expect (= "READY on \\d+" (get r "until")))
+                     (expect (true? (get r "is_matched")))
                      (expect (= "READY on 5273" (get r "matched")))
                      (expect (str/includes? (get r "note") "STILL RUNNING"))
                      (expect (> 30000 (long (get r "duration_ms"))))
@@ -627,6 +633,7 @@
                                   (expect (nil? (get r "matched")))
                                   (expect (= "NEVER-MATCHES" (get r "until")))
                                   (expect (false? (get r "timed_out")))
+                                  (expect (false? (get r "is_matched")))
                                   (expect (nil? (get r "note"))))
                                 (finally (resources/stop-all! sid))))))))
   (it "still times out observationally when neither the pattern nor the exit arrives"
@@ -645,20 +652,73 @@
                                   (expect (str/includes? (get r "note") "still running"))
                                   (expect (some? (first (resources/list-resources sid)))))
                                 (finally (resources/stop-all! sid))))))))
-  (it "refuses a broken `until` regex and refuses `until` on any op but wait"
+  (it "reports a match on an EMPTY line, which `matched` alone cannot express"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
                          (let
-                           [sid (str "shell-wait-until-bad-" (System/nanoTime))
+                           [sid (str "shell-wait-until-blank-" (System/nanoTime))
                             env {:session-id sid}]
 
-                           (try (shell-bg* env "job" "sleep 30")
-                                (expect (threw? #(shell-wait* env "job" 1 10 "READY(")))
-                                ;; `until` on `run` would promise a condition nothing evaluates — and it
-                                ;; must be refused BEFORE the command runs.
-                                (expect (threw? #(shell* env {"commands" ["true"] "until" "x"})))
-                                (expect (threw? #(shell* env {"op" "logs" "id" "job" "until" "x"})))
-                                (finally (resources/stop-all! sid)))))))))
+                           (try (shell-bg* env "job" "printf '\\n'; sleep 30")
+                                (let [r (:result (shell-wait* env "job" 5 20 "^$"))]
+                                  ;; `matched` is "" here, which is FALSY in Python — only the total
+                                  ;; `is_matched` can tell an empty matching line from no match at all.
+                                  (expect (true? (get r "is_matched")))
+                                  (expect (= "" (get r "matched")))
+                                  (expect (false? (get r "timed_out")))
+                                  (expect (= "running" (get r "status"))))
+                                (finally (resources/stop-all! sid))))))))
+  (it "calls an unreapable death an ENDING, not a still-running process"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid (str "shell-wait-unreapable-" (System/nanoTime))
+               env {:session-id sid}]
+
+              (try (shell-bg* env "job" "sleep 30")
+                   (let
+                     [real (:proc (@#'shell/bg-entry sid "job"))
+                      ;; The OS says the process is gone, but its exit code cannot be
+                      ;; read. Reporting "running"/`timed_out` is then a lie the caller
+                      ;; acts on: it would wait again on something already over.
+                      _ (swap! @#'shell/bg-procs update-in
+                          [sid "job"]
+                          assoc
+                          :proc {:alive? (constantly false)
+                                 :wait (fn []
+                                         (throw (RuntimeException. "unreapable")))}
+                          :pump nil)
+                      r (:result (shell-wait* env "job" 5 20 "NEVER"))]
+
+                     (swap! @#'shell/bg-procs update-in [sid "job"] assoc :proc real)
+                     (expect (= "exited" (get r "status")))
+                     (expect (nil? (get r "exit")))
+                     (expect (false? (get r "timed_out")))
+                     (expect (false? (get r "is_matched")))
+                     (expect (str/includes? (get r "note") "could not be read")))
+                   (finally (resources/stop-all! sid))))))))
+  (it "refuses a `wait` with no `until`, a broken regex, and `until` on any other op"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid (str "shell-wait-until-bad-" (System/nanoTime))
+               env {:session-id sid}]
+
+              (try (shell-bg* env "job" "sleep 30")
+                   ;; A `wait` with no condition is a wait on a CLOCK — the very
+                   ;; thing this op refuses to be. Refused via dispatch AND impl,
+                   ;; and a blank pattern is no pattern.
+                   (expect (threw? #(shell* env {"op" "wait" "id" "job"})))
+                   (expect (threw? #(shell* env {"op" "wait" "id" "job" "until" "  "})))
+                   (expect (threw? #(shell-wait* env "job" 1 10 nil)))
+                   (expect (threw? #(shell-wait* env "job" 1 10 "READY(")))
+                   ;; `until` on `run` would promise a condition nothing evaluates — and it
+                   ;; must be refused BEFORE the command runs.
+                   (expect (threw? #(shell* env {"commands" ["true"] "until" "x"})))
+                   (expect (threw? #(shell* env {"op" "logs" "id" "job" "until" "x"})))
+                   (finally (resources/stop-all! sid)))))))))
 
 (defdescribe shell-send-test
              (it "types into a running background shell's stdin and the program reads it"
@@ -896,6 +956,7 @@
         ;; The wait predicate is part of the ADVERTISED contract, not a hidden option.
         (expect (= "string" (get-in props ["until" :type])))
         (expect (str/includes? (get-in props ["until" :description]) "regex"))
+        (expect (str/includes? (get-in props ["until" :description]) "required"))
         (expect (= "array" (get-in props ["commands" :type])))))
   (it "closes every native shell input schema"
       (doseq [s shell/shell-symbols]
@@ -1086,13 +1147,13 @@
       (try
         (expect
           (=
-            ["wait" "exited" 0 ["done"]]
+            ["wait" "exited" 0 ["done"] false]
             (py
               c
               (str
                 "job = " (pr-str sid)
                 "\n"
                 "__vis_settle__(shell({'commands':['sleep 0.1; echo done'], 'op':'background', 'id':job}))\n"
-                "w = __vis_settle__(shell({'op':'wait', 'id':job, 'timeout_secs':5}))\n"
-                "[w['stage'], w['status'], w['exit'], w['lines']]"))))
+                "w = __vis_settle__(shell({'op':'wait', 'id':job, 'until':'NEVER', 'timeout_secs':5}))\n"
+                "[w['stage'], w['status'], w['exit'], w['lines'], w['is_matched']]"))))
         (finally (resources/stop-all! sid))))))
