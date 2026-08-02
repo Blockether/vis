@@ -7466,11 +7466,11 @@
      :native-tool? true
      :result
      (str
-       "String-keyed, `action`-discriminated result: copy/move `{action,src,dest}`, delete "
-       "`{action,path,is_deleted}`, create_dirs `{action,path,is_created}`, exists `{action,path,is_existing}`. "
-       "Batch `paths`: `{action,paths}` with one ordered action-less row/target. Top level includes `op`.")
+       "String-keyed and `action`-discriminated: copy/move `{action,src,dest}`, delete "
+       "`{action,path,is_deleted}`, create_dirs `{action,path,is_created}`, exists `{action,path,is_existing}`; "
+       "batch `paths` gives `{action,paths}` with one ordered row/target. Top level adds `op`.")
      :description
-     "Confined filesystem tool; `op` selects verb/params. delete is destructive and needs explicit intent; absent is a no-op (`is_deleted` false). create_dirs makes parents; exists checks without reading."
+     "Confined filesystem tool; `op` selects verb/params. delete is destructive and needs explicit intent; absent is a no-op (`is_deleted` false). create_dirs makes parents; exists never reads."
      :render render-fs-result
      :color-role :tool-color/move
      :schema {:type "object"
