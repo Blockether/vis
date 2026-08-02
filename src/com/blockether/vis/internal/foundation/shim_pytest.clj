@@ -59,7 +59,7 @@
      [{:shim/name "pytest"
        :shim/imports ["pytest"]
        :shim/description
-       "Stdlib pytest subset: collection/assert introspection; conftest, parametrize, marks, raises/warns/approx; fixtures monkeypatch, capsys/capfd/caplog, recwarn, tmp_path/tmpdir factories, request, and pytester/testdir. `pytest.main(paths)` discovers test_*.py/*_test.py; no paths runs current-block tests. pytester supports makepyfile/makeconftest/runpytest and RunResult assertions. Not supported: plugins, most CLI options, import-time assertion rewriting."
+       "Stdlib pytest subset: collection/assert introspection; conftest, parametrize, marks, raises/warns/approx; fixtures monkeypatch, capsys/capfd/caplog, recwarn, tmp_path/tmpdir factories, request, and pytester/testdir. `pytest.main(args)` discovers test_*.py/*_test.py, selects node ids (`file::name`, `file::Class::method`, `file::name[id]`), honours `--collect-only`, exits 5 when nothing ran and 4 on a missing path; no paths runs current-block tests. pytester supports makepyfile/makeconftest/runpytest and RunResult assertions. Not supported: plugins, most CLI options, import-time assertion rewriting."
        :shim/source "vis-shims/pytest.py"}]}))
 
 (vis/register-extension! vis-extension)

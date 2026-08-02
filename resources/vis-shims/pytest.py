@@ -2012,7 +2012,7 @@ def __vis_install_pytest_compat__():
 
     # ---- publish module -----------------------------------------------------
     mod = types.ModuleType("pytest")
-    mod.__doc__ = "vis pytest-compatible shim (pure Python stdlib; no plugins/import-rewrite, minimal -k/-x/--maxfail CLI, conftest.py in disk mode)."
+    mod.__doc__ = "vis pytest-compatible shim (pure Python stdlib; no plugins/import-rewrite, minimal -k/-x/--maxfail/--collect-only CLI with node-id selection, conftest.py in disk mode)."
     mod.__version__ = "8.0-vis"
     mod.raises = raises
     mod.warns = warns

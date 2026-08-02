@@ -403,3 +403,86 @@
                                              "    result = pytester.runpytest('-k', 'keep')\n"
                                              "    result.assert_outcomes(passed=1, deselected=1)\n"
                                              "rc = pytest.main()\n" report-code))))))))
+
+(defdescribe
+  node-id-selection-test
+  "Issue #78: `path.py::name` must SELECT that node, and a run that executed
+   nothing must not exit 0."
+  (it "runs only the named function of a node id"
+      (let [d (tmp-dir)
+            f (str d "/test_pick.py")]
+        (spit f "def test_one():\n    assert True\ndef test_two():\n    assert False\n")
+        (with-fs-context d
+                         (expect (= "RC=0;test_pick.py::test_one|passed"
+                                    (ev python-context
+                                        (str "import pytest\nrc = pytest.main(['" f
+                                             "::test_one'])\n" report-code)))))))
+  (it "selects a class method, and a bare class name selects its methods"
+      (let [d (tmp-dir)
+            f (str d "/test_cls.py")]
+        (spit f
+              (str "class TestBox:\n"
+                   "    def test_a(self):\n        assert True\n"
+                   "    def test_b(self):\n        assert True\n"
+                   "def test_loose():\n    assert False\n"))
+        (with-fs-context d
+                         (expect (= "RC=0;test_cls.py::TestBox::test_a|passed"
+                                    (ev python-context
+                                        (str "import pytest\nrc = pytest.main(['" f
+                                             "::TestBox::test_a'])\n" report-code))))
+                         (expect (= (str "RC=0;test_cls.py::TestBox::test_a|passed"
+                                         ";test_cls.py::TestBox::test_b|passed")
+                                    (ev python-context
+                                        (str "import pytest\nrc = pytest.main(['" f
+                                             "::TestBox'])\n" report-code)))))))
+  (it "selects one parametrized case by its bracketed id"
+      (let [d (tmp-dir)
+            f (str d "/test_param.py")]
+        (spit f
+              (str "import pytest\n"
+                   "@pytest.mark.parametrize('n', [1, 2])\n"
+                   "def test_pos(n):\n    assert n > 0\n"))
+        (with-fs-context d
+                         (expect (= "RC=0;test_param.py::test_pos[2]|passed"
+                                    (ev python-context
+                                        (str "import pytest\nrc = pytest.main(['" f
+                                             "::test_pos[2]'])\n" report-code)))))))
+  (it "merges several node ids naming the same file into ONE load"
+      (let [d (tmp-dir)
+            f (str d "/test_merge.py")]
+        (spit f
+              (str "def test_a():\n    assert True\n"
+                   "def test_b():\n    assert True\n"
+                   "def test_c():\n    assert False\n"))
+        (with-fs-context d
+                         (expect (= (str "RC=0;test_merge.py::test_a|passed"
+                                         ";test_merge.py::test_b|passed")
+                                    (ev python-context
+                                        (str "import pytest\nrc = pytest.main(['" f
+                                             "::test_a', '" f "::test_b'])\n"
+                                             report-code)))))))
+  (it "exits 5 (no tests collected), never 0, when a node id matches nothing"
+      (let [d (tmp-dir)
+            f (str d "/test_none.py")]
+        (spit f "def test_one():\n    assert True\n")
+        (with-fs-context d
+                         (expect (= "RC=5;"
+                                    (ev python-context
+                                        (str "import pytest\nrc = pytest.main(['" f
+                                             "::test_typo'])\n" report-code)))))))
+  (it "exits 4 with a diagnostic when a named path does not exist"
+      (let [d (tmp-dir)]
+        (with-fs-context d
+                         (expect (= 4
+                                    (ev python-context
+                                        (str "import pytest\npytest.main(['" d
+                                             "/test_absent.py'])")))))))
+  (it "--collect-only LISTS node ids and runs nothing"
+      (let [d (tmp-dir)
+            f (str d "/test_co.py")]
+        (spit f "def test_one():\n    assert True\ndef test_two():\n    assert False\n")
+        (with-fs-context d
+                         (expect (= "RC=0;"
+                                    (ev python-context
+                                        (str "import pytest\nrc = pytest.main(['" f
+                                             "', '--collect-only'])\n" report-code))))))))
