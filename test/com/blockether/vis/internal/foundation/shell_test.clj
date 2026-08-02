@@ -1185,3 +1185,49 @@
                 "w = __vis_settle__(shell({'op':'wait', 'id':job, 'until':'NEVER', 'timeout_secs':5}))\n"
                 "[w['stage'], w['status'], w['exit'], w['lines'], w['is_matched']]"))))
         (finally (resources/stop-all! sid))))))
+
+(def ^:private fd-exhaustion? @#'shell/fd-exhaustion?)
+
+(def ^:private spawn-retrying-fds @#'shell/spawn-retrying-fds)
+
+(defdescribe
+  spawn-fd-exhaustion-test
+  (it "reads the JDK's misleading spawn-helper text as what it really is: EMFILE"
+      ;; The JDK blames a version mismatch / a bad JDK install; the true fault is
+      ;; that THIS process has no descriptor left to fork with.
+      (expect (fd-exhaustion? (java.io.IOException.
+                                "Cannot run program \"bash\": error=24, Too many open files")))
+      (expect (fd-exhaustion? (RuntimeException. "spawn helper failed"
+                                                 (java.io.IOException.
+                                                   "error: 24 (Too many open files)"))))
+      (expect (not (fd-exhaustion? (java.io.IOException. "error=2, No such file or directory")))))
+  (it "retries an EMFILE spawn exactly ONCE after reclaiming, and never retries anything else"
+      (let
+        [tries
+         (atom 0)
+
+         spawned
+         (spawn-retrying-fds (fn []
+                               (when (= 1 (swap! tries inc))
+                                 (throw (java.io.IOException. "error=24, Too many open files")))
+                               :spawned))]
+
+        (expect (= :spawned spawned))
+        (expect (= 2 @tries)))
+      (let [tries (atom 0)]
+        (expect (threw? #(spawn-retrying-fds (fn []
+                                               (swap! tries inc)
+                                               (throw (java.io.IOException.
+                                                        "error=2, No such file or directory"))))))
+        (expect (= 1 @tries))))
+  (it "turns a PERSISTENT exhaustion into a typed diagnosis that names the real cause"
+      (let
+        [e (try (spawn-retrying-fds (fn []
+                                      (throw (java.io.IOException.
+                                               "error=24, Too many open files"))))
+                nil
+                (catch clojure.lang.ExceptionInfo ex ex))]
+        (expect (= :com.blockether.vis.internal.foundation.shell/fd-exhausted (:type (ex-data e))))
+        (expect (str/includes? (ex-message e) "Out of file descriptors"))
+        (expect (str/includes? (ex-message e) "with open(...)"))
+        (expect (fd-exhaustion? (ex-cause e))))))

@@ -310,6 +310,56 @@
         (throw (ex-info "Shell process denied: session jail policy is unavailable"
                         {:type ::jail-policy-missing :session-id (:session-id env)})))))
 
+(defn- fd-exhaustion?
+  "True when `t` (or any cause under it) is the OS refusing a spawn because THIS
+   process ran out of file descriptors (EMFILE).
+
+   The JDK reports EMFILE as a plain `IOException` whose text blames the spawn
+   helper — \"Bad file descriptor\", \"Spawn helper ran into JDK version mismatch\",
+   \"Re-install JDK\" — so the raw message sends the reader after a toolchain bug
+   that does not exist. `error=24` / `error: 24` and the plain phrase are the
+   reliable markers."
+  [^Throwable t]
+  (boolean (loop [^Throwable e t]
+             (when e
+               (let [m (str (.getMessage e))]
+                 (if (or (str/includes? m "Too many open files")
+                         (str/includes? m "error=24")
+                         (str/includes? m "error: 24"))
+                   true
+                   (recur (.getCause e))))))))
+
+(def ^:private fd-exhausted-message
+  "What to SAY when a spawn is out of descriptors — the JDK's own text names the
+   wrong culprit, so replace it with the real cause and the way out."
+  (str "Out of file descriptors: this process hit its open-file limit, so no child "
+       "process can be spawned (the JDK blames its spawn helper / a JDK mismatch; "
+       "it is neither). Already retried once after asking the JVM to reclaim "
+       "descriptors held by unreachable objects. Usual cause: sandbox Python that "
+       "opened files without closing them — a dropped file object is NOT closed "
+       "there, so always `with open(...) as f:` — or many live background shells "
+       "(`shell` op `stop`). Free them and retry."))
+
+(defn- spawn-retrying-fds
+  "Run `spawn` (a thunk that starts an OS process) and, ONLY when it failed
+   because this process is out of file descriptors, reclaim and try once more.
+
+   A leaked descriptor is held by an unreachable object, so a GC + finalization
+   pass genuinely returns it; without this, one leaky sandbox block wedges EVERY
+   later `shell`/`git` call for the rest of the session. A persistent failure is
+   rethrown as a typed `ex-info` carrying the real diagnosis, cause attached."
+  [spawn]
+  (try (spawn)
+       (catch Throwable t
+         (if-not (fd-exhaustion? t)
+           (throw t)
+           (do (System/gc)
+               (System/runFinalization)
+               (Thread/sleep 150)
+               (try (spawn)
+                    (catch Throwable t2
+                      (throw (ex-info fd-exhausted-message {:type ::fd-exhausted} t2)))))))))
+
 (defn- spawn!
   ^Process [cmd ^File dir merge-err? policy]
   (let
@@ -336,7 +386,7 @@
       (let [pe (process-jail/proxy-env policy)]
         (when (seq pe) (.putAll (.environment pb) ^java.util.Map pe))))
     (when merge-err? (.redirectErrorStream pb true))
-    (.start pb)))
+    (spawn-retrying-fds #(.start pb))))
 
 (defn- pty-spawn!
   "Spawn `cmd` under a REAL pseudo-terminal (internal.foundation.pty — pure Java
@@ -349,18 +399,20 @@
    `policy` is the live per-session jail policy value (or nil) applied to the
    spawned argv, so the OS jail confines the interactive child too."
   [cmd ^File dir policy]
-  (pty/spawn! {:command (process-jail/wrap-argv [(bash-command) "--noprofile" "--norc" "-lc"
-                                                 (str cmd)]
-                                                policy)
-               :dir (.getPath dir)
-               :env (if-let [full (process-jail/jailed-child-env policy)]
-                      ;; Confined child: allowlisted env only (secrets dropped).
-                      (doto (HashMap. ^java.util.Map full) (.put "TERM" "xterm-256color"))
-                      (doto (HashMap. ^java.util.Map (System/getenv))
-                        (.put "TERM" "xterm-256color")
-                        (.putAll ^java.util.Map (process-jail/proxy-env policy))))
-               :cols 120
-               :rows 40}))
+  (spawn-retrying-fds
+    (fn []
+      (pty/spawn! {:command (process-jail/wrap-argv [(bash-command) "--noprofile" "--norc" "-lc"
+                                                     (str cmd)]
+                                                    policy)
+                   :dir (.getPath ^File dir)
+                   :env (if-let [full (process-jail/jailed-child-env policy)]
+                          ;; Confined child: allowlisted env only (secrets dropped).
+                          (doto (HashMap. ^java.util.Map full) (.put "TERM" "xterm-256color"))
+                          (doto (HashMap. ^java.util.Map (System/getenv))
+                            (.put "TERM" "xterm-256color")
+                            (.putAll ^java.util.Map (process-jail/proxy-env policy))))
+                   :cols 120
+                   :rows 40}))))
 
 (defn- kill-tree!
   "Destroy a spawned process + every descendant reachable via `ProcessHandle.of

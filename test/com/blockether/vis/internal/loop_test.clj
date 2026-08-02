@@ -3827,7 +3827,11 @@
                  ;; The sleep/poll prohibition lives HERE and nowhere else: the core
                  ;; prompt deliberately dropped its duplicate copy.
                  "`time.sleep`/poll for background shells" "`shell` op `wait`"
-                 "REQUIRED `until` regex"]]
+                 "REQUIRED `until` regex"
+                 ;; Sandbox Python does NOT close a dropped file handle, so an
+                 ;; unclosed `open(...)` leaks a PROCESS descriptor until a GC —
+                 ;; enough of them and no `shell`/`git` child can be spawned at all.
+                 "Close what you open" "with open(...)" "leaked descriptors"]]
           (expect (str/includes? python-description fact))))
       (expect (str/includes? (get-in by-name ["session_fold" :description])
                              "finished iterations"))))
