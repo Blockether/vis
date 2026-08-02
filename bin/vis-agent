@@ -228,7 +228,9 @@ collect_user_extension_sdeps() {
 # checkout Vis owns and pins to a release tag. Running a checkout's own launcher
 # runs that checkout — that is what invoking it means.
 find_jvm_source() {
-  if (( dev_mode )) && [[ -f "$dev_checkout/deps.edn" ]]; then
+  if (( dev_mode )); then
+    # dev names ONE checkout. If it is not there, say so — never run another.
+    [[ -f "$dev_checkout/deps.edn" ]] || return 1
     printf '%s\n' "$dev_checkout"
   elif (( launcher_is_checkout )); then
     printf '%s\n' "$launcher_parent"
@@ -570,7 +572,7 @@ case "$runtime" in
             "Clone one there (or set VIS_DEV_CHECKOUT)," \
             "or leave dev mode: vis-agent runtime use auto"
       fi
-      die "the source runtime is selected ($runtime_origin), but no source is installed" \
+      die "the jvm runtime is selected ($runtime_origin), but no source is installed" \
           "Install release-tagged source:  vis-agent update --jvm" \
           "Or use the native runtime:      vis-agent update --native"
     fi

@@ -471,6 +471,22 @@
              (expect (str/includes? output "automatic")))
            (let [{:keys [output]} (run! ["--version"] dev-env)]
              (expect (str/includes? output "NATIVE:")))
+           ;; dev names ONE checkout. Pointed at a missing one the wrapper must
+           ;; say so, never silently run the checkout it happens to sit in.
+           (let [run-from-checkout!
+                 (wrapper-runner {:launcher (io/file checkout-bin "vis-agent")
+                                  :cwd root
+                                  :home home
+                                  :vis-home vis-home
+                                  :tools tools})
+
+                 {:keys [exit output]}
+                 (run-from-checkout! ["--dev" "--version"]
+                                     (assoc dev-env
+                                            "VIS_DEV_CHECKOUT"
+                                            (.getAbsolutePath (io/file root "gone"))))]
+             (expect (= 1 exit) output)
+             (expect (str/includes? output "is not a checkout") output))
            (finally (delete-tree! root))))))
 
 (defdescribe

@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - launcher: `vis-agent update --native|--jvm|--dev` reached the update path
   again (the launch-flag loop used to swallow them), and a `[[ … ]] && cmd`
   tail no longer makes a successful `runtime use` exit 1.
+- launcher: the `dev` runtime names one checkout. When `$VIS_DEV_CHECKOUT` does
+  not hold one, `vis-agent` now says so instead of silently running whichever
+  checkout the launcher happens to sit in.
 
 
 ## [v0.1.22] - 2026-08-01
