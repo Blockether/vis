@@ -637,17 +637,18 @@
       ;; A reused session id must not inherit the servers of its previous life.
       (if (empty? specs)
         (mcp/clear-session-servers! sid)
-        (let [{:keys [failed]} (mcp/set-session-servers! sid specs)]
+        (let [failed (get (mcp/set-session-servers! sid specs) "failed")]
           (when (seq failed)
             (mcp/clear-session-servers! sid)
             (fail! :internal-error
                    (str "could not connect to MCP server(s): "
                         (str/join ", "
-                                  (map (fn [{:keys [server error]}]
-                                         (str server ": " error))
+                                  (map (fn [row]
+                                         (str (get row "server") ": " (get row "error")))
                                        failed)))
-                   (json-safe {"failedMcpServers" (mapv (fn [{:keys [server error]}]
-                                                          {"name" server "error" (str error)})
+                   (json-safe {"failedMcpServers" (mapv (fn [row]
+                                                          {"name" (get row "server")
+                                                           "error" (str (get row "error"))})
                                                         failed)}))))))
     nil))
 

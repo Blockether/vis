@@ -495,7 +495,8 @@
    `:mcp :servers` config entry — to `session-id`, REPLACING whatever that
    session had, and connect each one EAGERLY so the caller learns now whether the
    client's servers actually work. Nothing is persisted. Returns
-   `{:connected [name…] :failed [{:server … :error …}…]}`. A detach/replacement
+   `{connected [name…], failed [{server …, error …}…]}` — STRING-keyed, like every
+   MCP surface. A detach/replacement
    racing a handshake wins: the just-opened transport is closed, never leaked."
   [session-id servers]
   (when-not (and (string? session-id) (seq session-id))
@@ -520,12 +521,12 @@
                                    nm
                                    spec
                                    #(= spec (session-spec-of session-id nm)))
-                (update acc :connected conj nm)
+                (update acc "connected" conj nm)
                 (update acc
-                        :failed
+                        "failed"
                         conj
-                        {:server nm :error "MCP session server was detached while connecting"})))
-            {:connected [] :failed []}
+                        {"server" nm "error" "MCP session server was detached while connecting"})))
+            {"connected" [] "failed" []}
             coerced)))
 
 (defn- conn-tools
@@ -802,11 +803,14 @@
    not connected at all), so reconnect it once the tokens exist. `row` is the
    string-keyed wire view of the flow."
   [row]
-  (let [status (get row "status")
-        server (get row "server")]
-    (when (and (= "ok" status) server (not (conn-of server)))
-      (revive! server)
-      (reconcile-async!)))
+  (let
+    [status
+     (get row "status")
+
+     server
+     (get row "server")]
+
+    (when (and (= "ok" status) server (not (conn-of server))) (revive! server) (reconcile-async!)))
   row)
 
 (defn complete-gateway-server-auth!
@@ -879,12 +883,11 @@
   (extension/failure {:result nil
                       :op op
                       :metadata {:started-at-ms (now-ms) :finished-at-ms (now-ms) :duration-ms 0}
-                      :error (reduce-kv (fn [m k v]
-                                          (assoc m
-                                            (if (= :hint k) :hint (str/replace (name k) "-" "_"))
-                                            v))
-                                        {:message message}
-                                        extra)}))
+                      :error (reduce-kv
+                               (fn [m k v]
+                                 (assoc m (if (= :hint k) :hint (str/replace (name k) "-" "_")) v))
+                               {:message message}
+                               extra)}))
 
 (defn- needs-auth?
   "True when `server` is an OAuth server nobody has signed into: it answered a

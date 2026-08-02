@@ -2093,7 +2093,7 @@
                                                    "env" [{"name" "ACP_TEST" "value" "1"}]}]))
                       "sessionId")]
             (try
-              (expect (= [{:name "fake" :transport "stdio" :is-connected true}]
+              (expect (= [{"name" "fake" "transport" "stdio" "is_connected" true}]
                          (mcp/session-servers sid)))
               ;; The tools reach the MODEL through exactly the env the engine
               ;; passes a tool call — anything less is a session that only LOOKS
@@ -2173,13 +2173,13 @@
 
           (init! c)
           (let [sid (get (result (new-session-with! c (spec "first"))) "sessionId")]
-            (try (expect (= ["first"] (mapv :name (mcp/session-servers sid))))
+            (try (expect (= ["first"] (mapv #(get % "name") (mcp/session-servers sid))))
                  (send! c
                         {"jsonrpc" "2.0"
                          "id" "load"
                          "method" "session/load"
                          "params" {"sessionId" sid "cwd" "/tmp" "mcpServers" (spec "second")}})
-                 (expect (= ["second"] (mapv :name (mcp/session-servers sid))))
+                 (expect (= ["second"] (mapv #(get % "name") (mcp/session-servers sid))))
                  ;; A resumed session must not inherit a previous life's servers.
                  (send! c
                         {"jsonrpc" "2.0"

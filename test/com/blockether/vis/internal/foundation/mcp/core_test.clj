@@ -4,6 +4,8 @@
             [com.blockether.vis.internal.ctx-renderer :as renderer]
             [com.blockether.vis.internal.foundation.mcp.client :as client]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp]
+            [com.blockether.vis.internal.foundation.mcp.oauth :as oauth]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
@@ -748,3 +750,107 @@
             (expect (str/includes? (msg (call-failed-err env "down" "x" (ex-info "boom" {})))
                                    "boom"))
             (finally (reset! conns {}) (reset! killed #{}))))))))
+
+(defdescribe
+  mcp-string-keyed-surfaces-test
+  (it
+    "answers EVERY surface with string keys - no keyword may reach the model, a client, or the wire"
+    (let
+      [store
+       (atom {"mcp" {"servers" {"alpha" {"transport" "stdio" "command" "echo" "env" {"S" "x"}}
+                                "remote" {"transport" "streamable_http"
+                                          "url" "https://remote.example.test/mcp"}}}})
+
+       resolve*
+       (fn [sym]
+         (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core sym))
+
+       conns
+       @(resolve* 'conns)
+
+       killed
+       @(resolve* 'killed)
+
+       reconcile!
+       (resolve* 'reconcile!)
+
+       reconcile-async!
+       (resolve* 'reconcile-async!)
+
+       call!
+       (resolve* 'mcp-call-impl)
+
+       contribute
+       (resolve* 'contribute)
+
+       env
+       {:session-id "s1"}
+
+       ;; `:message` and `:hint` are the ENGINE's failure contract, shared by every
+       ;; extension; everything MCP itself carries alongside them has to be a string.
+       payload
+       (fn [v]
+         (if (and (map? v) (or (contains? v :result) (contains? v :error)))
+           [(:result v) (dissoc (:error v) :message :hint)]
+           [v]))
+
+       keywords-in
+       (fn keywords-in [x path]
+         (cond (map? x) (mapcat (fn [[k v]]
+                                  (concat (when (keyword? k) [(conj path k)])
+                                          (keywords-in v (conj path k))))
+                                x)
+               (sequential? x) (apply concat
+                                 (map-indexed (fn [i v]
+                                                (keywords-in v (conj path i)))
+                                              x))
+               (keyword? x) [(conj path x)]
+               :else nil))]
+
+      (with-redefs-fn {#'config/load-global-config-raw (fn []
+                                                         @store)
+                       #'config/load-config-raw (fn []
+                                                  @store)
+                       #'config/save-config! (fn [value _source]
+                                               (reset! store value)
+                                               nil)
+                       #'client/connect (fn [_name _spec]
+                                          {:transport :stdio :tools (atom nil)})
+                       #'client/list-tools (constantly [{"name" "write_file"
+                                                         "description" "Write it"
+                                                         "inputSchema" {"type" "object"}}])
+                       #'client/alive? (constantly true)
+                       #'client/close (constantly nil)
+                       #'client/call-tool (fn [_conn _tool _args]
+                                            {"content" [{"text" "ok"}] "isError" true})
+                       reconcile-async! (constantly nil)}
+        (fn []
+          (try
+            (reset! conns {})
+            (reset! killed #{})
+            (reconcile!)
+            (let
+              [surfaces
+               [(mcp/gateway-servers)
+                (mcp/save-gateway-server!
+                  "beta"
+                  {"transport" "stdio" "command" "ls" "args" ["-l"] "cwd" "/tmp" "timeout_ms" 900})
+                (mcp/set-gateway-server-enabled! "beta" false) (mcp/kill-gateway-server! "beta")
+                (mcp/start-gateway-server! "beta") (mcp/delete-gateway-server! "beta")
+                (mcp/test-gateway-server! "probe" {"transport" "stdio" "command" "echo"})
+                (mcp/gateway-server-auth-status "remote")
+                (mcp/set-session-servers! "s1" {"sess" {"transport" "stdio" "command" "echo"}})
+                (mcp/session-servers "s1") (contribute env)
+                ;; The model-facing verb, in every shape it can land in.
+                (call! env "alpha") (call! env "alpha" "write_file" {"path" "p"})
+                (call! env "alpha" "nope" {}) (call! env "ghost")
+                (oauth/token-status "no-such-server") (oauth/cancel-authorization! "no-such-flow")]
+
+               values
+               (vec (mapcat payload surfaces))]
+
+              (expect (= [] (vec (mapcat #(keywords-in % []) values))))
+              ;; Already snake_case strings, so the wire encoder has NOTHING left to
+              ;; rewrite: what a surface returns is exactly what a client receives.
+              (expect (= values (mapv wire/->wire values))))
+            (finally (mcp/clear-session-servers! "s1") (reset! conns {}) (reset! killed #{}))))))))
