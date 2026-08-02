@@ -250,8 +250,6 @@
          (or (not (re-find #"\bNOT\s+NULL\b" u)) (boolean (re-find #"\bDEFAULT\b" u))))))
 
 
-
-
 (defn- existing-columns
   "Lower-cased column names of `table`, or an empty set when it does not exist."
   [^java.sql.Connection conn ^String table]

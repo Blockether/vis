@@ -26,8 +26,7 @@
             [com.blockether.vis.internal.persistance :as persistance]
             [honey.sql :as sql]
             [lazytest.core :refer [defdescribe it expect]]
-            [next.jdbc :as jdbc]
-            [next.jdbc.result-set :as rs])
+            [next.jdbc :as jdbc])
   (:import (java.io File)
            (java.util.concurrent CountDownLatch TimeUnit)))
 
@@ -42,7 +41,6 @@
 (defn- table-columns
   [store table]
   (set (map :name (jdbc/execute! (:datasource store) [(str "PRAGMA table_info(" table ")")]))))
-
 
 
 (def ^:private migration-checksum-mismatch? (private-core-fn "migration-checksum-mismatch?"))
@@ -547,11 +545,6 @@
                   (expect (= 1 (raw-count s2 :topup_probe)))
                   (finally (vis/db-dispose-connection! s2))))
            (finally (fs/delete-tree root))))))
-
-;; Mirrors the shape `db-list-sessions` builds: same predicates, same order. The
-;; index only earns its keep while the two stay aligned, so the plan is asserted
-;; here rather than trusted.
-
 
 (def ^:private multiprocess-child-code
   "(require '[com.blockether.vis.core :as vis])
