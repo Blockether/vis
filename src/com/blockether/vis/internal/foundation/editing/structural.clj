@@ -11,7 +11,11 @@
             [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
             ;; Side-effecting require: selects + loads the platform native lib.
             [com.blockether.tree-sitter-language-pack])
-  (:import [dev.kreuzberg.treesitterlanguagepack StructuralApi StructuralApi$Op]))
+  (:import [dev.kreuzberg.treesitterlanguagepack
+            StructuralApi
+            StructuralApi$FileReferences
+            StructuralApi$FileSource
+            StructuralApi$Op]))
 
 (def ^:private ops
   {:replace StructuralApi$Op/REPLACE
@@ -260,6 +264,28 @@
                             base)))
                       hits))))
 
+(defn- reference-entries
+  "Enrich ONE file's raw `{name [ReferenceHit …]}` reference map — from either
+   `findReferences` form, single-file or many-file — into `{name [entry …]}`, a
+   name with no hit simply absent. ONE line split and ONE definition walk serve
+   the whole map."
+  [^String source ^String language refs]
+  (let
+    [lines (vec (str/split-lines source))
+     line-anchor #(patch/line-anchor % (nth lines (dec (long %)) ""))
+     defs-by-name (group-by :name (index/definitions source language))]
+
+    (persistent!
+      (reduce (fn [acc e]
+                (let [hits (vec (val e))]
+                  (if (seq hits)
+                    (assoc! acc
+                            (key e)
+                            (occurrence-entries line-anchor (get defs-by-name (key e)) hits))
+                    acc)))
+              (transient {})
+              refs))))
+
 (defn occurrences-in
   "The BATCH form of `occurrences`: every occurrence of EACH identifier in
    `names` in `path`, as `{name [entry …]}` — a name that never occurs is simply
@@ -268,27 +294,18 @@
    ONE parse, ONE line split and ONE definition walk serve the whole batch, so
    the cost tracks the FILE, not the name count. Per-name calls re-parse `source`
    for every name, which is what made tracing N names over M files quadratic —
-   use this whenever more than one name is traced through the same file."
+   use this whenever more than one name is traced through the same file.
+
+   Tracing the same `names` through MANY files? Call `occurrences-in-files`: it
+   hands the whole file set to the pack in one parallel batch."
   [path source names]
   (let [wanted (into [] (comp (map str) (distinct)) names)]
     (if-let [language (when (seq wanted) (index/detect-language path))]
-      (let
-        [lines (vec (str/split-lines source))
-         line-anchor #(patch/line-anchor % (nth lines (dec (long %)) ""))
-         defs-by-name (group-by :name (index/definitions source language))]
-
-        (persistent!
-          (reduce (fn [acc e]
-                    (let [hits (vec (val e))]
-                      (if (seq hits)
-                        (assoc! acc
-                                (key e)
-                                (occurrence-entries line-anchor (get defs-by-name (key e)) hits))
-                        acc)))
-                  (transient {})
-                  (StructuralApi/findReferences ^String source
-                                                ^String language
-                                                ^java.util.Collection wanted))))
+      (reference-entries source
+                         language
+                         (StructuralApi/findReferences ^String source
+                                                       ^String language
+                                                       ^java.util.Collection wanted))
       {})))
 
 (defn occurrences
@@ -318,93 +335,78 @@
   (if (str/includes? source name) (get (occurrences-in path source [name]) name []) []))
 
 ;; -----------------------------------------------------------------------------
-;; Batch scanning — the tree-sitter layer owns its own fan-out.
+;; Batch scanning — the fan-out lives in the PACK, next to the parse.
 ;;
-;; Parsing is what costs; the tool layer only decides WHICH paths and how to
-;; read them. So the parallel walk lives HERE, next to the parse, and every
-;; consumer (struct_index rows, occurrence tracing) gets the same worker pool,
-;; the same request-ordering guarantee and the same failure semantics.
+;; `StructuralApi/mapParallel` and the many-file `findReferences` own the worker
+;; pool, the request ordering and the per-file failure rows, so every JVM consumer
+;; of the pack gets the same scheduler, and vis keeps only what is vis's: which
+;; paths, how to read them (`safe-path` confinement) and the vis entry shape.
 ;; -----------------------------------------------------------------------------
 
-(def ^:private scan-parallelism
-  "How many files `scan-mapv` scans at once.
-
-   One CPU per worker. The pack's parse is serialized process-wide (a global
-   mutex guards third-party scanners with mutable static state), but everything
-   AROUND it is not: the content-addressed tree cache, the reference walk, the
-   JSON boundary and the whole Clojure side all run concurrently, so a repo-wide
-   `struct_index` scales nearly linearly until the parse mutex saturates.
-
-   Measured over 140 files / 4.2 MB / 4 844 names, definitions + occurrences:
-   558 ms serial → 60 ms at 12-16 workers when the trees are cached, and
-   713 ms → 180 ms when every file must be parsed afresh (the parse mutex is
-   that floor). Past the core count the curve is flat, so there is nothing to
-   buy by oversubscribing."
-  (max 2 (min 16 (.availableProcessors (Runtime/getRuntime)))))
-
 (defn scan-mapv
-  "`mapv` over `items` across `scan-parallelism` workers, in REQUEST ORDER.
+  "`mapv` over `items` across the pack's scan pool, in REQUEST ORDER.
 
-   Workers pull the next index off a shared cursor, so one huge file cannot
-   strand a worker while the others idle. The first exception is rethrown AS
-   THROWN (never wrapped in `ExecutionException`) so a tool's `:on-error-fn`
-   still sees the original `ex-info`; the remaining workers are always awaited,
-   so no task outlives the call."
+   Straight delegation to `StructuralApi/mapParallel`: workers pull the next index
+   off a shared cursor, so one huge file cannot strand a worker while the others
+   idle. The first exception is rethrown AS THROWN (never wrapped in an
+   `ExecutionException`) so a tool's `:on-error-fn` still sees the original
+   `ex-info`; every worker is awaited, so no task outlives the call."
   [f items]
-  (let
-    [items
-     (vec items)
-
-     n
-     (count items)]
-
-    (if (or (< n 2) (< (long scan-parallelism) 2))
-      (mapv f items)
-      (let
-        [out
-         (object-array n)
-
-         cursor
-         (java.util.concurrent.atomic.AtomicInteger. 0)
-
-         worker
-         (fn []
-           (loop []
-
-             (let [i (.getAndIncrement cursor)]
-               (when (< i n) (aset out i (f (nth items i))) (recur)))))
-
-         futures
-         (vec (repeatedly (min (long scan-parallelism) n) #(future (worker))))
-
-         failure
-         (reduce (fn [acc fut]
-                   (try @fut
-                        acc
-                        (catch java.util.concurrent.ExecutionException e (or acc (.getCause e) e))
-                        (catch Throwable t (or acc t))))
-                 nil
-                 futures)]
-
-        (when failure (throw failure))
-        (vec out)))))
+  (vec (StructuralApi/mapParallel
+         ^java.util.List (vec items)
+         (reify java.util.function.Function
+           (apply [_ item] (f item))))))
 
 (defn occurrences-in-files
   "`occurrences-in` over MANY paths at once — one `{:path :occurrences}` map per
-   path, in REQUEST ORDER, scanned across `scan-parallelism` workers.
+   path, in REQUEST ORDER, traced in ONE pack batch.
 
    `read-fn` turns a path into its source, so the CALLER keeps path confinement
-   (vis resolves through `safe-path`) while the parse and the fan-out stay here.
-   Each file is read AND PARSED once per call, not once per name: a single
-   `occurrences-in` pass traces the whole `names` set.
+   (vis resolves through `safe-path`) while the parse and the fan-out stay in the
+   pack: the reads run on the pack's pool, then every readable file goes into a
+   single `StructuralApi/findReferences` over `FileSource`s, which resolves each
+   language once up front and walks the files in parallel. Each file is read AND
+   PARSED once per call, not once per name.
 
-   TOTAL per path — a read or parse failure becomes `{:path :error}` (the
-   message) instead of failing the batch, so one unreadable file cannot sink a
-   repo-wide trace. Returns `[]` when `names` is empty."
+   TOTAL per path — a read, language or parse failure becomes `{:path :error}`
+   (the message) instead of failing the batch, so one unreadable file cannot sink
+   a repo-wide trace. Returns `[]` when `names` is empty."
   [paths names read-fn]
-  (if (seq names)
-    (scan-mapv (fn [path]
-                 (try {:path path :occurrences (occurrences-in path (read-fn path) names)}
-                      (catch Exception e {:path path :error (or (ex-message e) (str (class e)))})))
-               paths)
-    []))
+  (let [wanted (into [] (comp (map str) (remove str/blank?) (distinct)) names)]
+    (if (seq wanted)
+      (let
+        [prepared
+         (scan-mapv (fn [path]
+                      (try
+                        (if-let [language (index/detect-language path)]
+                          {:path path :language language :source (read-fn path)}
+                          {:path path :occurrences {}})
+                        (catch Exception e
+                          {:path path :error (or (ex-message e) (str (class e)))})))
+                    paths)
+
+         ;; Only files vis could read AND name a language for reach the pack; the
+         ;; rest already carry their own row, so the batch is never asked to fail.
+         scanned
+         (into [] (keep-indexed (fn [i p] (when (:source p) i))) prepared)
+
+         rows
+         (zipmap scanned
+                 (StructuralApi/findReferences
+                   ^java.util.List (mapv (fn [p]
+                                           (StructuralApi$FileSource. (:path p) (:language p) (:source p)))
+                                         (filterv :source prepared))
+                   ^java.util.Collection wanted))]
+
+        (scan-mapv (fn [[i p]]
+                     (if-let [^StructuralApi$FileReferences row (get rows i)]
+                       (try
+                         (if (.isFailed row)
+                           {:path (:path p) :error (.error row)}
+                           {:path (:path p)
+                            :occurrences (reference-entries (:source p) (:language p) (.references row))})
+                         (catch Exception e
+                           {:path (:path p) :error (or (ex-message e) (str (class e)))}))
+                       p))
+                   (vec (map-indexed vector prepared))))
+      [])))

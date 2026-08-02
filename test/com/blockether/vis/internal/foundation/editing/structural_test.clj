@@ -229,6 +229,24 @@
         (expect (:is-definition (first (get (:occurrences (first scans)) "add"))))
         (expect (= 1 (count (get (:occurrences (second scans)) "add"))))
         (expect (= {} (:occurrences (last scans))))))
+  (it "occurrences-in-files batches MIXED languages in ONE pack pass"
+      (let
+        [sources
+         {"a.clj" "(defn add [a b] (+ a b))\n"
+          "b.py" "def add(a, b):\n    return a + b\n"
+          "c.unknownext" "add add add\n"}
+
+         scans
+         (structural/occurrences-in-files (vec (keys sources)) ["add"] sources)]
+
+        ;; Every language in the batch is resolved once, up front, by the pack.
+        (expect (= (vec (keys sources)) (mapv :path scans)))
+        (expect (:is-definition (first (get (:occurrences (first scans)) "add"))))
+        (expect (:is-definition (first (get (:occurrences (second scans)) "add"))))
+        ;; A path with no known language is a SCANNED row with nothing found —
+        ;; never an error, and never handed to the pack.
+        (expect (= {} (:occurrences (last scans))))
+        (expect (nil? (:error (last scans))))))
   (it "occurrences-in-files is TOTAL: an unreadable path is one :error row"
       (let
         [scans (structural/occurrences-in-files ["ok.clj" "missing.clj"]
