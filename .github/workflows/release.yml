@@ -119,10 +119,18 @@ jobs:
             echo "**Full Changelog**: https://github.com/Blockether/vis/compare/${PREV_TAG}...${CURRENT_TAG}"
           } > /tmp/release_body.md
 
+      # The installer and the wrapper ship as RELEASE ASSETS, so the documented
+      # one-liner is `releases/latest/download/install-vis-agent` and never a
+      # raw.githubusercontent.com path. native-release.yml attaches the platform
+      # bundles to this same release.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           body_path: /tmp/release_body.md
+          files: |
+            bin/install-vis-agent
+            bin/vis-agent
+          fail_on_unmatched_files: true
 
       - name: Check if version exists on Clojars
         id: check-clojars
@@ -150,10 +158,10 @@ jobs:
           CLOJARS_PASSWORD: ${{ secrets.CLOJARS_DEPLOY_TOKEN }}
         run: clojure -T:build deploy
 
-      - name: Update README.md version
+      - name: Stamp the published Clojars version in the docs
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          sed -i "s/{:mvn\/version \"[^\"]*\"}/{:mvn\/version \"$VERSION\"}/g" README.md
+          sed -i "s/{:mvn\/version \"[^\"]*\"}/{:mvn\/version \"$VERSION\"}/g" README.md resources/vis-docs/index.md
 
       - name: Update CHANGELOG.md
         shell: bash
@@ -200,7 +208,7 @@ jobs:
           set -euo pipefail
           git config user.name "blockether-deployer"
           git config user.email "contact@blockether.com"
-          git add README.md CHANGELOG.md
+          git add README.md CHANGELOG.md resources/vis-docs/index.md
           if git diff --cached --quiet; then
             echo "No changes to commit"
             exit 0

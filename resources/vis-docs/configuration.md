@@ -15,11 +15,13 @@ The gateway API — and the Companion on top of it — writes MCP servers to the
 
 Saving a managed server keeps its stored `env` and `headers` when the request omits those keys — the inventory a client reads never carries secret values, so a round-trip through a UI cannot wipe them. Sending the key explicitly, including as an empty map, still replaces it.
 
+The gateway also owns the *connections*, not just the config. Every enabled server is connected once, daemon-wide, and shared by every session; the daemon re-checks that pool on its own clock (and on every turn and `/reload`), reaps a crashed `stdio` child or a dropped HTTP session, and reconnects it. So a session never connects or disconnects anything — there is no such tool, and none is needed: a server you save, enable, or start is simply there, in the TUI and in the Companion alike. Stopping one is an explicit admin action (Kill, or `enabled: false`), and it applies everywhere, because everyone is using the same connection.
+
 ## Killing a server, and signing one in
 
 Two things are **runtime**, not config, so they work on hand-written servers too:
 
-- **Kill / Start.** Killing a server closes its connection — and, for a `stdio` server, its child process — and keeps it closed: the gateway reconciles connections every turn, and a killed server is skipped instead of reconnected. Nothing is written to disk, so a kill does not survive a gateway restart and never edits your YAML. `Start` releases it. Disabling, by contrast, persists `enabled: false` and is only available for gateway-managed servers. The inventory reports both: `is_killed` (runtime) beside `enabled` (config).
+- **Kill / Start.** Killing a server closes its connection — and, for a `stdio` server, its child process — and keeps it closed: the gateway reconciles connections continuously, and a killed server is skipped instead of reconnected. Nothing is written to disk, so a kill does not survive a gateway restart and never edits your YAML. `Start` releases it. Disabling, by contrast, persists `enabled: false`.
 - **Browser sign-in.** An HTTP MCP server that answers `401` needs OAuth. The gateway runs the whole flow — discovery, dynamic client registration, PKCE — and holds the tokens; a client only receives an authorization URL to open and hands back the code. Start a flow, open the URL, and either let the loopback redirect complete it by itself or paste the redirect URL (or the bare `code`) back. Poll until it reports `authorized`; `is_authorized` on the inventory row says whether tokens are already stored. Signing out forgets them.
 
 Because the flow lives on the gateway, a Companion on your phone and a TUI attached to a remote gateway authorize a server exactly the same way, and neither one ever holds a token or a PKCE verifier. In the TUI it is the `MCP Servers` command in the palette.

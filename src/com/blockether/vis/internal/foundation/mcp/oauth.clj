@@ -522,7 +522,7 @@
         (:token fresh)))))
 
 (defn forget!
-  "Drop persisted tokens for `server-name` (e.g. on `mcp__disconnect`, or when a
+  "Drop persisted tokens for `server-name` (e.g. on a gateway sign-out, or when a
    401 recurs after refresh)."
   [server-name]
   (let [f (token-file server-name)]

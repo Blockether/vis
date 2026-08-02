@@ -756,6 +756,43 @@
                        not-empty))
         (:models provider)))
 
+(defn- resolve-model-ref
+  "Resolve one `<role>_model` / `<role>_provider` config pair against `fleet` to
+   `[provider-keyword model-name]`.
+
+   The `provider/model` form names a provider explicitly and wins over the
+   sibling provider key, exactly as `--model` does — but ONLY when the prefix is
+   a provider the fleet actually has, and never when the tagged provider itself
+   exposes the whole name. Model ids legitimately CONTAIN slashes (openrouter
+   serves `z-ai/glm-4.6v`), and splitting those made a picked default resolve to
+   some other provider's first model, so choosing it appeared to do nothing."
+  [requested tagged fleet]
+  (let
+    [requested*
+     (some-> requested
+             str
+             str/trim
+             not-empty)
+
+     tagged*
+     (some-> tagged
+             str
+             str/trim
+             not-empty
+             keyword)
+
+     tagged-provider
+     (some #(when (= tagged* (:id %)) %) fleet)
+
+     [slash-provider slash-model]
+     (split-model-ref requested*)]
+
+    (cond (and requested* (some #{requested*} (provider-model-names tagged-provider))) [tagged*
+                                                                                        requested*]
+          (and slash-provider (some #(= slash-provider (:id %)) fleet)) [slash-provider slash-model]
+          slash-provider [tagged* requested*]
+          :else [tagged* slash-model])))
+
 (defn default-selection
   "Return the valid PRIMARY provider/model pair for `fleet`. Explicit config
    wins; an untagged config falls back to the first provider and its first model."
@@ -768,13 +805,8 @@
       ;; `default_model` accepts the same `provider/model` form as `--model`, and
       ;; its provider part wins — the pair must resolve identically here and in
       ;; `loop/honor-config-roots!`, or the picker and the router disagree.
-      [slash-provider slash-model]
-      (split-model-ref (:default-model cfg))
-
-      requested-provider
-      (or slash-provider
-          (some-> (:default-provider cfg)
-                  keyword))
+      [requested-provider requested-model]
+      (resolve-model-ref (:default-model cfg) (:default-provider cfg) fleet)
 
       selected-provider
       (or (some #(when (= requested-provider (:id %)) %) fleet) (first fleet))
@@ -783,7 +815,7 @@
       (provider-model-names selected-provider)
 
       selected-model
-      (if (some #{slash-model} model-names) slash-model (first model-names))]
+      (if (some #{requested-model} model-names) requested-model (first model-names))]
 
      (when (and selected-provider selected-model)
        {:provider-id (:id selected-provider) :model selected-model}))))
@@ -803,13 +835,8 @@
      [cfg
       (or (config/load-config) {})
 
-      [slash-provider slash-model]
-      (split-model-ref (:fallback-model cfg))
-
-      requested-provider
-      (or slash-provider
-          (some-> (:fallback-provider cfg)
-                  keyword))
+      [requested-provider requested-model]
+      (resolve-model-ref (:fallback-model cfg) (:fallback-provider cfg) fleet)
 
       selected-provider
       (some #(when (= requested-provider (:id %)) %) fleet)
@@ -818,7 +845,7 @@
       (provider-model-names selected-provider)
 
       selected-model
-      (if (some #{slash-model} model-names) slash-model (first model-names))]
+      (if (some #{requested-model} model-names) requested-model (first model-names))]
 
      (when (and selected-provider
                 selected-model
@@ -862,16 +889,26 @@
 
 (defn- raw-tagged-provider
   "The provider a RAW config's `<role>_provider`/`<role>_model` pair names, as a
-   keyword. The `provider/model` form of the model key wins, mirroring the read
-   path in `default-selection`/`fallback-selection`."
-  [raw {provider-key :provider model-key :model}]
-  (let [[slash-provider _] (split-model-ref (get raw model-key))]
-    (or slash-provider
-        (some-> (get raw provider-key)
-                str
-                str/trim
-                not-empty
-                keyword))))
+   keyword, resolved by `resolve-model-ref` so the `provider/model` form and a
+   model id that merely CONTAINS a slash are told apart exactly as they are on
+   the read path in `default-selection`/`fallback-selection`."
+  [raw {provider-key :provider model-key :model} fleet]
+  (first (resolve-model-ref (get raw model-key) (get raw provider-key) fleet)))
+
+(defn- selectable-model-names
+  "Every model id the PICKER offers for one fleet entry: the configured catalog
+   plus the provider's LIVE-fetched and preset ids.
+
+   The picker and the save path MUST agree. `model-options` is what channels
+   list, so a model the user can see and choose has to be persistable — reading
+   only the configured catalog here rejected every live model with \"Unknown
+   model for provider\", which is exactly the case where the user is switching
+   the default AWAY from what config already names. Degrades to the configured
+   catalog when the live fetch is unavailable."
+  [provider]
+  (into (set (provider-model-names provider))
+        (try (:models (model-options provider (default-model-names provider) true))
+             (catch Throwable _ nil))))
 
 (defn- save-selection!
   "Validate one provider/model pair against the live fleet and persist it under
@@ -903,7 +940,7 @@
      (some #(when (= provider-id* (:id %)) %) fleet)
 
      model-names
-     (set (provider-model-names selected))
+     (selectable-model-names selected)
 
      primary
      (:provider-id (default-selection fleet))
@@ -935,8 +972,16 @@
        existing
        (some #(when (= provider-id* (:id %)) %) current)
 
+       ;; A model picked from the LIVE catalog is written into the provider's
+       ;; persisted models: `default-selection` resolves `default_model` against
+       ;; that catalog only, so an unlisted name would silently revert to the
+       ;; provider's first model on the very next read.
+       catalog
+       (let [models (vec (:models selected))]
+         (if (some #(= model* (config/model-name %)) models) models (conj models {:name model*})))
+
        selected-config
-       (merge selected existing {:models (:models selected)})
+       (merge selected existing {:models catalog})
 
        providers*
        (if existing
@@ -951,7 +996,7 @@
 
        raw*
        (if (and (= role :primary)
-                (= provider-id* (raw-tagged-provider raw* (:fallback selection-keys))))
+                (= provider-id* (raw-tagged-provider raw* (:fallback selection-keys) fleet)))
          (apply dissoc raw* (vals (:fallback selection-keys)))
          raw*)
 

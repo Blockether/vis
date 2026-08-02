@@ -64,8 +64,10 @@
   (it
     "keeps the sectioned core contract explicit and non-contradictory"
     (let [text (var-get (ns-resolve 'com.blockether.vis.internal.prompt 'CORE_SYSTEM_PROMPT))]
-      ;; Context safety is worth a small fixed prompt cost; keep the whole core below 4.4k.
-      (expect (< (count text) 4400))
+      ;; Context safety is worth a small fixed prompt cost; keep the whole core below 4.5k.
+      ;; The ratchet must never squeeze out §7's teardown rule again: compressing it to a
+      ;; bare "finish clean" is how sessions started leaking REPLs.
+      (expect (< (count text) 4500))
       (let
         [steps (mapv #(str/index-of text %)
                      ["`grep` locates unknown code" "`struct_index` every known file"
@@ -132,9 +134,12 @@
           "re-read that one target and retry"
           "Lead with the answer. Be terse; depth only when earned."
           ;; End-of-turn teardown: without this the session leaks every REPL and
-          ;; background shell the agent spawned.
+          ;; background shell the agent spawned. The TRIGGER (before the final answer)
+          ;; and the ctx cue (`can_stop`, which `resources/model-view` keeps in every
+          ;; leaf) are part of the rule — a bare "finish clean" got skipped.
           "Finish clean: stop every session resource you started" "`shell` op \"stop\""
-          "nothing of yours running" "Confirm destructive actions."]]
+          "BEFORE your final answer" "live `can_stop` entry" "nothing of yours running"
+          "Confirm destructive actions."]]
         (expect (str/includes? text required)))
       ;; Python's native-result retrieval contract belongs in the execution-surface
       ;; guidance because it controls context shaping across every native tool.

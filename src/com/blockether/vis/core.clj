@@ -171,6 +171,8 @@
 ;; MCP lives on the GATEWAY: it owns the pool, the child processes, and the OAuth
 ;; tokens. Channels inspect, kill/start, and drive headless auth through these.
 (import-vars [gateway-mcp-servers gateway-client/mcp-servers]
+             [gateway-mcp-save-server! gateway-client/mcp-save-server!]
+             [gateway-mcp-test-server! gateway-client/mcp-test-server!]
              [gateway-mcp-kill-server! gateway-client/mcp-kill-server!]
              [gateway-mcp-start-server! gateway-client/mcp-start-server!]
              [gateway-mcp-set-server-enabled! gateway-client/mcp-set-server-enabled!]

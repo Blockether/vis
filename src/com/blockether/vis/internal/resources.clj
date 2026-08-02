@@ -34,7 +34,8 @@
    Model ctx stays PURE DATA and groups the flat registry through `model-view`:
    REPLs live at `session[\"resources\"][\"repls\"][language][cwd]`; `cwd` is
    their model-facing identity. Ctx leaves are PROJECTED (`repl-ctx-keys` /
-   `other-ctx-keys`) to what changes a decision — never a callable, never the
+   `other-ctx-keys`) to what changes a decision — `can_stop` included, so ctx never
+   stops advertising what the agent still has to tear down — never a callable, never the
    pack's full detail. Killing goes through `stop!`/`restart!` (by session + id) — the
    single path the agent tool AND the footer both call. `id` IS the binding."
   (:require [clojure.java.io :as io]
@@ -405,18 +406,21 @@
 
 (def ^:private repl-ctx-keys
   "Model-facing REPL leaf keys, in render order. `language`/`cwd` are already the
-   PATH, `id` addresses the REPL, `status` decides reuse vs start/restart, and
-   `port`/`external`/`host` say whether vis may kill it or only detach. Everything
-   else a pack records (versions, aliases, dialect, label, log, tool, kind, pid,
-   owner, created_at, can_*, nrepl session id) is one `repl` status call away and
-   changes no decision — carried in ctx it cost ~190 tokens PER LIVE REPL on every
-   request."
-  ["id" "status" "port" "external" "host"])
+   PATH, `id` addresses the REPL, `status` decides reuse vs start/restart,
+   `can_stop` is the TEARDOWN affordance — the agent has to leave nothing of its
+   own running, and a leaf that never says it is stoppable is one the agent
+   forgets to stop — and `port`/`external`/`host` say whether vis may kill it or
+   only detach. Everything else a pack records (versions, aliases, dialect, label,
+   log, tool, kind, pid, owner, created_at, can_restart, nrepl session id) is one
+   `repl` status call away and changes no decision — carried in ctx it cost ~190
+   tokens PER LIVE REPL on every request."
+  ["id" "status" "can_stop" "port" "external" "host"])
 
 (def ^:private other-ctx-keys
   "Model-facing leaf keys for non-REPL resources (`[\"other\"][kind][id]`): what to
-   address, whether it is alive, what it is running."
-  ["id" "status" "detail" "pid"])
+   address, whether it is alive, what it is running, and whether the agent can —
+   and therefore must — stop it before it finishes."
+  ["id" "status" "can_stop" "detail" "pid"])
 
 (defn- ctx-leaf
   "Project a registry DATA map onto `ks`, dropping absent keys and preserving `ks`

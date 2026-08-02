@@ -205,6 +205,42 @@ export async function pickMediaAttachments(
   );
 }
 
+/** Capture one new photo with the native camera, then apply the normal attachment gate. */
+export async function capturePhotoAttachment(
+  limits: AttachmentLimits = {},
+): Promise<PickAttachmentResult> {
+  const { Camera, CameraResultType, CameraSource } = await import('@capacitor/camera');
+  const permission = await Camera.requestPermissions({ permissions: ['camera'] });
+  if (permission.camera === 'denied') {
+    throw new Error('Camera access was denied — enable it in Settings');
+  }
+
+  const photo = await Camera.getPhoto({
+    quality: 100,
+    allowEditing: false,
+    correctOrientation: true,
+    resultType: CameraResultType.Base64,
+    saveToGallery: false,
+    source: CameraSource.Camera,
+  });
+  if (!photo.base64String) throw new Error('The camera did not return a photo');
+
+  const format = photo.format.toLowerCase();
+  const extension = format === 'jpeg' ? 'jpg' : format;
+  const mimeType = format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : `image/${format}`;
+  const timestamp = new Date().toISOString().replace(/[:.]/gu, '-');
+  const blob = base64AsBlob(photo.base64String, mimeType);
+
+  return collectAttachments(
+    [{
+      name: `photo-${timestamp}.${extension}`,
+      mimeType,
+      blob: async () => blob,
+    }],
+    { ...limits, maxFiles: 1 },
+  );
+}
+
 // Build attachments from raw File/Blob objects — the clipboard-paste and
 // drag-drop path (web + iOS/Android WKWebView), reusing the same validation
 // and data-URL encoding as the native picker above.

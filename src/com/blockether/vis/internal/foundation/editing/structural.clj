@@ -224,6 +224,71 @@
             (StructuralApi/findReferences source language name)))
     []))
 
+(defn- occurrence-entries
+  "Enrich the source-ordered `hits` of ONE identifier with `defs` — that same
+   identifier's definitions — into the entry list `occurrences` returns."
+  [line-anchor defs hits]
+  (let
+    [;; claim: def → index of the first still-unclaimed hit inside its span.
+     ;; The span is recovered from the def's anchors (its sole position).
+     claimed
+     (reduce (fn [acc d]
+               (let
+                 [lo (patch/anchor->line (:anchor d))
+                  hi (patch/anchor->line (:end-anchor d))]
+
+                 (if-let
+                   [i (first
+                        (keep-indexed
+                          (fn [i ^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
+                            (when (and (not (contains? acc i)) (<= lo (.line h) hi)) i))
+                          hits))]
+                   (assoc acc i d)
+                   acc)))
+             {}
+             defs)]
+    (vec (map-indexed (fn [i ^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
+                        (let [base {:anchor (line-anchor (.line h))}]
+                          (if-let [d (get claimed i)]
+                            (assoc base
+                              :is-definition true
+                              :kind (:kind d)
+                              :visibility (:visibility d)
+                              :signature (:signature d)
+                              :doc (:doc d)
+                              :end-anchor (:end-anchor d))
+                            base)))
+                      hits))))
+
+(defn occurrences-in
+  "The BATCH form of `occurrences`: every occurrence of EACH identifier in
+   `names` in `path`, as `{name [entry …]}` — a name that never occurs is simply
+   absent. Entries are exactly what `occurrences` returns; see its docstring.
+
+   ONE parse, ONE line split and ONE definition walk serve the whole batch, so
+   the cost tracks the FILE, not the name count. Per-name calls re-parse `source`
+   for every name, which is what made tracing N names over M files quadratic —
+   use this whenever more than one name is traced through the same file."
+  [path source names]
+  (let [wanted (into [] (comp (map str) (distinct)) names)]
+    (if-let [language (when (seq wanted) (index/detect-language path))]
+      (let
+        [lines (vec (str/split-lines source))
+         line-anchor #(patch/line-anchor % (nth lines (dec (long %)) ""))
+         defs-by-name (group-by :name (index/definitions source language))]
+
+        (persistent!
+          (reduce (fn [acc e]
+                    (let [hits (vec (val e))]
+                      (if (seq hits)
+                        (assoc! acc
+                                (key e)
+                                (occurrence-entries line-anchor (get defs-by-name (key e)) hits))
+                        acc)))
+                  (transient {})
+                  (StructuralApi/findReferences source language ^java.util.Collection wanted))))
+      {})))
+
 (defn occurrences
   "Every occurrence of identifier `name` in `path` — the DEFINITION occurrences
    ENRICHED — as ONE list (empty if none / unknown language):
@@ -241,46 +306,11 @@
 
    Definition detection: the FIRST occurrence inside each definition's
    `:anchor`..`:end-anchor` line span IS its declaration name (findReferences
-   returns hits in source order), so it survives decorators / attributes above it."
+   returns hits in source order), so it survives decorators / attributes above it.
+
+   Tracing SEVERAL names through the same file? Call `occurrences-in` once
+   instead of this per name."
   [path source name]
   ;; Cheap reject: see `references`. No raw occurrence ⇒ no reference AND no
-  ;; definition, so both native passes below are skippable.
-  (if-let [language (when (str/includes? source name) (index/detect-language path))]
-    (let
-      [lines (vec (str/split-lines source))
-       line-anchor #(patch/line-anchor % (nth lines (dec (long %)) ""))
-       hits (vec (StructuralApi/findReferences source language name))
-       defs (index/definitions source language name)
-       ;; claim: def → index of the first still-unclaimed hit inside its span.
-       ;; The span is recovered from the def's anchors (its sole position).
-       claimed
-       (reduce (fn [acc d]
-                 (let
-                   [lo (patch/anchor->line (:anchor d))
-                    hi (patch/anchor->line (:end-anchor d))]
-
-                   (if-let
-                     [i (first
-                          (keep-indexed
-                            (fn
-                              [i ^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
-                              (when (and (not (contains? acc i)) (<= lo (.line h) hi)) i))
-                            hits))]
-                     (assoc acc i d)
-                     acc)))
-               {}
-               defs)]
-
-      (vec (map-indexed (fn [i ^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
-                          (let [base {:anchor (line-anchor (.line h))}]
-                            (if-let [d (get claimed i)]
-                              (assoc base
-                                :is-definition true
-                                :kind (:kind d)
-                                :visibility (:visibility d)
-                                :signature (:signature d)
-                                :doc (:doc d)
-                                :end-anchor (:end-anchor d))
-                              base)))
-                        hits)))
-    []))
+  ;; definition, so the whole batch below is skippable.
+  (if (str/includes? source name) (get (occurrences-in path source [name]) name []) []))

@@ -8,12 +8,14 @@ Vis is a coding agent that writes Python into a sandboxed GraalPy runtime, keeps
 
 ## Install
 
-One command installs **`vis-agent`** — the only Vis command there is. (We deliberately do not install `vis`: Linux already ships an unrelated `vis` utility.)
+One command installs **`vis-agent`** — the only Vis command there is.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-vis-agent | bash
+curl -fsSL https://github.com/Blockether/vis/releases/latest/download/install-vis-agent | bash
 vis-agent help
 ```
+
+`install-vis-agent` is a release asset: every `vX.Y.Z` release publishes the installer and the `vis-agent` wrapper alongside the platform bundles, so that URL always serves the installer of the newest release.
 
 That installs the `vis-agent` command into `~/.local/bin` (adding it to your PATH when needed). `vis-agent` then downloads its own private `vis-agent-native` runtime beside itself — the native image is never a separate command you install. From then on vis-agent owns both:
 
@@ -25,26 +27,14 @@ vis-agent update --native   # (re)download just the native runtime
 
 Native runtimes are published for Linux x64 and arm64.
 
-### Variants
-
-| Goal | Command |
-|---|---|
-| Install for all users | `curl -fsSL …/bin/install-vis-agent -o /tmp/install-vis-agent`<br>`sudo bash /tmp/install-vis-agent --install-dir /usr/local/bin` |
-| Pin a release | `curl -fsSL …/bin/install-vis-agent \| bash -s -- --version vX.Y.Z` |
-| Run on the JVM source runtime (needs Java 25+, the Clojure CLI, and git) | `curl -fsSL …/bin/install-vis-agent \| bash -s -- --runtime jvm` |
-
-Corporate proxies often block `raw.githubusercontent.com`. Clone from `github.com` and run `bin/install-vis-agent` out of the checkout: it then installs that checkout's wrapper without touching the raw host.
-
-
 ### Hosts to allowlist
 
 | Host | Needed for |
 |---|---|
-| `github.com` | git clone and release bytes |
+| `github.com` | git clone, installer and release bytes |
 | `api.github.com` | release resolution for install/update |
 | `release-assets.githubusercontent.com` | release bundle bytes |
 | `repo1.maven.org`, `repo.clojars.org` | JVM/source dependency resolution |
-| `raw.githubusercontent.com` | one-line installers only |
 | your model provider's API | running the agent |
 
 ## Companion app (iPhone / Android)
@@ -87,6 +77,25 @@ is not installed is an error with the command that fixes it, never a silent
 substitution. There is no jar runtime: `target/vis.jar` is a build artifact.
 Full flag, update, state, and environment matrix:
 [Runtime distributions](resources/vis-docs/distributions.md).
+
+## Clojars packages
+
+[![Clojars Project](https://img.shields.io/clojars/v/com.blockether/vis.svg)](https://clojars.org/com.blockether/vis)
+
+Every release deploys the whole monorepo to Clojars at one shared version: the
+agent itself plus each channel, provider, language, foundation, and workspace
+extension.
+
+```clojure
+;; deps.edn
+{:deps {com.blockether/vis {:mvn/version "0.1.24"}}}
+```
+
+`com.blockether/vis` already depends on every bundled extension, so that single
+coordinate gives the full agent. Depend on one package
+(`com.blockether/vis-channel-tui`, `com.blockether/vis-provider-anthropic`,
+`com.blockether/vis-language-python`, …) only when you embed a part of it.
+Writing your own extension: [Extending Vis](resources/vis-docs/extending.md).
 
 ## Build / develop
 

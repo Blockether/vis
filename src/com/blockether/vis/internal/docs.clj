@@ -541,7 +541,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
           "<span class=\"hero-install-spacer\"></span>"
           "<button type=\"button\" class=\"copy-btn\" data-copy-active aria-label=\"Copy install command\">Copy</button>"
           "</div>"
-          "<code id=\"cmd-unix\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"unix\" aria-label=\"macOS and Linux install command\"><span class=\"token function\">curl</span> -fsSL <span class=\"token string\">https://raw.githubusercontent.com/Blockether/vis/main/bin/install-vis-agent</span> <span class=\"token punctuation\">|</span> <span class=\"token function\">bash</span></code>"
+          "<code id=\"cmd-unix\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"unix\" aria-label=\"macOS and Linux install command\"><span class=\"token function\">curl</span> -fsSL <span class=\"token string\">https://github.com/Blockether/vis/releases/latest/download/install-vis-agent</span> <span class=\"token punctuation\">|</span> <span class=\"token function\">bash</span></code>"
           "</div>" "</div></section>"))
       (rewrite-md-links html mode)
       "<div class=\"foot\">"

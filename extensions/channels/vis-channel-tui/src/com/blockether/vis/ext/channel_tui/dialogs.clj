@@ -11,6 +11,7 @@
             [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.mcp-model :as mcp-model]
             [com.blockether.vis.internal.theme :as shared-theme]
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna Symbols TerminalPosition]
@@ -3387,11 +3388,90 @@
                     (sort-by (juxt :type :label :name) group-rows)))
             (sort-by first (group-by extension-group-key extension-rows)))))
 
+(def ^:private mcp-inventory
+  "Cached gateway MCP inventory rendered INSIDE Settings.
+
+   Stays `:unloaded` until a dialog asks for it, so `settings-rows` keeps
+   working — and stays MCP-free — for callers and tests without a gateway."
+  (atom {:status :unloaded :servers [] :error nil}))
+
+(defn load-mcp-inventory!
+  "Refresh the cached MCP inventory from the gateway. Never throws: a gateway
+   that is down, or a rejected verb, becomes an inline row instead of yet
+   another modal."
+  []
+  (reset! mcp-inventory (try {:status :ok :servers (vec (vis/gateway-mcp-servers)) :error nil}
+                             (catch Exception e
+                               {:status :error :servers [] :error (ex-message e)}))))
+
+(defn- toggle-mcp-server!
+  "Flip one server's on/off straight from its Settings row.
+
+   Three separate states collapse into that one switch, so the verb has to be
+   chosen, not guessed: the `enabled` flag the gateway PERSISTS, the kill brake
+   it holds only at RUNTIME, and the hand-written config tier it refuses to
+   rewrite at all (`409`). Hence: a killed-but-enabled server is started —
+   never re-saved — a gateway-managed one has its flag persisted, and a
+   config-file one toggles by kill/start only. Turning a config-file server
+   that its own file declares off back on is that file's business; say so
+   instead of quietly killing an already-stopped server."
+  [row]
+  (let
+    [server
+     (str (get row "name"))
+
+     managed?
+     (mcp-model/flag row "is_managed")
+
+     killed?
+     (mcp-model/flag row "is_killed")
+
+     enabled?
+     (mcp-model/flag row "enabled")]
+
+    (cond (mcp-model/server-on? row) (if managed?
+                                       (vis/gateway-mcp-set-server-enabled! server false)
+                                       (vis/gateway-mcp-kill-server! server))
+          ;; Only the runtime brake is down: release it, no config write.
+          (and enabled? killed?) (vis/gateway-mcp-start-server! server)
+          ;; Enabling a managed server also lifts a kill (the gateway revives it
+          ;; on save), so this one call is the whole verb.
+          managed? (vis/gateway-mcp-set-server-enabled! server true)
+          :else (throw (ex-info (str server
+                                     " is disabled in a config file — edit that file to enable it")
+                                {:type :mcp/read-only :server server})))))
+
+(defn- mcp-settings-rows
+  "The `MCP Servers` settings section: one togglable row per server plus one
+   action row into the full manager (add / edit / sign in / remove). Empty
+   until `load-mcp-inventory!` has run."
+  []
+  (let [{:keys [status servers error]} @mcp-inventory]
+    (when-not (= :unloaded status)
+      (vec
+        (concat [{:type :section :label "MCP Servers"}]
+                (mapv (fn [row]
+                        {:type :mcp-toggle
+                         :label (str (get row "name"))
+                         :description (mcp-model/server-status row)
+                         :server row})
+                      servers)
+                (when (seq (str error))
+                  [{:type :info :label "MCP unavailable" :description (str error)}])
+                (when (and (empty? servers) (empty? (str error)))
+                  [{:type :info
+                    :label "No MCP servers yet"
+                    :description "Add one below, or declare it under `mcp:` in vis.yml."}])
+                [{:type :action
+                  :id :mcp-manage
+                  :label "Manage MCP servers…"
+                  :description "Add, edit, sign in, remove"}])))))
+
 (defn- settings-rows
   "Every settings row in ONE flat, grouped list — no tabs (mirrors the web
    settings modal): Terminal-UI chrome, then all feature toggles grouped by
-   `:group`, then Models, then channel / provider / extension knobs. Sections
-   with nothing to show drop out."
+   `:group`, then MCP servers, then channel / provider / extension knobs.
+   Sections with nothing to show drop out."
   ([] (settings-rows (extension-option-rows)))
   ([extension-rows]
    (let
@@ -3410,22 +3490,26 @@
       generic-rows
       (extension-rows-of-kind all-extension-rows :extension)]
 
-     (vec (concat [{:type :section :label "Terminal UI"}]
-                  (settings-ui-options)
-                  ;; ALL feature toggles, grouped by :group like the web.
-                  (or (registry-toggle-rows) [])
-                  (or (contributor-rows) [])
-                  ;; Reasoning-effort moved OUT of Settings (own control: Ctrl+R); the
-                  ;; Models section only ever carried it, so it's gone too.
-                  (when (seq channel-rows)
-                    (concat [{:type :section :label "Channel Settings"}]
-                            (settings-extension-groups channel-rows)))
-                  (when (seq provider-rows)
-                    (concat [{:type :section :label "Provider Settings"}]
-                            (settings-extension-groups provider-rows)))
-                  (when (seq generic-rows)
-                    (concat [{:type :section :label "Extension Settings"}]
-                            (settings-extension-groups generic-rows))))))))
+     (vec
+       (concat [{:type :section :label "Terminal UI"}]
+               (settings-ui-options)
+               ;; ALL feature toggles, grouped by :group like the web.
+               (or (registry-toggle-rows) [])
+               (or (contributor-rows) [])
+               ;; MCP servers live here too — one toggle per server instead
+               ;; of a stack of separate dialogs.
+               (or (mcp-settings-rows) [])
+               ;; Reasoning-effort moved OUT of Settings (own control: Ctrl+R); the
+               ;; Models section only ever carried it, so it's gone too.
+               (when (seq channel-rows)
+                 (concat [{:type :section :label "Channel Settings"}]
+                         (settings-extension-groups channel-rows)))
+               (when (seq provider-rows)
+                 (concat [{:type :section :label "Provider Settings"}]
+                         (settings-extension-groups provider-rows)))
+               (when (seq generic-rows)
+                 (concat [{:type :section :label "Extension Settings"}]
+                         (settings-extension-groups generic-rows))))))))
 
 (defn- extension-env-status-label
   [source]
@@ -3473,7 +3557,7 @@
    glyph and the resource status dots: ● (status-ok) = on, ○ (dim) = off,
    ◆ (accent) = a value/enum to cycle, ▸ (accent) = an action. Returns
    `[glyph fg-color]`."
-  [{:keys [key type set-key item-id toggle-id]} values]
+  [{:keys [key type set-key item-id toggle-id server]} values]
   (let
     [on
      [p/STATUS_ON t/status-ok]
@@ -3519,6 +3603,10 @@
         (cond (= :enum (:type spec)) val
               (boolean tv) on
               :else off))
+
+      ;; an MCP server reads its on/off off the live gateway row
+      :mcp-toggle
+      (if (mcp-model/server-on? server) on off)
 
       :toggle
       (if (get values key false) on off)
@@ -3568,7 +3656,7 @@
 
 (defn- settings-selectable?
   [{:keys [type]}]
-  (contains? #{:toggle :choice :action :set-toggle :registry-toggle} type))
+  (contains? #{:toggle :choice :action :set-toggle :registry-toggle :mcp-toggle} type))
 
 (defn- first-selectable-index
   [rows]
@@ -3576,6 +3664,22 @@
                              (when (settings-selectable? row) i))
                            rows))
       0))
+
+(defn- settings-initial-index
+  "Where the cursor starts. `section` (a section label such as `MCP Servers`)
+   opens Settings already parked on that section, so a palette entry can point
+   straight at its rows instead of opening a dialog of its own."
+  [rows section]
+  (let
+    [head (when (seq (str section))
+            (first (keep-indexed (fn [i {:keys [type label]}]
+                                   (when (and (= :section type) (= (str label) (str section))) i))
+                                 rows)))]
+    (or (when head
+          (first (keep-indexed (fn [i row]
+                                 (when (and (> (long i) (long head)) (settings-selectable? row)) i))
+                               rows)))
+        (first-selectable-index rows))))
 
 (defn- move-settings-selection
   [rows ^long selected ^long delta]
@@ -3735,7 +3839,19 @@
   (case (:type row)
     :action
     (when-let [f (get callbacks (:id row))]
-      (f @values))
+      (let [result (f @values)]
+        ;; The MCP manager can add, remove or authorize a server; re-read the
+        ;; inventory so the rows underneath it are never stale.
+        (when (= :mcp-manage (:id row)) (load-mcp-inventory!))
+        result))
+
+    :mcp-toggle
+    (do (try (toggle-mcp-server! (:server row))
+             (load-mcp-inventory!)
+             (catch Exception e
+               (load-mcp-inventory!)
+               (swap! mcp-inventory assoc :error (ex-message e))))
+        @values)
 
     (if (= :theme-name (:key row))
       (activate-theme-row! screen values callbacks row)
@@ -3921,16 +4037,24 @@
    the right pane and the rail tracks where you are.
 
    `settings` is the persisted TUI settings map (see
-   `state/default-settings`). Esc clears an active search first, then closes
-   and returns the current settings map."
+   `state/default-settings`). `callbacks` also carries `:focus-section` (a
+   section label to park the cursor on, e.g. `MCP Servers`) and
+   `:mcp-manage` (the full MCP manager, reached from its section's action
+   row). Esc clears an active search first, then closes and returns the
+   current settings map."
   ([^TerminalScreen screen settings] (settings-dialog! screen settings nil))
   ([^TerminalScreen screen settings callbacks]
    (let
      [extension-rows
       (extension-option-rows)
 
+      ;; MCP servers are a settings section now, so the inventory is read once
+      ;; when the dialog opens instead of behind a dialog of its own.
+      _
+      (load-mcp-inventory!)
+
       selected
-      (atom (first-selectable-index (settings-rows extension-rows)))
+      (atom (settings-initial-index (settings-rows extension-rows) (:focus-section callbacks)))
 
       scroll
       (atom 0)

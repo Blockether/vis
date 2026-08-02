@@ -106,7 +106,7 @@ const plistEntries = [
   [
     'NSCameraUsageDescription',
     `\t<key>NSCameraUsageDescription</key>
-\t<string>Scan a gateway pairing QR code to connect Vis.</string>`,
+\t<string>Take photos to attach to a Vis conversation and scan gateway pairing QR codes.</string>`,
   ],
   [
     'NSMicrophoneUsageDescription',

@@ -125,38 +125,43 @@ if [[ -d "$install_dir/vis-agent" || -d "$install_dir/vis-agent-native" ]]; then
 fi
 
 # ── 1. install the vis-agent command ────────────────────────────────────────
-# Run from a checkout (proxies commonly block raw.githubusercontent.com) and the
-# wrapper next to this script is used directly. The sibling deps.edn proves it is
-# a real checkout rather than an unrelated file in the current directory.
+# The wrapper is a RELEASE ASSET: every `vX.Y.Z` release publishes `vis-agent`
+# and `install-vis-agent` beside the platform bundles, so nothing is ever fetched
+# from a raw source host. Run from a checkout and the wrapper next to this script
+# is used directly; the sibling deps.edn proves it is a real checkout rather than
+# an unrelated file in the current directory.
 wrapper=""
 here="$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
 if [[ "$version" == latest && -n "$here" && -f "$here/vis-agent" && -f "$here/../deps.edn" ]]; then
   wrapper="$here/vis-agent"
   echo "vis-agent install: using the vis-agent command from this checkout"
 else
-  # A pinned --version pins the RUNTIME release. Older tags predate this wrapper,
-  # so fall back to main rather than failing on a 404: the wrapper is
-  # version-agnostic and step 2 still asks for the pinned runtime.
-  ref=main
-  [[ "$version" == latest ]] || ref="$version"
   wrapper="$(mktemp "${TMPDIR:-/tmp}/vis-agent.XXXXXX")"
   trap 'rm -f "$wrapper"' EXIT
   fetch_wrapper() {
-    local from="$1"
-    curl -fsSL "https://raw.githubusercontent.com/$repo_slug/$from/bin/vis-agent" -o "$wrapper" 2>/dev/null &&
+    local url="$1"
+    curl -fsSL "$url" -o "$wrapper" 2>/dev/null &&
       head -1 "$wrapper" | grep -q '^#!'
   }
-  echo "vis-agent install: downloading the vis-agent command ($ref)"
-  if ! fetch_wrapper "$ref"; then
-    if [[ "$ref" == main ]]; then
-      echo "vis-agent install: could not download the vis-agent command from main" >&2
-      exit 1
-    fi
-    echo "vis-agent install: $ref ships no bin/vis-agent; using the command from main and pinning the runtime to $version" >&2
-    fetch_wrapper main || {
-      echo "vis-agent install: could not download the vis-agent command from main" >&2
+  latest_asset="https://github.com/$repo_slug/releases/latest/download/vis-agent"
+  if [[ "$version" == latest ]]; then
+    echo "vis-agent install: downloading the vis-agent command (latest release)"
+    fetch_wrapper "$latest_asset" || {
+      echo "vis-agent install: could not download the vis-agent command from the latest release" >&2
       exit 1
     }
+  else
+    # A pinned --version pins the RUNTIME release. Older releases predate this
+    # asset, so fall back to the newest release rather than failing on a 404: the
+    # wrapper is version-agnostic and step 2 still asks for the pinned runtime.
+    echo "vis-agent install: downloading the vis-agent command ($version)"
+    if ! fetch_wrapper "https://github.com/$repo_slug/releases/download/$version/vis-agent"; then
+      echo "vis-agent install: $version ships no vis-agent asset; using the command from the latest release and pinning the runtime to $version" >&2
+      fetch_wrapper "$latest_asset" || {
+        echo "vis-agent install: could not download the vis-agent command from the latest release" >&2
+        exit 1
+      }
+    fi
   fi
 fi
 
@@ -212,7 +217,7 @@ vis-agent is installed at $install_dir/vis-agent, but its native runtime could
 not be installed — releases currently carry Linux x64 and arm64 only. Run the
 JVM source runtime instead (needs Java 25+, the Clojure CLI, and git):
 
-  curl -fsSL https://raw.githubusercontent.com/$repo_slug/main/bin/install-vis-agent | bash -s -- --runtime jvm
+  curl -fsSL https://github.com/$repo_slug/releases/latest/download/install-vis-agent | bash -s -- --runtime jvm
 EOF
   fi
   if (( ! path_configured )); then

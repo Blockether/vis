@@ -906,6 +906,25 @@
   []
   (vec (get (send-json! "GET" "/v1/mcp/servers") "servers")))
 
+(defn mcp-save-server!
+  "Create or replace a gateway-managed server. `spec` is the string-keyed wire
+   spec (`transport`, `command`/`args`/`cwd`/`env`, or `url`/`headers`, plus the
+   optional `enabled` and `timeout_ms`). The DAEMON validates it, persists it in
+   its own machine state, and reconnects — nothing is written on this side, so a
+   TUI attached to a REMOTE gateway adds servers exactly like the app does.
+
+   Secrets survive an omitting save: see `mcp.core/with-preserved-secrets`.
+   Returns the saved sanitized row."
+  [server spec]
+  (send-json! "POST" "/v1/mcp/servers" {:name server :server spec}))
+
+(defn mcp-test-server!
+  "Connect a CANDIDATE spec without saving it and return `{name, is_connected,
+   tools}`. The gateway opens and closes the connection, so a bad command or an
+   unreachable endpoint is reported before it is ever persisted."
+  [server spec]
+  (send-json! "POST" "/v1/mcp/servers/actions/test" {:name server :server spec}))
+
 (defn mcp-kill-server!
   "Stop a server NOW and hold it down until it is started again. Runtime only —
    nothing in the user's config changes."

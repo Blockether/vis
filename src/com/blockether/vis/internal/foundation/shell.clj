@@ -47,6 +47,7 @@
             [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.pty :as pty]
             [com.blockether.vis.internal.foundation.serial-batch :as batch]
@@ -61,7 +62,11 @@
 ;; Limits
 ;; =============================================================================
 
-(def ^:private default-timeout-secs 120)
+(def ^:private default-timeout-secs
+  ;; ONE source of truth, shared with the Python eval watchdog: the watchdog must
+  ;; sit a grace ABOVE this budget, or a shell call that names no timeout races a
+  ;; watchdog that started first and can never return its own timeout envelope.
+  rt/DEFAULT_SHELL_TIMEOUT_SECS)
 
 (def ^:private max-timeout-secs 600)
 

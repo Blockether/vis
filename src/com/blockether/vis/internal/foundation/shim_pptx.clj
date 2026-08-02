@@ -1,11 +1,11 @@
 (ns com.blockether.vis.internal.foundation.shim-pptx
   "Built-in sandbox SHIM: a `pptx` (python-pptx) compatible module backed by
-   `com.blockether/imaging` (Rust OOXML writer) so `from pptx import Presentation`
-   writes real .pptx files without the CPython package — and without Apache POI,
-   which cannot follow the CLI into the native image.
+   `com.blockether/imaging`'s Rust OOXML reader/writer. It creates, opens, edits,
+   and saves real presentations without Apache POI or a CPython wheel.
 
-   The Python side owns the whole presentation model and only crosses the
-   boundary ONCE, at `save()`: one string-keyed spec map in, base64 bytes out."
+   Python owns the mutable presentation model. The boundary is crossed once when
+   opening (bytes in, canonical model out) and once when saving (model in, bytes
+   out)."
   (:require [com.blockether.imaging :as im]
             [com.blockether.vis.core :as vis])
   (:import [java.util Base64]))
@@ -19,12 +19,19 @@
   [spec]
   (b64enc (im/pptx spec)))
 
+(defn- op-read
+  "Read a presentation through the Rust OOXML reader into the shim's wire model."
+  [encoded]
+  (-> (im/read-office (.decode (Base64/getDecoder) ^String encoded) {:with-images true})
+      vis/wire-canonical))
 
 (defn- pptx-bridge-bindings
   "Host callables (com.blockether/imaging, Rust) the pptx shim delegates to."
   []
   {"__vis_pptx_build__" (fn [spec]
-                          (envelope #(op-build spec)))})
+                          (envelope #(op-build spec)))
+   "__vis_pptx_read__" (fn [encoded]
+                         (envelope #(op-read encoded)))})
 
 ;; Python preamble: publishes a python-pptx-compatible module into sys.modules.
 
@@ -33,8 +40,8 @@
   (vis/extension
     {:ext/name "foundation-shim-pptx"
      :ext/description
-     "Sandbox python-pptx subset backed by com.blockether/imaging's Rust OOXML writer: Presentation/slides/layouts; text, pictures, shapes, tables, connectors, notes, properties, units, colors, fills/outlines, and common enums. Produces real `.pptx` files without pip/native wheel/JVM document model; no opening existing files, charts, or SmartArt."
-     :ext/version "0.2.0"
+     "Sandbox python-pptx compatibility backed by com.blockether/imaging's Rust OOXML reader/writer: create, open, edit, and save presentations with layouts, placeholders, rich text, images, fills, shapes, tables, connectors, charts, notes, properties, units, colors, and common enums. No pip wheel or JVM document model."
+     :ext/version "0.3.0"
      :ext/author "Blockether"
      :ext/owner "vis"
      :ext/license "Apache-2.0"
@@ -43,7 +50,7 @@
      [{:shim/name "pptx"
        :shim/imports ["pptx"]
        :shim/description
-       "python-pptx-compatible `.pptx` writer: model in Python, one Rust build on save. No existing-file open/edit, charts, or SmartArt."
+       "python-pptx-compatible create/open/edit/save support backed by one Rust read and one Rust build, including charts, images, rich text, tables, notes, layouts, and properties."
        :shim/bindings pptx-bridge-bindings
        :shim/source "vis-shims/pptx.py"}]}))
 

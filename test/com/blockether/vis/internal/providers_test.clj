@@ -230,6 +230,62 @@
              (mapv :name (get-in @saved ["providers" 1 :models])))
           "the complete selected-provider catalog is persisted"))))
 
+(deftest a-live-catalog-model-can-become-the-default
+  ;; The picker lists `model-options` (configured models PLUS the provider's
+  ;; live catalog), but the save path validated the choice against the
+  ;; configured catalog alone: picking any of the hundreds of live models a
+  ;; provider exposes was refused with "Unknown model for provider" and the TUI
+  ;; reported "Default rejected". Whatever the picker offers must be selectable,
+  ;; and the saved pair must survive the next read.
+  (let
+    [fleet
+     [{:id :anthropic-coding-plan :models [{:name "claude-fable-5"}]}
+      {:id :openrouter :models [{:name "glm-5.2"}]}]
+
+     saved
+     (atom nil)]
+
+    (with-redefs
+      [providers/picker-fleet
+       (constantly fleet)
+
+       providers/fetch-models
+       (fn [provider]
+         (when (= :openrouter (:id provider)) ["z-ai/glm-4.6v"]))
+
+       config/provider-template
+       (constantly nil)
+
+       config/load-config
+       (constantly {:default-provider "anthropic-coding-plan"
+                    :default-model "claude-fable-5"
+                    :providers fleet})
+
+       config/load-global-config-raw
+       (constantly {"providers" [{"id" "openrouter" "models" [{"name" "glm-5.2"}]}]})
+
+       config/save-config!
+       (fn [wire _]
+         (reset! saved wire))
+
+       config/reload-config!
+       (constantly nil)]
+
+      (is (= {:provider-id :openrouter :model "z-ai/glm-4.6v"}
+             (providers/save-default-selection! :openrouter "z-ai/glm-4.6v" :test))
+          "a model only the live catalog knows is still a valid default")
+      (is (= "openrouter" (get @saved "default_provider")))
+      (is (= "z-ai/glm-4.6v" (get @saved "default_model")))
+      (is (= ["glm-5.2" "z-ai/glm-4.6v"] (mapv :name (:models (first (get @saved "providers")))))
+          "the chosen model joins the persisted catalog")
+      (is (= {:provider-id :openrouter :model "z-ai/glm-4.6v"}
+             (with-redefs
+               [config/load-config (constantly {:default-provider "openrouter"
+                                                :default-model "z-ai/glm-4.6v"})]
+               (providers/default-selection
+                 [{:id :openrouter :models (:models (first (get @saved "providers")))}])))
+          "so the pair round-trips instead of reverting to the provider's first model"))))
+
 (deftest model-options-keeps-vis-yml-order
   ;; A hand-written `models:` list is an ORDER, not a set. Sorting every id
   ;; alphabetically reshuffled the user's fleet on every render (and moved the

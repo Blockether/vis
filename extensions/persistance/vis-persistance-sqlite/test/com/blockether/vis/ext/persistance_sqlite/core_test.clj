@@ -558,6 +558,109 @@
              (expect (true? (boolean (sqlite-core/db-store-stale? s dir))))
              (finally (vis/db-dispose-connection! s) (fs/delete-tree root))))))
 
+(defdescribe db-pool-sharing-and-drain-test
+             ;; Regression (hs_err_pid61432, gateway SIGBUS in `_platform_memmove` with
+             ;; `NativeDB.step` on the Java stack): every environment opened its OWN Hikari
+             ;; pool over the SAME `~/.vis/vis.mdb` (19 generations in 75 minutes), and a
+             ;; dispose closed that pool's physical SQLite handles even when a sibling
+             ;; thread was inside `sqlite3_step`. sqlite then dropped the last reference to
+             ;; the WAL-index shared-memory node and `munmap`ed the `-shm` region the
+             ;; stepping thread was writing into -> SIGBUS at the first 16 KiB page
+             ;; boundary past the wal-index header.
+             (it "shares ONE pool per db file and keeps it alive until the LAST dispose"
+                 (let
+                   [root
+                    (fs/create-temp-dir)
+
+                    dir
+                    (str (fs/path root "store"))
+
+                    s1
+                    (vis/db-create-connection! dir)
+
+                    s2
+                    (vis/db-create-connection! dir)]
+
+                   (try (expect (identical? (:datasource s1) (:datasource s2)))
+                        (vis/db-dispose-connection! s1)
+                        ;; `s2` still holds a reference, so the pool must still serve it.
+                        (expect (= 1 (count (jdbc/execute! (:datasource s2) ["SELECT 1"]))))
+                        (finally (vis/db-dispose-connection! s2) (fs/delete-tree root)))))
+             (it "drains an in-flight query instead of aborting it mid-step"
+                 (let
+                   [root
+                    (fs/create-temp-dir)
+
+                    dir
+                    (str (fs/path root "store"))
+
+                    s
+                    (vis/db-create-connection! dir)
+
+                    leased
+                    (java.util.concurrent.CountDownLatch. 1)
+
+                    outcome
+                    (promise)
+
+                    worker
+                    (future (try (with-open [conn (jdbc/get-connection (:datasource s))]
+                                   (.countDown leased)
+                                   ;; Hold the lease across the dispose below.
+                                   (Thread/sleep 300)
+                                   (deliver outcome (count (jdbc/execute! conn ["SELECT 1"]))))
+                                 (catch Throwable t (deliver outcome t))))]
+
+                   (try (.await leased)
+                        (vis/db-dispose-connection! s)
+                        @worker
+                        (expect (= 1 @outcome))
+                        (finally (fs/delete-tree root)))))
+             (it "drops ONE reference however often the same store is disposed"
+                 ;; `dispose-environment!` is reachable from eviction, `delete!`,
+                 ;; `close-all!` and `main`'s finally: a double release must not close a
+                 ;; pool a sibling environment is still using.
+                 (let
+                   [root
+                    (fs/create-temp-dir)
+
+                    dir
+                    (str (fs/path root "store"))
+
+                    s1
+                    (vis/db-create-connection! dir)
+
+                    s2
+                    (vis/db-create-connection! dir)]
+
+                   (try (vis/db-dispose-connection! s1)
+                        (vis/db-dispose-connection! s1)
+                        (expect (= 1 (count (jdbc/execute! (:datasource s2) ["SELECT 1"]))))
+                        (finally (vis/db-dispose-connection! s2) (fs/delete-tree root)))))
+             (it "retires the shared pool when the db file was REPLACED under a live holder"
+                 ;; Sharing must not outlive the inode: reusing a pool whose file was
+                 ;; recreated would send every write into the unlinked file.
+                 (let
+                   [root
+                    (fs/create-temp-dir)
+
+                    dir
+                    (str (fs/path root "store"))
+
+                    s1
+                    (vis/db-create-connection! dir)]
+
+                   (try (fs/delete-if-exists (fs/path dir "vis.db-shm"))
+                        (fs/delete-if-exists (fs/path dir "vis.db-wal"))
+                        (fs/delete (fs/path dir "vis.db"))
+                        (expect (true? (boolean (sqlite-core/db-store-stale? s1 dir))))
+                        (let [s2 (vis/db-create-connection! dir)]
+                          (try (expect (not (identical? (:datasource s1) (:datasource s2))))
+                               (expect (= 1 (count (jdbc/execute! (:datasource s2) ["SELECT 1"]))))
+                               (expect (fs/exists? (fs/path dir "vis.db")))
+                               (finally (vis/db-dispose-connection! s2))))
+                        (finally (vis/db-dispose-connection! s1) (fs/delete-tree root))))))
+
 (defdescribe
   migration-additive-column-top-up-test
   (it

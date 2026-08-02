@@ -78,13 +78,15 @@ Native contracts have one source: tool descriptions own routing and semantics; J
 
 ## Install
 
-The public command is **`vis-agent`**, not `vis`: Linux already has an unrelated
-`vis` utility, so the shorter name is intentionally left alone.
+The public command is **`vis-agent`**. `install-vis-agent` is a release asset:
+every `vX.Y.Z` release publishes the installer and the `vis-agent` wrapper next
+to the platform bundles, so the URL below always serves the newest release's
+installer.
 
 Install the command first; it fetches its own runtime:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-vis-agent | bash
+curl -fsSL https://github.com/Blockether/vis/releases/latest/download/install-vis-agent | bash
 vis-agent help
 ```
 
@@ -101,24 +103,6 @@ vis-agent update            # command + runtime, updated together
 vis-agent update --native   # (re)download just the native runtime
 ```
 
-### Variants
-
-All users:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-vis-agent -o /tmp/install-vis-agent
-sudo bash /tmp/install-vis-agent --install-dir /usr/local/bin
-```
-
-A pinned release: `... | bash -s -- --version vX.Y.Z`.
-
-JVM source runtime instead of the native one (needs Java 25+, the Clojure CLI,
-and git):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-vis-agent | bash -s -- --runtime jvm
-```
-
 The installer only ever installs the wrapper; `vis-agent update` then acquires
 the runtime for that channel — the release sidecar, or source checked out at the
 newest release tag — so the wrapper and its runtime cannot drift apart.
@@ -127,19 +111,30 @@ Release CI publishes Linux x64 and arm64 native runtimes. Elsewhere, use the
 source runtime or build a sidecar locally with `vis-agent update --jvm
 --rebuild` (GraalVM CE 25.1.3, ≥16 GB RAM).
 
-Corporate proxies commonly block `raw.githubusercontent.com`; cloning from
-`github.com` and running `bin/install-vis-agent` from the checkout avoids that
-host entirely — it installs the checkout's own wrapper.
+### Clojars packages
+
+Every release deploys the whole monorepo to Clojars at one shared version: the
+agent itself plus each channel, provider, language, foundation, and workspace
+extension.
+
+```clojure
+;; deps.edn
+{:deps {com.blockether/vis {:mvn/version "0.1.24"}}}
+```
+
+`com.blockether/vis` already depends on every bundled extension, so that single
+coordinate gives the full agent. Depend on one package
+(`com.blockether/vis-channel-tui`, `com.blockether/vis-provider-anthropic`,
+`com.blockether/vis-language-python`, …) only when you embed a part of it.
 
 ### Hosts to allowlist
 
 | Host | Needed for |
 |---|---|
-| `github.com` | git clone and release bytes |
+| `github.com` | git clone, installer and release bytes |
 | `api.github.com` | release resolution for install/update |
 | `release-assets.githubusercontent.com` | release bundle bytes |
 | `repo1.maven.org`, `repo.clojars.org` | JVM/source dependency resolution |
-| `raw.githubusercontent.com` | one-line installers only |
 | your model provider's API | running the agent |
 
 ## Choose native, tagged source, or dev

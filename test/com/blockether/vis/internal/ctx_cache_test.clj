@@ -69,10 +69,11 @@
   (it "no state change ⇒ no delta (frozen prefix stays warm)"
       (let [m0 (cr/ctx-static-map {:ctx base-ctx})]
         (expect (nil? (cr/render-ctx-delta m0 m0)))))
-  (it "projects language capabilities under canonical session language_tools"
-      (let [m (cr/ctx-static-map {:ctx base-ctx})]
-        (expect (= ["repl_eval" "repl"] (get-in m ["language_tools" "clojure"])))
-        (expect (not (contains? m "session_language_tools")))))
+  (it
+    "does NOT project language capabilities into ctx (the EXTENSIONS prompt block already names them)"
+    (let [m (cr/ctx-static-map {:ctx base-ctx})]
+      (expect (not (contains? m "language_tools")))
+      (expect (not (contains? m "session_language_tools")))))
   (it "projects the immutable security snapshot as standing session access"
       (let
         [access

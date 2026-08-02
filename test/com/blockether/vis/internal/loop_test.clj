@@ -2416,6 +2416,32 @@
                             (eval-timeout-ms-for-code
                               120000
                               "subprocess.run([\"sleep\", \"1\"], timeout=300)"))))
+             (it "reads a millisecond budget too, so repl_eval's own timeout is not preempted"
+                 ;; REGRESSION: the scan only understood seconds, so an explicitly long
+                 ;; `timeout_ms` (repl_eval, MCP) died at the 120s watchdog instead.
+                 (expect (= 310000
+                            (eval-timeout-ms-for-code
+                              120000
+                              "await repl_eval(\"clojure\", code=\"(x)\", timeout_ms=300000)")))
+                 ;; Sub-second budgets round UP, never to a zero-second widening.
+                 (expect (= 120000
+                            (eval-timeout-ms-for-code 120000 "await repl_eval(\"clojure\", timeout_ms=500)"))))
+             (it "floors the watchdog above a bounded call whose timeout is NOT a literal"
+                 ;; REGRESSION: the watchdog EQUALLED shell's own 120s default, and a
+                 ;; timeout that is a variable / expression / plain default is invisible
+                 ;; to a text scan. The watchdog started first, so it always won and the
+                 ;; turn got a bare `Timeout (120s)` with no stdout instead of shell's
+                 ;; structured envelope.
+                 (expect (= 130000 (eval-timeout-ms-for-code 120000 "r = await shell(commands=[\"sleep 300\"])")))
+                 (expect (= 130000
+                            (eval-timeout-ms-for-code
+                              120000
+                              "secs = 90\nr = await shell(op=\"wait\", id=\"j\", timeout_secs=secs)")))
+                 ;; A test run owns a multi-minute budget and answers timeouts itself.
+                 (expect (= 310000
+                            (eval-timeout-ms-for-code 120000 "r = await run_tests(\"clojure\", namespaces=[\"a.b-test\"])")))
+                 ;; Prose that merely mentions the word must not widen anything.
+                 (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('shell is bounded')"))))
              (it "splits + evals multi-form blocks whose statements contain astral chars (emoji)"
                  ;; Regression: GraalPy's ast.get_source_segment truncates
                  ;; the per-form source when a statement carries a non-BMP char (emoji 👆),

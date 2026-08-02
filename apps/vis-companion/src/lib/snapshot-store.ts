@@ -44,7 +44,9 @@ const STORAGE_KEY = 'vis.snapshots.v1';
  * Resource kinds worth surviving an app kill. `setting`/`model`/`model-default`
  * are tiny and are what the composer footer paints before anything else: a cold
  * start would otherwise show a nameless "model" chip and no reasoning chip at
- * all until a `/v1/router` probe (seconds on a cold daemon) came back.
+ * all until a `/v1/router` probe (seconds on a cold daemon) came back. `theme`
+ * is the palette catalog of one gateway: without it the application settings
+ * dialog opens on the bundled pair and jumps once every paired machine answers.
  */
 const DURABLE_KINDS = new Set([
   'sessions',
@@ -53,6 +55,7 @@ const DURABLE_KINDS = new Set([
   'setting',
   'model',
   'model-default',
+  'theme',
 ]);
 
 // A transcript page is 24 turns and a single turn can be hundreds of kilobytes

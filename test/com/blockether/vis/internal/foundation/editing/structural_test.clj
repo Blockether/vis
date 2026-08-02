@@ -171,6 +171,32 @@
              (it "unknown language → empty"
                  (expect (= [] (structural/occurrences "x.unknownext" "add add" "add")))))
 
+(defdescribe occurrences-in-test
+             (it
+               "the BATCH traces every name in one pass, identically to per-name calls"
+               (let
+                 [src
+                  "(defn add [a b] (+ a b))\n(defn mul [a b] (* a b))\n(def y (add (mul 1 2) 3))\n"
+
+                  names
+                  ["add" "mul" "y" "b" "absent"]
+
+                  batched
+                  (structural/occurrences-in "m.clj" src names)]
+
+                 (doseq [n names]
+                   (expect (= (structural/occurrences "m.clj" src n) (get batched n []))))
+                 (expect (= 2 (count (get batched "add")))) ;; the def + one use
+                 (expect (= 4 (count (get batched "b"))))   ;; params and uses, both defns
+                 (expect (= 1 (count (filterv :is-definition (get batched "mul")))))
+                 (expect (nil? (get batched "absent")))))   ;; never occurs → absent, not empty
+             (it "duplicate names collapse; no names / unknown language → empty map"
+                 (let [src "(defn add [a b] (+ a b))\n"]
+                   (expect (= (structural/occurrences-in "m.clj" src ["add"])
+                              (structural/occurrences-in "m.clj" src ["add" "add"])))
+                   (expect (= {} (structural/occurrences-in "m.clj" src [])))
+                   (expect (= {} (structural/occurrences-in "x.unknownext" "add add" ["add"]))))))
+
 (defdescribe
   replace-test
   (it "Clojure replace by name"

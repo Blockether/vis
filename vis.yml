@@ -47,7 +47,7 @@ workspace:
       description: Sibling repo — Blockether AWT-free imaging (decode/encode/transforms/SVG) over a first-party Rust cdylib.
     - id: infrastructure
       path: ~/infrastructure
-      description: Blockether Ansible infra — Hetzner servers, Dokku app deploys, SSH-CA, OpenBao secrets.
+      description: Sibling repo — private operations automation. Nothing about it belongs in this repository.
     # (`~/.vis` — Vis' own session folder — is granted implicitly by the engine.)
     # Managed REPL / test-runner dependency caches. Granted so a jailed JVM/Node
     # resolves already-cached artifacts, but kept OUT of the default search sweep.

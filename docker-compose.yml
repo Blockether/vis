@@ -23,7 +23,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        # Bump alongside ~/infrastructure/playbooks/vars/vis-toolchain-versions.yml.
+        # Build-time toggles only; version pins live in the Dockerfile's ARGs.
         WITH_BROWSERS: ${WITH_BROWSERS:-true}
         WITH_CHROME: ${WITH_CHROME:-true}
         # The GraalPy JIT variant forces -Xms14g on the builder JVM. Only turn
@@ -46,6 +46,18 @@ services:
       # The workspace the agent actually edits. Nothing else on the host is
       # reachable: no docker socket, no /etc, no other user's home.
       - ${VIS_WORKSPACE:-./work}:/work
+      # The GitHub identity, split from the state volume on purpose: `docker
+      # volume rm vis-state` throws away session history, and doing so must not
+      # also throw away a registered SSH key (which would have to be deleted on
+      # github.com and re-added) or the gh token.
+      #   .ssh    — id_ed25519_github + known_hosts + the github.com Host block
+      #   .config — gh's hosts.yml (`gh auth login --insecure-storage`) and
+      #             git's config, which the image points here with
+      #             GIT_CONFIG_GLOBAL rather than leaving it in ~/.gitconfig.
+      # Both paths exist in the image owned by uid 10001, which is what makes
+      # docker seed these volumes writable — see the Dockerfile's useradd.
+      - vis-ssh:/home/vis/.ssh
+      - vis-config:/home/vis/.config
       # Model and browser caches live in the image, so a `docker volume rm` of
       # the state volume costs nothing but the session history.
 
@@ -84,3 +96,21 @@ services:
 
 volumes:
   vis-state:
+  # Explicit `name:` on the two credential volumes, and only on them.
+  # Compose otherwise prefixes a volume with the project name, so the same
+  # secret material would live under `vis_vis-ssh` here and `foo_vis-ssh`
+  # in a checkout cloned to another directory. These two can be provisioned
+  # out of band — possibly before the image is ever built — so their identity
+  # must not depend on what the working copy happens to be called.
+  # vis-state is deliberately left prefixed: it is per-checkout state, and
+  # renaming it would orphan the gateway token and sessions of anyone who
+  # already has a `vis_vis-state` volume.
+  # If these volumes were populated before this file first ran, compose warns
+  # "already exists but was not created by Docker Compose". That warning is
+  # expected and harmless: compose adopts the volume as-is. Do NOT silence it
+  # with `external: true` — that would make a fresh checkout fail outright
+  # instead of creating the two empty volumes an unprovisioned run needs.
+  vis-ssh:
+    name: vis-ssh
+  vis-config:
+    name: vis-config

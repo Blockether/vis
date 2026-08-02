@@ -14,9 +14,8 @@
 #   browsers — spel (Playwright) + its browser bundles, in its own layer.
 #   runtime  — the binary, the model, and the agent toolchain.
 #
-# Version pins are ARGs and mirror
-# ~/infrastructure/playbooks/vars/vis-toolchain-versions.yml — that file and
-# this header are the only two places a version is written down. Bump both.
+# Version pins are ARGs. These ARGs and this header are the only place a
+# version is written down in this repo; bump them here.
 #
 #   docker build -t vis-gateway:local .
 #   docker build -t vis-gateway:lean --build-arg WITH_BROWSERS=false \
@@ -249,14 +248,18 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Three groups, and the reason each is here:
 #  1. the native binary + embedded GraalPy dlopen these at startup
 #     (zlib1g, libstdc++6); onnxruntime/sherpa additionally need libgomp1.
-#  2. the agent's own toolbelt — git, curl, ripgrep, jq, unzip, less, procps.
+#  2. the agent's own toolbelt — git, ssh, curl, ripgrep, jq, unzip, less, procps.
+#     openssh-client is listed EXPLICITLY: it is only a *Recommends* of git and
+#     this install is --no-install-recommends, so without it the image has no
+#     ssh and no ssh-keygen at all, and every git@github.com remote dies with
+#     "ssh: not found" (measured on debian:bookworm-slim, not assumed).
 #  3. voice: ffmpeg. The gateway TRANSCRIBES uploaded audio (there is no
 #     capture device in a container, and it needs none), and without ffmpeg it
 #     cannot convert .oga/.opus to the WAV the ASR consumes. `vis-agent doctor`
 #     reports it as missing — so it ships.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates zlib1g libstdc++6 libgomp1 \
-        bash git curl wget gnupg ripgrep jq unzip xz-utils less procps tini \
+        bash git openssh-client curl wget gnupg ripgrep jq unzip xz-utils less procps tini \
         ffmpeg \
         python3 python3-pip python3-venv python3-dev python-is-python3 pipx \
         nodejs npm \
@@ -273,6 +276,23 @@ RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends gh; \
     rm -rf /var/lib/apt/lists/*; \
     gh --version
+
+# github.com's SSH host keys, pinned into the SYSTEM known_hosts at build time.
+# A fresh container has an empty ~/.ssh, so the first `git fetch git@github.com:`
+# would have nothing to verify against: with no tty it cannot answer the TOFU
+# prompt and simply fails. Pinning here means ssh works on first boot without
+# StrictHostKeyChecking=no ever being tempting.
+# GitHub publishes the same keys at https://api.github.com/meta; re-check them
+# there when a rotation is announced.
+RUN set -eux; \
+    mkdir -p /etc/ssh; \
+    printf '%s\n' \
+        'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
+        'github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=' \
+        'github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=' \
+        > /etc/ssh/ssh_known_hosts; \
+    chmod 0644 /etc/ssh/ssh_known_hosts; \
+    ssh -V
 
 # Google Chrome. The keyring file is named `google-chrome` on purpose: the
 # .deb's own postinst writes a source list under that name, and a differently
@@ -369,25 +389,37 @@ RUN chmod 0755 /usr/local/bin/vis-agent /usr/local/bin/vis-agent-native
 # agent spawns. /work is the default workspace mount point.
 # Absolute path on purpose: the PATH set above deliberately omits /usr/sbin
 # (the vis user has no business there), so a bare `useradd` is "not found".
+# .ssh and .config/gh are created HERE, owned by vis: docker seeds a named
+# volume from the image's directory and inherits its owner and mode. Mount a
+# volume on a path the image does not have and it lands root-owned 0755 —
+# ssh-keygen then cannot write, and ssh refuses a group-readable ~/.ssh.
 RUN /usr/sbin/useradd --create-home --shell /bin/bash --uid 10001 vis \
-    && mkdir -p /home/vis/.vis /work \
+    && mkdir -p /home/vis/.vis /home/vis/.ssh /home/vis/.config/gh /home/vis/.config/git /work \
+    && chmod 0700 /home/vis/.ssh \
     && chown -R vis:vis /home/vis /work
 
 USER vis
 WORKDIR /work
+# GIT_CONFIG_GLOBAL: ~/.gitconfig would sit in the container layer and vanish on
+# every `compose up` recreate, taking user.name/user.email with it. Point git at
+# the persisted .config volume instead; `git config --global` then writes there
+# too, so the identity survives a rebuild.
 ENV HOME=/home/vis \
-    VIS_HOME=/home/vis/.vis
+    VIS_HOME=/home/vis/.vis \
+    GIT_CONFIG_GLOBAL=/home/vis/.config/git/config
 
 # Prove, at build time, that the assembled image is what it claims to be:
 # the toolchain resolves, and the voice extension can actually SEE the model.
 RUN set -eux; \
     java -version; clojure --version; mvn -v | head -1; \
     python3 --version; node --version; gh --version | head -1; \
-    ffmpeg -version | head -1; git --version; \
+    ffmpeg -version | head -1; git --version; ssh -V; \
     vis-agent --version; \
     vis-agent extension voice models status; \
     test ! -e /root/.vis; \
-    test -d /home/vis/.vis
+    test -d /home/vis/.vis; \
+    test "$(stat -c '%U %a' /home/vis/.ssh)" = 'vis 700'; \
+    test -d /home/vis/.config/gh
 
 EXPOSE 7890
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { GatewayClient, GatewayError } from '../lib/gateway';
+import { GatewayClient, GatewayError, cachedThemeCatalogs } from '../lib/gateway';
 import type {
   GatewayConn,
   PushDevice,
@@ -469,6 +469,10 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
   const [test, setTest] = useState<McpTestResult | null>(null);
   const [authFlow, setAuthFlow] = useState<McpAuthFlow | null>(null);
   const [authInput, setAuthInput] = useState('');
+  // The server being edited, or null while adding. Editing keys the save by the
+  // ORIGINAL name: `POST /v1/mcp/servers` replaces by name, so a renamed field
+  // would fork a second server instead of updating this one.
+  const [editing, setEditing] = useState<McpServer | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -507,6 +511,36 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
     return () => window.clearInterval(timer);
   }, [authFlow, client, load]);
 
+  // Editing loads the sanitized row back into the form. `env` and `headers` come
+  // back BLANK on purpose: the gateway never sends secret values, and a save that
+  // omits those keys keeps the ones it already stores.
+  function openForm(server: McpServer | null) {
+    setError(null);
+    setTest(null);
+    setEditing(server);
+    setTransport(server?.transport ?? 'stdio');
+    setName(server?.name ?? '');
+    setCommand(server?.command ?? '');
+    setArgs((server?.args ?? []).join('\n'));
+    setCwd(server?.cwd ?? '');
+    setUrl(server?.url ?? '');
+    setEnv('');
+    setHeaders('');
+    setShowForm(true);
+  }
+
+  function closeForm() {
+    setShowForm(false);
+    setEditing(null);
+    setName('');
+    setCommand('');
+    setArgs('');
+    setCwd('');
+    setUrl('');
+    setEnv('');
+    setHeaders('');
+  }
+
   const spec = (): McpServerInput => {
     const keyValues = (text: string) =>
       Object.fromEntries(
@@ -520,8 +554,15 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
           })
           .filter(([key]) => key),
       );
+    // An edit must not silently re-enable a disabled server or drop its timeout:
+    // the row carries the whole non-secret spec, so both are carried back.
+    const kept = {
+      ...(editing ? { enabled: editing.enabled } : {}),
+      ...(editing?.timeout_ms ? { timeout_ms: editing.timeout_ms } : {}),
+    };
     return transport === 'stdio'
       ? {
+          ...kept,
           transport,
           command: command.trim(),
           args: args.split('\n').map((arg) => arg.trim()).filter(Boolean),
@@ -529,6 +570,7 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
           ...(env.trim() ? { env: keyValues(env) } : {}),
         }
       : {
+          ...kept,
           transport,
           url: url.trim(),
           ...(headers.trim() ? { headers: keyValues(headers) } : {}),
@@ -545,20 +587,15 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
   async function validateAndSave() {
     const message = valid();
     if (message) return setError(message);
+    // Keyed by the name the gateway already knows when editing.
+    const target = editing ? editing.name : name.trim();
     const candidate = spec();
     setBusy('save');
     try {
-      const result = await client.testMcpServer(name.trim(), candidate);
+      const result = await client.testMcpServer(target, candidate);
       setTest(result);
-      await client.saveMcpServer(name.trim(), candidate);
-      setShowForm(false);
-      setName('');
-      setCommand('');
-      setArgs('');
-      setCwd('');
-      setUrl('');
-      setEnv('');
-      setHeaders('');
+      await client.saveMcpServer(target, candidate);
+      closeForm();
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -720,6 +757,9 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
                     disabled={busy !== null}
                     onClick={() => void toggle(server)}
                   />
+                  <Button variant="ghost" disabled={busy !== null} onClick={() => openForm(server)}>
+                    Edit
+                  </Button>
                   <Button variant="ghost" disabled={busy !== null} onClick={() => void remove(server)}>
                     Remove
                   </Button>
@@ -767,7 +807,7 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
         )}
         {!showForm ? (
           <div className="p-2.5">
-            <Button onClick={() => { setError(null); setTest(null); setShowForm(true); }}>Add MCP server</Button>
+            <Button onClick={() => openForm(null)}>Add MCP server</Button>
           </div>
         ) : (
           <div className="space-y-3 p-2.5">
@@ -784,7 +824,11 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
               ))}
             </div>
             <FormLabel label="Server name">
-              <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="filesystem" autoCapitalize="none" autoCorrect="off" />
+              {editing ? (
+                <p className="font-mono text-ui text-white">{editing.name}</p>
+              ) : (
+                <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="filesystem" autoCapitalize="none" autoCorrect="off" />
+              )}
             </FormLabel>
             {transport === 'stdio' ? (
               <>
@@ -797,7 +841,7 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
                 <FormLabel label="Working directory (optional)">
                   <Input value={cwd} onChange={(event) => setCwd(event.target.value)} placeholder="/workspace" autoCapitalize="none" autoCorrect="off" />
                 </FormLabel>
-                <FormLabel label="Environment variables (optional)" hint="One NAME=value per line. Values are write-only after saving.">
+                <FormLabel label="Environment variables (optional)" hint={editing ? 'One NAME=value per line. Leave blank to keep the values already stored.' : 'One NAME=value per line. Values are write-only after saving.'}>
                   <textarea value={env} onChange={(event) => setEnv(event.target.value)} placeholder="API_TOKEN=…" className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none" />
                 </FormLabel>
               </>
@@ -806,16 +850,16 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
                 <FormLabel label="Streamable HTTP endpoint">
                   <Input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://mcp.example.com/mcp" inputMode="url" autoCapitalize="none" autoCorrect="off" />
                 </FormLabel>
-                <FormLabel label="Headers (optional)" hint="One NAME=value per line. Values are write-only after saving.">
+                <FormLabel label="Headers (optional)" hint={editing ? 'One NAME=value per line. Leave blank to keep the values already stored.' : 'One NAME=value per line. Values are write-only after saving.'}>
                   <textarea value={headers} onChange={(event) => setHeaders(event.target.value)} placeholder="Authorization=Bearer …" className="min-h-20 w-full resize-y border border-dialog-edge bg-input px-2.5 py-2 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none" />
                 </FormLabel>
               </>
             )}
             {test && <Banner kind="ok">Validated {test.name}: {test.tools.length} tools discovered.</Banner>}
             <div className="flex flex-wrap justify-end gap-2 border-t border-dialog-edge pt-2">
-              <Button variant="ghost" disabled={busy !== null} onClick={() => setShowForm(false)}>Cancel</Button>
+              <Button variant="ghost" disabled={busy !== null} onClick={() => closeForm()}>Cancel</Button>
               <Button disabled={busy !== null} onClick={() => void validateAndSave()}>
-                {busy === 'save' ? 'Validating…' : 'Validate & save'}
+                {busy === 'save' ? 'Validating…' : editing ? 'Validate & update' : 'Validate & save'}
               </Button>
             </div>
           </div>
@@ -838,7 +882,12 @@ function FormLabel({ label, hint, children }: { label: string; hint?: string; ch
 /** Settings owned by this companion installation, never by a gateway. */
 export function ApplicationSettingsDialog({ onClose }: { onClose: () => void }) {
   const [pref, setPref] = useState<ThemePref>('blockether-light');
-  const [themes, setThemes] = useState<ThemeSummary[]>(BUNDLED_THEMES);
+  // Seeded from the catalogs already cached for the paired gateways (persisted
+  // across a cold start), so the FIRST frame is the finished list. Anything
+  // fetched below lands on top of the same rows instead of replacing them.
+  const [themes, setThemes] = useState<ThemeSummary[]>(() =>
+    dedupeThemes(...cachedThemeCatalogs(), BUNDLED_THEMES),
+  );
   const [pageSize, setPageSize] = useState(DEFAULT_SESSION_PAGE_SIZE);
   const [pending, setPending] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -855,20 +904,24 @@ export function ApplicationSettingsDialog({ onClose }: { onClose: () => void }) 
       if (cancelled) return;
       setPref(theme);
       setPageSize(sessions);
-      setThemes(dedupeThemes(cachedPalette ? [cachedPalette] : [], BUNDLED_THEMES));
+      const paint = () =>
+        setThemes(
+          dedupeThemes(...cachedThemeCatalogs(), cachedPalette ? [cachedPalette] : [], BUNDLED_THEMES),
+        );
+      paint();
 
-      // Each gateway advertises its complete catalog. Union every response so a
-      // palette available on any paired machine is selectable here exactly once.
-      const responses = await Promise.allSettled(
-        connections.map((connection) => new GatewayClient(connection).theme()),
-      );
+      // Each gateway advertises its complete catalog, and that catalog only moves
+      // when someone installs a theme — so this is a CACHED read (THEME_TTL_MS).
+      // Reopening settings inside the window touches the network zero times and
+      // repaints the identical list; a cold-but-cached machine paints instantly
+      // and revalidates underneath.
+      const clients = connections.map((connection) => new GatewayClient(connection));
+      if (clients.every((client) => client.isThemeFresh())) return;
+      await Promise.allSettled(clients.map((client) => client.themeCatalog()));
       if (cancelled) return;
-      const catalogs = responses.flatMap((response) =>
-        response.status === 'fulfilled'
-          ? [[response.value, ...(response.value.themes ?? [])]]
-          : [],
-      );
-      setThemes(dedupeThemes(...catalogs, cachedPalette ? [cachedPalette] : [], BUNDLED_THEMES));
+      // Unreachable gateways keep contributing their last known catalog, so a
+      // machine that is merely asleep never makes palettes vanish from the list.
+      paint();
     })();
     return () => {
       cancelled = true;

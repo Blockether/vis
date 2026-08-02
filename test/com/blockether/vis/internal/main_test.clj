@@ -231,6 +231,26 @@
                         (expect (= :vis.cli/unknown-model-provider (:type (ex-data e))))
                         (expect (true? (:vis/user-error (ex-data e))))))))
 
+(defdescribe model-override-slash-test
+  "Model ids may contain a slash (`z-ai/glm-4.6v`). `--model` must not read that
+   prefix as a provider tag when a configured provider lists the WHOLE name."
+  (it "promotes the provider whose catalog owns the slash-containing model"
+      (let [config {:providers [{:id :anthropic :models [{:name "claude-opus-5"}]}
+                               {:id :openrouter :models [{:name "gpt-oss-120b"}
+                                                         {:name "z-ai/glm-4.6v"}]}]}
+            out (#'main/config-with-model-override config "z-ai/glm-4.6v")
+            [active] (:providers out)]
+        (expect (= :openrouter (:id active)))
+        (expect (= "z-ai/glm-4.6v" (:name (first (:models active)))))
+        (expect (= [:openrouter :anthropic] (mapv :id (:providers out))))))
+  (it "still tags a real provider prefix"
+      (let [config {:providers [{:id :anthropic :models [{:name "claude-opus-5"}]}
+                               {:id :openrouter :models [{:name "gpt-oss-120b"}]}]}
+            out (#'main/config-with-model-override config "openrouter/gpt-oss-120b")
+            [active] (:providers out)]
+        (expect (= :openrouter (:id active)))
+        (expect (= "gpt-oss-120b" (:name (first (:models active))))))))
+
 (defdescribe
   toggle-name-parsing-test
   (it "accepts exact snake_case ids"

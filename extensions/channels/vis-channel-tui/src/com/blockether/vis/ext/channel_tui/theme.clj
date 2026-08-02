@@ -249,6 +249,31 @@
 
     [button-fg button-bg]))
 
+(defn- relative-luminance
+  "Perceived luminance of a palette colour, 0.0 (black) to 1.0 (white)."
+  ^double [^com.googlecode.lanterna.TextColor$RGB c]
+  (/ (+ (* 0.2126 (.getRed c)) (* 0.7152 (.getGreen c)) (* 0.0722 (.getBlue c))) 255.0))
+
+(defn contrast-ink
+  "Label colour for text painted ON the FILL colour `bg`: whichever of the
+   dialog's ink and its surface sits further from `bg` in luminance.
+
+   Every theme keeps one of that pair light and the other dark, so a filled chip
+   (a PRIMARY/FALLBACK badge, say) stays legible whatever hue the active theme
+   gives it — no per-theme label colour to keep in sync."
+  [bg]
+  (let
+    [l
+     (relative-luminance bg)
+
+     ink-gap
+     (abs (- l (relative-luminance dialog-fg)))
+
+     surface-gap
+     (abs (- l (relative-luminance dialog-bg)))]
+
+    (if (>= ink-gap surface-gap) dialog-fg dialog-bg)))
+
 ;; Widths
 (def dialog-width-ratio (width :dialog-width-ratio))
 

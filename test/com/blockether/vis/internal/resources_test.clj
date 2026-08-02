@@ -80,34 +80,38 @@
 
 (defdescribe
   model-view-test
-  (it "indexes REPL state by language and workspace-relative dir without a flat mirror"
-      (let
-        [view (resources/model-view
-                [{"id" "main"
-                  "kind" "nrepl"
-                  "language" "clojure"
-                  "status" "up"
-                  "label" "nREPL repo :dev"
-                  "can_stop" true
-                  "created_at" 1
-                  "session" "sid"
-                  "detail"
-                  {"cwd" "/repo" "port" 7888 "managed" true "versions" {"clojure" "1.12.4"}}}
-                 {"id" "api"
-                  "kind" "repl"
-                  "language" "python"
-                  "status" "starting"
-                  "detail" {"cwd" "/repo/apps/api" "cmd" "python -i"}}]
-                {:root "/repo" :languages ["clojure" "python" "typescript"]})]
-        (expect (= "up" (get-in view ["repls" "clojure" "." "status"])))
-        (expect (= 7888 (get-in view ["repls" "clojure" "." "port"])))
-        (expect (= "starting" (get-in view ["repls" "python" "apps/api" "status"])))
-        (expect (= {} (get-in view ["repls" "typescript"])))
-        ;; Ctx carries only what changes a decision: id/status/port —
-        ;; never the pack's label/versions/created_at/can_* noise.
-        (expect (= ["id" "status" "port"] (vec (keys (get-in view ["repls" "clojure" "."])))))
-        (expect (= ["id" "status"] (vec (keys (get-in view ["repls" "python" "apps/api"])))))
-        (expect (not (vector? view)))))
+  (it
+    "indexes REPL state by language and workspace-relative dir without a flat mirror"
+    (let
+      [view (resources/model-view
+              [{"id" "main"
+                "kind" "nrepl"
+                "language" "clojure"
+                "status" "up"
+                "label" "nREPL repo :dev"
+                "can_stop" true
+                "created_at" 1
+                "session" "sid"
+                "detail" {"cwd" "/repo" "port" 7888 "managed" true "versions" {"clojure" "1.12.4"}}}
+               {"id" "api"
+                "kind" "repl"
+                "language" "python"
+                "status" "starting"
+                "detail" {"cwd" "/repo/apps/api" "cmd" "python -i"}}]
+              {:root "/repo" :languages ["clojure" "python" "typescript"]})]
+      (expect (= "up" (get-in view ["repls" "clojure" "." "status"])))
+      (expect (= 7888 (get-in view ["repls" "clojure" "." "port"])))
+      (expect (= "starting" (get-in view ["repls" "python" "apps/api" "status"])))
+      (expect (= {} (get-in view ["repls" "typescript"])))
+      ;; Ctx carries only what changes a decision: id/status/can_stop/port.
+      ;; `can_stop` STAYS: it is the teardown affordance the agent acts on before
+      ;; finishing, and a leaf that never advertises it is a REPL nobody stops.
+      ;; The pack's label/versions/created_at/can_restart noise stays out.
+      (expect (= ["id" "status" "can_stop" "port"]
+                 (vec (keys (get-in view ["repls" "clojure" "."])))))
+      (expect (true? (get-in view ["repls" "clojure" "." "can_stop"])))
+      (expect (= ["id" "status"] (vec (keys (get-in view ["repls" "python" "apps/api"])))))
+      (expect (not (vector? view)))))
   (it "groups non-REPL resources without reviving the flat legacy shape"
       (let
         [resource
@@ -116,7 +120,8 @@
          view
          (resources/model-view [resource] {:root "/repo"})]
 
-        (expect (= {"id" "server" "status" "up"} (get-in view ["other" "process" "server"])))
+        (expect (= {"id" "server" "status" "up" "can_stop" true}
+                   (get-in view ["other" "process" "server"])))
         (expect (nil? (get view "repls"))))))
 
 (defdescribe

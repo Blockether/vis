@@ -20,13 +20,20 @@
    static bearer transparently negotiate OAuth 2.1 on first 401 (RFC 9728
    discovery + RFC 7591 dynamic client registration + PKCE loopback).
 
-   Five model-facing verbs under alias `mcp` (flat sandbox renders `alias_name`):
-     mcp__servers()                — configured servers + status + tool counts
-     mcp__tools(server)            — a server's tools (auto-connects)
-     mcp__call(server, tool, args) — call a tool (auto-connects)
-     mcp__connect(server) / mcp__disconnect(server) — manage the connection
+   ONE model-facing verb under alias `mcp` (flat sandbox renders `alias_name`):
+     mcp__call(server, tool, args) - call a tool
+     mcp__call(server)             - that server's descriptions + input schemas
 
-   Live connections + tool counts also ride in ctx under `env.mcp`."
+   There is deliberately NO connect/disconnect verb. The daemon connects every
+   enabled server, health-checks the pool on its own clock, and reaps/respawns a
+   dead one; a tool call self-heals its connection too. Starting or stopping a
+   server is a human admin action on the gateway API (save/enable/kill/start),
+   never something one session does to a resource every other session shares.
+
+   Every visible server - its status and the NAMES of the tools it exposes -
+   rides in ctx under `env.mcp`, keyed by server name so a change diffs per
+   server. That IS the inventory: no listing verb spends a turn re-fetching what
+   the session object already carries."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.config :as config]
@@ -183,7 +190,7 @@
 ;; Servers a client explicitly KILLED. `reconcile!` runs on every turn and every
 ;; `/reload`, so simply closing a connection is not a stop: the very next turn
 ;; respawns the stdio child the user just killed. A kill is therefore REMEMBERED
-;; until someone starts the server again (connect, save, enable). Deliberately
+;; until someone starts the server again (start, save, enable). Deliberately
 ;; in-memory and never persisted: this is a runtime brake for a runaway or
 ;; unwanted server, not an edit to the user's config, so a gateway restart brings
 ;; the server back exactly as declared.
@@ -209,24 +216,54 @@
 (defonce ^:private session-conns (atom {})) ; {[session-id server] {:conn :spec}}
 
 (defn- close-in-pool!
-  "Close the conn cached in `pool` at `k` (if any) and drop the entry."
+  "Atomically drop the conn cached in `pool` at `k` (if any), then close it.
+
+   The DROP takes the pool monitor — publication uses the same monitor, so a
+   connection finishing concurrently cannot slip past a stop/config change and
+   become an untracked live process. The CLOSE runs AFTER the monitor is
+   released: tearing down an stdio tree waits up to two seconds for SIGTERM
+   before SIGKILL, and an HTTP close waits on a `DELETE` round trip. Holding the
+   daemon-wide monitor across that made one slow kill freeze every other
+   server's connect — in every session — for the same window. Once dropped the
+   conn is unreachable from the pool, so closing it late is still exclusive."
   [pool k]
-  (when-let [conn (get-in @pool [k :conn])]
-    (try (mcp/close conn) (catch Throwable _ nil))
-    (swap! pool dissoc k))
+  (let
+    [conn (locking pool
+            (when-let [conn (get-in @pool [k :conn])]
+              (swap! pool dissoc k)
+              conn))]
+    (when conn (try (mcp/close conn) (catch Throwable _ nil))))
   nil)
 
 (defn- ensure-in-pool!
   "Idempotently connect `server` under `spec`, caching the conn (with the spec it
-   was connected under) in `pool` at `k`. Returns the conn, or nil when the
-   connection failed. A cached-but-dead conn is reaped and respawned."
-  [pool k server spec]
+   was connected under) in `pool` at `k`. `accept?` is checked while publishing:
+   if a kill, disable, delete, or spec change won during the handshake, the new
+   connection is closed instead of leaking past that decision. Concurrent handshakes
+   also converge on one cached conn; every losing process is closed. Returns the
+   accepted conn, or nil when connection failed / became stale.
+
+   Publication decides under the monitor and closes the losers OUTSIDE it, for the
+   same reason `close-in-pool!` does: a loser's teardown can block for seconds and
+   must not stall the pool it has already been excluded from."
+  [pool k server spec accept?]
   (let [existing (get @pool k)]
     (cond (and existing (mcp/alive? (:conn existing))) (:conn existing)
-          existing (do (close-in-pool! pool k) (recur pool k server spec))
-          :else (try (let [conn (mcp/connect server spec)]
-                       (swap! pool assoc k {:conn conn :spec spec})
-                       conn)
+          existing (do (close-in-pool! pool k) (recur pool k server spec accept?))
+          :else (try (let
+                       [conn (mcp/connect server spec)
+                        [accepted stale]
+                        (locking pool
+                          (let [winner (get @pool k)]
+                            (cond (not (accept?)) [nil [conn]]
+                                  (and winner (mcp/alive? (:conn winner))) [(:conn winner) [conn]]
+                                  :else (do (swap! pool assoc k {:conn conn :spec spec})
+                                            [conn (when winner [(:conn winner)])]))))]
+
+                       (run! (fn [c]
+                               (try (mcp/close c) (catch Throwable _ nil)))
+                             stale)
+                       accepted)
                      (catch Throwable t
                        (tel/log! {:level :warn
                                   :id ::connect-failed
@@ -257,13 +294,30 @@
 
 (defn- ensure-connected!
   "Idempotently connect `server` as `session-id` sees it, caching the conn in the
-   matching pool. Returns the conn or nil (unknown / disabled / failed)."
+   matching pool. Returns the conn or nil (unknown / disabled / killed / failed).
+
+   The kill brake is enforced HERE, not only in `reconcile!`: a TOOL CALL is a
+   connect path of its own, so checking only in the reconcile loop let the first
+   `mcp_call` after a kill respawn the very stdio child the user just stopped.
+   The publication predicate also closes a handshake that loses a race with kill,
+   disable, detach, delete, or a spec replacement. Session-scoped servers are never
+   governed by the daemon-wide kill brake."
   ([server] (ensure-connected! nil server))
   ([session-id server]
    (if-let [spec (session-spec-of session-id server)]
-     (ensure-in-pool! session-conns [session-id server] server spec)
-     (when-let [spec (get (configured-servers) server)]
-       (ensure-in-pool! conns server server spec)))))
+     (ensure-in-pool! session-conns
+                      [session-id server]
+                      server
+                      spec
+                      #(= spec (session-spec-of session-id server)))
+     (when-not (killed? server)
+       (when-let [spec (get (configured-servers) server)]
+         (ensure-in-pool! conns
+                          server
+                          server
+                          spec
+                          #(and (not (killed? server))
+                                (= spec (get (configured-servers) server)))))))))
 
 (defn- visible-servers
   "`{server spec}` visible to `session-id`: the configured (daemon-wide) servers
@@ -282,18 +336,63 @@
     (doseq [[server {:keys [conn spec]}] @conns]
       (when (or (killed? server) (not= spec (get cfg server)) (not (mcp/alive? conn)))
         (disconnect! server)))
-    (doseq [server (keys cfg)]
-      (when-not (killed? server) (ensure-connected! server)))
+    ;; `ensure-connected!` owns the kill brake, so this loop stays a plain
+    ;; "connect what config declares" — one place decides, not two.
+    (run! ensure-connected! (keys cfg))
     (doseq [[k {:keys [conn]}] @session-conns]
       (when-not (mcp/alive? conn) (close-in-pool! session-conns k)))
     nil))
 
-(defn- reconcile-async!
-  "Single-flight background `reconcile!` — safe to call from a turn's ctx-fn
-   without blocking it on a slow stdio spawn."
+(defn- reconcile-once!
+  "Single-flight `reconcile!`: one already in flight wins, and a throwing one is
+   logged rather than propagated to whoever nudged it."
   []
   (when (compare-and-set! reconciling? false true)
-    (future (try (reconcile!) (finally (reset! reconciling? false))))))
+    (try (reconcile!)
+         (catch Throwable t
+           (tel/log! {:level :warn :id ::reconcile-failed :data {:error (ex-message t)}}
+                     "MCP reconcile failed"))
+         (finally (reset! reconciling? false)))))
+
+(defonce ^:private supervisor (atom nil))
+
+(def ^:private health-interval-ms 30000)
+
+(defn- ensure-supervisor!
+  "Arm the daemon-wide MCP health loop, once. Every `health-interval-ms` it
+   reconciles the pool, so a crashed stdio child, a dropped HTTP session, or an
+   edited spec is repaired on the GATEWAY's clock instead of waiting for a turn —
+   which is what lets sessions have no connect/disconnect verb at all. Idempotent,
+   armed only once a server is configured, and daemon-threaded so it can never
+   hold the JVM open."
+  []
+  (when (and (nil? @supervisor) (seq (configured-servers)))
+    (let
+      [^java.util.concurrent.ScheduledExecutorService ex
+       (java.util.concurrent.Executors/newSingleThreadScheduledExecutor
+         (reify
+           java.util.concurrent.ThreadFactory
+             (newThread [_ r] (doto (Thread. ^Runnable r "vis-mcp-health") (.setDaemon true)))))]
+      (if (compare-and-set! supervisor nil ex)
+        (.scheduleWithFixedDelay ex
+                                 ^Runnable
+                                 (fn []
+                                   (reconcile-once!))
+                                 (long health-interval-ms)
+                                 (long health-interval-ms)
+                                 java.util.concurrent.TimeUnit/MILLISECONDS)
+        (.shutdownNow ex))))
+  nil)
+
+(defn- reconcile-async!
+  "Nudge the pool toward config in the background — safe from a turn's ctx-fn or
+   an HTTP handler without blocking either on a slow stdio spawn — and arm the
+   health loop, so the first look at MCP puts the gateway in charge of keeping
+   those servers alive from then on."
+  []
+  (ensure-supervisor!)
+  (when-not @reconciling? (future (reconcile-once!)))
+  nil)
 
 (defn clear-session-servers!
   "Drop and CLOSE every session-scoped server attached to `session-id`."
@@ -374,7 +473,8 @@
    `:mcp :servers` config entry — to `session-id`, REPLACING whatever that
    session had, and connect each one EAGERLY so the caller learns now whether the
    client's servers actually work. Nothing is persisted. Returns
-   `{:connected [name…] :failed [{:server … :error …}…]}`."
+   `{:connected [name…] :failed [{:server … :error …}…]}`. A detach/replacement
+   racing a handshake wins: the just-opened transport is closed, never leaked."
   [session-id servers]
   (when-not (and (string? session-id) (seq session-id))
     (throw (ex-info "MCP session id must be a non-blank string" {:type :mcp/invalid-session})))
@@ -393,31 +493,62 @@
                    servers)]
     (when (seq coerced) (swap! session-specs assoc session-id coerced))
     (reduce (fn [acc [nm spec]]
-              (try (let [conn (mcp/connect nm spec)]
-                     (swap! session-conns assoc [session-id nm] {:conn conn :spec spec})
-                     (update acc :connected conj nm))
-                   (catch Throwable t
-                     (tel/log! {:level :warn
-                                :id ::session-connect-failed
-                                :data {:server nm :session session-id :error (ex-message t)}}
-                               "MCP session server connect failed")
-                     (update acc :failed conj {:server nm :error (or (ex-message t) (str t))}))))
+              (if (ensure-in-pool! session-conns
+                                   [session-id nm]
+                                   nm
+                                   spec
+                                   #(= spec (session-spec-of session-id nm)))
+                (update acc :connected conj nm)
+                (update acc
+                        :failed
+                        conj
+                        {:server nm :error "MCP session server was detached while connecting"})))
             {:connected [] :failed []}
             coerced)))
 
-(defn- tool-count
-  "How many tools `conn` exposes. `mcp/list-tools` CACHES into the conn, so the
-   first read pays one RPC and every later read is free. Reading the raw `:tools`
-   atom instead reports 0 for every freshly connected server — the cache is only
-   filled on demand — which is what made a healthy gateway server look empty in
-   the Companion inventory and in the model's own `env.mcp` view."
+(defn- conn-tools
+  "The tools `conn` exposes, as raw `{\"name\" \"description\" \"inputSchema\"}` maps.
+   `mcp/list-tools` CACHES into the conn, so the first read pays one RPC and every
+   later read is free. Reading the raw `:tools` atom instead reports NOTHING for a
+   freshly connected server — that cache is only filled on demand — which is what
+   made a healthy gateway server look empty in the Companion inventory and in the
+   model's own `env.mcp` view. Never throws: a server that dies mid-read is simply
+   toolless until the next reconcile."
   [conn]
   (if-not conn
-    0
-    (count (or (some-> (:tools conn)
-                       deref)
-               (try (mcp/list-tools conn) (catch Throwable _ nil))
-               []))))
+    []
+    (or (some-> (:tools conn)
+                deref)
+        (try (mcp/list-tools conn) (catch Throwable _ nil))
+        [])))
+
+(defn- tool-count
+  "How many tools `conn` exposes; 0 when it is not connected."
+  [conn]
+  (count (conn-tools conn)))
+
+(def ^:private max-ctx-tools
+  "Cap on the tool NAMES listed per server in ctx, so one enormous server cannot
+   eat the context budget. The full catalog - descriptions and input schemas -
+   stays one `mcp__call` (server alone, no tool) away."
+  40)
+
+(defn- ctx-tool-names
+  "`{:names [...] :omitted n}` — the SORTED, capped tool names of `conn` for the
+   ctx block. Sorted on purpose: ctx is diffed structurally, so a stable order is
+   what lets an unchanged server re-render with no delta at all."
+  [conn]
+  (let
+    [cap
+     (long max-ctx-tools)
+
+     names
+     (sort (keep #(get % "name") (conn-tools conn)))
+
+     n
+     (long (count names))]
+
+    {:names (vec (take cap names)) :omitted (max 0 (- n cap))}))
 
 (defn- server-summary
   [name raw-spec is-managed]
@@ -449,6 +580,17 @@
       (:cwd spec)
       (assoc :cwd (:cwd spec))
 
+      ;; `args` and `timeout_ms` are NOT secrets — they are the rest of the spec a
+      ;; client needs to render an edit form. Without them an edit round-trip
+      ;; would save back a server that had silently lost its arguments; `env` and
+      ;; `headers` stay out and are instead preserved by omission on save.
+      (seq (:args spec))
+      (assoc :args (mapv str (:args spec)))
+
+      ;; `runtime-config` has already kebab-cased the wire key `timeout_ms`.
+      (:timeout-ms spec)
+      (assoc :timeout-ms (:timeout-ms spec))
+
       (:url spec)
       ;; OAuth is only ever an HTTP concern; `:is-authorized` lets a client offer
       ;; "Sign in" instead of letting the user stare at a server that 401s.
@@ -460,8 +602,11 @@
   "Sanitized MCP inventory for gateway management. Secrets (env and header values)
    deliberately never cross this boundary. Every configured server is listed —
    gateway-owned and hand-written alike — and `:is-managed` says which of them
-   this API may write."
+   this API may write. Reading the inventory also nudges the pool toward config
+   and arms the health loop, so a client that has not run a turn yet still gets —
+   not merely sees — the connections the gateway owes it."
   []
+  (reconcile-async!)
   (let [machine (machine-servers)]
     {:servers (->> (raw-servers)
                    (map (fn [[name spec]]
@@ -703,95 +848,73 @@
                       :metadata {:started-at-ms (now-ms) :finished-at-ms (now-ms) :duration-ms 0}
                       :error (merge {:message message} extra)}))
 
-(defn- mcp-servers-impl
-  [env]
-  (let [sid (:session-id env)]
-    (ok :mcp/servers
-        {"servers" (mapv (fn [[nm spec]]
-                           (let
-                             [session? (some? (session-spec-of sid nm))
-                              conn (conn-of sid nm)]
 
-                             (cond->
-                               {"name" nm
-                                "transport" (name (transport-of spec))
-                                "scope" (if session? "session" "global")
-                                "connected" (boolean conn)
-                                "enabled" true}
-                               (and (not session?) (killed? nm))
-                               (assoc "killed" true)
-
-                               conn
-                               (assoc "tools" (tool-count conn))
-
-                               (:command spec)
-                               (assoc "command" (:command spec))
-
-                               (:url spec)
-                               (assoc "url" (:url spec)))))
-                         (visible-servers sid))})))
-
-(defn- mcp-tools-impl
+(defn- unavailable-err
+  "The refusal for a server ctx advertises but the pool cannot reach. A KILLED
+   server is configured and enabled, so telling its user to check `:mcp :servers`
+   would send them editing a file that is already right: name the stop, and where
+   to undo it."
   [env server]
-  (if-let [conn (ensure-connected! (:session-id env) server)]
-    (ok :mcp/tools
-        {"server" server
-         "tools" (mapv (fn [t]
-                         {"name" (get t "name")
-                          "description" (get t "description")
-                          "input_schema" (get t "inputSchema")})
-                       (mcp/list-tools conn))})
-    (err :mcp/tools (str "MCP server '"
-                         server
-                         "' is not configured or is disabled (see ~/.vis/state.yml :mcp :servers).")
+  (if (killed? server)
+    (err :mcp/call
+         (str "MCP server '" server "' was stopped and is held down until it is started again.")
+         :hint (str "Start it from Settings -> MCP Servers, or POST /v1/mcp/servers/"
+                    server
+                    "/actions/start"))
+    (err :mcp/call (str "MCP server '"
+                        server
+                        "' is not configured or is disabled (see ~/.vis/state.yml :mcp :servers).")
          :hint (str "Enabled servers: "
                     (pr-str (vec (keys (visible-servers (:session-id env)))))))))
 
+(defn- tool-rows
+  "`conn`'s catalog in wire shape. Reads the conn's CACHED listing, so asking for
+   schemas twice in a turn costs one RPC, not two."
+  [conn]
+  (mapv (fn [t]
+          {"name" (get t "name")
+           "description" (get t "description")
+           "input_schema" (get t "inputSchema")})
+        (conn-tools conn)))
+
 (defn- mcp-call-impl
-  ([env server tool] (mcp-call-impl env server tool {}))
+  "The whole model-facing surface. `server` alone answers with that server's tools,
+   descriptions and input schemas; `server` + `tool` invokes. There is no inventory
+   verb because the inventory - every visible server, its status, its tool NAMES -
+   already rides in ctx under `env.mcp`, so a call only has to name the server."
+  ([env server] (mcp-call-impl env server nil nil))
+  ([env server tool] (mcp-call-impl env server tool nil))
   ([env server tool args]
    (if-let [conn (ensure-connected! (:session-id env) server)]
-     (let [r (mcp/call-tool conn tool (if (map? args) args {}))]
-       (ok :mcp/call
-           {"server" server
-            "tool" tool
-            "content" (get r "content")
-            "is_error" (boolean (get r "isError"))}))
-     (err :mcp/call (str "MCP server '"
-                         server
-                         "' is not configured or is disabled (see ~/.vis/state.yml :mcp :servers).")
-          :hint (str "Enabled servers: "
-                     (pr-str (vec (keys (visible-servers (:session-id env))))))))))
+     (let
+       [rows (tool-rows conn)
+        row (when (string? tool) (first (filter #(= tool (get % "name")) rows)))]
 
-(defn- mcp-connect-impl
-  [env server]
-  (revive! server)
-  (if-let [conn (ensure-connected! (:session-id env) server)]
-    (ok :mcp/connect
-        {"server" server
-         "connected" true
-         "tools" (count (try (mcp/list-tools conn) (catch Throwable _ [])))})
-    (err :mcp/connect (str "Could not connect to MCP server '" server "'."))))
+       (cond
+         ;; No tool named - or an args map drifted into its slot. Answer with the
+         ;; catalog rather than guessing at a call: this IS the schema lookup.
+         (or (not (string? tool)) (str/blank? tool)) (ok :mcp/call {"server" server "tools" rows})
+         ;; Unknown name, judged only against a catalog we actually have: a
+         ;; momentarily empty listing must never refuse a real call.
+         (and (seq rows) (nil? row))
+         (err :mcp/call (str "MCP server '" server "' exposes no tool '" tool "'.")
+              :server server
+              :tools (mapv #(get % "name") rows)
+              :hint
+              "Call mcp__call with `server` alone for every tool's description and input schema.")
+         :else (let
+                 [r (mcp/call-tool conn tool (if (map? args) args {}))
+                  is-error (boolean (get r "isError"))]
 
-(defn- mcp-disconnect-impl
-  "Stop `server` for real. A daemon-wide server is also KILLED — closing it alone
-   is undone by the next per-turn reconcile, which is not what anyone asking to
-   disconnect means. `mcp__connect` starts it again. A session-scoped server has
-   no config to be reconciled from, so closing it is enough."
-  [env server]
-  (let
-    [sid
-     (:session-id env)
-
-     session?
-     (some? (session-spec-of sid server))
-
-     connected
-     (some? (conn-of sid server))]
-
-    (when-not session? (swap! killed conj server))
-    (disconnect! sid server)
-    (ok :mcp/disconnect {"server" server "result" (if connected "disconnected" "not_connected")})))
+                 (ok :mcp/call
+                     (cond->
+                       {"server" server "tool" tool "content" (get r "content") "is_error" is-error}
+                       ;; A refused call is nearly always an argument mismatch, and the
+                       ;; schema is already cached: ship it WITH the refusal so the retry
+                       ;; costs no extra round trip.
+                       (and is-error row)
+                       (assoc "input_schema" (get row "input_schema")))))))
+     (unavailable-err env server))))
 
 ;; ---------------------------------------------------------------------------
 ;; Error envelope
@@ -812,59 +935,34 @@
 
 (defn- mcp-fence [s] (when (seq (str s)) (strutil/fenced s)))
 
-(defn- render-mcp-servers-result
-  [r]
-  (let [servers (get r "servers")]
-    {:summary (str (count servers) " MCP server" (when (not= 1 (count servers)) "s"))
-     :body (when (seq servers)
-             (str/join
-               "\n"
-               (map (fn [s]
-                      (str "- `"
-                           (get s "name")
-                           "` "
-                           (get s "transport")
-                           (if (get s "connected")
-                             (str " ✓" (when (get s "tools") (str " (" (get s "tools") " tools)")))
-                             " ·")))
-                    servers)))}))
 
-(defn- render-mcp-tools-result
-  [r]
-  (let [tools (get r "tools")]
-    {:summary
-     (str "`" (get r "server") "` — " (count tools) " tool" (when (not= 1 (count tools)) "s"))
-     :body (when (seq tools)
-             (str/join "\n"
-                       (map (fn [t]
-                              (str "- `" (get t "name")
-                                   "`" (when (seq (str (get t "description")))
-                                         (str " — " (get t "description")))))
-                            tools)))}))
 
 (defn- render-mcp-call-result
+  "One card for both shapes of the one verb: a catalog listing, or an invocation."
   [r]
-  (let
-    [blocks
-     (get r "content")
+  (if (contains? r "tools")
+    (let [tools (get r "tools")]
+      {:summary
+       (str "`" (get r "server") "` - " (count tools) " tool" (when (not= 1 (count tools)) "s"))
+       :body (when (seq tools)
+               (str/join "\n"
+                         (map (fn [t]
+                                (str "- `" (get t "name")
+                                     "`" (when (seq (str (get t "description")))
+                                           (str " - " (get t "description")))))
+                              tools)))})
+    (let
+      [blocks
+       (get r "content")
 
-     text
-     (->> blocks
-          (keep (fn [b]
-                  (get b "text")))
-          (str/join "\n"))]
+       text
+       (->> blocks
+            (keep (fn [b]
+                    (get b "text")))
+            (str/join "\n"))]
 
-    {:summary (str "`" (get r "server") "`/" (get r "tool") (when (get r "is_error") " — error"))
-     :body (mcp-fence (if (seq text) text (pr-str blocks)))}))
-
-(defn- render-mcp-connect-result
-  [r]
-  {:summary (str "connected `" (get r "server")
-                 "`" (when (get r "tools") (str " (" (get r "tools") " tools)")))})
-
-(defn- render-mcp-disconnect-result
-  [r]
-  {:summary (str "disconnected `" (get r "server") "` — " (get r "result"))})
+      {:summary (str "`" (get r "server") "`/" (get r "tool") (when (get r "is_error") " - error"))
+       :body (mcp-fence (if (seq text) text (pr-str blocks)))})))
 
 ;; ---------------------------------------------------------------------------
 ;; Public vars retain developer examples and fallback docs. Native symbols
@@ -872,40 +970,14 @@
 ;; `mcp` the Python names use one underscore; direct native names use two.
 ;; ---------------------------------------------------------------------------
 
-(def
-  ^{:doc
-    "List configured MCP servers and status: {\"servers\": [{\"name\": S, \"transport\": \"stdio\"|\"http\", \"connected\": bool, \"enabled\": bool, \"tools\": N (when connected), \"command\"/\"url\": S}]}. Connections are lazy via mcp__tools/mcp__call, or explicit via mcp__connect. Config: ~/.vis/state.yml :mcp :servers."
-    :arglists '([])}
-  mcp-servers
-  mcp-servers-impl)
+
 
 (def
   ^{:doc
-    "Connect if needed and list a server's tools: {\"server\": S, \"tools\": [{\"name\": S, \"description\": S, \"input_schema\": <JSON schema dict>}]}. Use input_schema for mcp__call args."
-    :arglists '([server])}
-  mcp-tools
-  mcp-tools-impl)
-
-(def
-  ^{:doc
-    "Connect if needed and invoke `tool` with `args` matching its input_schema (omit or {} for none). Returns {\"server\": S, \"tool\": S, \"content\": [<MCP content blocks>], \"is_error\": bool}; text is at content[i][\"text\"]."
-    :arglists '([server tool] [server tool args])}
+    "Invoke `tool` on configured MCP server `server` with `args` matching its input schema (omit or {} for none): {\"server\": S, \"tool\": S, \"content\": [<MCP content blocks>], \"is_error\": bool}; text is at content[i][\"text\"], and a refused call carries \"input_schema\" back with it. Called with `server` alone it lists that server's catalog instead: {\"server\": S, \"tools\": [{\"name\": S, \"description\": S, \"input_schema\": <JSON schema dict>}]}. Server names, status and tool names already ride in ctx under env.mcp; the gateway connects and heals every enabled server on its own clock, so there is no connect/disconnect verb. Config: ~/.vis/state.yml :mcp :servers."
+    :arglists '([server] [server tool] [server tool args])}
   mcp-call
   mcp-call-impl)
-
-(def
-  ^{:doc
-    "Connect a configured server into the daemon-wide pool. Usually unnecessary: mcp__tools/mcp__call connect lazily and /reload reconciles config. Returns {\"server\": S, \"connected\": bool, \"tools\": N}."
-    :arglists '([server])}
-  mcp-connect
-  mcp-connect-impl)
-
-(def
-  ^{:doc
-    "Disconnect from the daemon-wide pool, closing the connection and any stdio child. Returns {\"server\": S, \"result\": \"disconnected\"|\"not_connected\"}. A later /reload may reconnect configured servers."
-    :arglists '([server])}
-  mcp-disconnect
-  mcp-disconnect-impl)
 
 ;; ---------------------------------------------------------------------------
 ;; Symbols + ctx + extension
@@ -918,126 +990,79 @@
 ;; third-party MCP integration and 400s. Do NOT revert to single underscore.
 (def ^:private mcp-symbols
   [(vis/symbol
-     #'mcp-servers
-     {:symbol 'servers
-      :name "mcp__servers"
-      :native-tool? true
-      :result
-      "String-keyed `{op,servers:[{name,transport,connected,enabled,tools?,command?,url?}]}`."
-      :description
-      "List configured MCP servers and connection state. In `python_execution`, call `await mcp_servers()`."
-      :render render-mcp-servers-result
-      :call {:pos []}
-      :color-role :tool-color/meta
-      :schema {:type "object" :properties {} :required [] :additionalProperties false}
-      :tag :observation
-      :on-error-fn (mcp-on-error :mcp/servers)})
-   (vis/symbol
-     #'mcp-tools
-     {:symbol 'tools
-      :name "mcp__tools"
-      :native-tool? true
-      :result
-      "String-keyed `{op,server,tools:[{name,description,input_schema}]}`; descriptions may be null."
-      :description
-      "Discover a server's live tools and input schemas; auto-connects. In `python_execution`, call `await mcp_tools(...)`."
-      :render render-mcp-tools-result
-      :call {:pos ["server"]}
-      :color-role :tool-color/meta
-      :schema {:type "object"
-               :properties {"server" {:type "string"
-                                      :description "Configured server; auto-connects."}}
-               :required ["server"]
-               :additionalProperties false}
-      :tag :observation
-      :on-error-fn (mcp-on-error :mcp/tools)})
-   (vis/symbol
      #'mcp-call
      {:symbol 'call
       :name "mcp__call"
       :native-tool? true
       :result
-      "String-keyed `{op,server,tool,content,is_error}`; `content` is MCP blocks, with text at `block[\"text\"]`."
+      "String-keyed `{op,server,tool,content,is_error,input_schema?}`; text at `block[\"text\"]`. With `tool` omitted: `{op,server,tools:[{name,description,input_schema}]}`."
       :description
-      "Call a discovered server tool using its input schema; auto-connects. In `python_execution`, call `await mcp_call(...)`."
+      "Call a tool on an MCP server; auto-connects. Servers and their tool names are already in `session[\"env\"][\"mcp\"]`, so just name them. Omit `tool` for that server's input schemas. In `python_execution`, call `await mcp_call(...)`."
       :render render-mcp-call-result
-      :call {:pos ["server" "tool"] :opt-pos ["args"]}
+      :call {:pos ["server"] :opt-pos ["tool" "args"]}
       :color-role :tool-color/shell
       :schema {:type "object"
                :properties
-               {"server" {:type "string" :description "Configured server; auto-connects."}
-                "tool" {:type "string" :description "Discovered tool name."}
+               {"server" {:type "string" :description "Server named in `env.mcp`; auto-connects."}
+                "tool" {:type "string"
+                        :description "Tool name; omit to list this server's schemas."}
                 "args" {:type "object" :description "Input-schema args; omit or `{}` for none."}}
-               :required ["server" "tool"]
-               :additionalProperties false}
-      :tag :mutation
-      :on-error-fn (mcp-on-error :mcp/call)})
-   (vis/symbol
-     #'mcp-connect
-     {:symbol 'connect
-      :name "mcp__connect"
-      :native-tool? true
-      :result "String-keyed `{op,server,connected:true,tools}`."
-      :description
-      "Explicitly connect a configured server; tools/calls usually auto-connect and `/reload` reconciles the pool. In `python_execution`, call `await mcp_connect(...)`."
-      :render render-mcp-connect-result
-      :call {:pos ["server"]}
-      :color-role :tool-color/create
-      :schema {:type "object"
-               :properties {"server" {:type "string" :description "Configured server."}}
                :required ["server"]
                :additionalProperties false}
       :tag :mutation
-      :on-error-fn (mcp-on-error :mcp/connect)})
-   (vis/symbol
-     #'mcp-disconnect
-     {:symbol 'disconnect
-      :name "mcp__disconnect"
-      :native-tool? true
-      :result "String-keyed `{op,server,result}`, where result is `disconnected|not_connected`."
-      :description
-      "Disconnect from the pool, closing the connection and terminating any stdio child; `/reload` reconciles config. In `python_execution`, call `await mcp_disconnect(...)`."
-      :render render-mcp-disconnect-result
-      :call {:pos ["server"]}
-      :color-role :tool-color/delete
-      :schema {:type "object"
-               :properties {"server" {:type "string" :description "Configured server."}}
-               :required ["server"]
-               :additionalProperties false}
-      :tag :mutation
-      :on-error-fn (mcp-on-error :mcp/disconnect)})])
+      :on-error-fn (mcp-on-error :mcp/call)})])
 
 (defn- contribute
-  "`:ext/ctx-fn` — proactively reconcile the daemon-wide MCP pool, then surface
-   the CONNECTED servers (+ tool counts) so the model sees what's reachable at
-   `session[\"env\"][\"mcp\"][\"servers\"]`. The daemon-wide pool is shared across
-   every session; servers a client attached to THIS session (ACP `mcpServers`)
-   are listed alongside it, marked `\"scope\": \"session\"`."
+  "`:ext/ctx-fn` - proactively reconcile the daemon-wide MCP pool, then surface
+   every VISIBLE server and the tool NAMES it exposes at
+   `session[\"env\"][\"mcp\"][\"servers\"]`. This IS the MCP inventory: with it in the
+   session object there is no listing verb, and `mcp__call` only ever has to name
+   a server (and, to invoke, a tool).
+
+   Keyed BY SERVER NAME (a sorted map, never a list) on purpose: the ctx delta is
+   a recursive structural diff, so one server connecting, dying, or gaining a tool
+   emits exactly `session[\"env\"][\"mcp\"][\"servers\"][\"<name>\"][...] = ...` instead
+   of re-sending the whole inventory. A list would re-send every server on any
+   change.
+
+   Disconnected and killed servers are listed too, with `\"status\"`: the model must
+   be able to tell \"no such server\" from \"stopped - start it again\". The
+   daemon-wide pool is shared across every session; servers a client attached to
+   THIS session (ACP `mcpServers`) are listed alongside it and shadow a global one
+   of the same name, marked `\"scope\": \"session\"`."
   [env]
   (reconcile-async!)
   (let
     [sid
      (:session-id env)
 
-     row
-     (fn [scope nm conn]
-       {"name" nm "scope" scope "transport" (name (:transport conn)) "tools" (tool-count conn)})
+     entry
+     (fn [[nm spec]]
+       (let
+         [session?
+          (some? (session-spec-of sid nm))
 
-     session-rows
-     (keep (fn [[[s nm] {:keys [conn]}]]
-             (when (and (= s sid) conn) (row "session" nm conn)))
-           @session-conns)
+          conn
+          (conn-of sid nm)
 
-     shadowed
-     (set (map #(get % "name") session-rows))
+          {:keys [names omitted]}
+          (ctx-tool-names conn)]
 
-     global-rows
-     (keep (fn [[nm {:keys [conn]}]]
-             (when-not (contains? shadowed nm) (row "global" nm conn)))
-           @conns)
+         [nm
+          (cond->
+            {"scope" (if session? "session" "global")
+             "transport" (name (transport-of spec))
+             "status" (cond conn "connected"
+                            (and (not session?) (killed? nm)) "killed"
+                            :else "disconnected")}
+            conn
+            (assoc "tools" names)
+
+            (pos? (long omitted))
+            (assoc "tools_omitted" omitted))]))
 
      rows
-     (vec (concat session-rows global-rows))]
+     (into (sorted-map) (map entry) (visible-servers sid))]
 
     (when (seq rows) {"session_env" {"mcp" {"servers" rows}}})))
 
@@ -1047,13 +1072,20 @@
   [env]
   (boolean (or (seq (configured-servers)) (seq (get @session-specs (:session-id env))))))
 
-(defonce ^:private _mcp-reload-hook (extension/register-reload-hook! ::reconcile reconcile!))
+;; `/reload` re-reads config, so it is also where a gateway that has never run a
+;; turn first learns it owns servers: reconcile synchronously (so the reply
+;; reflects the new pool) and arm the health loop that keeps it that way.
+(defonce ^:private _mcp-reload-hook
+  (extension/register-reload-hook! ::reconcile
+                                   (fn []
+                                     (ensure-supervisor!)
+                                     (reconcile!))))
 
 (def vis-extension
   (vis/extension
     {:ext/name "foundation-mcp"
      :ext/description
-     "MCP client: one gateway-wide pool auto-connects and `/reload`-reconciles configured (`:mcp :servers`) stdio/Streamable HTTP servers; `mcp__servers`, `mcp__tools`, and `mcp__call` reach every session. Supports remote OAuth 2.1 discovery + PKCE (2025-06-18). Always on; active with servers."
+     "MCP client: one gateway-wide pool connects every enabled (`:mcp :servers`) stdio/Streamable HTTP server, health-checks it on the daemon's own clock, and `/reload`-reconciles it. The inventory rides in ctx under `env.mcp`, so the single verb `mcp__call` reaches every session (server alone lists schemas) and there is no per-session connect/disconnect. Supports remote OAuth 2.1 discovery + PKCE (2025-06-18). Always on; active with servers."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

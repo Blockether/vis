@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- chore(deps): bump tree-sitter-language-pack to 1.12.3-blockether.37 — reference
+  search runs as one native batch walk, and the shared native library cache is
+  now safe for many concurrent vis sessions/processes
+
 ## [v0.1.24] - 2026-08-02
 
 ### Changed

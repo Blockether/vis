@@ -110,29 +110,93 @@
     (min (long MAX_EVAL_TIMEOUT_MS) (max (long MIN_EVAL_TIMEOUT_MS) candidate))))
 
 (def ^:private shell-timeout-eval-grace-ms
-  "Extra room around the shell tool's own timeout so the shell tool can kill, drain,
-   and return its timeout envelope before the outer Python eval watchdog fires."
+  "Extra room around a bounded call's OWN timeout so that call can kill, drain,
+   and return its structured timeout envelope before the outer Python eval
+   watchdog fires. Mirrors `native-tool-timeout-grace-ms`: the watchdog is a
+   BACKSTOP, never a co-deadline."
   10000)
 
+(def DEFAULT_SHELL_TIMEOUT_SECS
+  "Default per-command / per-wait budget of the `shell` tool — declared here, and
+   read by `foundation.shell`, so ONE number governs both the tool and the
+   watchdog above it.
+
+   It matters here because it used to EQUAL the 120s eval watchdog. A `shell`
+   call that named no timeout therefore raced a watchdog that had already
+   started, and the watchdog always won: the turn got a bare `Timeout (120s)`
+   with NO output instead of shell's own envelope (partial stdout, `timed_out`
+   true, a killed process tree). The widener below now floors the watchdog above
+   this budget whenever an eval calls the shell at all."
+  120)
+
+(def RUN_TESTS_FLOOR_SECS
+  "Floor for an eval that calls `run_tests`. A test run carries its OWN multi-
+   minute budget (the Clojure pack's 290s nREPL deadline) and answers a timeout
+   with a STRUCTURED test result; a direct tool call parks the native wall for
+   exactly that reason. Called from `python_execution` it must not die earlier at
+   the generic 120s watchdog and lose the run's result."
+  300)
+
+(def ^:private timeout-secs-re
+  #"[\"']?(?:timeout_secs|timeout)[\"']?\s*(?::|=)\s*([0-9]+(?:\.[0-9]+)?)")
+
+(def ^:private timeout-ms-re #"[\"']?timeout_ms[\"']?\s*(?::|=)\s*([0-9]+(?:\.[0-9]+)?)")
+
+(def ^:private shell-call-re #"\bshell\s*\(|\bsubprocess\.")
+
+(def ^:private run-tests-call-re #"\brun_tests\s*\(")
+
+(defn- max-of
+  [xs]
+  (when-let [xs (seq (remove nil? xs))]
+    (apply max xs)))
+
 (defn explicit-shell-timeout-secs
-  "Best-effort scan for explicit shell/subprocess timeout overrides in Python
-   code. The real shell tool still owns validation/clamping; this only prevents
-   the outer eval watchdog (default 120s) from preempting a longer requested
-   shell timeout."
+  "Best-effort scan for an EXPLICIT timeout override in Python code, in seconds.
+   Reads `timeout_secs` / `timeout` (seconds) and `timeout_ms` (milliseconds,
+   rounded up) — `repl_eval` and MCP calls spell their budget in ms, and leaving
+   that spelling out let a deliberately long call die at the default watchdog.
+   The real tool still owns validation/clamping; this only prevents the outer
+   watchdog from preempting a longer requested budget."
   [code]
   (let
-    [nums (for
-            [[_ n] (re-seq #"[\"']?(?:timeout_secs|timeout)[\"']?\s*(?::|=)\s*([0-9]+(?:\.[0-9]+)?)"
-                           (str code))]
-            (long (Math/round (Double/parseDouble n))))]
-    (when (seq nums) (apply max nums))))
+    [code
+     (str code)
+
+     secs
+     (for [[_ n] (re-seq timeout-secs-re code)]
+       (long (Math/round (Double/parseDouble n))))
+
+     ms
+     (for [[_ n] (re-seq timeout-ms-re code)]
+       (long (Math/ceil (/ (Double/parseDouble n) 1000.0))))]
+
+    (max-of (concat secs ms))))
+
+(defn implicit-call-budget-secs
+  "Seconds an eval is entitled to purely from WHICH bounded calls it makes, when
+   none of them names a number. A timeout that is a variable, an expression, or
+   simply the tool's default is invisible to a text scan, so without this floor
+   the watchdog silently preempts a call that owns a longer budget and answers
+   timeouts itself."
+  [code]
+  (let [code (str code)]
+    (max-of [(when (re-find run-tests-call-re code) RUN_TESTS_FLOOR_SECS)
+             (when (re-find shell-call-re code) DEFAULT_SHELL_TIMEOUT_SECS)])))
 
 (defn eval-timeout-ms-for-code
+  "Eval watchdog for ONE Python block: the configured base, raised so it sits a
+   grace period ABOVE the longest bounded call the block makes."
   [base-timeout-ms code]
-  (let [base (clamp-eval-timeout-ms base-timeout-ms)]
-    (if-let [shell-secs (explicit-shell-timeout-secs code)]
-      (clamp-eval-timeout-ms
-        (max base (+ (* 1000 (long shell-secs)) (long shell-timeout-eval-grace-ms))))
+  (let
+    [base
+     (clamp-eval-timeout-ms base-timeout-ms)
+
+     secs
+     (max-of [(explicit-shell-timeout-secs code) (implicit-call-budget-secs code)])]
+
+    (if secs
+      (clamp-eval-timeout-ms (max base (+ (* 1000 (long secs)) (long shell-timeout-eval-grace-ms))))
       base)))
 
 (def ^:dynamic *rlm-context* "Dynamic context for RLM debug logging." nil)

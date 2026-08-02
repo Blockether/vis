@@ -14,6 +14,7 @@ import { Banner, Spinner } from '../components/ui';
 import { ProviderRouterDialog } from './RouterScreen';
 import {
   attachmentsFromFiles,
+  capturePhotoAttachment,
   editedAttachment,
   filePickerCancelled,
   isVideoMediaType,
@@ -41,6 +42,7 @@ import {
   writeDraftMessage,
 } from '../lib/draft-messages';
 import { clearPendingVoice, readPendingVoice, savePendingVoice } from '../lib/pending-voice';
+import { readerOwnsScroll } from '../lib/reader-gesture';
 import type {
   ContentBlock,
   IterationAttachment,
@@ -1515,6 +1517,14 @@ export function SessionScreen({
     for (const delay of [60, 160, 320, 600, 1000]) {
       settleTimersRef.current.push(
         window.setTimeout(() => {
+          // The reader taking hold of the scroller ends the pin outright, and it
+          // must end here rather than only in `releasePin`: that handler sits on
+          // the scroller's own React props, so anything the gesture does not
+          // deliver there — a flick that starts on a child that stops the event,
+          // a momentum phase, a trackpad — used to leave the whole settle
+          // schedule running, and the 600 ms and 1000 ms re-pins then hauled the
+          // reader back to the end a beat after they had scrolled away.
+          if (readerOwnsScroll()) settleUntilRef.current = 0;
           if (Date.now() > settleUntilRef.current) return;
           scrollToEnd('auto');
         }, delay),
@@ -2721,7 +2731,12 @@ export function SessionScreen({
       requestAnimationFrame(() => setLoading(false));
       return;
     }
-    if (followingRef.current) scrollToEnd('auto');
+    // Not while the reader is dragging. `followingRef` is a measurement from the
+    // last frame, and this effect runs once per backfilled chunk — i.e. every
+    // frame — so catching up here would undo the drag AND re-assert following on
+    // the way out, teaching the next chunk to do it again. Stand down and let
+    // `handleScroll` say where the gesture actually left them.
+    if (followingRef.current && !readerOwnsScroll()) scrollToEnd('auto');
   }, [turns, visibleTurnCount, hydratedTurnCount, liveTurn?.id, scrollToEnd, pinToEnd]);
 
   // Fill the render window back up to `visibleTurnCount`, a chunk per frame,
@@ -2825,10 +2840,13 @@ export function SessionScreen({
           }
         }
       }
-      if (composerOnly || !followingRef.current || resizeScrollFrameRef.current !== null) return;
+      if (composerOnly || !followingRef.current || readerOwnsScroll()) return;
+      if (resizeScrollFrameRef.current !== null) return;
       resizeScrollFrameRef.current = window.requestAnimationFrame(() => {
         resizeScrollFrameRef.current = null;
-        if (followingRef.current) scrollToEnd('auto');
+        // Re-checked here, not just above: the finger can land in the frame this
+        // catch-up was waiting for.
+        if (followingRef.current && !readerOwnsScroll()) scrollToEnd('auto');
       });
     });
     observer.observe(transcript);
@@ -2968,6 +2986,30 @@ export function SessionScreen({
       setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
     } catch (cause) {
       setComposerNotice(filePickerCancelled(cause) ? 'No files selected.' : (cause as Error).message);
+    }
+  }
+
+  // Taking a picture is a DIFFERENT act from picking one: the OS gallery sheet
+  // never opens the camera, so this is the composer's shutter. Native only —
+  // on web the file input already exposes whatever capture the browser has.
+  async function takePhoto() {
+    const limits = capabilities?.features.attachments;
+    const maximum = limits?.max_files ?? 8;
+    if (attachments.length >= maximum) {
+      setComposerNotice(`You can attach up to ${maximum} files`);
+      return;
+    }
+
+    try {
+      const result = await capturePhotoAttachment({
+        maxFileBytes: limits?.max_file_bytes ?? 5 * 1024 * 1024,
+        mediaTypes: limits?.media_types,
+      });
+      setAttachments((current) => [...current, ...result.attachments].slice(0, maximum));
+      setComposerNotice(result.rejected.length ? result.rejected.join(' · ') : null);
+    } catch (cause) {
+      // A cancelled shutter is a decision, not a failure.
+      setComposerNotice(filePickerCancelled(cause) ? 'No photo taken.' : (cause as Error).message);
     }
   }
 
@@ -3328,7 +3370,11 @@ export function SessionScreen({
     setError(null);
     setRunning(true);
     const sent: GatewayAttachment[] = pendingAttachments.map(
-      ({ filename, media_type, base64 }) => ({ filename, media_type, base64 }),
+      ({ filename, media_type, base64 }) => ({
+        filename,
+        media_type,
+        base64,
+      }),
     );
     setLiveTurn({
       request: displayRequest,
@@ -3482,8 +3528,10 @@ export function SessionScreen({
       // the snapshot while that transaction is pending.
       if (isViewportRotating() || rotationRestorePendingRef.current) return;
       // Outside rotation, the opening/keyboard pin still owns its own delayed
-      // scroll events so they cannot be misread as a reader leaving the end.
-      if (Date.now() <= settleUntilRef.current) {
+      // scroll events so they cannot be misread as a reader leaving the end —
+      // unless the reader is moving the scroller themselves, in which case this
+      // scroll is theirs and the pin has already lost its claim.
+      if (Date.now() <= settleUntilRef.current && !readerOwnsScroll()) {
         followingRef.current = true;
         if (showJumpRef.current) {
           showJumpRef.current = false;
@@ -4241,13 +4289,33 @@ export function SessionScreen({
               className="grid h-8 w-7 shrink-0 place-items-center text-dialog-hint transition-[background-color,color,transform,translate,scale,rotate] duration-150 hover:bg-hover hover:text-dialog-hint-key active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:h-7 sm:w-6"
               onClick={() => void addAttachments()}
               disabled={attachments.length >= (capabilities?.features.attachments.max_files ?? 8)}
-              aria-label="Add images"
-              title="Add images"
+              aria-label="Choose photos or videos"
+              title="Choose photos or videos"
             >
               <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
                 <path d="M12 5v14M5 12h14" strokeLinecap="square" />
               </svg>
             </button>
+
+            {/* The gallery sheet has no shutter, so "take a photo" needs its own
+                button — without it the only way to attach what you are LOOKING at
+                is to leave, open the camera app, come back and hunt for the file. */}
+            {Capacitor.isNativePlatform() && (
+              <button
+                type="button"
+                onMouseDown={keepKeyboard}
+                className="grid h-8 w-7 shrink-0 place-items-center text-dialog-hint transition-[background-color,color,transform,translate,scale,rotate] duration-150 hover:bg-hover hover:text-dialog-hint-key active:scale-[0.94] disabled:text-muted motion-reduce:transition-none sm:h-7 sm:w-6"
+                onClick={() => void takePhoto()}
+                disabled={attachments.length >= (capabilities?.features.attachments.max_files ?? 8)}
+                aria-label="Take a photo"
+                title="Take a photo"
+              >
+                <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                  <path d="M3 8h4l1.5-2h7L17 8h4v11H3z" strokeLinecap="square" />
+                  <circle cx="12" cy="13" r="3.2" />
+                </svg>
+              </button>
+            )}
 
             {voiceSupported && (
               <button

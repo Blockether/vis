@@ -585,8 +585,53 @@
 
     {:default primary :fallback fallback}))
 
+(defn- role-chip
+  "Chip ink `[fg bg]` for one router-root tag.
+
+   PRIMARY fills with the theme ACCENT (the colour the active header tab already
+   claims) and FALLBACK with the palette's violet, the one hue that stays clearly
+   apart from the accent in EVERY theme — the blockether accents are gold, so the
+   warning amber would have collapsed onto them. The label is picked by contrast
+   against the fill, and both are read on every paint, so `/theme` recolours the
+   badges instead of freezing the load-time palette."
+  [role]
+  (let [fill (if (= role :fallback) t/tool-color-search t/header-active-tab-accent)]
+    [(t/contrast-ink fill) fill]))
+
+(defn- draw-runs!
+  "Paint `runs` left to right from `x`, clipped to `max-w` columns; returns the
+   column after the last painted cell.
+
+   A run is `{:text … :fg … :bg … :bold? …}` and nil runs are skipped. Giving a
+   run its own `:bg` is what turns a label into a FILLED chip instead of more
+   body text — the reason the badges can carry colour while the rest of the card
+   keeps the flat `dialog-bg` palette. A run that no longer fits is truncated and
+   the runs after it are dropped."
+  [g x row max-w runs]
+  (let [end (+ (long x) (long max-w))]
+    (reduce (fn [col run]
+              (let
+                [col (long col)
+                 s (str (:text run))
+                 room (max 0 (- end col))
+                 shown (if (<= (count s) room) s (subs s 0 room))]
+
+                (if (zero? (count shown))
+                  col
+                  (do (p/set-colors! g (or (:fg run) t/dialog-fg) (or (:bg run) t/dialog-bg))
+                      (if (:bold? run)
+                        (p/styled g [p/BOLD] (p/put-str! g col row shown))
+                        (p/put-str! g col row shown))
+                      (+ col (count shown))))))
+            (long x)
+            (remove nil? runs))))
+
 (defn- draw-provider-card!
-  "Draw a two-line provider card with the PRIMARY and FALLBACK tags highlighted."
+  "Draw a two-line provider card with the PRIMARY and FALLBACK tags highlighted.
+
+   Both tags are painted as FILLED chips (`role-chip`): accent for PRIMARY,
+   violet for FALLBACK, with each row's ◆/◇ glyph in its own chip fill. The
+   Colour, not wording, is what finds the two router roots in a long list."
   [g left row inner-w _idx selected? provider status limits default-selection fallback-selection]
   ;; Reserve `p/SELECTION_WIDTH` cols at the start of the card row
   ;; for the selection gutter (`>` glyph plus breathing room).
@@ -613,6 +658,39 @@
      (and (not default?)
           (some? (:provider-id fallback-selection))
           (same-id? (:id provider) (:provider-id fallback-selection)))
+
+     ;; ONE role drives both lines: glyph, badge word and chip ink.
+     tag-role
+     (cond default? :default
+           fallback? :fallback
+           :else nil)
+
+     [tag-fg tag-bg]
+     (when tag-role (role-chip tag-role))
+
+     ;; Marker glyphs: the SAME diamond the vis welcome screen leads with, so
+     ;; the badge reads as product furniture instead of a rating. Filled for the
+     ;; live primary, hollow for the standby fallback — one shape, two states,
+     ;; and both are narrower than the East-Asian-Wide ★ that used to sit here.
+     tag-glyph
+     (case tag-role
+       :default
+       "◆ "
+
+       :fallback
+       "◇ "
+
+       nil)
+
+     tag-word
+     (case tag-role
+       :default
+       " DEFAULT "
+
+       :fallback
+       " FALLBACK "
+
+       nil)
 
      text-w
      (max 0 (- inner-w 2 p/SELECTION_WIDTH))
@@ -653,6 +731,16 @@
      fallback-model
      (:model fallback-selection)
 
+     tag-model
+     (case tag-role
+       :default
+       default-model
+
+       :fallback
+       fallback-model
+
+       nil)
+
      catalog-summary
      (str model-count (if (= 1 model-count) " model available" " models available"))
 
@@ -678,18 +766,26 @@
           (remove nil?)
           (str/join " / "))
 
-     ;; Layout line 1: label/default badge ... host/status.
-     left-part
-     (str (cond default? "★ "
-                fallback? "☆ "
-                :else "")
-          (or label "?")
-          (cond default? "  DEFAULT"
-                fallback? "  FALLBACK"
-                :else ""))
-
      right-part
-     (str host "  ●")]
+     (str host "  ●")
+
+     ;; Layout line 1: glyph + label + badge chip ... host/status.
+     line1-w
+     (max 0 (- text-w (count right-part) 1))
+
+     ;; Only the LABEL is ellipsized: a long provider name can never eat its
+     ;; own PRIMARY/FALLBACK badge off the end of the row.
+     label-w
+     (max 0 (- line1-w (count (str tag-glyph)) (count (str tag-word)) (if tag-role 2 0)))
+
+     line1-runs
+     (vec (concat (when tag-role [{:text tag-glyph :fg tag-bg :bold? true}])
+                  [{:text (dlg/ellipsize (or label "?") label-w) :fg t/dialog-fg :bold? true}]
+                  (when tag-role
+                    [{:text "  "} {:text tag-word :fg tag-fg :bg tag-bg :bold? true}])))
+
+     left-part
+     (apply str (map :text line1-runs))]
 
     ;; Selection visual: the cursor is a `> ` glyph painted in the
     ;; dialog padding column (between the dialog frame and the card
@@ -703,11 +799,9 @@
     ;; `> ` glyph in the dialog padding column, anchored to line 1.
     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
     (p/draw-selection-marker! g (inc left) row selected?)
-    ;; Line 1 left - priority + label (bold)
-    (p/set-fg! g t/dialog-fg)
-    (p/styled g
-              [p/BOLD]
-              (p/put-str! g text-x row (dlg/ellipsize left-part (- text-w (count right-part) 1))))
+    ;; Line 1 left - tag glyph + label (bold) + badge chip
+    (draw-runs! g text-x row line1-w line1-runs)
+    (p/set-colors! g t/dialog-fg t/dialog-bg)
     ;; Line 1 right - host (italic dimmed) + status dot
     (let
       [dot-col
@@ -737,16 +831,21 @@
       (if (seq error-text)
         (do (p/set-fg! g t/status-bad)
             (p/put-str! g text-x (inc row) (dlg/ellipsize (str "   ⚠ " error-text) text-w)))
-        (do (p/set-fg! g t/dialog-fg)
-            (p/put-str! g
-                        text-x
-                        (inc row)
-                        (dlg/ellipsize (str "   "
-                                            (cond default? (str "★ " default-model "  DEFAULT")
-                                                  fallback? (str "☆ " fallback-model "  FALLBACK")
-                                                  :else catalog-summary)
-                                            (when (seq limit-summary) (str " / " limit-summary)))
-                                       text-w)))))))
+        ;; The tagged model repeats the row's chip, so PRIMARY/FALLBACK reads the
+        ;; same on both lines; the limits tail stays dim so the badge leads.
+        (do (draw-runs!
+              g
+              text-x
+              (inc row)
+              text-w
+              (if tag-role
+                [{:text "   "} {:text tag-glyph :fg tag-bg :bold? true}
+                 {:text (str tag-model) :fg t/dialog-fg} {:text "  "}
+                 {:text tag-word :fg tag-fg :bg tag-bg :bold? true}
+                 (when (seq limit-summary) {:text (str " / " limit-summary) :fg t/dialog-hint})]
+                [{:text (str "   " catalog-summary) :fg t/dialog-fg}
+                 (when (seq limit-summary) {:text (str " / " limit-summary) :fg t/dialog-hint})]))
+            (p/set-colors! g t/dialog-fg t/dialog-bg))))))
 
 (defn- remove-provider-by-id [items provider-id] (vec (remove #(= provider-id (:id %)) items)))
 
@@ -1496,11 +1595,17 @@
                     fallback? (and (string? (:id model))
                                    (tagged? provider @fallback-selection)
                                    (= (:id model) (:model @fallback-selection)))
-                    label (str (:label model)
-                               (cond default? "  (default)"
-                                     fallback? "  (fallback)"
-                                     :else ""))
-                    label (subs label 0 (min (count label) (max 0 (- inner-w 5))))]
+                    marker (cond default? "  (default)"
+                                 fallback? "  (fallback)"
+                                 :else "")
+                    label (str (:label model) marker)
+                    label (subs label 0 (min (count label) (max 0 (- inner-w 5))))
+                    ;; The tag marker keeps its ROLE ink — the same accent /
+                    ;; warning pair the cards' chips fill with — so the tagged
+                    ;; models are findable without reading every row. nil once
+                    ;; truncation ate the marker.
+                    marker-x (when (and (seq marker) (str/ends-with? label marker))
+                               (+ left 2 p/SELECTION_WIDTH (- (count label) (count marker))))]
 
                    (p/set-colors! g t/dialog-fg t/dialog-bg)
                    (p/fill-rect! g (inc left) row inner-w 1)
@@ -1508,7 +1613,13 @@
                    (p/set-colors! g (if sel? t/dialog-fg t/dialog-hint) t/dialog-bg)
                    (if sel?
                      (p/styled g [p/BOLD] (p/put-str! g (+ left 2 p/SELECTION_WIDTH) row label))
-                     (p/put-str! g (+ left 2 p/SELECTION_WIDTH) row label))))))
+                     (p/put-str! g (+ left 2 p/SELECTION_WIDTH) row label))
+                   (when marker-x
+                     (p/set-colors! g
+                                    (second (role-chip (if default? :default :fallback)))
+                                    t/dialog-bg)
+                     (p/styled g [p/BOLD] (p/put-str! g marker-x row marker))
+                     (p/set-colors! g t/dialog-fg t/dialog-bg))))))
            (and (= @mode :actions) (pos? total))
            (let
              [provider

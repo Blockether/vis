@@ -3,6 +3,7 @@ def __vis_install_pptx__():
 
     _bi = sys.modules["builtins"]
     _build = __vis_pptx_build__
+    _read = __vis_pptx_read__
 
     EMU_PER_INCH = 914400
     EMU_PER_CM = 360000
@@ -258,7 +259,14 @@ def __vis_install_pptx__():
     )
     MSO_AUTO_SHAPE_TYPE = MSO_SHAPE
     MSO_SHAPE_TYPE = _Enum(
-        "AUTO_SHAPE", "PICTURE", "TEXT_BOX", "PLACEHOLDER", "TABLE", "LINE", "GROUP"
+        "AUTO_SHAPE",
+        "CHART",
+        "PICTURE",
+        "TEXT_BOX",
+        "PLACEHOLDER",
+        "TABLE",
+        "LINE",
+        "GROUP",
     )
 
     _PRESET = {
@@ -492,6 +500,44 @@ def __vis_install_pptx__():
         def brightness(self, value):
             pass
 
+    class _GradientStop(object):
+        """One gradient stop: `.color` and `.position` over a stop spec dict."""
+
+        def __init__(self, d):
+            self._d = d
+
+        @property
+        def color(self):
+            return _ColorFormat(self._d, "color")
+
+        @property
+        def position(self):
+            return float(self._d.get("position", 0.0))
+
+        @position.setter
+        def position(self, value):
+            v = float(value)
+            if v < 0.0 or v > 1.0:
+                raise ValueError("gradient stop position must be in 0.0..1.0")
+            self._d["position"] = v
+
+    class _GradientStops(object):
+        """The stop sequence of a gradient fill, as python-pptx exposes it."""
+
+        def __init__(self, stops):
+            self._stops = stops
+
+        def __getitem__(self, i):
+            if isinstance(i, slice):
+                return [_GradientStop(d) for d in self._stops[i]]
+            return _GradientStop(self._stops[i])
+
+        def __iter__(self):
+            return iter([_GradientStop(d) for d in self._stops])
+
+        def __len__(self):
+            return len(self._stops)
+
     class _Fill(object):
         """python-pptx FillFormat over `owner[key]` (a fill spec)."""
 
@@ -536,7 +582,13 @@ def __vis_install_pptx__():
 
         @property
         def gradient_stops(self):
-            return self._d("gradient").setdefault("stops", [])
+            d = self._d("gradient")
+            if not d.get("stops"):
+                d["stops"] = [
+                    {"position": 0.0, "color": "FFFFFF"},
+                    {"position": 1.0, "color": "000000"},
+                ]
+            return _GradientStops(d["stops"])
 
         @property
         def gradient_angle(self):
@@ -755,7 +807,10 @@ def __vis_install_pptx__():
     class _Paragraph(object):
         def __init__(self, d=None):
             self._d = d if d is not None else {}
-            self._d.setdefault("_runs", [])
+            raw_runs = self._d.pop("runs", None)
+            self._d["_runs"] = [
+                r if isinstance(r, _Run) else _Run(dict(r)) for r in (raw_runs or [])
+            ]
 
         @property
         def runs(self):
@@ -878,7 +933,12 @@ def __vis_install_pptx__():
     class _TextFrame(object):
         def __init__(self, owner):
             self._d = owner.setdefault("text_frame", {})
-            self._d.setdefault("_paragraphs", [_Paragraph()])
+            raw_paragraphs = self._d.pop("paragraphs", None)
+            if "_paragraphs" not in self._d:
+                self._d["_paragraphs"] = [
+                    p if isinstance(p, _Paragraph) else _Paragraph(dict(p))
+                    for p in (raw_paragraphs or [])
+                ] or [_Paragraph()]
 
         @property
         def paragraphs(self):
@@ -1143,13 +1203,23 @@ def __vis_install_pptx__():
             return (s[0], s[1]) if s else (0, 0)
 
     class GraphicFrame(Shape):
-        def __init__(self, d, shape_id=1, table=None):
-            Shape.__init__(self, d, shape_id, MSO_SHAPE_TYPE.TABLE)
+        def __init__(self, d, shape_id=1, table=None, chart=None):
+            Shape.__init__(
+                self,
+                d,
+                shape_id,
+                MSO_SHAPE_TYPE.CHART if chart is not None else MSO_SHAPE_TYPE.TABLE,
+            )
             self._table = table
+            self._chart = chart
 
         @property
         def has_table(self):
             return self._table is not None
+
+        @property
+        def has_chart(self):
+            return self._chart is not None
 
         @property
         def has_text_frame(self):
@@ -1161,10 +1231,22 @@ def __vis_install_pptx__():
                 raise PptxException("shape has no table")
             return self._table
 
+        @property
+        def chart(self):
+            if self._chart is None:
+                raise PptxException("shape has no chart")
+            return self._chart
+
+        @property
+        def chart_part(self):
+            return self.chart
+
         def _spec(self):
             out = dict((k, v) for k, v in self._d.items() if not k.startswith("_"))
             if self._table is not None:
                 out["table"] = self._table._spec()
+            if self._chart is not None:
+                out["chart"] = self._chart._spec()
             return _clean(out)
 
     # -- table ---------------------------------------------------------------
@@ -1217,8 +1299,26 @@ def __vis_install_pptx__():
         def merge(self, other):
             r1, c1 = self._d["_rc"]
             r2, c2 = other._d["_rc"]
-            self._d["grid_span"] = abs(c2 - c1) + 1
-            self._d["row_span"] = abs(r2 - r1) + 1
+            top, left = min(r1, r2), min(c1, c2)
+            bottom, right = max(r1, r2), max(c1, c2)
+            grid = self._d.get("_grid") or []
+            origin = grid[top][left] if grid else self._d
+            origin["grid_span"] = right - left + 1
+            origin["row_span"] = bottom - top + 1
+            origin.pop("h_merge", None)
+            origin.pop("v_merge", None)
+            for r in range(top, bottom + 1):
+                for c in range(left, right + 1):
+                    if (r, c) == (top, left):
+                        continue
+                    d = grid[r][c]
+                    d.pop("grid_span", None)
+                    d.pop("row_span", None)
+                    # a covered cell carries the merge flags PowerPoint expects
+                    if c > left:
+                        d["h_merge"] = True
+                    if r > top:
+                        d["v_merge"] = True
 
         def _spec(self):
             out = dict((k, v) for k, v in self._d.items() if not k.startswith("_"))
@@ -1274,23 +1374,48 @@ def __vis_install_pptx__():
         pass
 
     class _Table(object):
-        def __init__(self, rows, cols, width, height):
-            self._d = {
-                "col_widths": [int(width // cols)] * cols,
-                "first_row": True,
-                "band_row": True,
-            }
+        def __init__(self, rows, cols, width, height, spec=None):
+            if spec is None:
+                self._d = {
+                    "col_widths": [int(width // cols)] * cols,
+                    "first_row": True,
+                    "band_row": True,
+                }
+                row_h = int(height // rows) if rows else 0
+                row_specs = [
+                    {"height": row_h, "cells": [{} for _ in range(cols)]}
+                    for _ in range(rows)
+                ]
+            else:
+                self._d = dict(spec)
+                row_specs = list(self._d.pop("rows", []) or [])
+                cols = max(
+                    [len(self._d.get("col_widths", []) or [])]
+                    + [len(r.get("cells", []) or []) for r in row_specs]
+                    + [0]
+                )
+                rows = len(row_specs)
+                self._d.setdefault(
+                    "col_widths", [int(width // cols)] * cols if cols else []
+                )
+
             self._rows = []
-            row_h = int(height // rows) if rows else 0
-            for r in range(rows):
-                cells = []
-                cellspecs = []
-                for c in range(cols):
-                    cd = {"_rc": (r, c)}
-                    cellspecs.append(cd)
-                    cells.append(_Cell(cd))
-                rd = {"height": row_h, "_cells": cellspecs}
-                self._rows.append(_Row(rd, cells))
+            grid = []
+            for r, row_spec in enumerate(row_specs):
+                cellspecs = [dict(c) for c in row_spec.get("cells", [])]
+                while len(cellspecs) < cols:
+                    cellspecs.append({})
+                for c, cell in enumerate(cellspecs):
+                    cell["_rc"] = (r, c)
+                    cell["_grid"] = grid
+                grid.append(cellspecs)
+                rd = dict(row_spec)
+                rd["_cells"] = cellspecs
+                self._rows.append(_Row(rd, [_Cell(c) for c in cellspecs]))
+            # All cell maps must see the complete grid, not the incremental prefix.
+            for row in grid:
+                for cell in row:
+                    cell["_grid"] = grid
             self._nrows = rows
             self._ncols = cols
 
@@ -1335,7 +1460,1239 @@ def __vis_install_pptx__():
             ]
             return out
 
+    # -- charts ----------------------------------------------------------------
+
+    XL_CHART_TYPE = _Enum(
+        "AREA",
+        "AREA_STACKED",
+        "AREA_STACKED_100",
+        "BAR_CLUSTERED",
+        "BAR_STACKED",
+        "BAR_STACKED_100",
+        "BUBBLE",
+        "BUBBLE_THREE_D_EFFECT",
+        "COLUMN_CLUSTERED",
+        "COLUMN_STACKED",
+        "COLUMN_STACKED_100",
+        "DOUGHNUT",
+        "DOUGHNUT_EXPLODED",
+        "LINE",
+        "LINE_MARKERS",
+        "LINE_MARKERS_STACKED",
+        "LINE_MARKERS_STACKED_100",
+        "LINE_STACKED",
+        "LINE_STACKED_100",
+        "PIE",
+        "PIE_EXPLODED",
+        "RADAR",
+        "RADAR_FILLED",
+        "RADAR_MARKERS",
+        "XY_SCATTER",
+        "XY_SCATTER_LINES",
+        "XY_SCATTER_LINES_NO_MARKERS",
+        "XY_SCATTER_SMOOTH",
+        "XY_SCATTER_SMOOTH_NO_MARKERS",
+    )
+
+    XL_LEGEND_POSITION = _Enum("BOTTOM", "CORNER", "CUSTOM", "LEFT", "RIGHT", "TOP")
+    XL_LABEL_POSITION = _Enum(
+        "ABOVE",
+        "BELOW",
+        "BEST_FIT",
+        "CENTER",
+        "INSIDE_BASE",
+        "INSIDE_END",
+        "LEFT",
+        "MIXED",
+        "OUTSIDE_END",
+        "RIGHT",
+    )
+    XL_DATA_LABEL_POSITION = XL_LABEL_POSITION
+    XL_TICK_MARK = _Enum("CROSS", "INSIDE", "NONE", "OUTSIDE")
+    XL_TICK_LABEL_POSITION = _Enum("HIGH", "LOW", "NEXT_TO_AXIS", "NONE")
+    XL_MARKER_STYLE = _Enum(
+        "AUTOMATIC",
+        "CIRCLE",
+        "DASH",
+        "DIAMOND",
+        "DOT",
+        "NONE",
+        "PICTURE",
+        "PLUS",
+        "SQUARE",
+        "STAR",
+        "TRIANGLE",
+        "X",
+    )
+    XL_CATEGORY_TYPE = _Enum("AUTOMATIC_SCALE", "CATEGORY_SCALE", "TIME_SCALE")
+
+    #: XL_CHART_TYPE member -> extra chart-spec keys understood by the writer.
+    _CHART_TYPES = {
+        "AREA": {"type": "area"},
+        "AREA_STACKED": {"type": "area_stacked"},
+        "AREA_STACKED_100": {"type": "area_percent_stacked"},
+        "BAR_CLUSTERED": {"type": "bar"},
+        "BAR_STACKED": {"type": "bar_stacked"},
+        "BAR_STACKED_100": {"type": "bar_percent_stacked"},
+        "BUBBLE": {"type": "bubble"},
+        "BUBBLE_THREE_D_EFFECT": {"type": "bubble"},
+        "COLUMN_CLUSTERED": {"type": "column"},
+        "COLUMN_STACKED": {"type": "column_stacked"},
+        "COLUMN_STACKED_100": {"type": "column_percent_stacked"},
+        "DOUGHNUT": {"type": "doughnut"},
+        "DOUGHNUT_EXPLODED": {"type": "doughnut"},
+        "LINE": {"type": "line", "markers": False},
+        "LINE_MARKERS": {"type": "line", "markers": True},
+        "LINE_MARKERS_STACKED": {"type": "line_stacked", "markers": True},
+        "LINE_MARKERS_STACKED_100": {
+            "type": "line_percent_stacked",
+            "markers": True,
+        },
+        "LINE_STACKED": {"type": "line_stacked", "markers": False},
+        "LINE_STACKED_100": {"type": "line_percent_stacked", "markers": False},
+        "PIE": {"type": "pie"},
+        "PIE_EXPLODED": {"type": "pie", "_explosion": 25},
+        "RADAR": {"type": "radar", "radar_style": "marker"},
+        "RADAR_FILLED": {"type": "radar", "radar_style": "filled"},
+        "RADAR_MARKERS": {"type": "radar", "radar_style": "marker"},
+        "XY_SCATTER": {"type": "scatter", "scatter_style": "lineMarker"},
+        "XY_SCATTER_LINES": {"type": "scatter", "scatter_style": "lineMarker"},
+        "XY_SCATTER_LINES_NO_MARKERS": {
+            "type": "scatter",
+            "scatter_style": "lineMarker",
+        },
+        "XY_SCATTER_SMOOTH": {
+            "type": "scatter",
+            "scatter_style": "smoothMarker",
+            "smooth": True,
+        },
+        "XY_SCATTER_SMOOTH_NO_MARKERS": {
+            "type": "scatter",
+            "scatter_style": "smoothMarker",
+            "smooth": True,
+        },
+    }
+
+    #: XY / bubble chart types plot x against y rather than against categories.
+    _XY_TYPES = frozenset(
+        [
+            "BUBBLE",
+            "BUBBLE_THREE_D_EFFECT",
+            "XY_SCATTER",
+            "XY_SCATTER_LINES",
+            "XY_SCATTER_LINES_NO_MARKERS",
+            "XY_SCATTER_SMOOTH",
+            "XY_SCATTER_SMOOTH_NO_MARKERS",
+        ]
+    )
+
+    _LEGEND_POS = {
+        "BOTTOM": "b",
+        "CORNER": "tr",
+        "CUSTOM": "r",
+        "LEFT": "l",
+        "RIGHT": "r",
+        "TOP": "t",
+    }
+    _LABEL_POS = {
+        "ABOVE": "t",
+        "BELOW": "b",
+        "BEST_FIT": "bestFit",
+        "CENTER": "ctr",
+        "INSIDE_BASE": "inBase",
+        "INSIDE_END": "inEnd",
+        "LEFT": "l",
+        "MIXED": "ctr",
+        "OUTSIDE_END": "outEnd",
+        "RIGHT": "r",
+    }
+    _TICK_MARK = {"CROSS": "cross", "INSIDE": "in", "NONE": "none", "OUTSIDE": "out"}
+    _TICK_LBL_POS = {
+        "HIGH": "high",
+        "LOW": "low",
+        "NEXT_TO_AXIS": "nextTo",
+        "NONE": "none",
+    }
+    _MARKER_STYLE = {
+        "AUTOMATIC": "auto",
+        "CIRCLE": "circle",
+        "DASH": "dash",
+        "DIAMOND": "diamond",
+        "DOT": "dot",
+        "NONE": "none",
+        "PICTURE": "picture",
+        "PLUS": "plus",
+        "SQUARE": "square",
+        "STAR": "star",
+        "TRIANGLE": "triangle",
+        "X": "x",
+    }
+
+    def _code(table, value, default=None):
+        """Map an enum member (or a raw wire string) onto its OOXML token."""
+        if value is None:
+            return default
+        key = str(value)
+        return table.get(key, table.get(key.upper(), key))
+
+    def _uncode(table, code, default=None):
+        if code is None:
+            return default
+        for name, val in table.items():
+            if val == code:
+                return _EnumMember(name)
+        return _EnumMember(str(code))
+
+    def _put(d, key, value):
+        """Set `key`, or drop it entirely when `value` is None."""
+        if value is None:
+            d.pop(key, None)
+        else:
+            d[key] = value
+        return value
+
+    def _prune(v):
+        """Recursively drop None values so the wire spec stays total."""
+        if isinstance(v, dict):
+            return dict(
+                (k, _prune(x)) for k, x in v.items() if x is not None and k[:1] != "_"
+            )
+        if isinstance(v, (list, tuple)):
+            return [_prune(x) for x in v if x is not None]
+        return v
+
+    def _num(v):
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return int(v)
+        if isinstance(v, (int, float)):
+            return v
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return v
+
+    def _float_or(v):
+        """Plotted numbers are floats in python-pptx; anything else passes through."""
+        try:
+            return None if v is None else float(v)
+        except (TypeError, ValueError):
+            return v
+
+    # -- chart data ------------------------------------------------------------
+
+    class _SeriesData(object):
+        """One series being fed to `shapes.add_chart` / `chart.replace_data`."""
+
+        def __init__(self, name=None, values=(), number_format=None):
+            self.name = name
+            self.number_format = number_format
+            self.values = list(values or ())
+            self.x_values = []
+            self.y_values = []
+            self.sizes = []
+
+        def add_data_point(self, *args, **kwargs):
+            args = list(args)
+            if len(args) >= 3:
+                self.x_values.append(args[0])
+                self.y_values.append(args[1])
+                self.sizes.append(args[2])
+                return (args[0], args[1], args[2])
+            if len(args) == 2:
+                self.x_values.append(args[0])
+                self.y_values.append(args[1])
+                return (args[0], args[1])
+            if len(args) == 1:
+                self.values.append(args[0])
+                return args[0]
+            raise PptxException("add_data_point() needs a value")
+
+        def _spec(self):
+            d = {}
+            _put(d, "name", None if self.name is None else str(self.name))
+            if self.values:
+                d["values"] = [_num(v) for v in self.values]
+            if self.x_values:
+                d["x_values"] = [_num(v) for v in self.x_values]
+            if self.y_values:
+                d["y_values"] = [_num(v) for v in self.y_values]
+            if self.sizes:
+                d["sizes"] = [_num(v) for v in self.sizes]
+            return d
+
+    class CategoryChartData(object):
+        """python-pptx `CategoryChartData`: categories plus one value series each."""
+
+        def __init__(self, number_format=None):
+            self._categories = []
+            self._series = []
+            self.number_format = number_format
+
+        @property
+        def categories(self):
+            return self._categories
+
+        @categories.setter
+        def categories(self, value):
+            self._categories = list(value)
+
+        def add_category(self, label):
+            self._categories.append(label)
+            return label
+
+        @property
+        def series(self):
+            return tuple(self._series)
+
+        def add_series(self, name=None, values=(), number_format=None):
+            ser = _SeriesData(name, values, number_format)
+            self._series.append(ser)
+            return ser
+
+        def _spec(self):
+            d = {"series": [s._spec() for s in self._series]}
+            if self._categories:
+                d["categories"] = [
+                    "" if c is None else str(c) for c in self._categories
+                ]
+            _put(d, "number_format", self.number_format)
+            return d
+
+    class XyChartData(CategoryChartData):
+        """python-pptx `XyChartData`: series of (x, y) points."""
+
+        def add_series(self, name=None, number_format=None):
+            ser = _SeriesData(name, (), number_format)
+            self._series.append(ser)
+            return ser
+
+    class BubbleChartData(XyChartData):
+        """python-pptx `BubbleChartData`: series of (x, y, size) points."""
+
+    # -- chart parts -----------------------------------------------------------
+
+    class _ChartFormat(object):
+        """`.fill` / `.line` over any chart spec dict."""
+
+        def __init__(self, owner):
+            self._d = owner
+
+        @property
+        def fill(self):
+            return _Fill(self._d, "fill")
+
+        @property
+        def line(self):
+            return _LineFormat(self._d, "line")
+
+        @property
+        def shadow(self):
+            return _Shadow(self._d)
+
+    class _DataLabels(object):
+        """`<c:dLbls>` settings over `owner[key]`."""
+
+        _FLAGS = {
+            "show_value": "show_value",
+            "show_category_name": "show_category",
+            "show_series_name": "show_series",
+            "show_percentage": "show_percent",
+            "show_legend_key": "show_legend_key",
+            "show_bubble_size": "show_bubble_size",
+        }
+
+        def __init__(self, owner, key="data_labels"):
+            self._owner = owner
+            self._key = key
+
+        def _d(self):
+            cur = self._owner.get(self._key)
+            if not isinstance(cur, dict):
+                cur = {}
+                self._owner[self._key] = cur
+            return cur
+
+        @property
+        def number_format(self):
+            return self._d().get("number_format")
+
+        @number_format.setter
+        def number_format(self, value):
+            _put(self._d(), "number_format", None if value is None else str(value))
+
+        @property
+        def number_format_is_linked(self):
+            return False
+
+        @number_format_is_linked.setter
+        def number_format_is_linked(self, value):
+            pass
+
+        @property
+        def position(self):
+            return _uncode(_LABEL_POS, self._d().get("position"))
+
+        @position.setter
+        def position(self, value):
+            _put(self._d(), "position", _code(_LABEL_POS, value))
+
+        @property
+        def font(self):
+            return _Font(self._d().setdefault("font", {}))
+
+        @property
+        def format(self):
+            return _ChartFormat(self._d())
+
+        @property
+        def separator(self):
+            return self._d().get("separator")
+
+        @separator.setter
+        def separator(self, value):
+            _put(self._d(), "separator", None if value is None else str(value))
+
+        @staticmethod
+        def _flag(py_name, wire):
+            def getter(self):
+                return self._d().get(wire)
+
+            def setter(self, value):
+                _put(self._d(), wire, None if value is None else bool(value))
+
+            return property(getter, setter)
+
+    for _py, _wire in _DataLabels._FLAGS.items():
+        setattr(_DataLabels, _py, _DataLabels._flag(_py, _wire))
+
+    class _ChartTitleTextFrame(object):
+        def __init__(self, d):
+            self._d = d
+
+        @property
+        def text(self):
+            t = self._d.get("title")
+            return t if isinstance(t, str) else ""
+
+        @text.setter
+        def text(self, value):
+            self._d["title"] = "" if value is None else str(value)
+
+        @property
+        def paragraphs(self):
+            return (_ChartTitleParagraph(self._d),)
+
+        def add_paragraph(self):
+            return _ChartTitleParagraph(self._d)
+
+        def clear(self):
+            self._d["title"] = ""
+            return self
+
+        @property
+        def word_wrap(self):
+            return None
+
+        @word_wrap.setter
+        def word_wrap(self, value):
+            pass
+
+    class _ChartTitleRun(object):
+        def __init__(self, d):
+            self._d = d
+
+        @property
+        def text(self):
+            t = self._d.get("title")
+            return t if isinstance(t, str) else ""
+
+        @text.setter
+        def text(self, value):
+            self._d["title"] = "" if value is None else str(value)
+
+        @property
+        def font(self):
+            return _Font(self._d.setdefault("title_font", {}))
+
+    class _ChartTitleParagraph(object):
+        def __init__(self, d):
+            self._d = d
+
+        @property
+        def runs(self):
+            return (_ChartTitleRun(self._d),)
+
+        def add_run(self):
+            return _ChartTitleRun(self._d)
+
+        @property
+        def text(self):
+            t = self._d.get("title")
+            return t if isinstance(t, str) else ""
+
+        @text.setter
+        def text(self, value):
+            self._d["title"] = "" if value is None else str(value)
+
+        @property
+        def font(self):
+            return _Font(self._d.setdefault("title_font", {}))
+
+        @property
+        def alignment(self):
+            return None
+
+        @alignment.setter
+        def alignment(self, value):
+            pass
+
+    class _ChartTitle(object):
+        """`chart.chart_title` / `axis.axis_title`, keyed into a spec dict."""
+
+        def __init__(self, d, key="title", font_key="title_font"):
+            self._d = d
+            self._key = key
+            self._font_key = font_key
+
+        @property
+        def has_text_frame(self):
+            return True
+
+        @property
+        def text_frame(self):
+            return _ChartTitleTextFrame(_TitleView(self._d, self._key, self._font_key))
+
+        @property
+        def format(self):
+            return _ChartFormat(self._d)
+
+    class _TitleView(dict):
+        """A tiny live view mapping `title`/`title_font` onto arbitrary keys."""
+
+        def __init__(self, owner, key, font_key):
+            dict.__init__(self)
+            self._owner = owner
+            self._map = {"title": key, "title_font": font_key}
+
+        def get(self, k, default=None):
+            return self._owner.get(self._map.get(k, k), default)
+
+        def __getitem__(self, k):
+            return self._owner[self._map.get(k, k)]
+
+        def __setitem__(self, k, v):
+            self._owner[self._map.get(k, k)] = v
+
+        def setdefault(self, k, default=None):
+            return self._owner.setdefault(self._map.get(k, k), default)
+
+    class _TickLabels(object):
+        def __init__(self, d):
+            self._d = d
+
+        @property
+        def font(self):
+            return _Font(self._d.setdefault("tick_labels_font", {}))
+
+        @property
+        def number_format(self):
+            return self._d.get("number_format")
+
+        @number_format.setter
+        def number_format(self, value):
+            _put(self._d, "number_format", None if value is None else str(value))
+
+        @property
+        def number_format_is_linked(self):
+            return False
+
+        @number_format_is_linked.setter
+        def number_format_is_linked(self, value):
+            pass
+
+        @property
+        def offset(self):
+            return self._d.get("tick_label_offset", 100)
+
+        @offset.setter
+        def offset(self, value):
+            _put(self._d, "tick_label_offset", None if value is None else int(value))
+
+    class _ChartAxis(object):
+        """`chart.category_axis` / `chart.value_axis` over one axis spec dict."""
+
+        def __init__(self, chart_d, key):
+            self._chart = chart_d
+            self._key = key
+
+        def _d(self):
+            cur = self._chart.get(self._key)
+            if not isinstance(cur, dict):
+                cur = {}
+                self._chart[self._key] = cur
+            return cur
+
+        @property
+        def visible(self):
+            return self._d().get("visible", True)
+
+        @visible.setter
+        def visible(self, value):
+            _put(self._d(), "visible", None if value is None else bool(value))
+
+        @property
+        def has_major_gridlines(self):
+            return bool(self._d().get("major_gridlines", False))
+
+        @has_major_gridlines.setter
+        def has_major_gridlines(self, value):
+            self._d()["major_gridlines"] = bool(value)
+
+        @property
+        def has_minor_gridlines(self):
+            return bool(self._d().get("minor_gridlines", False))
+
+        @has_minor_gridlines.setter
+        def has_minor_gridlines(self, value):
+            self._d()["minor_gridlines"] = bool(value)
+
+        @property
+        def has_title(self):
+            return "title" in self._d()
+
+        @has_title.setter
+        def has_title(self, value):
+            d = self._d()
+            if value:
+                d.setdefault("title", "")
+            else:
+                d.pop("title", None)
+
+        @property
+        def axis_title(self):
+            d = self._d()
+            d.setdefault("title", "")
+            return _ChartTitle(d)
+
+        @property
+        def maximum_scale(self):
+            return self._d().get("max")
+
+        @maximum_scale.setter
+        def maximum_scale(self, value):
+            _put(self._d(), "max", _num(value))
+
+        @property
+        def minimum_scale(self):
+            return self._d().get("min")
+
+        @minimum_scale.setter
+        def minimum_scale(self, value):
+            _put(self._d(), "min", _num(value))
+
+        @property
+        def major_unit(self):
+            return self._d().get("major_unit")
+
+        @major_unit.setter
+        def major_unit(self, value):
+            _put(self._d(), "major_unit", _num(value))
+
+        @property
+        def minor_unit(self):
+            return self._d().get("minor_unit")
+
+        @minor_unit.setter
+        def minor_unit(self, value):
+            _put(self._d(), "minor_unit", _num(value))
+
+        @property
+        def reverse_order(self):
+            return bool(self._d().get("reverse", False))
+
+        @reverse_order.setter
+        def reverse_order(self, value):
+            _put(self._d(), "reverse", None if value is None else bool(value))
+
+        @property
+        def log_base(self):
+            return self._d().get("log_base")
+
+        @log_base.setter
+        def log_base(self, value):
+            _put(self._d(), "log_base", _num(value))
+
+        @property
+        def major_tick_mark(self):
+            return _uncode(_TICK_MARK, self._d().get("major_tick_mark"))
+
+        @major_tick_mark.setter
+        def major_tick_mark(self, value):
+            _put(self._d(), "major_tick_mark", _code(_TICK_MARK, value))
+
+        @property
+        def minor_tick_mark(self):
+            return _uncode(_TICK_MARK, self._d().get("minor_tick_mark"))
+
+        @minor_tick_mark.setter
+        def minor_tick_mark(self, value):
+            _put(self._d(), "minor_tick_mark", _code(_TICK_MARK, value))
+
+        @property
+        def tick_label_position(self):
+            return _uncode(_TICK_LBL_POS, self._d().get("tick_label_position"))
+
+        @tick_label_position.setter
+        def tick_label_position(self, value):
+            _put(self._d(), "tick_label_position", _code(_TICK_LBL_POS, value))
+
+        @property
+        def tick_labels(self):
+            return _TickLabels(self._d())
+
+        @property
+        def format(self):
+            return _ChartFormat(self._d())
+
+        @property
+        def category_type(self):
+            return XL_CATEGORY_TYPE.CATEGORY_SCALE
+
+    class _Legend(object):
+        def __init__(self, chart_d):
+            self._chart = chart_d
+
+        def _d(self):
+            cur = self._chart.get("legend")
+            if not isinstance(cur, dict):
+                cur = {"position": cur if isinstance(cur, str) else "r"}
+                self._chart["legend"] = cur
+            return cur
+
+        @property
+        def position(self):
+            return _uncode(_LEGEND_POS, self._d().get("position"), None)
+
+        @position.setter
+        def position(self, value):
+            self._d()["position"] = _code(_LEGEND_POS, value, "r")
+
+        @property
+        def include_in_layout(self):
+            return bool(self._d().get("overlay", False))
+
+        @include_in_layout.setter
+        def include_in_layout(self, value):
+            self._d()["overlay"] = bool(value)
+
+        @property
+        def font(self):
+            return _Font(self._d().setdefault("font", {}))
+
+        @property
+        def horz_offset(self):
+            return 0.0
+
+        @horz_offset.setter
+        def horz_offset(self, value):
+            pass
+
+    class _Marker(object):
+        def __init__(self, series_d):
+            self._owner = series_d
+
+        def _d(self):
+            cur = self._owner.get("marker")
+            if not isinstance(cur, dict):
+                cur = {} if cur is None else {"symbol": str(cur)}
+                self._owner["marker"] = cur
+            return cur
+
+        @property
+        def style(self):
+            return _uncode(_MARKER_STYLE, self._d().get("symbol"))
+
+        @style.setter
+        def style(self, value):
+            _put(self._d(), "symbol", _code(_MARKER_STYLE, value))
+
+        @property
+        def size(self):
+            return self._d().get("size")
+
+        @size.setter
+        def size(self, value):
+            _put(self._d(), "size", None if value is None else int(value))
+
+        @property
+        def format(self):
+            return _ChartFormat(self._d())
+
+    class _Point(object):
+        def __init__(self, d):
+            self._d = d
+
+        @property
+        def format(self):
+            return _ChartFormat(self._d)
+
+        @property
+        def data_label(self):
+            return _DataLabels(self._d, "data_labels")
+
+        @property
+        def explosion(self):
+            return self._d.get("explosion")
+
+        @explosion.setter
+        def explosion(self, value):
+            _put(self._d, "explosion", None if value is None else int(value))
+
+    class _Points(object):
+        """Lazily grown per-point overrides — `series.points[2].format.fill`."""
+
+        def __init__(self, series_d, count):
+            self._owner = series_d
+            self._count = count
+
+        def _list(self):
+            cur = self._owner.get("points")
+            if not isinstance(cur, list):
+                cur = []
+                self._owner["points"] = cur
+            return cur
+
+        def __getitem__(self, i):
+            pts = self._list()
+            if i < 0:
+                i += max(self._count, len(pts))
+            if i < 0:
+                raise IndexError("point index out of range")
+            while len(pts) <= i:
+                pts.append({})
+            return _Point(pts[i])
+
+        def __iter__(self):
+            for i in range(len(self)):
+                yield self[i]
+
+        def __len__(self):
+            return max(self._count, len(self._list()))
+
+    class _Series(object):
+        """One plotted series, over its spec dict."""
+
+        def __init__(self, d, index=0):
+            self._d = d
+            self._index = index
+
+        @property
+        def index(self):
+            return self._index
+
+        @property
+        def name(self):
+            return self._d.get("name", "")
+
+        @name.setter
+        def name(self, value):
+            _put(self._d, "name", None if value is None else str(value))
+
+        @property
+        def values(self):
+            # python-pptx reads plotted values back out of the XML as floats.
+            return tuple(_float_or(v) for v in self._d.get("values", ()))
+
+        @property
+        def format(self):
+            return _ChartFormat(self._d)
+
+        @property
+        def fill(self):
+            return _Fill(self._d, "fill")
+
+        @property
+        def line(self):
+            return _LineFormat(self._d, "line")
+
+        @property
+        def marker(self):
+            return _Marker(self._d)
+
+        @property
+        def smooth(self):
+            return bool(self._d.get("smooth", False))
+
+        @smooth.setter
+        def smooth(self, value):
+            self._d["smooth"] = bool(value)
+
+        @property
+        def invert_if_negative(self):
+            return bool(self._d.get("invert_if_negative", False))
+
+        @invert_if_negative.setter
+        def invert_if_negative(self, value):
+            self._d["invert_if_negative"] = bool(value)
+
+        @property
+        def explosion(self):
+            return self._d.get("explosion")
+
+        @explosion.setter
+        def explosion(self, value):
+            _put(self._d, "explosion", None if value is None else int(value))
+
+        @property
+        def has_data_labels(self):
+            return isinstance(self._d.get("data_labels"), dict)
+
+        @has_data_labels.setter
+        def has_data_labels(self, value):
+            if value:
+                self._d.setdefault("data_labels", {})
+            else:
+                self._d["data_labels"] = False
+
+        @property
+        def data_labels(self):
+            return _DataLabels(self._d, "data_labels")
+
+        @property
+        def points(self):
+            return _Points(self._d, len(self._d.get("values", ())))
+
+    class _SeriesCollection(object):
+        def __init__(self, chart_d):
+            self._chart = chart_d
+
+        def _list(self):
+            cur = self._chart.get("series")
+            if not isinstance(cur, list):
+                cur = []
+                self._chart["series"] = cur
+            return cur
+
+        def __getitem__(self, i):
+            return _Series(self._list()[i], i)
+
+        def __iter__(self):
+            for i, d in enumerate(self._list()):
+                yield _Series(d, i)
+
+        def __len__(self):
+            return len(self._list())
+
+    class _Plot(object):
+        """The single plot group of a chart — python-pptx `chart.plots[0]`."""
+
+        def __init__(self, chart_d):
+            self._d = chart_d
+
+        @property
+        def categories(self):
+            return tuple(self._d.get("categories", ()))
+
+        @property
+        def series(self):
+            return _SeriesCollection(self._d)
+
+        @property
+        def vary_by_categories(self):
+            return bool(self._d.get("vary_colors", False))
+
+        @vary_by_categories.setter
+        def vary_by_categories(self, value):
+            self._d["vary_colors"] = bool(value)
+
+        @property
+        def gap_width(self):
+            return self._d.get("gap_width", 150)
+
+        @gap_width.setter
+        def gap_width(self, value):
+            _put(self._d, "gap_width", None if value is None else int(value))
+
+        @property
+        def overlap(self):
+            return self._d.get("overlap", 0)
+
+        @overlap.setter
+        def overlap(self, value):
+            _put(self._d, "overlap", None if value is None else int(value))
+
+        @property
+        def first_slice_angle(self):
+            return self._d.get("first_slice_angle", 0)
+
+        @first_slice_angle.setter
+        def first_slice_angle(self, value):
+            _put(self._d, "first_slice_angle", None if value is None else int(value))
+
+        @property
+        def hole_size(self):
+            return self._d.get("hole_size", 50)
+
+        @hole_size.setter
+        def hole_size(self, value):
+            _put(self._d, "hole_size", None if value is None else int(value))
+
+        @property
+        def bubble_scale(self):
+            return self._d.get("bubble_scale", 100)
+
+        @bubble_scale.setter
+        def bubble_scale(self, value):
+            _put(self._d, "bubble_scale", None if value is None else int(value))
+
+        @property
+        def has_data_labels(self):
+            return isinstance(self._d.get("data_labels"), dict)
+
+        @has_data_labels.setter
+        def has_data_labels(self, value):
+            if value:
+                self._d.setdefault("data_labels", {})
+            else:
+                self._d["data_labels"] = False
+
+        @property
+        def data_labels(self):
+            return _DataLabels(self._d, "data_labels")
+
+    class Chart(object):
+        """python-pptx `Chart`, backed by the chart spec the writer consumes."""
+
+        def __init__(self, d, chart_type=None):
+            self._d = d
+            self._type = chart_type or _chart_type_of(d)
+
+        @property
+        def chart_type(self):
+            return self._type
+
+        @property
+        def part(self):
+            return self
+
+        @property
+        def element(self):
+            return self._d
+
+        @property
+        def plots(self):
+            return (_Plot(self._d),)
+
+        @property
+        def series(self):
+            return _SeriesCollection(self._d)
+
+        @property
+        def font(self):
+            return _Font(self._d.setdefault("font", {}))
+
+        @property
+        def format(self):
+            return _ChartFormat(self._d)
+
+        @property
+        def chart_style(self):
+            return self._d.get("style")
+
+        @chart_style.setter
+        def chart_style(self, value):
+            _put(self._d, "style", None if value is None else int(value))
+
+        @property
+        def has_title(self):
+            return isinstance(self._d.get("title"), str)
+
+        @has_title.setter
+        def has_title(self, value):
+            if value:
+                if not isinstance(self._d.get("title"), str):
+                    self._d["title"] = ""
+            else:
+                self._d["title"] = False
+
+        @property
+        def chart_title(self):
+            if not isinstance(self._d.get("title"), str):
+                self._d["title"] = ""
+            return _ChartTitle(self._d)
+
+        @property
+        def has_legend(self):
+            legend = self._d.get("legend")
+            return legend is not None and legend is not False
+
+        @has_legend.setter
+        def has_legend(self, value):
+            if value:
+                if not isinstance(self._d.get("legend"), dict):
+                    self._d["legend"] = {"position": "r"}
+            else:
+                self._d.pop("legend", None)
+
+        @property
+        def legend(self):
+            if not self.has_legend:
+                return None
+            return _Legend(self._d)
+
+        @property
+        def _is_xy(self):
+            return str(self._type) in _XY_TYPES
+
+        @property
+        def category_axis(self):
+            return _ChartAxis(self._d, "x_axis" if self._is_xy else "category_axis")
+
+        @property
+        def value_axis(self):
+            return _ChartAxis(self._d, "y_axis" if self._is_xy else "value_axis")
+
+        @property
+        def x_axis(self):
+            return self.category_axis
+
+        @property
+        def y_axis(self):
+            return self.value_axis
+
+        @property
+        def display_blanks(self):
+            return self._d.get("display_blanks", "gap")
+
+        @display_blanks.setter
+        def display_blanks(self, value):
+            _put(self._d, "display_blanks", None if value is None else str(value))
+
+        @property
+        def plot_area(self):
+            return _ChartFormat(self._d.setdefault("plot_area", {}))
+
+        def replace_data(self, chart_data):
+            """Swap categories and series, keeping every formatting key intact."""
+            data = chart_data._spec()
+            old = dict(
+                (s.get("name"), s)
+                for s in self._d.get("series", [])
+                if isinstance(s, dict)
+            )
+            merged = []
+            for ser in data.get("series", []):
+                prev = old.get(ser.get("name"))
+                if prev:
+                    keep = dict(
+                        (k, v)
+                        for k, v in prev.items()
+                        if k not in ("values", "x_values", "y_values", "sizes", "name")
+                    )
+                    keep.update(ser)
+                    ser = keep
+                merged.append(ser)
+            self._d["series"] = merged
+            if "categories" in data:
+                self._d["categories"] = data["categories"]
+            else:
+                self._d.pop("categories", None)
+            if data.get("number_format"):
+                self._d["number_format"] = data["number_format"]
+            return self
+
+        def _spec(self):
+            return _prune(self._d)
+
+    def _chart_type_of(spec):
+        """Best python-pptx chart enum for a chart parsed by the Rust reader."""
+        kind = str(spec.get("type", "column"))
+        exact = {
+            "area_stacked": "AREA_STACKED",
+            "area_percent_stacked": "AREA_STACKED_100",
+            "bar_stacked": "BAR_STACKED",
+            "bar_percent_stacked": "BAR_STACKED_100",
+            "column_stacked": "COLUMN_STACKED",
+            "column_percent_stacked": "COLUMN_STACKED_100",
+            "line_stacked": "LINE_STACKED",
+            "line_percent_stacked": "LINE_STACKED_100",
+        }
+        name = exact.get(kind)
+        if name is None:
+            name = {
+                "area": "AREA",
+                "bar": "BAR_CLUSTERED",
+                "bubble": "BUBBLE",
+                "column": "COLUMN_CLUSTERED",
+                "doughnut": "DOUGHNUT",
+                "line": "LINE_MARKERS" if spec.get("markers") else "LINE",
+                "pie": "PIE",
+                "radar": "RADAR",
+                "scatter": "XY_SCATTER",
+            }.get(kind, "COLUMN_CLUSTERED")
+        return getattr(XL_CHART_TYPE, name)
+
+    def _chart_spec(chart_type, chart_data):
+        """Merge an XL_CHART_TYPE with its data into one wire chart spec."""
+        key = str(chart_type) if chart_type is not None else "COLUMN_CLUSTERED"
+        base = _CHART_TYPES.get(key)
+        if base is None:
+            raise PptxException("unsupported chart type: %s" % key)
+        d = dict((k, v) for k, v in base.items() if not k.startswith("_"))
+        data = chart_data._spec() if chart_data is not None else {"series": []}
+        for k, v in data.items():
+            d[k] = v
+        if key in ("PIE_EXPLODED", "DOUGHNUT_EXPLODED"):
+            for ser in d.get("series", []):
+                ser.setdefault("explosion", 25)
+        if key in (
+            "XY_SCATTER",
+            "XY_SCATTER_SMOOTH_NO_MARKERS",
+            "XY_SCATTER_LINES_NO_MARKERS",
+        ):
+            for ser in d.get("series", []):
+                if key == "XY_SCATTER":
+                    ser.setdefault("line", {"type": "none"})
+                else:
+                    ser.setdefault("marker", {"symbol": "none"})
+        if d.get("smooth"):
+            for ser in d.get("series", []):
+                ser.setdefault("smooth", True)
+            d.pop("smooth", None)
+        return d
+
     # -- shape trees ---------------------------------------------------------
+
+    def _shape_from_spec(raw):
+        """Hydrate a python-pptx shape facade over one Rust-reader shape map."""
+        d = dict(raw)
+        shape_id = int(d.pop("shape_id", len(d) + 1))
+        kind = d.get("kind")
+        if kind == "picture":
+            return Picture(d, shape_id)
+        if kind == "table":
+            table = _Table(
+                0,
+                0,
+                int(d.get("width", 0)),
+                int(d.get("height", 0)),
+                d.get("table") or {},
+            )
+            return GraphicFrame(d, shape_id, table=table)
+        if kind == "chart":
+            chart = Chart(d.get("chart") or {})
+            return GraphicFrame(d, shape_id, chart=chart)
+        shape_type = {
+            "auto": MSO_SHAPE_TYPE.AUTO_SHAPE,
+            "connector": MSO_SHAPE_TYPE.LINE,
+            "textbox": MSO_SHAPE_TYPE.TEXT_BOX,
+            "group": MSO_SHAPE_TYPE.GROUP,
+        }.get(kind)
+        if d.get("ph"):
+            shape_type = MSO_SHAPE_TYPE.PLACEHOLDER
+        return Shape(d, shape_id, shape_type)
 
     class _Placeholders(object):
         def __init__(self, shapes):
@@ -1357,9 +2714,11 @@ def __vis_install_pptx__():
             return len(self._all())
 
     class _Shapes(object):
-        def __init__(self, slide):
+        def __init__(self, slide, specs=None):
             self._slide = slide
             self._shapes = []
+            for spec in specs or ():
+                self._shapes.append(_shape_from_spec(spec))
 
         def _next_id(self):
             return len(self._shapes) + 2
@@ -1452,6 +2811,22 @@ def __vis_install_pptx__():
                 }
             )
             return self._add(Shape(d, self._next_id(), MSO_SHAPE_TYPE.LINE))
+
+        def add_chart(self, chart_type, x, y, cx, cy, chart_data=None):
+            spec = _chart_spec(chart_type, chart_data)
+            d = _clean(
+                {
+                    "kind": "chart",
+                    "left": _emu(x),
+                    "top": _emu(y),
+                    "width": _emu(cx),
+                    "height": _emu(cy),
+                    "name": "Chart %d" % (len(self._shapes) + 1),
+                    "chart": spec,
+                }
+            )
+            frame = GraphicFrame(d, self._next_id(), chart=Chart(spec, chart_type))
+            return self._add(frame)
 
         @property
         def title(self):
@@ -1739,10 +3114,20 @@ def __vis_install_pptx__():
             return ()
 
     class Slide(object):
-        def __init__(self, prs, layout, slide_id):
+        def __init__(self, prs, layout, slide_id, spec=None):
             self._prs = prs
             self._layout = layout
             self._id = slide_id
+            if spec is not None:
+                self._d = dict(spec)
+                shape_specs = self._d.pop("shapes", []) or []
+                # Reader diagnostics are not part of the build schema.
+                for key in ("index", "name", "layout_part", "paragraphs"):
+                    self._d.pop(key, None)
+                self._d["layout"] = layout._index
+                self._shapes = _Shapes(self, shape_specs)
+                return
+
             self._d = {"layout": layout._index}
             self._shapes = _Shapes(self)
             for ph in layout._spec["placeholders"]:
@@ -1860,17 +3245,34 @@ def __vis_install_pptx__():
 
     class Presentation(object):
         def __init__(self, pptx=None):
-            if pptx is not None:
-                raise PptxException(
-                    "the vis pptx shim builds new presentations only; "
-                    "opening or editing an existing .pptx is not supported"
-                )
-            # python-pptx's default template is 10in x 7.5in (4:3).
-            self._d = {"width": 9144000, "height": 6858000, "properties": {}}
+            if pptx is None:
+                self._d = {"width": 9144000, "height": 6858000, "properties": {}}
+                read_slides = []
+            else:
+                if hasattr(pptx, "read"):
+                    data = pptx.read()
+                else:
+                    with open(str(pptx), "rb") as f:
+                        data = f.read()
+                if isinstance(data, str):
+                    data = data.encode("utf-8")
+                parsed = _raise(*_read(base64.b64encode(data).decode("ascii")))
+                self._d = {
+                    "width": int(parsed.get("width", 9144000)),
+                    "height": int(parsed.get("height", 6858000)),
+                    "properties": dict(parsed.get("properties") or {}),
+                }
+                read_slides = list(parsed.get("slides") or [])
+
             self._layout_specs = _layouts_for(self._d["width"])
             self._master = _SlideMaster(self)
             self._layouts = _SlideLayouts(self._layout_specs, self._master)
             self._slides = _Slides(self)
+            for n, spec in enumerate(read_slides):
+                layout = (
+                    self._layouts.get_by_name(spec.get("layout")) or self._layouts[6]
+                )
+                self._slides._slides.append(Slide(self, layout, 256 + n, spec))
 
         @property
         def slides(self):
@@ -2014,29 +3416,74 @@ def __vis_install_pptx__():
 
     chart_mod = types.ModuleType("pptx.chart")
     chart_data_mod = types.ModuleType("pptx.chart.data")
-
-    class CategoryChartData:
-        def __init__(self):
-            self.categories = []
-            self.series = []
-
-        def add_category(self, label):
-            self.categories.append(label)
-            return label
-
-        def add_series(self, name, values=()):
-            series = (name, tuple(values))
-            self.series.append(series)
-            return series
-
-    chart_data_mod.CategoryChartData = CategoryChartData
     chart_data_mod.ChartData = CategoryChartData
+    chart_data_mod.CategoryChartData = CategoryChartData
+    chart_data_mod.XyChartData = XyChartData
+    chart_data_mod.BubbleChartData = BubbleChartData
     chart_mod.data = chart_data_mod
+
+    chart_chart_mod = types.ModuleType("pptx.chart.chart")
+    chart_chart_mod.Chart = Chart
+    chart_chart_mod.Legend = _Legend
+    chart_chart_mod.PlotArea = _Plot
+    chart_mod.chart = chart_chart_mod
+
+    chart_plot_mod = types.ModuleType("pptx.chart.plot")
+    chart_plot_mod.Plot = _Plot
+    chart_plot_mod.CategoryPlot = _Plot
+    chart_plot_mod.BarPlot = _Plot
+    chart_plot_mod.LinePlot = _Plot
+    chart_plot_mod.PiePlot = _Plot
+    chart_plot_mod.XyPlot = _Plot
+    chart_plot_mod.BubblePlot = _Plot
+    chart_mod.plot = chart_plot_mod
+
+    chart_series_mod = types.ModuleType("pptx.chart.series")
+    chart_series_mod.SeriesCollection = _SeriesCollection
+    chart_series_mod.BarSeries = _Series
+    chart_series_mod.LineSeries = _Series
+    chart_series_mod.PieSeries = _Series
+    chart_series_mod.XySeries = _Series
+    chart_series_mod.BubbleSeries = _Series
+    chart_mod.series = chart_series_mod
+
+    chart_point_mod = types.ModuleType("pptx.chart.point")
+    chart_point_mod.Point = _Point
+    chart_point_mod.PointCollection = _Points
+    chart_mod.point = chart_point_mod
+
+    chart_marker_mod = types.ModuleType("pptx.chart.marker")
+    chart_marker_mod.Marker = _Marker
+    chart_mod.marker = chart_marker_mod
+
+    chart_axis_mod = types.ModuleType("pptx.chart.axis")
+    chart_axis_mod.CategoryAxis = _ChartAxis
+    chart_axis_mod.ValueAxis = _ChartAxis
+    chart_axis_mod.DateAxis = _ChartAxis
+    chart_axis_mod.AxisTitle = _ChartTitle
+    chart_axis_mod.TickLabels = _TickLabels
+    chart_mod.axis = chart_axis_mod
+
+    chart_datalabel_mod = types.ModuleType("pptx.chart.datalabel")
+    chart_datalabel_mod.DataLabels = _DataLabels
+    chart_datalabel_mod.DataLabel = _DataLabels
+    chart_mod.datalabel = chart_datalabel_mod
+
+    chart_xmlwriter_mod = types.ModuleType("pptx.chart.xmlwriter")
+    chart_mod.xmlwriter = chart_xmlwriter_mod
+
     mod.chart = chart_mod
 
-    # Chart OOXML output is not supported by the compact Rust deck writer.
-    # The data object above is still useful for code that assembles decks
-    # conditionally, and imports retain the normal python-pptx package shape.
+    enum_chart = types.ModuleType("pptx.enum.chart")
+    enum_chart.XL_CHART_TYPE = XL_CHART_TYPE
+    enum_chart.XL_LEGEND_POSITION = XL_LEGEND_POSITION
+    enum_chart.XL_LABEL_POSITION = XL_LABEL_POSITION
+    enum_chart.XL_DATA_LABEL_POSITION = XL_DATA_LABEL_POSITION
+    enum_chart.XL_TICK_MARK = XL_TICK_MARK
+    enum_chart.XL_TICK_LABEL_POSITION = XL_TICK_LABEL_POSITION
+    enum_chart.XL_MARKER_STYLE = XL_MARKER_STYLE
+    enum_chart.XL_CATEGORY_TYPE = XL_CATEGORY_TYPE
+    enum.chart = enum_chart
 
     exc = types.ModuleType("pptx.exc")
     exc.PythonPptxError = PptxException
@@ -2053,6 +3500,15 @@ def __vis_install_pptx__():
         ("pptx.dml.color", color_mod),
         ("pptx.chart", chart_mod),
         ("pptx.chart.data", chart_data_mod),
+        ("pptx.chart.chart", chart_chart_mod),
+        ("pptx.chart.plot", chart_plot_mod),
+        ("pptx.chart.series", chart_series_mod),
+        ("pptx.chart.point", chart_point_mod),
+        ("pptx.chart.marker", chart_marker_mod),
+        ("pptx.chart.axis", chart_axis_mod),
+        ("pptx.chart.datalabel", chart_datalabel_mod),
+        ("pptx.chart.xmlwriter", chart_xmlwriter_mod),
+        ("pptx.enum.chart", enum_chart),
         ("pptx.enum", enum),
         ("pptx.enum.text", enum_text),
         ("pptx.enum.shapes", enum_shapes),

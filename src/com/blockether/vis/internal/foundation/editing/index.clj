@@ -97,11 +97,12 @@
       t)))
 
 (def ^:private parse-cache-size
-  "How many parsed files `parse-cache` keeps before evicting the oldest.
+  "How many parsed files `parse-cache` and `defs-cache` keep before evicting the oldest.
 
-   Entries retain roughly 38KB each on this repo's files, so the bound costs a
-   few MB at most while covering a whole multi-file request."
-  64)
+   256 covers a whole ordinary repo-wide request (the former 64-entry bound thrashed
+   completely on this repo's 140 Clojure files when indexing was followed by occurrence
+   tracing). Entries retain roughly 38KB each here, so each cache stays under about 10MB."
+  256)
 
 (def ^:private parse-cache
   "CONTENT-ADDRESSED cache of `process-source` results: `[language source]` →

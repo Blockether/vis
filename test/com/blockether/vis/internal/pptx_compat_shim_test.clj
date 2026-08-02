@@ -1,12 +1,9 @@
 (ns com.blockether.vis.internal.pptx-compat-shim-test
-  "The pptx (python-pptx) compat shim installed into every sandbox context via
-   the generic sandbox-shim mechanism: a `pptx` module published into
-   `sys.modules`, backed by the Rust OOXML writer in com.blockether/imaging
-   (GraalPy can't install the CPython package). Presentations/slides/shapes live
-   host-side by integer handle and the finished file crosses back as base64. These
-   tests exercise the
-   util helpers + enums and a real round-trip: a deck built through the shim is
-   re-opened as a zip and its OOXML parts / text are asserted."
+  "The python-pptx-compatible shim installed into every sandbox context. Its
+   ordinary Python object model is serialized once through the lock-free Rust
+   OOXML writer in com.blockether/imaging; opening an existing deck uses the
+   matching Rust reader. These tests exercise utility types, enums, chart data,
+   real package generation, and an in-memory create/open/edit/save round-trip."
   (:require [com.blockether.vis.internal.env-python :as ep]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]))
@@ -83,6 +80,44 @@
                    (expect (= [["one"] [["series" [1 2]]]]
                               (ev python-context
                                   (str "from pptx.chart.data import CategoryChartData\n"
-                                       "data = CategoryChartData()\n" "data.add_category('one')\n"
+                                       "data = CategoryChartData()\n"
+                                       "data.add_category('one')\n"
                                        "data.add_series('series', [1,2])\n"
-                                       "[data.categories, data.series]")))))))
+                                       "[list(data.categories),\n"
+                                       " [[s.name, list(s.values)] for s in data.series]]")))))))
+
+(defdescribe
+  pptx-open-edit-save-test
+  (it
+    "re-opens Rust OOXML into editable python-pptx shapes, tables, charts and notes"
+    (with-python-context
+      (expect
+        (=
+          ;; `repr` keeps the float-ness of plotted values visible: GraalPy → Clojure
+          ;; conversion narrows an integral double back to a long.
+          ["Hello again" "Q1" "Q2" "[3.0, 7.0]" "Speaker notes" "Edited" true]
+          (ev
+            python-context
+            (str
+              "import io\n" "from pptx import Presentation\n"
+              "from pptx.chart.data import CategoryChartData\n"
+              "from pptx.enum.chart import XL_CHART_TYPE\n"
+              "from pptx.util import Inches\n" "prs = Presentation()\n"
+              "s = prs.slides.add_slide(prs.slide_layouts[6])\n"
+              "s.shapes.add_textbox(Inches(1), Inches(1), Inches(3), Inches(1)).text = 'Hello again'\n"
+              "table = s.shapes.add_table(2, 2, Inches(1), Inches(2), Inches(3), Inches(1)).table\n"
+              "table.cell(0, 0).text = 'A'\n"
+              "table.cell(1, 1).text = 'B'\n" "cd = CategoryChartData()\n"
+              "cd.categories = ['Q1', 'Q2']\n" "cd.add_series('Sales', [3, 7])\n"
+              "s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(4), Inches(1), Inches(5), Inches(3), cd)\n"
+              "s.notes_slide.notes_text_frame.text = 'Speaker notes'\n"
+              "b1 = io.BytesIO()\n" "prs.save(b1)\n"
+              "opened = Presentation(io.BytesIO(b1.getvalue()))\n"
+              "opened.slides[0].shapes[0].text = 'Edited'\n"
+              "b2 = io.BytesIO()\n" "opened.save(b2)\n"
+              "again = Presentation(io.BytesIO(b2.getvalue()))\n"
+              "shapes = again.slides[0].shapes\n"
+              "chart = next(x.chart for x in shapes if x.has_chart)\n"
+              "['Hello again', chart.plots[0].categories[0], chart.plots[0].categories[1],\n"
+              " repr(list(chart.series[0].values)), again.slides[0].notes_slide.notes_text_frame.text,\n"
+              " shapes[0].text, b2.getvalue()[:2] == b'PK']")))))))

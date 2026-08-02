@@ -134,13 +134,12 @@
   ;; headless bootstrap, no fontconfig, and SVG rasterisation finally works in
   ;; the macOS binary. Fonts are embedded in the cdylib (four Noto faces).
   ;; `java.desktop` itself is still loaded, and that is FINE: mic capture uses
-  ;; `javax.sound.sampled` (the JDK's only microphone API), and two third-party,
-  ;; non-graphical users pull it too — Apache POI (value classes in xlsx/pptx
-  ;; writing) and next.jdbc's `clojure.java.data` (`java.beans.Introspector`).
+  ;; `javax.sound.sampled` (the JDK's only microphone API), while next.jdbc's
+  ;; `clojure.java.data` uses `java.beans.Introspector`.
   com.blockether/imaging {:mvn/version "0.1.5"}
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
-  com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.36"}
+  com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.37"}
   com.blockether/ruff {:mvn/version "0.3.3"}
   org.clojure/core.memoize {:mvn/version "1.2.281"}
   com.blockether/fff {:mvn/version "0.12.2"}
@@ -179,8 +178,6 @@
   ;; Apache MINA SSHD server backing the paramiko shim's `Transport.start_server`
   ;; (reverse port-forwarding); JSch above is client-only.
   org.apache.sshd/sshd-core {:mvn/version "2.15.0"}
-  ;; Pure-Java OOXML (Apache POI) backing the sandbox `xlsxwriter` + `pptx` shims.
-  org.apache.poi/poi-ooxml {:mvn/version "5.5.1"}
   ;; Pure-Java X.509 minting for the egress-proxy MITM CA (ephemeral, per-session)
   ;; — HTTPS verb/path enforcement for jailed shell children. No system provider is
   ;; registered; bcpkix builders use the default JCA signer (native-image friendly).

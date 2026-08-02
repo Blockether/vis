@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.dialogs-test
   (:require [clojure.string :as str]
-            [lazytest.core :refer [defdescribe expect it]]
+            [lazytest.core :refer [defdescribe expect it throws?]]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.table :as table]
@@ -1342,3 +1342,133 @@
   (it "fits nothing into a sliver without blowing up"
       (expect (= [] (dlg/fit-hint-pairs (var-get #'dlg/magit-hints) 3)))
       (expect (= [] (dlg/fit-hint-pairs (var-get #'dlg/magit-hints) 0)))))
+
+(defdescribe
+  mcp-settings-section-test
+  (it
+    "MCP servers are settings ROWS — one toggle each, not a dialog of their own"
+    (let
+      [inventory
+       (var-get #'dlg/mcp-inventory)
+
+       mcp-rows
+       (var-get #'dlg/mcp-settings-rows)
+
+       mark
+       (var-get #'dlg/settings-row-mark)
+
+       selectable?
+       (var-get #'dlg/settings-selectable?)
+
+       original
+       @inventory]
+
+      (try
+        ;; No gateway read yet → Settings stays MCP-free.
+        (reset! inventory {:status :unloaded :servers [] :error nil})
+        (expect (nil? (mcp-rows)))
+        (reset! inventory
+          {:status :ok
+           :error nil
+           :servers [{"name" "fs" "enabled" true "is_managed" true "is_connected" true "tools" 3}
+                     {"name" "gh" "enabled" false "is_managed" true}
+                     {"name" "hand" "enabled" true "is_managed" false "is_killed" true}]})
+        (let
+          [rows
+           (mcp-rows)
+
+           toggles
+           (filterv #(= :mcp-toggle (:type %)) rows)]
+
+          (expect (= [:section :mcp-toggle :mcp-toggle :mcp-toggle :action] (mapv :type rows)))
+          (expect (= "MCP Servers" (:label (first rows))))
+          (expect (= ["fs" "gh" "hand"] (mapv :label toggles)))
+          (expect (= "connected · 3 tools" (:description (first toggles))))
+          (expect (= :mcp-manage (:id (last rows))))
+          ;; on = enabled AND not killed, so a killed config-file server reads off
+          (expect (= [p/STATUS_ON p/STATUS_OFF p/STATUS_OFF] (mapv #(first (mark % {})) toggles)))
+          (expect (every? selectable? (remove #(= :section (:type %)) rows))))
+        ;; A gateway that is down degrades to an inline row, never a modal.
+        (reset! inventory {:status :error :servers [] :error "connection refused"})
+        (expect (= [:section :info :action] (mapv :type (mcp-rows))))
+        (finally (reset! inventory original)))))
+  (it
+    "settings-rows carries the MCP section and Settings can open focused on it"
+    (let
+      [settings-rows
+       (var-get #'dlg/settings-rows)
+
+       inventory
+       (var-get #'dlg/mcp-inventory)
+
+       initial-index
+       (var-get #'dlg/settings-initial-index)
+
+       original
+       @inventory]
+
+      (try (reset! inventory {:status :ok
+                              :error nil
+                              :servers [{"name" "fs" "enabled" true "is_managed" true}]})
+           (with-redefs
+             [vis/registered-extensions
+              (constantly [])
+
+              vis/get-router
+              (constantly nil)]
+
+             (let
+               [rows
+                (settings-rows)
+
+                row
+                (first (filter #(= :mcp-toggle (:type %)) rows))]
+
+               (expect (some #{"MCP Servers"}
+                             (->> rows
+                                  (filter #(= :section (:type %)))
+                                  (mapv :label))))
+               (expect (= "fs" (:label row)))
+               ;; the palette's MCP entry parks the cursor on the section's first row
+               (expect (= "fs" (:label (nth rows (initial-index rows "MCP Servers")))))
+               (expect (not= (initial-index rows "MCP Servers") (initial-index rows nil)))))
+           (finally (reset! inventory original)))))
+  (it
+    "one Enter picks the RIGHT verb: runtime for a kill, config for a managed flag"
+    (let
+      [toggle!
+       (var-get #'dlg/toggle-mcp-server!)
+
+       calls
+       (atom [])
+
+       record
+       (fn [verb]
+         (fn [& args]
+           (swap! calls conj (into [verb] args))
+           nil))]
+
+      (with-redefs
+        [vis/gateway-mcp-set-server-enabled!
+         (record :enabled)
+
+         vis/gateway-mcp-kill-server!
+         (record :kill)
+
+         vis/gateway-mcp-start-server!
+         (record :start)]
+
+        (toggle! {"name" "fs" "enabled" true "is_managed" true})
+        ;; killed but still enabled: release the brake, never re-save the spec
+        (toggle! {"name" "fs" "enabled" true "is_managed" true "is_killed" true})
+        (toggle! {"name" "gh" "enabled" false "is_managed" true})
+        ;; a config-file server is read-only, so its switch is kill/start
+        (toggle! {"name" "hand" "enabled" true "is_managed" false})
+        (toggle! {"name" "hand" "enabled" true "is_managed" false "is_killed" true})
+        (expect (= [[:enabled "fs" false] [:start "fs"] [:enabled "gh" true] [:kill "hand"]
+                    [:start "hand"]]
+                   @calls))
+        ;; and one its own file declares off says so instead of killing it again
+        (expect (throws? clojure.lang.ExceptionInfo
+                         #(toggle! {"name" "hand" "enabled" false "is_managed" false})))
+        (expect (= 5 (count @calls)))))))

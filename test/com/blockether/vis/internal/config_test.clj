@@ -201,6 +201,30 @@
                  (expect (= "prov-c" (get raw "fallback_provider")))
                  (expect (= "gamma-1" (get raw "fallback_model")))))
              (finally (rm-rf! (io/file tmp))))))
+  (it "a slash INSIDE a fallback model id is not a provider tag"
+      (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-fb-" (System/nanoTime))]
+        (try (with-redefs
+               [config/config-dir tmp
+                config/state-path (str tmp "/state.yml")
+                config/project-config-yaml-paths (constantly [(str tmp "/none/.vis/config.yml")])
+                config/project-root-yaml-paths (constantly [])]
+
+               (config/save-config! {"providers" [{"id" "prov-a" "api_key" "key-a"}
+                                                  {"id" "openrouter" "api_key" "key-b"}]
+                                     "fallback_provider" "openrouter"
+                                     "fallback_model" "z-ai/glm-4.6v"})
+               ;; `z-ai` is a model-id prefix, NOT a configured provider: the tag
+               ;; belongs to `openrouter` and must survive removing someone else
+               (expect (config/remove-config-provider! :prov-a))
+               (let [raw (config/load-config-raw)]
+                 (expect (= "openrouter" (get raw "fallback_provider")))
+                 (expect (= "z-ai/glm-4.6v" (get raw "fallback_model"))))
+               ;; ...and must go when its real owner is removed
+               (expect (config/remove-config-provider! :openrouter))
+               (let [raw (config/load-config-raw)]
+                 (expect (nil? (get raw "fallback_provider")))
+                 (expect (nil? (get raw "fallback_model")))))
+             (finally (rm-rf! (io/file tmp))))))
   (it "reports no change when the provider is absent and holds no tag"
       (let [tmp (str (System/getProperty "java.io.tmpdir") "/vis-cfg-fb-" (System/nanoTime))]
         (try (with-redefs

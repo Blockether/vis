@@ -2342,17 +2342,28 @@
    `with-dialog-lock` themselves. Live `:on-change` and the returned value
    both dispatch `:update-settings`, so a tweak applies whether the user
    edits a row or just closes. Repaints the chat frame so a live theme change
-   shows immediately. Returns nil."
-  [^TerminalScreen screen]
-  (when-let [s (dlg/settings-dialog!
-                 screen
-                 (:settings @state/app-db)
-                 {:on-change
-                  (fn [settings]
-                    (state/dispatch [:update-settings settings])
-                    (repaint-chat-frame! screen))})]
-    (state/dispatch [:update-settings s]))
-  nil)
+   shows immediately.
+
+   `focus-section` parks the cursor on one section label: the palette's MCP
+   entry opens Settings on `MCP Servers`, where each server is a toggle row
+   and `:mcp-manage` opens the full manager for add / edit / sign-in /
+   remove. Returns nil."
+  ([^TerminalScreen screen] (open-settings-modal! screen nil))
+  ([^TerminalScreen screen focus-section]
+   (when-let [s (dlg/settings-dialog!
+                  screen
+                  (:settings @state/app-db)
+                  {:focus-section focus-section
+
+                   :mcp-manage
+                   (fn [_] (mcp/show-mcp-dialog! screen))
+
+                   :on-change
+                   (fn [settings]
+                     (state/dispatch [:update-settings settings])
+                     (repaint-chat-frame! screen))})]
+     (state/dispatch [:update-settings s]))
+   nil))
 
 (def ^:private view-churn-keys
   "app-db keys the render thread mutates as bookkeeping only — never part of the
@@ -6639,10 +6650,12 @@
                                     (state/dispatch [:set-config c])
                                     (state/dispatch [:force-provider-limits-refresh]))
 
-                                  ;; MCP servers: kill/start a server, toggle it,
-                                  ;; and run the gateway's headless OAuth leg.
+                                  ;; MCP servers live INSIDE Settings now: one
+                                  ;; toggle row per server (enable/disable, or
+                                  ;; kill/start for config-file ones) with the
+                                  ;; full manager one row below them.
                                   :mcp
-                                  (with-dialog-lock #(mcp/show-mcp-dialog! screen))
+                                  (with-dialog-lock #(open-settings-modal! screen "MCP Servers"))
 
                                   :settings
                                   (with-dialog-lock #(open-settings-modal! screen))

@@ -5028,6 +5028,57 @@
     (:wildcard imp)
     (assoc "wildcard" true)))
 
+(def ^:private scan-parallelism
+  "How many files `scan-mapv` indexes at once.
+
+   One CPU per worker. The pack's parse is serialized process-wide (a global
+   mutex guards third-party scanners with mutable static state), but everything
+   AROUND it is not: the content-addressed tree cache, the reference walk, the
+   JSON boundary and the whole Clojure side all run concurrently, so a repo-wide
+   `struct_index` scales nearly linearly until the parse mutex saturates.
+
+   Measured over 140 files / 4.2 MB / 4 844 names, definitions + occurrences:
+   558 ms serial → 60 ms at 12-16 workers when the trees are cached, and
+   713 ms → 180 ms when every file must be parsed afresh (the parse mutex is
+   that floor). Past the core count the curve is flat, so there is nothing to
+   buy by oversubscribing."
+  (max 2 (min 16 (.availableProcessors (Runtime/getRuntime)))))
+
+(defn- scan-mapv
+  "`mapv` over `items` across `scan-parallelism` workers, in REQUEST ORDER.
+
+   Workers pull the next index off a shared cursor, so one huge file cannot
+   strand a worker while the others idle. The first exception is rethrown AS
+   THROWN (never wrapped in `ExecutionException`) so the tool's `:on-error-fn`
+   still sees the original `ex-info`; the remaining workers are always awaited,
+   so no task outlives the call."
+  [f items]
+  (let [items (vec items)
+        n (count items)]
+    (if (or (< n 2) (< (long scan-parallelism) 2))
+      (mapv f items)
+      (let
+        [out (object-array n)
+         cursor (java.util.concurrent.atomic.AtomicInteger. 0)
+         worker (fn []
+                  (loop []
+                    (let [i (.getAndIncrement cursor)]
+                      (when (< i n)
+                        (aset out i (f (nth items i)))
+                        (recur)))))
+         futures (vec (repeatedly (min (long scan-parallelism) n) #(future (worker))))
+         failure (reduce (fn [acc fut]
+                           (try @fut
+                                acc
+                                (catch java.util.concurrent.ExecutionException e
+                                  (or acc (.getCause e) e))
+                                (catch Throwable t (or acc t))))
+                         nil
+                         futures)]
+
+        (when failure (throw failure))
+        (vec out)))))
+
 (defn- index-one
   "Index one normalized path specification for the paths-only `struct_index` tool.
    Its result becomes one row in the tool's `results` vector."
@@ -5087,7 +5138,7 @@
                                   "No structural index for this language yet — use cat(path).")
                        :else (assoc base "note" "Unknown language — use cat(path).")))})))
 
-(declare occurrences-data symbol-rename-tool)
+(declare occurrences-data occurrence->wire symbol-rename-tool)
 
 (defn- index-tool
   "Index source files with one paths-only contract. Results preserve request order.
@@ -5125,7 +5176,7 @@
                          entries)
 
        results
-       (mapv #(:result (index-one %)) specs)
+       (scan-mapv #(:result (index-one %)) specs)
 
        result
        (cond-> {"results" results}
@@ -5145,12 +5196,46 @@
                    distinct
                    vec)
 
-              ;; Each file is read ONCE per request, not once per name.
-              read-source
-              (memoize (fn [path]
-                         (slurp (safe-path path))))]
+              ;; Each file is read AND PARSED once per request, not once per
+              ;; name: one `occurrences-in` pass traces the whole name set.
+              ;; Scan eagerly in parallel, preserving per-file failures, then
+              ;; TRANSPOSE only the non-empty name/file pairs. A dense name ×
+              ;; path regrouping did 678k lookups to consume 8k pairs on Vis.
+              scans
+              (when (seq names)
+                (scan-mapv
+                  (fn [path]
+                    (try
+                      {:path path
+                       :occurrences
+                       (structural/occurrences-in path
+                                                  (slurp (safe-path path))
+                                                  names)}
+                      (catch Exception e
+                        {:path path
+                         :error (or (ex-message e) (str (class e)))})))
+                  paths))
 
-             (mapv #(occurrences-data % paths read-source) names))))]
+              failed
+              (into []
+                    (keep (fn [{:keys [path error]}]
+                            (when error {"path" path "error" error})))
+                    scans)
+
+              by-name
+              (reduce
+                (fn [acc {:keys [path occurrences]}]
+                  (reduce-kv
+                    (fn [m name occ]
+                      (update m name (fnil conj [])
+                              {"path" path
+                               "occurrences" (mapv #(occurrence->wire name %) occ)}))
+                    acc
+                    occurrences))
+                {}
+                scans)]
+
+             (mapv #(occurrences-data % paths (get by-name % []) failed) names))))]
 
       (tool-success {:op :struct_index :kind :file :result result}))))
 
@@ -7125,33 +7210,35 @@
    definition owns every use; otherwise only a file-local unique definition owns
    its uses, and ambiguous uses remain in `other_uses`.
 
-   `read-source` reads one path's content. Tracing runs over the SAME paths for
-   every declared name, so the caller passes a memoised reader and each file is
-   read once per request instead of once per name; the 2-arity reads directly."
+   The 3-arity accepts a tracer for compatibility and error isolation. The 4-arity
+   consumes already-transposed, non-empty path rows; repo-wide indexing uses that
+   sparse path to avoid scanning every path again for every declared name."
   ([name paths]
    (occurrences-data name
                      paths
-                     (fn [path]
-                       (slurp (safe-path path)))))
-  ([name paths read-source]
+                     (fn [path nm]
+                       (structural/occurrences path (slurp (safe-path path)) nm))))
+  ([name paths trace]
+   (let [{:keys [per failed]}
+         (reduce
+           (fn [acc path]
+             (try
+               (let [occ (trace path name)]
+                 (cond-> acc
+                   (seq occ)
+                   (update :per
+                           conj
+                           {"path" path "occurrences" (mapv #(occurrence->wire name %) occ)})))
+               (catch Exception e
+                 (update acc :failed conj
+                         {"path" path "error" (or (ex-message e) (str (class e)))}))))
+           {:per [] :failed []}
+           paths)]
+     (occurrences-data name paths per failed)))
+  ([name paths per failed]
    (let
      [files
       (vec paths)
-
-      {:keys [per failed]}
-      (reduce
-        (fn [acc path]
-          (try
-            (let [occ (structural/occurrences path (read-source path) name)]
-              (cond-> acc
-                (seq occ)
-                (update :per
-                        conj
-                        {"path" path "occurrences" (mapv #(occurrence->wire name %) occ)})))
-            (catch Exception e
-              (update acc :failed conj {"path" path "error" (or (ex-message e) (str (class e)))}))))
-        {:per [] :failed []}
-        files)
 
       total
       (reduce + 0 (map #(count (get % "occurrences")) per))

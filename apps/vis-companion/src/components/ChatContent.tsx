@@ -20,6 +20,7 @@ import 'prismjs/components/prism-java';
 import 'prismjs/components/prism-json';
 import 'prismjs/components/prism-markdown';
 import 'prismjs/components/prism-python';
+import 'prismjs/components/prism-rust';
 import 'prismjs/components/prism-typescript';
 import 'prismjs/components/prism-jsx';
 import 'prismjs/components/prism-tsx';
@@ -27,6 +28,7 @@ import 'prismjs/components/prism-yaml';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { parseUserMessage } from '../lib/paste';
+import { readerOwnsScroll } from '../lib/reader-gesture';
 import { formatCost, formatTokens, turnUsage } from '../lib/usage';
 import { isViewportRotating, onViewportRotation } from '../lib/viewport';
 import type {
@@ -61,13 +63,25 @@ export const transcriptRiseClass = 'animate-transcript-rise motion-reduce:animat
 // One assistant turn is thousands of nodes, and opening a session used to mount
 // them all in one shot: measured on device, a single turn of this transcript is
 // ~13k elements and the first paint cost 409 ms, the full window 1256 ms — the
-// stall between tapping a row and seeing the conversation. Deferring the TURN
-// was tried and rejected (the guessed height made fast scroll-up flash white
-// bands and shift). A SEGMENT is the right grain: small enough that a wrong
-// guess is a few pixels, and `auto` makes the browser remember the real size
-// after the first render, so nothing shifts twice. Same measurement with this
-// applied: 283 ms first paint, 735 ms fully mounted (-31% / -41%).
-const segmentDeferClass = '[content-visibility:auto] [contain-intrinsic-size:auto_320px]';
+// stall between tapping a row and seeing the conversation.
+//
+// `content-visibility:auto` was that fix and had to be REVERTED: it buys first
+// paint by guessing the height of everything it skips, and every first reveal
+// then corrects that guess. On a scroller with no scroll anchoring (WebKit has
+// none, and the transcript sets `overflow-anchor:none` on purpose) a correction
+// ABOVE the viewport moves what you are reading. Measured in WebKit on a 28-turn
+// session, one 10 000 px scroll up: 39 height corrections totalling 53 307 px,
+// the worst single ones 21 002 / 12 940 / 7 752 px — the flicker while scrolling
+// a freshly opened session. Without it: zero height corrections.
+//
+// `contain:layout style` had to go with it. It faked no size, but it split a
+// 41 148 px transcript into 198 paint-isolated islands, and a fast fling then
+// exposed the paper background before WebKit rasterized them — the white bands.
+// A continuous paint tree has no such catch-up boundary.
+//
+// What keeps the open cheap instead is the bounded window: pagination mounts
+// only INITIAL_VISIBLE_TURNS, `Load earlier` brings the rest in on demand, and
+// the iteration ramp below stages a turn's trace. None of those guess a height.
 
 const toolRoleClasses: Record<string, { border: string; text: string }> = {
   'tool-color/read': { border: 'border-tool-read', text: 'text-tool-read' },
@@ -1453,17 +1467,39 @@ const SEGMENT_FIRST_PAINT = 8;
 // A fixed batch size cannot be right: segment weight spans three orders of
 // magnitude (a one-line reply vs. a run of 400 tool cards), so any constant is
 // either a stall on light turns or a dropped frame on heavy ones. Measured on
-// device a flat 12/frame cost 14-20 long frames and one 71 ms frame while a big
-// session ramped. Aim each step at a slice of the frame instead: bill it for the
-// render plus the forced layout the scroll hold already does, and back off hard
-// the moment the frame it landed in actually dropped.
-const SEGMENT_RAMP_START = 8;
+// device a flat 12/frame cost 14-20 long frames and one 106 ms frame on a
+// 400-call session. Aim each step at a slice of the frame instead: bill it for
+// the render plus the forced layout the scroll hold already does, and back off
+// hard the moment the frame it landed in actually dropped — a pure "grow while
+// frames stay whole" window overshoots (it reached 24 and spent 15 frames over
+// 25 ms), because once the tree is memoised the cost really is roughly linear
+// in batch size.
+const SEGMENT_RAMP_START = 4;
 const SEGMENT_RAMP_MIN = 2;
 const SEGMENT_RAMP_MAX = 32;
 /** Per-step work budget, leaving the rest of a 60 Hz frame for style and paint. */
 const RAMP_BUDGET_MS = 6;
 /** A step whose whole frame took longer than this dropped one; halve on sight. */
 const RAMP_DROPPED_FRAME_MS = 32;
+
+// A screen holds several traces (one per turn), and if they all ramp at once
+// every frame pays for several mounts and several forced layouts while each
+// trace's stopwatch is really timing its neighbours — so all of them read "too
+// expensive" and shrink to the minimum, which is the stutter. Exactly one trace
+// backfills at a time, and it is the LAST one mounted: the turn at the bottom,
+// where the reader is.
+const rampQueue: symbol[] = [];
+
+/** True when this trace is the bottom-most one still ramping. */
+function claimRamp(id: symbol): boolean {
+  if (!rampQueue.includes(id)) rampQueue.push(id);
+  return rampQueue[rampQueue.length - 1] === id;
+}
+
+function releaseRamp(id: symbol): void {
+  const at = rampQueue.indexOf(id);
+  if (at >= 0) rampQueue.splice(at, 1);
+}
 
 /** The scroller this trace lives in, or the document's, so the ramp can hold it. */
 function scrollParent(node: HTMLElement | null): HTMLElement | null {
@@ -1567,13 +1603,7 @@ const TraceSegment = memo(function TraceSegment({
   );
 
   return (
-    <section
-      className={
-        live
-          ? `min-w-0 ${segmentDeferClass} ${transcriptEnterClass}`
-          : `min-w-0 ${segmentDeferClass}`
-      }
-    >
+    <section className={live ? `min-w-0 ${transcriptEnterClass}` : 'min-w-0'}>
       {segment.head.thinking && <ThinkingBand>{segment.head.thinking}</ThinkingBand>}
       {segment.head.prose && (
         <div className="my-2.5 text-ui text-vis-message">
@@ -1608,9 +1638,12 @@ export const IterationTrace = memo(function IterationTrace({
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
-  // Pre-growth geometry of that scroller, captured in the frame that asks for
+  // Pre-growth height of that scroller, captured in the frame that asks for
   // more: `null` means this render was not a ramp step.
-  const rampFromRef = useRef<{ height: number; bottomGap: number } | null>(null);
+  const rampFromRef = useRef<number | null>(null);
+  // Identity in the ramp queue, so only the bottom-most trace backfills at once.
+  const [rampId] = useState(() => Symbol('trace-ramp'));
+  useEffect(() => () => releaseRamp(rampId), [rampId]);
   // Adaptive ramp step: how many segments the next frame mounts, when the
   // current one started (0 = none in flight), and what the last one cost.
   const stepRef = useRef({ size: SEGMENT_RAMP_START, startedAt: 0, work: 0 });
@@ -1627,13 +1660,24 @@ export const IterationTrace = memo(function IterationTrace({
     const from = rampFromRef.current;
     rampFromRef.current = null;
     const scroller = scrollerRef.current;
-    if (from && scroller) {
+    if (from != null && scroller) {
       // Reading scrollHeight here is the forced layout of everything the step
       // just mounted — i.e. the honest price of this batch, and what the timing
       // below is allowed to bill it for.
-      const grew = scroller.scrollHeight - from.height;
+      const grew = scroller.scrollHeight - from;
       if (grew > 0) {
-        if (from.bottomGap <= 8) scroller.scrollTop = scroller.scrollHeight;
+        // Where the reader was is derived from AFTER the mutation, never from a
+        // snapshot taken before it: the growth lands above them, so it widened
+        // the gap to the end by exactly `grew`. A pre-snapshot loses a scroll
+        // that happened inside this frame and yanks a reader who just flicked
+        // up back down.
+        const gapBefore =
+          scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight - grew;
+        // Pin only a reader who was already at the end AND is not touching the
+        // scroller: a slow drag travels less than this tolerance in one frame,
+        // so the pin would otherwise swallow the drag itself. Everyone else
+        // keeps their pixel, gesture or not — that is compensation, not a pin.
+        if (gapBefore <= 8 && !readerOwnsScroll()) scroller.scrollTop = scroller.scrollHeight;
         else scroller.scrollTop += grew;
       }
     }
@@ -1647,13 +1691,26 @@ export const IterationTrace = memo(function IterationTrace({
   // A chunk per frame, so the work the first paint skipped never lands as one
   // long frame either.
   useEffect(() => {
-    if (rampDone) return;
-    const frame = window.requestAnimationFrame(() => {
+    if (rampDone) {
+      releaseRamp(rampId);
+      return;
+    }
+    let frame = 0;
+    let waited = false;
+    const tick = () => {
+      // Wait our turn: a trace below is still backfilling, and two ramps in one
+      // frame is what makes both of them look expensive.
+      if (!claimRamp(rampId)) {
+        waited = true;
+        frame = window.requestAnimationFrame(tick);
+        return;
+      }
       // One rAF to the next spans the previous step end to end, paint included.
       // Grow on the measured work, but if that frame was actually dropped, the
       // estimate was wrong about style/paint: halve and re-learn from there.
+      // After waiting, that span is somebody else's work: do not price on it.
       const step = stepRef.current;
-      if (step.startedAt > 0) {
+      if (step.startedAt > 0 && !waited) {
         const frameCost = performance.now() - step.startedAt;
         const scaled = Math.round((step.size * RAMP_BUDGET_MS) / Math.max(step.work, 0.5));
         const grown = Math.min(Math.ceil(step.size * 1.5), Math.max(1, scaled));
@@ -1663,18 +1720,13 @@ export const IterationTrace = memo(function IterationTrace({
 
       const scroller = scrollerRef.current ?? scrollParent(rootRef.current);
       scrollerRef.current = scroller;
-      rampFromRef.current = scroller
-        ? {
-          height: scroller.scrollHeight,
-          bottomGap: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
-        }
-        : null;
+      rampFromRef.current = scroller ? scroller.scrollHeight : null;
       step.startedAt = performance.now();
-      (window as any).__ramp = ((window as any).__ramp||[]).concat([[Math.round(performance.now()), step.size, Math.round((stepRef.current.work||0)*10)/10]]);
       setMountedSegments((count) => count + step.size);
-    });
+    };
+    frame = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(frame);
-  }, [mountedSegments, rampDone]);
+  }, [mountedSegments, rampDone, rampId]);
 
   if (!segments.length) return null;
   const shown = rampDone ? segments : segments.slice(segments.length - mountedSegments);
@@ -1813,17 +1865,13 @@ export const AssistantMessage = memo(function AssistantMessage({
     : null;
   const fallbackNote = meta && !cancelled ? turnFallbackNote(turn) : null;
 
-  // `content-visibility:auto` lets WebKit skip layout, style and paint for turns
-  // scrolled out of view — a long transcript is tens of thousands of nodes, and
-  // without it every scroll frame walks all of them. `contain-intrinsic-size:auto`
-  // keeps the LAST rendered height as the placeholder size, so the scrollbar does
-  // not jump once a turn has been on screen; the 1200px seed is only used the
-  // first time a turn is skipped.
+  // Keep a turn an ordinary paint subtree: both a `content-visibility`
+  // placeholder (which corrects its guessed height above the reader) and a
+  // `contain:layout style` boundary (which WebKit rasterizes only once it
+  // enters the viewport) made big turns arrive late while scrolling — the
+  // shift and the white bands. See the note at the top of this file.
   return (
-    <article
-      className="mt-4 w-full [contain-intrinsic-size:auto_1200px] [contain:layout_style] [content-visibility:auto]"
-      aria-busy={streaming}
-    >
+    <article className="mt-4 w-full" aria-busy={streaming}>
       <div className={`mb-1 font-mono text-meta font-bold ${cancelled ? 'text-dialog-hint' : 'text-vis-role'}`}>Vis</div>
       <div className="min-w-0">
         <IterationTrace iterations={turn.iterations ?? []} live={streaming} client={client} sid={sid} />

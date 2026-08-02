@@ -176,12 +176,35 @@
                               (assoc "params" params)))))
      :close-fn (fn []
                  (reset! closed? true)
-                 (try (.close in) (catch Throwable _ nil))
-                 (try (.destroy proc) (catch Throwable _ nil))
-                 (try (when (.isAlive proc)
-                        (when-not (.waitFor proc 2 java.util.concurrent.TimeUnit/SECONDS)
-                          (.destroyForcibly proc)))
-                      (catch Throwable _ nil)))
+                 ;; Snapshot the tree BEFORE the parent dies. Real MCP servers are
+                 ;; almost always reached through a launcher (`npx`, `uvx`, `bunx`,
+                 ;; `docker run`) that runs the server as its own CHILD: destroying
+                 ;; only `proc` reparents that grandchild to init, where it keeps
+                 ;; running — a "stopped" server still holding its port, its files,
+                 ;; and its memory. Once the parent is gone the handle no longer
+                 ;; lists them, so the list has to be taken first.
+                 (let
+                   [kids
+                    (try (vec (iterator-seq (.iterator (.descendants (.toHandle proc)))))
+                         (catch Throwable _ []))
+
+                    destroy-kids!
+                    (fn [f]
+                      (run! (fn [^java.lang.ProcessHandle h]
+                              (try (when (.isAlive h) (f h)) (catch Throwable _ nil)))
+                            kids))]
+
+                   ;; Closing stdin is the polite stop an MCP server is specified to
+                   ;; honor; the signals below are the ones that do not need consent.
+                   (try (.close in) (catch Throwable _ nil))
+                   (destroy-kids! (fn [^java.lang.ProcessHandle h]
+                                    (.destroy h)))
+                   (try (.destroy proc) (catch Throwable _ nil))
+                   (try (when-not (.waitFor proc 2 java.util.concurrent.TimeUnit/SECONDS)
+                          (.destroyForcibly proc))
+                        (catch Throwable _ nil))
+                   (destroy-kids! (fn [^java.lang.ProcessHandle h]
+                                    (.destroyForcibly h)))))
      :alive-fn (fn []
                  (and (not @closed?) (.isAlive proc)))}))
 
@@ -458,7 +481,8 @@
      stdio           → `{:transport :stdio :command :args :env :cwd :timeout-ms}`
      streamable-http → `{:transport :streamable-http :url :headers :bearer-fn
                          :timeout-ms :listen? :on-notification}`
-   Returns an opaque `conn` map (or throws)."
+   Returns an opaque `conn` map (or throws). A failed handshake always closes the
+   transport it already opened, so failed stdio starts cannot orphan processes."
   [name spec]
   (let
     [transport
@@ -485,43 +509,38 @@
              :spec spec
              :connected-at (now-ms)
              :tools (atom nil)
-             :timeout-ms timeout-ms})
+             :timeout-ms timeout-ms})]
 
-     init
-     ((:request-fn conn)
-       "initialize"
-       {"protocolVersion" protocol-version
-        "capabilities" {}
-        "clientInfo" {"name" "vis" "version" "0.1.0"}}
-       timeout-ms)]
+    (try (let
+           [init ((:request-fn conn)
+                   "initialize"
+                   {"protocolVersion" protocol-version
+                    "capabilities" {}
+                    "clientInfo" {"name" "vis" "version" "0.1.0"}}
+                   timeout-ms)]
+           ;; Per spec, acknowledge before issuing further requests.
+           ((:notify-fn conn) "notifications/initialized" nil)
+           (let
+             [negotiated-protocol-version (or (get init "protocolVersion") protocol-version)
+              _ (when-let [version-atom (:protocol-version-atom t)]
+                  (reset! version-atom negotiated-protocol-version))
+              conn (assoc conn
+                     :server-info (get init "serverInfo")
+                     :server-capabilities (get init "capabilities")
+                     :protocol-version negotiated-protocol-version)]
 
-    ;; Per spec, acknowledge before issuing further requests.
-    ((:notify-fn conn) "notifications/initialized" nil)
-    (let
-      [negotiated-protocol-version
-       (or (get init "protocolVersion") protocol-version)
-
-       _
-       (when-let [version-atom (:protocol-version-atom t)]
-         (reset! version-atom negotiated-protocol-version))
-
-       conn
-       (assoc conn
-         :server-info (get init "serverInfo")
-         :server-capabilities (get init "capabilities")
-         :protocol-version negotiated-protocol-version)]
-
-      ;; Wire the optional HTTP listen channel: server-pushed
-      ;; `notifications/tools/list_changed` invalidates the tools cache so a
-      ;; repeat `list-tools` re-fetches; any caller-supplied `:on-notification`
-      ;; still fires (called AFTER the invalidator).
-      (when-let [start (:listen-start-fn t)]
-        (let [user-cb (:on-notification spec)]
-          (start (fn [msg]
-                   (when (= "notifications/tools/list_changed" (get msg "method"))
-                     (reset! (:tools conn) nil))
-                   (when user-cb (try (user-cb msg) (catch Throwable _ nil)))))))
-      conn)))
+             ;; Wire the optional HTTP listen channel: server-pushed
+             ;; `notifications/tools/list_changed` invalidates the tools cache so a
+             ;; repeat `list-tools` re-fetches; any caller-supplied `:on-notification`
+             ;; still fires (called AFTER the invalidator).
+             (when-let [start (:listen-start-fn t)]
+               (let [user-cb (:on-notification spec)]
+                 (start (fn [msg]
+                          (when (= "notifications/tools/list_changed" (get msg "method"))
+                            (reset! (:tools conn) nil))
+                          (when user-cb (try (user-cb msg) (catch Throwable _ nil)))))))
+             conn))
+         (catch Throwable t (try ((:close-fn conn)) (catch Throwable _ nil)) (throw t)))))
 
 (defn list-tools
   "`tools/list` → vector of tool maps `{\"name\" \"description\" \"inputSchema\"}`.

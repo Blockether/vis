@@ -28,6 +28,7 @@ import type {
   SlashCommand,
   SseEvent,
   SubmittedTurn,
+  ThemeSummary,
   Toggle,
   TranscriptIteration,
   TranscriptTurn,
@@ -258,6 +259,43 @@ function writeSnapshot(key: string, value: unknown): void {
     snapshots.delete(oldest);
   }
   scheduleSnapshotFlush(snapshotStores);
+}
+
+/**
+ * How long ONE gateway's palette catalog stays good.
+ *
+ * `/v1/theme` describes which themes a machine has installed — a fact that moves
+ * when somebody installs a theme, i.e. approximately never — yet the application
+ * settings dialog asks EVERY paired gateway for it. Re-reading that on every
+ * open made the picker paint the bundled pair first and then jump to the full
+ * list once the slowest machine answered. Minutes of reuse make every reopen
+ * inside the window free, and repaint exactly the rows already on screen.
+ */
+export const THEME_TTL_MS = 5 * 60 * 1000;
+
+/** When each gateway's catalog was last read off the network, by base URL. */
+const themeFetchedAt = new Map<string, number>();
+
+/** In-flight catalog reads per base URL, so concurrent opens cost one request. */
+const themeInflight = new Map<string, Promise<GatewayTheme>>();
+
+/**
+ * Every palette catalog cached from any paired gateway, one per base URL.
+ *
+ * Sorted by base so the picker's ROW ORDER is identical on the seeded first
+ * frame and after revalidation: the list only ever grows, and never reshuffles
+ * under the finger that is already reaching for a row.
+ */
+export function cachedThemeCatalogs(): ThemeSummary[][] {
+  const keys: string[] = [];
+  for (const key of snapshots.keys()) {
+    if (key.endsWith('\u0000theme')) keys.push(key);
+  }
+  keys.sort();
+  return keys.flatMap((key) => {
+    const theme = snapshots.get(key) as GatewayTheme | undefined;
+    return theme?.id ? [[theme, ...(theme.themes ?? [])]] : [];
+  });
 }
 
 /**
@@ -1134,8 +1172,42 @@ export class GatewayClient {
   }
 
   // ── Theme (same persisted selection and palette as the TUI) ─────
-  theme(signal?: AbortSignal): Promise<GatewayTheme> {
-    return this.request<GatewayTheme>('GET', '/v1/theme', undefined, signal);
+  /** Last catalog seen for THIS gateway — paint it, then revalidate. */
+  cachedTheme(): GatewayTheme | null {
+    return readSnapshot<GatewayTheme>(this.snapshotKey('theme'));
+  }
+
+  /** True while the cached catalog is young enough to serve without asking. */
+  isThemeFresh(): boolean {
+    return (
+      this.cachedTheme() !== null &&
+      Date.now() - (themeFetchedAt.get(this.base) ?? 0) < THEME_TTL_MS
+    );
+  }
+
+  /**
+   * This gateway's catalog, at most one network read per TTL per gateway.
+   *
+   * A failed read deliberately leaves the stamp alone, so the next open retries
+   * instead of pretending an unreachable machine has no themes.
+   */
+  themeCatalog(signal?: AbortSignal): Promise<GatewayTheme> {
+    const cached = this.cachedTheme();
+    if (cached && this.isThemeFresh()) return Promise.resolve(cached);
+    const inflight = themeInflight.get(this.base);
+    if (inflight) return inflight;
+    const pending = this.theme(signal);
+    themeInflight.set(this.base, pending);
+    return pending.finally(() => {
+      if (themeInflight.get(this.base) === pending) themeInflight.delete(this.base);
+    });
+  }
+
+  async theme(signal?: AbortSignal): Promise<GatewayTheme> {
+    const response = await this.request<GatewayTheme>('GET', '/v1/theme', undefined, signal);
+    writeSnapshot(this.snapshotKey('theme'), response);
+    themeFetchedAt.set(this.base, Date.now());
+    return response;
   }
 
   setTheme(id: string): Promise<GatewayTheme> {

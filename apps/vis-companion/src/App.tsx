@@ -795,13 +795,19 @@ function Header({
             </button>
           ))}
         </nav>
+        {/* The cog is an ICON, not the `⚙` character: the glyph falls back to an emoji
+            font whose advance width and baseline differ per platform, so it never sat
+            centred in its 48px cell. A stroked `size-4` icon matches `NavIcon` exactly.
+            The negative right margin cancels the header's own gutter so the tap target
+            reaches the physical edge while the icon's right edge lines up with the
+            content edge of everything below it. */}
         <button
           type="button"
+          className="-mr-3 ml-auto grid min-h-12 min-w-12 place-items-center text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent sm:-mr-4"
           onClick={onAppSettings}
-          className="ml-auto grid min-h-12 min-w-12 place-items-center font-mono text-display text-dialog-hint transition-colors hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
           aria-label="Open application settings"
         >
-          ⚙
+          <SettingsIcon />
         </button>
       </div>
     </header>
@@ -850,6 +856,16 @@ function NavIcon({ id }: { id: Tab }) {
   return (
     <svg viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
       <path d="M4 4.5h12v4H4zM4 11.5h12v4H4zM6.5 6.5h.01M6.5 13.5h.01" />
+    </svg>
+  );
+}
+
+/** Header cog. Same 20-unit box, stroke and weight as `NavIcon` so the two read as one set. */
+function SettingsIcon() {
+  return (
+    <svg viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <path d="M8.35 4.23 L8.72 1.9 A8.2 8.2 0 0 1 11.28 1.9 L11.65 4.23 A6 6 0 0 1 14.17 5.68 L16.37 4.84 A8.2 8.2 0 0 1 17.66 7.06 L15.82 8.55 A6 6 0 0 1 15.82 11.45 L17.66 12.94 A8.2 8.2 0 0 1 16.37 15.16 L14.17 14.32 A6 6 0 0 1 11.65 15.77 L11.28 18.1 A8.2 8.2 0 0 1 8.72 18.1 L8.35 15.77 A6 6 0 0 1 5.83 14.32 L3.63 15.16 A8.2 8.2 0 0 1 2.34 12.94 L4.18 11.45 A6 6 0 0 1 4.18 8.55 L2.34 7.06 A8.2 8.2 0 0 1 3.63 4.84 L5.83 5.68 A6 6 0 0 1 8.35 4.23 Z" />
+      <circle cx="10" cy="10" r="2.4" />
     </svg>
   );
 }

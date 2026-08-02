@@ -13,7 +13,7 @@
 ;; =============================================================================
 
 ;; Context rendering is intentionally narrow: stable session identity,
-;; workspace/env/language_tools/routing/resources/symbols, and utilization. Tool outputs are
+;; workspace/env/routing/resources/symbols, and utilization. Tool outputs are
 ;; rendered as append-only `r["tN/iN/fN"] = …` assignments by the loop, not here.
 
 ;; =============================================================================
@@ -70,9 +70,6 @@
      (get view "session_env")
      (assoc "env" (get view "session_env"))
 
-     (not-empty (get view "session_language_tools"))
-     (assoc "language_tools" (get view "session_language_tools"))
-
      (not-empty (get view "session_routing"))
      (assoc "routing" (get view "session_routing"))
 
@@ -85,7 +82,7 @@
 (def ^:private static-context-keys
   "Ambient session keys embedded once in the cached prefix. Runtime changes are
    emitted as structural deltas; access changes only on reload or workspace overlay updates."
-  ["workspace" "access" "env" "language_tools" "routing" "resources" "symbols"])
+  ["workspace" "access" "env" "routing" "resources" "symbols"])
 
 (defn project-ctx-static
   "`project-ctx` limited to `static-context-keys`, canonical order preserved.
@@ -118,8 +115,8 @@
          "\n" "```")))
 
 (defn render-ctx-static
-  "Render the standing session context (workspace / env / language_tools /
-   routing / resources / symbols) as a FENCED PYTHON block that binds `session` to its initial value —
+  "Render the standing session context (workspace / access / env / routing /
+   resources / symbols) as a FENCED PYTHON block that binds `session` to its initial value —
    embedded once in the system prompt. The same `session` dict is live in the
    sandbox; mid-session changes arrive as `session[...] = …` / `del session[...]` delta
    lines (`render-ctx-delta`), so the embed and the deltas are one coherent

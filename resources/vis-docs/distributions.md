@@ -81,8 +81,8 @@ diverged history, with the counts and the exact recovery command.
 ## Installing
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-vis-agent | bash
-curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-vis-agent | bash -s -- --runtime jvm
+curl -fsSL https://github.com/Blockether/vis/releases/latest/download/install-vis-agent | bash
+curl -fsSL https://github.com/Blockether/vis/releases/latest/download/install-vis-agent | bash -s -- --runtime jvm
 ```
 
 `bin/install-vis-agent` takes `--runtime native|jvm` (default `native`),
@@ -93,9 +93,12 @@ use` persists the choice. Runtime acquisition therefore always belongs to
 `vis-agent`, so wrapper and runtime cannot drift apart. `--runtime jvm`
 additionally requires Java 25+, the Clojure CLI, and git.
 
-Corporate proxies often block `raw.githubusercontent.com`. Clone from
-`github.com` and run `bin/install-vis-agent` out of the checkout: it installs
-that checkout's own wrapper without touching the raw host.
+`install-vis-agent` and the `vis-agent` wrapper are release assets, published on
+every `vX.Y.Z` release beside the platform bundles: `releases/latest/download`
+always serves the newest pair and `releases/download/vX.Y.Z` a pinned one, so the
+installer never fetches from a raw source host. Cloning the repository and
+running `bin/install-vis-agent` out of the checkout works too — it installs that
+checkout's own wrapper.
 
 ## Everything Vis owns
 

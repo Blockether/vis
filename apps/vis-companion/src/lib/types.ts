@@ -179,8 +179,11 @@ export interface McpServer {
   /** HTTP servers only: whether the gateway already holds a usable OAuth token. */
   is_authorized?: boolean;
   command?: string;
+  /** Non-secret rest of the spec, so a client can render an edit form without losing them. */
+  args?: string[];
   cwd?: string;
   url?: string;
+  timeout_ms?: number;
 }
 
 export interface McpServersResponse {

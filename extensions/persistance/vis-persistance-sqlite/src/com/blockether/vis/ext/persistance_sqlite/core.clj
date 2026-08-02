@@ -28,7 +28,7 @@
             [next.jdbc :as jdbc]
             [next.jdbc.result-set :as rs]
             [taoensso.nippy :as nippy])
-  (:import (com.zaxxer.hikari HikariConfig HikariDataSource)
+  (:import (com.zaxxer.hikari HikariConfig HikariDataSource HikariPoolMXBean)
            (java.io File RandomAccessFile)
            (java.nio.channels FileLock)
            (java.nio.file Files LinkOption Paths)
@@ -246,14 +246,23 @@
     (.setUrl ds url)
     ds))
 
+(def ^:private pool-max-size
+  "One pool now serves the WHOLE process per database file (see
+   `acquire-disk-pool!`), where every environment used to get its own pool of
+   5. Size it for the gateway's request threads instead: SQLite WAL runs N
+   concurrent readers against 1 writer, and an idle SQLite handle costs a file
+   descriptor and a few KiB."
+  (max 8 (min 16 (* 2 (.availableProcessors (Runtime/getRuntime))))))
+
 (defn- pooled-datasource
   "Wrap `raw-ds` in a HikariCP pool. `pool-name` is the JMX name and
    shows up in thread names (`HikariPool-vis-rlm-disk-1`), which
    makes debugging far easier when there are multiple envs alive.
 
    Pool sizing for SQLite WAL:
-     maximumPoolSize = 5  - 1 writer + up to 4 concurrent readers,
-                            mirrors the SQLite WAL concurrency model.
+     maximumPoolSize = `pool-max-size` - concurrent readers for the whole
+                            process; writes serialize on `sqlite-write-lock`
+                            and the 30s busy timeout regardless.
      minimumIdle     = 1  - keep one connection warm; cold-start cost
                             on SQLite is small, but eliminating it
                             removes one source of `[SQLITE_CANTOPEN]`
@@ -270,7 +279,7 @@
     [cfg (doto (HikariConfig.)
            (.setPoolName pool-name)
            (.setDataSource raw-ds)
-           (.setMaximumPoolSize 5)
+           (.setMaximumPoolSize pool-max-size)
            (.setMinimumIdle 1)
            (.setConnectionTimeout 30000)
            (.setIdleTimeout 0)
@@ -338,6 +347,146 @@
         (try (f) (finally (close-lock-resources! {:lock lock :channel channel :raf raf}))))
       (finally (.unlock monitor)))))
 
+(def ^:private POOL_DRAIN_TIMEOUT_MS 5000)
+
+(defn- close-pool!
+  "Close a Hikari pool WITHOUT yanking connections out from under their owners.
+
+   `HikariDataSource.close` ends in `abortActiveConnections`, which tears down
+   the physical connection of every LEASED entry. Measured on this stack
+   (sqlite-jdbc 3.53.2.1) that abort cannot corrupt a query already inside
+   `sqlite3_step` - `NativeDB.step` and `NativeDB._close` are both
+   `synchronized` on the same instance, so a close waits for the step - but the
+   lease owner still ends up with a dead handle for its next statement, which
+   is how dispose used to fail live gateway requests.
+
+   So: stop handing out connections, wait (bounded) for the in-flight leases to
+   come back, and only then close. The SIGBUS this namespace guards against
+   comes from the other end of the lifecycle - see `acquire-disk-pool!`."
+  [^HikariDataSource pool]
+  (try (when-not (.isClosed pool)
+         (when-let [^HikariPoolMXBean mx (.getHikariPoolMXBean pool)]
+           (.softEvictConnections mx)
+           (let [deadline (+ (System/currentTimeMillis) (long POOL_DRAIN_TIMEOUT_MS))]
+             (while (and (pos? (.getActiveConnections mx)) (< (System/currentTimeMillis) deadline))
+               (Thread/sleep 20)))))
+       (catch Throwable _ nil))
+  (try (.close pool) (catch Throwable _ nil))
+  nil)
+
+(defn- fs-file-key
+  "`(dev, ino)` identity of `file`, or nil when it does not exist yet or the
+   attribute cannot be read. Two different values mean the pathname now
+   resolves to a DIFFERENT file."
+  [^String file]
+  (try (get (Files/readAttributes ^java.nio.file.Path (Paths/get file (make-array String 0))
+                                  "basic:fileKey"
+                                  ^"[Ljava.nio.file.LinkOption;" (make-array LinkOption 0))
+            "fileKey")
+       (catch Throwable _ nil)))
+
+(defonce ^:private disk-pools
+  ;; canonical `vis.db` path -> {:pool HikariDataSource :refs long}
+  (atom {}))
+
+(defonce ^:private disk-pools-monitor (Object.))
+
+(defn- open-disk-pool!
+  "Fresh pool over `file`, schema installed under the cross-process migration
+   lock. Closes the pool if the migration fails so a failed open leaks nothing."
+  ^HikariDataSource [^String path ^String file]
+  (let
+    [raw
+     (raw-sqlite-datasource (str "jdbc:sqlite:" file))
+
+     pool
+     (pooled-datasource raw (str "vis-rlm-disk-" (.incrementAndGet pool-counter)))]
+
+    (try (with-migration-lock! path #(install-schema! pool))
+         pool
+         (catch Throwable t (try (.close pool) (catch Throwable _ nil)) (throw t)))))
+
+(defn- acquire-disk-pool!
+  "ONE Hikari pool per SQLite file per process, reference counted.
+
+   Why it matters, from the gateway crash (`hs_err_pid61432`): a jetty `qtp`
+   thread died in `_platform_memmove` five frames under `NativeDB.step`,
+   copying `WALINDEX_PGSZ - WALINDEX_HDR_SIZE` (32768 - 136) bytes into the
+   wal-index at `shm_base + 0x88` and faulting at the first 16 KiB page edge.
+   `mmap_size` is 0 on this sqlite build, so the wal-index `-shm` is the only
+   mapping sqlite holds, and that mapping had lost its backing: the file was
+   shorter than the region being written.
+
+   The wal-index node is PER PROCESS, not per connection (`lsof` on a live
+   gateway: 17 descriptors on `vis.db`, ONE on `vis.db-shm`). When a process'
+   connection count for the file drops to ZERO, sqlite purges that node and
+   drops its DMS lock; the next opener takes the DMS lock exclusively and
+   TRUNCATES `-shm` to zero before rebuilding it. Anything still holding the
+   old mapping is one write away from SIGBUS. Per-environment pools plus the
+   process-wide shared connection made those zero-connection transitions
+   routine - the crashed gateway had reached pool generation
+   `vis-rlm-disk-19` in 75 minutes (351 in an earlier 3h21m run).
+
+   One shared pool with `minimumIdle 1`, no idle timeout and no max lifetime
+   keeps at least one connection - and therefore the wal-index and its DMS
+   lock - alive for as long as ANY store is open, and makes the ordinary
+   open/dispose cycle stop closing connections other callers still use.
+
+   The pool IS retired and reopened when `file` resolves to a different inode,
+   the one case where the pooled handles are worthless (see
+   `db-store-stale?`)."
+  ^HikariDataSource [^String path ^String file]
+  (let
+    [key-now
+     (fs-file-key file)
+
+     [pool doomed]
+     (locking disk-pools-monitor
+       (let
+         [entry
+          (get @disk-pools file)
+
+          ^HikariDataSource pool
+          (:pool entry)
+
+          file-key
+          (:file-key entry)
+
+          reusable?
+          (and pool
+               (not (.isClosed pool))
+               ;; A MISSING file is a replacement in progress, not a
+               ;; reason to reuse: reusing would bind the caller to
+               ;; the unlinked inode and silently lose its writes.
+               (or (nil? file-key) (= key-now file-key)))]
+
+         (if reusable?
+           (do (swap! disk-pools assoc
+                 file
+                 {:pool pool :refs (inc (long (:refs entry 0))) :file-key (or file-key key-now)})
+               [pool nil])
+           (let [fresh (open-disk-pool! path file)]
+             (swap! disk-pools assoc file {:pool fresh :refs 1 :file-key (fs-file-key file)})
+             [fresh (when (and pool (not (.isClosed pool))) pool)]))))]
+
+    ;; A retired generation drains OUTSIDE the monitor; its remaining holders
+    ;; find a foreign entry on release and close nothing twice.
+    (when doomed (close-pool! doomed))
+    pool))
+
+(defn- release-disk-pool!
+  "Drop one reference; close only the last one. The decision is taken under the
+   monitor, the (draining, therefore slow) close happens outside it."
+  [^String file ^HikariDataSource pool]
+  (let
+    [doomed (locking disk-pools-monitor
+              (let [entry (get @disk-pools file)]
+                (cond (or (nil? entry) (not (identical? pool (:pool entry)))) pool ;; an older generation nobody tracks any more
+                      (<= (long (:refs entry 1)) 1) (do (swap! disk-pools dissoc file) pool)
+                      :else (do (swap! disk-pools update-in [file :refs] dec) nil))))]
+    (when doomed (close-pool! doomed))
+    nil))
+
 (defn- open-sqlite-at-dir
   [^String dir]
   ;; Forward slashes for the JDBC URL, the `File` ops and the migration lock
@@ -346,14 +495,15 @@
     (.mkdirs (File. path))
     (let
       [file (str path "/" DB_FILENAME)
-       raw (raw-sqlite-datasource (str "jdbc:sqlite:" file))
-       pool (pooled-datasource raw (str "vis-rlm-disk-" (.incrementAndGet pool-counter)))]
+       pool (acquire-disk-pool! path file)]
 
-      (try (with-migration-lock! path #(install-schema! pool))
-           {:datasource pool :conn pool :path path :db-file file :backend :sqlite}
-           (catch Throwable t
-             (try (.close ^HikariDataSource pool) (catch Throwable _ nil))
-             (throw t))))))
+      {:datasource pool
+       :conn pool
+       :path path
+       :db-file file
+       :backend :sqlite
+       ;; One-shot latch so a store released twice drops ONE reference.
+       :dispose-once (java.util.concurrent.atomic.AtomicBoolean. false)})))
 
 (def ^:private ^AtomicLong mem-counter (AtomicLong.))
 
@@ -380,7 +530,8 @@
      :db-file nil
      :backend :sqlite
      :owned? true
-     :mode :memory}))
+     :mode :memory
+     :dispose-once (java.util.concurrent.atomic.AtomicBoolean. false)}))
 
 (defn- stable-db-file-key
   "Filesystem IDENTITY of the SQLite file behind a store - the `(dev, ino)`
@@ -394,21 +545,15 @@
    LIE: SQLite rewrites `vis.db` in place on every WAL checkpoint, so
    ORDINARY write traffic moved both while the inode never changed.
    `db-store-stale?` then answered true for the rest of the process, and the
-   facade responds to a stale store by closing the process-wide Hikari pool
-   - underneath in-flight queries - and opening a new one. A crashed gateway
-   had reached pool generation `vis-rlm-disk-351` with seven leaked
-   housekeeper threads in 3h21m of uptime, and died with SIGBUS inside
-   `NativeDB.step`. Identity moves exactly when a reopen is the right
-   answer."
+   facade responds to a stale store by disposing it and opening a new one -
+   which is what drove the pool-generation churn (`vis-rlm-disk-351` in
+   3h21m) behind the wal-index SIGBUS described in `acquire-disk-pool!`.
+   Identity moves exactly when a reopen is the right answer."
   [store]
   (when-let [db-file (:db-file store)]
-    (try (let
-           [attrs (Files/readAttributes ^java.nio.file.Path
-                                        (Paths/get db-file (make-array String 0))
-                                        "basic:fileKey"
-                                        ^"[Ljava.nio.file.LinkOption;" (make-array LinkOption 0))]
-           {:db-file db-file :file-key (get attrs "fileKey")})
-         (catch Throwable _ {:db-file db-file :missing? true}))))
+    (if-let [k (fs-file-key db-file)]
+      {:db-file db-file :file-key k}
+      {:db-file db-file :missing? true})))
 
 (defn- with-file-key-snapshot
   [store]
@@ -453,14 +598,34 @@
       (throw (maybe-wrap-db-open-error e)))))
 
 (defn db-close!
-  "Idempotent dispose. Closes the Hikari pool when we own it; for
-   `:external` mode (caller-supplied DataSource) it's a no-op - the
-   caller still owns the handle they passed in."
+  "Idempotent dispose. Releases our reference on the per-file Hikari pool when
+   we own it - the pool itself is closed (after draining in-flight leases, see
+   `close-pool!`) once the last holder lets go. For `:external` mode
+   (caller-supplied DataSource) it's a no-op - the caller still owns the handle
+   they passed in.
+
+   Idempotent means idempotent PER STORE, enforced by the store's own
+   `:dispose-once` latch: the reference is dropped exactly once however often
+   the same store is disposed. `dispose-environment!` is reachable from several
+   teardown paths (eviction, `delete!`, `close-all!`, the `main` finally), and
+   a second release would close a pool other environments are still using."
   [store]
-  (when (and store (:owned? store))
-    (let [^Object ds (:datasource store)]
-      (when (instance? java.io.Closeable ds)
-        (try (.close ^java.io.Closeable ds) (catch Throwable _ nil)))))
+  (when (and store
+             (:owned? store)
+             (let [^java.util.concurrent.atomic.AtomicBoolean once (:dispose-once store)]
+               (or (nil? once) (.compareAndSet once false true))))
+    (let
+      [^Object ds
+       (:datasource store)
+
+       file
+       (:db-file store)]
+
+      (cond (and file (instance? HikariDataSource ds)) (release-disk-pool! file ds)
+            (instance? HikariDataSource ds) (close-pool! ds)
+            (instance? java.io.Closeable ds) (try (.close ^java.io.Closeable ds)
+                                                  (catch Throwable _ nil))
+            :else nil)))
   nil)
 
 (defn- canonical-path

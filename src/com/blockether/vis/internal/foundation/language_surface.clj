@@ -86,9 +86,10 @@
   "STRUCTURED capability map for the ACTIVE language packs:
    `{\"clojure\" [\"format\" \"test\" \"repl_eval\" \"repl\"], \"python\" [...]}`
    — nil when none active. Recomputed every turn from active-extensions, so it
-   GAINS a language the moment its pack activates (e.g. a .py file appears). Goes
-   in ctx (`session[\"language_tools\"]`) so the model can read it programmatically
-   AND it always reflects the current turn."
+   GAINS a language the moment its pack activates (e.g. a .py file appears).
+   INTERNAL: it feeds the EXTENSIONS prompt block and the `resources` ctx
+   projection. It is NOT shipped in the model's `session` dict — that was a
+   verbatim duplicate of the prompt block's LANGUAGE TOOLS lines."
   [env]
   (let
     [by-lang (reduce (fn [m cap]

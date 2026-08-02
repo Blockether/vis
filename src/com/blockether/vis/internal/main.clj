@@ -490,6 +490,19 @@
   (when-let [template (config/provider-template provider-id)]
     (select-keys template [:id :base-url :api-style :llm-headers :responses-path])))
 
+(defn- provider-with-model
+  "Return the configured provider whose catalog lists `model-name` verbatim.
+
+   Model ids may contain a slash (`z-ai/glm-4.6v`), so a whole-name catalog hit
+   wins over reading the prefix as a provider tag."
+  [providers model-name]
+  (let [wanted (str/lower-case (str model-name))]
+    (some (fn [provider]
+            (when (some #(= wanted (some-> (config/model-name %) str str/lower-case))
+                        (:models provider))
+              provider))
+          providers)))
+
 (defn- config-with-provider-override
   "Return config with `provider-id` promoted to the active (first) position.
    Resolves from configured providers first, falling back to provider templates.
@@ -520,7 +533,11 @@
                     str/trim
                     not-empty)]
     (let [providers (vec (:providers config))]
-      (if-let [[provider-id model-name] (split-provider-model model*)]
+      (if-let [[provider-id model-name]
+               (if-let [owner (when (str/includes? model* "/")
+                                (provider-with-model providers model*))]
+                 [(:id owner) model*]
+                 (split-provider-model model*))]
         (let
           [provider (or (some #(when (= provider-id (:id %)) %) providers)
                         (provider-from-template provider-id)
