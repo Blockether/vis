@@ -6,9 +6,18 @@
 
    `err` is the error map carried on a trace entry / ex-info:
    `{:message .. :data {:status .. :body .. :request-id ..} ..}`. Every
-   helper tolerates the bare ex-info shape too (via `ex-message`)."
+   helper tolerates the bare ex-info shape too (via `ex-message`).
+
+   CLASSIFICATION IS SVAR'S. `svar-classification` wraps
+   `svar.internal.failure/classify` — the single owner of failure families,
+   retry safety and `:reached-model?` for everything svar transports. This
+   namespace owns WORDING, plus the handful of failures svar cannot see (its
+   typed empty-content and stream-watchdog outcomes, gateway tool-field
+   rejections, tool-schema defects). Never grow a second copy of svar's
+   heuristics here."
   (:require [charred.api :as json]
             [clojure.string :as str]
+            [com.blockether.svar.internal.failure :as failure]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.strutil :refer [truncate]]))
 
@@ -241,6 +250,40 @@
        (or (:status data) (:status (:data data)))]
 
       (transport-error? status text nil))))
+
+(defn- ->classifiable
+  "`err` as the Throwable svar's classifier expects. A trace-entry error map is
+   the same evidence wearing a map, so rebuild the ex-info instead of
+   re-deriving svar's heuristics over here."
+  ^Throwable [err]
+  (cond (instance? Throwable err) err
+        (map? err) (ex-info (str (or (:message err) (ex-message err)))
+                            (or (:data err) (ex-data err) err))
+        :else (ex-info (str err) {})))
+
+(defn svar-classification
+  "svar's canonical verdict for `err`: `{:category :retryable? :reached-model?
+   :request-id :status …}` from `svar.internal.failure/classify`.
+
+   Vis presents, svar classifies. Reading this instead of re-implementing it is
+   what keeps the two layers from disagreeing about whether the model ever saw
+   the request — and svar, not vis, owns the retry ladder that follows."
+  [err]
+  (failure/classify (->classifiable err)))
+
+(defn unanswered-request?
+  "True when NOTHING answered: svar reports a pre-response transport drop, so
+   `:reached-model?` is false and re-sending is side-effect-free.
+
+   Why ask svar rather than `transport-error?`: vis' own text gate only fires
+   when NO HTTP status is present, but the shared gateway answers a pre-response
+   socket drop with a 502 whose body carries the real cause. That status alone
+   made vis call it a rejection — the exact complaint in issue #69. A
+   `:connect-timeout` is deliberately NOT folded in here: `upstream-timeout-phase`
+   already says `while connecting — the request never reached the model`."
+  [err]
+  (let [{:keys [category reached-model?]} (svar-classification err)]
+    (boolean (and (false? reached-model?) (= :transport-drop category)))))
 
 (defn empty-content-error?
   "True when the failure is svar's TYPED `:svar.llm/empty-content` — the
@@ -484,7 +527,7 @@
       (str "WHAT HAPPENED: your Claude extra-usage allowance is exhausted — third-party "
            "apps draw from extra usage, not your plan. "
            (or provider-message "Third-party apps now draw from your extra usage"))
-      (transport-error? status provider-message message)
+      (or (transport-error? status provider-message message) (unanswered-request? err))
       "WHAT HAPPENED: the connection dropped before any response came back. The model never saw the request."
       (rate-limit-error? status provider-message message)
       (str "WHAT HAPPENED: the provider rate-limited this request."
@@ -512,6 +555,10 @@
              "fallback was tried. Transcript and tool results are intact.")
         (str "WHAT HAPPENED: every provider in this turn's fallback list failed before a "
              "usable response. Transcript and tool results are intact."))
+      (and (nil? status) (str/blank? provider-message) (:request-id (svar-classification err)))
+      (str "WHAT HAPPENED: the provider call failed with nothing but a correlation id — no "
+           "status, no provider message. Nothing here says the request was rejected; quote the "
+           "id below if it keeps happening.")
       (seq provider-message) (str "WHAT HAPPENED: the provider rejected the request. "
                                   provider-message)
       :else "WHAT HAPPENED: the provider rejected the request.")))
@@ -719,18 +766,40 @@
           (billing-required-error? status) :billing
           (anthropic-extra-usage-error? status provider-message message) :anthropic-extra-usage
           (rate-limit-error? status provider-message message) :rate-limit
-          (transport-error? status provider-message message) :transport
+          (or (transport-error? status provider-message message) (unanswered-request? err))
+          :transport
           (resource-mismatch-error? (provider-error-upstream-text err)) :resource-mismatch
           (upstream-timeout-error? status (provider-error-upstream-text err)) :upstream-timeout
           :else :generic)))
 
+(def ^:private RETRYABLE_KINDS
+  "Kinds vis knows are worth another attempt even when svar has no opinion —
+   its own typed outcomes (an empty 200 body, a stream watchdog) plus the
+   transport/timeout families it words itself."
+  #{:rate-limit :transport :overloaded :empty-content :stream-timeout :upstream-timeout})
+
+(def ^:private TERMINAL_KINDS
+  "Kinds where an identical retry fails identically: the request, the key, the
+   plan or the pinned resource is wrong. No classification may soften these."
+  #{:auth :billing :tool-schema :context-overflow :resource-mismatch :output-budget-too-small
+    :invalid-thinking-signature :anthropic-extra-usage})
+
 (defn provider-error-retryable?
   "Whether retrying the SAME request can plausibly succeed. Surfaces read this
    so they never suggest a blind retry for a terminal or pinned failure (auth,
-   billing, tool schema, resource mismatch, context overflow)."
+   billing, tool schema, resource mismatch, context overflow).
+
+   Vis answers only for the kinds it classifies better than svar does (its typed
+   stream watchdogs, empty content, gateway tool-field rejections). Everything
+   else — every plain HTTP failure — defers to `svar-classification`'s
+   `:retryable?`, so vis never keeps a second, drifting copy of that verdict.
+
+   This is presentation only: svar owns the actual retry ladder."
   [err]
-  (contains? #{:rate-limit :transport :overloaded :empty-content :stream-timeout :upstream-timeout}
-             (provider-error-kind err)))
+  (let [kind (provider-error-kind err)]
+    (cond (contains? RETRYABLE_KINDS kind) true
+          (contains? TERMINAL_KINDS kind) false
+          :else (boolean (:retryable? (svar-classification err))))))
 
 (defn provider-failure?
   "True when `err` is a PROVIDER failure — presentable as the styled card
@@ -759,7 +828,11 @@
      (:status data)
 
      request-id
-     (or (:request-id data) (:request_id data))
+     (or (:request-id data)
+         (:request_id data)
+         ;; A gateway that answers with nothing but a correlation id leaves it in
+         ;; the message; svar already knows how to read it out (issue #69).
+         (:request-id (svar-classification err)))
 
      provider-id
      (provider-id-of data)
@@ -774,7 +847,9 @@
      (:tool-schema-path data)]
 
     (cond-> []
-      (and (seq message) (not (generic-wrapper-message? message)))
+      (and (seq message)
+           (not (generic-wrapper-message? message))
+           (not= (str/trim message) (str request-id)))
       (conj ["Wrapper" message])
 
       status

@@ -456,3 +456,87 @@
                  (let [[c] (perr/provider-error-content resource-mismatch-err)]
                    (expect (= "provider_resource-mismatch" (get c "code")))
                    (expect (false? (get c "retryable"))))))
+
+(def ^:private status-bearing-drop-err
+  "Issue #69: the shared gateway ACCEPTS the connection, then closes it before a
+   single response byte — and answers the wrapper with a 502 whose body carries
+   the real cause. That status alone used to make vis call it a rejection."
+  {:message "Provider unavailable"
+   :data {:type :svar.core/http-error
+          :status 502
+          :body "litellm.APIConnectionError: HTTP/1.1 header parser received no bytes"}})
+
+(defdescribe
+  unanswered-request-presentation-test
+  (it "classifies a pre-response drop as :transport even when it wears a status"
+      (expect (perr/unanswered-request? status-bearing-drop-err))
+      (expect (= :transport (perr/provider-error-kind status-bearing-drop-err))))
+  (it "says the model never saw the request instead of claiming a rejection"
+      (let [ex (perr/provider-error-explanation status-bearing-drop-err)]
+        (expect (str/includes? ex "connection dropped"))
+        (expect (str/includes? ex "never saw the request"))
+        (expect (not (str/includes? ex "rejected the request")))))
+  (it "reports it as safe to retry, and keeps the gateway's status as a fact"
+      (expect (true? (perr/provider-error-retryable? status-bearing-drop-err)))
+      (expect (some #(= ["HTTP" "502"] %) (perr/provider-error-facts status-bearing-drop-err))))
+  (it "a plain gateway outage with no drop evidence is NOT called a transport drop"
+      (let [err {:message "Provider unavailable" :data {:status 502 :body "Bad gateway"}}]
+        (expect (not (perr/unanswered-request? err)))
+        (expect (not= :transport (perr/provider-error-kind err)))))
+  (it "a connect timeout keeps its phase-aware upstream-timeout wording"
+      ;; `upstream-timeout-phase` already says the request never reached the
+      ;; model, so :connect-timeout must not be swallowed by :transport.
+      (let
+        [err {:message "Provider unavailable"
+              :data {:status 408
+                     :body (str "litellm.Timeout: BedrockException: Timeout Error - "
+                                "litellm.Timeout: Connection timed out.")}}]
+        (expect (not (perr/unanswered-request? err)))
+        (expect (= :upstream-timeout (perr/provider-error-kind err)))))
+  (it "a definitive client error still reads as a rejection"
+      (let
+        [err {:message "Exceptional status code: 400"
+              :data {:status 400 :body "{\"error\":{\"message\":\"messages must not be empty\"}}"}}]
+        (expect (not (perr/unanswered-request? err)))
+        (expect (str/includes? (perr/provider-error-explanation err) "rejected the request")))))
+
+(defdescribe
+  correlation-id-presentation-test
+  ;; Issue #69's second symptom: the gateway answered with NOTHING but a
+  ;; correlation id — no status, no provider message. Calling that "the provider
+  ;; rejected the request" is unsupported by any evidence vis holds.
+  (let [err {:message "2c0061ee-46c5-4ec4-b6e0-e1f97120e680" :data {}}]
+    (it "does not claim a rejection nothing answered for"
+        (let [ex (perr/provider-error-explanation err)]
+          (expect (str/includes? ex "correlation id"))
+          (expect (not (str/includes? ex "rejected the request")))))
+    (it "surfaces the bare id as a Request id fact, not as a wrapper message"
+        (let [facts (perr/provider-error-facts err)]
+          (expect (some #(= ["Request id" "2c0061ee-46c5-4ec4-b6e0-e1f97120e680"] %) facts))
+          (expect (not-any? #(= "Wrapper" (first %)) facts))))
+    (it "an explicit request id in the ex-data still wins the row"
+        (let [err (assoc-in err [:data :request-id] "req_explicit")]
+          (expect (some #(= ["Request id" "req_explicit"] %) (perr/provider-error-facts err))))))
+  (it "a real wrapper message is still quoted as the wrapper"
+      (let
+        [err {:message "litellm.BadRequestError: deployment is not permitted"
+              :data {:status 400 :body "{\"error\":{\"message\":\"bad\"}}"}}]
+        (expect (some #(= "Wrapper" (first %)) (perr/provider-error-facts err))))))
+
+(defdescribe
+  retryability-defers-to-svar-test
+  ;; vis answers only for the kinds it words itself; everything else reads
+  ;; svar's `:retryable?` so the two layers can never drift apart.
+  (it "a gateway 503 vis calls :generic is still retryable, because svar says so"
+      (let
+        [err {:message "Provider unavailable" :data {:status 503 :body "upstream connect failure"}}]
+        (expect (= :generic (perr/provider-error-kind err)))
+        (expect (true? (perr/provider-error-retryable? err)))))
+  (it "a definitive 400 is not retryable"
+      (expect (false? (perr/provider-error-retryable?
+                        {:message "Exceptional status code: 400"
+                         :data {:status 400
+                                :body
+                                "{\"error\":{\"message\":\"messages must not be empty\"}}"}}))))
+  (it "no classification can soften a terminal kind"
+      (expect (false? (perr/provider-error-retryable? resource-mismatch-err)))))
