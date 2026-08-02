@@ -70,6 +70,20 @@
   (.acquire scan-semaphore)
   (try (thunk) (finally (.release scan-semaphore))))
 
+(def max-content-file-size
+  "Largest file whose CONTENT the pooled index will read, in bytes (256 MiB).
+
+   fff's own default is 10 MB (`MAX_FFFILE_SIZE`), and everything above it was
+   skipped SILENTLY: a needle sitting in a 20 MB log, dump or generated source
+   made `grep` answer \"No file NAME or CONTENT matched\". A silent false
+   negative is strictly worse than the slow scan this discovery path replaced,
+   so the budget is raised HERE and at the `fff/grep` call site — the index's
+   own content budget wins, so moving only one of the two still reads nothing.
+
+   Cost is page cache, not heap: fff reads these files itself, and vis streams
+   them line by line (`search-file-content`) rather than slurping them."
+  (* 256 1024 1024))
+
 (defn- open!
   "Create a FRESH fff instance scoped to `root`, blocking until its initial
    scan completes. The caller owns the instance and must close it. The
@@ -110,22 +124,27 @@
           (.getCanonicalPath root)
 
           idx
-          (try (fff/create {:base-path k
-                            :watch? true
-                            :ai-mode? true
-                            :enable-content-indexing? true
-                            :enable-mmap-cache? false
-                            ;; see docstring — never open fff's LMDB dbs.
-                            :frecency-db-path nil
-                            :history-db-path nil
-                            :respect-ignore-files? (boolean respect-ignore-files?)
-                            ;; ignore overlay — fff honors it in BOTH the scan
-                            ;; walk and the live watcher, which is why vis no
-                            ;; longer walks trees in Clojure for `.rgignore` or
-                            ;; the `:grep` config overlay.
-                            :custom-ignore-filenames (:custom-ignore-filenames overlay)
-                            :exclude-globs (:exclude-globs overlay)
-                            :unignore-globs (:unignore-globs overlay)})
+          (try (fff/create
+                 {:base-path k
+                  :watch? true
+                  :ai-mode? true
+                  :enable-content-indexing? true
+                  :enable-mmap-cache? false
+                  ;; content budget: fff skips files past this SILENTLY,
+                  ;; and its 10 MB default made grep miss needles that
+                  ;; live in big logs/dumps (issue #63 follow-up).
+                  :cache-budget-max-file-size max-content-file-size
+                  ;; see docstring — never open fff's LMDB dbs.
+                  :frecency-db-path nil
+                  :history-db-path nil
+                  :respect-ignore-files? (boolean respect-ignore-files?)
+                  ;; ignore overlay — fff honors it in BOTH the scan
+                  ;; walk and the live watcher, which is why vis no
+                  ;; longer walks trees in Clojure for `.rgignore` or
+                  ;; the `:grep` config overlay.
+                  :custom-ignore-filenames (:custom-ignore-filenames overlay)
+                  :exclude-globs (:exclude-globs overlay)
+                  :unignore-globs (:unignore-globs overlay)})
                (catch Throwable t
                  (throw (ex-info (str "rg requires fff for directory search, but fff failed for " k)
                                  {:type :ext.foundation.editing/fff-unavailable :path k}

@@ -112,6 +112,34 @@
                                (iterator-seq (.iterator (.relativize rp fp)))))))
                    roots))))
 
+(def ^:private rg-fff-grep-max-file-size
+  "Largest file fff's native content grep will READ, in bytes.
+
+   fff's own default is 10 MB (`MAX_FFFILE_SIZE`) and it skips bigger files
+   SILENTLY, so a needle living in a 20 MB log/dump made grep answer \"No file
+   NAME or CONTENT matched\" — a false negative, strictly worse than the slow
+   scan this discovery path replaced. The index carries the SAME budget
+   (`fff-index/max-content-file-size`); both have to move, raising only one
+   still reads nothing."
+  fff-index/max-content-file-size)
+
+(def ^:private rg-search-budget-ms
+  "Wall-clock budget for one grep's SCAN phase, in ms.
+
+   Everything else about grep is bounded by COUNTS (`limit`, page limits,
+   `rg-breadth-probe-limit`), which says nothing about time: a pathological tree
+   or needle could ride all the way to the native-tool hard kill at 120 s and
+   return NOTHING. Past this budget the sweep stops and reports what it has with
+   `truncated_by`/`hits_truncated_by` = `time` plus a narrowing hint, so partial
+   results never read as a whole answer."
+  20000)
+
+(def ^:private search-file-poll-lines
+  "Lines between `check-interrupt!` polls while streaming ONE file. A 200 MB file
+   is millions of lines; polling every line costs, polling never means Esc and
+   the tool timeout cannot land mid-file."
+  4096)
+
 (def ^:private rg-fff-grep-page-limit
   "Matches per native-grep page. With `:max-matches-per-file 1` this is also the
    number of FILES a page can report, so a page is a file page."
@@ -147,6 +175,7 @@
                   :file-offset offset
                   :page-limit rg-fff-grep-page-limit
                   :max-matches-per-file 1
+                  :max-file-size rg-fff-grep-max-file-size
                   :time-budget-ms 1500})
 
        acc
@@ -2475,7 +2504,7 @@
       "file_counts" file-counts
       "total_file_count" total-files
       "total_file_count_is_exact" (boolean (get out :total-file-count-exact? true))
-      "hits_truncated_by" (when (contains? #{:limit :bytes} (:truncated-by out))
+      "hits_truncated_by" (when (contains? #{:limit :bytes :time} (:truncated-by out))
                             (name (:truncated-by out)))
       "first_hit" (when (pos? (count hits))
                     (let [{:keys [path line]} (nth hits 0)]
@@ -2629,7 +2658,17 @@
          (str
            "No CONTENT matched \"" query
            "\" — CONTENT matching is LITERAL smart-case substring, regex syntax is not interpreted. "
-           "Search a plain distinctive fragment; only the file NAME matches in `paths` are real.")))]
+           "Search a plain distinctive fragment; only the file NAME matches in `paths` are real."))
+
+       ;; The scan stopped at its wall-clock budget, so these results are
+       ;; PARTIAL. Said LAST because it outranks every hint above: "nothing
+       ;; matched" is a lie when the sweep never finished.
+       (= "time" (get content "hits_truncated_by"))
+       (assoc "hint"
+         (str
+           "Search stopped at its " (quot (long rg-search-budget-ms) 1000)
+           "s scan budget — these results are PARTIAL, not the whole tree. "
+           "Narrow `paths` to a subdirectory, add `include` globs, or search a more distinctive term.")))]
 
     (tool-success {:op :grep
                    :path (first searched_paths)
@@ -2825,19 +2864,19 @@
   "Walk one file once, emit hits with optional context. Content-mode helper.
    Returns a vec of hit maps; an empty vec means no match. `:text` and the
    `:before`/`:after` context are kept FULL — the value is the model's data,
-   sliceable in Python via `r[...]`; only the wire VIEW is bounded downstream."
+   sliceable in Python via `r[...]`; only the wire VIEW is bounded downstream.
+
+   STREAMING, one line at a time. This used to slurp the file with
+   `(vec (line-seq r))`, which pinned a whole multi-hundred-MB candidate in heap
+   and offered NO cancellation point, so one huge file outlived both Esc and the
+   tool timeout. `:before` now comes from a bounded ring of the last
+   `before-ctx` lines and `:after` is filled in by hits still awaiting it, so
+   memory is O(context), not O(file), and `check-interrupt!` lands mid-file."
   [^File f matches? before-ctx after-ctx]
   (try
     (let
       [path
        (rel-path f)
-
-       lines
-       (with-open [r (io/reader f)]
-         (vec (line-seq r)))
-
-       n
-       (count lines)
 
        before-ctx
        (long before-ctx)
@@ -2851,40 +2890,54 @@
        want-after?
        (pos? after-ctx)]
 
-      (loop
-        [i
-         0
+      (with-open [r (io/reader f)]
+        (loop
+          [ls (line-seq r)
+           i 0
+           ;; ring of the last `before-ctx` [line-no text] pairs
+           ring clojure.lang.PersistentQueue/EMPTY
+           ;; hits whose :after window is not full yet, oldest first — hits
+           ;; therefore still complete in line order
+           pending []
+           out (transient [])]
 
-         out
-         (transient [])]
+          (when (zero? (rem (long i) (long search-file-poll-lines))) (check-interrupt!))
+          (if-some [line (first ls)]
+            (let
+              [line-no (inc (long i))
+               ;; feed the open :after windows BEFORE this line can open its own
+               fed (mapv (fn [h]
+                           (cond-> h
+                             (< (count (:after h)) after-ctx)
+                             (update :after conj [line-no line])))
+                         pending)
+               done (filterv (fn [h]
+                               (>= (count (:after h)) after-ctx))
+                      fed)
+               waiting (filterv (fn [h]
+                                  (< (count (:after h)) after-ctx))
+                         fed)
+               out (reduce conj! out done)
+               ;; FULL text here: the hit's :text feeds `patch/line-anchor` (the
+               ;; patch hash must match the real file line). Display clipping
+               ;; happens AFTER the anchor is computed (see rg-search).
+               hit (when (matches? line)
+                     (cond-> {:path path :line line-no :text line}
+                       want-before?
+                       (assoc :before (vec ring))
 
-        (cond (>= i n) (persistent! out)
-              (matches? (nth lines i)) (let
-                                         [line-no
-                                          (inc i)
+                       want-after?
+                       (assoc :after [])))
+               out (if (and hit (not want-after?)) (conj! out hit) out)
+               waiting (if (and hit want-after?) (conj waiting hit) waiting)
+               ring (if want-before?
+                      (let [q (conj ring [line-no line])]
+                        (if (> (count q) before-ctx) (pop q) q))
+                      ring)]
 
-                                          ;; FULL text here: the hit's :text feeds `patch/line-anchor`
-                                          ;; (the patch hash must match the real file line). Display
-                                          ;; clipping happens AFTER the anchor is computed (see rg-search).
-                                          text
-                                          (nth lines i)
-
-                                          hit
-                                          (cond-> {:path path :line line-no :text text}
-                                            want-before?
-                                            (assoc :before
-                                              (mapv (fn [j]
-                                                      [(inc (long j)) (nth lines j)])
-                                                    (range (max 0 (- i before-ctx)) i)))
-
-                                            want-after?
-                                            (assoc :after
-                                              (mapv (fn [j]
-                                                      [(inc (long j)) (nth lines j)])
-                                                    (range (inc i) (min n (+ i after-ctx 1))))))]
-
-                                         (recur (inc i) (conj! out hit)))
-              :else (recur (inc i) out))))
+              (recur (rest ls) (inc (long i)) ring waiting out))
+            ;; EOF: hits whose :after window never filled ship short
+            (persistent! (reduce conj! out pending))))))
     (catch Throwable _ [])))
 
 (defn- file-has-any-hit?
@@ -2996,6 +3049,16 @@
           (remove (fn [^File f]
                     (and (not is_hidden) (rg-hidden-below-root? roots f)))))
 
+     ;; WALL-CLOCK budget for the scan below. Every other bound here is a COUNT,
+     ;; which says nothing about time: before this, a pathological tree could run
+     ;; to the 120 s native-tool kill and return nothing at all.
+     deadline
+     (+ (System/currentTimeMillis) (long rg-search-budget-ms))
+
+     out-of-time?
+     (fn []
+       (>= (System/currentTimeMillis) (long deadline)))
+
      files
      ;; DECORATE-SORT-UNDECORATE: `rel-path` canonicalizes paths (syscalls). Handing it
      ;; to `sort-by` directly ran it INSIDE the comparator — O(n·log n) canonicalizations
@@ -3025,6 +3088,9 @@
                        (atom 0)
 
                        breadth-capped?
+                       (atom false)
+
+                       time-capped?
                        (atom false)]
 
                       ;; the scan phase reads every candidate file — poll so Esc/timeout
@@ -3036,9 +3102,10 @@
                         [^File f
                          files
 
-                         :while (not @breadth-capped?)]
+                         :while (and (not @breadth-capped?) (not @time-capped?))]
 
                         (check-interrupt!)
+                        (when (out-of-time?) (reset! time-capped? true))
                         (if @capped?
                           (do (when (file-has-any-hit? f matches?) (swap! total-files inc))
                               (when (>= (long (swap! probed-extra inc))
@@ -3050,70 +3117,77 @@
                             (when (>= (count @out) (long limit)) (reset! capped? true)))))
                       {:files (vec @out)
                        :missing rg-missing-paths
-                       :truncated-by (if @capped? :limit :end-of-results)
+                       :truncated-by (cond @capped? :limit
+                                           @time-capped? :time
+                                           :else :end-of-results)
                        :total-file-count @total-files
-                       :total-file-count-exact? (not @breadth-capped?)})
-      :else (let
-              [out
-               (atom [])
+                       :total-file-count-exact? (and (not @breadth-capped?) (not @time-capped?))})
+      :else
+      (let
+        [out
+         (atom [])
 
-               bytes-used
-               (atom 0)
+         bytes-used
+         (atom 0)
 
-               cap-reason
-               (atom nil)
+         cap-reason
+         (atom nil)
 
-               ;; nil | :limit | :bytes
-               total-files
-               (atom 0)
+         ;; nil | :limit | :bytes
+         total-files
+         (atom 0)
 
-               probed-extra
-               (atom 0)
+         probed-extra
+         (atom 0)
 
-               breadth-capped?
-               (atom false)]
+         breadth-capped?
+         (atom false)
 
-              (doseq
-                [^File f
-                 files
+         time-capped?
+         (atom false)]
 
-                 :while (not @breadth-capped?)]
+        (doseq
+          [^File f
+           files
 
-                ;; the scan phase reads every candidate file — poll so Esc/timeout
-                ;; aborts mid-sweep
-                (check-interrupt!)
-                (if @cap-reason
-                  ;; DISPLAY is full — keep counting matching files for breadth via a
-                  ;; short-circuit probe (no hit objects/context, so the tail stays
-                  ;; cheap), bounded by `rg-breadth-probe-limit`.
-                  (do (when (file-has-any-hit? f matches?) (swap! total-files inc))
-                      (when (>= (long (swap! probed-extra inc)) (long rg-breadth-probe-limit))
-                        (reset! breadth-capped? true)))
-                  (let [hits (search-file-content f matches? before-ctx after-ctx)]
-                    (when (seq hits)
-                      (swap! total-files inc)
-                      ;; Attach the `lineno:hash` anchor (patchable straight from the hit).
-                      ;; :text is kept FULL — it's the model's data, sliceable in Python
-                      ;; via r[...]; the wire VIEW is bounded by the 64KB observation clip.
-                      ;; Stop on the hit limit OR the total-bytes budget (whichever first).
-                      (doseq
-                        [hit hits
-                         :while (not @cap-reason)]
+           :while (and (not @breadth-capped?) (not @time-capped?))]
 
-                        (let
-                          [hit* (cond-> hit
-                                  (not (str/blank? (:text hit)))
-                                  (assoc :anchor (patch/line-anchor (:line hit) (:text hit))))]
-                          (swap! out conj hit*)
-                          (swap! bytes-used + (hit-bytes hit*))
-                          (cond (>= (count @out) (long limit)) (reset! cap-reason :limit)
-                                (>= (long @bytes-used) (long max-rg-result-bytes))
-                                (reset! cap-reason :bytes))))))))
-              {:hits (vec @out)
-               :missing rg-missing-paths
-               :truncated-by (or @cap-reason :end-of-results)
-               :total-file-count @total-files
-               :total-file-count-exact? (not @breadth-capped?)}))))
+          ;; the scan phase reads every candidate file — poll so Esc/timeout
+          ;; aborts mid-sweep
+          (check-interrupt!)
+          (when (out-of-time?) (reset! time-capped? true))
+          (if @cap-reason
+            ;; DISPLAY is full — keep counting matching files for breadth via a
+            ;; short-circuit probe (no hit objects/context, so the tail stays
+            ;; cheap), bounded by `rg-breadth-probe-limit`.
+            (do (when (file-has-any-hit? f matches?) (swap! total-files inc))
+                (when (>= (long (swap! probed-extra inc)) (long rg-breadth-probe-limit))
+                  (reset! breadth-capped? true)))
+            (let [hits (search-file-content f matches? before-ctx after-ctx)]
+              (when (seq hits)
+                (swap! total-files inc)
+                ;; Attach the `lineno:hash` anchor (patchable straight from the hit).
+                ;; :text is kept FULL — it's the model's data, sliceable in Python
+                ;; via r[...]; the wire VIEW is bounded by the 64KB observation clip.
+                ;; Stop on the hit limit OR the total-bytes budget (whichever first).
+                (doseq
+                  [hit hits
+                   :while (not @cap-reason)]
+
+                  (let
+                    [hit* (cond-> hit
+                            (not (str/blank? (:text hit)))
+                            (assoc :anchor (patch/line-anchor (:line hit) (:text hit))))]
+                    (swap! out conj hit*)
+                    (swap! bytes-used + (hit-bytes hit*))
+                    (cond (>= (count @out) (long limit)) (reset! cap-reason :limit)
+                          (>= (long @bytes-used) (long max-rg-result-bytes)) (reset! cap-reason
+                                                                               :bytes))))))))
+        {:hits (vec @out)
+         :missing rg-missing-paths
+         :truncated-by (or @cap-reason (when @time-capped? :time) :end-of-results)
+         :total-file-count @total-files
+         :total-file-count-exact? (and (not @breadth-capped?) (not @time-capped?))}))))
 
 ;; =============================================================================
 ;; Thin babashka.fs wrappers
@@ -5056,69 +5130,6 @@
     (:wildcard imp)
     (assoc "wildcard" true)))
 
-(def ^:private scan-parallelism
-  "How many files `scan-mapv` indexes at once.
-
-   One CPU per worker. The pack's parse is serialized process-wide (a global
-   mutex guards third-party scanners with mutable static state), but everything
-   AROUND it is not: the content-addressed tree cache, the reference walk, the
-   JSON boundary and the whole Clojure side all run concurrently, so a repo-wide
-   `struct_index` scales nearly linearly until the parse mutex saturates.
-
-   Measured over 140 files / 4.2 MB / 4 844 names, definitions + occurrences:
-   558 ms serial → 60 ms at 12-16 workers when the trees are cached, and
-   713 ms → 180 ms when every file must be parsed afresh (the parse mutex is
-   that floor). Past the core count the curve is flat, so there is nothing to
-   buy by oversubscribing."
-  (max 2 (min 16 (.availableProcessors (Runtime/getRuntime)))))
-
-(defn- scan-mapv
-  "`mapv` over `items` across `scan-parallelism` workers, in REQUEST ORDER.
-
-   Workers pull the next index off a shared cursor, so one huge file cannot
-   strand a worker while the others idle. The first exception is rethrown AS
-   THROWN (never wrapped in `ExecutionException`) so the tool's `:on-error-fn`
-   still sees the original `ex-info`; the remaining workers are always awaited,
-   so no task outlives the call."
-  [f items]
-  (let
-    [items
-     (vec items)
-
-     n
-     (count items)]
-
-    (if (or (< n 2) (< (long scan-parallelism) 2))
-      (mapv f items)
-      (let
-        [out
-         (object-array n)
-
-         cursor
-         (java.util.concurrent.atomic.AtomicInteger. 0)
-
-         worker
-         (fn []
-           (loop []
-
-             (let [i (.getAndIncrement cursor)]
-               (when (< i n) (aset out i (f (nth items i))) (recur)))))
-
-         futures
-         (vec (repeatedly (min (long scan-parallelism) n) #(future (worker))))
-
-         failure
-         (reduce (fn [acc fut]
-                   (try @fut
-                        acc
-                        (catch java.util.concurrent.ExecutionException e (or acc (.getCause e) e))
-                        (catch Throwable t (or acc t))))
-                 nil
-                 futures)]
-
-        (when failure (throw failure))
-        (vec out)))))
-
 (defn- index-one
   "Index one normalized path specification for the paths-only `struct_index` tool.
    Its result becomes one row in the tool's `results` vector."
@@ -5231,7 +5242,7 @@
                          entries)
 
        results
-       (scan-mapv #(:result (index-one %)) specs)
+       (structural/scan-mapv #(:result (index-one %)) specs)
 
        result
        (cond-> {"results" results}
@@ -5251,25 +5262,13 @@
                    distinct
                    vec)
 
-              ;; Each file is read AND PARSED once per request, not once per
-              ;; name: one `occurrences-in` pass traces the whole name set.
-              ;; Scan eagerly in parallel, preserving per-file failures, then
-              ;; TRANSPOSE only the non-empty name/file pairs. A dense name ×
-              ;; path regrouping did 678k lookups to consume 8k pairs on Vis.
+              ;; The tree-sitter layer owns the read + parse fan-out: one read
+              ;; and ONE parse per file for the WHOLE name set, per-file
+              ;; failures preserved. This side only confines the path and
+              ;; TRANSPOSES the non-empty name/file pairs — a dense name × path
+              ;; regrouping did 678k lookups to consume 8k pairs on Vis.
               scans
-              (when (seq names)
-                (scan-mapv
-                  (fn [path]
-                    (try
-                      {:path path
-                       :occurrences
-                       (structural/occurrences-in path
-                                                  (slurp (safe-path path))
-                                                  names)}
-                      (catch Exception e
-                        {:path path
-                         :error (or (ex-message e) (str (class e)))})))
-                  paths))
+              (structural/occurrences-in-files paths names #(slurp (safe-path %)))
 
               failed
               (into []

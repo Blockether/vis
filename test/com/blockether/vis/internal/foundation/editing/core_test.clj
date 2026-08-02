@@ -6159,3 +6159,168 @@
                    {"path" "resources/vis-docs" "depth" 2 "is_hidden" true}]]
             (expect (seq (get ((private-fn "ls-one") spec) "entries")))))
         (expect (zero? @fresh)))))
+
+(defdescribe
+  grep-large-file-and-deadline-test
+  "The two silent failures left behind when fff became grep's ONLY discovery
+   path (issue #63 follow-up).
+
+   fff skips files past its content budget WITHOUT saying so and its default is
+   10 MB, so a needle living in a 20 MB log/dump made grep answer \"No file NAME
+   or CONTENT matched\" — a false negative, strictly worse than the slow scan the
+   fff path replaced. And every other bound on a grep is a COUNT, which says
+   nothing about time: a pathological tree could ride to the 120 s native-tool
+   kill and return nothing at all."
+  (let
+    [gt
+     (private-fn "grep-tool")
+
+     rg-search
+     (private-fn "rg-search")
+
+     search-file-content
+     (private-fn "search-file-content")
+
+     ;; the VAR, not its value — `with-redefs-fn` needs the Var itself
+     budget-var
+     (resolve 'com.blockether.vis.internal.foundation.editing.core/rg-search-budget-ms)]
+
+    (it "the index budget and the grep-call budget are the SAME, and both clear fff's 10 MB default"
+        ;; Raising only ONE of the two still reads nothing: the index refuses to
+        ;; cache content past its own budget, so the native grep never sees it.
+        (expect (= (private-fn "rg-fff-grep-max-file-size") (fff-index-fn "max-content-file-size")))
+        (expect (> (long (fff-index-fn "max-content-file-size")) (* 10 1024 1024))))
+    (it
+      "a needle past fff's 10 MB content default is FOUND, not silently dropped"
+      (let
+        [_
+         (write-temp! "greplarge/small.txt" "ZZBIGNEEDLEZZ small\n")
+
+         rel
+         (write-temp! "greplarge/big.txt" "")
+
+         big
+         (fs/file rel)
+
+         filler
+         (apply str (repeat 63 \x))
+
+         ;; 16 MiB of filler, then the needle on the LAST line: past fff's
+         ;; MAX_FFFILE_SIZE and past the end of any prefix read.
+         _
+         (with-open [w (java.io.BufferedWriter. (java.io.FileWriter. ^java.io.File big))]
+           (dotimes [_ 262144]
+             (.write w ^String filler)
+             (.write w "\n"))
+           (.write w "before-the-needle\n")
+           (.write w "ZZBIGNEEDLEZZ big\n"))
+
+         _
+         ((fff-index-fn "note-fs-write!"))
+
+         dir
+         (temp-dir-path "greplarge")]
+
+        (try (let
+               [hits
+                (:hits (rg-search {"query" "ZZBIGNEEDLEZZ" "paths" [dir] "context" 1 "limit" 50}))
+
+                by-name
+                (into {}
+                      (map (fn [h]
+                             [(last (string/split (:path h) #"/")) h]))
+                      hits)]
+
+               (expect (> (long (fs/size big)) (* 10 1024 1024)))
+               (expect (contains? by-name "small.txt"))
+               (expect (contains? by-name "big.txt"))
+               ;; streamed, so the bounded ring still holds the preceding line for
+               ;; a hit that lands 16 MB into the file
+               (expect (= ["before-the-needle"] (mapv second (:before (get by-name "big.txt"))))))
+             (finally (fs/delete-if-exists big)))))
+    (it "a scan that runs out of WALL-CLOCK time says so instead of end-of-results"
+        (let
+          [_
+           (doseq [i (range 1 6)]
+             (write-temp! (str "grepdeadline/f" i ".clj") ";; ZZDEADLINEZZ\n"))
+
+           dir
+           (temp-dir-path "grepdeadline")]
+
+          (with-redefs-fn {budget-var 0}
+            (fn []
+              (let
+                [content
+                 (rg-search {"query" "ZZDEADLINEZZ" "paths" [dir] "limit" 50})
+
+                 files-only
+                 (rg-search {"query" "ZZDEADLINEZZ" "paths" [dir] "limit" 50 "is_files_only" true})]
+
+                ;; PARTIAL, and LABELLED partial: without `:time` these read as
+                ;; `end-of-results` and a slice passes as the whole tree.
+                (expect (= :time (:truncated-by content)))
+                (expect (pos? (count (:hits content))))
+                (expect (< (count (:hits content)) 5))
+                (expect (false? (:total-file-count-exact? content)))
+                (expect (= :time (:truncated-by files-only)))
+                (expect (pos? (count (:files files-only))))
+                (expect (< (count (:files files-only)) 5)))))))
+    (it "grep surfaces the time cap as hits_truncated_by plus a NARROWING hint"
+        (let
+          [_
+           (doseq [i (range 1 4)]
+             (write-temp! (str "grepdeadline2/f" i ".clj") ";; ZZDEADLINE2ZZ\n"))
+
+           dir
+           (temp-dir-path "grepdeadline2")
+
+           complete
+           (:result (gt {"query" "ZZDEADLINE2ZZ" "paths" [dir]}))]
+
+          ;; control: an unhurried sweep is complete and says nothing about time
+          (expect (nil? (get complete "hits_truncated_by")))
+          (expect (not (string/includes? (str (get complete "hint")) "PARTIAL")))
+          (with-redefs-fn {budget-var 0}
+            (fn []
+              (let [out (:result (gt {"query" "ZZDEADLINE2ZZ" "paths" [dir]}))]
+                (expect (= "time" (get out "hits_truncated_by")))
+                (expect (string/includes? (str (get out "hint")) "PARTIAL"))
+                (expect (string/includes? (str (get out "hint")) "Narrow"))
+                (expect (false? (get out "total_file_count_is_exact"))))))))
+    (it "streaming a file keeps the SAME context windows the slurping walk produced"
+        (let
+          [rel
+           (write-temp! "grepstream/ctx.txt"
+                        (string/join "\n"
+                                     (map #(if (#{2 3 9} %) (str "L" % " ZZSTREAMZZ") (str "L" %))
+                                          (range 1 11))))
+
+           hits
+           (search-file-content (fs/file rel) #(string/includes? % "ZZSTREAMZZ") 2 2)]
+
+          ;; hits stay in LINE order even though a hit is held back until its
+          ;; :after window fills, and a window clipped by BOF/EOF ships short
+          (expect (= [[2 [1] [3 4]] [3 [1 2] [4 5]] [9 [7 8] [10]]]
+                     (mapv (fn [h]
+                             [(:line h) (mapv first (:before h)) (mapv first (:after h))])
+                           hits)))
+          (expect (= ["L2 ZZSTREAMZZ" "L3 ZZSTREAMZZ" "L9 ZZSTREAMZZ"] (mapv :text hits)))))
+    (it "zero context asks for no windows at all"
+        (let
+          [rel
+           (write-temp! "grepstream/plain.txt" "a\nZZPLAINZZ\nb\n")
+
+           hits
+           (search-file-content (fs/file rel) #(string/includes? % "ZZPLAINZZ") 0 0)]
+
+          (expect (= 1 (count hits)))
+          (expect (= 2 (:line (first hits))))
+          (expect (not (contains? (first hits) :before)))
+          (expect (not (contains? (first hits) :after)))))
+    (it "an unreadable file yields no hits instead of blowing up the sweep"
+        (expect (= []
+                   (search-file-content (fs/file (str (temp-dir-path "grepstream")
+                                                      "/does-not-exist.txt"))
+                                        (constantly true)
+                                        0
+                                        0))))))

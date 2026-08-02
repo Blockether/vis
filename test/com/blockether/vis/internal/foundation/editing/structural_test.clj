@@ -198,6 +198,58 @@
                    (expect (= {} (structural/occurrences-in "x.unknownext" "add add" ["add"]))))))
 
 (defdescribe
+  scan-batch-test
+  (it "scan-mapv keeps REQUEST ORDER across workers"
+      (let [items (vec (range 200))]
+        (expect (= items (structural/scan-mapv #(do (Thread/sleep (long (rand-int 2))) %) items)))
+        (expect (= [] (structural/scan-mapv identity [])))
+        (expect (= [:a] (structural/scan-mapv identity [:a])))))
+  (it "scan-mapv rethrows the ORIGINAL ex-info, never an ExecutionException"
+      (let
+        [thrown (try (structural/scan-mapv (fn [i]
+                                             (if (= i 7) (throw (ex-info "boom" {:i i})) i))
+                                           (vec (range 64)))
+                     nil
+                     (catch Exception e e))]
+        (expect (instance? clojure.lang.ExceptionInfo thrown))
+        (expect (= {:i 7} (ex-data thrown)))))
+  (it "occurrences-in-files traces every path in one parallel pass"
+      (let
+        [sources
+         {"a.clj" "(defn add [a b] (+ a b))\n"
+          "b.clj" "(def y (add 1 2))\n"
+          "c.clj" "(defn unrelated [] nil)\n"}
+
+         scans
+         (structural/occurrences-in-files (vec (keys sources)) ["add"] sources)]
+
+        ;; REQUEST ORDER, one row per path, `read-fn` owns the read.
+        (expect (= (vec (keys sources)) (mapv :path scans)))
+        (expect (= 1 (count (get (:occurrences (first scans)) "add"))))
+        (expect (:is-definition (first (get (:occurrences (first scans)) "add"))))
+        (expect (= 1 (count (get (:occurrences (second scans)) "add"))))
+        (expect (= {} (:occurrences (last scans))))))
+  (it "occurrences-in-files is TOTAL: an unreadable path is one :error row"
+      (let
+        [scans (structural/occurrences-in-files ["ok.clj" "missing.clj"]
+                                                ["add"]
+                                                (fn [p]
+                                                  (if (= p "ok.clj")
+                                                    "(defn add [a b] (+ a b))\n"
+                                                    (throw (java.io.FileNotFoundException.
+                                                             "missing.clj")))))]
+        (expect (= ["ok.clj" "missing.clj"] (mapv :path scans)))
+        (expect (nil? (:error (first scans))))
+        (expect (string? (:error (second scans))))
+        (expect (nil? (:occurrences (second scans))))))
+  (it "no names → no scan at all"
+      (expect (= []
+                 (structural/occurrences-in-files ["a.clj"]
+                                                  []
+                                                  (fn [_]
+                                                    (throw (AssertionError. "read"))))))))
+
+(defdescribe
   replace-test
   (it "Clojure replace by name"
       (expect (str/includes? (edit

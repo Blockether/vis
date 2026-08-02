@@ -286,7 +286,9 @@
                                 (occurrence-entries line-anchor (get defs-by-name (key e)) hits))
                         acc)))
                   (transient {})
-                  (StructuralApi/findReferences ^String source ^String language ^java.util.Collection wanted))))
+                  (StructuralApi/findReferences ^String source
+                                                ^String language
+                                                ^java.util.Collection wanted))))
       {})))
 
 (defn occurrences
@@ -314,3 +316,95 @@
   ;; Cheap reject: see `references`. No raw occurrence ⇒ no reference AND no
   ;; definition, so the whole batch below is skippable.
   (if (str/includes? source name) (get (occurrences-in path source [name]) name []) []))
+
+;; -----------------------------------------------------------------------------
+;; Batch scanning — the tree-sitter layer owns its own fan-out.
+;;
+;; Parsing is what costs; the tool layer only decides WHICH paths and how to
+;; read them. So the parallel walk lives HERE, next to the parse, and every
+;; consumer (struct_index rows, occurrence tracing) gets the same worker pool,
+;; the same request-ordering guarantee and the same failure semantics.
+;; -----------------------------------------------------------------------------
+
+(def ^:private scan-parallelism
+  "How many files `scan-mapv` scans at once.
+
+   One CPU per worker. The pack's parse is serialized process-wide (a global
+   mutex guards third-party scanners with mutable static state), but everything
+   AROUND it is not: the content-addressed tree cache, the reference walk, the
+   JSON boundary and the whole Clojure side all run concurrently, so a repo-wide
+   `struct_index` scales nearly linearly until the parse mutex saturates.
+
+   Measured over 140 files / 4.2 MB / 4 844 names, definitions + occurrences:
+   558 ms serial → 60 ms at 12-16 workers when the trees are cached, and
+   713 ms → 180 ms when every file must be parsed afresh (the parse mutex is
+   that floor). Past the core count the curve is flat, so there is nothing to
+   buy by oversubscribing."
+  (max 2 (min 16 (.availableProcessors (Runtime/getRuntime)))))
+
+(defn scan-mapv
+  "`mapv` over `items` across `scan-parallelism` workers, in REQUEST ORDER.
+
+   Workers pull the next index off a shared cursor, so one huge file cannot
+   strand a worker while the others idle. The first exception is rethrown AS
+   THROWN (never wrapped in `ExecutionException`) so a tool's `:on-error-fn`
+   still sees the original `ex-info`; the remaining workers are always awaited,
+   so no task outlives the call."
+  [f items]
+  (let
+    [items
+     (vec items)
+
+     n
+     (count items)]
+
+    (if (or (< n 2) (< (long scan-parallelism) 2))
+      (mapv f items)
+      (let
+        [out
+         (object-array n)
+
+         cursor
+         (java.util.concurrent.atomic.AtomicInteger. 0)
+
+         worker
+         (fn []
+           (loop []
+
+             (let [i (.getAndIncrement cursor)]
+               (when (< i n) (aset out i (f (nth items i))) (recur)))))
+
+         futures
+         (vec (repeatedly (min (long scan-parallelism) n) #(future (worker))))
+
+         failure
+         (reduce (fn [acc fut]
+                   (try @fut
+                        acc
+                        (catch java.util.concurrent.ExecutionException e (or acc (.getCause e) e))
+                        (catch Throwable t (or acc t))))
+                 nil
+                 futures)]
+
+        (when failure (throw failure))
+        (vec out)))))
+
+(defn occurrences-in-files
+  "`occurrences-in` over MANY paths at once — one `{:path :occurrences}` map per
+   path, in REQUEST ORDER, scanned across `scan-parallelism` workers.
+
+   `read-fn` turns a path into its source, so the CALLER keeps path confinement
+   (vis resolves through `safe-path`) while the parse and the fan-out stay here.
+   Each file is read AND PARSED once per call, not once per name: a single
+   `occurrences-in` pass traces the whole `names` set.
+
+   TOTAL per path — a read or parse failure becomes `{:path :error}` (the
+   message) instead of failing the batch, so one unreadable file cannot sink a
+   repo-wide trace. Returns `[]` when `names` is empty."
+  [paths names read-fn]
+  (if (seq names)
+    (scan-mapv (fn [path]
+                 (try {:path path :occurrences (occurrences-in path (read-fn path) names)}
+                      (catch Exception e {:path path :error (or (ex-message e) (str (class e)))})))
+               paths)
+    []))
