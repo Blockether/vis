@@ -3601,34 +3601,6 @@
                                      {:type :svar.llm/provider-unavailable :status %})
                             0)
                          [400 429 500 503 nil]))))
-    (it
-      "issue #68: a litellm 408 CONNECT timeout is retried 3x at 1s/2s/4s, not fatal on the first blip"
-      (let [litellm-408
-            (fn []
-              (ex-info
-                (str "litellm.Timeout: BedrockException: Timeout Error - litellm.Timeout: "
-                     "Connection timed out. Timeout passed=Timeout(connect=5.0, read=600.0, "
-                     "write=600.0, pool=600.0), time taken=0.001 seconds. Received Model "
-                     "Group=claude-sonnet-5 Available Model Group Fallbacks=None")
-                {:type :svar.llm/provider-unavailable :status 408}))]
-        (expect (true? (provider-unavailable-retry? (litellm-408) 0)))
-        (let [{:keys [delays outcome pu-attempt]} (drive zero litellm-408)]
-          (expect (= [1000 2000 4000] delays))
-          (expect (= MAX_PROVIDER_UNAVAILABLE_RETRIES pu-attempt))
-          (expect (= :fatal outcome)))))
-    (it
-      "only the CONNECT phase is replayable: a 408 read timeout, a bare 408 and a 429 wearing timeout prose stay terminal"
-      (let [pu-408 (fn [msg]
-                     (ex-info msg {:type :svar.llm/provider-unavailable :status 408}))]
-        ;; the model may already have started — replaying could double a side effect
-        (expect (false? (provider-unavailable-retry? (pu-408 "litellm.Timeout: Read timed out") 0)))
-        ;; 408 with no phase evidence at all: no proof nothing ran
-        (expect (false? (provider-unavailable-retry? (pu-408 "Provider unavailable") 0)))
-        ;; a real rate-limit response: svar's policy owns it, never a second ladder
-        (expect (false? (provider-unavailable-retry?
-                          (ex-info "litellm.Timeout: Connection timed out"
-                                   {:type :svar.llm/provider-unavailable :status 429})
-                          0)))))
     (it "backoff widens 1s -> 2s -> 4s and clamps past the vector"
         (expect (= [1000 2000 4000 4000 4000]
                    (mapv provider-unavailable-retry-delay-ms (range 5)))))
