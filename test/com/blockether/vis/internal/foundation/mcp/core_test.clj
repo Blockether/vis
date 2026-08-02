@@ -248,20 +248,27 @@
           (try (reset! conns {})
                (reset! killed #{})
                (reconcile!)
-               (expect (= ["local"] @connects))
+               (expect (= #{"local"} (set @connects)))
+               (expect (contains? @conns "local"))
                (let [row (mcp/kill-gateway-server! "local")]
                  (expect (true? (get row "is_killed")))
                  (expect (false? (get row "is_connected"))))
                (expect (empty? @conns))
-               ;; The brake has to survive the per-turn reconcile: closing the
-               ;; connection alone let the very next turn respawn the stdio child
-               ;; the user just killed.
-               (reconcile!)
-               (expect (= ["local"] @connects))
-               (let [row (mcp/start-gateway-server! "local")]
-                 (expect (false? (get row "is_killed")))
-                 (expect (true? (get row "is_connected"))))
-               (expect (= ["local" "local"] @connects))
+               ;; Everything below is counted FROM THE KILL, never from the start of
+               ;; the case: the health loop and the per-turn nudge reconcile this
+               ;; same pool off other threads, so an exact connect log is a race
+               ;; while "nothing reconnects while the brake is on" is the contract.
+               (let [killed-at (count @connects)]
+                 ;; The brake has to survive the per-turn reconcile: closing the
+                 ;; connection alone let the very next turn respawn the stdio child
+                 ;; the user just killed.
+                 (reconcile!)
+                 (expect (= killed-at (count @connects)))
+                 (let [row (mcp/start-gateway-server! "local")]
+                   (expect (false? (get row "is_killed")))
+                   (expect (true? (get row "is_connected"))))
+                 (expect (< killed-at (count @connects)))
+                 (expect (= #{"local"} (set @connects))))
                ;; A kill is a RUNTIME brake, never an edit to anybody's config.
                (expect (= {"transport" "stdio" "command" "echo"}
                           (get-in @store ["mcp" "servers" "local"])))
@@ -386,14 +393,19 @@
           (try (reset! conns {})
                (reset! killed #{})
                (reconcile!)
-               (expect (= ["local"] @connects))
+               (expect (= #{"local"} (set @connects)))
                ;; The stdio child crashes out from under the daemon. Nothing in a
                ;; session can notice or repair that, which is exactly why there is
                ;; no connect verb: the pool has to heal itself.
-               (swap! dead conj (get-in @conns ["local" :conn]))
-               (reconcile!)
-               (expect (= ["local" "local"] @connects))
-               (expect (false? (contains? @dead (get-in @conns ["local" :conn]))))
+               (let [crashed-at (count @connects)]
+                 (swap! dead conj (get-in @conns ["local" :conn]))
+                 (reconcile!)
+                 ;; A RECONNECT, counted from the crash — not a call log. The health
+                 ;; loop and the per-turn nudge reconcile this same pool off other
+                 ;; threads, so an exact connect count is a race; "the dead conn was
+                 ;; replaced by a live one" is the contract.
+                 (expect (< crashed-at (count @connects)))
+                 (expect (false? (contains? @dead (get-in @conns ["local" :conn])))))
                (finally (reset! conns {}) (reset! killed #{})))))))
   (it "arms exactly one daemon-wide health loop once a server is configured"
       (let
