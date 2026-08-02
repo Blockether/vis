@@ -4682,6 +4682,69 @@
              (finally (reset! cooldown {}))))))
 
 (defdescribe
+  wrapped-auth-exhaustion-cooldown-test
+  "Once svar's router has walked the fleet it throws `Provider unavailable` with no
+   status and no auth prose: the 401s survive only on `:attempts`. The auth ladder
+   read the WRAPPER only, so a wrapped credential failure took neither the rescue
+   route nor the cooldown and the dead provider was re-probed every iteration
+   (issue #82)."
+  (let
+    [wrapper
+     (ex-info "Provider unavailable"
+              {:type :svar.llm/provider-unavailable
+               :attempts [{:provider :rbi-genai
+                           :model "gpt-5"
+                           :status 401
+                           :reason :authentication
+                           :error "API authentication failed. Check your API key."}
+                          {:provider :openai
+                           :model "gpt-5"
+                           :status 401
+                           :reason :authentication
+                           :error "Incorrect API key provided"}]})
+
+     mixed
+     (ex-info "Provider unavailable"
+              {:type :svar.llm/provider-unavailable
+               :attempts [{:provider :rbi-genai :status 401 :reason :authentication :error "bad key"}
+                          {:provider :openai :status 503 :reason :transient-error :error "upstream down"}]})
+
+     shaped? @#'lp/auth-error-shaped?
+
+     fallback-routing @#'lp/auth-fallback-routing
+
+     resolved {:provider :rbi-genai :name "gpt-5"}]
+
+    (it "reads the credential verdict off the attempts when the wrapper hides it"
+        (expect (= true (shaped? wrapper)))
+        ;; One transient attempt means the fleet did NOT die on credentials: that
+        ;; is an outage, and cooling the provider down would be wrong.
+        (expect (= false (shaped? mixed))))
+    (it "gives the wrapped failure the same rescue route a bare 401 gets"
+        (expect (= {:on-auth-error :fallback-provider
+                    :exclude-providers #{:rbi-genai}
+                    :on-transient-error :hybrid}
+                   (fallback-routing wrapper {} resolved)))
+        (expect (nil? (fallback-routing mixed {} resolved)))
+        ;; Visible output already streamed: replaying would duplicate it.
+        (expect (nil? (fallback-routing (ex-info "Provider unavailable"
+                                                 (assoc (ex-data wrapper) :content-acc-len 12))
+                                        {}
+                                        resolved))))
+    (it "arms the cooldown so the NEXT iteration skips the dead credential"
+        (let [cooldown @#'lp/provider-auth-cooldown]
+          (try (reset! cooldown {})
+               (expect (some? (fallback-routing wrapper {} resolved)))
+               (expect (= true (@#'lp/note-provider-auth-cooldown! (:provider resolved))))
+               (expect (= {:on-auth-error :fallback-provider
+                           :exclude-providers #{:rbi-genai}
+                           :on-transient-error :hybrid}
+                          (@#'lp/apply-auth-cooldown-routing {})))
+               (@#'lp/note-provider-request-ok! resolved)
+               (expect (= {} (@#'lp/apply-auth-cooldown-routing {})))
+               (finally (reset! cooldown {})))))))
+
+(defdescribe
   router-with-pinned-model-test
   "A session pick naming a model only the provider's LIVE catalog lists must still
    BIND. It used to validate away to `{}` and the turn silently ran the default

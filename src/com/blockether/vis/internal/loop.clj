@@ -6819,9 +6819,9 @@
   [^Throwable e]
   (let [d (ex-data e)]
     (or (perr/auth-provider-error? (:status d)
-                                  (perr/provider-body-message (some-> (:body d)
-                                                                     str))
-                                  (ex-message e))
+                                   (perr/provider-body-message (some-> (:body d)
+                                                                       str))
+                                   (ex-message e))
         (perr/auth-exhausted-attempts? e))))
 
 (defn- auth-fallback-routing
