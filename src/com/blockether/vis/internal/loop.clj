@@ -269,21 +269,50 @@
 (defn- provider-unavailable-error?
   "True when an exception is svar's terminal `:svar.llm/provider-unavailable`
    (a single-provider turn whose upstream call failed before any usable
-   response). Retry-able (provider 5xx only), then terminal."
+   response). Retry-able (provider 5xx, or an upstream connect timeout), then
+   terminal."
   [^Throwable e]
   (= :svar.llm/provider-unavailable (:type (ex-data e))))
 
+(defn- connect-phase-timeout-pu?
+  "True when a status-bearing provider-unavailable is really an UPSTREAM CONNECT
+   timeout: the deadline blew before the request reached the model, so nothing
+   ran and replaying it is safe. litellm reports exactly this as HTTP 408
+   (`litellm.Timeout: ... Connection timed out`), which the plain 5xx gate below
+   would drop on the floor after a single attempt. Read-phase timeouts stay
+   terminal — the model may already have started, so a blind replay could double
+   a side effect."
+  [^Throwable e]
+  (let
+    [data
+     (ex-data e)
+
+     status
+     (:status data)
+
+     text
+     (perr/provider-error-upstream-text e)]
+
+    (and (perr/upstream-timeout-error? status text)
+         (= :connect (perr/upstream-timeout-phase status text)))))
+
 (defn- provider-unavailable-retry?
-  "True while a terminal provider-unavailable represents an HTTP 5xx and still
-   has retry budget left (`pu-attempt` below the cap). 4xx responses, especially
-   429, are terminal here: svar has already applied its rate-limit policy, so a
-   Vis retry would stack a second retry ladder on top of it. Connect-level PU
-   (`:status` nil) is likewise excluded; svar already decided it."
+  "True while a terminal provider-unavailable is worth another attempt and still
+   has retry budget left (`pu-attempt` below the cap). Two admissible shapes:
+   an HTTP 5xx, and a status-bearing upstream CONNECT timeout (litellm's 408).
+   Other 4xx responses, especially 429, are terminal here: svar has already
+   applied its rate-limit policy, so a Vis retry would stack a second retry
+   ladder on top of it. Connect-level PU (`:status` nil) is likewise excluded;
+   svar already decided it."
   [^Throwable e pu-attempt]
   (let [status (:status (ex-data e))]
     (and (provider-unavailable-error? e)
          (integer? status)
-         (<= 500 (long status) 599)
+         ;; 429 arrived as a real rate-limit response, whatever prose it carries:
+         ;; svar's rate-limit policy owns it, so never re-admit it via the
+         ;; text-based timeout branch below.
+         (not= 429 (long status))
+         (or (<= 500 (long status) 599) (connect-phase-timeout-pu? e))
          (< (long pu-attempt) (long MAX_PROVIDER_UNAVAILABLE_RETRIES)))))
 
 (defn- provider-unavailable-retry-delay-ms
@@ -4802,9 +4831,9 @@
      "Only `print` returns; bare expressions drop and errors surface. Native results return inline and stay "
      "at `ntr[tool_id]`; engine-bound natives are bare snake_case, native-only ones absent. Never "
      "`time.sleep`/poll for background shells \u2014 use `shell` op `wait` (a REQUIRED `until` regex ends it "
-      "line), via `gather` when parallel. Close what you open (`with open(...)`): a dropped file handle is "
-      "NOT auto-closed here, so the sandbox reclaims leaked descriptors and refuses more than 512 held at "
-      "once (`VIS_PY_MAX_OPEN_FILES`) — leaked descriptors stop the process spawning `shell`/`git` children."
+     "line), via `gather` when parallel. Close what you open (`with open(...)`): a dropped file handle is "
+     "NOT auto-closed here, so the sandbox reclaims leaked descriptors and refuses more than 512 held at "
+     "once (`VIS_PY_MAX_OPEN_FILES`) — leaked descriptors stop the process spawning `shell`/`git` children."
      (when-let [cap (python-execution-capability-line caps)]
        (str " " cap)))
    :result
