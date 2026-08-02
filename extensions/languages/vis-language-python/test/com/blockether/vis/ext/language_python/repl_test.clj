@@ -111,6 +111,10 @@
                         (spit (io/file root "uv.lock") "")
                         (expect (true? (uv-project? (.getPath root))))
                         (finally (cleanup root)))))
+             (it "treats an UNPARSABLE pyproject as not-uv rather than throwing"
+                 (with-pyproject "[project\nname = "
+                                 (fn [root]
+                                   (expect (false? (uv-project? root))))))
              (it "reports nothing for a directory with no pyproject at all"
                  (let [root (tmp-dir)]
                    (try (expect (false? (uv-project? (.getPath root)))) (finally (cleanup root))))))

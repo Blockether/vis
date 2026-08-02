@@ -3,7 +3,8 @@
    deps.edn / lein / bb. Prefers a project-managed env so the REPL sees the
    project's dependencies — not the bare system interpreter."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [com.blockether.vis.internal.foundation.editing.zipper :as zipper]))
 
 (defn- exists? [root rel] (.isFile (io/file root rel)))
 
@@ -30,55 +31,35 @@
                 ["bin/python" "bin/python3"]))
         [".venv" "venv"]))
 
+(defn- unquote-seg
+  "A TOML key segment with its surrounding quotes (if any) removed."
+  [s]
+  (let [s (str/trim s)]
+    (if (and (>= (count s) 2)
+             (or (and (str/starts-with? s "\"") (str/ends-with? s "\""))
+                 (and (str/starts-with? s "'") (str/ends-with? s "'"))))
+      (subs s 1 (dec (count s)))
+      s)))
+
 (defn- toml-table-headers
   "The dotted paths of the TOML TABLE HEADERS `text` declares, in order — `tool.uv`
-   for `[tool.uv]`, `tool.uv.sources` for `[[tool.uv.sources]]`. A header counts
-   only when it is the whole line (comments allowed after it) and outside a
-   multi-line string, so `[tool.uv]` inside a comment, a description or a
-   docstring never registers. Quotes and whitespace are stripped from segments.
-   This answers WHICH tables a file declares; it is not a TOML parser."
+   for `[tool.uv]`, `tool.uv.index` for `[[tool.uv.index]]`.
+
+   PARSED, never scanned: the tree-sitter TOML grammar already shipped with vis
+   (the one the structural editors use) does the reading, so a `[tool.uv]` sitting
+   in a comment, a description string or a multi-line docstring is simply not a
+   table node. Unparsable input yields no headers."
   [^String text]
-  (letfn [(unquote-seg [s]
-            (let [s (str/trim s)]
-              (if (and (>= (count s) 2)
-                       (or (and (str/starts-with? s "\"") (str/ends-with? s "\""))
-                           (and (str/starts-with? s "'") (str/ends-with? s "'"))))
-                (subs s 1 (dec (count s)))
-                s)))]
-    (loop
-      [[line & more]
-       (str/split-lines text)
-
-       open
-       nil
-
-       acc
-       []]
-
-      (if (nil? line)
-        acc
-        (let
-          [delims
-           (if open [open] ["\"\"\"" "'''"])
-
-           toggled
-           (some (fn [d]
-                   (when (odd? (count (re-seq (re-pattern (java.util.regex.Pattern/quote d)) line)))
-                     d))
-                 delims)
-
-           header
-           (when-not open
-             (some-> (re-matches #"\s*\[\[?\s*([^\[\]]+?)\s*\]\]?\s*(?:#.*)?" line)
-                     second))]
-
-          (recur more
-                 (cond (and open toggled) nil
-                       toggled toggled
-                       :else open)
-                 (if header
-                   (conj acc (str/join "." (map unquote-seg (str/split header #"\."))))
-                   acc)))))))
+  (let [root (zipper/inspect "toml" text [])]
+    (into []
+          (comp (keep-indexed (fn [i child]
+                                (when (#{"table" "table_array_element"} (:kind child)) i)))
+                ;; Child 0 of a table node is its header key (bare/quoted/dotted).
+                (keep (fn [i]
+                        (:text (zipper/inspect "toml" text [i 0]))))
+                (map (fn [k]
+                       (str/join "." (map unquote-seg (str/split k #"\."))))))
+          (:children root))))
 
 (defn- declares-table?
   "Does TOML `text` declare table `path`, or any table beneath it? `[tool.uv]` and
