@@ -135,7 +135,31 @@
              ;; changed-paths returns `/`-separated display paths on EVERY OS.
              (expect (= #{"real.txt" ".clj-kondo/config.edn"}
                         (set (ws/changed-paths dir fork-ms)))))
-           (finally (delete-tree! dir))))))
+           (finally (delete-tree! dir)))))
+  (it "prunes churny build/cache dirs at ANY depth, not just the repo root"
+      ;; Regression: a monorepo keeps its churn NESTED — apps/web/node_modules,
+      ;; extensions/<ext>/target, packages/<p>/.clj-kondo/.cache. Matching only
+      ;; path segment 0 let thousands of gitignored generated files through, so
+      ;; they were reported as agent edits and landed into trunk by `apply!`.
+      (let [dir (temp-dir "vis-prune-deep")]
+        (try (let [fork-ms (do (Thread/sleep 8) (System/currentTimeMillis))]
+               (Thread/sleep 8)
+               (spit (io/file dir "real.txt") "edit\n")
+               (.mkdirs (io/file dir "apps" "web" "node_modules" "left-pad"))
+               (spit (io/file dir "apps" "web" "node_modules" "left-pad" "index.js") "x\n")
+               (.mkdirs (io/file dir "extensions" "ext-a" "target" "classes"))
+               (spit (io/file dir "extensions" "ext-a" "target" "classes" "C.class") "bytes\n")
+               (.mkdirs (io/file dir "apps" "web" "ios" ".git"))
+               (spit (io/file dir "apps" "web" "ios" ".git" "HEAD") "ref: refs/heads/x\n")
+               (.mkdirs (io/file dir "packages" "p" ".clj-kondo" ".cache" "v1"))
+               (spit (io/file dir "packages" "p" ".clj-kondo" ".cache" "v1" "x.transit.json") "c\n")
+               ;; a NESTED tracked source file / kondo config is still an edit
+               (spit (io/file dir "packages" "p" ".clj-kondo" "config.edn") "{}\n")
+               (.mkdirs (io/file dir "apps" "web" "src"))
+               (spit (io/file dir "apps" "web" "src" "app.ts") "edit\n")
+               (expect (= #{"real.txt" "apps/web/src/app.ts" "packages/p/.clj-kondo/config.edn"}
+                          (set (ws/changed-paths dir fork-ms)))))
+             (finally (delete-tree! dir))))))
 
 (defdescribe
   rift-roundtrip-test

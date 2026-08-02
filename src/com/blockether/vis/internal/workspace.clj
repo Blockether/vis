@@ -554,8 +554,8 @@
 ;; Since-fork diff — pure mtime, git-free
 ;; =============================================================================
 
-(def ^:private prune-root-dirs
-  "Top-level directory names pruned from the since-fork diff: VCS internals
+(def ^:private prune-dir-names
+  "Directory names pruned from the since-fork diff AT ANY DEPTH: VCS internals
    plus build/dependency/editor caches that churn on mtime but are never
    meaningful agent edits and are gitignored anyway. Landing them into trunk
    is always wrong, and — because a cache like `.clj-kondo/.cache` or `target`
@@ -566,16 +566,24 @@
     ".cljs_node_repl" ".gitlibs" ".gradle" ".idea"})
 
 (defn- prune-dir?
-  "True when the clone-relative directory `rel` should be skipped by the
-   diff: a top-level VCS/build/cache dir (`prune-root-dirs`), or the
-   clj-kondo analysis cache specifically (`.clj-kondo/.cache` — we keep the
-   tracked `.clj-kondo/config.edn`, prune only the churny cache subtree)."
+  "True when the clone-relative path `rel` lies in a VCS/build/cache subtree the
+   diff must skip: ANY segment named in `prune-dir-names`, or a `.clj-kondo/.cache`
+   subtree (we keep the tracked `.clj-kondo/config.edn`, prune only the churny
+   cache).
+
+   Depth matters — a monorepo keeps its churn NESTED (`apps/web/node_modules`,
+   `extensions/<ext>/target`, a generated native project's own `.git`). Matching
+   only segment 0 reported all of that as agent edits and landed it into trunk."
   [^Path rel]
   (let [c (.getNameCount rel)]
-    (and (pos? c)
-         (let [s0 (str (.getName rel 0))]
-           (or (contains? prune-root-dirs s0)
-               (and (= ".clj-kondo" s0) (>= c 2) (= ".cache" (str (.getName rel 1)))))))))
+    (loop [i 0]
+      (if (>= i c)
+        false
+        (let [s (str (.getName rel i))]
+          (if (or (contains? prune-dir-names s)
+                  (and (= ".clj-kondo" s) (< (inc i) c) (= ".cache" (str (.getName rel (inc i))))))
+            true
+            (recur (inc i))))))))
 
 (defn changed-paths
   "Repo-relative paths of files under `clone` whose mtime is newer than

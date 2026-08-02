@@ -94,8 +94,8 @@
      :rift-error-path (:path data)
      :error (or (ex-message t) (str t))}))
 
-(def ^:private prune-root-dirs
-  "Top-level directory names skipped when toggling source perms for a fork:
+(def ^:private prune-dir-names
+  "Directory names skipped AT ANY DEPTH when toggling source perms for a fork:
    VCS internals plus build/dependency/editor caches. They hold thousands of
    gitignored files that are never part of the fork, so walking them just to
    flip a write bit is what made `/draft new` stall on a large repo."
@@ -103,8 +103,11 @@
     ".cljs_node_repl" ".gitlibs" ".gradle" ".idea"})
 
 (defn- prune-dir?
-  "True when the source-relative directory `dir` is a VCS/build/cache subtree
-   (`prune-root-dirs`, or `.clj-kondo/.cache`) that the perms walk must skip."
+  "True when the source-relative directory `dir` lies in a VCS/build/cache
+   subtree (`prune-dir-names` at ANY depth, or `.clj-kondo/.cache`) that the
+   perms walk must skip. A monorepo nests its caches — `apps/web/node_modules`,
+   `extensions/<ext>/target` — so matching only the first segment walked them
+   all anyway, which is the stall this prune exists to avoid."
   [^Path root ^Path dir]
   (let
     [rel
@@ -113,10 +116,14 @@
      c
      (.getNameCount rel)]
 
-    (and (pos? c)
-         (let [s0 (str (.getName rel 0))]
-           (or (contains? prune-root-dirs s0)
-               (and (= ".clj-kondo" s0) (>= c 2) (= ".cache" (str (.getName rel 1)))))))))
+    (loop [i 0]
+      (if (>= i c)
+        false
+        (let [s (str (.getName rel i))]
+          (if (or (contains? prune-dir-names s)
+                  (and (= ".clj-kondo" s) (< (inc i) c) (= ".cache" (str (.getName rel (inc i))))))
+            true
+            (recur (inc i))))))))
 
 (defn- read-only-perms
   "Map {Path -> perms} of every non-owner-writable regular file under `src`,

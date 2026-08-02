@@ -54,3 +54,31 @@
                             (expect (some #(= (str (.toPath keep)) (:path %)) (:failures data)))
                             (expect (some #{(str (.toPath keep))} (:remaining data)))))
                         (finally (delete-tree-lax! root))))))
+
+(def ^:private prune-dir? @#'com.blockether.vis.ext.workspace-rift/prune-dir?)
+
+(defdescribe prune-dir-test
+             (it
+               "prunes VCS/build/cache subtrees at ANY depth so the pre-fork perms walk skips them"
+               ;; The perms walk is per-file. On a monorepo whose generated app tree holds
+               ;; tens of thousands of gitignored files, descending into a NESTED
+               ;; node_modules/target is exactly the `/draft new` stall this prune avoids.
+               (let
+                 [root
+                  (java.nio.file.Path/of "/repo" (into-array String []))
+
+                  p
+                  (fn [& segs]
+                    (java.nio.file.Path/of "/repo" (into-array String segs)))]
+
+                 (expect (prune-dir? root (p ".git")))
+                 (expect (prune-dir? root (p "target")))
+                 (expect (prune-dir? root (p "apps" "web" "node_modules")))
+                 (expect (prune-dir? root (p "apps" "web" "node_modules" "left-pad")))
+                 (expect (prune-dir? root (p "extensions" "ext-a" "target" "classes")))
+                 (expect (prune-dir? root (p "apps" "web" "ios" ".git")))
+                 (expect (prune-dir? root (p "packages" "p" ".clj-kondo" ".cache")))
+                 ;; the tracked .clj-kondo dir itself stays walkable
+                 (expect (not (prune-dir? root (p "packages" "p" ".clj-kondo"))))
+                 (expect (not (prune-dir? root (p "apps" "web" "src"))))
+                 (expect (not (prune-dir? root root))))))
