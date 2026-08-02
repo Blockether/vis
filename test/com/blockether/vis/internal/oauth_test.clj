@@ -134,43 +134,44 @@
       ;; be swallowed into a fake success handing DEAD straight back.
       (expect (throws? clojure.lang.ExceptionInfo #(r "DEAD")))
       (expect (= 1 @exchanges))))
-  (it
-    "two refreshers (different providers) refresh IN PARALLEL — no shared lock"
-    (let
-      [mk
-       (fn [c]
-         (oauth/make-file-refresher {:load (fn []
-                                             {:refresh-token "R" :saved-at-ms 0})
-                                     :saved-at :saved-at-ms
-                                     :refresh-token :refresh-token
-                                     :exchange! (fn [_]
-                                                  (swap! c inc)
-                                                  (Thread/sleep 250)
-                                                  {:access-token "T" :saved-at-ms 0})
-                                     :persist! identity
-                                     :->token (fn [a]
-                                                {:token (:access-token a)})
-                                     :no-token! #(throw (ex-info "no" {}))}))
+  (it "two refreshers (different providers) refresh IN PARALLEL — no shared lock"
+      ;; Proven by OVERLAP, not by wall-clock: a loaded CI box makes any "finished
+      ;; under N ms" threshold flaky. Both exchanges must be INSIDE the critical
+      ;; section at the same instant — under a shared lock the second thread could
+      ;; not enter until the first returned, so its await would time out.
+      (let
+        [entered
+         (java.util.concurrent.CountDownLatch. 2)
 
-       a
-       (mk (atom 0))
+         overlapped
+         (atom [])
 
-       b
-       (mk (atom 0))
+         mk
+         (fn []
+           (oauth/make-file-refresher {:load (fn []
+                                               {:refresh-token "R" :saved-at-ms 0})
+                                       :saved-at :saved-at-ms
+                                       :refresh-token :refresh-token
+                                       :exchange!
+                                       (fn [_]
+                                         (.countDown entered)
+                                         (swap! overlapped conj
+                                           (.await entered 5 java.util.concurrent.TimeUnit/SECONDS))
+                                         {:access-token "T" :saved-at-ms 0})
+                                       :persist! identity
+                                       :->token (fn [a]
+                                                  {:token (:access-token a)})
+                                       :no-token! #(throw (ex-info "no" {}))}))
 
-       t0
-       (System/currentTimeMillis)
+         fa
+         (future ((mk)))
 
-       fa
-       (future (a))
+         fb
+         (future ((mk)))]
 
-       fb
-       (future (b))]
-
-      @fa
-      @fb
-      ;; serialized by a shared lock would be ~500ms; independent locks ~250ms
-      (expect (< (- (System/currentTimeMillis) t0) 480))))
+        @fa
+        @fb
+        (expect (= [true true] @overlapped))))
   (it "make-file-refresher throws via :no-token! when no refresh token"
       (let
         [r (oauth/make-file-refresher {:load (fn []
